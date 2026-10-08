@@ -1,0 +1,140 @@
+name: AmberDeepRead
+options:
+  bundleIdPrefix: app.amber.deepread
+  deploymentTarget:
+    iOS: "26.0"
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.1"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+  configs:
+    Debug:
+      SHARED_FRAMEWORK_CONFIGURATION: debugFramework
+    Release:
+      SHARED_FRAMEWORK_CONFIGURATION: releaseFramework
+packages:
+  swift-nio:
+    url: https://github.com/apple/swift-nio.git
+    from: 2.81.0
+targets:
+  DeepRead:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+      - path: ../iosApp/DeepReadCore
+      - path: ../iosApp/HotlistCore
+      - path: ../iosApp/DeepReadStructures.swift
+      - path: ../iosApp/IOSDeepReadEditorialRenderer.swift
+      - path: ../iosApp/IOSDeepReadStructuredRenderer.swift
+      - path: ../iosApp/IOSDeepReadFontAssets.swift
+      - path: ../iosApp/IOSDocumentExportSupport.swift
+      - path: ../iosApp/MarkdownBridge.swift
+      - path: ../iosApp/PackedAstReader.swift
+      - path: ../iosApp/IOSAppLanguage.swift
+      - path: ../iosApp/IOSSearchExecutor.swift
+      - path: ../iosApp/IOSToolOutputLimits.swift
+      - path: ../iosApp/IOSCredentialRedactor.swift
+      - path: ../iosApp/IOSFreeSearchAggregator.swift
+      - path: ../iosApp/IOSGoogleWebViewSearch.swift
+      - path: ../iosApp/IOSWebMountPublicDNS.swift
+      - path: ../iosApp/IOSVerifiedHTTPScrapeTransport.swift
+      - path: ../Resources/Fonts/noto_serif_sc.otf
+        buildPhase: resources
+      - path: ../Resources/Fonts/jetbrains_mono.ttf
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.deepread
+        PRODUCT_NAME: AmberDeepRead
+        PRODUCT_MODULE_NAME: AmberDeepRead
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: 深度阅读
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_TESTABILITY: YES
+        FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../shared/build/bin/iosSimulatorArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+        FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../shared/build/bin/iosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../native/AmberNative.xcframework/ios-arm64-sim"
+        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../native/AmberNative.xcframework/ios-arm64"
+        OTHER_LDFLAGS: "$(inherited) -lamber_ffi"
+    dependencies:
+      - framework: Shared.framework
+        embed: false
+        link: true
+        implicit: true
+      - package: swift-nio
+        product: NIOCore
+      - package: swift-nio
+        product: NIOEmbedded
+      - package: swift-nio
+        product: NIOHTTP1
+    preBuildScripts:
+      - name: Build Shared KMP Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          case "${SDK_NAME:-}" in
+            iphonesimulator*) kotlin_target="IosSimulatorArm64" ;;
+            iphoneos*) kotlin_target="IosArm64" ;;
+            *) exit 1 ;;
+          esac
+          if [ -z "${JAVA_HOME:-}" ] && [ -x /opt/homebrew/opt/openjdk@17/bin/java ]; then
+            export JAVA_HOME=/opt/homebrew/opt/openjdk@17
+            export PATH="$JAVA_HOME/bin:$PATH"
+          fi
+          cd "${SRCROOT}/../.."
+          ./gradlew ":shared:link${CONFIGURATION}Framework${kotlin_target}"
+    postBuildScripts:
+      - name: Embed Shared KMP Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          case "${SDK_NAME:-}" in
+            iphonesimulator*) kotlin_dir="iosSimulatorArm64" ;;
+            iphoneos*) kotlin_dir="iosArm64" ;;
+            *) exit 1 ;;
+          esac
+          config_dir="$(printf '%s' "${CONFIGURATION}" | tr '[:upper:]' '[:lower:]')Framework"
+          framework_src="${SRCROOT}/../../shared/build/bin/${kotlin_dir}/${config_dir}/Shared.framework"
+          framework_dst="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/Shared.framework"
+          mkdir -p "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
+          ditto "${framework_src}" "${framework_dst}"
+          if [ "${CODE_SIGNING_ALLOWED:-YES}" != NO ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
+            codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$framework_dst"
+          fi
+  DeepReadTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+      - path: ../iosAppTests/IOSDeepReadTemplateStoreTests.swift
+    dependencies:
+      - target: DeepRead
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.deepread.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/AmberDeepRead.app/AmberDeepRead"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../shared/build/bin/iosSimulatorArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+        FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../shared/build/bin/iosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+schemes:
+  DeepRead:
+    build:
+      targets:
+        DeepRead: all
+    test:
+      targets:
+        - DeepReadTests

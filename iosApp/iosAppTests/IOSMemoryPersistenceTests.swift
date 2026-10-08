@@ -208,7 +208,7 @@ final class IOSMemoryPersistenceTests: XCTestCase {
             updatedAt: 1,
             lastUsedAt: nil,
             topicTitle: nil,
-            memberIds: []
+            memberIds: [], lastReinforcedAt: nil
         )
     }
 }

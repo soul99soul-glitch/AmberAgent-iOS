@@ -511,6 +511,7 @@ struct AgentBrowserTaskCompactBar: View {
         .simultaneousGesture(expandGesture)
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("chat-browser-task-compact")
         .accessibilityLabel(summary)
         .accessibilityHint("轻点或向上滑动展开浏览器任务")
         .accessibilityAction(named: "展开浏览器任务", expand)
@@ -2356,7 +2357,7 @@ struct WebMountSiteMemorySheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Agent 提议并经你确认的站点经验保存在本机，供后续任务参考。")
+                    Text("Agent 提议的站点经验经手动批准或高风险自动批准后保存在本机，供后续任务参考。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2395,7 +2396,7 @@ struct WebMountSiteMemorySheet: View {
                                 Text("暂无站点记忆")
                                     .font(.body.weight(.medium))
                                     .foregroundStyle(AmberTheme.foreground)
-                                Text("Agent 提交记忆提案并经你批准后，会显示在这里。")
+                                Text("Agent 提交记忆提案，经手动批准或高风险自动批准后会显示在这里。")
                                     .font(.caption)
                                     .foregroundStyle(AmberTheme.muted)
                                     .fixedSize(horizontal: false, vertical: true)

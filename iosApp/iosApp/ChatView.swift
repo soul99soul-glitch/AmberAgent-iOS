@@ -4,6 +4,12 @@ import UIKit
 import UniformTypeIdentifiers
 import PhotosUI
 
+private struct SiteMemoryApprovalLayoutSignal: Equatable {
+    let requestID: String?
+    let availableHeight: CGFloat
+    let minimumHeight: CGFloat
+}
+
 private enum ComposerPanel: String, Identifiable {
     case thinking
     case context
@@ -169,6 +175,7 @@ struct ChatView: View {
     let documentStore: DocumentAccessStore?
     let workspaceStore: IOSWorkspaceStore
     let activityStore: IOSSubAgentActivityStore
+    let webMountController: IOSWebMountController
     let initialMessageAnchor: ChatMessageAnchor?
     @State private var viewModel: ChatViewModel
     @State private var activeComposerPanel: ComposerPanel?
@@ -204,7 +211,11 @@ struct ChatView: View {
     @State private var islandPresentation: ChatIslandPresentation?
     @State private var islandHoldToken = 0
     @State private var composerInputHeight: CGFloat = 40
-    @State private var composerBarHeight: CGFloat = 0
+    @State private var approvalContainerHeight: CGFloat = 0
+    @State private var composerAuxiliaryHeight: CGFloat = 0
+    @State private var subAgentActivityBarHeight: CGFloat = 0
+    @State private var siteMemoryApprovalMinimumHeights: [String: CGFloat] = [:]
+    @State private var collapsedSiteMemoryComposerRequestId: String?
     @State private var isSubAgentBarVisible = false
     @State private var composerInputController = ComposerInputController()
     @State private var chatListSummary = ChatListSummarySnapshot()
@@ -229,13 +240,15 @@ struct ChatView: View {
         workspaceStore: IOSWorkspaceStore = .shared,
         viewModel: ChatViewModel? = nil,
         initialMessageAnchor: ChatMessageAnchor? = nil,
-        activityStore: IOSSubAgentActivityStore = .shared
+        activityStore: IOSSubAgentActivityStore = .shared,
+        webMountController: IOSWebMountController = .shared
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
         self.documentStore = documentStore
         self.workspaceStore = workspaceStore
         self.activityStore = activityStore
+        self.webMountController = webMountController
         self.initialMessageAnchor = initialMessageAnchor
         let resolvedViewModel = viewModel ?? ChatViewModel(
             settingsStore: settingsStore,
@@ -271,7 +284,8 @@ struct ChatView: View {
                         }
                     )
                     .padding(.horizontal, ChatLayout.contentHorizontalInset)
-                    .padding(.bottom, max(10, composerBarHeight + 8))
+                    // The bottom inset already reserves the composer and activity bar.
+                    .padding(.bottom, 10)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(browserTaskTransition)
@@ -334,25 +348,32 @@ struct ChatView: View {
                         await openSubAgentSourceConversation(sourceConversationId)
                     }
                 )
-                .onGeometryChange(for: Bool.self) { $0.size.height > 0 } action: { visible in
-                    isSubAgentBarVisible = visible
+                .frame(height: collapsesComposerForSiteMemoryApproval ? 0 : nil, alignment: .top)
+                .clipped()
+                .opacity(collapsesComposerForSiteMemoryApproval ? 0 : 1)
+                .allowsHitTesting(!collapsesComposerForSiteMemoryApproval)
+                .accessibilityHidden(collapsesComposerForSiteMemoryApproval)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    subAgentActivityBarHeight = height
+                    let visible = height > 0
+                    if isSubAgentBarVisible != visible { isSubAgentBarVisible = visible }
                 }
 
                 // 不再强制 light:原生 `.glassEffect` 本就按系统外观渲染(深色模式下渲染为深色玻璃),
                 // 若把内容强制成 light,前景图标/文字会按浅色调色板解析成深灰,贴在深色玻璃上发暗。
                 // 让 composer 跟随真实外观(与顶栏一致),图标与玻璃明暗才匹配。
                 inputBar
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear
-                                .preference(key: ChatComposerHeightPreferenceKey.self, value: proxy.size.height)
-                        }
-                    }
             }
         }
-        .onPreferenceChange(ChatComposerHeightPreferenceKey.self) { height in
-            guard abs(composerBarHeight - height) > 0.5 else { return }
-            composerBarHeight = height
+        .onChange(of: viewModel.pendingWebMountApproval?.id) { _, id in
+            if collapsedSiteMemoryComposerRequestId != nil {
+                collapsedSiteMemoryComposerRequestId = viewModel.pendingWebMountApproval?.siteMemoryChanges == nil ? nil : id
+            }
+        }
+        .task(id: siteMemoryApprovalLayoutSignal) {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            collapseSiteMemoryComposerIfNeeded()
         }
         .sheet(isPresented: $isModelSheetPresented) {
             ComposerModelSheet(sharedSettings: sharedSettings, currentModel: composerCurrentModelSelection) { model in
@@ -377,7 +398,7 @@ struct ChatView: View {
             focusedRemoteWebMountSessionId = nil
         }) {
             WebMountDesktopBackendsView(
-                controller: .shared,
+                controller: webMountController,
                 focusedSessionId: focusedRemoteWebMountSessionId
             )
             .presentationDetents([.large])
@@ -470,7 +491,14 @@ struct ChatView: View {
     }
 
     var body: some View {
-        chatContent
+        GeometryReader { proxy in
+            chatContent
+                .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        // Measure the parent's proposal, before the bottom inset can grow to its ideal height.
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            if abs(approvalContainerHeight - height) > 0.5 { approvalContainerHeight = height }
+        }
         .simultaneousGesture(SpatialTapGesture(coordinateSpace: .global).onEnded { tap in
             // Observe taps alongside the existing controls/scroll views; do not
             // place a full-screen hit-test layer over the timeline.
@@ -914,7 +942,7 @@ struct ChatView: View {
     private var activeWebMountSession: IOSWebMountSessionRecord? {
         guard let conversationId = currentConversationIdString else { return nil }
         let recentUserTurnStartMillis = chatListSummary.webMountRecentUserTurnStartMillis
-        return IOSWebMountController.shared.sessionStore.records
+        return webMountController.sessionStore.records
             .filter { record in
                 Self.webMountSessionIsRetained(
                     record,
@@ -959,7 +987,7 @@ struct ChatView: View {
     }
 
     private var compactWebMountSession: IOSWebMountSessionRecord? {
-        guard !isAttachExpanded,
+        guard !isAttachExpanded, !collapsesComposerForSiteMemoryApproval,
               let record = displayedWebMountSession,
               webMountSessionIsCompact(record) else { return nil }
         return record
@@ -979,17 +1007,17 @@ struct ChatView: View {
     }
 
     private var scrollToBottomBottomPadding: CGFloat {
-        max(10, composerBarHeight + 10 + (compactWebMountSession == nil ? 0 : 52))
+        10 + (compactWebMountSession == nil ? 0 : 52)
     }
 
     private func webMountSessionIsOpenable(_ record: IOSWebMountSessionRecord) -> Bool {
         record.backend != .local ||
-            WebMountSiteRoute(watching: record, registry: IOSWebMountController.shared.registry) != nil
+            WebMountSiteRoute(watching: record, registry: webMountController.registry) != nil
     }
 
     private func webMountSessionAction(sessionId: String?) -> (() -> Void)? {
         guard let sessionId = sessionId?.nilIfBlank,
-              let record = IOSWebMountController.shared.sessionStore.record(sessionId: sessionId) else {
+              let record = webMountController.sessionStore.record(sessionId: sessionId) else {
             return nil
         }
         if !webMountSessionIsOpenable(record) {
@@ -999,7 +1027,7 @@ struct ChatView: View {
     }
 
     private func openWebMountSession(sessionId: String) {
-        let controller = IOSWebMountController.shared
+        let controller = webMountController
         guard let record = controller.sessionStore.record(sessionId: sessionId) else { return }
         if record.needsReopen {
             guard controller.sessionStore.reopen(sessionId: sessionId) != nil else {
@@ -1581,6 +1609,36 @@ struct ChatView: View {
 
     // MARK: - Input Bar
 
+    private var collapsesComposerForSiteMemoryApproval: Bool {
+        guard let id = collapsedSiteMemoryComposerRequestId else { return false }
+        return viewModel.pendingWebMountApproval?.id == id
+    }
+
+    private func collapseSiteMemoryComposerIfNeeded() {
+        guard let request = viewModel.pendingWebMountApproval, request.siteMemoryChanges != nil,
+              collapsedSiteMemoryComposerRequestId == nil, approvalContainerHeight > 0,
+              let minimumHeight = siteMemoryApprovalMinimumHeights[request.id], minimumHeight > 0,
+              siteMemoryApprovalMaximumHeight + 1 < minimumHeight else { return }
+        // Keep the text view mounted and the draft intact. The request owns the collapsed state;
+        // releasing space must not immediately expand the dock and start a layout feedback loop.
+        collapsedSiteMemoryComposerRequestId = request.id
+    }
+
+    private var siteMemoryApprovalLayoutSignal: SiteMemoryApprovalLayoutSignal {
+        let id = viewModel.pendingWebMountApproval?.id
+        return .init(requestID: id, availableHeight: siteMemoryApprovalMaximumHeight,
+                     minimumHeight: id.flatMap { siteMemoryApprovalMinimumHeights[$0] } ?? 0)
+    }
+
+    private var siteMemoryApprovalMaximumHeight: CGFloat {
+        guard approvalContainerHeight > 0 else { return .infinity }
+        // Measure the non-approval area directly. Subtracting total/card measurements from
+        // separate layout callbacks feeds an animating card's height back into its own budget.
+        let composerChrome: CGFloat = 6 + (isSubAgentBarVisible ? 4 : 8) + 8
+        let topControls = ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight
+        return max(0, approvalContainerHeight - topControls - composerAuxiliaryHeight - composerChrome - subAgentActivityBarHeight)
+    }
+
     private var pendingUserGateCards: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let descriptor = viewModel.pendingToolOutcomeUnknown {
@@ -1596,15 +1654,17 @@ struct ChatView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            if let reasons = viewModel.jevAutoApprovalEscalation {
-                JevAutoApprovalEscalationNote(reasons: reasons)
-                    .transition(.opacity)
-            }
-
-            // 增强 Phase E：审批分诊标签行——异步补充,缺失时审批卡与原样一致。
-            if let triage = viewModel.jevApprovalTriage {
-                JevApprovalTriageChips(triage: triage)
-                    .transition(.opacity)
+            // Site-memory review information shares the bounded preview's scroll area.
+            // Other approval types retain their existing header layout.
+            if viewModel.pendingWebMountApproval?.siteMemoryChanges == nil {
+                if let reasons = viewModel.jevAutoApprovalEscalation {
+                    JevAutoApprovalEscalationNote(reasons: reasons)
+                        .transition(.opacity)
+                }
+                if let triage = viewModel.jevApprovalTriage {
+                    JevApprovalTriageChips(triage: triage)
+                        .transition(.opacity)
+                }
             }
 
             if let request = viewModel.pendingMemoryApproval {
@@ -1642,9 +1702,17 @@ struct ChatView: View {
                     },
                     onDeny: {
                         viewModel.denyPendingWebMountTool(requestId: request.id)
-                    }
+                    },
+                    maximumHeight: siteMemoryApprovalMaximumHeight,
+                    jevReviewReasons: viewModel.jevAutoApprovalEscalation,
+                    jevTriage: viewModel.jevApprovalTriage
                 )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .buttonStyle(.plain)
+                .onPreferenceChange(WebMountSiteMemoryApprovalMinimumHeightKey.self) { heights in
+                    if siteMemoryApprovalMinimumHeights != heights { siteMemoryApprovalMinimumHeights = heights }
+                }
+                .id(request.id)
+                .transition(webMountApprovalTransition)
             }
 
             if let request = viewModel.pendingWorkspaceApproval {
@@ -1755,213 +1823,233 @@ struct ChatView: View {
 
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if viewModel.hasPendingUserGate { pendingUserGateCards }
-
-            if viewModel.showsJevCompletionNotice {
-                JevCompletionCheckNotice {
-                    viewModel.requestCompletionVerification()
+            Group {
+                if viewModel.hasPendingUserGate {
+                    pendingUserGateCards
+                        .transition(webMountApprovalTransition)
                 }
-                .transition(.opacity)
             }
+            .animation(webMountApprovalVisibilityAnimation, value: viewModel.pendingWebMountApproval?.id)
 
-            if let record = displayedWebMountSession,
-               !webMountSessionIsCompact(record) {
-                AgentBrowserTaskCard(
-                    record: record,
-                    onCollapse: {
-                        collapsedWebMountSessionId = record.id
-                        expandedWebMountSessionId = nil
-                    },
-                    onHide: {
-                        IOSWebMountController.shared.sessionStore.hideCard(sessionId: record.id)
-                        collapsedWebMountSessionId = nil
-                        expandedWebMountSessionId = nil
+            // Keep auxiliary cards and the UIKit input mounted while making room for
+            // a short approval viewport. Their state and attachment controls return together.
+            VStack(alignment: .leading, spacing: 6) {
+                if viewModel.showsJevCompletionNotice {
+                    JevCompletionCheckNotice {
+                        viewModel.requestCompletionVerification()
                     }
-                ) {
-                    openWebMountSession(sessionId: record.id)
+                    .transition(.opacity)
                 }
-                .id(record.id)
-                .transition(browserTaskTransition)
-            }
 
-            if !viewModel.pendingImages.isEmpty {
-                ComposerPendingImageStrip(
-                    items: viewModel.pendingImages.map {
-                        .init(id: $0.id, previewData: $0.previewData)
-                    },
-                    onRemove: { viewModel.removePendingImage($0) },
-                    status: chatImageAttachmentStatus
-                )
-            }
-
-            if let preview = viewModel.pendingSelectedFilePreview {
-                ComposerPendingFileCard(
-                    fileName: preview.fileName,
-                    byteSummary: preview.byteSummary,
-                    isTruncated: preview.isTruncated,
-                    footnote: IOSAppLocalization.string(
-                        "发送后，已解析文本会保存进此会话上下文。",
-                        defaultValue: "发送后，已解析文本会保存进此会话上下文。"
-                    ),
-                    onRemove: { viewModel.clearPendingSelectedFilePreview() }
-                )
-            }
-
-            if let error = viewModel.selectedFileContextError {
-                ComposerAttachmentStatusLabel(status: .error(error))
-            }
-
-            if viewModel.currentConversationIsOrchestratedChild,
-               let message = ChatComposerSendBlockReason.orchestratedThread.userVisibleMessage {
-                ComposerAttachmentStatusLabel(
-                    status: .muted(message, systemImage: "arrow.triangle.branch")
-                )
-            }
-
-            if let error = viewModel.configurationError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.accentAmber)
-                    .lineLimit(3)
-            }
-
-            if isAttachExpanded {
-                attachmentGlassPanel
-                    .transition(.scale(scale: 0.75, anchor: .bottomLeading).combined(with: .opacity))
-            }
-
-            if !viewModel.chatSuggestions.isEmpty, !viewModel.isGenerationActive {
-                ChatSuggestionStrip(suggestions: viewModel.chatSuggestions) { suggestion in
-                    viewModel.fillInputFromSuggestion(suggestion)
-                    isInputFocused = true
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
-            VStack(spacing: 8) {
-                    // P1-a: 排队条与整行 dock 同宽（右缘对齐发送键），空队列零占位。
-                    if !viewModel.steerQueue.isEmpty {
-                        ChatSteerQueueStrip(
-                            entries: viewModel.steerQueue,
-                            onRemove: { viewModel.removeSteerMessage(id: $0) }
-                        )
+                if let record = displayedWebMountSession,
+                   !webMountSessionIsCompact(record) {
+                    AgentBrowserTaskCard(
+                        record: record,
+                        onCollapse: {
+                            collapsedWebMountSessionId = record.id
+                            expandedWebMountSessionId = nil
+                        },
+                        onHide: {
+                            webMountController.sessionStore.hideCard(sessionId: record.id)
+                            collapsedWebMountSessionId = nil
+                            expandedWebMountSessionId = nil
+                        }
+                    ) {
+                        openWebMountSession(sessionId: record.id)
                     }
+                    .id(record.id)
+                    .transition(browserTaskTransition)
+                }
 
-                    VStack(spacing: 0) {
-                        // Apple Music dock：左侧输入胶囊 + 右侧发送键；底对齐。
-                        HStack(alignment: .bottom, spacing: 8) {
-                            HStack(alignment: .center, spacing: 6) {
-                                ComposerAttachToggleButton(
-                                    isExpanded: isAttachExpanded,
-                                    isBusy: viewModel.isAttachingSelectedFile,
-                                    // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
-                                    isDisabled: viewModel.isRecognizingImages
-                                        || viewModel.isAttachingSelectedFile
-                                        || hasPendingComposerGate
-                                        || viewModel.currentConversationIsOrchestratedChild
-                                ) {
-                                    withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
-                                        isAttachExpanded.toggle()
-                                    }
-                                }
+                if !viewModel.pendingImages.isEmpty {
+                    ComposerPendingImageStrip(
+                        items: viewModel.pendingImages.map {
+                            .init(id: $0.id, previewData: $0.previewData)
+                        },
+                        onRemove: { viewModel.removePendingImage($0) },
+                        status: chatImageAttachmentStatus
+                    )
+                }
 
-                                ZStack(alignment: .leading) {
-                                    ComposerInputTextView(
-                                        text: $viewModel.inputText,
-                                        height: $composerInputHeight,
-                                        isFocused: inputFocusBinding,
-                                        isEnabled: !hasPendingComposerGate
-                                            && !viewModel.currentConversationIsOrchestratedChild,
-                                        sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
-                                        controller: composerInputController,
-                                        onSubmit: sendComposerMessage
-                                    )
-                                    .frame(height: composerInputHeight)
+                if let preview = viewModel.pendingSelectedFilePreview {
+                    ComposerPendingFileCard(
+                        fileName: preview.fileName,
+                        byteSummary: preview.byteSummary,
+                        isTruncated: preview.isTruncated,
+                        footnote: IOSAppLocalization.string(
+                            "发送后，已解析文本会保存进此会话上下文。",
+                            defaultValue: "发送后，已解析文本会保存进此会话上下文。"
+                        ),
+                        onRemove: { viewModel.clearPendingSelectedFilePreview() }
+                    )
+                }
 
-                                    if viewModel.inputText.isEmpty {
-                                        Text(inputPlaceholder)
-                                            .font(.body)
-                                            .foregroundStyle(AmberTheme.muted2)
-                                            .allowsHitTesting(false)
-                                    }
-                                }
-                                .frame(minHeight: 40)
-                            }
-                            .padding(.leading, 8)
-                            .padding(.trailing, 18)
-                            .padding(.vertical, 5)
-                            .composerDockGlass(cornerRadius: 27)
+                if let error = viewModel.selectedFileContextError {
+                    ComposerAttachmentStatusLabel(status: .error(error))
+                }
 
-                            ComposerDockSendButton(
-                                isLoading: isComposerStopMode,
-                                sendEnabled: sendEnabled,
-                                diameter: 54,
-                                onSend: sendComposerMessage,
-                                onStop: {
-                                    if viewModel.isRecognizingImages {
-                                        viewModel.cancelVisionRecognition()
-                                    } else {
-                                        viewModel.cancelGeneration()
-                                    }
-                                }
+                if viewModel.currentConversationIsOrchestratedChild,
+                   let message = ChatComposerSendBlockReason.orchestratedThread.userVisibleMessage {
+                    ComposerAttachmentStatusLabel(
+                        status: .muted(message, systemImage: "arrow.triangle.branch")
+                    )
+                }
+
+                if let error = viewModel.configurationError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.accentAmber)
+                        .lineLimit(3)
+                }
+
+                if isAttachExpanded {
+                    attachmentGlassPanel
+                        .transition(.scale(scale: 0.75, anchor: .bottomLeading).combined(with: .opacity))
+                }
+
+                if !viewModel.chatSuggestions.isEmpty, !viewModel.isGenerationActive {
+                    ChatSuggestionStrip(suggestions: viewModel.chatSuggestions) { suggestion in
+                        viewModel.fillInputFromSuggestion(suggestion)
+                        isInputFocused = true
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
+                VStack(spacing: 8) {
+                        // P1-a: 排队条与整行 dock 同宽（右缘对齐发送键），空队列零占位。
+                        if !viewModel.steerQueue.isEmpty {
+                            ChatSteerQueueStrip(
+                                entries: viewModel.steerQueue,
+                                onRemove: { viewModel.removeSteerMessage(id: $0) }
                             )
                         }
 
-                            HStack {
-                                Button {
-                                    openComposerModelSheet()
-                                } label: {
-                                    Text(composerModelLabel)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(AmberTheme.foreground2)
-                                        .lineLimit(1)
-                                        .padding(.horizontal, 12)
-                                        .frame(height: 30)
-                                        .composerDockGlass(cornerRadius: 15)
-                                }
-                                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
-                                .frame(minHeight: 44)
-                                .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                                .accessibilityLabel("切换模型，当前 \(composerModelLabel)")
-
-                                Spacer()
-
-                                HStack(spacing: 8) {
-                                    ComposerIconButton(
-                                        koboyo: .solidThoughtCloud,
-                                        accessibilityLabel: "设置思考等级",
-                                        size: 34,
-                                        symbolSize: 15
+                        VStack(spacing: 0) {
+                            // Apple Music dock：左侧输入胶囊 + 右侧发送键；底对齐。
+                            HStack(alignment: .bottom, spacing: 8) {
+                                HStack(alignment: .center, spacing: 6) {
+                                    ComposerAttachToggleButton(
+                                        isExpanded: isAttachExpanded,
+                                        isBusy: viewModel.isAttachingSelectedFile,
+                                        // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
+                                        isDisabled: viewModel.isRecognizingImages
+                                            || viewModel.isAttachingSelectedFile
+                                            || hasPendingComposerGate
+                                            || viewModel.currentConversationIsOrchestratedChild
                                     ) {
-                                        toggleComposerPanel(.thinking)
-                                    }
-                                    .accessibilityValue(reasoningAccessibilityValue)
-                                    .popover(isPresented: popoverBinding(for: .thinking), arrowEdge: .bottom) {
-                                        ComposerThinkingPanel(
-                                            selectedOption: selectedReasoningBinding,
-                                            options: availableReasoningOptions,
-                                            isAvailable: reasoningIsAvailable
-                                        ) { _ in activeComposerPanel = nil }
-                                        .presentationCompactAdaptation(.popover)
+                                        withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
+                                            isAttachExpanded.toggle()
+                                        }
                                     }
 
-                                    ChatContextControl(
-                                        viewModel: viewModel,
-                                        isPresented: popoverBinding(for: .context),
-                                        jevSummaryRunId: jevSummaryRunId,
-                                        onOpen: { toggleComposerPanel(.context) }
-                                    )
+                                    ZStack(alignment: .leading) {
+                                        ComposerInputTextView(
+                                            text: $viewModel.inputText,
+                                            height: $composerInputHeight,
+                                            isFocused: inputFocusBinding,
+                                            isEnabled: !hasPendingComposerGate
+                                                && !viewModel.currentConversationIsOrchestratedChild,
+                                            sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
+                                            controller: composerInputController,
+                                            onSubmit: sendComposerMessage
+                                        )
+                                        .frame(height: composerInputHeight)
+
+                                        if viewModel.inputText.isEmpty {
+                                            Text(inputPlaceholder)
+                                                .font(.body)
+                                                .foregroundStyle(AmberTheme.muted2)
+                                                .allowsHitTesting(false)
+                                        }
+                                    }
+                                    .frame(minHeight: 40)
                                 }
+                                .padding(.leading, 8)
+                                .padding(.trailing, 18)
+                                .padding(.vertical, 5)
+                                .composerDockGlass(cornerRadius: 27)
+
+                                ComposerDockSendButton(
+                                    isLoading: isComposerStopMode,
+                                    sendEnabled: sendEnabled,
+                                    diameter: 54,
+                                    onSend: sendComposerMessage,
+                                    onStop: {
+                                        if viewModel.isRecognizingImages {
+                                            viewModel.cancelVisionRecognition()
+                                        } else {
+                                            viewModel.cancelGeneration()
+                                        }
+                                    }
+                                )
                             }
-                            .padding(.horizontal, 2)
-                            .padding(.top, 10)
-                            // 常驻布局、只折叠高度：收键盘时整个 dock 随键盘下移，被移除的视图
-                            // 不跟随这段位移，会停在原地/往上飞。顶对齐折叠让它贴着输入行一起下沉并渐隐。
-                            .frame(height: showsComposerMeta ? nil : 0, alignment: .top)
-                            .opacity(showsComposerMeta ? 1 : 0)
-                            .allowsHitTesting(showsComposerMeta)
-                            .accessibilityHidden(!showsComposerMeta)
-                    }
+
+                                HStack {
+                                    Button {
+                                        openComposerModelSheet()
+                                    } label: {
+                                        Text(composerModelLabel)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(AmberTheme.foreground2)
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 12)
+                                            .frame(height: 30)
+                                            .composerDockGlass(cornerRadius: 15)
+                                    }
+                                    .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+                                    .frame(minHeight: 44)
+                                    .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                                    .accessibilityLabel("切换模型，当前 \(composerModelLabel)")
+
+                                    Spacer()
+
+                                    HStack(spacing: 8) {
+                                        ComposerIconButton(
+                                            koboyo: .solidThoughtCloud,
+                                            accessibilityLabel: "设置思考等级",
+                                            size: 34,
+                                            symbolSize: 15
+                                        ) {
+                                            toggleComposerPanel(.thinking)
+                                        }
+                                        .accessibilityValue(reasoningAccessibilityValue)
+                                        .popover(isPresented: popoverBinding(for: .thinking), arrowEdge: .bottom) {
+                                            ComposerThinkingPanel(
+                                                selectedOption: selectedReasoningBinding,
+                                                options: availableReasoningOptions,
+                                                isAvailable: reasoningIsAvailable
+                                            ) { _ in activeComposerPanel = nil }
+                                            .presentationCompactAdaptation(.popover)
+                                        }
+
+                                        ChatContextControl(
+                                            viewModel: viewModel,
+                                            isPresented: popoverBinding(for: .context),
+                                            jevSummaryRunId: jevSummaryRunId,
+                                            onOpen: { toggleComposerPanel(.context) }
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 2)
+                                .padding(.top, 10)
+                                // 常驻布局、只折叠高度：收键盘时整个 dock 随键盘下移，被移除的视图
+                                // 不跟随这段位移，会停在原地/往上飞。顶对齐折叠让它贴着输入行一起下沉并渐隐。
+                                .frame(height: showsComposerMeta ? nil : 0, alignment: .top)
+                                .opacity(showsComposerMeta ? 1 : 0)
+                                .allowsHitTesting(showsComposerMeta)
+                                .accessibilityHidden(!showsComposerMeta)
+                        }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: viewModel.pendingWebMountApproval?.siteMemoryChanges != nil)
+            .frame(height: collapsesComposerForSiteMemoryApproval ? 0 : nil, alignment: .top)
+            // 只在折叠时贴边裁切；展开时外扩裁切框，避免削掉发送键/输入胶囊的玻璃边缘。
+            .clipShape(Rectangle().inset(by: collapsesComposerForSiteMemoryApproval ? 0 : -20))
+            .opacity(collapsesComposerForSiteMemoryApproval ? 0 : 1)
+            .allowsHitTesting(!collapsesComposerForSiteMemoryApproval)
+            .accessibilityHidden(collapsesComposerForSiteMemoryApproval)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                if abs(composerAuxiliaryHeight - height) > 0.5 { composerAuxiliaryHeight = height }
             }
         }
         .padding(.horizontal, ChatLayout.contentHorizontalInset)
@@ -2002,6 +2090,21 @@ struct ChatView: View {
                 .combined(with: .offset(y: 4))
                 .combined(with: .scale(scale: 0.995, anchor: .bottom))
         )
+    }
+
+    private var webMountApprovalTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 10)),
+            removal: .opacity.combined(with: .offset(y: 4))
+        )
+    }
+
+    private var webMountApprovalVisibilityAnimation: Animation {
+        if reduceMotion { return .easeOut(duration: 0.12) }
+        return viewModel.pendingWebMountApproval == nil
+            ? .easeIn(duration: 0.16)
+            : .timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
     }
 
     private var ishApprovalVisibilityAnimation: Animation? {

@@ -95,6 +95,13 @@ data class MemoryRecord(
     /** Set only on [MemoryKind.TOPIC] aggregation records. */
     val topicTitle: String? = null,
     val memberIds: List<Int> = emptyList(),
+    /**
+     * Last time this memory was positively reinforced: the model explicitly
+     * cited it, or the user restated it. Unlike [lastUsedAt] (set whenever the
+     * record is injected), this is a real "still relevant" signal and drives
+     * short_term → long_term promotion.
+     */
+    val lastReinforcedAt: Long? = null,
 )
 
 @Serializable

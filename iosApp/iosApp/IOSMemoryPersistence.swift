@@ -114,7 +114,10 @@ enum IOSMemoryToolExecutor {
     @MainActor
     private static func list(args: [String: Any], runtime: AgentRuntimeSetting) -> String {
         let requestedScope = (args["scope"] ?? args["type"]) as? String
+        // Archived rows (superseded versions, expired or invalidated facts) are
+        // history, not current memory; `read` by id still returns them.
         let records = IosMemoryFactory.shared.getAllRecords()
+            .filter { !$0.archived }
             .filter { record in
                 guard isScopeEnabled(record.scope, runtime: runtime) else { return false }
                 guard let requestedScope, requestedScope != "all" else { return true }
@@ -372,6 +375,10 @@ enum IOSMemoryToolExecutor {
             IOSMemoryWriteAuditStore.shared.record(action: "edit", status: "failed", reason: "topic records are managed automatically", memoryId: id)
             return json(["ok": false, "tool": "memory_tool", "action": "edit", "error": "topic records are managed automatically", "id": id])
         }
+        guard !existing.archived else {
+            IOSMemoryWriteAuditStore.shared.record(action: "edit", status: "failed", reason: "memory is archived", memoryId: id)
+            return json(["ok": false, "tool": "memory_tool", "action": "edit", "error": "memory is archived", "id": id])
+        }
         guard expectedUpdatedAt == nil || existing.updatedAt == expectedUpdatedAt else {
             IOSMemoryWriteAuditStore.shared.record(
                 action: "edit",
@@ -459,7 +466,8 @@ enum IOSMemoryToolExecutor {
             updatedAt: updatedAt,
             lastUsedAt: existing.lastUsedAt,
             topicTitle: existing.topicTitle,
-            memberIds: existing.memberIds
+            memberIds: existing.memberIds,
+            lastReinforcedAt: existing.lastReinforcedAt
         )
 
         guard let saved = IosMemoryFactory.shared.updateRecord(record: updated) else {
@@ -822,6 +830,46 @@ enum IOSMemoryToolExecutor {
     }
 }
 
+/// Consolidated user profile (Letta-style core block) compiled by the model
+/// dream pass from preference memories. Injected in place of the records it
+/// covers, but only while every covered record is unchanged — otherwise it may
+/// state superseded facts and recall falls back to the individual records.
+struct IOSMemoryProfile: Codable, Equatable {
+    struct Item: Codable, Equatable {
+        let text: String
+        let memoryIds: [Int]
+    }
+
+    let items: [Item]
+    /// updatedAt of every covered record (keyed by id) when compiled.
+    let sourceVersions: [String: Int64]
+    let generatedAt: Int64
+    /// updatedAt of every preference record the model was shown, covered or
+    /// not, so a deliberately omitted one does not force a daily recompile.
+    var evaluatedSourceVersions: [String: Int64]? = nil
+
+    var evaluatedVersions: [String: Int64] { evaluatedSourceVersions ?? sourceVersions }
+
+    var coveredIds: Set<Int> { Set(sourceVersions.keys.compactMap { Int($0) }) }
+
+    /// The covered records when the profile is still accurate for `records`;
+    /// nil once any covered record changed, was archived or deleted, expired,
+    /// or is outside `records` (e.g. its scope was switched off).
+    func coveredRecords(in records: [MemoryRecord], now: Int64) -> [MemoryRecord]? {
+        guard !items.isEmpty, !sourceVersions.isEmpty else { return nil }
+        var byId: [Int: MemoryRecord] = [:]
+        for record in records { byId[Int(record.id)] = record }
+        var covered: [MemoryRecord] = []
+        for (key, version) in sourceVersions.sorted(by: { $0.key < $1.key }) {
+            guard let id = Int(key), let record = byId[id], !record.archived,
+                  record.updatedAt == version,
+                  (record.expiresAt?.int64Value ?? Int64.max) > now else { return nil }
+            covered.append(record)
+        }
+        return covered
+    }
+}
+
 /// [Slice 6] iOS-local persistence for memories.
 ///
 /// The KMP `IosMemoryFactory` is a pure in-memory StateFlow (no file IO). This
@@ -857,6 +905,9 @@ final class IOSMemoryPersistence {
     /// Derived Markdown documents (index.md + topics/) next to memories.json.
     private let markdownStore: IOSMemoryMarkdownStore
     private(set) var records: [MemoryRecord] = []
+    /// Derived profile (memories/profile.json). Losing it only costs a
+    /// regeneration, so read/write failures never block the record store.
+    private(set) var profile: IOSMemoryProfile?
     private(set) var revision: Int = 0
     private(set) var loadState: LoadState = .notLoaded
     private(set) var lastErrorMessage: String?
@@ -884,13 +935,14 @@ final class IOSMemoryPersistence {
     /// A missing file starts an empty library. An unreadable file is preserved
     /// and blocks later writes until a subsequent load succeeds.
     func load() {
+        profile = (try? Data(contentsOf: profileURL)).flatMap { try? decoder.decode(IOSMemoryProfile.self, from: $0) }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             IosMemoryFactory.shared.replaceAll(records: [])
             loadState = .missing
             lastErrorMessage = nil
             refresh()
             // An externally deleted store also retires its derived documents.
-            markdownStore.syncIfChanged(records: [])
+            markdownStore.syncIfChanged(records: [], profile: profile)
             return
         }
         do {
@@ -902,7 +954,7 @@ final class IOSMemoryPersistence {
             revision += 1
             loadState = .loaded
             lastErrorMessage = nil
-            markdownStore.syncIfChanged(records: kmpRecords)
+            markdownStore.syncIfChanged(records: kmpRecords, profile: profile)
         } catch {
             loadState = .unreadable
             lastErrorMessage = "无法读取现有记忆，已停止写入以保护原文件。"
@@ -957,7 +1009,13 @@ final class IOSMemoryPersistence {
             revision += 1
             loadState = .loaded
             lastErrorMessage = nil
-            markdownStore.syncIfChanged(records: snapshot)
+            // A stale profile may still describe deleted or superseded facts;
+            // drop it now instead of keeping that text until the next pass.
+            if let profile,
+               profile.coveredRecords(in: snapshot, now: Int64(Date().timeIntervalSince1970 * 1_000)) == nil {
+                saveProfile(nil)
+            }
+            markdownStore.syncIfChanged(records: snapshot, profile: profile)
             return true
         } catch {
             print("[IOSMemoryPersistence] persist failed: \(error.localizedDescription)")
@@ -965,6 +1023,34 @@ final class IOSMemoryPersistence {
             rollback(to: previousRecords)
             return false
         }
+    }
+
+    private var profileURL: URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("profile.json", isDirectory: false)
+    }
+
+    /// Replace (or with nil, remove) the derived profile. Requires a usable
+    /// store, like `persist`; returns false without changing state on failure.
+    @discardableResult
+    func saveProfile(_ newProfile: IOSMemoryProfile?) -> Bool {
+        guard loadState == .loaded || loadState == .missing else { return false }
+        do {
+            if let newProfile {
+                try FileManager.default.createDirectory(
+                    at: profileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+                )
+                try encoder.encode(newProfile).write(to: profileURL, options: [.atomic])
+            } else if FileManager.default.fileExists(atPath: profileURL.path) {
+                try FileManager.default.removeItem(at: profileURL)
+            }
+        } catch {
+            print("[IOSMemoryPersistence] profile save failed: \(error.localizedDescription)")
+            return false
+        }
+        profile = newProfile
+        revision += 1
+        markdownStore.syncIfChanged(records: records, profile: newProfile)
+        return true
     }
 
     /// P2-b: 记忆召回使用记录（零模型依赖）。
@@ -978,16 +1064,19 @@ final class IOSMemoryPersistence {
     ///
     /// - Parameter force: P2-c 修复 2。模型显式引用（citation flush）与召回标记
     ///   语义不同：引用是模型的显式信号，即使与上一 run 的召回集合完全一致也
-    ///   必须生效。保留参数供已有后台 citation 调用；存储本身不再去抖。
+    ///   必须生效。所有 force 调用方都是 citation flush，因此 force 同时记一次
+    ///   强化（`lastReinforcedAt`），供短期 → 长期升级判断；存储本身不再去抖。
     /// - Returns: 本次调用是否发生了实际写盘。
     @discardableResult
     func markUsed(ids: Set<Int32>, now: Int64 = Int64(Date().timeIntervalSince1970 * 1_000), force: Bool = false) -> Bool {
         guard !ids.isEmpty else { return false }
         let previousRecords = IosMemoryFactory.shared.snapshotRecords()
-        IosMemoryFactory.shared.touchMemories(
-            ids: ids.map { KotlinInt(value: $0) },
-            timestamp: now
-        )
+        let kotlinIds = ids.map { KotlinInt(value: $0) }
+        if force {
+            IosMemoryFactory.shared.reinforceMemories(ids: kotlinIds, timestamp: now)
+        } else {
+            IosMemoryFactory.shared.touchMemories(ids: kotlinIds, timestamp: now)
+        }
         return persist(previousRecords: previousRecords)
     }
 
@@ -1021,6 +1110,7 @@ private struct PersistedMemoryRecord: Codable {
     var lastUsedAt: Int64?
     var topicTitle: String?
     var memberIds: [Int]
+    var lastReinforcedAt: Int64?
 
     init(
         id: Int,
@@ -1039,7 +1129,8 @@ private struct PersistedMemoryRecord: Codable {
         updatedAt: Int64,
         lastUsedAt: Int64?,
         topicTitle: String?,
-        memberIds: [Int]
+        memberIds: [Int],
+        lastReinforcedAt: Int64?
     ) {
         self.id = id
         self.content = content
@@ -1058,12 +1149,13 @@ private struct PersistedMemoryRecord: Codable {
         self.lastUsedAt = lastUsedAt
         self.topicTitle = topicTitle
         self.memberIds = memberIds
+        self.lastReinforcedAt = lastReinforcedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, content, scope, kind, assistantId, sourceConversationId, sourceMessageIds
         case supersedesIds, expiresAt, confidence, pinned, archived, createdAt, updatedAt, lastUsedAt
-        case topicTitle, memberIds
+        case topicTitle, memberIds, lastReinforcedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -1091,6 +1183,7 @@ private struct PersistedMemoryRecord: Codable {
         lastUsedAt = try c.decodeIfPresent(Int64.self, forKey: .lastUsedAt)
         topicTitle = try c.decodeIfPresent(String.self, forKey: .topicTitle)
         memberIds = try c.decodeIfPresent([Int].self, forKey: .memberIds) ?? []
+        lastReinforcedAt = try c.decodeIfPresent(Int64.self, forKey: .lastReinforcedAt)
     }
 
     static func from(_ record: MemoryRecord) -> PersistedMemoryRecord {
@@ -1115,7 +1208,8 @@ private struct PersistedMemoryRecord: Codable {
             updatedAt: record.updatedAt,
             lastUsedAt: record.lastUsedAt?.int64Value,
             topicTitle: record.topicTitle,
-            memberIds: record.memberIds.map { Int(truncating: $0) }
+            memberIds: record.memberIds.map { Int(truncating: $0) },
+            lastReinforcedAt: record.lastReinforcedAt?.int64Value
         )
     }
 
@@ -1163,7 +1257,8 @@ private struct PersistedMemoryRecord: Codable {
             updatedAt: updatedAt,
             lastUsedAt: lastUsedAt.map { KotlinLong(value: $0) },
             topicTitle: topicTitle,
-            memberIds: exactMemberIds
+            memberIds: exactMemberIds,
+            lastReinforcedAt: lastReinforcedAt.map { KotlinLong(value: $0) }
         )
     }
 }

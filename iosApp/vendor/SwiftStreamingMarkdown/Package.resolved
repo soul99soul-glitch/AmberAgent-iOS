@@ -35,24 +35,6 @@
       }
     },
     {
-      "identity" : "ish-arm64-pkg",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Lolendor/ish-arm64-pkg",
-      "state" : {
-        "revision" : "6f96f02c71830914c2a608258a26a8ef0833d026",
-        "version" : "0.3.3"
-      }
-    },
-    {
-      "identity" : "swift-asn1",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-asn1.git",
-      "state" : {
-        "revision" : "a9a5efd40eaf558a2bcd48d64b1d1646be686008",
-        "version" : "1.7.1"
-      }
-    },
-    {
       "identity" : "swift-atomics",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-atomics.git",
@@ -80,15 +62,6 @@
       }
     },
     {
-      "identity" : "swift-crypto",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-crypto.git",
-      "state" : {
-        "revision" : "47d3869a7291f085c1fb9fb1e6d3b97a793f45c6",
-        "version" : "4.5.1"
-      }
-    },
-    {
       "identity" : "swift-custom-dump",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-custom-dump",
@@ -113,15 +86,6 @@
       "state" : {
         "revision" : "0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b",
         "version" : "2.101.3"
-      }
-    },
-    {
-      "identity" : "swift-nio-ssh",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-nio-ssh.git",
-      "state" : {
-        "revision" : "1a915a324afefd4031e396e81a0e210178621be8",
-        "version" : "0.13.0"
       }
     },
     {

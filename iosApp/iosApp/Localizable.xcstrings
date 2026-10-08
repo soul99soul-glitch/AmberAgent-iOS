@@ -23875,43 +23875,43 @@
         }
       }
     },
-    "写入审批记录": {
+    "记忆变更记录": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Write approval record"
+            "value": "Memory change log"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "承認記録に書き込む"
+            "value": "メモリ変更履歴"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "쓰기 승인 기록"
+            "value": "메모리 변경 기록"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Записать в журнал одобрений"
+            "value": "Журнал изменений памяти"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "写入审批记录"
+            "value": "记忆变更记录"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "寫入核准記錄"
+            "value": "記憶變更記錄"
           }
         }
       }
@@ -29861,43 +29861,43 @@
         }
       }
     },
-    "只会清除审批历史，不会删除已保存的记忆。": {
+    "只会清除变更历史，不会删除已保存的记忆。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Only the approval history will be cleared; saved memories won't be deleted."
+            "value": "Only the change history will be cleared; saved memories won't be deleted."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "承認履歴だけを消去し、保存済みのメモリは削除しません。"
+            "value": "変更履歴だけを消去し、保存済みのメモリは削除しません。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "승인 기록만 삭제하며 저장된 기억은 삭제하지 않습니다."
+            "value": "변경 기록만 지우며 저장된 메모리는 삭제하지 않습니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Будет очищена только история согласований; сохранённая память не удаляется."
+            "value": "Будет очищена только история изменений; сохранённые воспоминания не удаляются."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "只会清除审批历史，不会删除已保存的记忆。"
+            "value": "只会清除变更历史，不会删除已保存的记忆。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "只會清除核准歷史，不會刪除已儲存的記憶。"
+            "value": "只會清除變更歷史，不會刪除已儲存的記憶。"
           }
         }
       }
@@ -56470,43 +56470,43 @@
         }
       }
     },
-    "暂无模型写入审批记录。聊天里的新增、修改或删除请求会记录在这里；需要确认时会在聊天中提示。": {
+    "暂无记忆变更。模型写入、自动提炼、自动整理和你的手动修改都会记录在这里；需要确认时会在聊天中提示。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No model write approvals yet. Requests to add, edit, or delete from chat are recorded here; you'll be prompted in chat when confirmation is needed."
+            "value": "No memory changes yet. Model writes, automatic extraction, automatic consolidation, and your manual edits are logged here; you'll be prompted in chat when confirmation is needed."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "モデルによる書き込みの承認履歴はありません。チャットでの追加・変更・削除リクエストはここに記録され、確認が必要な場合はチャットに表示されます。"
+            "value": "メモリの変更はまだありません。モデルによる書き込み、自動抽出、自動整理、手動での編集がここに記録されます。確認が必要な場合はチャットでお知らせします。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "모델 쓰기 승인 기록이 없습니다. 채팅에서 추가, 수정 또는 삭제를 요청하면 여기에 기록되며, 확인이 필요할 때는 채팅에 안내됩니다."
+            "value": "아직 메모리 변경이 없습니다. 모델 쓰기, 자동 추출, 자동 정리, 직접 수정한 내용이 여기에 기록되며, 확인이 필요하면 채팅에서 알려 드립니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Записей о согласовании действий модели пока нет. Запросы на добавление, изменение или удаление из чата будут отображаться здесь; при необходимости подтверждения появится уведомление в чате."
+            "value": "Изменений памяти пока нет. Здесь фиксируются записи модели, автоматическое извлечение, автоматическое упорядочивание и ваши ручные правки; если потребуется подтверждение, вы увидите запрос в чате."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "暂无模型写入审批记录。聊天里的新增、修改或删除请求会记录在这里；需要确认时会在聊天中提示。"
+            "value": "暂无记忆变更。模型写入、自动提炼、自动整理和你的手动修改都会记录在这里；需要确认时会在聊天中提示。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "暫無模型寫入核准記錄。聊天中的新增、修改或刪除請求會記錄在這裡；需要確認時會在聊天中提示。"
+            "value": "暫無記憶變更。模型寫入、自動提煉、自動整理和你的手動修改都會記錄在這裡；需要確認時會在聊天中提示。"
           }
         }
       }
@@ -68483,43 +68483,43 @@
         }
       }
     },
-    "清除写入审批记录？": {
+    "清除记忆变更记录？": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Clear write approval history?"
+            "value": "Clear memory change log?"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "書き込み承認履歴を消去しますか？"
+            "value": "メモリ変更履歴を消去しますか？"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "쓰기 승인 기록을 지울까요?"
+            "value": "메모리 변경 기록을 지울까요?"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Очистить записи согласований действий модели?"
+            "value": "Очистить журнал изменений памяти?"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除写入审批记录？"
+            "value": "清除记忆变更记录？"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除寫入核准記錄？"
+            "value": "清除記憶變更記錄？"
           }
         }
       }
@@ -68647,43 +68647,43 @@
         }
       }
     },
-    "清除审批记录": {
+    "清除变更记录": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Clear approval records"
+            "value": "Clear change log"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "承認履歴を消去"
+            "value": "変更履歴を消去"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "승인 기록 삭제"
+            "value": "변경 기록 지우기"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Очистить записи согласований"
+            "value": "Очистить журнал изменений"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除审批记录"
+            "value": "清除变更记录"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除核准記錄"
+            "value": "清除變更記錄"
           }
         }
       }
@@ -110003,6 +110003,129 @@
           "stringUnit": {
             "state": "translated",
             "value": "等待開始…"
+          }
+        }
+      }
+    },
+    "恢复记忆": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore memory"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メモリを復元"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "메모리 복원"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Восстановить воспоминание"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复记忆"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢復記憶"
+          }
+        }
+      }
+    },
+    "显示全部（%lld 条）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show all (%lld)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて表示（%lld 件）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모두 보기(%lld개)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать все (%lld)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示全部（%lld 条）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示全部（%lld 條）"
+          }
+        }
+      }
+    },
+    "管理 Amber 会在聊天中参考的本地记忆。自动提炼只保存用户明确表达的偏好与项目事实；你更正或否定时会更新或作废旧记忆，旧版本归档保留，可在「管理全部记忆」的「已归档」中查看与恢复。记录可以搜索、查看来源或删除。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage the local memories Amber refers to in chats. Automatic extraction only saves preferences and project facts you state explicitly; when you correct or contradict one, the old memory is updated or retired and the previous version is archived, where you can view or restore it under Archived in Manage All Memories. Records can be searched, traced to their source, or deleted."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amber がチャットで参照するローカルメモリを管理します。自動抽出では、あなたが明確に示した好みとプロジェクトの事実だけを保存します。訂正や否定をすると古いメモリは更新または無効化され、旧版はアーカイブとして残り、「すべてのメモリを管理」の「アーカイブ済み」で確認・復元できます。記録は検索、出典の確認、削除ができます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amber가 채팅에서 참고하는 로컬 메모리를 관리합니다. 자동 추출은 사용자가 명확히 밝힌 선호와 프로젝트 사실만 저장합니다. 정정하거나 부정하면 기존 메모리가 업데이트되거나 폐기되고 이전 버전은 보관되며, '전체 메모리 관리'의 '보관됨'에서 확인하고 복원할 수 있습니다. 기록은 검색하거나 출처를 확인하거나 삭제할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Управляйте локальными воспоминаниями, на которые Amber опирается в чатах. Автоматическое извлечение сохраняет только явно высказанные вами предпочтения и факты о проектах; если вы что-то исправите или опровергнете, старое воспоминание обновится или будет отменено, а прежняя версия попадёт в архив — её можно просмотреть и восстановить в разделе «Архив» на экране «Все воспоминания». Записи можно искать, проверять их источник и удалять."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "管理 Amber 会在聊天中参考的本地记忆。自动提炼只保存用户明确表达的偏好与项目事实；你更正或否定时会更新或作废旧记忆，旧版本归档保留，可在「管理全部记忆」的「已归档」中查看与恢复。记录可以搜索、查看来源或删除。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "管理 Amber 會在聊天中參考的本機記憶。自動提煉只儲存使用者明確表達的偏好與專案事實；你更正或否定時會更新或作廢舊記憶，舊版本歸檔保留，可在「管理全部記憶」的「已歸檔」中查看與恢復。記錄可以搜尋、查看來源或刪除。"
           }
         }
       }

@@ -446,6 +446,7 @@ final class ChatToolRuntime {
     private let jsCellRegistry: IOSJsCellRegistry
     private let soulPreviousStore: IOSSoulPreviousStore
     private let mcpImportClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)?
+    private let autoApprovalGate: IOSJevAutoApprovalGate
     private lazy var skillMcpToolService = IOSSkillMcpToolService(
         skillStore: skillFileStore,
         sharedSettings: sharedSettings,
@@ -587,7 +588,8 @@ final class ChatToolRuntime {
         recipeStoreBaseDirectory: URL? = nil,
         recipeRegistry: IOSDynamicToolRegistry? = nil,
         soulPreviousStore: IOSSoulPreviousStore? = nil,
-        mcpImportClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)? = nil
+        mcpImportClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)? = nil,
+        autoApprovalGate: IOSJevAutoApprovalGate? = nil
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -646,6 +648,7 @@ final class ChatToolRuntime {
         )
         self.soulPreviousStore = soulPreviousStore ?? IOSSoulPreviousStore()
         self.mcpImportClientFactory = mcpImportClientFactory
+        self.autoApprovalGate = autoApprovalGate ?? .shared
     }
 
     /// 把只读 preview 对应的 CAS 上下文交给 Coordinator 的 pending MCP 槽。
@@ -1532,6 +1535,25 @@ final class ChatToolRuntime {
     }
 
     /// 自动批准生效时，非低风险调用经 Jev 判定高风险则改为人工审批（前台与后台共用）。
+    func hasAutoApprovalPolicy(for toolCall: UIMessagePart.Tool) -> Bool {
+        // Terminal job tools can resolve to a different capability from their
+        // static declaration. Use the same resolver as the local executor.
+        let capabilityId = localToolExecutor?.terminalApprovalCapabilityId(
+            toolName: toolCall.toolName, input: toolCall.input
+        ) ?? IOSCapabilityRegistry.capability(forToolName: toolCall.toolName)?.id
+        let capability = capabilityId.flatMap { id in
+            IOSCapabilityRegistry.capabilities.first { $0.id == id }
+        }
+        let policy = capability.map {
+            IOSExecutionPolicyContext.snapshot?.policy(for: $0)
+                ?? localToolExecutor?.permissionPolicy(capabilityId: $0.id)
+                ?? IOSPermissionStore.defaultPolicy(for: $0)
+        }
+        guard policy != .disabled else { return false }
+        return effectiveGlobalAutoApproveEnabled || effectiveHighRiskAutoApproveEnabled
+            || policy == .autoApprove || policy == .autoApproveHighRisk
+    }
+
     private func shouldTightenAutoApproval(
         toolCall: UIMessagePart.Tool,
         recentUserTexts: [String],
@@ -1539,7 +1561,7 @@ final class ChatToolRuntime {
         conversationId: KotlinUuid?,
         toolExposureBridge: IosToolExposureBridge?
     ) async -> Bool {
-        guard effectiveGlobalAutoApproveEnabled || effectiveHighRiskAutoApproveEnabled,
+        guard hasAutoApprovalPolicy(for: toolCall),
               sharedSettings.jevSettings.effectiveMode(for: .autoApprovalGate) != .off else { return false }
         let name = toolCall.toolName
         // 只读检索、编排/交互类工具（无审批分支，收紧快照还会传给子运行）、
@@ -1555,7 +1577,7 @@ final class ChatToolRuntime {
             )
         )
         guard !IOSJevAutoApprovalGate.isStaticallyLowRisk(facts) else { return false }
-        return await IOSJevAutoApprovalGate.shared.shouldEscalate(
+        return await autoApprovalGate.shouldEscalate(
             requestId: ChatToolCallParsing.requestId(for: toolCall),
             toolName: name,
             argumentsJSON: toolCall.input,

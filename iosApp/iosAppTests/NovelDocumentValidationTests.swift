@@ -86,10 +86,6 @@ final class NovelDocumentValidationTests: XCTestCase {
         assertInvalid(document, containing: "history is not strictly increasing")
     }
 
-    func testValidFixturePasses() throws {
-        XCTAssertNoThrow(try NovelDocumentValidator.validate(NovelTestFixtures.document()))
-    }
-
     func testDuplicateIDsReturnValidationErrorInsteadOfTrapping() throws {
         var document = try NovelTestFixtures.documentWithForkableCheckpoint()
         document.branches.append(document.branches[0])

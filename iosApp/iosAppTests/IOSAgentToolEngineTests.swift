@@ -1186,6 +1186,8 @@ final class IOSAgentToolEngineTests: XCTestCase {
             secondRoundNames.contains("wm_type"),
             "the tool_search hit must be declared on the NEXT engine round's params"
         )
+        XCTAssertTrue(secondRoundNames.contains("wm_visual_read"))
+        XCTAssertFalse(secondRoundNames.contains("wm_screenshot"))
         XCTAssertFalse(
             result.messages.contains { message in
                 message.parts.contains { ($0 as? UIMessagePart.Tool)?.output.isEmpty == true }
@@ -2227,7 +2229,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             updatedAt: updatedAt,
             lastUsedAt: nil,
             topicTitle: nil,
-            memberIds: []
+            memberIds: [], lastReinforcedAt: nil
         )
     }
 }

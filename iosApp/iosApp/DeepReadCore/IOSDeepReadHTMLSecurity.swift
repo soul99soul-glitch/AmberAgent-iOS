@@ -10,8 +10,11 @@ struct IOSDeepReadTemplateValidationResult: Equatable, Sendable {
 enum IOSDeepReadHTMLSecurity {
     static let contentSecurityPolicy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data: amberfont:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
 
-    static func hardenedDocument(_ html: String) -> String {
-        let escapedPolicy = contentSecurityPolicy.replacingOccurrences(of: "\"", with: "&quot;")
+    static func hardenedDocument(_ html: String, allowsRemoteImages: Bool = false) -> String {
+        let policy = allowsRemoteImages
+            ? contentSecurityPolicy.replacingOccurrences(of: "img-src data:;", with: "img-src data: https: http:;")
+            : contentSecurityPolicy
+        let escapedPolicy = policy.replacingOccurrences(of: "\"", with: "&quot;")
         let meta = #"<meta http-equiv="Content-Security-Policy" content="\#(escapedPolicy)">"#
         if let head = tagRanges(named: "head", in: html).first(where: {
             !isClosingTag(String(html[$0]))

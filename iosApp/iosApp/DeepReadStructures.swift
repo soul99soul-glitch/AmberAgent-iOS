@@ -18,6 +18,8 @@ struct IOSDeepReadOutput: Codable, Equatable {
     var diagram: IOSDeepReadDiagram? = nil
     var extendedReading: [IOSDeepReadLink] = []
     var references: [IOSDeepReadLink] = []
+    /// Claims the sources have not settled yet (single-source, contradicted, or awaiting official word).
+    var uncertainties: [String] = []
     var heroImageUrl: String? = nil
     var heroCaption: String? = nil
 
@@ -31,6 +33,7 @@ struct IOSDeepReadOutput: Codable, Equatable {
         case diagram
         case extendedReading = "extended_reading"
         case references
+        case uncertainties
         case heroImageUrl = "hero_image_url"
         case heroCaption = "hero_caption"
     }
@@ -48,6 +51,7 @@ struct IOSDeepReadOutput: Codable, Equatable {
         diagram = try? c.decodeIfPresent(IOSDeepReadDiagram.self, forKey: .diagram)
         extendedReading = (try? c.decodeIfPresent([IOSDeepReadLink].self, forKey: .extendedReading)) ?? []
         references = (try? c.decodeIfPresent([IOSDeepReadLink].self, forKey: .references)) ?? []
+        uncertainties = (try? c.decodeIfPresent([String].self, forKey: .uncertainties)) ?? []
         heroImageUrl = try? c.decodeIfPresent(String.self, forKey: .heroImageUrl)
         heroCaption = try? c.decodeIfPresent(String.self, forKey: .heroCaption)
     }
@@ -56,7 +60,7 @@ struct IOSDeepReadOutput: Codable, Equatable {
     /// falling back to the flat-markdown reader).
     var hasStructuredBody: Bool {
         !timeline.isEmpty || !corePoints.isEmpty || diagram != nil
-            || analysis.hasContent || !extendedReading.isEmpty || !summary.isEmpty
+            || analysis.hasContent || !extendedReading.isEmpty || !references.isEmpty || !summary.isEmpty
     }
 
     /// Merge a later stage's partial output in: every non-empty / non-nil field from
@@ -73,6 +77,7 @@ struct IOSDeepReadOutput: Codable, Equatable {
         if let diagram = other.diagram, diagram.nodes.count >= 2 { result.diagram = diagram }
         if !other.extendedReading.isEmpty { result.extendedReading = other.extendedReading }
         if !other.references.isEmpty { result.references = other.references }
+        if !other.uncertainties.isEmpty { result.uncertainties = other.uncertainties }
         if let hero = other.heroImageUrl, !hero.isEmpty { result.heroImageUrl = hero }
         if let caption = other.heroCaption, !caption.isEmpty { result.heroCaption = caption }
         return result

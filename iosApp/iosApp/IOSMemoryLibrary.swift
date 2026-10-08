@@ -7,6 +7,9 @@ enum IOSMemoryScopeFilter: String, CaseIterable, Identifiable {
     case core
     case shortTerm
     case longTerm
+    /// Archived atomic records (superseded, invalidated, expired or long unused),
+    /// shown only here so the user can review or restore them.
+    case archived
 
     var id: String { rawValue }
 
@@ -16,12 +19,13 @@ enum IOSMemoryScopeFilter: String, CaseIterable, Identifiable {
         case .core: "核心"
         case .shortTerm: "短期"
         case .longTerm: "长期"
+        case .archived: "已归档"
         }
     }
 
     func includes(_ scope: MemoryScope) -> Bool {
         switch self {
-        case .all:
+        case .all, .archived:
             true
         case .core:
             scope == MemoryScope.core
@@ -41,13 +45,18 @@ enum IOSMemoryLibrary {
     ) -> [MemoryRecord] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return records
-            // 已归档记录只保留审计与溯源，不出现在用户可见的活跃列表。
-            .filter { !$0.archived }
+            // 已归档记录不出现在活跃列表，只在"已归档"筛选下供查看与恢复；
+            // 退役主题由整理流程维护，不进归档列表。
+            .filter { scopeFilter == .archived ? ($0.archived && $0.kind != .topic) : !$0.archived }
             .filter { scopeFilter.includes($0.scope) }
             .filter { record in
                 guard !trimmedQuery.isEmpty else { return true }
                 if record.content.localizedCaseInsensitiveContains(trimmedQuery) { return true }
                 if record.topicTitle?.localizedCaseInsensitiveContains(trimmedQuery) == true { return true }
+                // 界面上显示的标签与来源文案（"短期""用户""来自聊天"）也能搜到。
+                if scopeTitle(record.scope).localizedCaseInsensitiveContains(trimmedQuery) { return true }
+                if kindTitle(record.kind).localizedCaseInsensitiveContains(trimmedQuery) { return true }
+                if sourceSummary(record).localizedCaseInsensitiveContains(trimmedQuery) { return true }
                 if record.scope.wireName.localizedCaseInsensitiveContains(trimmedQuery) { return true }
                 if record.kind.wireName.localizedCaseInsensitiveContains(trimmedQuery) { return true }
                 if record.sourceConversationId?.localizedCaseInsensitiveContains(trimmedQuery) == true { return true }
@@ -138,11 +147,27 @@ enum IOSMemoryLibrary {
         case "create", "add", "write": "新增"
         case "edit", "update": "修改"
         case "delete", "remove": "删除"
+        case "restore": "恢复"
+        case "invalidate": "作废"
         case "extract": "自动提炼"
         case "consolidate": "自动整理"
         case "topic": "主题聚合"
+        case "profile": "用户画像"
         default: raw
         }
+    }
+
+    /// "N 条记忆" everywhere counts live atomic memories: topics are groupings,
+    /// not memories (matches the index.md summary).
+    static func liveMemoryCount(_ records: [MemoryRecord]) -> Int {
+        records.filter { !$0.archived && $0.kind != .topic }.count
+    }
+
+    /// Topic members that still resolve to live records; archived, superseded
+    /// or deleted members are not counted (matches the topic detail page).
+    static func liveMemberCount(of topic: MemoryRecord, in records: [MemoryRecord]) -> Int {
+        let memberIds = Set(topic.memberIds.map { Int(truncating: $0) })
+        return records.filter { memberIds.contains(Int($0.id)) && !$0.archived && $0.kind != .topic }.count
     }
 
     static func sourceSummary(_ record: MemoryRecord) -> String {

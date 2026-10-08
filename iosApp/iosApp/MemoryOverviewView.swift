@@ -20,6 +20,7 @@ struct MemoryOverviewView: View {
     @State private var consolidation = IOSMemoryConsolidationCoordinator.shared
     @State private var operationError: String?
     @State private var showClearAuditConfirmation = false
+    @State private var showAllAudit = false
     /// P2-a: 受外部内容影响（POLLUTED）的会话数；空态时整节不显示。
     @State private var pollutedConversations: [ConversationSummary] = []
     /// 派生的记忆文档列表（index.md + topics/）；随 persistence.revision 刷新。
@@ -66,7 +67,7 @@ struct MemoryOverviewView: View {
             Text(operationError ?? "未知错误")
         }
         .confirmationDialog(
-            "清除写入审批记录？",
+            "清除记忆变更记录？",
             isPresented: $showClearAuditConfirmation,
             titleVisibility: .visible
         ) {
@@ -75,7 +76,7 @@ struct MemoryOverviewView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只会清除审批历史，不会删除已保存的记忆。")
+            Text("只会清除变更历史，不会删除已保存的记忆。")
         }
     }
 
@@ -92,7 +93,7 @@ struct MemoryOverviewView: View {
                     Text("灵魂与记忆")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(AmberTheme.foreground)
-                    Text(selectedTab == .soul ? "Amber 的核心指令" : "\(persistence.records.filter { !$0.archived }.count) 条本地记忆")
+                    Text(selectedTab == .soul ? "Amber 的核心指令" : "\(IOSMemoryLibrary.liveMemoryCount(persistence.records)) 条本地记忆")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(AmberTheme.muted)
                 }
@@ -148,12 +149,16 @@ struct MemoryOverviewView: View {
                                     .matchedGeometryEffect(id: "selection", in: tabSelection)
                             }
                         }
+                        // 视觉胶囊保持 38pt，点击区向容器内边距延伸到 44pt。
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
             }
         }
-        .padding(4)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
         .background(
             AmberTheme.surface.opacity(0.72),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -293,7 +298,7 @@ struct MemoryOverviewView: View {
     }
 
     private var intro: some View {
-        Text("管理 Amber 会在聊天中参考的本地记忆。自动提炼只保存用户明确表达的偏好与项目事实，记录可以搜索、查看来源或删除。")
+        Text("管理 Amber 会在聊天中参考的本地记忆。自动提炼只保存用户明确表达的偏好与项目事实；你更正或否定时会更新或作废旧记忆，旧版本归档保留，可在「管理全部记忆」的「已归档」中查看与恢复。记录可以搜索、查看来源或删除。")
             .font(.callout)
             .foregroundStyle(AmberTheme.foreground2)
             .lineSpacing(3)
@@ -348,7 +353,7 @@ struct MemoryOverviewView: View {
             AmberFormGroup {
                 MemoryPresetRow(
                     title: "自动整理记忆",
-                    subtitle: "合并重复、归档过期记录，并把长期保留的短期记忆升级。",
+                    subtitle: "合并重复，归档已过期的记忆和 30 天未用的短期记忆，并把持续被用到的短期记忆升级为长期。",
                     isOn: Binding(
                         get: { sharedSettings.agentRuntime.memoryWorker.dreamMaintenanceEnabled },
                         set: {
@@ -360,7 +365,7 @@ struct MemoryOverviewView: View {
                 MemoryDivider()
                 MemoryPresetRow(
                     title: "主题聚合",
-                    subtitle: "整理时让模型把相关记忆归入主题，并同步生成 Markdown 文档。",
+                    subtitle: "整理时让模型把相关记忆归入主题、合并同义重复并生成用户画像，同步生成 Markdown 文档。",
                     isOn: Binding(
                         get: { sharedSettings.agentRuntime.memoryWorker.dreamModelEnabled },
                         set: {
@@ -481,8 +486,10 @@ struct MemoryOverviewView: View {
     private var documentsSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "记忆文档")
-            let liveCount = persistence.records.filter { !$0.archived }.count
-            if documents.isEmpty && liveCount == 0 {
+            let liveCount = IOSMemoryLibrary.liveMemoryCount(persistence.records)
+            // 只剩归档记忆时仍保留入口，否则"已归档"筛选与恢复不可达。
+            let archivedCount = persistence.records.filter { $0.archived && $0.kind != .topic }.count
+            if documents.isEmpty && liveCount == 0 && archivedCount == 0 {
                 AmberFormGroup {
                     MemoryEmptyState(isSearching: false)
                 }
@@ -520,7 +527,7 @@ struct MemoryOverviewView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AmberTheme.foreground)
                             Spacer()
-                            Text("\(liveCount) 条")
+                            Text(liveCount == 0 ? "\(archivedCount) 条已归档" : "\(liveCount) 条")
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
                             Image(systemName: "chevron.right")
@@ -539,27 +546,52 @@ struct MemoryOverviewView: View {
         }
     }
 
+    /// 一次提炼可能同时产生新增、更新、作废多条记录，预览给足 8 条。
+    private static let auditPreviewCount = 8
+
     private var auditSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "写入审批记录")
+            AmberSectionLabel(text: "记忆变更记录")
             AmberFormGroup {
                 if auditStore.records.isEmpty {
-                    Text("暂无模型写入审批记录。聊天里的新增、修改或删除请求会记录在这里；需要确认时会在聊天中提示。")
+                    Text("暂无记忆变更。模型写入、自动提炼、自动整理和你的手动修改都会记录在这里；需要确认时会在聊天中提示。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
                 } else {
-                    ForEach(Array(auditStore.records.prefix(5))) { record in
+                    ForEach(Array(auditStore.records.prefix(showAllAudit ? auditStore.records.count : Self.auditPreviewCount))) { record in
                         MemoryAuditRow(record: record)
                         MemoryDivider(leading: 52)
+                    }
+
+                    if auditStore.records.count > Self.auditPreviewCount {
+                        Button {
+                            withAnimation(.smooth(duration: 0.2)) { showAllAudit.toggle() }
+                        } label: {
+                            Group {
+                                if showAllAudit {
+                                    Text("收起")
+                                } else {
+                                    Text("显示全部（\(auditStore.records.count) 条）")
+                                }
+                            }
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(AmberTheme.accent)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(minHeight: 44)
+                                .padding(.horizontal, 14)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        MemoryDivider(leading: 14)
                     }
 
                     Button(role: .destructive) {
                         showClearAuditConfirmation = true
                     } label: {
-                        Text("清除审批记录")
+                        Text("清除变更记录")
                             .font(.body.weight(.medium))
                             .foregroundStyle(AmberTheme.accentRed)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -662,18 +694,40 @@ private struct MemoryAuditRow: View {
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(IOSMemoryLibrary.actionDisplay(record.action)) · \(statusTitle)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(IOSMemoryLibrary.actionDisplay(record.action)) · \(statusTitle)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                    Spacer(minLength: 0)
+                    Text(
+                        Date(timeIntervalSince1970: TimeInterval(record.createdAt) / 1_000),
+                        format: .relative(presentation: .named)
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(2)
+                    .lineLimit(detailLineLimit)
+                // 作废的依据是用户原文：单独成行、单独限行，不被被作废记忆的长预览挤掉。
+                if isAutoInvalidation, !record.reason.isEmpty {
+                    Text(record.reason)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .lineLimit(2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var isAutoInvalidation: Bool {
+        record.action == "invalidate" && record.status == "auto_saved"
     }
 
     private var detail: String {
@@ -682,12 +736,19 @@ private struct MemoryAuditRow: View {
         if let scope = record.scope { parts.append(IOSMemoryLibrary.scopeDisplay(scope)) }
         if let kind = record.kind { parts.append(IOSMemoryLibrary.kindDisplay(kind)) }
         if let contentPreview = record.contentPreview { parts.append(contentPreview) }
-        if parts.isEmpty, !record.reason.isEmpty { return record.reason }
+        if parts.isEmpty, !record.reason.isEmpty, !isAutoInvalidation { return record.reason }
         return parts.joined(separator: " · ")
     }
 
+    /// 整理/失败类记录没有预览，摘要可能较长，不截断。
+    private var detailLineLimit: Int? {
+        record.contentPreview == nil ? nil : 2
+    }
+
     private var statusTitle: String {
-        switch record.status {
+        if isAutoInvalidation { return "自动归档" }
+        if record.action == "restore", record.status == "user_saved" { return "用户恢复" }
+        return switch record.status {
         case "approved": "已批准"
         case "user_saved": "用户保存"
         case "auto_saved": "自动保存"
@@ -699,7 +760,8 @@ private struct MemoryAuditRow: View {
     }
 
     private var statusIcon: String {
-        switch record.status {
+        if isAutoInvalidation { return "archivebox.fill" }
+        return switch record.status {
         case "approved", "user_saved", "auto_saved": "checkmark.circle.fill"
         case "needs_user_action": "hand.raised.fill"
         case "denied", "denied_by_user": "xmark.circle.fill"
@@ -709,7 +771,8 @@ private struct MemoryAuditRow: View {
     }
 
     private var statusColor: Color {
-        switch record.status {
+        if isAutoInvalidation { return AmberTheme.accentAmber }
+        return switch record.status {
         case "approved", "user_saved", "auto_saved": AmberTheme.accentGreen
         case "needs_user_action": AmberTheme.accentAmber
         case "denied", "denied_by_user", "user_deleted": AmberTheme.accentRed

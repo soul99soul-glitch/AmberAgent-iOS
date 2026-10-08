@@ -27,15 +27,27 @@ enum IOSDeepReadLauncher {
         _ sourceId: String?
     ) throws -> Void
 
+    /// `primaryIndex` names the source read in full as the article body (close reading); the
+    /// other sources become reports compared against it. Nil keeps the topic synthesis.
     static func createAndGenerate(
         title: String,
         sources: [IOSDeepReadSource],
         templateId: String,
+        primaryIndex: Int? = nil,
+        originalOnly: Bool = false,
         sharedSettings: IOSSharedSettingsStore,
         navigate: @escaping (String) -> Void,
         onStatus: @escaping StatusHandler
     ) throws {
         let store = IOSDeepReadStore.shared
+        var sources = sources
+        if let primaryIndex, sources.indices.contains(primaryIndex) {
+            sources[primaryIndex].metadata[DeepReadCloseReader.roleKey] = DeepReadCloseReader.primaryRole
+            if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sources[primaryIndex].metadata[DeepReadCloseReader.titlePendingKey] = "true"
+            }
+            if originalOnly { sources[primaryIndex].metadata[DeepReadCloseReader.originalOnlyKey] = "true" }
+        }
         let task = try store.createTask(title: title, sources: sources, templateId: templateId)
         guard store.markRunning(id: task.id) else { throw IOSDeepReadStoreError.persistenceFailed }
         navigate(task.id)
@@ -94,6 +106,30 @@ enum IOSDeepReadLauncher {
         )
     }
 
+    /// Turns a "只读原文" reading into a full close reading. A failed run restores the original.
+    static func annotate(
+        taskId: String,
+        sharedSettings: IOSSharedSettingsStore,
+        onStatus: @escaping StatusHandler
+    ) {
+        let store = IOSDeepReadStore.shared
+        guard var sources = store.task(id: taskId)?.sources else {
+            onStatus(IOSAppLocalization.string("深度阅读记录不存在。", defaultValue: "深度阅读记录不存在。"), true)
+            return
+        }
+        for index in sources.indices { sources[index].metadata.removeValue(forKey: DeepReadCloseReader.originalOnlyKey) }
+        guard store.replaceSources(id: taskId, sources: sources) else {
+            reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+            return
+        }
+        retry(taskId: taskId, sharedSettings: sharedSettings, onStatus: onStatus)
+    }
+
+    typealias SourceSearch = @MainActor (_ title: String, _ settings: Settings?) async -> [IOSDeepReadSource]
+    typealias SourceEnrichment = @MainActor (_ sources: [IOSDeepReadSource], _ settings: Settings?,
+                                             _ progress: @escaping (Int, Int) -> Void) async -> [IOSDeepReadSource]
+    typealias PrimaryFetch = @MainActor (_ url: String, _ settings: Settings?) async throws -> DeepReadCloseReader.Page
+
     @discardableResult
     static func runExistingTask(
         taskId: String,
@@ -106,7 +142,19 @@ enum IOSDeepReadLauncher {
         targetStages: Set<String>? = nil,
         initialOutput: IOSDeepReadOutput? = nil,
         priorCompletion: IOSDeepReadPriorCompletion? = nil,
-        onActivityStage: (@MainActor (_ stage: AgentActivityStage, _ detail: String?) -> Void)? = nil
+        onActivityStage: (@MainActor (_ stage: AgentActivityStage, _ detail: String?) -> Void)? = nil,
+        searchSources: SourceSearch = { title, settings in
+            await DeepReadSourceCollector.search(title: title, settings: settings)
+        },
+        enrichSources: SourceEnrichment = { sources, settings, progress in
+            await DeepReadSourceCollector.enrich(sources, settings: settings, onSourceProgress: progress)
+        },
+        fetchPrimary: PrimaryFetch = { url, settings in
+            try await DeepReadCloseReader.fetch(url: url, settings: settings)
+        },
+        searchReports: SourceSearch = { title, settings in
+            await DeepReadSourceCollector.search(title: title, settings: settings, queries: [title])
+        }
     ) async -> Bool {
         defer {
             if isCurrentRun() {
@@ -116,9 +164,15 @@ enum IOSDeepReadLauncher {
         guard isCurrentRun() else { return false }
         guard var running = store.task(id: taskId) else { return false }
         guard running.status == .queued || running.status == .running else { return false }
-        guard let (model, providerSetting) = sharedSettings.resolveBoardDeepReadModel(
+        let primaryIndex = running.sources.firstIndex(where: DeepReadCloseReader.isPrimary)
+        // Reading only the original never calls a model, so it needs none configured.
+        let originalOnly = primaryIndex.map {
+            running.sources[$0].metadata[DeepReadCloseReader.originalOnlyKey] == "true"
+        } ?? false
+        let resolved = sharedSettings.resolveBoardDeepReadModel(
             boardModelId: sharedSettings.todayBoard.boardModelId
-        ) else {
+        )
+        guard resolved != nil || originalOnly else {
             return failRun(
                 taskId: taskId,
                 message: IOSAppLocalization.string(
@@ -158,100 +212,179 @@ enum IOSDeepReadLauncher {
             IOSAppLocalization.string("准备生成", defaultValue: "准备生成")
         )
 
-        updateProgress(
-            1,
-            IOSAppLocalization.string("正在搜索补充来源", defaultValue: "正在搜索补充来源")
-        )
-        reportStage(.searching)
-        let searched = await searchSourcesForDeepRead(title: running.title, settings: sharedSettings.snapshot)
-        guard isCurrentRun() else { return false }
-
-        let mergedSources = Array(dedupeSources(running.sources + searched).prefix(10))
-        let scrapeBase: Int64 = 2
-        let generationBase = scrapeBase + Int64(max(mergedSources.count, 1))
-        progressTotal = generationBase + 5
-        updateProgress(
-            2,
-            IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文"),
-            total: progressTotal
-        )
-        // 灵动岛显示正在抓取的那个来源；回调在每个来源抓完后触发，所以取下一个。
-        reportStage(.readingWeb, AgentActivityStepDetailPolicy.webDetail(url: mergedSources.first?.url))
-        let enriched = await enrichSourcesWithScrape(
-            mergedSources,
-            settings: sharedSettings.snapshot,
-            onSourceProgress: { index, total in
-                updateProgress(
-                    scrapeBase + Int64(index),
-                    "\(IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文")) \(index)/\(total)"
-                )
-                if index < mergedSources.count {
-                    reportStage(.readingWeb, AgentActivityStepDetailPolicy.webDetail(url: mergedSources[index].url))
-                }
-            }
-        )
-        guard isCurrentRun() else { return false }
-
-        guard store.replaceSources(id: taskId, sources: enriched) else {
-            return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
-        }
-        running.sources = enriched
-        guard enriched.contains(where: isUsableSourceForGeneration) else {
-            return failRun(
-                taskId: taskId,
-                message: IOSAppLocalization.string(
-                    "深度阅读生成失败：没有找到可用来源。免费搜索受网络环境和反爬限制，结果不稳定；可在「设置 › 搜索服务」添加有免费额度的 Tavily、Serper、Exa、Brave 或智谱后重试。",
-                    defaultValue: "深度阅读生成失败：没有找到可用来源。免费搜索受网络环境和反爬限制，结果不稳定；可在「设置 › 搜索服务」添加有免费额度的 Tavily、Serper、Exa、Brave 或智谱后重试。"
-                ),
-                store: store,
-                onStatus: onStatus,
-                priorCompletion: priorCompletion
-            )
-        }
-
         let output: String
         var structuredJSON: String? = nil
         var missingSections: [String] = []
-        updateProgress(
-            generationBase,
-            IOSAppLocalization.string("正在生成深度阅读", defaultValue: "正在生成深度阅读")
-        )
-        reportStage(.generating)
-        let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
-            task: running,
-            providerSetting: providerSetting,
-            model: model,
-            provider: textProvider,
-            onStageProgress: { label, index, _ in
-                updateProgress(
-                    generationBase + Int64(index),
-                    "\(IOSAppLocalization.string("正在生成", defaultValue: "正在生成"))\(label)"
-                )
-            },
-            initialOutput: initialOutput,
-            targetStages: targetStages
-        )
-        guard isCurrentRun() else { return false }
-        missingSections = result.missingSections
-        switch IOSDeepReadDraftGenerator.outcome(
-            for: result,
-            offlineFallback: IOSDeepReadDraftGenerator.generate(task: running)
-        ) {
-        case .failed(let reason):
-            return failRun(
-                taskId: taskId,
-                message: IOSAppLocalization.formatted(
-                    "深度阅读生成失败：%@",
-                    defaultValue: "深度阅读生成失败：%@",
-                    arguments: [IOSDeepReadUserFacingText.sanitize(reason)]
-                ),
-                store: store,
-                onStatus: onStatus,
-                priorCompletion: priorCompletion
+        if let primaryIndex {
+            let outcome = await generateCloseReading(
+                task: running, primaryIndex: primaryIndex, resolved: resolved,
+                keepsPriorGuide: DeepReadCloseReading.decode(priorCompletion?.structuredJSON)?.hasGuide == true,
+                settings: sharedSettings.snapshot, store: store, textProvider: textProvider,
+                isCurrentRun: isCurrentRun, progress: { updateProgress($0, $1, total: $2) }, stage: reportStage,
+                fetchPrimary: fetchPrimary, searchReports: searchReports, enrichSources: enrichSources
             )
-        case .completed(let markdown, let json):
-            output = markdown
-            structuredJSON = json
+            switch outcome {
+            case .aborted:
+                return false
+            case .persistenceFailed:
+                return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+            case .failed(let message):
+                return failRun(taskId: taskId, message: message, store: store, onStatus: onStatus,
+                               priorCompletion: priorCompletion)
+            case .completed(let markdown, let json, let missing):
+                output = markdown
+                structuredJSON = json
+                missingSections = missing
+            }
+        } else {
+            // Without a primary source a model is required (checked above).
+            guard let (model, providerSetting) = resolved else { return false }
+            updateProgress(
+                1,
+                IOSAppLocalization.string("正在搜索补充来源", defaultValue: "正在搜索补充来源")
+            )
+            reportStage(.searching)
+            let searched = await searchSources(running.title, sharedSettings.snapshot)
+            guard isCurrentRun() else { return false }
+
+            // Search warnings belong to one collection attempt; user inputs and webpage scrape
+            // failures stay durable across retries.
+            let retained = running.sources.filter {
+                !($0.metadata["search_query"] != nil && $0.metadata["scrape_status"] == "failed")
+            }
+            // The generator reads at most 10 usable sources, so only those are scraped; search
+            // warnings ride along to show why an angle found nothing.
+            let collected = DeepReadSourceCollector.dedupe(retained + searched)
+            let isWarning = { (source: IOSDeepReadSource) in
+                source.metadata["search_query"] != nil && source.metadata["scrape_status"] == "failed"
+            }
+            let mergedSources = Array(collected.filter { !isWarning($0) }.prefix(10)) + collected.filter(isWarning)
+            let scrapeBase: Int64 = 2
+            let generationBase = scrapeBase + Int64(max(mergedSources.count, 1))
+            progressTotal = generationBase + 5
+            updateProgress(
+                2,
+                IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文"),
+                total: progressTotal
+            )
+            // 灵动岛显示正在抓取的那个来源；回调在每个来源抓完后触发，所以取下一个。
+            reportStage(.readingWeb, AgentActivityStepDetailPolicy.webDetail(url: mergedSources.first?.url))
+            let enriched = await enrichSources(
+                mergedSources,
+                sharedSettings.snapshot,
+                { index, total in
+                    updateProgress(
+                        scrapeBase + Int64(index),
+                        "\(IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文")) \(index)/\(total)"
+                    )
+                    if index < mergedSources.count {
+                        reportStage(.readingWeb, AgentActivityStepDetailPolicy.webDetail(url: mergedSources[index].url))
+                    }
+                }
+            )
+            guard isCurrentRun() else { return false }
+
+            guard store.replaceSources(id: taskId, sources: enriched) else {
+                return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+            }
+            running.sources = enriched
+            guard enriched.contains(where: isUsableSourceForGeneration) else {
+                return failRun(
+                    taskId: taskId,
+                    message: IOSAppLocalization.string(
+                        "深度阅读生成失败：没有找到可用来源。免费搜索受网络环境和反爬限制，结果不稳定；可在「设置 › 搜索服务」添加有免费额度的 Tavily、Serper、Exa、Brave 或智谱后重试。",
+                        defaultValue: "深度阅读生成失败：没有找到可用来源。免费搜索受网络环境和反爬限制，结果不稳定；可在「设置 › 搜索服务」添加有免费额度的 Tavily、Serper、Exa、Brave 或智谱后重试。"
+                    ),
+                    store: store,
+                    onStatus: onStatus,
+                    priorCompletion: priorCompletion
+                )
+            }
+
+            var templateArticle: DeepReadTemplateArticle?
+            // Completing a magazine article that auto mode already chose must not switch templates.
+            if let template = DeepReadSynthesisTemplate(rawValue: running.templateId),
+               !(template == .auto && initialOutput?.hasStructuredBody == true) {
+                let numbered = DeepReadTemplateWriter.numbered(running.sources)
+                var chosen: DeepReadSynthesisTemplate? = template
+                reportStage(.generating)
+                if template == .auto {
+                    updateProgress(generationBase, IOSAppLocalization.string("正在生成写作框架", defaultValue: "正在生成写作框架"))
+                    let (pick, _) = await IOSDeepReadDraftGenerator.synthesizeJSON(
+                        prompt: DeepReadTemplateWriter.pickPrompt(topic: running.title, numbered: numbered),
+                        providerSetting: providerSetting, model: model, provider: textProvider, timeoutSeconds: 60)
+                    guard isCurrentRun() else { return false }
+                    // Nil (the classic magazine, or an unreadable pick) continues with the shared pipeline below.
+                    chosen = DeepReadTemplateWriter.parsePick(pick)
+                }
+                if let chosen {
+                    updateProgress(generationBase + 1, "\(IOSAppLocalization.string("正在生成", defaultValue: "正在生成"))\(chosen.name)")
+                    let (text, error) = await IOSDeepReadDraftGenerator.synthesizeJSON(
+                        prompt: DeepReadTemplateWriter.prompt(chosen, topic: running.title, numbered: numbered),
+                        providerSetting: providerSetting, model: model, provider: textProvider)
+                    guard isCurrentRun() else { return false }
+                    guard let article = DeepReadTemplateWriter.parse(text, template: chosen, topic: running.title, numbered: numbered) else {
+                        return failRun(
+                            taskId: taskId,
+                            message: IOSAppLocalization.formatted(
+                                "深度阅读生成失败：%@",
+                                defaultValue: "深度阅读生成失败：%@",
+                                arguments: [IOSDeepReadUserFacingText.sanitize(error ?? "模型没有按「\(chosen.name)」模板返回内容。")]
+                            ),
+                            store: store,
+                            onStatus: onStatus,
+                            priorCompletion: priorCompletion
+                        )
+                    }
+                    templateArticle = article
+                }
+            }
+            if let templateArticle {
+                output = DeepReadTemplateWriter.markdown(templateArticle)
+                structuredJSON = templateArticle.encoded()
+            } else {
+                updateProgress(
+                    generationBase,
+                    IOSAppLocalization.string("正在生成深度阅读", defaultValue: "正在生成深度阅读")
+                )
+                reportStage(.generating)
+                let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
+                    task: running,
+                    providerSetting: providerSetting,
+                    model: model,
+                    provider: textProvider,
+                    onStageProgress: { label, index, _ in
+                        updateProgress(
+                            generationBase + Int64(index),
+                            "\(IOSAppLocalization.string("正在生成", defaultValue: "正在生成"))\(label)"
+                        )
+                    },
+                    initialOutput: initialOutput,
+                    targetStages: targetStages
+                )
+                guard isCurrentRun() else { return false }
+                missingSections = result.missingSections
+                switch IOSDeepReadDraftGenerator.outcome(
+                    for: result,
+                    offlineFallback: IOSDeepReadDraftGenerator.generate(task: running)
+                ) {
+                case .failed(let reason):
+                    return failRun(
+                        taskId: taskId,
+                        message: IOSAppLocalization.formatted(
+                            "深度阅读生成失败：%@",
+                            defaultValue: "深度阅读生成失败：%@",
+                            arguments: [IOSDeepReadUserFacingText.sanitize(reason)]
+                        ),
+                        store: store,
+                        onStatus: onStatus,
+                        priorCompletion: priorCompletion
+                    )
+                case .completed(let markdown, let json):
+                    output = markdown
+                    structuredJSON = json
+                }
+            }
         }
 
         // KeepAlive expire/system-cancel may have already marked failed; don't resurrect.
@@ -271,7 +404,8 @@ enum IOSDeepReadLauncher {
             return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
         }
         do {
-            try workspaceArtifactSaver(running.title, output, .deepRead, "deep_read", running.id)
+            // A close reading may have replaced a pending title with the original's.
+            try workspaceArtifactSaver(store.task(id: taskId)?.title ?? running.title, output, .deepRead, "deep_read", running.id)
             if missingSections.isEmpty {
                 onStatus?(
                     IOSAppLocalization.string(
@@ -382,6 +516,134 @@ enum IOSDeepReadLauncher {
         )
     }
 
+    private enum CloseReadingOutcome {
+        case completed(markdown: String, json: String?, missing: [String])
+        case failed(String)
+        case persistenceFailed
+        case aborted
+    }
+
+    /// Close reading: the primary text is read in full, numbered and annotated, then compared
+    /// with other reports on the same story (the task's other sources plus a title search).
+    private static func generateCloseReading(
+        task: IOSDeepReadTask,
+        primaryIndex: Int,
+        resolved: (model: Model, provider: ProviderSetting)?,
+        keepsPriorGuide: Bool,
+        settings: Settings?,
+        store: IOSDeepReadStore,
+        textProvider: any IOSAgentTextProvider,
+        isCurrentRun: @escaping @MainActor () -> Bool,
+        progress: @escaping (_ completed: Int64, _ label: String, _ total: Int64?) -> Void,
+        stage: (_ stage: AgentActivityStage, _ detail: String?) -> Void,
+        fetchPrimary: PrimaryFetch,
+        searchReports: SourceSearch,
+        enrichSources: SourceEnrichment
+    ) async -> CloseReadingOutcome {
+        let taskId = task.id
+        var primary = task.sources[primaryIndex]
+        var page = DeepReadCloseReader.Page(title: primary.title, text: primary.content,
+                                            heroImageURL: primary.metadata["hero_image_url"])
+        if let url = primary.url, primary.metadata["scrape_status"] != "ok" {
+            progress(1, IOSAppLocalization.string("正在抓取原文正文", defaultValue: "正在抓取原文正文"), 6)
+            stage(.readingWeb, AgentActivityStepDetailPolicy.webDetail(url: url))
+            do {
+                page = try await fetchPrimary(url, settings)
+            } catch {
+                guard isCurrentRun() else { return .aborted }
+                return .failed(IOSAppLocalization.formatted(
+                    "原文读取失败：%@", defaultValue: "原文读取失败：%@",
+                    arguments: [IOSDeepReadUserFacingText.fromError(error)]
+                ))
+            }
+            guard isCurrentRun() else { return .aborted }
+            primary.content = page.text
+            if !page.title.isEmpty { primary.title = page.title }
+            primary.metadata["scrape_status"] = "ok"
+            if let hero = page.heroImageURL { primary.metadata["hero_image_url"] = hero }
+        }
+        // A page without a <title> keeps the source's own title (the hot-list headline or the link's host).
+        if page.title.isEmpty { page.title = primary.title }
+        if primary.metadata.removeValue(forKey: DeepReadCloseReader.titlePendingKey) != nil, !page.title.isEmpty {
+            _ = store.updateTitle(id: taskId, title: page.title)
+        }
+        let paragraphs = DeepReadCloseReader.segment(primary.content)
+        guard !paragraphs.isEmpty else {
+            return .failed(IOSAppLocalization.string("原文没有可读的正文。", defaultValue: "原文没有可读的正文。"))
+        }
+        let site = DeepReadCloseReader.siteName(primary.url) ?? primary.title
+        if primary.metadata[DeepReadCloseReader.originalOnlyKey] == "true" {
+            var sources = task.sources
+            sources[primaryIndex] = primary
+            guard store.replaceSources(id: taskId, sources: sources) else { return .persistenceFailed }
+            let reading = DeepReadCloseReader.unannotated(page: page, url: primary.url, site: site, paragraphs: paragraphs)
+            return .completed(markdown: DeepReadCloseReader.markdown(reading), json: reading.encoded(), missing: [])
+        }
+        guard let resolved else {
+            return .failed(IOSAppLocalization.string(
+                "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。",
+                defaultValue: "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。"
+            ))
+        }
+
+        // Other reports: the task's remaining sources plus a search on the article's title.
+        progress(2, IOSAppLocalization.string("正在抓取其他报道", defaultValue: "正在抓取其他报道"), 6)
+        stage(.searching, nil)
+        let searchTitle = store.task(id: taskId)?.title ?? task.title
+        let searched = await searchReports(searchTitle, settings)
+        guard isCurrentRun() else { return .aborted }
+        let primaryURL = primary.url
+        let inputs = task.sources.filter { !DeepReadCloseReader.isPrimary($0) }
+        // The title search usually finds the original itself, often under another URL form.
+        let candidates = Array(DeepReadSourceCollector.dedupe(inputs + searched)
+            .filter { $0.url != nil && !DeepReadCloseReader.sameArticle($0.url, primaryURL) && $0.metadata["scrape_status"] != "failed" }
+            .prefix(DeepReadCloseReader.maxOtherReports))
+        let enriched = await enrichSources(candidates, settings, { index, total in
+            progress(2, "\(IOSAppLocalization.string("正在抓取其他报道", defaultValue: "正在抓取其他报道")) \(index)/\(total)", nil)
+        })
+        guard isCurrentRun() else { return .aborted }
+        // The task's other inputs that were not compared this time stay for later retries;
+        // search results that could not be read are dropped so a retry can find and scrape them again.
+        let compared = Set(candidates.map(\.id))
+        let kept = [primary] + (enriched + inputs.filter { !compared.contains($0.id) })
+            .filter { !($0.metadata["search_query"] != nil && $0.metadata["scrape_status"] == "failed") }
+        guard store.replaceSources(id: taskId, sources: kept) else { return .persistenceFailed }
+
+        progress(3, IOSAppLocalization.string("正在生成导读与批注", defaultValue: "正在生成导读与批注"), nil)
+        stage(.generating, nil)
+        let (guideText, _) = await IOSDeepReadDraftGenerator.synthesizeJSON(
+            prompt: DeepReadCloseReader.prompt(title: page.title, site: site, paragraphs: paragraphs),
+            providerSetting: resolved.provider, model: resolved.model, provider: textProvider)
+        guard isCurrentRun() else { return .aborted }
+        // A failed guide still leaves a readable original, marked partial so a retry can fill it in;
+        // a retry must not trade an existing guide for the bare original.
+        let annotated = DeepReadCloseReader.parse(guideText, page: page, url: primary.url, site: site, paragraphs: paragraphs)
+        if annotated == nil, keepsPriorGuide {
+            return .failed(IOSAppLocalization.string(
+                "导读与批注生成失败，已保留上一版精读。", defaultValue: "导读与批注生成失败，已保留上一版精读。"
+            ))
+        }
+        var reading = annotated ?? DeepReadCloseReader.unannotated(page: page, url: primary.url, site: site, paragraphs: paragraphs)
+        var missing = annotated == nil ? [DeepReadCloseReader.missingSection] : []
+
+        let others = enriched.filter(\.hasUsableGenerationContent).enumerated()
+            .map { DeepReadCloseReader.OtherInput(id: $0.offset + 1, source: $0.element) }
+        // Comparison notes hang on a guided reading; without a guide the page only shows the original.
+        if annotated != nil, !others.isEmpty {
+            progress(4, IOSAppLocalization.string("正在生成别家说法", defaultValue: "正在生成别家说法"), nil)
+            let (compareText, _) = await IOSDeepReadDraftGenerator.synthesizeJSON(
+                prompt: DeepReadCloseReader.comparePrompt(reading: reading, others: others),
+                providerSetting: resolved.provider, model: resolved.model, provider: textProvider)
+            guard isCurrentRun() else { return .aborted }
+            if let compared = DeepReadCloseReader.mergeComparison(compareText, into: reading, others: others) {
+                reading = compared
+            } else {
+                missing.append(DeepReadCloseReader.compareMissingSection)
+            }
+        }
+        return .completed(markdown: DeepReadCloseReader.markdown(reading), json: reading.encoded(), missing: missing)
+    }
+
     private static func failRun(
         taskId: String,
         message: String,
@@ -429,156 +691,6 @@ enum IOSDeepReadLauncher {
 
     private static func isUsableSourceForGeneration(_ source: IOSDeepReadSource) -> Bool {
         source.hasUsableGenerationContent
-    }
-
-    private static func enrichSourcesWithScrape(
-        _ sources: [IOSDeepReadSource],
-        settings: Settings?,
-        onSourceProgress: ((_ index: Int, _ total: Int) -> Void)? = nil
-    ) async -> [IOSDeepReadSource] {
-        var enriched: [IOSDeepReadSource] = []
-        for (index, var source) in sources.enumerated() {
-            guard !Task.isCancelled else { break }
-            defer { onSourceProgress?(index + 1, sources.count) }
-            // A retry reuses verified article text instead of appending it again or
-            // losing it when the source website is temporarily unavailable.
-            if source.metadata["scrape_status"] == "ok", source.hasUsableGenerationContent {
-                enriched.append(source)
-                continue
-            }
-            if source.metadata["scrape_status"] == "failed" {
-                enriched.append(source)
-                continue
-            }
-            guard let url = source.url, !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                source.metadata["scrape_status"] = "no_url"
-                enriched.append(source)
-                continue
-            }
-            do {
-                let input = jsonString(["url": url, "max_chars": 12_000])
-                let output = try await IOSSearchExecutor.execute(
-                    toolName: "scrape_web",
-                    toolInput: input,
-                    settings: settings
-                )
-                if let content = scrapeContent(from: output), !content.isEmpty {
-                    source.content = IOSDeepReadSourceNormalizer.cleanMultiline(source.content + "\n\n网页正文：\n" + content)
-                    source.metadata["scrape_status"] = "ok"
-                } else {
-                    source.metadata["scrape_status"] = "empty"
-                }
-                if source.metadata["hero_image_url"] == nil,
-                   let hero = scrapeFirstImage(from: output) {
-                    source.metadata["hero_image_url"] = hero
-                }
-            } catch {
-                let hasExistingContent = !IOSDeepReadSourceNormalizer.cleanMultiline(source.content).isEmpty
-                source.metadata["scrape_status"] = hasExistingContent ? "scrape_failed_keep_content" : "failed"
-                source.metadata["scrape_error"] = String(IOSDeepReadUserFacingText.fromError(error).prefix(180))
-            }
-            enriched.append(source)
-        }
-        return enriched
-    }
-
-    private static func searchSourcesForDeepRead(title: String, settings: Settings?) async -> [IOSDeepReadSource] {
-        let queries = deepReadSearchQueries(from: title)
-        guard !queries.isEmpty else { return [] }
-        var byURL: [String: IOSSearchResult] = [:]
-        var order: [String] = []
-        for query in queries {
-            do {
-                let execution = try await IOSSearchExecutor.searchResults(
-                    toolInput: searchToolInput(query: query, maxResults: 4),
-                    settings: settings
-                )
-                for result in execution.results {
-                    let key = result.url.lowercased().trimmingCharacters(in: .whitespaces)
-                    guard !key.isEmpty, byURL[key] == nil else { continue }
-                    byURL[key] = result
-                    order.append(key)
-                }
-            } catch {
-#if DEBUG
-                NSLog("[AmberDeepRead] topic-search angle failed (\(query.prefix(20))…): \(error)")
-#endif
-            }
-        }
-        let merged = Array(order.prefix(12).compactMap { byURL[$0] })
-#if DEBUG
-        NSLog("[AmberDeepRead] topic-search angles=\(queries.count) distinct=\(byURL.count) used=\(merged.count)")
-#endif
-        guard !merged.isEmpty else { return [] }
-        return (try? IOSDeepReadSourceNormalizer.searchSources(query: title, results: merged)) ?? []
-    }
-
-    private static func deepReadSearchQueries(from title: String) -> [String] {
-        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard t.count >= 2 else { return [] }
-        let year = Calendar.current.component(.year, from: Date())
-        let lower = t.lowercased()
-        var queries = [
-            t,
-            "\(t) 前因后果 时间线 背景 最新进展",
-            "\(t) 官方 声明 通报",
-            "\(t) 核心矛盾 争议 影响 各方反应",
-            "\(t) 专家解读 分析",
-            "\(t) background timeline latest news \(year)",
-            "\(t) 图片 现场图 截图",
-        ]
-        if ["gemini", "google", "openai", "claude", "deepseek", "gpt", "llm", "大模型", "模型", "发布会", "ppt", "截图"].contains(where: { lower.contains($0) || t.contains($0) }) {
-            queries.append("\(t) 发布 价格 跑分 性能 评价")
-            queries.append("\(t) 发布会 PPT 演示 文稿 图片")
-        }
-        return queries
-    }
-
-    private static func dedupeSources(_ sources: [IOSDeepReadSource]) -> [IOSDeepReadSource] {
-        var seen = Set<String>()
-        var result: [IOSDeepReadSource] = []
-        for source in sources {
-            let url = (source.url ?? "").lowercased().trimmingCharacters(in: .whitespaces)
-            let key = url.isEmpty ? "t:" + source.title.lowercased() : url
-            if seen.insert(key).inserted { result.append(source) }
-        }
-        return result
-    }
-
-    private static func scrapeContent(from json: String) -> String? {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        return object["content"] as? String
-    }
-
-    private static func scrapeFirstImage(from json: String) -> String? {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let images = object["images"] as? [String] else {
-            return nil
-        }
-        return images.first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
-    }
-
-    private static func jsonString(_ values: [String: Any]) -> String {
-        guard JSONSerialization.isValidJSONObject(values),
-              let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]),
-              let string = String(data: data, encoding: .utf8) else {
-            return "{}"
-        }
-        return string
-    }
-
-    private static func searchToolInput(query: String, maxResults: Int) -> String {
-        let object: [String: Any] = ["query": query, "max_results": maxResults]
-        guard JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-              let string = String(data: data, encoding: .utf8) else {
-            return query
-        }
-        return string
     }
 }
 

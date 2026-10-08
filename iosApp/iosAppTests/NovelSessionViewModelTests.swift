@@ -2796,7 +2796,16 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertEqual(final.sessions[0].messages.last?.content, "等待落盘")
     }
 
-    func testQuickStartTerminalBubbleRetriesThroughWorkspaceFlow() async throws {
+    /// 真机回归：快速开始失败后重试曾退回默认文案，丢失用户填写的调整方向。
+    func testQuickStartTerminalBubbleRetriesOriginalGuidanceThroughWorkspaceFlow() async throws {
+        let guidance = "保留北宋背景，改成双主角。\n人物关系先于世界观展开。"
+        let originalUserText = """
+        请生成一组可确认的世界观、人物、总剧情大纲和写作要求建议。
+
+        用户对上一版建议不满意，要求按以下方向调整重新生成：
+        保留北宋背景，改成双主角。
+        人物关系先于世界观展开。
+        """
         let retryableFailure = NovelModelFailure(
             code: "quick_start_failed",
             message: "快速开始暂时失败",
@@ -2810,7 +2819,7 @@ final class NovelSessionViewModelTests: XCTestCase {
             ]
         )
 
-        await harness.workspace.startQuickStartSuggestions()
+        await harness.workspace.startQuickStartSuggestions(guidance: guidance)
         let firstFailed = await eventually {
             harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed
         }
@@ -2826,6 +2835,16 @@ final class NovelSessionViewModelTests: XCTestCase {
         }
         XCTAssertTrue(completed)
         XCTAssertNotEqual(harness.workspace.projectSnapshot?.activeRuns.last?.id, failedRunID)
+        let requests = await harness.adapter.requests
+        XCTAssertEqual(
+            requests.map { $0.messages.last(where: { $0.role == .user })?.content },
+            [originalUserText, originalUserText]
+        )
+        let persisted = try await harness.repository.loadProject(id: harness.projectID).document
+        XCTAssertEqual(
+            persisted.sessions[0].messages.filter { $0.role == .user }.map(\.content),
+            [originalUserText, originalUserText]
+        )
     }
 
     func testQuickStartRetryReportsAcceptedWhenRunCompletesDuringBinding() async throws {

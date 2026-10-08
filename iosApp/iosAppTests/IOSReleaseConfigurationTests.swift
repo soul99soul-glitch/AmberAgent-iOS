@@ -16,6 +16,8 @@ final class IOSReleaseConfigurationTests: XCTestCase {
         let ats = try XCTUnwrap(info["NSAppTransportSecurity"] as? [String: Any])
         XCTAssertEqual(ats["NSAllowsLocalNetworking"] as? Bool, true)
         XCTAssertNil(ats["NSAllowsArbitraryLoads"])
+        XCTAssertNil(ats["NSAllowsArbitraryLoadsInWebContent"])
+        XCTAssertNil(ats["NSAllowsArbitraryLoadsForMedia"])
         XCTAssertNil(ats["NSExceptionDomains"])
     }
 
@@ -34,7 +36,7 @@ final class IOSReleaseConfigurationTests: XCTestCase {
             }
         )
 
-        XCTAssertEqual(reasons["NSPrivacyAccessedAPICategoryUserDefaults"], ["CA92.1"])
+        XCTAssertEqual(reasons["NSPrivacyAccessedAPICategoryUserDefaults"], ["CA92.1", "1C8F.1"])
         XCTAssertEqual(reasons["NSPrivacyAccessedAPICategoryFileTimestamp"], ["C617.1", "3B52.1"])
         XCTAssertEqual(reasons["NSPrivacyAccessedAPICategorySystemBootTime"], ["35F9.1"])
     }
@@ -65,8 +67,8 @@ final class IOSReleaseConfigurationTests: XCTestCase {
         XCTAssertNil(experimental["com.apple.developer.healthkit"])
         XCTAssertNil(experimental["com.apple.developer.weatherkit"])
         XCTAssertNil(experimental["com.apple.developer.icloud-services"])
-        XCTAssertNil(experimental["com.apple.developer.applesignin"])
-        XCTAssertNil(experimental["aps-environment"])
+        XCTAssertEqual(experimental["com.apple.developer.applesignin"] as? [String], ["Default"])
+        XCTAssertEqual(experimental["aps-environment"] as? String, "$(APS_ENVIRONMENT)")
         XCTAssertNil(experimental["com.apple.developer.devicecheck.appattest-environment"])
         XCTAssertNil(stable["com.apple.developer.associated-domains"])
         XCTAssertNil(experimental["com.apple.developer.associated-domains"])
@@ -79,7 +81,14 @@ final class IOSReleaseConfigurationTests: XCTestCase {
         XCTAssertTrue(project.contains("CODE_SIGN_ENTITLEMENTS: iosApp/AmberAgentExperimental.entitlements"))
         XCTAssertTrue(project.contains("Prepare Experimental Info.plist"))
         XCTAssertTrue(project.contains("AmberExperimental-Info.plist"))
-        XCTAssertTrue(project.contains("UIBackgroundModes -json '[\"audio\",\"processing\"]'"))
+        let modesRange = try XCTUnwrap(project.range(
+            of: #"(?<=UIBackgroundModes -json ')\[[^']+\](?=')"#,
+            options: .regularExpression
+        ))
+        let modes = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(project[modesRange].utf8)) as? [String]
+        )
+        XCTAssertEqual(Set(modes), ["audio", "processing", "location"])
         XCTAssertFalse(project.contains("Enable Experimental Audio Background Mode"))
         XCTAssertTrue(project.contains("AmberAgentExperimentalConfiguredEntitlements"))
         XCTAssertTrue(project.contains("APS_ENVIRONMENT: production"))

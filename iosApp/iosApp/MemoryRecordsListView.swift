@@ -18,7 +18,8 @@ struct MemoryRecordsListView: View {
     }
 
     var body: some View {
-        ZStack {
+        let rows = filteredRecords
+        return ZStack {
             AmberTheme.background.ignoresSafeArea()
 
             ScrollView {
@@ -26,15 +27,26 @@ struct MemoryRecordsListView: View {
                     chrome
                     libraryToolbar
 
-                    if filteredRecords.isEmpty {
+                    if rows.isEmpty {
                         AmberFormGroup {
-                            MemoryEmptyState(isSearching: !persistence.records.isEmpty)
+                            if scopeFilter == .archived {
+                                MemoryEmptyState(
+                                    isSearching: !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                                    archived: true
+                                )
+                            } else {
+                                // 只剩归档记录（被取代、作废或过期）时库对用户而言是空的，不是"没有匹配"。
+                                MemoryEmptyState(isSearching: persistence.records.contains { !$0.archived })
+                            }
                         }
                     } else {
                         AmberFormGroup {
-                            ForEach(Array(filteredRecords.enumerated()), id: \.element.id) { index, record in
+                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, record in
                                 MemoryRecordRow(
                                     record: record,
+                                    memberCount: record.kind == .topic
+                                        ? IOSMemoryLibrary.liveMemberCount(of: record, in: persistence.records)
+                                        : 0,
                                     onEdit: {
                                         router.navigate(to: .memoryEdit(
                                             recordId: Int(record.id),
@@ -45,10 +57,13 @@ struct MemoryRecordsListView: View {
                                     },
                                     onDelete: {
                                         pendingDeleteRecord = record
+                                    },
+                                    onRestore: {
+                                        restore(record)
                                     }
                                 )
 
-                                if index < filteredRecords.count - 1 {
+                                if index < rows.count - 1 {
                                     MemoryDivider(leading: 14)
                                 }
                             }
@@ -102,7 +117,7 @@ struct MemoryRecordsListView: View {
                     .font(.title2.weight(.bold))
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
-                Text("\(persistence.records.filter { !$0.archived }.count) 条本地记忆")
+                Text("\(IOSMemoryLibrary.liveMemoryCount(persistence.records)) 条本地记忆")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(1)
@@ -127,7 +142,7 @@ struct MemoryRecordsListView: View {
         .padding(.bottom, 12)
     }
 
-    /// 记忆库工具条：搜索 + 四枚范围过滤（等分铺开，不做横滑簇拥）。
+    /// 记忆库工具条：搜索 + 五枚过滤（四个范围 + 已归档，等分铺开，不做横滑簇拥）。
     private var libraryToolbar: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
@@ -181,6 +196,35 @@ struct MemoryRecordsListView: View {
         .padding(.bottom, 12)
     }
 
+    /// 恢复归档记录：与删除相同的陈旧检查，失败回滚并提示。
+    private func restore(_ record: MemoryRecord) {
+        guard persistence.records.contains(where: { $0.id == record.id && $0.updatedAt == record.updatedAt }) else {
+            operationError = "这条记忆已在其他地方更新或删除，请重试。"
+            persistence.refresh()
+            return
+        }
+        let previousRecords = persistence.records
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        guard IosMemoryFactory.shared.restoreMemory(id: record.id, now: now) != nil else {
+            operationError = "这条记忆已不在归档中，请重试。"
+            persistence.refresh()
+            return
+        }
+        guard persistence.persist(previousRecords: previousRecords) else {
+            operationError = persistence.lastErrorMessage ?? "无法写入记忆。"
+            return
+        }
+        IOSMemoryWriteAuditStore.shared.record(
+            action: "restore",
+            status: "user_saved",
+            memoryId: Int(record.id),
+            scope: record.scope.wireName,
+            kind: record.kind.wireName,
+            contentPreview: IOSMemoryLibrary.preview(record.content)
+        )
+        persistence.refresh()
+    }
+
     private func delete(_ record: MemoryRecord) {
         guard persistence.records.contains(where: { $0.id == record.id && $0.updatedAt == record.updatedAt }) else {
             operationError = "这条记忆已在其他地方更新或删除，请重试。"
@@ -207,8 +251,11 @@ struct MemoryRecordsListView: View {
 
 struct MemoryRecordRow: View {
     let record: MemoryRecord
+    /// Live topic members (archived ones excluded); ignored for non-topic rows.
+    let memberCount: Int
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let onRestore: () -> Void
 
     private var isTopic: Bool { record.kind == .topic }
 
@@ -254,7 +301,18 @@ struct MemoryRecordRow: View {
                 }
 
                 HStack(spacing: 10) {
-                    if !isTopic {
+                    if record.archived {
+                        // 归档记录只读：恢复后才能编辑。
+                        Button(action: onRestore) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(AmberTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("恢复记忆")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                    } else if !isTopic {
                         Button(action: onEdit) {
                             Image(systemName: "pencil")
                                 .font(.system(size: 15, weight: .semibold))
@@ -282,11 +340,14 @@ struct MemoryRecordRow: View {
                 // 不对用户暴露内部 id / 召回候选等控制台语义。
                 MemoryTag(text: IOSMemoryLibrary.scopeTitle(record.scope))
                 MemoryTag(text: IOSMemoryLibrary.kindTitle(record.kind))
-                if isTopic, !record.memberIds.isEmpty {
-                    MemoryTag(text: "含 \(record.memberIds.count) 条", tint: AmberTheme.accent)
+                if isTopic, memberCount > 0 {
+                    MemoryTag(text: "含 \(memberCount) 条", tint: AmberTheme.accent)
                 }
                 if record.pinned {
                     MemoryTag(text: "置顶", tint: AmberTheme.accentAmber)
+                }
+                if record.archived {
+                    MemoryTag(text: "已归档")
                 }
                 Spacer(minLength: 0)
             }
@@ -338,17 +399,24 @@ struct MemoryScopeFilterChip: View {
 
 struct MemoryEmptyState: View {
     let isSearching: Bool
+    /// 已归档筛选下的空状态：说明归档的来源与可恢复性。
+    var archived = false
 
     private var title: String {
-        isSearching ? "没有匹配结果" : "暂无记忆"
+        if isSearching { return "没有匹配结果" }
+        return archived ? "没有已归档的记忆" : "暂无记忆"
     }
 
     private var message: String {
-        isSearching ? "换个关键词或范围再试。" : "点右上角新增，或在聊天中批准模型写入。"
+        if isSearching { return "换个关键词或范围再试。" }
+        return archived
+            ? "被更新取代、被你否定、过期或久未使用的记忆会归档在这里，可随时恢复。"
+            : "点右上角新增，或在聊天中批准模型写入。"
     }
 
     private var systemImage: String {
-        isSearching ? "magnifyingglass" : "tray"
+        if isSearching { return "magnifyingglass" }
+        return archived ? "archivebox" : "tray"
     }
 
     var body: some View {

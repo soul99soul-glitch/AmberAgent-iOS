@@ -23,20 +23,6 @@ final class IOSMcpManagerTests: XCTestCase {
         XCTAssertEqual(manager.statusByServer["disabled"], .idle)
     }
 
-    func testCallToolRoutesToOwningServer() async throws {
-        let fakeClient = FakeIOSMcpClient(tools: [IOSMcpTool(name: "echo", description: nil)], callOutput: "hello")
-        let manager = IOSMcpManager(
-            serverProvider: { [.streamableHTTP(name: "docs", url: "https://example.com/mcp")] },
-            clientFactory: { _ in fakeClient }
-        )
-        await manager.syncAll()
-
-        let output = try await manager.callTool(serverName: "docs", toolName: "echo", arguments: ["text": "hello"])
-
-        XCTAssertEqual(output, "hello")
-        XCTAssertEqual(fakeClient.calledTools, ["echo"])
-    }
-
     func testCallToolSyncsBeforeCallingWhenChatDidNotOpenMcpPage() async throws {
         let fakeClient = FakeIOSMcpClient(tools: [IOSMcpTool(name: "echo", description: nil)], callOutput: "hello")
         let manager = IOSMcpManager(

@@ -38,6 +38,8 @@ struct BoardView: View {
     @State private var deepReadTitle = ""
     @State private var manualText = ""
     @State private var searchQuery = ""
+    @State private var links = ""
+    @State private var readingMode = ReadingMode.synthesis
     @State private var selectedTemplateId = IOSDeepReadTemplate.defaultId
     @State private var deepReadMessage: String?
     @State private var deepReadMessageIsError = false
@@ -45,6 +47,8 @@ struct BoardView: View {
     @State private var isImportingDeepReadFile = false
     @State private var showCustomSourceSheet = false
     @State private var showHistorySheet = false
+    @State private var historyQuery = ""
+    @State private var historyFilter = HistoryFilter.all
     @State private var topicActionTarget: IOSHotTopic?
     @State private var appliedBoardSettings: BoardSettingsSignature?
     @State private var hotListMessage: String?
@@ -54,6 +58,42 @@ struct BoardView: View {
     @Environment(DocumentAccessStore.self) private var documentStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+
+    /// A close reading takes exactly one source (text, link, file or page) as the article itself.
+    private enum ReadingMode { case synthesis, closeReading, originalOnly }
+
+    private var closeReadingIndex: Int? { readingMode == .synthesis ? nil : 0 }
+
+    private enum HistoryFilter: CaseIterable {
+        case all, running, succeeded, failed
+
+        var title: LocalizedStringKey {
+            switch self {
+            case .all: "全部"
+            case .running: "生成中"
+            case .succeeded: "已完成"
+            case .failed: "失败"
+            }
+        }
+
+        func matches(_ status: IOSDeepReadTaskStatus) -> Bool {
+            switch self {
+            case .all: true
+            case .running: status == .running || status == .queued
+            case .succeeded: status == .succeeded
+            case .failed: status == .failed || status == .unsupported
+            }
+        }
+    }
+
+    private var visibleHistory: [IOSDeepReadTask] {
+        let query = historyQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return deepReadStore.history.filter { task in
+            historyFilter.matches(task.status)
+                && (query.isEmpty || task.title.localizedStandardContains(query)
+                    || task.resultMarkdown.localizedStandardContains(query))
+        }
+    }
 
     private struct BoardSettingsSignature: Equatable {
         let boardModelId: String?
@@ -126,6 +166,7 @@ struct BoardView: View {
                 .scrollIndicators(.hidden)
                 .background(AmberTheme.background.ignoresSafeArea())
                 .navigationTitle("深度阅读历史")
+                .searchable(text: $historyQuery, prompt: "搜索标题与正文")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("完成") { showHistorySheet = false }
@@ -145,12 +186,20 @@ struct BoardView: View {
                     .compactMap(\.url)
                     .first(where: { !$0.isEmpty })
                     .flatMap { URL(string: $0) }
+                // Close reading needs an article to read; discussion pages (weibo, zhihu…) have none.
+                let primaryIndex = (try? IOSDeepReadSourceNormalizer.hotTopicSources(topic: topic))
+                    .flatMap(DeepReadCloseReader.primaryIndex(in:))
                 TopicActionSheet(
                     title: topic.title,
                     sourceURL: sourceURL,
+                    canReadOriginal: primaryIndex != nil,
                     onDeepRead: {
                         topicActionTarget = nil
                         Task { await createDeepReadTask(topic: topic) }
+                    },
+                    onCloseRead: { originalOnly in
+                        topicActionTarget = nil
+                        Task { await createDeepReadTask(topic: topic, primaryIndex: primaryIndex, originalOnly: originalOnly) }
                     },
                     onOpenSource: {
                         if let sourceURL {
@@ -363,13 +412,37 @@ struct BoardView: View {
 
                     deepReadTextField(title: "搜索", text: $searchQuery, placeholder: "可选：搜索一个主题并纳入来源")
 
-                    Picker("版式", selection: $selectedTemplateId) {
-                        ForEach(IOSDeepReadTemplate.builtIns) { template in
-                            Text(verbatim: IOSAppLocalization.string(template.name, defaultValue: template.name))
-                                .tag(template.id)
+                    deepReadTextField(title: "链接", text: $links, placeholder: "可选：网页链接，多个用空格分隔")
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("阅读方式", selection: $readingMode) {
+                            Text("多源综述").tag(ReadingMode.synthesis)
+                            Text("精读").tag(ReadingMode.closeReading)
+                            Text("只读原文").tag(ReadingMode.originalOnly)
                         }
+                        .pickerStyle(.segmented)
+                        Text(readingModeNote)
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .pickerStyle(.segmented)
+
+                    // Generation templates shape topic syntheses; a close reading keeps the original's structure.
+                    if readingMode == .synthesis {
+                        Picker("生成模板", selection: $selectedTemplateId) {
+                            ForEach(DeepReadSynthesisTemplate.options, id: \.id) { option in
+                                Label(IOSAppLocalization.string(option.name, defaultValue: option.name), systemImage: option.symbol)
+                                    .tag(option.id)
+                            }
+                            ForEach(IOSDeepReadTemplateStore.shared.templates) { template in
+                                Text(verbatim: template.name).tag(template.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(AmberTheme.foreground)
+                    }
 
                     AmberGlassGroup(spacing: 16) {
                         HStack(spacing: 10) {
@@ -431,6 +504,14 @@ struct BoardView: View {
         }
     }
 
+    private var readingModeNote: String {
+        switch readingMode {
+        case .synthesis: "自动从多个角度搜索资料，再结合你提供的来源生成文章。"
+        case .closeReading: "以唯一的来源（文本、链接、文件或网页）为正文，配导读、模块和段落批注，并对照其他报道。"
+        case .originalOnly: "只抓取并排版原文，不调用模型；之后可以在文章页生成精读。"
+        }
+    }
+
     private func deepReadTextField(title: LocalizedStringKey, text: Binding<String>, placeholder: LocalizedStringKey) -> some View {
         HStack(spacing: 12) {
             Text(title)
@@ -449,18 +530,33 @@ struct BoardView: View {
     }
 
     private var deepReadHistorySection: some View {
-        VStack(spacing: 0) {
+        let tasks = visibleHistory
+        let filtering = historyFilter != .all || !historyQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                ForEach(HistoryFilter.allCases, id: \.self) { filter in
+                    BoardSettingsChip(title: filter.title, selected: historyFilter == filter) {
+                        historyFilter = filter
+                    }
+                    .accessibilityAddTraits(historyFilter == filter ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 4)
+            .sensoryFeedback(.selection, trigger: historyFilter)
             AmberSectionLabel(text: "历史")
             AmberFormGroup {
-                if deepReadStore.history.isEmpty {
-                    Text("还没有深度阅读任务。创建后会保存到本机历史。")
+                if tasks.isEmpty {
+                    Text(filtering ? "没有匹配的深度阅读。尝试其他关键词或状态。" : "还没有深度阅读任务。创建后会保存到本机历史。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
                 } else {
-                    ForEach(Array(deepReadStore.history.prefix(20).enumerated()), id: \.element.id) { index, task in
+                    // Searching and filtering reach the whole library; the unfiltered list stays at the latest 20.
+                    let shown = filtering ? tasks : Array(tasks.prefix(20))
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, task in
                         Button {
                             // 先收起历史 sheet，再在主导航栈上跳转到文章。两者是独立状态，
                             // 文章已 push 到 sheet 之下，收起 sheet 即直接露出文章，避免
@@ -471,7 +567,7 @@ struct BoardView: View {
                             IOSDeepReadHistoryRow(task: task)
                         }
                         .buttonStyle(.plain)
-                        if index < min(deepReadStore.history.count, 20) - 1 {
+                        if index < shown.count - 1 {
                             BoardCapabilityDivider()
                         }
                     }
@@ -492,8 +588,27 @@ struct BoardView: View {
             if !manualText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 sources.append(try IOSDeepReadSourceNormalizer.manualText(title: deepReadTitle, text: manualText))
             }
-            if includeConversation, let source = try? conversationStore.currentConversationDeepReadSource() {
+            for link in links.split(whereSeparator: \.isWhitespace) {
+                let value = link.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty else { continue }
+                guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+                    deepReadMessage = "网页链接需要完整的 http 或 https 地址：\(value)"
+                    deepReadMessageIsError = true
+                    return
+                }
+                sources.append(IOSDeepReadSource(kind: .searchResult, title: url.host ?? value, content: value, url: value))
+            }
+            // A close reading reads one given source; the current conversation only stands in when there is none.
+            if includeConversation, readingMode == .synthesis || sources.isEmpty,
+               let source = try? conversationStore.currentConversationDeepReadSource() {
                 sources.append(source)
+            }
+            if readingMode != .synthesis {
+                guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, sources.count == 1 else {
+                    deepReadMessage = "精读和只读原文需要恰好一个来源：一段文本、一个链接、一个文件或当前网页。"
+                    deepReadMessageIsError = true
+                    return
+                }
             }
             if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 do {
@@ -516,9 +631,11 @@ struct BoardView: View {
                     ))
                 }
             }
-            try createAndGenerateTask(title: deepReadTitle, sources: sources, templateId: selectedTemplateId)
+            try createAndGenerateTask(title: deepReadTitle, sources: sources, templateId: selectedTemplateId,
+                                      primaryIndex: closeReadingIndex, originalOnly: readingMode == .originalOnly)
             manualText = ""
             searchQuery = ""
+            links = ""
             showCustomSourceSheet = false
         } catch {
             deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
@@ -526,7 +643,7 @@ struct BoardView: View {
         }
     }
 
-    private func createDeepReadTask(topic: IOSHotTopic) async {
+    private func createDeepReadTask(topic: IOSHotTopic, primaryIndex: Int? = nil, originalOnly: Bool = false) async {
         guard !isCreatingDeepRead else { return }
         isCreatingDeepRead = true
         deepReadMessage = nil
@@ -540,7 +657,9 @@ struct BoardView: View {
             try createAndGenerateTask(
                 title: topic.title,
                 sources: baseSources,
-                templateId: sharedSettings.todayBoard.deepReadTemplateId
+                templateId: sharedSettings.todayBoard.deepReadTemplateId,
+                primaryIndex: primaryIndex,
+                originalOnly: originalOnly
             )
         } catch {
             deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
@@ -551,12 +670,16 @@ struct BoardView: View {
     private func createAndGenerateTask(
         title: String,
         sources: [IOSDeepReadSource],
-        templateId: String
+        templateId: String,
+        primaryIndex: Int? = nil,
+        originalOnly: Bool = false
     ) throws {
         try IOSDeepReadLauncher.createAndGenerate(
             title: title,
             sources: sources,
             templateId: templateId,
+            primaryIndex: primaryIndex,
+            originalOnly: originalOnly,
             sharedSettings: sharedSettings,
             navigate: { router.navigate(to: .deepReadTask(id: $0)) },
             onStatus: { message, isError in
@@ -634,7 +757,9 @@ struct BoardView: View {
                 try createAndGenerateTask(
                     title: source.title,
                     sources: [source],
-                    templateId: sharedSettings.todayBoard.deepReadTemplateId
+                    templateId: sharedSettings.todayBoard.deepReadTemplateId,
+                    primaryIndex: closeReadingIndex,
+                    originalOnly: readingMode == .originalOnly
                 )
             } catch {
                 deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
@@ -665,7 +790,9 @@ struct BoardView: View {
                         try createAndGenerateTask(
                             title: source.title,
                             sources: [source],
-                            templateId: sharedSettings.todayBoard.deepReadTemplateId
+                            templateId: sharedSettings.todayBoard.deepReadTemplateId,
+                            primaryIndex: closeReadingIndex,
+                            originalOnly: readingMode == .originalOnly
                         )
                     } catch {
                         deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
@@ -810,6 +937,12 @@ private struct IOSDeepReadHistoryRow: View {
     }
 
     private var historySummary: String {
+        let sourceSummary = task.localizedSourceSummary
+        func joined(_ label: String) -> String { sourceSummary.isEmpty ? label : "\(label) · \(sourceSummary)" }
+        if let primary = task.sources.first(where: DeepReadCloseReader.isPrimary) {
+            return joined(primary.metadata[DeepReadCloseReader.originalOnlyKey] == "true" ? "原文" : "精读")
+        }
+        if let synthesis = DeepReadSynthesisTemplate(rawValue: task.templateId) { return joined(synthesis.name) }
         let template = task.template
         let isBuiltIn = template.id == IOSDeepReadTemplate.magazine.id
             || template.id == IOSDeepReadTemplate.editorial.id
@@ -817,8 +950,7 @@ private struct IOSDeepReadHistoryRow: View {
         let templateName = isBuiltIn
             ? IOSAppLocalization.string(template.name, defaultValue: template.name)
             : template.name
-        let sourceSummary = task.localizedSourceSummary
-        return sourceSummary.isEmpty ? templateName : "\(templateName) · \(sourceSummary)"
+        return joined(templateName)
     }
 
     private var iconName: String {
@@ -931,6 +1063,16 @@ struct IOSDeepReadTaskDetailView: View {
     /// and leaves a blank gap above「相关报道」.
     @State private var editorialHeight: CGFloat = 1
     @State private var isRetryingWorkspaceSync = false
+    /// Decoded once per task change; the body and header read them many times per update.
+    @State private var closeReading: DeepReadCloseReading?
+    @State private var templateArticle: DeepReadTemplateArticle?
+    /// Nil follows the article: original when it has no guide yet, close reading otherwise.
+    @State private var originalChoice: Bool?
+    /// The `structuredJSON` the two values above were decoded from. The article waits until they
+    /// match the task: loading one page and replacing it a frame later makes the reader drop the second.
+    @State private var decodedJSON: String?? = .none
+    @Bindable private var appearance = DeepReadAppearance.shared
+    @State private var press: PressMoment?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(RouterPath.self) private var router
     @Environment(IOSConversationStore.self) private var conversationStore
@@ -938,6 +1080,13 @@ struct IOSDeepReadTaskDetailView: View {
 
     private var task: IOSDeepReadTask? {
         store.task(id: taskId)
+    }
+
+    private var showsOriginal: Bool { closeReading.map { originalChoice ?? !$0.hasGuide } ?? false }
+
+    private struct PressMoment: Equatable {
+        let inscription: String
+        let caption: String
     }
 
     // 三种 UI 状态:生成中(骨架)/ 完成(编辑器正文)/ 失败(琥珀横幅)。心智:阅读面是实的,
@@ -992,6 +1141,19 @@ struct IOSDeepReadTaskDetailView: View {
             header
             toastView
         }
+        .overlay {
+            if let press {
+                IOSDeepReadPressMoment(inscription: press.inscription, caption: press.caption)
+                    .transition(.opacity)
+                    .onTapGesture { withAnimation(.easeOut) { self.press = nil } }
+            }
+        }
+        .task(id: press) {
+            guard let press else { return }
+            // A replaced or dismissed seal cancels this task; don't clear its successor.
+            guard (try? await Task.sleep(for: .seconds(press.inscription == "付印" ? 1.4 : 2.6))) != nil else { return }
+            withAnimation(.easeOut(duration: 0.4)) { self.press = nil }
+        }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
@@ -999,7 +1161,26 @@ struct IOSDeepReadTaskDetailView: View {
         }
         .onChange(of: taskId) { _, _ in
             editorialHeight = 1
+            originalChoice = nil
         }
+        .onChange(of: task, initial: true) { old, task in
+            closeReading = DeepReadCloseReading.decode(task?.structuredJSON)
+            templateArticle = closeReading == nil ? DeepReadTemplateArticle.decode(task?.structuredJSON) : nil
+            decodedJSON = .some(task?.structuredJSON)
+            // A run that finished while the reader watched. A retry that only restored the
+            // previous article after a failure leaves the text unchanged and is not a fresh print.
+            guard let old, let new = task, old.id == new.id, old.status == .running || old.status == .queued, new.status == .succeeded,
+                  new.resultMarkdown != old.resultMarkdown,
+                  let seal = DeepReadMoment.pressSeal(
+                    finishedWithError: false,
+                    wasFirstDraft: old.resultMarkdown.isEmpty,
+                    completedCount: store.tasks.filter { $0.status == .succeeded }.count)
+            else { return }
+            withAnimation(.easeIn(duration: 0.2)) { press = PressMoment(inscription: seal.inscription, caption: seal.caption) }
+        }
+        .sensoryFeedback(.selection, trigger: originalChoice)
+        .sensoryFeedback(.selection, trigger: appearance.readerStyle)
+        .sensoryFeedback(.selection, trigger: appearance.readerLayout)
     }
 
     // 浮动玻璃顶栏:返回左对齐,操作组右对齐(完成→分享,失败→重试)。底部渐变模糊。
@@ -1018,8 +1199,38 @@ struct IOSDeepReadTaskDetailView: View {
                         retry()
                     }
                 case .done:
-                    Menu {
-                        ShareLink(item: "\(task.title)\n\n\(task.resultMarkdown)") {
+                    // Only a reading with a guide has two views to switch between.
+                    if let reading = closeReading, reading.hasGuide {
+                        Picker("阅读方式", selection: Binding(get: { showsOriginal }, set: { originalChoice = $0 })) {
+                            Text("精读").tag(false)
+                            Text("原文").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+                    if let reading = closeReading, !reading.hasGuide, task.status == .succeeded {
+                        AmberGlassCircleButton(systemImage: "sparkles", accessibilityLabel: "生成精读", size: 44, symbolSize: 17) {
+                            annotate(task)
+                        }
+                    }
+                    // Custom HTML templates bring their own look, so styles only apply to built-in pages.
+                    if customTemplateHTML(task) == nil {
+                        glassCircleMenu(systemImage: "textformat", accessibilityLabel: "版式与样式") {
+                            // Close readings and template articles have no magazine sections to reorder.
+                            if closeReading == nil, templateArticle == nil {
+                                Picker("版式", selection: $appearance.readerLayout) {
+                                    ForEach(DeepReadReaderLayout.allCases) { Label($0.name, systemImage: $0.symbol).tag($0) }
+                                }
+                                .pickerStyle(.menu)
+                            }
+                            Picker("样式", selection: $appearance.readerStyle) {
+                                ForEach(DeepReadReaderStyle.allCases) { Text($0.name).tag($0) }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    }
+                    glassCircleMenu(systemImage: "square.and.arrow.up", accessibilityLabel: "分享与导出") {
+                        ShareLink(item: DeepReadTextExporter.text(from: shareMarkdown(task))) {
                             Label("分享文本", systemImage: "text.alignleft")
                         }
                         Button("导出为 Markdown", systemImage: "doc.plaintext") {
@@ -1030,21 +1241,7 @@ struct IOSDeepReadTaskDetailView: View {
                             AmberHaptics.trigger(.lightImpact)
                             shareDeepRead(task, asPDF: true)
                         }
-                    } label: {
-                        // 与左侧 AmberGlassCircleButton 同一套玻璃圆形样式、图标字号与颜色；
-                        // 导出进度与失败走 App 级 IOSShareActivity 浮层，与对话导出一致。
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(AmberTheme.foreground)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .menuStyle(.button)
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .controlSize(.mini)
-                    .buttonSizing(.flexible)
-                    .frame(width: 44, height: 44)
-                    .accessibilityLabel("分享与导出")
                 case .generating:
                     EmptyView()
                 }
@@ -1069,6 +1266,36 @@ struct IOSDeepReadTaskDetailView: View {
                 )
                 .ignoresSafeArea(edges: .top)
         }
+    }
+
+    // 与左侧 AmberGlassCircleButton 同一套玻璃圆形样式、图标字号与颜色；
+    // 导出进度与失败走 App 级 IOSShareActivity 浮层，与对话导出一致。
+    private func glassCircleMenu<Content: View>(
+        systemImage: String,
+        accessibilityLabel: LocalizedStringKey,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Menu {
+            content()
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(AmberTheme.foreground)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .controlSize(.mini)
+        .buttonSizing(.flexible)
+        .frame(width: 44, height: 44)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// 正文已自带一级标题时不再重复加。
+    private func shareMarkdown(_ task: IOSDeepReadTask) -> String {
+        let body = task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        return body.hasPrefix("# ") ? body : "# \(task.title)\n\n\(body)"
     }
 
     // 顶部浮动 toast(重试反馈),~1.7s 自动消失。
@@ -1130,8 +1357,7 @@ struct IOSDeepReadTaskDetailView: View {
         state(for: task) == .done
             && task.workspaceSyncFailed == nil
             && (task.missingSections ?? []).isEmpty
-            && !(task.templateId.hasPrefix(IOSDeepReadTemplate.customPrefix)
-                && templateStore.template(id: task.templateId) != nil)
+            && customTemplateHTML(task) == nil
     }
 
     @ViewBuilder
@@ -1155,15 +1381,10 @@ struct IOSDeepReadTaskDetailView: View {
     private func content(_ task: IOSDeepReadTask) -> some View {
         switch state(for: task) {
         case .generating:
-            DeepReadMagazineSkeleton(
-                dimmed: false,
-                progressLabel: store.progressLabel(for: task.id)
-            )
+            IOSDeepReadNewsroomView(title: task.title, progressLabel: store.progressLabel(for: task.id))
         case .failed:
             failBanner(task)
-            if task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                DeepReadMagazineSkeleton(dimmed: true)
-            } else {
+            if !task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 articleContent(task)
             }
         case .done:
@@ -1173,7 +1394,9 @@ struct IOSDeepReadTaskDetailView: View {
 
     @ViewBuilder
     private func articleContent(_ task: IOSDeepReadTask) -> some View {
-        if let html = customTemplateHTML(task) {
+        if decodedJSON != .some(task.structuredJSON) {
+            EmptyView()
+        } else if let html = customTemplateHTML(task) {
             IOSDeepReadTemplateWebView(html: html)
                 .frame(minHeight: 560)
                 .frame(maxWidth: .infinity)
@@ -1181,7 +1404,9 @@ struct IOSDeepReadTaskDetailView: View {
         } else {
             // 完成:编辑器 HTML 阅读器(body-only,标题由上方 masthead 提供)。关掉 WebView
             // 内部滚动、按内容高度自适应,整篇随详情页一起滚动。
-            IOSDeepReadEditorialWebView(html: editorialHTML(task), contentHeight: $editorialHeight)
+            // Close readings and template articles carry the original's images inside the page.
+            IOSDeepReadEditorialWebView(html: articleHTML(task), contentHeight: $editorialHeight,
+                                        allowsRemoteImages: closeReading != nil || templateArticle != nil)
                 .frame(height: editorialHeight)
                 .frame(maxWidth: .infinity)
                 .id(task.id)
@@ -1261,8 +1486,12 @@ struct IOSDeepReadTaskDetailView: View {
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(AmberTheme.foreground)
                         Text(verbatim: IOSAppLocalization.formatted(
-                            "以下模块未能生成：%@。重新生成只重跑这些缺失段落。",
-                            defaultValue: "以下模块未能生成：%@。重新生成只重跑这些缺失段落。",
+                            closeReading != nil
+                                ? "以下模块未能生成：%@。重新生成会重新读取原文与其他报道。"
+                                : "以下模块未能生成：%@。重新生成只重跑这些缺失段落。",
+                            defaultValue: closeReading != nil
+                                ? "以下模块未能生成：%@。重新生成会重新读取原文与其他报道。"
+                                : "以下模块未能生成：%@。重新生成只重跑这些缺失段落。",
                             arguments: [missing.map {
                                 IOSAppLocalization.string($0, defaultValue: $0)
                             }.joined(separator: "、")]
@@ -1358,6 +1587,10 @@ struct IOSDeepReadTaskDetailView: View {
     }
 
     private func kicker(_ task: IOSDeepReadTask) -> String {
+        if let closeReading {
+            return showsOriginal ? "原文" : "精读 · " + DeepReadCloseReading.genreLabel(closeReading.genre)
+        }
+        if let templateArticle { return templateArticle.kind.name }
         let topicType = decodeStructured(task)?.topicType.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return topicType.isEmpty
             ? IOSAppLocalization.string("深度阅读", defaultValue: "深度阅读").uppercased()
@@ -1402,6 +1635,18 @@ struct IOSDeepReadTaskDetailView: View {
         }
     }
 
+    private func annotate(_ task: IOSDeepReadTask) {
+        guard let sharedSettings else {
+            showToast(IOSAppLocalization.string("当前设置不可用，无法重试", defaultValue: "当前设置不可用，无法重试"))
+            return
+        }
+        AmberHaptics.trigger(.lightImpact)
+        originalChoice = nil
+        IOSDeepReadLauncher.annotate(taskId: task.id, sharedSettings: sharedSettings) { message, isError in
+            showToast(isError ? IOSDeepReadUserFacingText.sanitize(message) : message)
+        }
+    }
+
     private func retryWorkspaceSync(_ task: IOSDeepReadTask) {
         guard !isRetryingWorkspaceSync else { return }
         isRetryingWorkspaceSync = true
@@ -1418,6 +1663,8 @@ struct IOSDeepReadTaskDetailView: View {
     /// editorial renderer used to use (task source `hero_image_url`, else the structured
     /// output's `heroImageUrl`), so the cover shows the same image — now above the title.
     private func coverImageURL(_ task: IOSDeepReadTask) -> String? {
+        // Close readings and template articles place their own images inside the page.
+        guard closeReading == nil, templateArticle == nil else { return nil }
         let metaHero = task.sources
             .compactMap { $0.metadata["hero_image_url"] }
             .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
@@ -1477,10 +1724,7 @@ struct IOSDeepReadTaskDetailView: View {
                     let data = try await IOSHTMLPDFRenderer.render(html: try pdfHTML(task))
                     url = try IOSShareFileWriter.write(data, fileName: task.title, pathExtension: "pdf")
                 } else {
-                    let body = task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
-                    // 正文已自带一级标题时不再重复加。
-                    let markdown = body.hasPrefix("# ") ? body : "# \(task.title)\n\n\(body)"
-                    url = try IOSShareFileWriter.write(Data(markdown.utf8), fileName: task.title, pathExtension: "md")
+                    url = try IOSShareFileWriter.write(Data(shareMarkdown(task).utf8), fileName: task.title, pathExtension: "md")
                 }
                 let presented = await IOSShareSheet.present([url])
                 activity.end(failure: presented ? nil : "当前无法弹出分享面板，请稍后重试。")
@@ -1496,7 +1740,7 @@ struct IOSDeepReadTaskDetailView: View {
         let usesCustomTemplate = task.templateId.hasPrefix(IOSDeepReadTemplate.customPrefix)
             && templateStore.template(id: task.templateId) != nil
         guard usesCustomTemplate else {
-            return IOSHTMLPDFRenderer.printFriendly(editorialHTML(task, forPrint: true))
+            return IOSHTMLPDFRenderer.printFriendly(articleHTML(task, forPrint: true))
         }
         // 模板存在却渲染失败时明确报错，不静默退回默认版式（模板已删除时详情页与 PDF 都用默认版式）。
         guard let html = customTemplateHTML(task) else {
@@ -1509,9 +1753,52 @@ struct IOSDeepReadTaskDetailView: View {
         return IOSHTMLPDFRenderer.printFriendly(html)
     }
 
+    /// Reader canvas colors: the app theme's palette, so the article follows the chosen background
+    /// (paper or immersive) like the native masthead around it. PDF uses the light paper, because
+    /// immersive canvases have no real light variant.
+    private func readerPalette(forPrint: Bool) -> DeepReadCloseReadingRenderer.Palette {
+        let dark = !forPrint && colorScheme == .dark
+        let runtime = AmberThemeRuntime.shared
+        let paper = runtime.paper
+        let palette = forPrint
+            ? (paper.isImmersive ? AmberTheme.paperLight : paper.lightPalette)
+            : AmberTheme.resolvedCanvasPalette(paper: paper, design: runtime.design, dark: dark)
+        func hex(_ value: UInt32) -> String { String(format: "#%06X", value) }
+        return .init(accent: hex(runtime.accentHex), bg: hex(palette.background), fg: hex(palette.foreground),
+                     surface: hex(palette.surface), muted: hex(palette.muted), border: hex(palette.border), dark: dark)
+    }
+
+    /// Untextured canvas: the page background is the same solid color, so a transparent article is seamless.
+    private func transparentCanvas(forPrint: Bool) -> Bool {
+        !forPrint && !AmberThemeRuntime.shared.showsCanvasTexture(on: .app)
+    }
+
+    private var readerFontScale: Double { Double(sharedSettings?.todayBoard.deepReadFontScale ?? 1) }
+    private var readerFontMode: String { sharedSettings?.todayBoard.boardReadingFontMode.wireName ?? "serif" }
+
+    /// Built-in article page: close reading, template article or the magazine editorial.
+    private func articleHTML(_ task: IOSDeepReadTask, forPrint: Bool = false) -> String {
+        guard closeReading != nil || templateArticle != nil else { return editorialHTML(task, forPrint: forPrint) }
+        let palette = readerPalette(forPrint: forPrint)
+        var css = appearance.readerStyle.css
+        if forPrint {
+            // The PDF loads no remote images (CSP), so they are hidden instead of leaving empty frames.
+            css += "\nimg,figure{display:none!important;}"
+        } else {
+            // The native masthead carries the kicker and title on screen.
+            css += "\n.headline>.kicker,.headline>h1{display:none;}"
+            if transparentCanvas(forPrint: false) { css += "\nhtml,body{background:transparent;}" }
+        }
+        if let closeReading {
+            return DeepReadCloseReadingRenderer.html(closeReading, palette: palette, fontMode: readerFontMode, styleCSS: css,
+                                                     scale: readerFontScale, originalOnly: showsOriginal, expandNotes: forPrint)
+        }
+        return DeepReadTemplateArticleRenderer.html(templateArticle!, palette: palette, fontMode: readerFontMode,
+                                                    styleCSS: css, scale: readerFontScale)
+    }
+
     /// `forPrint` 用于导出 PDF：固定浅色、带标题（详情页的原生标题/封面不会进入 PDF）。
     private func editorialHTML(_ task: IOSDeepReadTask, forPrint: Bool = false) -> String {
-        let dark = !forPrint && colorScheme == .dark
         // Structured output (when the LLM produced it) drives the rich cards; else the
         // renderer falls back to the flat-markdown body.
         let structured: IOSDeepReadOutput? = task.structuredJSON
@@ -1520,18 +1807,9 @@ struct IOSDeepReadTaskDetailView: View {
         let kicker = (structured?.topicType.isEmpty == false)
             ? structured!.topicType.uppercased()
             : IOSAppLocalization.string("深度阅读", defaultValue: "深度阅读").uppercased()
-        // Resolve the app theme's canvas palette for the current appearance, so the reader
-        // follows the chosen background (paper or immersive) — same colors as the native
-        // masthead/sources around it. Immersive canvases share one palette across light/dark.
-        // 详情页与原生 AmberTheme 同源（含设计主题的颜色覆盖）。
-        // PDF 仍用纸张调色板：沉浸色画布没有真正的浅色版（深底浅字），回退到纸张浅色，保证打印可读。
-        let runtime = AmberThemeRuntime.shared
-        let paper = runtime.paper
-        let palette = forPrint
-            ? (paper.isImmersive ? AmberTheme.paperLight : paper.lightPalette)
-            : AmberTheme.resolvedCanvasPalette(paper: paper, design: runtime.design, dark: dark)
-        func hex(_ value: UInt32) -> String { String(format: "#%06X", value) }
-        return IOSDeepReadEditorialRenderer.renderHTML(
+        let palette = readerPalette(forPrint: forPrint)
+        let layout = appearance.readerLayout
+        let html = IOSDeepReadEditorialRenderer.renderHTML(
             IOSDeepReadEditorialRenderer.Input(
                 title: task.title,
                 markdown: task.resultMarkdown,
@@ -1542,24 +1820,32 @@ struct IOSDeepReadTaskDetailView: View {
                 heroImageURL: nil,
                 heroCaption: nil,
                 sourceLabel: nil,
-                dark: dark,
+                dark: palette.dark,
                 structured: structured,
+                sectionOrder: layout.order,
                 showHeadline: forPrint,
-                accentHex: hex(AmberThemeRuntime.shared.accentHex),
-                fontMode: sharedSettings?.todayBoard.boardReadingFontMode.wireName ?? "serif",
-                bgHex: hex(palette.background),
-                fgHex: hex(palette.foreground),
-                surfaceHex: hex(palette.surface),
-                mutedHex: hex(palette.muted),
-                borderHex: hex(palette.border),
+                accentHex: palette.accent,
+                fontMode: readerFontMode,
+                bgHex: palette.bg,
+                fgHex: palette.fg,
+                surfaceHex: palette.surface,
+                mutedHex: palette.muted,
+                borderHex: palette.border,
                 // 无纹理画布：页面背景就是同一纯色，正文透明即无缝；有纹理时保持纯色以保可读。
-                transparentCanvas: !forPrint && !runtime.showsCanvasTexture(on: .app)
+                transparentCanvas: transparentCanvas(forPrint: forPrint)
             )
+        )
+        // 版式与阅读样式只叠加一层 CSS；字号按设置缩放整篇正文。
+        return html.replacingOccurrences(
+            of: "</head>",
+            with: "<style>\(layout.css)\n\(appearance.readerStyle.css)\nbody{zoom:\(readerFontScale)}</style></head>"
         )
     }
 
     private func customTemplateHTML(_ task: IOSDeepReadTask) -> String? {
-        guard task.templateId.hasPrefix(IOSDeepReadTemplate.customPrefix),
+        // Close readings and template articles have their own structure and always use the built-in page.
+        guard closeReading == nil, templateArticle == nil,
+              task.templateId.hasPrefix(IOSDeepReadTemplate.customPrefix),
               let template = templateStore.template(id: task.templateId) else {
             return nil
         }
@@ -1669,6 +1955,7 @@ struct IOSDeepReadTemplateWebView: View {
 struct IOSDeepReadEditorialWebView: UIViewRepresentable {
     let html: String
     @Binding var contentHeight: CGFloat
+    var allowsRemoteImages = false
 
     /// Document height the frame must give the article (internal scroll is off). Measures to
     /// the article's bottom edge, not its height: the first section's top margin collapses
@@ -1694,6 +1981,18 @@ struct IOSDeepReadEditorialWebView: UIViewRepresentable {
         // Serve the app-bundled reader fonts (Noto Serif SC / JetBrains Mono) to the
         // page's @font-face via a custom scheme.
         configuration.setURLSchemeHandler(IOSDeepReadFontSchemeHandler(), forURLScheme: IOSDeepReadFontSchemeHandler.scheme)
+        // Content that changes height after load (a close reading's footnotes open and close)
+        // reports its new height; the fixed 0/280/800ms remeasure only covers the first paint.
+        configuration.userContentController.add(context.coordinator, name: Coordinator.heightMessage)
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: """
+            new ResizeObserver(function() {
+              window.webkit.messageHandlers.\(Coordinator.heightMessage).postMessage(\(Self.measureHeightScript.trimmingCharacters(in: CharacterSet(charactersIn: " \n;"))));
+            }).observe(document.body);
+            """,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.isOpaque = false
@@ -1716,7 +2015,7 @@ struct IOSDeepReadEditorialWebView: UIViewRepresentable {
         // request handed to the handler → fail → blank page). Fonts then load
         // cross-origin via the handler's Access-Control-Allow-Origin: * response.
         webView.loadHTMLString(
-            IOSDeepReadHTMLSecurity.hardenedDocument(html),
+            IOSDeepReadHTMLSecurity.hardenedDocument(html, allowsRemoteImages: allowsRemoteImages),
             baseURL: URL(string: IOSDeepReadFontSchemeHandler.documentBaseURL)
         )
     }
@@ -1725,7 +2024,8 @@ struct IOSDeepReadEditorialWebView: UIViewRepresentable {
         Coordinator(onHeight: { [binding = $contentHeight] in binding.wrappedValue = $0 })
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        static let heightMessage = "deepReadHeight"
         private let onHeight: @MainActor (CGFloat) -> Void
         var loadedHTML: String?
         var lastHeight: CGFloat = 0
@@ -1792,6 +2092,11 @@ struct IOSDeepReadEditorialWebView: UIViewRepresentable {
             }
         }
 
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let height = (message.body as? NSNumber).map({ CGFloat(truncating: $0) }), height > 0 else { return }
+            publishHeight(height.rounded(.up))
+        }
+
         private func publishHeight(_ height: CGFloat) {
             guard abs(height - lastHeight) > 0.5 else { return }
             lastHeight = height
@@ -1829,6 +2134,7 @@ struct IOSDeepReadEditorialWebView: UIViewRepresentable {
 struct IOSDeepReadEditorialWebView: View {
     let html: String
     @Binding var contentHeight: CGFloat
+    var allowsRemoteImages = false
 
     var body: some View {
         Text("当前平台不支持 HTML 阅读器。")
@@ -1875,7 +2181,9 @@ struct BoardCapabilityNote: View {
 private struct TopicActionSheet: View {
     let title: String
     let sourceURL: URL?
+    let canReadOriginal: Bool
     let onDeepRead: () -> Void
+    let onCloseRead: (_ originalOnly: Bool) -> Void
     let onOpenSource: () -> Void
     let onRegenerate: () -> Void
 
@@ -1892,6 +2200,10 @@ private struct TopicActionSheet: View {
 
             VStack(spacing: 10) {
                 TopicActionRow(icon: "book.pages", title: "深度阅读", prominent: true, action: onDeepRead)
+                if canReadOriginal {
+                    TopicActionRow(icon: "doc.text.magnifyingglass", title: "精读原文") { onCloseRead(false) }
+                    TopicActionRow(icon: "doc.plaintext", title: "只读原文") { onCloseRead(true) }
+                }
                 if sourceURL != nil {
                     TopicActionRow(icon: "safari", title: "打开原文", action: onOpenSource)
                 }
@@ -1948,6 +2260,7 @@ private struct TopicActionRow: View {
 /// 让等待阶段也保有阅读器的精致感。
 // 杂志结构骨架屏:铺在实色阅读面上(非玻璃卡片)。deck 行 + 进度行(spinner + 衬线标签
 // + 「排版中」meta)+ 导读 / 左竖线 pullquote / 要点 / 双栏。dimmed = 失败态(降透明、spinner 停)。
+// 死代码：生成中页面已改用 IOSDeepReadNewsroomView，此骨架不再被引用；确认后可删除。
 private struct DeepReadMagazineSkeleton: View {
     var dimmed: Bool = false
     var progressLabel: String? = nil

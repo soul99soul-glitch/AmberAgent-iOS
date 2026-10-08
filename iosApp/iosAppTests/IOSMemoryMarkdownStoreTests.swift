@@ -50,7 +50,7 @@ final class IOSMemoryMarkdownStoreTests: XCTestCase {
             id: 9, content: "手冲为主", scope: .longTerm, kind: .topic,
             assistantId: "__long_term__", sourceConversationId: nil, sourceMessageIds: [],
             supersedesIds: [], expiresAt: nil, confidence: 1, pinned: false, archived: true,
-            createdAt: 1, updatedAt: 2, lastUsedAt: nil, topicTitle: "咖啡偏好", memberIds: [KotlinInt(value: 2)]
+            createdAt: 1, updatedAt: 2, lastUsedAt: nil, topicTitle: "咖啡偏好", memberIds: [KotlinInt(value: 2)], lastReinforcedAt: nil
         )
         store.syncIfChanged(records: [member, loose, archived])
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: topicsDir.path), [])
@@ -157,7 +157,7 @@ final class IOSMemoryMarkdownStoreTests: XCTestCase {
             assistantId: "__long_term__", sourceConversationId: nil, sourceMessageIds: [],
             supersedesIds: [], expiresAt: nil, confidence: 1, pinned: false, archived: false,
             createdAt: updatedAt, updatedAt: updatedAt, lastUsedAt: nil,
-            topicTitle: nil, memberIds: []
+            topicTitle: nil, memberIds: [], lastReinforcedAt: nil
         )
     }
 
@@ -167,7 +167,7 @@ final class IOSMemoryMarkdownStoreTests: XCTestCase {
             assistantId: "__long_term__", sourceConversationId: nil, sourceMessageIds: [],
             supersedesIds: [], expiresAt: nil, confidence: 1, pinned: false, archived: false,
             createdAt: 1, updatedAt: 1, lastUsedAt: nil,
-            topicTitle: title, memberIds: memberIds.map { KotlinInt(value: $0) }
+            topicTitle: title, memberIds: memberIds.map { KotlinInt(value: $0) }, lastReinforcedAt: nil
         )
     }
 }

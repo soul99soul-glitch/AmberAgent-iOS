@@ -31,15 +31,39 @@ import kotlin.test.assertTrue
 class IosToolExposureBridgeTest {
 
     @Test
-    fun siteMemoryProposalCannotAutoApproveWhileReadRemainsReadOnly() {
+    fun siteMemoryProposalSupportsHighRiskApprovalWhileReadRemainsReadOnly() {
         val tool = iosToolDeclarations(listOf("wm_site_memory")).single()
         val read = tool.invocationPolicy("""{"host":"github.com","action":"read"}""")
         val propose = tool.invocationPolicy("""{"host":"github.com","action":"propose"}""")
         assertFalse(read.needsApproval)
         assertFalse(read.mandatoryApproval)
+        assertFalse(read.mutates)
+        assertEquals(ToolRisk.Normal, read.risk)
+        assertTrue(read.autoApprovable)
+        assertTrue(read.concurrencySafe)
         assertTrue(propose.needsApproval)
-        assertTrue(propose.mandatoryApproval)
-        assertFalse(propose.autoApprovable)
+        assertFalse(propose.mandatoryApproval)
+        assertTrue(propose.mutates)
+        assertEquals(ToolRisk.Sensitive, propose.risk)
+        assertTrue(propose.autoApprovable)
+        assertFalse(propose.concurrencySafe)
+    }
+
+    @Test
+    fun siteMemoryProposalSchemaRequiresExplicitOperationAndBoundsBatch() {
+        val tool = iosToolDeclarations(listOf("wm_site_memory")).single()
+        val parameters = assertIs<InputSchema.Obj>(tool.parameters())
+        val changes = parameters.properties.getValue("changes").jsonObject
+        val item = changes.getValue("items").jsonObject
+
+        assertEquals(listOf("operation"), item.getValue("required").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(1, changes.getValue("minItems").jsonPrimitive.int)
+        assertEquals(8, changes.getValue("maxItems").jsonPrimitive.int)
+        assertEquals(
+            listOf("add", "update", "delete"),
+            item.getValue("properties").jsonObject.getValue("operation").jsonObject
+                .getValue("enum").jsonArray.map { it.jsonPrimitive.content },
+        )
     }
 
     private val json = Json { ignoreUnknownKeys = true }

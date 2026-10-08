@@ -70,7 +70,7 @@ final class IOSP1BatchTests: XCTestCase {
             updatedAt: updatedAt,
             lastUsedAt: KotlinLong(value: updatedAt),
             topicTitle: nil,
-            memberIds: []
+            memberIds: [], lastReinforcedAt: nil
         )
     }
 }

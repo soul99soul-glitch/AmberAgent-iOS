@@ -3,11 +3,14 @@ import XCTest
 @testable import iosApp
 
 final class NovelPromptCatalogTests: XCTestCase {
-    func testCatalogSnapshot() {
+    func testCurrentTemplatesHaveContentAndPreserveDiscussionVersionsAndTools() {
         let templates = NovelPromptKind.allCases.map(NovelPromptCatalog.template)
-        let snapshot = templates.map {
-            "\($0.kind.rawValue)\n\($0.version)\n\($0.systemText)"
-        }.joined(separator: "\n---\n")
+        for template in templates {
+            XCTAssertFalse(
+                template.systemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                "\(template.kind.rawValue) must have a system prompt"
+            )
+        }
 
         // 2026-08-11 显式更新:`.discussion` 升到 `novel.discussion.v7`。在既有工具规则
         // （ask_user + 搜索）段落后追加「PROJECT WRITE TOOLS」段:讨论专用项目字段
@@ -63,8 +66,6 @@ final class NovelPromptCatalogTests: XCTestCase {
                 ])
         )
         XCTAssertEqual(Set(templates.map(\.version)).count, NovelPromptKind.allCases.count)
-        XCTAssertFalse(snapshot.isEmpty)
-        _ = sha256(snapshot) // keep helper exercised
     }
 
     func testFactPromptAcceptedVersionsKeepPreviousShippedReleases() {

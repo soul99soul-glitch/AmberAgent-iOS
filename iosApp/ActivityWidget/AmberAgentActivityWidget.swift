@@ -173,13 +173,29 @@ struct AmberAgentActivityWidget: Widget {
                     .padding(.top, 6)
                 }
             } compactLeading: {
-                AgentActivityCompactStatus(state: context.state, phase: phase)
+                // 窄岛（iPhone 18 Pro 三活动并排、横屏）给紧凑态的宽度约 60pt，装不下"状态文字 + 52pt 计时"，
+                // 两头会被裁掉；此时换成两枚图标：左边标志表明是 Amber，右边状态指示表明在做什么、到哪了。
+                AgentActivityWidthLimitReader { isLimited in
+                    if isLimited {
+                        AgentActivityMark(size: 22, faded: phase == .stale)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(AgentActivityMinimalMark.accessibilityLabel(state: context.state, phase: phase))
+                    } else {
+                        AgentActivityCompactStatus(state: context.state, phase: phase)
+                    }
+                }
             } compactTrailing: {
-                AgentActivityCompactTimer(
-                    startedAt: context.attributes.startedAt,
-                    state: context.state,
-                    phase: phase
-                )
+                AgentActivityWidthLimitReader { isLimited in
+                    if isLimited {
+                        AgentActivityNarrowIndicator(state: context.state, phase: phase)
+                    } else {
+                        AgentActivityCompactTimer(
+                            startedAt: context.attributes.startedAt,
+                            state: context.state,
+                            phase: phase
+                        )
+                    }
+                }
             } minimal: {
                 AgentActivityMinimalMark(phase: phase)
                     // 标志和圆环都不是可读元素，需合成一个元素才能挂上标签。

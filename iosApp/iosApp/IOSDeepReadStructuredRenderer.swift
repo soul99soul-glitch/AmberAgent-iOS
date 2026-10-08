@@ -14,26 +14,53 @@ enum IOSDeepReadStructuredRenderer {
         return #"<div class="summary markdown-body">"# + body + "</div>"
     }
 
-    /// All rich sections after the headline, in Android's order.
-    static func sectionsHTML(_ output: IOSDeepReadOutput) -> String {
-        var b = ""
-        b += timelineSection(output.timeline)
-        b += corePointsSection(output.corePoints)
-        if let diagram = output.diagram { b += diagramSection(diagram) }
-        b += analysisSection(output.analysis)
-        b += extendedReadingSection(output.extendedReading)
-        b += referencesSection(output.references)
-        return b
+    /// Key people/organizations as a tag row under the summary.
+    static func entitiesHTML(_ entities: [String]) -> String {
+        let items = entities.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.prefix(8)
+        guard !items.isEmpty else { return "" }
+        return #"<div class="entities">"# + items.map { "<span>" + esc($0) + "</span>" }.joined() + "</div>"
+    }
+
+    enum Section {
+        case takeaways, timeline, corePoints, diagram, analysis, uncertainties, extendedReading, references
+        /// Android's order, with the takeaways list leading and open questions after the analysis.
+        static let standard: [Section] = [.takeaways, .timeline, .corePoints, .diagram, .analysis, .uncertainties, .extendedReading, .references]
+    }
+
+    /// All rich sections after the headline, in the given order.
+    static func sectionsHTML(_ output: IOSDeepReadOutput, order: [Section] = Section.standard) -> String {
+        order.map { section in
+            switch section {
+            case .takeaways: takeawaysSection(output.corePoints)
+            case .timeline: timelineSection(output.timeline)
+            case .corePoints: corePointsSection(output.corePoints)
+            case .diagram: output.diagram.map(diagramSection) ?? ""
+            case .analysis: analysisSection(output.analysis)
+            case .uncertainties: uncertaintiesSection(output.uncertainties)
+            case .extendedReading: extendedReadingSection(output.extendedReading)
+            case .references: referencesSection(output.references)
+            }
+        }.joined()
     }
 
     // MARK: - Sections
+
+    /// The first core points as a one-glance list; the full points with support follow later.
+    private static func takeawaysSection(_ points: [IOSDeepReadCorePoint]) -> String {
+        let items = points.filter { !$0.point.isEmpty }.prefix(3)
+        guard items.count >= 3 else { return "" }
+        return #"<section class="takeaways"><p class="section">要点速览</p><ol>"#
+            // One span per item: the li is a grid, and bare inline markup would split into extra cells.
+            + items.map { "<li><span>" + mdInline($0.point) + "</span></li>" }.joined()
+            + "</ol></section>"
+    }
 
     private static func timelineSection(_ events: [IOSDeepReadTimelineEvent]) -> String {
         let items = events.filter { !$0.event.isEmpty || !$0.date.isEmpty }
         guard !items.isEmpty else { return "" }
         var b = #"<section><p class="section">时间轴</p>"#
         for event in items {
-            b += #"<div class="timeline-item"><div class="timeline-marker"></div><div class="timeline-body">"#
+            b += #"<div class="timeline-item"# + (event.isHighlight ? " highlight" : "") + #""><div class="timeline-marker"></div><div class="timeline-body">"#
             if !event.date.isEmpty { b += #"<p class="timeline-date">"# + esc(event.date) + "</p>" }
             b += #"<div class="timeline-copy markdown-body">"# + md(event.event) + "</div>"
             b += figure(event.imageUrl, event.imageCaption)
@@ -75,8 +102,24 @@ enum IOSDeepReadStructuredRenderer {
         var b = #"<section class="diagram-block"><p class="section">"# + esc(typeLabel) + "</p>"
         b += "<h2>" + mdInline(diagram.title) + "</h2>"
         b += #"<div class="diagram-frame">"#
-        b += useSteps ? diagramSteps(nodes) : diagramCards(nodes)
-        b += diagramRelations(edges, labels: labels)
+        if useSteps {
+            // Steps already read top to bottom; only the labels of step-to-next edges add
+            // information, so they sit under the step and drop out of the relations list.
+            var nextLabels: [Int: String] = [:]
+            for index in nodes.indices.dropLast() {
+                let between = edges.filter { $0.from == nodes[index].id && $0.to == nodes[index + 1].id }
+                if !between.isEmpty {
+                    nextLabels[index] = between.compactMap(\.label).first { !$0.isEmpty } ?? ""
+                }
+            }
+            b += diagramSteps(nodes, nextLabels: nextLabels)
+            b += diagramRelations(edges.filter { edge in
+                !nextLabels.keys.contains { edge.from == nodes[$0].id && edge.to == nodes[$0 + 1].id }
+            }, labels: labels)
+        } else {
+            b += diagramCards(nodes)
+            b += diagramRelations(edges, labels: labels)
+        }
         b += "</div>"
         if let caption = diagram.caption, !caption.isEmpty {
             b += #"<p class="diagram-caption">"# + esc(caption) + "</p>"
@@ -84,11 +127,13 @@ enum IOSDeepReadStructuredRenderer {
         return b + "</section>"
     }
 
-    private static func diagramSteps(_ nodes: [IOSDeepReadDiagramNode]) -> String {
+    private static func diagramSteps(_ nodes: [IOSDeepReadDiagramNode], nextLabels: [Int: String]) -> String {
         var b = #"<ol class="diagram-steps">"#
         for (index, node) in nodes.enumerated() {
             b += #"<li class="diagram-step"><span class="diagram-step-index">"#
-            b += String(format: "%02d", index + 1) + "</span><div>" + diagramNodeInner(node) + "</div></li>"
+            b += String(format: "%02d", index + 1) + "</span><div>" + diagramNodeInner(node)
+            if let label = nextLabels[index], !label.isEmpty { b += #"<p class="diagram-next">↓ "# + esc(label) + "</p>" }
+            b += "</div></li>"
         }
         return b + "</ol>"
     }
@@ -143,6 +188,14 @@ enum IOSDeepReadStructuredRenderer {
             b += #"<div class="markdown-body">"# + md(implications) + "</div>"
         }
         return b + "</section>"
+    }
+
+    private static func uncertaintiesSection(_ items: [String]) -> String {
+        let claims = items.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !claims.isEmpty else { return "" }
+        return #"<section class="uncertain"><p class="section">待核实</p><ul>"#
+            + claims.map { "<li>" + mdInline($0) + "</li>" }.joined()
+            + "</ul></section>"
     }
 
     private static func extendedReadingSection(_ links: [IOSDeepReadLink]) -> String {

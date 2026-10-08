@@ -39,7 +39,9 @@ enum IOSGrokOAuthConstants {
 /// Identity headers the CLI chat proxy admits. Copied from grok-cli / pi-grok;
 /// a mismatch yields HTTP 426.
 enum IOSGrokCliProxyIdentity {
-    static let clientVersion = "0.2.101"
+    // Synced with https://x.ai/cli/stable on 2026-10-02.
+    // The proxy rejects versions below 1.0.13 with HTTP 426.
+    static let clientVersion = "1.0.46"
     static let clientIdentifier = "grok-shell"
     static let clientMode = "interactive"
     static let authenticateResponse = "authenticate-response"

@@ -339,8 +339,8 @@ fun Tool.invocationPolicy(input: JsonElement?): ToolInvocationPolicy {
             risk = if (proposing) ToolRisk.Sensitive else ToolRisk.Normal
             riskExplicit = true
             needsApproval = proposing
-            mandatoryApprovalEffective = proposing
-            autoApprovable = !proposing
+            mandatoryApprovalEffective = false
+            autoApprovable = !proposing || allowsAutoApproval
             concurrencySafe = !proposing
         }
 

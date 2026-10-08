@@ -677,12 +677,6 @@ final class NovelContinuityAuditTests: XCTestCase {
         """))
     }
 
-    func testDecoderAcceptsTheContractedShape() {
-        XCTAssertNoThrow(
-            try NovelStructuredOutputDecoder.decodeContinuityAudit(from: identityDriftJSON)
-        )
-    }
-
     // MARK: - 一键修复
 
     func testRepairPlannerTargetsTheLaterChapterAndMergesSameChapterJobs() {

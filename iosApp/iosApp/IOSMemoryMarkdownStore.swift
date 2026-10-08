@@ -44,11 +44,15 @@ final class IOSMemoryMarkdownStore {
     }
 
     /// Rewrite the documents only when the projected state changed.
-    func syncIfChanged(records: [MemoryRecord]) {
-        let signature = Self.signature(of: records)
+    func syncIfChanged(records: [MemoryRecord], profile: IOSMemoryProfile? = nil) {
+        // Only an accurate profile is shown; a stale one would contradict the records.
+        let liveProfile = profile.flatMap {
+            $0.coveredRecords(in: records, now: Int64(now().timeIntervalSince1970 * 1_000)) == nil ? nil : $0
+        }
+        let signature = Self.signature(of: records, profile: liveProfile)
         guard signature != defaults.string(forKey: signatureKey) else { return }
         do {
-            try write(records: records)
+            try write(records: records, profile: liveProfile)
             defaults.set(signature, forKey: signatureKey)
         } catch {
             print("[IOSMemoryMarkdownStore] sync failed: \(error.localizedDescription)")
@@ -147,7 +151,7 @@ final class IOSMemoryMarkdownStore {
         }
     }
 
-    private func write(records: [MemoryRecord]) throws {
+    private func write(records: [MemoryRecord], profile: IOSMemoryProfile?) throws {
         let topicsDir = directory.appendingPathComponent("topics", isDirectory: true)
         try FileManager.default.createDirectory(at: topicsDir, withIntermediateDirectories: true)
 
@@ -211,13 +215,24 @@ final class IOSMemoryMarkdownStore {
         var index = "# Amber 记忆索引\n\n<!-- generated \(ISO8601DateFormatter().string(from: now())); do not edit -->\n\n"
         // 概览行放最前——打开索引先看到总量，而不是先翻主题列表。
         index += "共 \(groupedIds.count + ungrouped.count) 条记忆 · \(topics.count) 个主题 · \(ungrouped.count) 条未归类\n\n"
+        if let profile {
+            index += "## 用户画像\n\n> 由记忆整理根据偏好类记忆汇编，任一来源记忆变化后会重新生成。\n\n"
+            for item in profile.items {
+                index += "- \(item.text)\n"
+            }
+            index += "\n"
+        }
         index += "## 主题\n\n"
         if topics.isEmpty {
             index += "暂无主题。\n\n"
         } else {
             for topic in topics {
                 let fileName = "\(topic.id)-\(Self.slug(topic.topicTitle ?? "topic")).md"
-                index += "- [\(topic.topicTitle ?? "主题")](topics/\(fileName)) — \(topic.memberIds.count) 条\n"
+                let liveMembers = topic.memberIds.filter { id in
+                    guard let member = byId[Int(truncating: id)] else { return false }
+                    return !member.archived && member.kind != .topic
+                }.count
+                index += "- [\(topic.topicTitle ?? "主题")](topics/\(fileName)) — \(liveMembers) 条\n"
             }
             index += "\n"
         }
@@ -232,7 +247,8 @@ final class IOSMemoryMarkdownStore {
         try writeIfChanged(index, to: directory.appendingPathComponent("index.md"))
     }
 
-    private static func signature(of records: [MemoryRecord]) -> String {
+    private static func signature(of records: [MemoryRecord], profile: IOSMemoryProfile?) -> String {
+        let profileLine = profile.map { "profile|" + $0.items.map(\.text).joined(separator: "\u{1F}") } ?? ""
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in records
             .sorted(by: { $0.id < $1.id })
@@ -240,6 +256,7 @@ final class IOSMemoryMarkdownStore {
                 "\(record.id)|\(record.updatedAt)|\(record.archived)|\(record.kind.wireName)|\(record.scope.wireName)|\(record.topicTitle ?? "")|\(record.memberIds.map { "\(Int(truncating: $0))" }.joined(separator: ","))|\(record.content)"
             })
             .joined(separator: "\n")
+            .appending(profileLine)
             .utf8 {
             hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211
         }

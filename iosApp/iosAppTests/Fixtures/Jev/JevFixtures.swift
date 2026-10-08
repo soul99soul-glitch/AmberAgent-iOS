@@ -242,7 +242,7 @@ enum JevFixtures {
             updatedAt: fixture.updatedAt,
             lastUsedAt: nil,
             topicTitle: nil,
-            memberIds: []
+            memberIds: [], lastReinforcedAt: nil
         )
     }
 

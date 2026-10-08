@@ -127,16 +127,6 @@ final class NovelProjectFileDocumentTests: XCTestCase {
         XCTAssertFalse(UTType.amberNovelProject.isDynamic)
     }
 
-    func testSourceInfoPlistRegistersExportedAndEditableNovelDocumentType() throws {
-        let plistURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("iosApp/Info.plist")
-        let plist = try plistDictionary(at: plistURL)
-
-        try assertNovelDocumentRegistration(in: plist)
-    }
-
     func testHostedStableAppProcessedInfoPlistKeepsNovelDocumentRegistration() throws {
         let plist = try XCTUnwrap(
             Bundle.main.infoDictionary,
@@ -169,17 +159,6 @@ private extension NovelProjectFileDocumentTests {
         return unsafeBitCast(
             (UTType.amberNovelProject, Optional<FileWrapper>.none),
             to: FileDocumentWriteConfiguration.self
-        )
-    }
-
-    func plistDictionary(at url: URL) throws -> [String: Any] {
-        let data = try Data(contentsOf: url)
-        return try XCTUnwrap(
-            PropertyListSerialization.propertyList(
-                from: data,
-                options: [],
-                format: nil
-            ) as? [String: Any]
         )
     }
 

@@ -481,6 +481,133 @@ private struct AgentActivityButtons: View {
 
 // MARK: - 紧凑态：左侧状态，右侧计时
 
+/// 读取灵动岛是否限宽。该环境值 iOS 27 才有，更早的系统没有窄岛，按不限宽处理。
+struct AgentActivityWidthLimitReader<Content: View>: View {
+    @ViewBuilder let content: (Bool) -> Content
+
+    var body: some View {
+        if #available(iOS 27.0, *) {
+            Reader(content: content)
+        } else {
+            content(false)
+        }
+    }
+
+    @available(iOS 27.0, *)
+    private struct Reader: View {
+        @Environment(\.isDynamicIslandLimitedInWidth) private var isLimited
+        let content: (Bool) -> Content
+
+        var body: some View { content(isLimited) }
+    }
+}
+
+/// 窄岛右侧的状态指示，和音乐的声波一样，一眼看出"在做什么、到哪了"。
+/// 运行中是阶段图标外加圆环：有总数时圆环就是真实进度，没有时是与最小态同一套的两段弧；
+/// 待确认和终态换成实心色块，颜色仍只用于待确认、完成、中断。左侧标志已带读屏标签，这里不重复。
+struct AgentActivityNarrowIndicator: View {
+    let state: AgentActivityAttributes.ContentState
+    let phase: AgentActivityPhase
+
+    var body: some View {
+        indicator
+            .frame(width: 22, height: 22)
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var indicator: some View {
+        switch phase {
+        case .running:
+            ZStack {
+                if let fraction = state.presentation.progressFraction {
+                    Circle().stroke(AgentIslandPalette.line, lineWidth: 2)
+                    arc(to: max(0.04, fraction), color: AgentIslandPalette.primary)
+                } else {
+                    spinningArcs(AgentIslandPalette.primary)
+                }
+                glyph(state.presentation.stage.narrowSymbolName, color: AgentIslandPalette.primary)
+            }
+        case .reconnecting:
+            ZStack {
+                spinningArcs(AgentIslandPalette.secondary)
+                glyph("wifi.exclamationmark", color: AgentIslandPalette.secondary)
+            }
+        case .waitingForUser:
+            badge("hand.raised.fill", fill: AgentIslandPalette.accent)
+        case .completed:
+            badge("checkmark", fill: AgentIslandPalette.ok)
+        case .failed:
+            badge("exclamationmark", fill: AgentIslandPalette.danger)
+        case .stale:
+            ZStack {
+                Circle().stroke(AgentIslandPalette.line, lineWidth: 2)
+                glyph("pause.fill", color: AgentIslandPalette.secondary)
+            }
+        case .cancelled:
+            ZStack {
+                Circle().stroke(AgentIslandPalette.line, lineWidth: 2)
+                glyph("stop.fill", color: AgentIslandPalette.secondary)
+            }
+        }
+    }
+
+    private func arc(to end: Double, color: Color) -> some View {
+        Circle().trim(from: 0, to: end)
+            .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            .rotationEffect(.degrees(-90))
+    }
+
+    /// 与最小态的圆环一致：上、右两段四分之一弧，一实一淡，表示"在转"而不是进度。
+    private func spinningArcs(_ color: Color) -> some View {
+        ZStack {
+            arc(to: 0.25, color: color)
+            Circle().trim(from: 0.25, to: 0.5)
+                .stroke(Color.white.opacity(0.3), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+    }
+
+    private func glyph(_ name: String, color: Color) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(color)
+    }
+
+    private func badge(_ name: String, fill: Color) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 11, weight: .black))
+            .foregroundStyle(.black)
+            .frame(width: 22, height: 22)
+            .background(fill, in: Circle())
+    }
+}
+
+private extension AgentActivityStage {
+    /// 窄岛圆环里的阶段图标，只在运行中用到；其余阶段由指示本身的形态表达。
+    var narrowSymbolName: String {
+        switch self {
+        case .preparing: "ellipsis"
+        case .thinking: "sparkle"
+        case .searching: "magnifyingglass"
+        case .readingSources: "books.vertical.fill"
+        case .readingWeb: "globe"
+        case .generating: "pencil"
+        case .generatingImage: "photo.fill"
+        case .organizing: "list.bullet"
+        case .readingDocument: "doc.text.fill"
+        case .updatingMemory: "brain.head.profile"
+        case .runningTool: "wrench.and.screwdriver.fill"
+        case .waitingForConfirmation: "hand.raised.fill"
+        case .reconnecting: "wifi.exclamationmark"
+        case .stale: "pause.fill"
+        case .completed: "checkmark"
+        case .failed: "exclamationmark"
+        case .cancelled: "stop.fill"
+        }
+    }
+}
+
 /// 紧凑态左侧：当前状态。颜色只在待确认、完成、中断时出现。
 struct AgentActivityCompactStatus: View {
     let state: AgentActivityAttributes.ContentState

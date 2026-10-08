@@ -41,7 +41,7 @@
 
 1. 存储：每个站点（host）一份结构化记忆，存在 App 本地（与站点设置同处），字段：`pages`（URL 模式与用途）、`actions`（名称 + locator + 说明）、`pitfalls`、`cannot_do`、`apis`（阶段 4 填充）、每条的 `updated_at` 与 `source`（agent/user）。
 2. 读取：`wm_open` / 会话首次观察某 host 时，结果中附带该站点记忆摘要（有预算上限），标注 `untrusted_site_memory`，并说明“与页面实际不符时以页面为准”。
-3. 写入：新增 `wm_site_memory`（`read` / `propose`）。Agent 只能提出修改；修改以卡片形式在会话中展示，用户确认后才写入。写入前去掉 URL query 值、邮箱、手机号、订单号等个人信息。
+3. 写入：新增 `wm_site_memory`（`read` / `propose`）。Agent 一次可提出 1–8 条修改；整批走一次审批，用户手动确认或已开启高风险自动批准后写入。普通自动批准不绕过 Sensitive 风险门槛；启用 Jev 自动批准复核时，其独立风险判定仍可将自动批准收紧为人工审批。每条必填 `operation`，不推断默认操作。写入前去掉 URL query 值、邮箱、手机号、订单号等个人信息。
 4. UI：站点详情页新增“站点记忆”分区，可查看、删除单条、清空。
 
 完成标准：记忆的提出—确认—读取闭环有测试；站点详情页在模拟器中布局正确。
@@ -80,5 +80,5 @@
 ## 进度记录
 
 - 2026-09-26：阶段 0、1、2 已实现并各经一轮 review 修复（未提交）。最终回归在只含阶段 0–2 文件的隔离检出中进行：KMP `:ai-core:jvmTest` + `:feature:tools:api:jvmTest` 149 通过 / 0 失败；WebMount 相关 XCTest 173 通过 / 0 失败。UI 以模拟器定点布局截图验收（浅/深色、常规/AX5），真实 App 导航、真机与真实 provider 尚未验收；`webmount-benchmark.md` 的手工基准尚未执行。
-- 阶段 2 限制：`wm_site_memory` 暂不允许作为 Recipe 步骤（避免自动批准绕过逐次审批），阶段 3 需重新设计该约束。
+- 阶段 2 限制：`wm_site_memory` 暂不允许作为 Recipe 步骤（Recipe 中的站点记忆写入审批尚未接线），阶段 3 需重新设计该约束。
 - 阶段 3–5 未开始。

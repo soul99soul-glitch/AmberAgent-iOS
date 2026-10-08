@@ -35,6 +35,8 @@ enum IOSDeepReadEditorialRenderer {
         /// renders the rich editorial cards (timeline / core-points / diagram /
         /// analysis / reading-links); otherwise it falls back to the flat Markdown body.
         var structured: IOSDeepReadOutput? = nil
+        /// Order of the structured sections; the default is the Android order led by the takeaways list.
+        var sectionOrder: [IOSDeepReadStructuredRenderer.Section] = IOSDeepReadStructuredRenderer.Section.standard
         /// When false, the body renders WITHOUT the kicker + `<h1>` headline (the native
         /// SwiftUI masthead owns those); the summary/lead is kept as the body's opener.
         var showHeadline: Bool = true
@@ -116,6 +118,7 @@ enum IOSDeepReadEditorialRenderer {
             if let s = structured, !s.summary.isEmpty {
                 b += IOSDeepReadStructuredRenderer.summaryHTML(s.summary)
             }
+            if let s = structured { b += IOSDeepReadStructuredRenderer.entitiesHTML(s.keyEntities) }
             b += "</section>"
         } else if let s = structured, !s.summary.isEmpty {
             // Body-only: native masthead owns kicker + h1; keep the summary as the lead.
@@ -125,7 +128,7 @@ enum IOSDeepReadEditorialRenderer {
         if let s = structured {
             // Rich editorial sections from the typed output (timeline / core-points /
             // diagram / analysis / extended-reading) — Android parity.
-            b += IOSDeepReadStructuredRenderer.sectionsHTML(s)
+            b += IOSDeepReadStructuredRenderer.sectionsHTML(s, order: input.sectionOrder)
         } else {
             // Fallback: magazine-typeset flat Markdown body + the raw sources list.
             b += #"<section><div class="markdown-body">"# + markdownToHTML(stripLeadingH1(input.markdown)) + "</div></section>"
@@ -311,14 +314,15 @@ enum IOSDeepReadEditorialRenderer {
     static func esc(_ s: String) -> String {
         var r = ""
         r.reserveCapacity(s.count)
-        for c in s {
+        // Scalars, not Characters: a quote followed by a combining mark is one Character and would slip through.
+        for c in s.unicodeScalars {
             switch c {
             case "&": r += "&amp;"
             case "<": r += "&lt;"
             case ">": r += "&gt;"
             case "\"": r += "&quot;"
             case "'": r += "&#39;"
-            default: r.append(c)
+            default: r.unicodeScalars.append(c)
             }
         }
         return r
@@ -485,6 +489,18 @@ enum IOSDeepReadEditorialRenderer {
     .markdown-body blockquote{margin:0 0 13px;padding-left:10px;border-left:2px solid var(--deep-read-accent);font-size:15px;line-height:1.68;}
     blockquote.markdown-body p{font-size:18px;line-height:1.48;}
     .diagram-note.markdown-body p{font-family:var(--deep-read-sans);font-size:12px;line-height:1.58;color:var(--deep-read-muted);margin:0;}
+    .diagram-step .diagram-next{font-family:var(--deep-read-sans);font-size:11px;line-height:1.5;color:var(--deep-read-accent);margin:6px 0 0;}
+    .entities{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 0;}
+    .entities span{font-family:var(--deep-read-sans);font-size:11px;line-height:1.4;padding:3px 9px;border-radius:999px;border:1px solid var(--deep-read-border);color:var(--deep-read-muted);}
+    .takeaways ol{list-style:none;margin:0;padding:0;counter-reset:takeaway;}
+    .takeaways li{counter-increment:takeaway;display:grid;grid-template-columns:28px minmax(0,1fr);gap:8px;padding:10px 0;border-top:1px solid var(--deep-read-border);font-size:15px;line-height:1.55;}
+    .takeaways li::before{content:counter(takeaway);font-family:var(--deep-read-sans);font-weight:700;font-size:13px;color:var(--deep-read-accent);padding-top:2px;}
+    .timeline-item.highlight .timeline-marker{background:var(--deep-read-accent);}
+    .timeline-item.highlight .timeline-date{font-weight:700;}
+    .uncertain ul{list-style:none;margin:0;padding:12px 14px;border:1px dashed var(--deep-read-border);border-radius:12px;background:var(--deep-read-surface);}
+    .uncertain li{position:relative;padding-left:22px;font-size:14px;line-height:1.6;margin:0 0 8px;}
+    .uncertain li:last-child{margin-bottom:0;}
+    .uncertain li::before{content:"?";position:absolute;left:0;top:2px;width:15px;height:15px;border-radius:50%;border:1px solid var(--deep-read-accent);color:var(--deep-read-accent);font-family:var(--deep-read-sans);font-size:10px;font-weight:700;line-height:15px;text-align:center;}
     """
 
     /// App-bundled fonts served via the `amberfont://` scheme handler

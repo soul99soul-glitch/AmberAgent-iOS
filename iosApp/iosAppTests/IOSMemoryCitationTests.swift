@@ -332,7 +332,7 @@ final class IOSMemoryCitationTests: XCTestCase {
             updatedAt: updatedAt,
             lastUsedAt: nil,
             topicTitle: nil,
-            memberIds: []
+            memberIds: [], lastReinforcedAt: nil
         )
     }
 

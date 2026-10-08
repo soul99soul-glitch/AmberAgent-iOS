@@ -122,6 +122,35 @@ final class IOSMemoryLibraryTests: XCTestCase {
         XCTAssertEqual(IOSMemoryLibrary.kindTitle(.reference), "资料")
     }
 
+    // "已归档"筛选只列归档的原子记录（不含退役主题）；其他筛选只列活跃记录。
+    // 搜索也匹配界面上显示的中文标签与来源文案。
+    func testArchivedFilterAndDisplayLabelSearch() {
+        let live = memory(id: 1, content: "当前项目用 Vue", scope: .shortTerm, kind: .project)
+        let archived = memory(id: 2, content: "旧项目用 React", scope: .shortTerm, kind: .project, archived: true)
+        let retiredTopic = memory(id: 3, content: "旧主题", scope: .longTerm, kind: .topic, archived: true)
+        let records = [live, archived, retiredTopic]
+
+        XCTAssertEqual(IOSMemoryLibrary.filteredRecords(records: records, query: "", scopeFilter: .archived).map(\.id), [2])
+        XCTAssertEqual(IOSMemoryLibrary.filteredRecords(records: records, query: "", scopeFilter: .all).map(\.id), [1])
+        XCTAssertEqual(IOSMemoryLibrary.filteredRecords(records: records, query: "短期", scopeFilter: .all).map(\.id), [1])
+        XCTAssertEqual(IOSMemoryLibrary.filteredRecords(records: records, query: "项目", scopeFilter: .archived).map(\.id), [2])
+    }
+
+    // 列表行的"含 N 条"必须与主题详情页一致：只计仍存在且未归档的非主题成员。
+    func testLiveMemberCountIgnoresArchivedMissingAndTopicMembers() {
+        let live = memory(id: 1, content: "喜欢冰美式", scope: .longTerm, kind: .routine)
+        let archived = memory(id: 2, content: "喜欢热美式", scope: .longTerm, kind: .routine, archived: true)
+        let nested = memory(id: 3, content: "子主题", scope: .longTerm, kind: .topic)
+        let topic = MemoryRecord(
+            id: 9, content: "咖啡习惯", scope: .longTerm, kind: .topic,
+            assistantId: IosMemoryFactory.shared.LONG_TERM_MEMORY_ID,
+            sourceConversationId: nil, sourceMessageIds: [], supersedesIds: [], expiresAt: nil,
+            confidence: 1, pinned: false, archived: false, createdAt: 1, updatedAt: 1, lastUsedAt: nil,
+            topicTitle: "咖啡", memberIds: [1, 2, 3, 404].map { KotlinInt(value: $0) }, lastReinforcedAt: nil
+        )
+        XCTAssertEqual(IOSMemoryLibrary.liveMemberCount(of: topic, in: [live, archived, nested, topic]), 1)
+    }
+
     func testWriteAuditStorePersistsAndClears() {
         let suiteName = "MemoryAudit-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -176,7 +205,7 @@ final class IOSMemoryLibraryTests: XCTestCase {
             updatedAt: updatedAt,
             lastUsedAt: nil,
             topicTitle: nil,
-            memberIds: []
+            memberIds: [], lastReinforcedAt: nil
         )
     }
 }

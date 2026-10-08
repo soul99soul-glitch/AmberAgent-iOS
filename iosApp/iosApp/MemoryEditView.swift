@@ -107,6 +107,11 @@ struct MemoryEditView: View {
                         MemoryEditDivider()
                         MemoryPreviewLine(label: "最近使用", value: dateText(lastUsedAt))
                     }
+                    if let expiresAt = existingRecord.expiresAt?.int64Value {
+                        MemoryEditDivider()
+                        // expiresAt 是失效的那一刻（通常是次日 0 点），显示最后有效时刻。
+                        MemoryPreviewLine(label: "有效期至", value: dateText(expiresAt - 1))
+                    }
                 }
             }
         }
@@ -117,7 +122,7 @@ struct MemoryEditView: View {
     private var topicMembers: [MemoryRecord] {
         guard let topic = existingRecord, isTopicRecord else { return [] }
         let memberIds = Set(topic.memberIds.map { Int(truncating: $0) })
-        return persistence.records.filter { memberIds.contains(Int($0.id)) && !$0.archived }
+        return persistence.records.filter { memberIds.contains(Int($0.id)) && !$0.archived && $0.kind != .topic }
     }
 
     @ViewBuilder
@@ -369,7 +374,8 @@ struct MemoryEditView: View {
                 updatedAt: updatedAt,
                 lastUsedAt: current.lastUsedAt,
                 topicTitle: current.topicTitle,
-                memberIds: current.memberIds
+                memberIds: current.memberIds,
+                lastReinforcedAt: current.lastReinforcedAt
             )
             let previousRecords = persistence.records
             guard let saved = IosMemoryFactory.shared.updateRecord(record: updated) else {

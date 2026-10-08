@@ -1353,7 +1353,7 @@ final class IOSParityRedLightTests: XCTestCase {
             encoding: .utf8
         )
         let deepRead = try String(
-            contentsOf: appDirectory.appendingPathComponent("DeepReadCreateView.swift"),
+            contentsOf: appDirectory.appendingPathComponent("DeepReadCore/DeepReadSourceCollector.swift"),
             encoding: .utf8
         )
 

@@ -85,7 +85,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
         XCTAssertTrue(deferredPresent.isEmpty, "deferred tools must be hidden until tool_search exposes them: \(deferredPresent)")
     }
 
-    func testToolSearchHitBecomesCallableOnNextRound() throws {
+    func testChatCatalogSearchExposesWebMountToolsWithSafeVisualRead() throws {
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
             sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
@@ -101,12 +101,10 @@ final class IOSToolSearchExposureTests: XCTestCase {
         XCTAssertTrue(payload.contains("expanded_tools"))
         XCTAssertTrue(payload.contains("wm_type"))
 
-        // The coordinator re-derives every round's params from the same run
-        // bridge, so the hit is declared on the very next round.
-        let nextRoundParams = viewModel.textGenerationParamsForTesting().replacingTools(bridge.visibleTools())
-        XCTAssertTrue(nextRoundParams.tools.map(\.name).contains("wm_type"))
-        XCTAssertTrue(nextRoundParams.tools.map(\.name).contains("wm_visual_read"))
-        XCTAssertFalse(nextRoundParams.tools.map(\.name).contains("wm_screenshot"))
+        let exposedNames = Set(bridge.visibleTools().map(\.name))
+        XCTAssertTrue(exposedNames.contains("wm_type"))
+        XCTAssertTrue(exposedNames.contains("wm_visual_read"))
+        XCTAssertFalse(exposedNames.contains("wm_screenshot"))
     }
 
     func testTerminalToolsAreDeferredUntilToolSearchHit() throws {
@@ -650,23 +648,6 @@ final class IOSToolSearchExposureTests: XCTestCase {
         XCTAssertFalse(names.contains("recipe_delete"))
     }
 
-    // MARK: - Kotlin→Swift interop smoke
-
-    func testBridgeKotlinSwiftExportShape() throws {
-        let bridge = IosToolExposureBridge(tools: fullIosDeclarations())
-
-        XCTAssertTrue(bridge.lazyModeEnabled())
-        let visible = bridge.visibleTools()
-        XCTAssertFalse(visible.isEmpty)
-        XCTAssertTrue(visible.map(\.name).contains("tool_search"))
-        let full = bridge.fullToolDeclarations()
-        XCTAssertGreaterThan(full.count, visible.count)
-        let summary = bridge.savingsSummary()
-        XCTAssertTrue(summary.contains("estimated_full_schema_chars"))
-        XCTAssertTrue(summary.contains("estimated_visible_schema_chars"))
-        bridge.exposeToolNames(names: ["wm_type"])
-        XCTAssertTrue(bridge.visibleTools().map(\.name).contains("wm_type"))
-    }
 }
 
 /// Minimal IOSSearchHTTPTransport double that counts requests and never

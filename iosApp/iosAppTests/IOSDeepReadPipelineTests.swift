@@ -1075,3 +1075,176 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         XCTAssertTrue(draft.contains("## 分析"))
     }
 }
+
+// MARK: - Close reading and synthesis templates (ported from the standalone DeepRead app)
+
+extension IOSDeepReadPipelineTests {
+    private static let article = """
+    Title: iPhone 18 Pro Review
+    URL Source: https://example.com/review
+
+    Markdown Content:
+    [Home](https://example.com) [Reviews](https://example.com/r)
+    iPhone 18 Pro Review
+    ====================
+    ![Image 1: hero](https://img.example.com/hero.jpg)
+    The **variable aperture** is the headline change, with [four stops](https://example.com/a).
+    ## Battery
+    It lasted a 25-hour travel day with 12% left.
+    - Charges to 50% in 15 minutes
+    [Home](https://example.com) [Reviews](https://example.com/r)
+    """
+
+    private static let guideReply = #"{"genre":"review","title":"iPhone 18 Pro 评测","guide":"导读。","body_start":2,"body_end":7,"notes":[{"paragraph":4,"kind":"context","title":"光圈","body":"解释"}]}"#
+
+    private func configuredSettings() -> (IOSSharedSettingsStore, () -> Void) {
+        let settings = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!)
+        let model = makeDeepReadModel()
+        let configured = settings.addProvider(makeProviderSetting(model: model))
+        settings.setCurrentChatModelId(model.id.description())
+        return (settings, { _ = settings.removeProvider(providerId: configured.id.description()) })
+    }
+
+    private func primaryLink(originalOnly: Bool = false) -> IOSDeepReadSource {
+        var link = IOSDeepReadSource(kind: .searchResult, title: "example.com", content: "https://example.com/review", url: "https://example.com/review")
+        link.metadata[DeepReadCloseReader.roleKey] = DeepReadCloseReader.primaryRole
+        link.metadata[DeepReadCloseReader.titlePendingKey] = "true"
+        if originalOnly { link.metadata[DeepReadCloseReader.originalOnlyKey] = "true" }
+        return link
+    }
+
+    func testOriginalOnlyCloseReadingNeedsNoModelAndNeverSearches() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "", sources: [primaryLink(originalOnly: true)], templateId: IOSDeepReadTemplate.defaultId)
+        XCTAssertTrue(store.markRunning(id: task.id))
+        let unconfigured = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!)
+        let provider = StageProvider([Self.guideReply])
+        var fetched: [String] = []
+        var searches = 0
+        var savedTitle: String?
+
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(
+            taskId: task.id, sharedSettings: unconfigured, store: store, textProvider: provider,
+            workspaceArtifactSaver: { title, _, _, _, _ in savedTitle = title },
+            searchSources: { _, _ in searches += 1; return [] },
+            fetchPrimary: { url, _ in fetched.append(url); return DeepReadCloseReader.parseJina(Self.article) },
+            searchReports: { _, _ in searches += 1; return [] }
+        )
+
+        XCTAssertTrue(didComplete)
+        let saved = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertEqual(saved.status, .succeeded, saved.failureMessage ?? "")
+        XCTAssertNil(saved.missingSections)
+        XCTAssertEqual(saved.title, "iPhone 18 Pro Review", "the fetched title replaces the pending one")
+        XCTAssertEqual(savedTitle, "iPhone 18 Pro Review")
+        XCTAssertEqual(provider.callCount, 0)
+        XCTAssertEqual(searches, 0)
+        XCTAssertEqual(fetched, ["https://example.com/review"])
+        let reading = try XCTUnwrap(DeepReadCloseReading.decode(saved.structuredJSON))
+        XCTAssertFalse(reading.hasGuide)
+    }
+
+    func testCloseReadingAnnotatesThenComparesOtherReports() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "", sources: [primaryLink()], templateId: IOSDeepReadTemplate.defaultId)
+        XCTAssertTrue(store.markRunning(id: task.id))
+        let (settings, cleanup) = configuredSettings()
+        defer { cleanup() }
+        let compareReply = #"{"others":[{"source":1,"stance":"differ","summary":"续航结论更保守"}],"notes":[{"paragraph":6,"kind":"differ","sources":[1],"title":"续航","body":"别家说剩 35%"}]}"#
+        let provider = StageProvider([Self.guideReply, compareReply])
+        var reportSearches: [String] = []
+
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(
+            taskId: task.id, sharedSettings: settings, store: store, textProvider: provider,
+            workspaceArtifactSaver: { _, _, _, _, _ in },
+            enrichSources: { sources, _, _ in
+                sources.map { var read = $0; read.content += "\n网页正文：别家报道正文"; read.metadata["scrape_status"] = "ok"; return read }
+            },
+            fetchPrimary: { _, _ in DeepReadCloseReader.parseJina(Self.article) },
+            searchReports: { title, _ in
+                reportSearches.append(title)
+                return [IOSDeepReadSource(kind: .searchResult, title: "别家评测", content: "摘要", url: "https://example.org/other"),
+                        IOSDeepReadSource(kind: .searchResult, title: "原文换了个地址", content: "摘要", url: "https://www.example.com/review?utm_source=x")]
+            }
+        )
+
+        XCTAssertTrue(didComplete)
+        let saved = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertEqual(saved.status, .succeeded, saved.failureMessage ?? "")
+        XCTAssertNil(saved.missingSections)
+        XCTAssertEqual(provider.callCount, 2)
+        XCTAssertEqual(reportSearches, ["iPhone 18 Pro Review"])
+        XCTAssertFalse(saved.sources.contains { $0.title == "原文换了个地址" }, "the original under another URL is not an other report")
+        let reading = try XCTUnwrap(DeepReadCloseReading.decode(saved.structuredJSON))
+        XCTAssertTrue(reading.hasGuide)
+        XCTAssertEqual(reading.others?.map(\.id), [1])
+        XCTAssertEqual(reading.notes.filter { $0.kind == .differ }.count, 1)
+    }
+
+    func testCloseReadingRetryKeepsThePreviousGuideWhenTheNewGuideFails() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "", sources: [primaryLink()], templateId: IOSDeepReadTemplate.defaultId)
+        XCTAssertTrue(store.markRunning(id: task.id))
+        let (settings, cleanup) = configuredSettings()
+        defer { cleanup() }
+        func run(_ provider: StageProvider, prior: IOSDeepReadPriorCompletion? = nil) async -> Bool {
+            await IOSDeepReadLauncher.runExistingTask(
+                taskId: task.id, sharedSettings: settings, store: store, textProvider: provider,
+                workspaceArtifactSaver: { _, _, _, _, _ in }, priorCompletion: prior,
+                fetchPrimary: { _, _ in DeepReadCloseReader.parseJina(Self.article) },
+                searchReports: { _, _ in [] }
+            )
+        }
+        let firstRun = await run(StageProvider([Self.guideReply]))
+        XCTAssertTrue(firstRun)
+        let guided = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertTrue(try XCTUnwrap(DeepReadCloseReading.decode(guided.structuredJSON)).hasGuide)
+        let prior = IOSDeepReadPriorCompletion(markdown: guided.resultMarkdown, structuredJSON: guided.structuredJSON,
+                                               missingSections: guided.missingSections ?? [])
+        XCTAssertTrue(store.prepareRetry(id: task.id, preservingResult: true))
+
+        let didComplete = await run(StageProvider(["not json"]), prior: prior)
+
+        XCTAssertFalse(didComplete)
+        let saved = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertEqual(saved.status, .succeeded)
+        XCTAssertEqual(saved.structuredJSON, guided.structuredJSON, "the earlier guide is restored, not replaced by the bare original")
+    }
+
+    func testSynthesisTemplateWritesItsOwnArticleAndRetryDropsOldSearchWarnings() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        var warning = try IOSDeepReadSourceNormalizer.searchFailureSource(query: "旧角度", error: "超时")
+        warning.metadata["search_query"] = "旧角度"
+        let sources = [IOSDeepReadSource(kind: .manualText, title: "报道甲", content: "甲的正文，足够长的一段事实描述。"), warning]
+        let task = try store.createTask(title: "话题", sources: sources, templateId: DeepReadSynthesisTemplate.brief.id)
+        XCTAssertTrue(store.markRunning(id: task.id))
+        let (settings, cleanup) = configuredSettings()
+        defer { cleanup() }
+        let provider = StageProvider([#"{"title":"简报标题","lede":"导语","points":["要点一","要点二"],"background":"背景","impact":"影响","uncertain":[]}"#])
+
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(
+            taskId: task.id, sharedSettings: settings, store: store, textProvider: provider,
+            workspaceArtifactSaver: { _, _, _, _, _ in },
+            searchSources: { _, _ in [] },
+            enrichSources: { sources, _, _ in sources }
+        )
+
+        XCTAssertTrue(didComplete)
+        let saved = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertEqual(saved.status, .succeeded, saved.failureMessage ?? "")
+        XCTAssertEqual(provider.callCount, 1, "a concrete template is written in one call")
+        let article = try XCTUnwrap(DeepReadTemplateArticle.decode(saved.structuredJSON))
+        XCTAssertEqual(article.kind, .brief)
+        XCTAssertTrue(saved.resultMarkdown.contains("## 要点"))
+        XCTAssertFalse(saved.sources.contains { $0.metadata["search_query"] == "旧角度" },
+                       "a previous attempt's search warning is cleared on the next collection")
+    }
+}

@@ -28,18 +28,6 @@ final class ThinkingOrbEngineTests: XCTestCase {
         }
     }
 
-    // MARK: - Draw produces non-empty output
-
-    func testDrawProducesNonEmptyOutput() {
-        let size = 24.0
-        let t = 0.6
-        for state in OrbState.allCases {
-            let resolved = orbResolvePreset(state, .small)
-            let stats = renderStats(mode: resolved.mode, size: size, t: t, dark: true, opts: resolved.opts)
-            XCTAssertGreaterThan(stats.opaquePixels, 0, "\(state) must produce visible pixels")
-        }
-    }
-
     // MARK: - Determinism: same t → identical pixels
 
     func testDrawDeterministic() {

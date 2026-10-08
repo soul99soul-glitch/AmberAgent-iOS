@@ -102,7 +102,8 @@ final class IOSJevMemoryRecallService {
         let localResult = ChatMemoryContextBuilder.contextPromptResult(
             records: eligible,
             runtime: runtime,
-            queryText: queryText
+            queryText: queryText,
+            profile: IOSMemoryPersistence.shared.profile
         )
 
         // 候选：词面命中 + 新近 + 全量补充。普通候选提交 Score 与 Noul 两题，
@@ -239,7 +240,8 @@ final class IOSJevMemoryRecallService {
             records: eligible,
             runtime: runtime,
             queryText: queryText,
-            orderedSelection: screened
+            orderedSelection: screened,
+            profile: IOSMemoryPersistence.shared.profile
         )
         guard result.records.isEmpty == false || ordered.isEmpty || screeningRemovedHits else {
             turnStates[key]?.selectionWasUsed = true
@@ -556,7 +558,8 @@ final class IOSJevMemoryRecallService {
             runtime: runtime,
             queryText: queryText,
             now: now,
-            orderedSelection: screened
+            orderedSelection: screened,
+            profile: IOSMemoryPersistence.shared.profile
         )
         // Active recall falls back to the captured local set when a nonempty ordered
         // selection cannot fit the existing prompt budget.

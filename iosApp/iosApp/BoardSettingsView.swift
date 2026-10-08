@@ -7,6 +7,7 @@ struct BoardSettingsView: View {
     var providerRegistry: ProviderRegistryStore? = nil
 
     @State private var templateStore = IOSDeepReadTemplateStore.shared
+    @Bindable private var appearance = DeepReadAppearance.shared
     @State private var focusKeywordsText = ""
     @State private var editorSeed: BoardTemplateEditorSeed?
     @State private var banner: String?
@@ -34,6 +35,7 @@ struct BoardSettingsView: View {
                         hotListSourceSection
                         focusSection
                         fontSection
+                        readerStyleSection
                         templateSection
                     }
                     .padding(.bottom, 36)
@@ -118,6 +120,11 @@ struct BoardSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
+                    // A confirmation, not a state: it clears itself; a newer one restarts the timer.
+                    .task(id: banner) {
+                        guard (try? await Task.sleep(for: .seconds(3))) != nil else { return }
+                        withAnimation { self.banner = nil }
+                    }
                 BoardCapabilityDivider()
             }
 
@@ -313,6 +320,8 @@ struct BoardSettingsView: View {
                         in: 0.85...1.25,
                         step: 0.05
                     )
+                    .accessibilityLabel("字号比例")
+                    .accessibilityValue("\(Int((board.deepReadFontScale * 100).rounded()))%")
                 }
 
                 Text("iOS 当前只提供系统与衬线两种真实可用字体，不显示未打包字体包。")
@@ -325,17 +334,47 @@ struct BoardSettingsView: View {
         }
     }
 
+    /// 阅读样式与版式即时生效（无需保存），只作用于内置排版；自定义 HTML 模板保持自身样式。
+    private var readerStyleSection: some View {
+        BoardSettingsSection(title: "阅读样式") {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("样式", selection: $appearance.readerStyle) {
+                    ForEach(DeepReadReaderStyle.allCases) { style in
+                        Text(verbatim: style.name).tag(style)
+                    }
+                }
+                Text(verbatim: appearance.readerStyle.detail)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                Picker("版式", selection: $appearance.readerLayout) {
+                    ForEach(DeepReadReaderLayout.allCases) { layout in
+                        Label(layout.name, systemImage: layout.symbol).tag(layout)
+                    }
+                }
+                Text("版式调整杂志长文各部分的顺序；精读与模板文章按自身结构排列。")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .pickerStyle(.menu)
+            .tint(AmberTheme.foreground)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
+    }
+
     private var templateSection: some View {
         BoardSettingsSection(title: "模板") {
-            ForEach(Array(IOSDeepReadTemplate.builtIns.enumerated()), id: \.element.id) { index, template in
+            // Auto, the two magazine layouts, then the single-call synthesis templates.
+            let options = DeepReadSynthesisTemplate.options
+            ForEach(Array(options.enumerated()), id: \.element.id) { index, template in
+                let selected = IOSDeepReadTemplate.normalizedTemplateId(board.deepReadTemplateId) == template.id
                 BoardSettingsActionRow(
-                    systemImage: iconName(for: template.id),
+                    systemImage: template.symbol,
                     iconColor: AmberTheme.accent,
                     title: IOSAppLocalization.string(template.name, defaultValue: template.name),
-                    subtitle: IOSAppLocalization.string(template.description, defaultValue: template.description),
-                    value: IOSDeepReadTemplate.normalizedTemplateId(board.deepReadTemplateId) == template.id
-                        ? IOSAppLocalization.string("已选择", defaultValue: "已选择")
-                        : nil
+                    subtitle: IOSAppLocalization.string(template.detail, defaultValue: template.detail),
+                    value: selected ? IOSAppLocalization.string("已选择", defaultValue: "已选择") : nil
                 ) {
                     Button {
                         sharedSettings.updateTodayBoard { _ in
@@ -344,14 +383,16 @@ struct BoardSettingsView: View {
                     } label: {
                         Image(systemName: "checkmark")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(IOSDeepReadTemplate.normalizedTemplateId(board.deepReadTemplateId) == template.id ? AmberTheme.accent : AmberTheme.muted2)
+                            .foregroundStyle(selected ? AmberTheme.accent : AmberTheme.muted2)
                             .frame(width: 30, height: 30)
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(IOSAppLocalization.string(template.name, defaultValue: template.name))
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
-                if index < IOSDeepReadTemplate.builtIns.count - 1 || !templateStore.templates.isEmpty {
+                if index < options.count - 1 || !templateStore.templates.isEmpty {
                     BoardCapabilityDivider()
                 }
             }
@@ -517,6 +558,7 @@ struct BoardSettingsView: View {
         }
     }
 
+    // 死代码：模板列表改用 DeepReadSynthesisTemplate.options 自带的图标后不再被引用；确认后可删除。
     private func iconName(for templateId: String) -> String {
         switch templateId {
         case IOSDeepReadTemplate.editorial.id: "newspaper"
@@ -613,7 +655,7 @@ private struct BoardSettingsToggleRow: View {
     }
 }
 
-private struct BoardSettingsChip: View {
+struct BoardSettingsChip: View {
     let title: LocalizedStringKey
     let selected: Bool
     let action: () -> Void

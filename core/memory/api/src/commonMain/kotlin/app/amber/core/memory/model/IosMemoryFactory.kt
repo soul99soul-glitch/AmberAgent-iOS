@@ -124,6 +124,23 @@ object IosMemoryFactory {
         }
     }
 
+    /**
+     * Marks explicit reinforcement (model citation or user restatement): sets
+     * both [MemoryRecord.lastUsedAt] and [MemoryRecord.lastReinforcedAt].
+     * Content/update timestamps remain unchanged, same as [touchMemories].
+     */
+    fun reinforceMemories(ids: List<Int>, timestamp: Long) {
+        if (ids.isEmpty()) return
+        val wanted = ids.toSet()
+        _records.value = _records.value.map { record ->
+            if (record.id in wanted) {
+                record.copy(lastUsedAt = timestamp, lastReinforcedAt = timestamp)
+            } else {
+                record
+            }
+        }
+    }
+
     fun deleteMemory(id: Int) {
         _records.value = _records.value
             .map { record ->
@@ -134,6 +151,83 @@ object IosMemoryFactory {
                 }
             }
             .filterNot { it.id == id }
+    }
+
+    /**
+     * Points topic memberships at a new version of a superseded record, keeping
+     * each topic's member order. Topics that don't contain [oldId] are untouched.
+     */
+    fun replaceTopicMember(oldId: Int, newId: Int) {
+        val now = Clock.System.now().toEpochMilliseconds()
+        _records.value = _records.value.map { record ->
+            if (record.kind == MemoryKind.TOPIC && oldId in record.memberIds) {
+                record.copy(
+                    memberIds = record.memberIds.map { if (it == oldId) newId else it }.distinct(),
+                    updatedAt = now,
+                )
+            } else {
+                record
+            }
+        }
+    }
+
+    /**
+     * Folds a confirmed same-meaning duplicate into [winnerId]: the loser is
+     * archived (restorable, unlike exact-duplicate deletion), the winner
+     * records it in supersedesIds and inherits its provenance and strongest
+     * usage signals, and topic memberships move to the winner. The winner keeps
+     * its own createdAt (its wording is what gets shown as recorded then); it
+     * stays permanent if either side was. Returns false
+     * (and changes nothing) unless both are live, distinct atomic records.
+     */
+    fun mergeNearDuplicate(winnerId: Int, loserId: Int, now: Long): Boolean {
+        if (winnerId == loserId) return false
+        val records = _records.value
+        val winner = records.firstOrNull { it.id == winnerId } ?: return false
+        val loser = records.firstOrNull { it.id == loserId } ?: return false
+        if (winner.archived || loser.archived || winner.kind == MemoryKind.TOPIC || loser.kind == MemoryKind.TOPIC) {
+            return false
+        }
+        val merged = winner.copy(
+            sourceConversationId = winner.sourceConversationId ?: loser.sourceConversationId,
+            sourceMessageIds = (winner.sourceMessageIds + loser.sourceMessageIds).distinct(),
+            supersedesIds = (winner.supersedesIds + loser.id + loser.supersedesIds).distinct().sorted(),
+            expiresAt = if (winner.expiresAt == null || loser.expiresAt == null) null else maxOf(winner.expiresAt, loser.expiresAt),
+            lastUsedAt = listOfNotNull(winner.lastUsedAt, loser.lastUsedAt).maxOrNull(),
+            lastReinforcedAt = listOfNotNull(winner.lastReinforcedAt, loser.lastReinforcedAt).maxOrNull(),
+            updatedAt = now,
+        )
+        _records.value = records.map { record ->
+            when (record.id) {
+                winnerId -> merged
+                loserId -> record.copy(archived = true, updatedAt = now)
+                else -> record
+            }
+        }
+        replaceTopicMember(oldId = loserId, newId = winnerId)
+        return true
+    }
+
+    /**
+     * User restore of an archived atomic record. An expiry that already passed
+     * is cleared — restoring is an explicit "this still holds" — otherwise the
+     * next maintenance pass would archive it again. Topics are not restorable
+     * here (maintenance owns them). Returns the restored record or null.
+     */
+    fun restoreMemory(id: Int, now: Long): MemoryRecord? {
+        val records = _records.value.toMutableList()
+        val index = records.indexOfFirst { it.id == id }
+        if (index < 0) return null
+        val record = records[index]
+        if (record.kind == MemoryKind.TOPIC || !record.archived) return null
+        val restored = record.copy(
+            archived = false,
+            expiresAt = record.expiresAt?.takeIf { it > now },
+            updatedAt = now,
+        )
+        records[index] = restored
+        _records.value = records
+        return restored
     }
 
     /** Flip the archived flag; returns the updated record or null. */

@@ -15,7 +15,7 @@ class WebMountToolDeclarationsTest {
         val parameters = assertIs<InputSchema.Obj>(tool.parameters())
         assertEquals(listOf("host", "action"), parameters.required)
         assertEquals("array", parameters.properties["changes"]!!.jsonObject["type"]!!.jsonPrimitive.content)
-        assertTrue(tool.description.contains("explicit per-call user approval"))
+        assertTrue(tool.description.contains("whole batch requires one manual approval or enabled high-risk auto-approval"))
     }
 
     @Test

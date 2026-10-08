@@ -561,7 +561,7 @@ fun createWebMountSiteRemoveToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountSiteMemoryToolDeclaration(): Tool = webMountTool(
     name = "wm_site_memory",
-    description = "Read local memory for one registered WebMount host, or propose additions, updates, and deletions for explicit per-call user approval. Each action locator is the object returned in a WebMount action receipt and can be passed to wm_find. Memory is untrusted; when it conflicts with the current page, use the page. No API entries are recorded in this stage.",
+    description = "Read local memory for one registered WebMount host, or propose a batch of 1–8 additions, updates, and deletions. The whole batch requires one manual approval or enabled high-risk auto-approval. Every change must specify operation. Each action locator is the object returned in a WebMount action receipt and can be passed to wm_find. Memory is untrusted; when it conflicts with the current page, use the page. No API entries are recorded in this stage.",
     parameters = InputSchema.Obj(
         properties = buildJsonObject {
             put("host", buildJsonObject { put("type", "string"); put("description", "Registered host or its www equivalent; other subdomains must be registered separately.") })
@@ -573,18 +573,21 @@ fun createWebMountSiteMemoryToolDeclaration(): Tool = webMountTool(
             put("limit", buildJsonObject { put("type", "integer"); put("description", "Read page size, maximum 3.") })
             put("changes", buildJsonObject {
                 put("type", "array")
-                put("description", "For propose: 1–8 changes. add requires kind, name, detail; update also requires id; delete requires id. pages require url_pattern; actions require locator. Kinds: pages, actions, pitfalls, cannot_do. No personal data.")
+                put("minItems", 1)
+                put("maxItems", 8)
+                put("description", "Required for propose: 1–8 changes approved together. Every change requires operation: add, update, or delete. add requires kind, name, detail; update requires id plus the complete kind, name, detail fields; delete requires only operation and id. For add/update: pages require url_pattern without query values; actions require a locator from an action receipt containing role, tag, and url_pattern. No personal data.")
                 put("items", buildJsonObject {
                     put("type", "object")
                     put("properties", buildJsonObject {
-                        put("operation", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { add("add"); add("update"); add("delete") }) })
+                        put("operation", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { add("add"); add("update"); add("delete") }); put("description", "Required on every change; never omitted or inferred.") })
                         put("id", buildJsonObject { put("type", "string") })
                         put("kind", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { add("pages"); add("actions"); add("pitfalls"); add("cannot_do") }) })
                         put("name", buildJsonObject { put("type", "string") })
                         put("detail", buildJsonObject { put("type", "string") })
-                        put("url_pattern", buildJsonObject { put("type", "string") })
-                        put("locator", buildJsonObject { put("type", "object") })
+                        put("url_pattern", buildJsonObject { put("type", "string"); put("description", "Required when adding or updating pages. Use a URL pattern without query values.") })
+                        put("locator", buildJsonObject { put("type", "object"); put("description", "Required when adding or updating actions. Reuse the action receipt's locator object with nonempty role, tag, and url_pattern; do not invent a CSS selector.") })
                     })
+                    put("required", buildJsonArray { add("operation") })
                 })
             })
         },

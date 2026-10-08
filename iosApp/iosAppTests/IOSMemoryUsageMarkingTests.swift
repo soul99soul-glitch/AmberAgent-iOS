@@ -92,6 +92,30 @@ final class IOSMemoryUsageMarkingTests: XCTestCase {
         }
     }
 
+    /// 强化信号：模型显式引用（force）同时记 lastUsedAt 与 lastReinforcedAt；
+    /// 召回注入只记 lastUsedAt。两者都不动 updatedAt（它是审批 CAS 令牌）。
+    func testCitationReinforcesWhileInjectionOnlyMarksUsed() throws {
+        try withIsolatedPersistence { persistence, _ in
+            IosMemoryFactory.shared.replaceAll(records: [
+                makeRecord(id: 1, content: "injected only", scope: .longTerm, kind: .note, updatedAt: 10),
+                makeRecord(id: 2, content: "cited by model", scope: .longTerm, kind: .note, updatedAt: 20),
+            ])
+
+            XCTAssertTrue(persistence.markUsed(ids: Set<Int32>([1]), now: 100))
+            XCTAssertTrue(persistence.markUsed(ids: Set<Int32>([2]), now: 200, force: true))
+
+            let reader = IOSMemoryPersistence(fileURL: persistenceFileURL)
+            reader.load()
+            let injected = try XCTUnwrap(reader.records.first { $0.id == 1 })
+            let cited = try XCTUnwrap(reader.records.first { $0.id == 2 })
+            XCTAssertEqual(injected.lastUsedAt?.int64Value, 100)
+            XCTAssertNil(injected.lastReinforcedAt)
+            XCTAssertEqual(cited.lastUsedAt?.int64Value, 200)
+            XCTAssertEqual(cited.lastReinforcedAt?.int64Value, 200)
+            XCTAssertEqual(cited.updatedAt, 20)
+        }
+    }
+
     /// 同一状态链覆盖：空集合 no-op、同集合去抖、集合变化写盘、force 绕过去抖，
     /// 以及 force 后继续同步去抖状态。
     func testMarkUsedDedupForceAndEmptySetStateMatrix() throws {
@@ -174,7 +198,7 @@ final class IOSMemoryUsageMarkingTests: XCTestCase {
                 updatedAt: record.updatedAt,
                 lastUsedAt: KotlinLong(value: 999),
                 topicTitle: record.topicTitle,
-                memberIds: record.memberIds
+                memberIds: record.memberIds, lastReinforcedAt: record.lastReinforcedAt
             )
         }
 
@@ -282,7 +306,7 @@ final class IOSMemoryUsageMarkingTests: XCTestCase {
             updatedAt: updatedAt,
             lastUsedAt: nil,
             topicTitle: nil,
-            memberIds: []
+            memberIds: [], lastReinforcedAt: nil
         )
     }
 }

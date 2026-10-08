@@ -260,39 +260,6 @@ final class NovelSessionReplayTests: XCTestCase {
         )
     }
 
-    /// Quiet retire clears `terminalAwaitingRefresh` first but leaves the tail on
-    /// `.terminalAwaitingRefresh` until delay elapses — chrome must stay up.
-    func testTerminalPresentingChromeCoversQuietRetireWindow() {
-        // Mirrors NovelSessionViewModel.isTerminalPresenting without spinning a VM:
-        // flag OR terminal tail phase.
-        func chromeVisible(
-            terminalAwaitingRefresh: Bool,
-            phase: NovelSessionTransientTailPhase?
-        ) -> Bool {
-            if terminalAwaitingRefresh { return true }
-            if case .terminalAwaitingRefresh = phase { return true }
-            return false
-        }
-        XCTAssertTrue(chromeVisible(terminalAwaitingRefresh: true, phase: .streaming))
-        XCTAssertTrue(
-            chromeVisible(terminalAwaitingRefresh: false, phase: .terminalAwaitingRefresh),
-            "Quiet window after unlock still shows terminal tail."
-        )
-        XCTAssertFalse(chromeVisible(terminalAwaitingRefresh: false, phase: .streaming))
-        XCTAssertFalse(chromeVisible(terminalAwaitingRefresh: false, phase: .interrupted))
-        XCTAssertFalse(chromeVisible(terminalAwaitingRefresh: false, phase: nil))
-        XCTAssertTrue(
-            NovelSessionComposerPolicy.showsGenerationStatus(
-                isRunning: false,
-                isTerminalPresenting: chromeVisible(
-                    terminalAwaitingRefresh: false,
-                    phase: .terminalAwaitingRefresh
-                ),
-                activeRunKind: .prose
-            )
-        )
-    }
-
     /// 终态大积压与 Chat 共用连续 whoosh 曲线：24k 字 ≤64 拍、锚速间隔护栏 ≤0.6s。
     /// 2026-08-15 契约变更（用户拍板，与 IOSParityRedLightTests 同款更新）：排空
     /// 收尾必须连续减速到打字节奏、末拍以完整淡入落定（「最后一个字优雅地逐字

@@ -182,7 +182,7 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             supersedesIds: topic.supersedesIds, expiresAt: topic.expiresAt,
             confidence: topic.confidence, pinned: topic.pinned, archived: topic.archived,
             createdAt: topic.createdAt, updatedAt: topic.updatedAt,
-            lastUsedAt: topic.lastUsedAt, topicTitle: "咖啡", memberIds: topic.memberIds
+            lastUsedAt: topic.lastUsedAt, topicTitle: "咖啡", memberIds: topic.memberIds, lastReinforcedAt: topic.lastReinforcedAt
         )
         let decision = IOSJevDecision(answers: [], usage: nil, modelVersion: "m", latencyMs: 0, requestBytes: 0, responseBytes: 0)
         let ordered = IOSJevMemoryRecallService.orderedSelection(
@@ -224,7 +224,7 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             supersedesIds: archived.supersedesIds, expiresAt: archived.expiresAt,
             confidence: archived.confidence, pinned: archived.pinned, archived: true,
             createdAt: archived.createdAt, updatedAt: archived.updatedAt,
-            lastUsedAt: archived.lastUsedAt, topicTitle: archived.topicTitle, memberIds: archived.memberIds
+            lastUsedAt: archived.lastUsedAt, topicTitle: archived.topicTitle, memberIds: archived.memberIds, lastReinforcedAt: archived.lastReinforcedAt
         )
         // 合法集合按归档状态排除 id 2（fixture 本体 archived=false，测试里单独移除）。
         let eligible = JevFixtures.makeRecords().filter { Int($0.id) != 2 }
@@ -259,7 +259,7 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             supersedesIds: bumped[0].supersedesIds, expiresAt: bumped[0].expiresAt,
             confidence: bumped[0].confidence, pinned: bumped[0].pinned, archived: bumped[0].archived,
             createdAt: bumped[0].createdAt, updatedAt: bumped[0].updatedAt + 1,
-            lastUsedAt: bumped[0].lastUsedAt, topicTitle: bumped[0].topicTitle, memberIds: bumped[0].memberIds
+            lastUsedAt: bumped[0].lastUsedAt, topicTitle: bumped[0].topicTitle, memberIds: bumped[0].memberIds, lastReinforcedAt: bumped[0].lastReinforcedAt
         )
         let key4 = IOSJevMemoryRecallService.turnKey(messages: messages1, eligible: bumped, settingsRevision: 1)
         XCTAssertNotEqual(key1, key4, "record content change must change turnKey")
@@ -687,7 +687,7 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             updatedAt: original.updatedAt,
             lastUsedAt: original.lastUsedAt,
             topicTitle: original.topicTitle,
-            memberIds: original.memberIds
+            memberIds: original.memberIds, lastReinforcedAt: original.lastReinforcedAt
         )
         let transport = JevStubTransport { request in
             (self.batchPayload(for: request, scores: ["m31": 2.5], noul: ["inj31": 0.7]), self.httpResponse(status: 200))

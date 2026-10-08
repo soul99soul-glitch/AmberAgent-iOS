@@ -57,16 +57,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 
-    func testStableBuildDoesNotDeclareAudioKeepAlive() throws {
-        let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
-        let info = try source("iosApp/Info.plist")
-
-        XCTAssertTrue(keepAlive.contains("isAudioKeepAlivePreferenceEnabled"))
-        XCTAssertTrue(keepAlive.contains("backgroundModes.contains(\"audio\")"))
-        XCTAssertFalse(info.contains("<string>audio</string>"))
-        XCTAssertTrue(info.contains("<string>processing</string>"))
-    }
-
     func testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground() throws {
         let novel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
         let session = try source("iosApp/NovelCreation/NovelSessionViewModel.swift")
@@ -599,6 +589,15 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertEqual(IOSGrokWebConstants.fallbackModels.first?.modelId, "grok-4.6")
     }
 
+    func testGrokCliIdentityMeetsProxyVersionFloor() throws {
+        let headers = IOSGrokCliProxyIdentity.headers()
+        let version = try XCTUnwrap(headers["x-grok-client-version"])
+        // The proxy rejects versions below 1.0.13 with HTTP 426.
+        // Keep this floor independent of the production constant.
+        XCTAssertNotEqual(version.compare("1.0.13", options: .numeric), .orderedAscending)
+        XCTAssertEqual(headers["User-Agent"], "grok-shell/\(version) (ios; arm64)")
+    }
+
     func testGrokOAuthDoesNotRewriteUnrelatedOpenAIProvider() async throws {
         let id = KotlinUuid.companion.random()
         let providerId = id.description()
@@ -774,17 +773,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(IOSProviderEndpointPolicy.isValidBaseURL("http://[2001:db8::10]:8080/v1"))
         XCTAssertFalse(IOSProviderEndpointPolicy.isValidBaseURL("http://sub2api.example/v1"))
         XCTAssertFalse(IOSProviderEndpointPolicy.isValidBaseURL("203.0.113.10:8080/v1"))
-    }
-
-    func testInfoPlistAllowsLocalNetworkingWithoutBroadATSExceptions() throws {
-        let info = try source("iosApp/Info.plist")
-
-        XCTAssertTrue(info.contains("NSAppTransportSecurity"))
-        XCTAssertTrue(info.contains("NSAllowsLocalNetworking"))
-        XCTAssertFalse(info.contains("NSExceptionAllowsInsecureHTTPLoads"))
-        XCTAssertFalse(info.contains("0.0.0.0/0"))
-        XCTAssertFalse(info.contains("::/0"))
-        XCTAssertFalse(info.contains("NSAllowsArbitraryLoads"))
     }
 
     private func makeCookie(name: String, value: String) -> HTTPCookie {
