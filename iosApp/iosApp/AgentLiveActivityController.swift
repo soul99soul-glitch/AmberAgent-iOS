@@ -1,5 +1,6 @@
 @preconcurrency import ActivityKit
 import Foundation
+import UIKit
 
 enum IOSExecutionPreferenceKeys {
     static let liveActivity = "app.amber.ios.execution.liveActivity"
@@ -16,6 +17,33 @@ enum IOSExecutionPreferenceKeys {
     /// P3-a: exec 纯求值工具总开关（默认关）。与 ExecutionSettingsView 的
     /// @AppStorage / SettingsStore 共用同一 key。
     static let execJavaScriptEnabled = "app.amber.ios.execution.execJavaScriptEnabled"
+}
+
+/// 终态停留期间向系统申请的后台时间；到期或停留结束都只释放一次。
+/// 到期时交给 `onExpire` 收尾，由收尾在 end 落地后释放；没有收尾时直接释放。
+@MainActor
+private final class LingerBackgroundTime {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+    var onExpire: (() -> Void)?
+
+    init() {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: "AmberActivityTerminalLinger") { [weak self] in
+            MainActor.assumeIsolated {
+                // 先释放会让 App 可能在 end 落地前就被挂起，岛上一直停在终态。
+                if let onExpire = self?.onExpire {
+                    onExpire()
+                } else {
+                    self?.finish()
+                }
+            }
+        }
+    }
+
+    func finish() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+    }
 }
 
 struct AgentActivityOwnershipCandidate: Equatable {
@@ -66,6 +94,32 @@ final class AgentLiveActivityController {
         let card: SystemCardHandle
         var lastPresentation: AgentActivityPresentation
         var lastUpdateAt: Date
+        var stepHistory: [AgentActivityStep]
+
+        init(
+            runId: String,
+            conversationId: String?,
+            card: SystemCardHandle,
+            lastPresentation: AgentActivityPresentation,
+            lastUpdateAt: Date
+        ) {
+            self.runId = runId
+            self.conversationId = conversationId
+            self.card = card
+            self.lastPresentation = lastPresentation
+            self.lastUpdateAt = lastUpdateAt
+            // 重启/接管已有卡片时沿用卡片上已显示的历史，避免下一次更新时"缩水"。
+            self.stepHistory = lastPresentation.recentSteps ?? []
+        }
+    }
+
+    /// 完成/失败后仍停留在灵动岛上的卡片，按 card id 记录，便于被新任务或关闭开关提前收起。
+    private struct LingeringEnd {
+        let card: SystemCardHandle
+        let presentation: AgentActivityPresentation
+        let dismissalDelay: TimeInterval
+        let task: Task<Void, Never>
+        let backgroundTime: LingerBackgroundTime
     }
 
     /// 起步意图在系统请求在途期间被撤销（`end`/`stopCurrent`）时记录的终态：
@@ -112,13 +166,28 @@ final class AgentLiveActivityController {
     private var pendingStarts: [String: PendingStart] = [:]
     private let fetchSystemSnapshot: SystemSnapshotFetcher
     private let requestSystemCard: SystemCardRequester
+    private let terminalLinger: (TimeInterval) async -> Void
+    private let lingerAllowance: @MainActor () -> TimeInterval
+    private let heartbeatSleep: (TimeInterval) async -> Void
+    private var lingering: [String: LingeringEnd] = [:]
+    private var heartbeats: [String: Task<Void, Never>] = [:]
+    /// 每张卡最后一次排队的写入。ActivityKit 的 update/end 会并发执行、不保证落地顺序，
+    /// 旧状态可能晚到并覆盖新状态（真机上正文写完后仍停在"正在阅读网页"），
+    /// 所以同一张卡的写入按调用顺序依次执行。
+    private var cardWrites: [String: Task<Void, Never>] = [:]
 
     /// 单例继续用默认值（真实 ActivityKit 调用）。测试创建独立实例注入替身，
     /// 与 `BackgroundAudioKeepAlive` 同一做法。
     init(
         fetchSystemSnapshot: @escaping SystemSnapshotFetcher = AgentLiveActivityController.defaultFetchSystemSnapshot,
-        requestSystemCard: @escaping SystemCardRequester = AgentLiveActivityController.defaultRequestSystemCard
+        requestSystemCard: @escaping SystemCardRequester = AgentLiveActivityController.defaultRequestSystemCard,
+        terminalLinger: @escaping (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
+        lingerAllowance: @escaping @MainActor () -> TimeInterval = AgentLiveActivityController.defaultLingerAllowance,
+        heartbeatSleep: @escaping (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
     ) {
+        self.terminalLinger = terminalLinger
+        self.lingerAllowance = lingerAllowance
+        self.heartbeatSleep = heartbeatSleep
         self.fetchSystemSnapshot = fetchSystemSnapshot
         self.requestSystemCard = requestSystemCard
     }
@@ -131,6 +200,11 @@ final class AgentLiveActivityController {
         conversationTitle: String? = nil,
         presentation: AgentActivityPresentation
     ) {
+        // 新任务开始时，上一张还在展示「完成 / 中断」的卡立即收起，不与新卡并存。
+        if !lingering.isEmpty {
+            let ended = takeLingering()
+            Task { await self.endLingering(ended) }
+        }
         if pendingStarts[runId] != nil {
             pendingStarts[runId]?.presentation = presentation
             // 在途期间先撤销再重新 start：以最新意图为准，落地后保留卡片。
@@ -267,6 +341,16 @@ final class AgentLiveActivityController {
         }
         guard var owned = activitiesByRunId[runId], owned.runId == runId else { return }
 
+        owned.stepHistory = AgentActivityStepHistoryPolicy.history(
+            after: owned.lastPresentation,
+            current: owned.stepHistory,
+            next: presentation
+        )
+        var presentation = presentation
+        if presentation.phase == .running || presentation.phase == .reconnecting {
+            presentation.recentSteps = owned.stepHistory.isEmpty ? nil : owned.stepHistory
+        }
+
         let now = Date()
         if !force,
            now.timeIntervalSince(owned.lastUpdateAt) < minimumInterval,
@@ -277,7 +361,55 @@ final class AgentLiveActivityController {
         owned.lastPresentation = presentation
         owned.lastUpdateAt = now
         activitiesByRunId[runId] = owned
-        await owned.card.performUpdate(Self.content(presentation: presentation, now: now))
+        let content = Self.content(presentation: presentation, now: now)
+        await write(owned.card) { await $0.performUpdate(content) }
+        if presentation.phase == .running, presentation.stage.isToolStage {
+            startToolHeartbeatIfNeeded(runId: runId)
+        }
+    }
+
+    /// 工具执行期间没有流式输出（终端命令、生图、子代理可能持续数分钟），
+    /// 只要 App 仍在执行，就按间隔续期；步骤一变或卡片结束即退出。
+    /// App 被挂起时这里不会运行，系统照常把卡片显示为失联。
+    private func startToolHeartbeatIfNeeded(runId: String) {
+        guard heartbeats[runId] == nil else { return }
+        heartbeats[runId] = Task { @MainActor [weak self, heartbeatSleep] in
+            while !Task.isCancelled {
+                await heartbeatSleep(AgentActivityLifecyclePolicy.progressRefreshInterval)
+                guard let self else { return }
+                guard let owned = self.activitiesByRunId[runId],
+                      owned.lastPresentation.phase == .running,
+                      owned.lastPresentation.stage.isToolStage else {
+                    self.heartbeats[runId] = nil
+                    return
+                }
+                self.noteProgress(runId: runId)
+            }
+        }
+    }
+
+    /// 流式输出仍在前进时调用，逐 chunk 调用也只是一次字典查找。
+    /// 同一步骤里状态不变就不会有更新，系统会在过期时间后把仍在输出的任务显示为失联；
+    /// 这里满间隔后原样重发一次，把过期时间往后推。输出一停就不再续期，
+    /// 真卡住的任务照常过期。
+    func noteProgress(runId: String, now: Date = Date()) {
+        guard pendingStarts[runId] == nil,
+              var owned = activitiesByRunId[runId],
+              owned.lastPresentation.phase == .running,
+              now.timeIntervalSince(owned.lastUpdateAt) >= AgentActivityLifecyclePolicy.progressRefreshInterval
+        else { return }
+        let presentation = owned.lastPresentation
+        owned.lastUpdateAt = now
+        activitiesByRunId[runId] = owned
+        let cardId = owned.card.id
+        Task { @MainActor [weak self] in
+            // 续期排队期间状态可能已被真实更新替换，迟到的续期不得把旧状态盖回去。
+            guard let current = self?.activitiesByRunId[runId],
+                  current.card.id == cardId,
+                  current.lastPresentation == presentation else { return }
+            let content = Self.content(presentation: presentation, now: now)
+            await self?.write(current.card) { await $0.performUpdate(content) }
+        }
     }
 
     func refreshLanguage() async {
@@ -309,17 +441,102 @@ final class AgentLiveActivityController {
         guard let owned = activitiesByRunId[runId], owned.runId == runId else { return }
         guard endingActivityIDs.insert(owned.card.id).inserted else { return }
 
-        let terminalPresentation = presentation.preservingKind(from: owned.lastPresentation)
-        activitiesByRunId.removeValue(forKey: runId)
-
-        await owned.card.performEnd(
-            terminalPresentation,
-            dismissalDelay ?? AgentActivityLifecyclePolicy.lockScreenDismissalDelay(for: terminalPresentation.phase)
+        var terminalPresentation = presentation.preservingKind(from: owned.lastPresentation)
+        let finishedSteps = AgentActivityStepHistoryPolicy.closing(
+            last: owned.lastPresentation,
+            current: owned.stepHistory
         )
-        endingActivityIDs.remove(owned.card.id)
+        terminalPresentation.recentSteps = finishedSteps.isEmpty ? nil : finishedSteps
+        activitiesByRunId.removeValue(forKey: runId)
+        let card = owned.card
+        let resolvedDismissalDelay = dismissalDelay
+            ?? AgentActivityLifecyclePolicy.lockScreenDismissalDelay(for: terminalPresentation.phase)
+
+        // end 后系统立刻把活动撤出灵动岛：先在岛上展示终态，停留后再 end。
+        // 前台时系统不在岛上显示本 App 的活动，不停留；后台时停留不超过剩余后台时间。
+        let backgroundTime = LingerBackgroundTime()
+        let linger = min(
+            AgentActivityLifecyclePolicy.islandLingerDuration(for: terminalPresentation.phase),
+            lingerAllowance()
+        )
+        guard linger >= 1 else {
+            let terminal = terminalPresentation
+            await write(card) { await $0.performEnd(terminal, resolvedDismissalDelay) }
+            endingActivityIDs.remove(card.id)
+            backgroundTime.finish()
+            return
+        }
+
+        // 停留在独立任务里进行，调用方不等待。
+        // 先登记再发终态：等待发送期间进来的 start / stopCurrent / 到期都能找到这张卡。
+        let cardId = card.id
+        let task = Task { @MainActor [weak self, terminalLinger] in
+            await terminalLinger(linger)
+            guard let self, let entry = self.lingering.removeValue(forKey: cardId) else { return }
+            await self.endLingering([entry])
+        }
+        lingering[cardId] = LingeringEnd(
+            card: card,
+            presentation: terminalPresentation,
+            dismissalDelay: resolvedDismissalDelay,
+            task: task,
+            backgroundTime: backgroundTime
+        )
+        // 后台时间提前到期：立即收起，不把终态留在岛上等下次唤醒。
+        // 取不到说明已被别处收尾，由那边释放后台时间。
+        backgroundTime.onExpire = { [weak self] in
+            guard let self, let entry = self.lingering.removeValue(forKey: cardId) else { return }
+            Task { await self.endLingering([entry]) }
+        }
+        let content = Self.content(presentation: terminalPresentation, now: Date())
+        await write(card) { await $0.performUpdate(content) }
+    }
+
+    /// 同步取走全部停留中的卡片，保证每张只结束一次。
+    private func takeLingering() -> [LingeringEnd] {
+        let entries = Array(lingering.values)
+        lingering.removeAll()
+        return entries
+    }
+
+    private func write(
+        _ card: SystemCardHandle,
+        _ operation: @escaping @MainActor (SystemCardHandle) async -> Void
+    ) async {
+        let previous = cardWrites[card.id]
+        let task = Task { @MainActor in
+            await previous?.value
+            await operation(card)
+        }
+        cardWrites[card.id] = task
+        await task.value
+        if cardWrites[card.id] == task {
+            cardWrites[card.id] = nil
+        }
+    }
+
+    private func endLingering(_ entries: [LingeringEnd]) async {
+        for entry in entries {
+            entry.task.cancel()
+            await write(entry.card) { await $0.performEnd(entry.presentation, entry.dismissalDelay) }
+            endingActivityIDs.remove(entry.card.id)
+            entry.backgroundTime.finish()
+        }
+    }
+
+    /// 前台为 0；后台取剩余后台时间减去余量，保证在挂起前完成 end。
+    static func defaultLingerAllowance() -> TimeInterval {
+        let application = UIApplication.shared
+        guard application.applicationState != .active else { return 0 }
+        return max(0, application.backgroundTimeRemaining - 2)
     }
 
     func stopCurrent(dismissalDelay: TimeInterval = 1) async {
+        // 停留中的卡片按其终态结束一次，下面的系统枚举不再重复结束它们。
+        let lingeringEnded = takeLingering()
+        let lingeringCardIDs = Set(lingeringEnded.map(\.card.id))
+        await endLingering(lingeringEnded)
+
         // 在途请求同样标记撤销而非直接丢弃：系统请求已经发出，落地后
         // `resolvePendingStart` 需要知道要立即结束这张卡片，而不是误当作
         // 仍然存活继续展示。
@@ -341,10 +558,10 @@ final class AgentLiveActivityController {
         let ownedCardIDs = Set(owned.values.map(\.card.id))
 
         let discovered = Activity<AgentActivityAttributes>.activities
-        endingActivityIDs.formUnion(discovered.map(\.id))
+        endingActivityIDs.formUnion(discovered.map(\.id).filter { !lingeringCardIDs.contains($0) })
         endingActivityIDs.formUnion(ownedCardIDs)
 
-        for activity in discovered where !ownedCardIDs.contains(activity.id) {
+        for activity in discovered where !ownedCardIDs.contains(activity.id) && !lingeringCardIDs.contains(activity.id) {
             let kind = owned[activity.attributes.runId]?.lastPresentation.kind
                 ?? activity.content.state.presentation.kind
             let cancelledPresentation = AgentActivityPresentation(
@@ -368,7 +585,7 @@ final class AgentLiveActivityController {
                 stage: .cancelled,
                 action: nil
             )
-            await entry.card.performEnd(cancelledPresentation, dismissalDelay)
+            await write(entry.card) { await $0.performEnd(cancelledPresentation, dismissalDelay) }
             endingActivityIDs.remove(entry.card.id)
         }
     }
@@ -583,7 +800,7 @@ final class AgentLiveActivityController {
             action: nil
         )
         Task { [weak self] in
-            await owned.card.performEnd(presentation, dismissalDelay)
+            await self?.write(owned.card) { await $0.performEnd(presentation, dismissalDelay) }
             self?.endingActivityIDs.remove(owned.card.id)
         }
     }
