@@ -29,7 +29,13 @@ ever retains a Swift pointer.
 
 Status has finite phases and stable error codes. Native diagnostics expose
 `IdeviceError.code()` and `sub_code()`, plus typed I/O kind and OS error code
-when available. Pair-verify failures retain the same redacted fields.
+when available. Amber also opts into fixed framing-stage diagnostics
+(`serialize_request`, `write_frame`, `flush_frame`, `read_magic`, `validate_magic`,
+`read_length`, `read_body`, `decode_body`, `response_received`) and rejects a non-`RPPairing` magic before reading its length.
+No response bytes are retained in diagnostics. Pair-verify failures retain the
+same redacted fields.
+A stage denotes the last transport operation, including a verify-rejection cleanup
+write; it does not imply that a consent prompt was presented.
 Untrusted protocol error text is not surfaced. The session disables upstream tracing on its own runtime thread
 because upstream pairing parsing logs private plist contents at debug level.
 
@@ -40,7 +46,9 @@ back to creating a new pairing. A rejected pairing is an actionable failure.
 Explicit first preparation uses the separate `pairing_start` entry point. It
 implements upstream's documented iOS network pair-setup (`pair_rsd_ios.rs`
 `wifi_pair_flow`): new local identity → RemotePairing handshake → system
-consent → SRP verification → save peer record. It never launches an app. The
+consent → SRP verification → save peer record. Only a typed `PairVerifyFailed`
+response permits setup; transport and protocol failures stop before consent.
+It never launches an app. The
 phase is `waiting_for_consent` while requesting approval, then `paired` only
 after the full protocol succeeds. Rejection/cancellation/90-second timeout
 returns without exporting any private result. The control-start API never
@@ -78,6 +86,35 @@ The first-preparation API defaults to `127.0.0.1:49152`. The library never
 installs or changes VPN/network settings. Neither endpoint's TCP availability
 proves pairing or automation authorization.
 
+## Temporary pairable-host advertisement material
+
+`amber_iphone_control_self_discovery_info` is a pure in-memory preparation
+helper for the formal app's one-shot iOS 27 pairable-host discovery probe. It
+reuses the pinned vendor `PairableHostInfo::generate("Amber 同机验证", "Mac17,7")`
+and `mdns_txt_records` APIs, returning owned JSON with only:
+
+```json
+{
+  "service_identifier": "<fresh UUID>",
+  "txt_records": {
+    "name": "Amber 同机验证",
+    "identifier": "<same UUID>",
+    "authTag": "<base64 6-byte tag>",
+    "model": "Mac17,7",
+    "flags": "1",
+    "ver": "26",
+    "minVer": "17"
+  }
+}
+```
+
+Each call creates a fresh temporary identifier and host `altIRK` in memory.
+The helper does not bind a socket, publish Bonjour, access Keychain, create an
+`RpPairingFile`, start SRP, display a PIN, or write any pairing material. The
+formal app owns the fixed service type
+`_remotepairing-pairable-host._tcp.` and must free the returned JSON with
+`amber_iphone_control_string_free`.
+
 The installed runner executable and supplied module must agree. For the pinned
 iphone-use runner: bundle `app.amber.selfcontrol.runner.xctrunner`, executable
 `iPhoneUse-Runner`, module `iPhoneUse`, plugin `iPhoneUse.xctest`, filter
@@ -96,15 +133,20 @@ an action or starts a second test session.
 `vendor/idevice` is the `idevice/` package from
 [jkcoxson/idevice at 3854a5df4a5a6dee71ffce4d8befc2ea356a8065](https://github.com/jkcoxson/idevice/tree/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/idevice),
 under the retained `vendor/idevice/LICENSE.txt` (MIT). No StikDebug Swift source
-or opaque binary is included. The only upstream implementation change is
-`services/dvt/xctest/mod.rs`, recorded in `patches/xctest-rsd.patch`:
+or opaque binary is included. The XCTest adaptation in
+`services/dvt/xctest/mod.rs` is recorded in
+`patches/xctest-rsd.patch`:
 
 - optional explicit product module in TestConfig;
 - `run_rsd` accepts an existing authenticated adapter/RSD directory;
 - existing runner orchestration moved into a shared private helper, so the
   original provider entry and new entry execute the same testmanager protocol.
 
-`source-manifest.json` records the upstream package tree and local patch hash.
+`remote_pairing/socket.rs` adds opt-in framing diagnostics and magic validation,
+recorded in `patches/rppairing-diagnostics.patch`. Existing upstream constructors
+keep their prior behavior; both Amber pairing entries explicitly enable this path.
+
+`source-manifest.json` records the upstream package tree and local patch hashes.
 The patch adds no secondary transport fallback. The reviewed feature set is
 `ring`, `tcp`, `remote_pairing`, and `xctest` and their required dependencies.
 

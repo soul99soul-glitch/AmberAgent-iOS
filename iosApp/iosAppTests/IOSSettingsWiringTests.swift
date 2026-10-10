@@ -44,9 +44,17 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(shell.contains("IOSPhoneControlSettingsView()"))
         XCTAssertTrue(view.contains("controller.enabled = $0"))
         XCTAssertTrue(view.contains("controller.authorizeNextTask(durationSeconds:"))
+        for tag in [".tag(300)", ".tag(1_800)", ".tag(7_200)", ".tag(0)"] {
+            XCTAssertTrue(view.contains(tag))
+        }
+        XCTAssertFalse(view.contains(".tag(60)"))
+        XCTAssertTrue(host.contains("phoneControl.revokeAuthorizationWindow(runID: runId)"))
         XCTAssertTrue(owner.contains("defaults.set(enabled, forKey: Self.enabledPreferenceKey)"))
         XCTAssertTrue(host.contains("phoneControlUserInitiated: Bool = false"))
-        XCTAssertTrue(host.contains("phoneControlUserInitiated && bridge.fullToolDeclarations()"))
+        XCTAssertTrue(host.contains("let hasPhoneDeclarations = bridge.fullToolDeclarations()"))
+        XCTAssertTrue(host.contains("phoneControlUserInitiated && hasPhoneDeclarations"))
+        XCTAssertTrue(host.contains("&& phoneControl.claim(runID: runId)"))
+        XCTAssertFalse(host.contains("phoneControl.start(runID:"))
         XCTAssertTrue(chat.contains("includePhoneControlTools: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild"))
         let autoResume = try XCTUnwrap(chat.range(of: "private func resumeYieldedRunIfReady"))
         let endResume = try XCTUnwrap(chat.range(of: "/// 工具循环/新 run", range: autoResume.upperBound..<chat.endIndex))

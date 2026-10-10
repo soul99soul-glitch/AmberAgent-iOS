@@ -97,6 +97,8 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_amberagent._tcp</string>
+		<string>_remotepairing._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
 	</array>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>AmberAgent can request full calendar access when you choose to enable calendar capabilities.</string>

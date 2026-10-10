@@ -1,0 +1,168 @@
+{
+  "updated_at_utc": "2026-10-10T07:15:32.637882+00:00",
+  "authorization": "User selected one-time Mac initialization and import into formal Amber; no XCTest/model loop",
+  "initial_route": {
+    "status": "timed_out",
+    "exit_code": 1,
+    "output_bytes": 0,
+    "stage_unknown": true,
+    "route": "CoreDeviceProxy/RSD/untrusted"
+  },
+  "corrected_route": {
+    "status": "completed",
+    "exit_code": 0,
+    "route": "existing RemotePairingLockdownService over trusted USB",
+    "service": "com.apple.dt.remotepairingdeviced.lockdown",
+    "fixed_stages": [
+      "stage=usbmux_connect",
+      "stage=device_lookup",
+      "stage=lockdown_service_1",
+      "stage=pairing_pass_1",
+      "stage=lockdown_service_2",
+      "stage=pairing_pass_2",
+      "stage=export_write",
+      "stage=export_sync",
+      "stage=complete"
+    ],
+    "official_reference": "https://github.com/jkcoxson/idevice_pair/blob/c8114c2bb88a80e2e17c0d9297b9915f09498ead/src/backend/pairing.rs#L82-L120",
+    "source_sha256": "8905ebeba97b322dd3a524a2db7edff09f4a20daacbab00c2fdb22979b700f6a"
+  },
+  "material": {
+    "private_parent_mode": "0700",
+    "file_mode": "0600",
+    "bytes": 501,
+    "structural_check_passed": true,
+    "key_values_logged": false,
+    "app_key_match_validation": "passed by formal Amber existing CryptoKit validation before successful Keychain save",
+    "successful_mac_temp_material_deleted": true
+  },
+  "helper_tests": {
+    "passed": 3,
+    "failed": 0,
+    "log": "build/p1/preparation-usb-tests.log"
+  },
+  "helper_build": {
+    "exit_code": 0,
+    "log": "build/p1/preparation-usb-build.log"
+  },
+  "dependencies": {
+    "added_or_upgraded": 0,
+    "unused_removed": 17
+  },
+  "independent_review": "pairing_options: passed fixed USB route, verify guard, private export and no Mac runtime ownership",
+  "phone_import": {
+    "status": "saved_to_keychain_and_staging_deleted",
+    "bundle_id": "app.amber.ios",
+    "staging_path": "Library/Caches/amber-phone-control-usb.plist",
+    "destination_store": "AfterFirstUnlockThisDeviceOnly non-synchronizable Keychain",
+    "preinstall_metadata": {
+      "conversation_files": 345,
+      "app_group_top_level_entries": 1,
+      "contents_read": false,
+      "reserved_staging_absent": true
+    },
+    "build": {
+      "exit_code": 0,
+      "scheme": "iosAppExperimentalGPL",
+      "configuration": "Release",
+      "bundle_id": "app.amber.ios",
+      "app_group": "group.app.amber.ios.experimental-gpl.watchkit",
+      "codesign_verification": "passed",
+      "executable_sha256": "cfb18ed25ad0d07107b0e2597a9d74655b43b7217c0e00ef0ced251a8fd97058",
+      "log": "build/p1/usb-import-device-build.log",
+      "historical_import_build": true,
+      "artifact_path_has_since_been_rebuilt": true
+    },
+    "install_exit_code": 0,
+    "launch_exit_code": 0,
+    "copy_exit_code": 0,
+    "conversation_metadata": {
+      "before": 345,
+      "after": 345,
+      "missing": 0,
+      "size_changed": 0,
+      "contents_read": false
+    },
+    "app_group_top_level_preserved": true,
+    "staging_existing_file_overwritten": false,
+    "other_apps_installed": false,
+    "staged_metadata": {
+      "bytes": 501,
+      "permissions": 384,
+      "symlink": false,
+      "contents_read": false
+    },
+    "user_report": "Pairing material saved in this phone Keychain",
+    "device_screenshot": "usb-import-device.png",
+    "device_observation": "Formal Amber shows 已保存配对文件; new USB button visible, no error banner; allowed App scope remains empty",
+    "device_keychain_write_confirmed": "UI success plus staging deletion after successful validated save; no Keychain secrets exported",
+    "app_key_match_validation": "passed via app save path",
+    "phone_staging_deleted": true,
+    "phone_staging_deletion_evidence": "build/p1/usb-import-caches-after-import.json",
+    "process_id": 39739,
+    "process_from_new_bundle_confirmed": true,
+    "after_import_metadata": {
+      "evidence": "build/p1/usb-import-caches-after-import.json",
+      "task_owned_staging_absent": true,
+      "contents_read": false
+    },
+    "cleanup": {
+      "phone_task_owned_staging_removed": true,
+      "successful_mac_material_and_empty_directory_removed": true,
+      "failed_old_material_preserved_not_imported": true
+    }
+  },
+  "acceptance": {
+    "phone_loopback_accepts_material": false,
+    "phone_owned_xctest": false,
+    "real_cross_app": false,
+    "mac_xctest_started": false,
+    "mac_model_loop": false,
+    "other_apps_installed": false
+  },
+  "usb_import_source": {
+    "review": "usb_import_review final: no blocking finding; controller ownership/cancellation/save-before-cleanup confirmed",
+    "tests": {
+      "result": "Passed",
+      "passedTests": 6,
+      "failedTests": 0,
+      "totalTestCount": 6
+    },
+    "test_evidence": "build/p1/usb-import-reviewed-tests.xcresult",
+    "ui": {
+      "platform": "iPhone 17 Pro simulator iOS26.5",
+      "ordinary": {
+        "content_size": "large",
+        "button_frame_points": {
+          "x": 16,
+          "y": 496.6667,
+          "width": 370,
+          "height": 56
+        },
+        "screenshot": "build/p1/usb-import-ui-ordinary.png",
+        "visual_check": "passed: alignment, spacing, complete one-line title"
+      },
+      "maximum": {
+        "content_size": "accessibility-extra-extra-extra-large",
+        "button_frame_points": {
+          "x": 16,
+          "y": 403.6667,
+          "width": 370,
+          "height": 199.3333
+        },
+        "screenshot": "build/p1/usb-import-ui-max-row-final.png",
+        "visual_check": "passed: full multiline title within row after scrolling"
+      },
+      "physical_ui": "passed ordinary font: complete USB button, spacing and alignment inspected in device screenshot"
+    },
+    "source_sha256": {
+      "iosApp/iosApp/PhoneControl/IOSPhoneControlController.swift": "d22a1daf043ea2b7a8440034964af223ba5c8650e751fe4f314df602114ea742",
+      "iosApp/iosApp/PhoneControl/IOSPhoneControlCredentials.swift": "813a4f75ffd30de9e0459a95617419648fe5c7fa998e75f5b69860eb89d200fd",
+      "iosApp/iosApp/PhoneControl/IOSPhoneControlSettingsView.swift": "7a3f71458e32bb7d0ec9bce8034374bc576c94b1e51ff0f1447e36b7117054db",
+      "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift": "fdebdc1e153ae87d10de9eb1ccf468c7d63352ac3b969c3bb0e3f419f6dacaa0"
+    }
+  },
+  "remaining_next_stage": "Existing product start(runID:) includes verification, tunnel and XCTest launch; import action performs none. Phone-loopback handshake needs separate bounded device validation before runner installation.",
+  "independent_delivery_review": "p1_delivery_review: validated import/artifact/data/acceptance boundary; historical snapshot/hash and raw launch metadata findings corrected",
+  "latest_app_delivery": "cross-app-closure.json"
+}

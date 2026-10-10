@@ -5,20 +5,15 @@ struct IOSPhoneControlSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var controller = IOSPhoneControlController.shared
+    @State private var serviceInspection = IOSPhoneControlServiceInspection()
     @State private var bundleIDDraft = ""
-    @State private var durationSeconds = 180
+    @State private var durationSeconds = 300
     @State private var presentsPairingImporter = false
     @State private var operation: Operation?
     @State private var errorMessage: String?
 
     private enum Operation: Equatable {
-        case importing, pairing, removing, stopping
-    }
-
-    private enum PairingImportError: LocalizedError {
-        case tooLarge
-
-        var errorDescription: String? { "配对文件不能超过 1 MB。" }
+        case importing, pairing, removing, stopping, inspecting
     }
 
     var body: some View {
@@ -47,6 +42,7 @@ struct IOSPhoneControlSettingsView: View {
         .toolbar(.hidden, for: .navigationBar)
         .tint(AmberTheme.accent)
         .task { await controller.refreshPreparation() }
+        .onDisappear { serviceInspection.cancel() }
         .fileImporter(
             isPresented: $presentsPairingImporter,
             allowedContentTypes: [.propertyList, .xml],
@@ -90,7 +86,7 @@ struct IOSPhoneControlSettingsView: View {
                     get: { controller.enabled },
                     set: { controller.enabled = $0 }
                 )) {
-                    rowText("允许手机控制工具", detail: "默认关闭，每次任务还需单独授权")
+                    rowText("允许手机控制工具", detail: "默认关闭；授权窗口可在多个任务间复用")
                 }
                 .frame(minHeight: 52)
                 .padding(.horizontal, 14)
@@ -151,6 +147,19 @@ struct IOSPhoneControlSettingsView: View {
                 .disabled(!canEditPreparation)
                 .accessibilityIdentifier("phoneControlImportPairing")
 
+                rowDivider
+                actionRow("导入 USB 准备的配对材料", systemImage: "cable.connector", busy: operation == .importing) {
+                    operation = .importing
+                    errorMessage = nil
+                    Task {
+                        defer { operation = nil }
+                        do { try await controller.importUSBPreparedPairing(from: IOSPhoneControlCredentials.usbImportURL) }
+                        catch { errorMessage = error.localizedDescription }
+                    }
+                }
+                .disabled(!canEditPreparation)
+                .accessibilityIdentifier("phoneControlImportUSBPairing")
+
                 if controller.hasPreparedPairing {
                     rowDivider
                     actionRow("移除配对文件", systemImage: "trash", color: AmberTheme.accentRed,
@@ -164,6 +173,26 @@ struct IOSPhoneControlSettingsView: View {
                         }
                     }
                     .disabled(!canEditPreparation)
+                }
+            }
+            AmberFormGroup {
+                actionRow("核对本机开发服务", systemImage: "network") {
+                    operation = .inspecting
+                    Task { @MainActor in
+                        await serviceInspection.inspectAndRecord(source: "settings")
+                        operation = nil
+                    }
+                }
+                .disabled(isWorking || controller.isOccupied)
+                .accessibilityIdentifier("phoneControlInspectService")
+            }
+            if let result = serviceInspection.summary {
+                if result.services.isEmpty {
+                    footer("未取得可解析的开发服务记录，服务身份仍未知；这不代表服务不存在。")
+                } else {
+                    ForEach(Array(result.services.enumerated()), id: \.offset) { _, service in
+                        footer("\(service.host):\(service.port) · \(service.addressFamilies.joined(separator: ", ")) · \(service.localAddressMatch == true ? "地址匹配本机" : "本机身份未确认")")
+                    }
                 }
             }
             footer("首次配对需要系统允许开发连接，也可导入已准备的 RemotePairing plist。控制 runner 仍须开发签名并安装，配对不会代替安装。当前同机启动与后台持续控制仍待验证。")
@@ -224,23 +253,23 @@ struct IOSPhoneControlSettingsView: View {
             }
             footer(controller.selectedBundleIDs.isEmpty
                 ? "先添加至少一个 App。任务只获得授权时选中的应用范围。"
-                : "仅允许列表中的 App；修改列表会撤销待用授权，开始任务后不能扩大范围。")
+                : "仅允许列表中的 App；修改列表会撤销授权窗口，运行中的任务仍保持原范围。")
         }
     }
 
     private var authorizationSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: controller.isOccupied ? "当前任务授权" : "下一次任务")
+            AmberSectionLabel(verbatim: controller.isOccupied ? "当前任务授权" : "授权窗口")
             AmberFormGroup {
                 let layout = dynamicTypeSize.isAccessibilitySize
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                     : AnyLayout(HStackLayout(spacing: 12))
                 layout {
-                    Text("单次控制时长")
+                    Text("授权窗口时长")
                         .font(.body)
                         .foregroundStyle(AmberTheme.foreground)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Picker("单次控制时长", selection: Binding(
+                    Picker("授权窗口时长", selection: Binding(
                         get: {
                             if controller.hasPendingAuthorization || controller.isOccupied {
                                 return controller.authorizedDurationSeconds ?? durationSeconds
@@ -249,9 +278,10 @@ struct IOSPhoneControlSettingsView: View {
                         },
                         set: { durationSeconds = $0 }
                     )) {
-                        Text("1 分钟").tag(60)
-                        Text("3 分钟").tag(180)
                         Text("5 分钟").tag(300)
+                        Text("30 分钟").tag(1_800)
+                        Text("2 小时").tag(7_200)
+                        Text("无限制").tag(0)
                     }
                     .pickerStyle(.menu)
                     .frame(minHeight: 44)
@@ -262,15 +292,15 @@ struct IOSPhoneControlSettingsView: View {
                 .disabled(isWorking || controller.isOccupied || controller.hasPendingAuthorization)
                 rowDivider
                 if controller.isOccupied {
-                    rowText("仅本次任务", detail: controller.authorizationTargetSummary)
+                    rowText("当前任务范围", detail: controller.authorizationTargetSummary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
                 } else if controller.hasPendingAuthorization {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("已授权下一次任务")
+                        Text("授权窗口已开启")
                             .font(.body.weight(.medium))
                             .foregroundStyle(AmberTheme.foreground)
-                        Text("请在 5 分钟内返回聊天并发送目标。这份授权只供下一次由你发起的任务使用。")
+                        Text(authorizationWindowDetail)
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
                     }
@@ -280,12 +310,12 @@ struct IOSPhoneControlSettingsView: View {
                     .padding(.vertical, 12)
                     .accessibilityIdentifier("phoneControlPendingAuthorization")
                     rowDivider
-                    actionRow("取消这次授权", systemImage: "xmark.circle", color: AmberTheme.muted) {
+                    actionRow("关闭授权窗口", systemImage: "xmark.circle", color: AmberTheme.muted) {
                         controller.discardPendingAuthorization()
                     }
                     .disabled(isWorking)
                 } else {
-                    actionRow("授权下一次聊天任务", systemImage: "checkmark.shield") {
+                    actionRow("开启授权窗口", systemImage: "checkmark.shield") {
                         errorMessage = nil
                         do { try controller.authorizeNextTask(durationSeconds: durationSeconds) }
                         catch { errorMessage = error.localizedDescription }
@@ -295,8 +325,19 @@ struct IOSPhoneControlSettingsView: View {
                 }
             }
             footer(controller.isOccupied
-                ? "任务结束、取消或超时后，控制权限随之收回。下一次任务需要重新授权，系统也可能提前结束后台运行。"
-                : "授权不会启动控制。任务结束、取消或超时后，控制权限随之收回。系统可能提前结束后台运行。")
+                ? "启动失败或任务正常结束后，授权窗口在到期前仍可复用；在设置中停止、取消聊天、改范围或到期会撤回。系统可能提前结束后台运行。"
+                : "授权不会启动控制。窗口从点击时开始固定计时，可供多个任务复用；在设置中停止、取消聊天、改范围或到期会撤回。系统可能提前结束后台运行。")
+        }
+    }
+
+    private var authorizationWindowDetail: String {
+        switch controller.authorizedDurationSeconds {
+        case 0:
+            "窗口从点击时开始生效，可供多个由你发起的任务复用，不设软件到期；系统仍可能结束后台运行。"
+        case let seconds?:
+            "窗口从点击时开始固定计时，将在 \(seconds / 60) 分钟后到期，可供多个由你发起的任务复用。"
+        default:
+            "窗口从点击时开始固定计时，可供多个由你发起的任务复用。"
         }
     }
 
@@ -410,7 +451,7 @@ struct IOSPhoneControlSettingsView: View {
                 defer { operation = nil }
                 do {
                     let data = try await Task.detached(priority: .userInitiated) {
-                        try Self.readPairingFile(url)
+                        try IOSPhoneControlCredentials.readPairingFile(url)
                     }.value
                     try await controller.importPairing(data)
                 } catch {
@@ -420,13 +461,5 @@ struct IOSPhoneControlSettingsView: View {
         }
     }
 
-    private nonisolated static func readPairingFile(_ url: URL) throws -> Data {
-        let hasAccess = url.startAccessingSecurityScopedResource()
-        defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: 1_048_577) ?? Data()
-        guard data.count <= 1_048_576 else { throw PairingImportError.tooLarge }
-        return data
-    }
+
 }

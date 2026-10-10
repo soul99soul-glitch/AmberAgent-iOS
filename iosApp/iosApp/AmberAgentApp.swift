@@ -7,6 +7,14 @@ struct AmberAgentApp: App {
 
     init() {
         IOSAppLanguagePreference.normalize()
+        if ProcessInfo.processInfo.arguments.contains(IOSPhoneControlSelfDiscovery.diagnosticLaunchArgument) {
+            Task { @MainActor in await IOSPhoneControlSelfDiscovery.shared.start() }
+        }
+        if ProcessInfo.processInfo.arguments.contains(IOSPhoneControlServiceInspection.diagnosticLaunchArgument) {
+            Task { @MainActor in
+                await IOSPhoneControlServiceInspection().inspectAndRecord(source: "launch")
+            }
+        }
     }
 
     var body: some Scene {

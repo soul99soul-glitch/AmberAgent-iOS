@@ -952,6 +952,7 @@ final class ChatViewModel {
     /// 「run 行也在默认库」时才安全。
     @ObservationIgnored private lazy var chatRunLedger: IOSAgentRunLedgering = IOSAgentRunLedger(dao: agentRuntimeDao)
     @ObservationIgnored private let mcpManager: IOSMcpManager
+    @ObservationIgnored private let phoneControl: IOSPhoneControlController
     /// 每个会话独立保留文本与直接图片运行；懒构造本身零副作用。
     @ObservationIgnored private var conversationRuns: [String: ChatConversationRun] = [:]
     private var runActivityRevision = 0
@@ -1132,7 +1133,8 @@ final class ChatViewModel {
         mailboxStore: IOSMailboxStore? = nil,
         orchestrationToolService: IOSThreadOrchestrationToolService? = nil,
         mailboxActivityCenter: IOSMailboxActivityCenter? = nil,
-        agentRuntimeDao: AgentRuntimeDao? = nil
+        agentRuntimeDao: AgentRuntimeDao? = nil,
+        phoneControl: IOSPhoneControlController = .shared
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -1144,6 +1146,7 @@ final class ChatViewModel {
         self.auxiliaryTextProvider = auxiliaryTextProvider
         self.liveActivityController = liveActivityController ?? .shared
         self.injectedAgentRuntimeDao = agentRuntimeDao
+        self.phoneControl = phoneControl
         // Build from the shared config store (same UserDefaults key as
         // McpServersView) so callTool reaches the same configured servers;
         // tests inject a manager with a deterministic directory instead.
@@ -1204,7 +1207,8 @@ final class ChatViewModel {
             dependencies: makeGenerationDependencies(),
             bindings: makeGenerationBindings(state: state),
             toolLedger: chatRunLedger,
-            textProvider: textProviderOverride
+            textProvider: textProviderOverride,
+            phoneControl: phoneControl
         )
     }
 
@@ -4660,6 +4664,7 @@ final class ChatViewModel {
     }
 
     private func makeTextGenerationParams(includePhoneControlTools: Bool = false) -> TextGenerationParams {
+        let includesAuthorizedPhoneTools = includePhoneControlTools && phoneControl.hasPendingAuthorization
         let modelId = currentModelId
         let modelAbilities = currentModelAbilities
         let searchEnabled = sharedSettings.snapshot.enableWebSearch
@@ -4785,7 +4790,7 @@ final class ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSAppleAgentToolCatalog.toolNames).sorted()
         ))
-        if includePhoneControlTools, IOSPhoneControlController.shared.hasPendingAuthorization {
+        if includesAuthorizedPhoneTools {
             toolDeclarations.append(contentsOf: IOSPhoneControlToolCatalog.declarations)
         }
         let mcpNetworkEnabled = isCapabilityPolicyEnabled("ios.mcp.tool_call")
@@ -4870,6 +4875,9 @@ final class ChatViewModel {
         // bridge instance is handed to the run coordinator, which owns it for
         // the whole run so hits become callable on the NEXT round.
         let exposureBridge = IosToolExposureBridge(tools: toolDeclarations, recipeSearchInfo: recipeSearchInfo)
+        if includesAuthorizedPhoneTools {
+            exposureBridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
+        }
         exposureBridge.restoreExecutedTools(tools: recentToolsForExposure())
         if let provider = makeProviderSetting(),
            PromptTranscriptCapabilities.companion.resolve(setting: provider, model: model).toolAdditions {
@@ -4937,8 +4945,8 @@ final class ChatViewModel {
 
     /// Test accessor for the resolved generation params (reads real
     /// Assistant/Model values + resolveSessionDefaults).
-    func textGenerationParamsForTesting() -> TextGenerationParams {
-        makeTextGenerationParams()
+    func textGenerationParamsForTesting(includePhoneControlTools: Bool = false) -> TextGenerationParams {
+        makeTextGenerationParams(includePhoneControlTools: includePhoneControlTools)
     }
 
     /// P0-a: the run bridge built by the latest assembly (nil until

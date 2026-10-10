@@ -1,0 +1,68 @@
+{
+  "recorded_at_utc": "2026-10-10T05:46:38.461879+00:00",
+  "authorization": "User explicitly authorized one first-pairing retest in existing Amber; system confirmation handled by user; no extra app, VPN, or Developer Mode changes",
+  "attempt_count_user_reported": 1,
+  "attempt_started": true,
+  "initiation": "User pressed existing 在本机建立配对 button on physical phone; no Mac-triggered protocol/test session",
+  "device_model": "iPhone 18 Pro",
+  "ios": "27.2 Beta 24B5089g",
+  "bundle_id": "app.amber.ios",
+  "scheme": "iosAppExperimentalGPL",
+  "configuration": "Release",
+  "observed_result": "failed",
+  "diagnostic": {
+    "code": "pairing_handshake_failed",
+    "native_error_code": 1,
+    "native_error_subcode": 0,
+    "native_transport_stage": "read_magic",
+    "native_io_kind": "ConnectionReset",
+    "native_os_error_code": 54
+  },
+  "evidence": {
+    "kind": "Xcode USB screenshot of actual product settings",
+    "path": "/tmp/amber-p1-pairing-result.png",
+    "sha256": "d40c0eae3c3bf6b5af9ab11dc265ecc8a852776303317368bdd304801a63b58c",
+    "image_committed": false,
+    "reason_not_committed": "Personal status-bar/Live Activity content; diagnostic fields transcribed without those details"
+  },
+  "ui_preparation": "尚未导入配对文件",
+  "phone_control_enabled_observed": true,
+  "selected_app_field_observed": "empty",
+  "scope_authorization_created_by_assistant": false,
+  "source_backed_inference": [
+    "TCP connect, first request serialization, write_all and flush returned successfully before receive entered read_magic",
+    "Response magic did not finish; no response length/body/JSON parsing reached",
+    "No app pair-verify/consent/setup branch reached, no successful pairing material export/save",
+    "write_all/flush success is local transport success and does not establish peer protocol acceptance"
+  ],
+  "not_established": [
+    "whether zero or partial magic bytes were received before reset",
+    "whether loopback endpoint is identical to Bonjour-advertised service",
+    "reason for reset: endpoint identity, routing/policy, or peer protocol compatibility remain unproven"
+  ],
+  "pairing_body_keys_or_token_recorded": false,
+  "extra_pairing_attempts": 0,
+  "did_install_probe_target_runner": false,
+  "did_change_vpn_or_developer_mode": false,
+  "mac_owned_xctest_or_model_loop": false,
+  "P1_accepted": false,
+  "phone_owned_xctest_started": false,
+  "tree_action_new_tree_accepted": false,
+  "independent_review": {
+    "agent": "p1_reset_review",
+    "result": "No failure-as-success or ownership/cleanup finding; source chain confirms failure at initial magic read and no material save; no second attempt or code changes",
+    "source_references": [
+      "https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/tools/src/pair_rsd_ios.rs#L68-L104",
+      "https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/tools/src/pair_rsd_ios.rs#L284-L328",
+      "https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/idevice/src/remote_pairing/responder.rs",
+      "https://github.com/jkcoxson/idevice_pair#over-wi-fi-with-iphone-or-ipad"
+    ],
+    "research_boundary": "iOS27 device-initiated PairableHost is a documented alternate entry. Neither these sources nor this reset prove legacy initiator is universally removed or that self-discovery/connection will work on this phone."
+  },
+  "source_changes_after_device_result": false,
+  "next_evidence_needed": [
+    "Confirmed identity/route of same-device RemotePairing endpoint and redacted rejection reason",
+    "If considering PairableHost: first demonstrate that iOS Settings can discover and connect to the app-owned listener on this same phone; no implementation/acceptance inferred from upstream computer-host example"
+  ],
+  "additional_tests_this_retest": false
+}

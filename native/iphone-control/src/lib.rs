@@ -3,6 +3,7 @@
 //! explicit first-setup result API, never through status or logs.
 
 use std::{
+    collections::BTreeMap,
     ffi::{CStr, CString, c_char},
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -12,7 +13,7 @@ use std::{
 
 use idevice::{
     IdeviceError, RsdService,
-    remote_pairing::{RemotePairingClient, RpPairingFile, RpPairingSocket, connect_tls_psk_tunnel_native},
+    remote_pairing::{errors::RemotePairingError, PairableHostInfo, RemotePairingClient, RpPairingFile, RpPairingSocket, connect_tls_psk_tunnel_native},
     services::{
         dvt::xctest::{TestConfig, XCUITestService, listener::XCUITestListener},
         installation_proxy::InstallationProxyClient,
@@ -41,6 +42,13 @@ struct NativeDiagnostic {
     native_error_subcode: i32,
     native_io_kind: Option<String>,
     native_os_error_code: Option<i32>,
+    native_transport_stage: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct SelfDiscoveryInfo {
+    service_identifier: String,
+    txt_records: BTreeMap<String, String>,
 }
 
 impl NativeDiagnostic {
@@ -49,7 +57,12 @@ impl NativeDiagnostic {
             IdeviceError::Socket(io) => (Some(format!("{:?}", io.kind())), io.raw_os_error()),
             _ => (None, None),
         };
-        Self { native_error_code: error.code(), native_error_subcode: error.sub_code(), native_io_kind, native_os_error_code }
+        Self { native_error_code: error.code(), native_error_subcode: error.sub_code(), native_io_kind, native_os_error_code, native_transport_stage: None }
+    }
+
+    fn with_transport(mut self, stage: &Mutex<Option<&'static str>>) -> Self {
+        self.native_transport_stage = *stage.lock().unwrap_or_else(|p| p.into_inner());
+        self
     }
 }
 
@@ -143,6 +156,9 @@ impl Failure {
         // Upstream error payloads and tracing may include plist/key contents.
         // Retain stable numeric diagnostics, never the arbitrary remote payload.
         Self { code, message, native: Some(NativeDiagnostic::from_error(&error)) }
+    }
+    fn transport(code: &'static str, message: &'static str, error: IdeviceError, stage: &Mutex<Option<&'static str>>) -> Self {
+        Self { code, message, native: Some(NativeDiagnostic::from_error(&error).with_transport(stage)) }
     }
 }
 
@@ -339,6 +355,30 @@ pub unsafe extern "C" fn amber_iphone_control_string_free(text: *mut c_char) {
     if !text.is_null() { drop(unsafe { CString::from_raw(text) }); }
 }
 
+/// Creates one in-memory pairable-host identity for the formal app to publish.
+/// This function does not bind a socket, publish Bonjour, read Keychain, create
+/// an RpPairingFile, or start any pairing protocol. The caller owns the returned
+/// JSON string and must release it with amber_iphone_control_string_free.
+#[unsafe(no_mangle)]
+pub extern "C" fn amber_iphone_control_self_discovery_info() -> *mut c_char {
+    let json = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let service_identifier = uuid::Uuid::new_v4().to_string();
+        let host = PairableHostInfo::generate("Amber 同机验证", "Mac17,7");
+        let txt_records = host
+            .mdns_txt_records(&service_identifier)
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        let info = SelfDiscoveryInfo { service_identifier, txt_records };
+        serde_json::to_string(&info).ok()
+    }))
+        .ok()
+        .flatten();
+    json
+        .and_then(|json| CString::new(json).ok())
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
 struct Listener(Arc<Session>);
 
 impl XCUITestListener for Listener {
@@ -375,22 +415,27 @@ async fn run_first_pairing(endpoint: SocketAddr, session: Arc<Session>) -> Resul
     // RpPairingFile::generate derives its identifier from the advertised name.
     let name = format!("Amber-{}", uuid::Uuid::new_v4());
     let mut pairing = RpPairingFile::generate(&name);
-    let mut remote = RemotePairingClient::new(RpPairingSocket::new(stream), &name);
+    let stage = Arc::new(Mutex::new(None));
+    let mut remote = RemotePairingClient::new(RpPairingSocket::new_with_diagnostics(stream, stage.clone()), &name);
     // The same ordering as upstream RemotePairingClient.connect, split here so
     // a dead transport during the initial handshake isn't mislabeled as denial
     // of a consent prompt the device never actually presented.
     session.stage("pairing_handshake", "正在与本机配对服务握手。");
     remote.attempt_pair_verify().await
-        .map_err(|e| Failure::device("pairing_handshake_failed", "配对服务在初始握手阶段断开或返回错误。", e))?;
+        .map_err(|e| Failure::transport("pairing_handshake_failed", "配对服务在初始握手阶段断开或返回错误。", e, &stage))?;
     session.stage("verifying_pairing", "正在确认本次配对身份。");
     if let Err(verify_error) = remote.validate_pairing(&mut pairing).await {
+        // Only an explicit unknown identity permits setup; transport/protocol
+        // failures cannot be repaired by sending consent on the same socket.
+        if !matches!(verify_error, IdeviceError::RemotePairing(RemotePairingError::PairVerifyFailed)) {
+            return Err(Failure::transport("pairing_verify_failed", "配对身份验证失败，未发起新的系统配对。", verify_error, &stage));
+        }
         let mut status = Status::new("waiting_for_consent", "waiting_for_consent", "正在请求系统配对确认；如出现提示，请在本机确认。");
-        status.pair_verify_error = Some(NativeDiagnostic::from_error(&verify_error));
+        status.pair_verify_error = Some(NativeDiagnostic::from_error(&verify_error).with_transport(&stage));
         session.set(status);
-        // Retain the prior numeric/IO error as well: upstream attempts setup
-        // after any failed verify, including failures on an already-dead socket.
+        // Preserve the explicit verify rejection separately from setup failure.
         remote.pair(&mut pairing, async || "000000".to_owned()).await
-            .map_err(|e| Failure::device("pairing_setup_failed", "新的开发配对未完成；请结合系统提示与错误码确认原因。", e))?;
+            .map_err(|e| Failure::transport("pairing_setup_failed", "新的开发配对未完成；请结合系统提示与错误码确认原因。", e, &stage))?;
     }
     let xml = String::from_utf8(pairing.to_bytes())
         .map_err(|_| Failure::new("pairing_export_failed", "无法保存已完成的配对结果。"))?;
@@ -405,12 +450,13 @@ async fn run_session(config: Config, session: Arc<Session>) -> Result<(), Failur
     let stream = tokio::net::TcpStream::connect(config.endpoint).await
         .map_err(|e| Failure::device("connection_failed", "无法连接本机开发服务，请检查 loopback 路由和服务端口。", e.into()))?;
     session.stage("pairing", "正在验证已有配对。");
-    let mut remote = RemotePairingClient::new(RpPairingSocket::new(stream), "Amber");
+    let stage = Arc::new(Mutex::new(None));
+    let mut remote = RemotePairingClient::new(RpPairingSocket::new_with_diagnostics(stream, stage.clone()), "Amber");
     remote.attempt_pair_verify().await
-        .map_err(|e| Failure::device("pairing_handshake_failed", "开发服务配对握手失败。", e))?;
+        .map_err(|e| Failure::transport("pairing_handshake_failed", "开发服务配对握手失败。", e, &stage))?;
     // Do not use connect(): it silently falls back to creating a new pairing.
     remote.validate_pairing(&mut pairing).await
-        .map_err(|e| Failure::device("pairing_rejected", "设备拒绝已有配对，请重新准备 RemotePairing 文件。", e))?;
+        .map_err(|e| Failure::transport("pairing_rejected", "设备拒绝已有配对，请重新准备 RemotePairing 文件。", e, &stage))?;
     session.stage("tunnel", "正在建立本机开发隧道。");
     let port = remote.create_tcp_listener().await
         .map_err(|e| Failure::device("tunnel_rejected", "设备未允许建立开发隧道。", e))?;
@@ -456,6 +502,63 @@ async fn run_session(config: Config, session: Arc<Session>) -> Result<(), Failur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn self_discovery_json() -> (String, serde_json::Value) {
+        let pointer = amber_iphone_control_self_discovery_info();
+        assert!(!pointer.is_null());
+        let text = unsafe { CStr::from_ptr(pointer) }.to_str().unwrap().to_owned();
+        let value = serde_json::from_str(&text).unwrap();
+        unsafe { amber_iphone_control_string_free(pointer) };
+        (text, value)
+    }
+
+    fn decode_six_byte_base64(value: &str) -> [u8; 6] {
+        assert_eq!(value.len(), 8);
+        assert!(!value.contains('='));
+        let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut bits = 0u64;
+        let mut bit_count = 0u8;
+        let mut output = [0u8; 6];
+        let mut output_index = 0;
+        for byte in value.bytes() {
+            let value = alphabet.iter().position(|candidate| *candidate == byte).unwrap() as u64;
+            bits = (bits << 6) | value;
+            bit_count += 6;
+            while bit_count >= 8 {
+                bit_count -= 8;
+                output[output_index] = ((bits >> bit_count) & 0xff) as u8;
+                output_index += 1;
+            }
+        }
+        assert_eq!(output_index, 6);
+        output
+    }
+
+    #[test]
+    fn self_discovery_info_uses_pinned_pairable_host_txt_contract() {
+        let (text, value) = self_discovery_json();
+        let object = value.as_object().unwrap();
+        assert_eq!(object.len(), 2);
+        let service_identifier = value["service_identifier"].as_str().unwrap();
+        let txt = value["txt_records"].as_object().unwrap();
+        assert_eq!(txt["identifier"].as_str(), Some(service_identifier));
+        assert_eq!(txt["name"].as_str(), Some("Amber 同机验证"));
+        assert_eq!(txt["model"].as_str(), Some("Mac17,7"));
+        assert_eq!(txt["flags"].as_str(), Some("1"));
+        assert_eq!(txt["ver"].as_str(), Some("26"));
+        assert_eq!(txt["minVer"].as_str(), Some("17"));
+        assert_eq!(decode_six_byte_base64(txt["authTag"].as_str().unwrap()).len(), 6);
+        for forbidden in ["alt_irk", "private_key", "public_key", "token", "pin"] {
+            assert!(!text.contains(forbidden), "JSON leaked {forbidden}");
+        }
+    }
+
+    #[test]
+    fn self_discovery_info_generates_a_fresh_identifier_each_call() {
+        let (_, first) = self_discovery_json();
+        let (_, second) = self_discovery_json();
+        assert_ne!(first["service_identifier"], second["service_identifier"]);
+    }
 
     fn config() -> Config {
         Config { pairing: vec![1], endpoint: "10.7.0.1:49152".parse().unwrap(),
@@ -567,6 +670,132 @@ mod tests {
             amber_iphone_control_free(handle);
         }
         assert_eq!(tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await.unwrap().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn first_handshake_reports_framing_failure_without_payload_or_material() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let cases: &[(&[u8], &str)] = &[
+            (b"RPP", "read_magic"),
+            (b"RPPairing\x00", "read_length"),
+            (b"RPPairing\x00\x10private-marker", "read_body"),
+            (b"HTTP/1.1 ", "validate_magic"),
+            (b"RPPairing\x00\x0eprivate-marker", "decode_body"),
+            (b"RPPairing\x00\x02{}", "response_received"),
+        ];
+        for &(response, expected_stage) in cases {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
+            let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr()) };
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
+            // Read one complete request so EOF cannot race the initial write.
+            let mut header = [0u8; 11];
+            stream.read_exact(&mut header).await.unwrap();
+            assert_eq!(&header[..9], b"RPPairing");
+            let mut body = vec![0; u16::from_be_bytes([header[9], header[10]]) as usize];
+            stream.read_exact(&mut body).await.unwrap();
+            stream.write_all(response).await.unwrap();
+            stream.shutdown().await.unwrap();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            let status = loop {
+                let status = unsafe { &*handle }.session.status.lock().unwrap().clone();
+                if status.phase == "failed" { break status; }
+                assert!(tokio::time::Instant::now() < deadline, "fixture failed to terminate");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            };
+            assert_eq!(status.code, "pairing_handshake_failed");
+            let diagnostic = status.native.as_ref().unwrap();
+            assert_eq!(diagnostic.native_transport_stage, Some(expected_stage));
+            if expected_stage.starts_with("read_") {
+                assert_eq!(diagnostic.native_error_code, 1);
+                assert_eq!(diagnostic.native_io_kind.as_deref(), Some("UnexpectedEof"));
+            }
+            unsafe {
+                let json = amber_iphone_control_status_json(handle);
+                let text = CStr::from_ptr(json).to_str().unwrap();
+                assert!(text.contains(expected_stage));
+                assert!(!text.contains("private-marker"));
+                assert!(amber_iphone_control_pairing_copy_plist(handle).is_null());
+                amber_iphone_control_string_free(json);
+                amber_iphone_control_free(handle);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_disconnect_stops_without_sending_setup_or_exporting_identity() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
+        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr()) };
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
+        for round in 0..2 {
+            let mut header = [0u8; 11];
+            stream.read_exact(&mut header).await.unwrap();
+            let mut body = vec![0; u16::from_be_bytes([header[9], header[10]]) as usize];
+            stream.read_exact(&mut body).await.unwrap();
+            if round == 0 {
+                let response = br#"{"message":{"plain":{"_0":{"response":{"_1":{"handshake":{"_0":{}}}}}}}}"#;
+                stream.write_all(b"RPPairing").await.unwrap();
+                stream.write_all(&(response.len() as u16).to_be_bytes()).await.unwrap();
+                stream.write_all(response).await.unwrap();
+            }
+        }
+        stream.shutdown().await.unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let status = loop {
+            let status = unsafe { &*handle }.session.status.lock().unwrap().clone();
+            if status.phase == "failed" { break status; }
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+        unsafe {
+            assert!(amber_iphone_control_pairing_copy_plist(handle).is_null());
+            amber_iphone_control_free(handle);
+        }
+        assert_eq!(status.code, "pairing_verify_failed");
+        assert_eq!(status.native.as_ref().unwrap().native_transport_stage, Some("read_magic"));
+        assert_eq!(status.native.as_ref().unwrap().native_io_kind.as_deref(), Some("UnexpectedEof"));
+        assert!(status.pair_verify_error.is_none(), "no consent attempt on a dead socket");
+        let mut extra = Vec::new();
+        stream.read_to_end(&mut extra).await.unwrap();
+        assert!(extra.is_empty(), "no pair-setup request was sent after verify EOF");
+    }
+
+    #[tokio::test]
+    async fn explicit_verify_rejection_still_allows_one_consent_request() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
+        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr()) };
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
+        let replies: &[&[u8]] = &[
+            br#"{"message":{"plain":{"_0":{"response":{"_1":{"handshake":{"_0":{}}}}}}}}"#,
+            br#"{"message":{"plain":{"_0":{"event":{"_0":{"pairingData":{"_0":{"data":"BwEC"}}}}}}}}"#,
+        ];
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for round in 0..4 {
+                let mut header = [0u8; 11];
+                stream.read_exact(&mut header).await.unwrap();
+                let mut body = vec![0; u16::from_be_bytes([header[9], header[10]]) as usize];
+                stream.read_exact(&mut body).await.unwrap();
+                if round < 2 {
+                    stream.write_all(b"RPPairing").await.unwrap();
+                    stream.write_all(&(replies[round].len() as u16).to_be_bytes()).await.unwrap();
+                    stream.write_all(replies[round]).await.unwrap();
+                } else if round == 3 {
+                    let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(request.pointer("/message/plain/_0/event/_0/pairingData/_0/kind").unwrap(), "setupManualPairing");
+                }
+            }
+        }).await.unwrap();
+        let status = unsafe { &*handle }.session.status.lock().unwrap().clone();
+        unsafe {
+            assert!(amber_iphone_control_pairing_copy_plist(handle).is_null());
+            amber_iphone_control_free(handle);
+        }
+        assert_eq!(status.phase, "waiting_for_consent");
+        assert_eq!(status.pair_verify_error.unwrap().native_error_subcode, 5);
     }
 
     #[test]

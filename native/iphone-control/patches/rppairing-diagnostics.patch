@@ -1,0 +1,98 @@
+diff --git a/native/iphone-control/vendor/idevice/src/remote_pairing/socket.rs b/native/iphone-control/vendor/idevice/src/remote_pairing/socket.rs
+index 473ce93..2930096 100644
+--- a/native/iphone-control/vendor/idevice/src/remote_pairing/socket.rs
++++ b/native/iphone-control/vendor/idevice/src/remote_pairing/socket.rs
+@@ -4,7 +4,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+ use plist_macro::{plist, pretty_print_plist};
+ use serde::Serialize;
+ use serde_json::json;
+-use std::{fmt::Debug, pin::Pin};
++use std::{fmt::Debug, pin::Pin, sync::{Arc, Mutex}};
+ use tokio::io::{AsyncReadExt, AsyncWriteExt};
+ use tracing::{debug, trace, warn};
+ 
+@@ -44,6 +44,7 @@ pub struct RpPairingSocket<R: ReadWrite> {
+     /// and pairs *into* (see [`crate::remote_pairing::PairableHost`]) - sends
+     /// `"device"`, because in rppairing terms it plays the accessory/responder role.
+     originated_by: &'static str,
++    diagnostic_stage: Option<Arc<Mutex<Option<&'static str>>>>,
+ }
+ 
+ impl<R: ReadWrite> RpPairingSocket<R> {
+@@ -52,6 +53,7 @@ impl<R: ReadWrite> RpPairingSocket<R> {
+         Self {
+             inner: socket,
+             originated_by: "host",
++            diagnostic_stage: None,
+         }
+     }
+ 
+@@ -63,10 +65,26 @@ impl<R: ReadWrite> RpPairingSocket<R> {
+         Self {
+             inner: socket,
+             originated_by: "device",
++            diagnostic_stage: None,
++        }
++    }
++
++    /// Opt-in framing diagnostics for the owning app. Only fixed stage labels
++    /// are retained; no protocol bytes or remote error text are recorded.
++    pub fn new_with_diagnostics(socket: R, stage: Arc<Mutex<Option<&'static str>>>) -> Self {
++        let mut result = Self::new(socket);
++        result.diagnostic_stage = Some(stage);
++        result
++    }
++
++    fn stage(&self, label: &'static str) {
++        if let Some(stage) = &self.diagnostic_stage {
++            *stage.lock().unwrap_or_else(|p| p.into_inner()) = Some(label);
+         }
+     }
+ 
+     async fn send_rppairing(&mut self, value: impl Serialize) -> Result<(), IdeviceError> {
++        self.stage("serialize_request");
+         let value = serde_json::to_string(&value)?;
+         let x = value.as_bytes();
+ 
+@@ -74,7 +92,9 @@ impl<R: ReadWrite> RpPairingSocket<R> {
+         frame.extend_from_slice(RPPAIRING_MAGIC);
+         frame.extend_from_slice(&(x.len() as u16).to_be_bytes());
+         frame.extend_from_slice(x);
++        self.stage("write_frame");
+         self.inner.write_all(&frame).await?;
++        self.stage("flush_frame");
+         self.inner.flush().await?;
+         Ok(())
+     }
+@@ -120,13 +140,21 @@ impl<R: ReadWrite> RpPairingSocketProvider for RpPairingSocket<R> {
+     ) -> Pin<Box<dyn Future<Output = Result<plist::Value, IdeviceError>> + Send + 'a>> {
+         Box::pin(async move {
+             let mut magic = vec![0u8; RPPAIRING_MAGIC.len()];
++            self.stage("read_magic");
+             self.inner.read_exact(&mut magic).await?;
++            // Preserve the upstream default; Amber explicitly enables validation.
++            if self.diagnostic_stage.is_some() && magic != RPPAIRING_MAGIC {
++                self.stage("validate_magic");
++                return Err(IdeviceError::UnexpectedResponse("invalid RPPairing magic".into()));
++            }
+ 
+             let mut packet_len_bytes = [0u8; 2];
++            self.stage("read_length");
+             self.inner.read_exact(&mut packet_len_bytes).await?;
+             let packet_len = u16::from_be_bytes(packet_len_bytes);
+ 
+             let mut value = vec![0u8; packet_len as usize];
++            self.stage("read_body");
+             self.inner.read_exact(&mut value).await?;
+ 
+             debug!("recv_rppairing: {packet_len} json bytes");
+@@ -135,7 +163,9 @@ impl<R: ReadWrite> RpPairingSocketProvider for RpPairingSocket<R> {
+                 String::from_utf8_lossy(&value)
+             );
+ 
++            self.stage("decode_body");
+             let value: serde_json::Value = serde_json::from_slice(&value)?;
++            self.stage("response_received");
+ 
+             // Try plain first, then return the whole message dict for encrypted
+             if let Some(v) = value

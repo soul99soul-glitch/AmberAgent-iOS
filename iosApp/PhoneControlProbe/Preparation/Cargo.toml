@@ -7,5 +7,5 @@ publish = false
 [workspace]
 
 [dependencies]
-idevice = { path = "../../../native/iphone-control/vendor/idevice", default-features = false, features = ["ring", "usbmuxd", "tcp", "remote_pairing", "core_device_proxy", "tunnel_tcp_stack", "rsd"] }
+idevice = { path = "../../../native/iphone-control/vendor/idevice", default-features = false, features = ["ring", "usbmuxd", "remote_pairing", "syslog_relay"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }

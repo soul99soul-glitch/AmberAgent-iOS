@@ -143,7 +143,19 @@
     "src/xpc/xpc_macro.rs": "4e760809245fb291267b7037e4aac6ce4f84c4a27769765f65bf87d6cf147c60"
   },
   "modified_files": [
-    "src/services/dvt/xctest/mod.rs"
+    "src/services/dvt/xctest/mod.rs",
+    "src/remote_pairing/socket.rs"
   ],
-  "patch_sha256": "c7d326e0303edc53c159850be2493fd1c9f56bad1dce6e9053889bb02db3b6fc"
+  "patch_sha256": "c7d326e0303edc53c159850be2493fd1c9f56bad1dce6e9053889bb02db3b6fc",
+  "additional_patches": [
+    {
+      "path": "patches/rppairing-diagnostics.patch",
+      "sha256": "f713efe50f3f6d18be29b5676d33f1c41394ee1fbf28525002fa7b90fe1db9f5"
+    }
+  ],
+  "local_files_sha256": {
+    "src/lib.rs": "cd1582f212f92509277e1a70c9ef6b54a8a888f4d67ce85bef937e267eb73e59",
+    "include/AmberIPhoneControl.h": "de4730820a3c69a7404d79758187faeb299297bc526809c601d13ced7b535320",
+    "README.md": "3c0d9e91a31d36eb713a686e2bcbb977aed0d01e36aa71c4d9e2b3487aa135bd"
+  }
 }

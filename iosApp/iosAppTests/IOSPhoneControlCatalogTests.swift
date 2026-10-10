@@ -4,6 +4,41 @@ import XCTest
 
 @MainActor
 final class IOSPhoneControlCatalogTests: XCTestCase {
+    func testForegroundCatalogIncludesVisiblePhoneToolsOnlyForGrantedUserTurn() async throws {
+        let suite = "PhoneCatalog-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = IOSPhoneControlController(defaults: defaults, credentials: CatalogPairingStore())
+        await controller.refreshPreparation()
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: defaults, storageKey: "phone-catalog-settings"),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: defaults),
+            autoGenerateResponses: false,
+            phoneControl: controller
+        )
+        let ungranted = viewModel.textGenerationParamsForTesting(includePhoneControlTools: true)
+        var bridge = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isDisjoint(with: Set(bridge.fullToolDeclarations().map(\.name))))
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isDisjoint(with: Set(ungranted.tools.map(\.name))))
+
+        controller.enabled = true
+        controller.selectedBundleIDs = ["app.example.target"]
+        try controller.authorizeNextTask(durationSeconds: 300)
+        let granted = viewModel.textGenerationParamsForTesting(includePhoneControlTools: true)
+        bridge = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isSubset(of: Set(bridge.fullToolDeclarations().map(\.name))))
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isSubset(of: Set(granted.tools.map(\.name))))
+
+        let automatic = viewModel.textGenerationParamsForTesting()
+        bridge = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isDisjoint(with: Set(bridge.fullToolDeclarations().map(\.name))))
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isDisjoint(with: Set(automatic.tools.map(\.name))))
+        XCTAssertTrue(controller.hasPendingAuthorization, "Automatic assembly must not consume the authorization window")
+        controller.discardPendingAuthorization()
+        let revoked = viewModel.textGenerationParamsForTesting(includePhoneControlTools: true)
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isDisjoint(with: Set(revoked.tools.map(\.name))))
+    }
+
     func testBackgroundRebuildKeepsFrozenPhoneSchemaAndDoesNotAddNewGrantTools() {
         let frozenNames = ["runtime_status", "phone_observe", "phone_act"]
         let declarations = IOSPhoneControlToolCatalog.declarations.filter { frozenNames.contains($0.name) }
@@ -31,4 +66,10 @@ final class IOSPhoneControlCatalogTests: XCTestCase {
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_stop", input: "{}"), .sideEffect)
         XCTAssertTrue(ChatToolRuntime.execNestedToolWhitelist(visibleToolNames: IOSPhoneControlToolCatalog.toolNames).isEmpty)
     }
+}
+
+private actor CatalogPairingStore: IOSPhoneControlCredentialStoring {
+    func loadPairing() -> Data? { Data([1]) }
+    func savePairing(_ data: Data) { }
+    func deletePairing() { }
 }

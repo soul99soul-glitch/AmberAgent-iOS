@@ -144,3 +144,118 @@ Release 构建、签名校验、原位安装与启动均成功；读取进程列
 这是当前实现的交接版本，P1 同机 RemotePairing／XCTest／树-动作-新树仍未通过，P2–P4 的源代码完成与正式主应用装机也不改变该结论。公司 AI 应先核对本地规则、HEAD 和 WIP，读取本文件、`iphone-control-evidence/verification.json`、`iphone-control-evidence/device-delivery.json`，再定位首次握手失败的服务入口与具体 I/O 阶段。旧研究中的 FFI 缺口已经由本轮桥接实现补齐，不重复研究或重写设置页。
 
 交接不扩大设备实验范围：不恢复三个临时 App，不改变 VPN／Developer Mode／配对材料，不把主应用原位更新授权解释成任意设备实验。已授权的源码工作按阶段继续，每阶段独立 subagent review，只做与真实问题直接相关的验证。保留 ExperimentalGPL／`app.amber.ios` 与现有 App Group；不能默认执行旧设备 ID 的装机脚本。
+
+
+## 2026-10-10 公司机器 P1 诊断续轮
+
+公司机器原工作区在 `main` / `13ceb5eece1821eeca04e0d3723c87d8261208e9`，有聊天、后台与 Three.js 未提交工作，且尚未包含交接提交。获取 `origin/main` 后，在本仓忽略目录 `build/iphone-control-p1` 建立独立 worktree / `codex/iphone-control-p1`，以 `6390cef4efb1de5c672f23ff46884b9538452357` 为基线。没有 reset、clean、stash、覆盖原工作区或读取兄弟产品仓库。
+
+本轮修复诊断缺口，未猜改 wire protocol version、扫描端口或新增传输后端。
+
+- Amber 两个 RemotePairing 入口显式启用 framing 阶段诊断，错误状态附 `native_transport_stage`。区分写入、flush、magic、长度、正文、JSON 解码与响应结构；不保留协议正文、magic 字节、密钥或 token。Swift 消费及错误摘要支持新字段，旧状态仍可解码。
+- 该入口在读取长度前校验 `RPPairing` magic。vendor 默认构造器保持既有行为，额外 patch 和 SHA-256 已登记。
+- 独立 review 找到已有首次配对入口对任意 verify 错误继续 setup 的问题。真实本地 socket 回归检查在修复前得到 `pairing_setup_failed`；修复后 verify EOF 立即返回 `pairing_verify_failed`，无后续 setup 请求、无材料导出。只有 typed `PairVerifyFailed` 可进入一次 setup。
+- `native_transport_stage` 表示最后一次传输操作。verify 拒绝后的 cleanup 写入可能成为最后阶段，不应将它当作最初错误位置，也不证明系统已经显示 consent 提示。
+- `p1_protocol_review` 对调用链、生命周期、脱敏、默认行为与 provenance 独立复核，Rust 11 项通过。Swift 与装机结果单独记录，不能由 Rust 测试背书。
+
+USB 已连接到 iPhone 18 Pro / iOS 27.2 Beta `24B5089g`。Mac 的 Bonjour 定向发现 `_remotepairing._tcp`，解析出 `iPhone-2.local.:49152`，与设备名相符。固定 upstream 使用 [Bonjour 实际地址与端口](https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/tools/src/pair_rsd_ios.rs#L68-L104)进入 [raw RPPairing](https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/tools/src/pair_rsd_ios.rs#L284-L328)。这不是手机进程中 `127.0.0.1:49152` 服务身份、配对成功或自主 XCTest 的证据。
+
+本轮读取安装版及设备信息，使用 Xcode 自带 USB screenshot 观察 Amber。iPhone Mirroring 未运行，未点击 Connect/Continue；没有改用 Mac 维持控制会话。未恢复 probe/target/runner，未改变 VPN、Developer Mode 或配对配置。首次配对复测尚待既有实验边界之外的明确授权；P1 仍未验收。
+
+最终必要检查及交付状态见 `iphone-control-evidence/p1-continuation.json`。历史 `verification.json` 与 `device-delivery.json` 保留原记录。
+
+
+续轮最终构建与交付边界：Rust 11/11、Swift 状态兼容检查 1/1 通过；device 与 simulator 原生库、主产品模拟器测试构建和 `iosAppExperimentalGPL / Release` 签名构建通过。严格签名校验、Bundle ID、既有 ExperimentalGPL App Group 以及新诊断/verify guard 在可执行文件中的存在性均已核对。构建环境补齐 Rust iOS targets，命令级使用可用 JDK 21，没有修改项目配置或新加产品依赖。
+
+构建完成时设备仍显示 `unavailable` / CoreDevice `4016`，所以本轮未安装更新版、未运行新二进制，也未复测首次握手。仅此前交接安装版曾通过 USB 启动与截图观察。更新前会话文件元数据读取为 345 个条目，未读取正文；未发生安装，因此没有声称本轮更新后的数据保留已验证。App Group 文件元数据读取在连接失效时失败，保留该验证缺口。生成的无关 `Package.resolved` 变化已经移除；原工作区 WIP 没有被修改。本轮未提交或推送。
+
+
+### USB 恢复后的诊断版原位交付
+
+用户要求继续后，USB 已恢复为 available。复核源码与签名制品指纹一致，复用已通过检查的 `iosAppExperimentalGPL / Release`，原位更新 `app.amber.ios`，保留既有 ExperimentalGPL App Group。安装、启动均返回 0；进程列表与安装路径核对，确认 PID `39525` 来自新 bundle。更新前后会话文件元数据均为 345 条，没有缺失或大小变化，未读取正文。相同 App Group 域在更新前后均可访问，顶层条目保留；没有递归比较 Group 内部内容。未卸载 Amber、清空数据或安装临时 App。
+
+使用 Xcode USB screenshot 确认新应用首页已经显示；首页含用户会话标题，截图只留在本机临时目录，不提交。正式交付结果见 `iphone-control-evidence/device-delivery-p1-diagnostics.json`，历史 `device-delivery.json` 保留。
+
+此时仍未按下配对按钮，未建立控制会话。依据既有实验边界，已经提出仅一次正式 App 首次配对的授权问题，系统确认由用户处理；回复前不进行该操作。装机成功仍不证明 P1 配对、XCTest、真实跨 App 或后台通过。
+
+`p1_delivery_review` 已独立复核上述交付材料，未发现阻塞问题。复核确认源码/patch/制品指纹、严格签名、Bundle ID/App Group、进程来源与元数据前后保留；未把 Apple Development 诊断签名称为分发签名，也未把主应用启动称为控制验收。没有重复构建或测试。
+
+用户随后明确授权一次正式 Amber 首次配对复测，系统确认由用户处理，仍不安装 probe/target/runner 或改变 VPN/Developer Mode。USB 可读截图，当前镜像未运行且现有点击工具只支持模拟器，因此通过现有正式按钮发起：已请用户进入“设置 → 运行环境 → 本机手机控制”，只点一次“在本机建立配对”，结果留在页面供 USB 观察。授权已获得，不再重复询问；实际点击前不记为已经发起配对。
+
+
+### 一次正式 App 首次配对的真机结果
+
+用户报告已只按一次“在本机建立配对”，并留在结果页。USB 截图读到 `pairing_handshake_failed, native=1, subcode=0, transport=read_magic, io=ConnectionReset, os=54`；准备状态仍为“尚未导入配对文件”。控制开关在该截图中为开启，但目标 App 字段为空，本 agent 未建立下一次任务范围授权。
+
+结合已安装源码，TCP 连接、首请求序列化、`write_all` 和 `flush` 已返回成功，错误发生在响应 magic 读取未完成时。它不是长度/正文/JSON 解码错误，未进入 app 的 pair-verify、consent 或 setup 分支，也没有成功配对材料导出/保存。写入成功不代表对端接受了协议；现有诊断没有接收计数，不能说响应为 0 bytes，也不能把错误直接归因为 wire version、设备权限、VPN 或 loopback 服务身份。
+
+脱敏记录见 `iphone-control-evidence/pairing-retest.json`。原截图仅保留本机临时目录，其个人状态栏与 Live Activity 不提交。本次明确授权的一次尝试已结束，不再重试、扫描端口、变更协议版本、配置 VPN 或恢复临时 App。P1 配对/XCTest/跨 App 验收仍未通过。
+
+
+`p1_reset_review` 已独立复核实际截图、调用链与失败关闭流程，确认错误没有误报为成功，失败后没有成功材料写入；没有第二次尝试，也没有改代码或重复测试。
+
+一手入口核对：同一固定依赖已提供 [device-initiated PairableHost responder](https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/idevice/src/remote_pairing/responder.rs)，其角色和首消息方向与当前主动拨号入口不同；[上游 iOS27 工具说明](https://github.com/jkcoxson/idevice_pair#over-wi-fi-with-iphone-or-ipad)由设备选择所广播的 host 并输入代码。这支持优先核对 iOS27 首次配对服务入口/角色，但不证明旧 initiator 路径在全部 iOS27 上被移除，也不能把当前 RST 定为唯一的角色问题。改动版本号或直接增加另一条未验证路线没有依据。
+
+下一条必要证据是同机 endpoint 的服务身份/路由及脱敏拒绝原因。若评估 responder，应先证明 iOS 设置能发现并连接本机 App 自有 listener，再决定实现；电脑-host 的上游示例不是同机可用性的证据。本轮只完成一次诊断复测，P1 的真实配对、XCTest、跨 App 与后台仍未通过。
+
+
+### 初始化分叉的授权准备
+
+用户要求继续推进后，针对原有一次性 Mac 助手新增只读 `--check-device`，并收口错误脱敏、不覆盖输出、独立 attempt 身份与 verify typed guard。它只在命令行使用，不进入正式 App、Probe 或 runner 构建；没有新依赖，正式 Amber 源码/签名制品不变。两项检查验证协议/IO 错误脱敏和已有输出保持不变；`pairing_options` 独立复核通过。失败输出保留，避免删除可能唯一的部分身份副本或发生路径所有权竞态；失败产物不表示配对成功，不自动重试。
+
+最初只读查询返回 native22，随后同一默认 Unix socket 的原始/库级 `ListDevices` 均看到目标设备，UDID 精确匹配、类型 USB；请求 tag0/1 比较均成功。预检与实际准备现在都使用同一 `USBMUXD_SOCKET_ADDRESS` 规则。首次失败的时序/环境原因没有确证，不把它归因为协议 bug，也没有运行正常 prepare、读取 trust record、创建 RemotePairing 材料或修改设备配置。
+
+可选路径已具体化。推荐复用 Mac 助手首次准备与正式 Amber 导入，不让 Mac 维持 XCTest/模型循环；另一条是 App 自有 PairableHost，需要 Bonjour、稳定身份、PIN 与生命周期完整实现，以及同机发现/连接证据。后者是重大初始化架构选择，前者涉及新设备凭据操作，已向用户合并提出路线/授权选择。回复前不做新的配对。目标仍是手机独立运行；此预检不证明 CoreDevice untrusted service、配对创建、手机 loopback 验证或跨 App 控制通过。
+
+
+### P1 一次性 Mac 初始化与正式 App 安全导入续轮
+
+用户已选择并授权一次 Mac 首次初始化及正式 Amber 导入。先前 CoreDeviceProxy/RSD/untrusted 路线在 60 秒上限内未产出材料，阶段无法确认；未猜改协议或盲重试。核对固定官方 idevice_pair 创建入口后，仅将现有助手切换到已有 USB 信任下的 `RemotePairingLockdownService`，显式完成两段准备。助手已成功生成 501 字节私有 plist 并退出；没有安装测试 App、启动 XCTest 或运行模型循环。脱敏记录为 `iphone-control-evidence/mac-initialization.json`，私有材料和路径仅在被忽略的本机任务状态内。
+
+正式设置增加“导入 USB 准备的配对材料”一个按钮，复用现有读取、CryptoKit 验证及 ThisDeviceOnly Keychain。USB 仅暂存到正式 App 私有 `Library/Caches/amber-phone-control-usb.plist`，复制前检查不存在；保存成功且内容未变化后删除。失败保留文件，不破坏已有钥匙串。全程由 App controller 持有导入占用和 preparationRevision，不消费一次性控制授权。独立 usb_import_review 已确认源码逻辑闭环；构建、更新、导入及视觉检查按后续证据分别记录。
+
+生成有效结构材料不等于手机本机入口验证成功，不等于手机自己启动 XCTest。当前仍无 runner 或真实跨 App 控制验收。不得把 Mac 初始化成功合并成自主运行成功。
+
+
+正式 USB 导入阶段已取得设备结果：`iosAppExperimentalGPL / Release` 构建 exit 0，strict codesign、`app.amber.ios` 及原 App Group 核验通过；新二进制 SHA256 为 `cfb18ed25ad0d07107b0e2597a9d74655b43b7217c0e00ef0ced251a8fd97058`，原位安装及启动成功，PID 39739 来自新 bundle。更新前后 345 个会话文件元数据无丢失、大小无变化，App Group 顶层元数据保持一致；未读取正文。
+
+配对材料经 USB 送入正式 App 私有 Caches，501 字节、权限 0600，复制前确认无保留同名文件。用户仅点一次新增导入按钮，手机显示“已保存配对文件”，截图见 `iphone-control-evidence/usb-import-device.png`。USB 元数据确认该暂存已消失，结合 App 保存成功后才删除的源码路径，确认 CryptoKit 校验与 Keychain 保存成功；没有导出钥匙串秘密。Mac 本任务成功材料及其空临时目录已删除，失败的旧材料未导入。辅助字号只在模拟器验证，普通字号同时在真机看过；控制器 6/6、助手 3/3 通过，独立源码 review 无阻断问题。
+
+这是首次材料初始化/导入完成，不是 P1 手机本机握手验收。手机本机验证、runner 安装和启动、signed status/unsigned rejection、真实跨 App 和后台多轮均没有本阶段设备证据。Mac 助手已退出，不维持控制会话。下一步先验证手机入口及已导入材料，不扫描端口、重建身份或盲重放动作；runner 的安装仍须遵守用户明确禁止自动恢复安装的边界。
+
+
+### 三方 App 闭环续轮
+
+用户明确要求手机自主操控小米办公 Pro（`com.dancesuite.dance.ka.saxmsa667`），精确收件人刘剑崑，只发送一条“你好你好”，新观察确认，不确定就停止且不补发。用户随后单独授权只安装固定 runner，禁止 probe/target，Mac 不跑 XCTest 或模型循环。现有 Xcode 账户与 wildcard profile 起初不满足新手机，用户确认登录现有团队后 runner 的签名 build-for-testing、strict codesign、当前 UDID 和模块/插件核验通过；设备清单确认仅增加 `app.amber.selfcontrol.runner.xctrunner`，没有启动它。
+
+USB 读取用户指定的新普通聊天，实际四次 tool_search 与一次 tools_list 未发现 phone 工具，也没有 phone 工具调用。由于 Host 在 claim 成功时必先启动 native、失败不调用 provider，可判断本轮没有取得控制 owner；授权在 start 时是否存在仍未有设备证据，不猜测其原因。新增 `phoneControlRunGate` 沿现有 lifecycle ring 仅记录六个布尔门控值，无 token、正文或 pairing 数据。真实新用户 grant 存在时四个 phone 工具在首轮直接可见，自动任务/无 grant 仍不暴露工具。
+
+独立 review 确认保活到期路径在成功 handoff 前提前 revoke 是源码阻断。定点回归在修复前实际失败，修复后同 run owner 在成功 handoff 保留，失败由 cancel revoke，stale run 不影响当前 owner；VM→Host 使用同一默认 App shared controller。直接 VM 测试涵盖未授权/授权/自动组装/撤销目录与首轮可见性，并隔离内存材料和 lifecycle log。最后相关 suite 159 pass、3 fail、1 skip；失败之一是 handoff 基线已存在的后台接线字符串断言，另外两个是未改动 replay 渲染路径上的帧性能用例，独立复跑仍失败，未扩改无关渲染代码或降低断言。
+
+更新主应用仍为 ExperimentalGPL / Release / app.amber.ios / 既有 App Group。真机目标因 Xcode discovery 不可用未进入编译，改 generic iOS 完成同一签名构建，再通过明确 UDID 原位安装并启动，新 SHA256 `2ba549ed714ce9ba30b8504f99b8a13eb882acb36557d8c8f44590fbbaa0d504`，PID39839 来自新 bundle。347 会话文件元数据前后无丢失、大小变化，App Group 顶层保持。一次性授权按契约不跨重启恢复，已请用户重新 grant 并立即从空闲普通聊天发出指定任务；USB 直接读取实际结果。
+
+现有 Mac 初始化助手另增只读 `--check-runner-auth <UDID>`：仅在手机自己已启动 runner 后，用已有 USB 到固定8100发送一次无 token GET/status，5秒 deadline，仅读上限1024的首行且必须401，不记录正文、不创建配对或维持任何测试/模型会话。5/5 和锁定构建通过并独立收口 review。真实运行、unsigned401、三方树→发送→新树仍待设备证据，完整状态见 `iphone-control-evidence/cross-app-closure.json`。
+
+### 2026-10-10 授权窗口续轮
+
+用户明确要求将一次性授权改为 5 分钟、30 分钟、2 小时和无限制。窗口从点击时固定计时，claim 不消费也不延长；无限制使用 nil deadline。窗口只存在当前进程，重启不会恢复。正常完成与本机启动失败保留窗口；设置页停止、取消聊天、改目标范围、到期及 matching run 的 unknown 会撤回。phone_stop 按原工具契约只释放当前 run 的连接。单 runId owner、冻结范围、HMAC 和 unknown 不重放机制保持。
+
+授权窗口、Host、后台取消/恢复 unknown 及服务身份解析定点检查 81/81 通过。新增只读服务核对仅浏览 `_remotepairing._tcp`，最多四条、5 秒结束；不读取 TXT、不连接 TCP、不发送 pairing 数据。无结果表示身份未知，不能作为服务不存在证据。正式更新和设备服务观察仍待完成；跨 App 树、动作、发送和新树均未验证。
+
+窗口版 `bc6c9f04…` 已成功原位安装并启动，348 个会话文件没有丢失，两个文件在启动时大小增加，原因未定，未读取无关消息正文。真机截图确认窗口文案、配对仍保存。用户随后提供普通“你好”“啥？”也被手机握手失败挡住的证据，暴露了窗口复用与 Host 预启动的回归；此前源码检查未覆盖此产品行为，不能以通过测试掩盖实际失败。
+
+修复将启动入口移动到前后台共用的 phone executor：Host 只冻结本 run 的授权范围，不在 provider 之前连接；phone_status 和 phone_stop 不启动；首次 phone_observe/phone_act 才启动，失败只产生 not_sent 且禁止同 run 重连。尚未请求连接的普通任务不因关闭或到期的控制窗口被取消。真机服务核对暂缓，先恢复普通聊天；定点测试、正式构建及纠正版装机仍在进行。
+
+惰性启动纠正版 `8ebdb3e9…` 已原位安装并启动，PID40107，349 会话文件无丢失及大小变化，84/84 定点检查通过。用户随后提供真实 phone_status → phone_act(launch) → 启动失败 → 停止的工具调用结果，证明工具路由已恢复；首次配对握手仍 read_magic/ConnectionReset/os54，没有发送手机动作。USB 系统 App 元数据确认授权 ID 对应 Miwork Pro 7.72.25，不能凭 bundle 命名要求用户更改范围或重配。
+
+为消除手动按钮触发歧义，新增仅显式启动参数 `-amber-phone-service-inspection-once` 的一次只读 Bonjour 核对。正式 `a81126c8…` 装机通过；Mac 控制台只保留元数据白名单，其余输出不存储。手机实际返回 started(source=launch)、resolved=1、port=49152、families=ipv4,ipv6、local=true。控制台12秒超时 exit2发生在结果后，不伪报 exit0。一次 CoreDevice4016因可信开发连接不可用阻断读取，usbmux仍识别USB设备；用户解锁后连接恢复，不修改配对记录。
+
+下一项有证据的最小修复是将刚解析出的唯一匹配本机 IPv4 数值地址送入原有启动配置。材料在任何 DNS 前校验，发现后再次检查 cancellation/run owner，无候选或多个候选在 TCP 前停止，不猜127/10.7、其他端口、IPv6 scope或协议版本，不自动重试。该接线已独立审查；定点检查、构建和装机后的单次握手验证仍待完成。服务地址匹配不能证明 pairing、XCTest 或跨 App 操控成功。
+
+唯一地址版 `8ac20b40…` 已正式原位安装并启动，PID40218，定点90/90通过。用户授权后发送一次既定任务，USB读取指定新会话的工具结果与脱敏门控：phone_status为authorized，phone_observe在首次启动中使用Bonjour确认的非loopback本机IPv4，但仍在read_magic返回ConnectionReset/os54。没有pairVerify、XCTest或手机动作，不能把地址接线作为P1修复完成。Agent凭bundle命名否定Miwork身份是错误推断；系统安装元数据仍确认该ID是Miwork Pro，未改范围或旧记忆。
+
+下一阶段只准备正式App的有界self-responder入口验证：`-amber-phone-self-discovery-once`精确参数才启用App级owner；生成临时UUID/host身份及固定上游TXT，NWListener用临时端口发布`_remotepairing-pairable-host._tcp`，最多60秒，系统后台到期可提前停止。后台assertion不可用则不发布；服务不自动改名；所有入站连接立即关闭，不读写配对正文、不调用PairableHost.accept、不生成PIN、不读写Keychain、不启动runner或模型。日志只留ready/published、local地址匹配布尔、零应用层正文读写及固定停止原因，不存地址、identifier或authTag。native13/13通过，Swift首轮10/10及必要清理修正后的受影响4/4通过，独立review通过；正式Release构建进行中，系统设置发现/入站证据尚无。
+
+此阶段的后续边界也已核对：pinned PairableHost.accept仅返回PeerDevice，accepted socket未暴露为tunnel client，且responder声明allowsIncomingTunnelConnections=false。即使自发现和首次配对通过，仍需用新RpPairingFile另建host client来走CDTunnel/RSD/XCTest；不能假设旧49152路径已恢复。host altIRK与RpPairingFile中的对端altIRK不同，且稳定广播身份不保证系统重启后自动连接。真实配对、手机启动XCTest、签名接口、跨App闭环与后台流程继续保持未通过。
+
+该验证制品的正式ExperimentalGPL/Release构建已exit0，严格签名、同Bundle ID/App Group、团队和当前手机描述文件通过，执行文件SHA256为`ab7e3b1e10ede27f7227d39f84250742a6449aa9f25b11ae0ffd27c7ad75f6a3`。首次安装exit1，CoreDevice4016；只读设备状态确认tunnelState=unavailable、ddiServicesAvailable=false。已请求用户解锁与处理系统提示，没有自动修改信任/VPN/Developer Mode/配对设置。此制品尚未安装或启动，系统发现和入站验证仍未执行。

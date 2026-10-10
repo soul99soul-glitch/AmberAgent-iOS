@@ -17,6 +17,7 @@ struct PhoneControlLaunchStatus: Decodable, Sendable {
     let native_error_code: Int?
     let native_error_subcode: Int?
     let native_io_kind: String?
+    let native_transport_stage: String?
     let native_os_error_code: Int?
     let pair_verify_error: PhoneControlNativeDiagnostic?
 
@@ -24,6 +25,7 @@ struct PhoneControlLaunchStatus: Decodable, Sendable {
         var parts = code.map { [$0] } ?? []
         if let native_error_code { parts.append("native=\(native_error_code)") }
         if let native_error_subcode { parts.append("subcode=\(native_error_subcode)") }
+        if let native_transport_stage { parts.append("transport=\(native_transport_stage)") }
         if let native_io_kind { parts.append("io=\(native_io_kind)") }
         if let native_os_error_code { parts.append("os=\(native_os_error_code)") }
         if let pair_verify_error { parts.append("pair_verify=\(pair_verify_error.summary)") }
@@ -35,10 +37,12 @@ struct PhoneControlNativeDiagnostic: Decodable, Sendable {
     let native_error_code: Int
     let native_error_subcode: Int
     let native_io_kind: String?
+    let native_transport_stage: String?
     let native_os_error_code: Int?
 
     var summary: String {
         var parts = ["native=\(native_error_code)", "subcode=\(native_error_subcode)"]
+        if let native_transport_stage { parts.append("transport=\(native_transport_stage)") }
         if let native_io_kind { parts.append("io=\(native_io_kind)") }
         if let native_os_error_code { parts.append("os=\(native_os_error_code)") }
         return parts.joined(separator: ", ")
@@ -141,7 +145,7 @@ actor PhoneControlSession {
             lastLaunchStatus = PhoneControlLaunchStatus(phase: "stopped", code: nil,
                                                        message: "本轮测试连接已关闭", native_error_code: nil,
                                                        native_error_subcode: nil, native_io_kind: nil,
-                                                       native_os_error_code: nil, pair_verify_error: nil)
+                                                       native_transport_stage: nil, native_os_error_code: nil, pair_verify_error: nil)
         }
     }
 }

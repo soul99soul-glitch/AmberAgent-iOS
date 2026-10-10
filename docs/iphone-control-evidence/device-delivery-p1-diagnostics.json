@@ -1,0 +1,58 @@
+{
+  "completed_at_utc": "2026-10-10T05:36:56.364040+00:00",
+  "scope": "In-place update of existing Amber only; no probe/target/runner or pairing attempt",
+  "scheme": "iosAppExperimentalGPL",
+  "configuration": "Release",
+  "bundle_id": "app.amber.ios",
+  "app_group": "group.app.amber.ios.experimental-gpl.watchkit",
+  "device_model": "iPhone 18 Pro",
+  "build_reused": true,
+  "executable_sha256": "1d9d8e66b6e3c87e3e968389c41d38e56b7a194f9a78481c628e865d445fe311",
+  "signature_verification_passed": true,
+  "source_fingerprints_rechecked": true,
+  "install_exit_code": 0,
+  "launch_exit_code": 0,
+  "process_id": 39525,
+  "process_from_new_bundle_confirmed": true,
+  "metadata_preservation": {
+    "files": {
+      "before_entries": 345,
+      "after_entries": 345,
+      "missing_entries": 0,
+      "size_changed_entries": 0,
+      "contents_read": false
+    },
+    "group": {
+      "before_entries": 1,
+      "after_entries": 1,
+      "missing_entries": 0,
+      "size_changed_entries": 0,
+      "contents_read": false
+    }
+  },
+  "app_group_boundary": "Existing same App Group domain accessible before/after; top-level metadata only, no recursive contents comparison",
+  "did_uninstall_amber": false,
+  "did_clear_user_data": false,
+  "did_install_probe_target_runner": false,
+  "did_start_pairing_or_phone_control": false,
+  "independent_phone_control_accepted": false,
+  "command_evidence": [
+    "build/p1/device-install.log",
+    "build/p1/device-launch.log",
+    "/tmp/amber-p1-resume-install.json",
+    "/tmp/amber-p1-resume-launch.json",
+    "/tmp/amber-p1-resume-files-before.json",
+    "/tmp/amber-p1-resume-files-after.json",
+    "/tmp/amber-p1-resume-group-before.json",
+    "/tmp/amber-p1-resume-group-after.json",
+    "/tmp/amber-p1-resume-processes.json"
+  ],
+  "homepage_screenshot": "/tmp/amber-p1-resume-current-screen.png; not committed because homepage contains user conversation titles",
+  "independent_review": {
+    "agent": "p1_delivery_review",
+    "result": "No blocking findings; independently verified source/patch fingerprints, binary checksum, strict codesign, identity/App Group, process origin and metadata preservation",
+    "limits": "Apple Development signing; App Group top-level metadata only; no pairing/control acceptance"
+  },
+  "evidence_scope": "Historical diagnostics installation before secure USB import build",
+  "superseded_by": "mac-initialization.json"
+}

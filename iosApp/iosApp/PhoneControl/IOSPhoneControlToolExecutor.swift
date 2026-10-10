@@ -42,30 +42,47 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 "message": "当前 run 已停止接受手机控制动作；已发送的动作不能撤销。",
             ]))
         case .observe(let maxNodes, let includeScreenshot):
-            let runner: PhoneRunnerClient
-            do {
-                runner = try controller.runner(runID: runID)
-            } catch {
-                return .denied(Self.denial(error))
-            }
-            do {
-                let observation = try await runner.observe(maxNodes: maxNodes)
-                var parts: [UIMessagePart] = [UIMessagePart.Text(text: observation.compactText, metadata: nil)]
-                if includeScreenshot {
-                    parts.append(Self.imagePart(try await runner.screenshot()))
+            switch await prepareRunner() {
+            case .outcome(let outcome):
+                return outcome
+            case .ready(let runner):
+                do {
+                    let observation = try await runner.observe(maxNodes: maxNodes)
+                    var parts: [UIMessagePart] = [UIMessagePart.Text(text: observation.compactText, metadata: nil)]
+                    if includeScreenshot {
+                        parts.append(Self.imagePart(try await runner.screenshot()))
+                    }
+                    return .filledParts(parts)
+                } catch {
+                    return Self.readFailure(error)
                 }
-                return .filledParts(parts)
-            } catch {
-                return Self.readFailure(error)
             }
         case .act(let action):
-            let runner: PhoneRunnerClient
-            do {
-                runner = try controller.runner(runID: runID)
-            } catch {
-                return .denied(Self.denial(error))
+            switch await prepareRunner() {
+            case .outcome(let outcome):
+                return outcome
+            case .ready(let runner):
+                return Self.actionOutcome(await runner.act(action))
             }
-            return Self.actionOutcome(await runner.act(action))
+        }
+    }
+
+    private func prepareRunner() async -> RunnerPreparation {
+        guard controller.ownerRunID == runID else {
+            return .outcome(.denied(Self.denial(IOSPhoneControlError.unauthorized)))
+        }
+        do {
+            _ = try await controller.start(runID: runID)
+        } catch {
+            // Controller.start revokes the matching owner on startup failure; await the
+            // minimum cleanup needed before exposing the window to a later run.
+            await controller.stop(runID: runID)
+            return .outcome(.failed(Self.startFailure(error)))
+        }
+        do {
+            return .ready(try controller.runner(runID: runID))
+        } catch {
+            return .outcome(.denied(Self.denial(error)))
         }
     }
 
@@ -146,6 +163,20 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             let text = json(problemFields(problem, outcome: "unknown", retrySafe: false))
             return .outcomeUnknown([UIMessagePart.Text(text: text, metadata: nil)])
         }
+    }
+
+    private static func startFailure(_ error: Error) -> String {
+        json([
+            "outcome": "not_sent", "retry_safe": false,
+            "code": "phone_control_start_failed",
+            "message": "本机手机控制会话启动失败；本次未发送任何手机动作。",
+            "detail": error.localizedDescription,
+        ])
+    }
+
+    private enum RunnerPreparation {
+        case ready(PhoneRunnerClient)
+        case outcome(IOSAgentToolOutcome)
     }
 
     private static func readFailure(_ error: Error) -> IOSAgentToolOutcome {

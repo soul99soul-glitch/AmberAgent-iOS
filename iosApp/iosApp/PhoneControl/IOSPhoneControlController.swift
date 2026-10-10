@@ -15,15 +15,15 @@ enum IOSPhoneControlError: LocalizedError {
         case .unprepared: "请先导入本机 RemotePairing 配对文件，并准备已签名的控制 runner。"
         case .occupied: "已有手机控制任务正在运行或关闭，请等原任务结束。"
         case .invalidScope: "请填写本次允许控制的目标 App bundle ID。"
-        case .invalidDuration: "本次授权时长须在 60 到 300 秒之间。"
-        case .unauthorized: "本任务没有手机控制授权。请在设置中授权下一次用户发起的任务。"
-        case .expired: "本次手机控制授权已到期。"
+        case .invalidDuration: "授权窗口只能选择 5 分钟、30 分钟、2 小时或不设软件到期。"
+        case .unauthorized: "本任务没有手机控制授权。请在设置中开启授权窗口。"
+        case .expired: "手机控制授权窗口已到期。"
         }
     }
 }
 
 /// The app owns the connection; a settings/chat page only observes it.
-/// A grant is consumed by one user-started run and is never persisted or restored after process death.
+/// The authorization window is process-local and is never persisted or restored after process death.
 @MainActor
 @Observable
 final class IOSPhoneControlController {
@@ -46,7 +46,7 @@ final class IOSPhoneControlController {
         didSet {
             guard selectedBundleIDs != oldValue else { return }
             defaults.set(selectedBundleIDs.sorted(), forKey: Self.selectedBundleIDsPreferenceKey)
-            // Editing the next-task scope cannot expand an already frozen run's scope.
+            // Editing the window scope revokes that window; an active run keeps its frozen scope.
             discardPendingAuthorization()
         }
     }
@@ -63,7 +63,8 @@ final class IOSPhoneControlController {
     var isPreparingPairing: Bool { isUpdatingPairing && pairingOperationID != nil }
     var hasPendingAuthorization: Bool {
         guard let pending else { return false }
-        return enabled && pending.validUntil > Date()
+        guard enabled else { return false }
+        return pending.validUntil.map({ $0 > Date() }) ?? true
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -115,11 +116,40 @@ final class IOSPhoneControlController {
         isUpdatingPairing = true
         preparationRevision += 1
         defer { isUpdatingPairing = false }
+        try await saveImportedPairing(data)
+    }
+
+    private func saveImportedPairing(_ data: Data) async throws {
+        try Task.checkCancellation()
         try await credentials.savePairing(data)
         hasPreparedPairing = true
         discardPendingAuthorization()
         phase = .idle
         statusMessage = "配对文件已保存在本机钥匙串；runner 和同机开发服务仍须完成准备"
+    }
+
+    func importUSBPreparedPairing(from url: URL) async throws {
+        try Task.checkCancellation()
+        guard !isOccupied, !isUpdatingPairing else { throw IOSPhoneControlError.occupied }
+        isUpdatingPairing = true
+        preparationRevision += 1
+        defer { isUpdatingPairing = false }
+        let data = try await Task.detached(priority: .userInitiated) {
+            try IOSPhoneControlCredentials.readUSBPairingFile(url)
+        }.value
+        try await saveImportedPairing(data)
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                // Delete only the same task-owned file that was successfully saved.
+                guard try IOSPhoneControlCredentials.readUSBPairingFile(url) == data else {
+                    throw IOSPhoneControlCredentialError.usbMaterialChanged
+                }
+                try FileManager.default.removeItem(at: url)
+            }.value
+        } catch {
+            statusMessage = "配对已保存在本机钥匙串；USB 暂存材料未能清理。"
+            throw error
+        }
     }
 
     /// Explicit preparation only. It does not install a runner or start any GUI control session.
@@ -201,27 +231,56 @@ final class IOSPhoneControlController {
         guard enabled else { throw IOSPhoneControlError.disabled }
         guard !isOccupied, !isUpdatingPairing else { throw IOSPhoneControlError.occupied }
         guard hasPreparedPairing else { throw IOSPhoneControlError.unprepared }
-        guard (60...300).contains(durationSeconds) else { throw IOSPhoneControlError.invalidDuration }
+        guard [0, 300, 1_800, 7_200].contains(durationSeconds) else {
+            throw IOSPhoneControlError.invalidDuration
+        }
         guard !selectedBundleIDs.isEmpty, selectedBundleIDs.allSatisfy(Self.validBundleID) else {
             throw IOSPhoneControlError.invalidScope
         }
-        let grant = PendingGrant(scope: selectedBundleIDs, duration: durationSeconds,
-                                 validUntil: Date().addingTimeInterval(300))
+        let grant = PendingGrant(
+            scope: selectedBundleIDs,
+            validUntil: durationSeconds == 0
+                ? nil
+                : Date().addingTimeInterval(TimeInterval(durationSeconds))
+        )
         pending = grant
         expirationTask?.cancel()
-        expirationTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(300)) }
-            catch { return }
-            guard let self, self.pending?.validUntil == grant.validUntil else { return }
-            self.discardPendingAuthorization()
+        expirationTask = nil
+        if let validUntil = grant.validUntil {
+            expirationTask = Task { [weak self] in
+                let delay = max(0, validUntil.timeIntervalSinceNow)
+                do { try await Task.sleep(for: .seconds(delay)) }
+                catch { return }
+                guard let self else { return }
+                if self.pending?.validUntil == validUntil {
+                    self.expireAuthorizationWindow()
+                } else if self.owner?.active == true, self.owner?.expiresAt == validUntil {
+                    self.endCurrentTask()
+                }
+            }
         }
         authorizationTargetSummary = selectedBundleIDs.sorted().joined(separator: ", ")
         authorizedDurationSeconds = durationSeconds
         phase = .authorized
-        statusMessage = "已授权下一次用户发起的任务；请在 5 分钟内开始，任务授权持续 \(durationSeconds) 秒"
+        statusMessage = durationSeconds == 0
+            ? "授权窗口已开启；可供多个由你发起的任务复用，不设软件到期"
+            : "授权窗口已开启；可供多个由你发起的任务复用，窗口固定持续 \(durationSeconds / 60) 分钟"
     }
 
     func discardPendingAuthorization() {
+        clearAuthorizationWindow()
+    }
+
+    /// Clears the window only when the matching run still owns the slot.
+    /// Call this before stopping a run whose action outcome is unknown.
+    @discardableResult
+    func revokeAuthorizationWindow(runID: String) -> Bool {
+        guard owner?.runID == runID, owner?.active == true else { return false }
+        discardPendingAuthorization()
+        return true
+    }
+
+    private func clearAuthorizationWindow() {
         pending = nil
         if !isOccupied {
             expirationTask?.cancel()
@@ -230,7 +289,7 @@ final class IOSPhoneControlController {
             authorizedDurationSeconds = nil
             if phase == .authorized {
                 phase = .idle
-                statusMessage = "下一次任务的手机控制授权已撤销"
+                statusMessage = "手机控制授权窗口已撤销"
             }
         }
     }
@@ -238,24 +297,24 @@ final class IOSPhoneControlController {
     /// The host calls this only for a new user-started run, never on handoff or cold recovery.
     func claim(runID: String, onExpiration: @escaping @MainActor () -> Void) -> Bool {
         guard enabled, !isOccupied, !isUpdatingPairing,
-              let pending, pending.validUntil > Date() else { return false }
-        self.pending = nil
-        expirationTask?.cancel()
+              let pending else { return false }
+        if let validUntil = pending.validUntil, validUntil <= Date() {
+            expireAuthorizationWindow()
+            return false
+        }
         let context = Owner(runID: runID, sessionID: UUID(), scope: pending.scope,
-                            expiresAt: Date().addingTimeInterval(TimeInterval(pending.duration)),
+                            expiresAt: pending.validUntil,
                             onExpiration: onExpiration)
         owner = context
         ownerRunID = runID
         lastFailure = nil
         phase = .authorized
-        statusMessage = "本任务已取得手机控制授权，正在等待本机连接启动"
-        expirationTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(pending.duration)) }
-            catch { return }
-            guard let self, self.owner?.runID == runID, self.owner?.active == true else { return }
-            self.endCurrentTask()
-        }
+        statusMessage = "本任务已取得授权窗口，正在等待本机连接启动"
         return true
+    }
+
+    func hasRequestedSession(runID: String) -> Bool {
+        owner?.runID == runID && startTask != nil
     }
 
     @discardableResult
@@ -274,7 +333,16 @@ final class IOSPhoneControlController {
                 }
                 try Task.checkCancellation()
                 _ = try activeOwner(runID: runID)
-                let configuration = PhoneControlLaunchConfiguration(pairing: pairing,
+                let validatedPairing = try IOSPhoneControlCredentials.validatedPairing(pairing)
+                let discovery = IOSPhoneControlServiceInspection()
+                let services = await discovery.inspectAndRecord(source: "control")
+                try Task.checkCancellation()
+                _ = try activeOwner(runID: runID)
+                let endpoint = try services.uniqueLocalIPv4Endpoint
+                IOSBackgroundLifecycleLog.record("phoneControlResolvedEndpoint",
+                    detail: "source=bonjour_self port=49152 loopback=\(endpoint == "127.0.0.1:49152")")
+                let configuration = PhoneControlLaunchConfiguration(pairing: validatedPairing,
+                                                                    endpoint: endpoint,
                                                                     allowedBundleIDs: context.scope)
                 let status = try await session.start(runID: context.sessionID, configuration: configuration)
                 try Task.checkCancellation()
@@ -309,11 +377,17 @@ final class IOSPhoneControlController {
 
     /// A cached status read does not create a test session or touch Keychain/native services.
     func statusText(runID: String) -> String {
-        guard let owner, owner.runID == runID, owner.active, owner.expiresAt > Date() else {
+        guard let owner, owner.runID == runID, owner.active,
+              owner.expiresAt.map({ $0 > Date() }) ?? true else {
             return "本任务没有有效的手机控制授权；状态读取不会启动或恢复控制会话。"
         }
-        let remaining = max(0, Int(owner.expiresAt.timeIntervalSinceNow.rounded(.up)))
-        return "phase=\(phase.rawValue)\n\(statusMessage)\n这是本次启动的最后状态；实际可用性以新观察为准。\nscope=\(owner.scope.sorted().joined(separator: ","))\nauthorization_remaining_seconds=\(remaining)"
+        let remaining = owner.expiresAt.map {
+            String(max(0, Int($0.timeIntervalSinceNow.rounded(.up))))
+        } ?? "unlimited"
+        let remainingLabel = owner.expiresAt == nil
+            ? "authorization_remaining=unlimited"
+            : "authorization_remaining_seconds=\(remaining)"
+        return "phase=\(phase.rawValue)\n\(statusMessage)\n这是本次启动的最后状态；实际可用性以新观察为准。\nscope=\(owner.scope.sorted().joined(separator: ","))\n\(remainingLabel)"
     }
 
     /// Revoke synchronously; keep the slot until native runtime join finishes.
@@ -323,8 +397,10 @@ final class IOSPhoneControlController {
         self.owner = owner
         runnerClient = nil
         runnerStatus = nil
-        expirationTask?.cancel()
-        expirationTask = nil
+        if pending == nil {
+            expirationTask?.cancel()
+            expirationTask = nil
+        }
         startTask?.cancel()
         phase = .stopping
         statusMessage = "正在关闭本任务的手机控制连接"
@@ -339,10 +415,15 @@ final class IOSPhoneControlController {
             ownerRunID = nil
             startTask = nil
             cleanupTask = nil
-            authorizationTargetSummary = ""
-            authorizedDurationSeconds = nil
-            phase = lastFailure == nil ? .idle : .failed
-            statusMessage = lastFailure ?? "本轮手机控制连接已关闭"
+            if let pending, pending.validUntil.map({ $0 > Date() }) ?? true {
+                phase = .authorized
+                statusMessage = lastFailure.map { "\($0)；授权窗口仍有效" }
+                    ?? "本轮手机控制连接已关闭；授权窗口仍有效"
+            } else {
+                clearAuthorizationWindow()
+                phase = lastFailure == nil ? .idle : .failed
+                statusMessage = lastFailure ?? "本轮手机控制连接已关闭"
+            }
         }
     }
 
@@ -368,11 +449,19 @@ final class IOSPhoneControlController {
 
     private func activeOwner(runID: String) throws -> Owner {
         guard let owner, owner.runID == runID, owner.active else { throw IOSPhoneControlError.unauthorized }
-        guard owner.expiresAt > Date() else {
+        guard owner.expiresAt.map({ $0 > Date() }) ?? true else {
             endCurrentTask()
             throw IOSPhoneControlError.expired
         }
         return owner
+    }
+
+    private func expireAuthorizationWindow() {
+        guard pending != nil else { return }
+        clearAuthorizationWindow()
+        if owner?.active == true {
+            endCurrentTask()
+        }
     }
 
     static func validBundleID(_ value: String) -> Bool {
@@ -383,14 +472,13 @@ final class IOSPhoneControlController {
 
     private struct PendingGrant {
         let scope: Set<String>
-        let duration: Int
-        let validUntil: Date
+        let validUntil: Date?
     }
     private struct Owner {
         let runID: String
         let sessionID: UUID
         let scope: Set<String>
-        let expiresAt: Date
+        let expiresAt: Date?
         let onExpiration: @MainActor () -> Void
         var active = true
     }

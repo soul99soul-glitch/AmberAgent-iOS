@@ -36,12 +36,20 @@ AmberIPhoneControlHandle *amber_iphone_control_pairing_start(const char *endpoin
 char *amber_iphone_control_pairing_copy_plist(const AmberIPhoneControlHandle *handle);
 
 /// Snapshot: {phase, code, message, native_error_code, native_error_subcode,
-/// native_io_kind, native_os_error_code, pair_verify_error}. Optional diagnostics
-/// contain only stable error numbers/standard IO variants, never remote text.
+/// native_io_kind, native_os_error_code, native_transport_stage, pair_verify_error}. Optional diagnostics
+/// contain only stable error numbers/standard IO variants/fixed last-transport stages,
+/// never remote text. A stage is the last operation, including verify cleanup writes.
 /// Phases: connecting, pairing, tunnel, discovering, starting, running,
 /// stopping, stopped, failed. "running" is the testServe start event, NOT HTTP readiness.
 /// The caller must free this owned string with amber_iphone_control_string_free.
 char *amber_iphone_control_status_json(const AmberIPhoneControlHandle *handle);
+
+/// Creates one temporary in-memory pairable-host identity for the formal app
+/// to publish over Bonjour. This does not bind a socket, publish Bonjour,
+/// access Keychain, create an RPPairing file, or start pairing. The JSON has
+/// only `service_identifier` and a `txt_records` string dictionary. Caller
+/// owns the returned string and must free it with amber_iphone_control_string_free.
+char *amber_iphone_control_self_discovery_info(void);
 
 /// Nonblocking, idempotent cancellation. Does not undo executed device actions.
 void amber_iphone_control_stop(const AmberIPhoneControlHandle *handle);

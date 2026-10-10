@@ -61,6 +61,70 @@ final class IOSPhoneControlToolExecutorTests: XCTestCase {
         XCTAssertEqual(object["message"] as? String, "activation failed")
     }
 
+    @MainActor
+    func testStatusStopAndInvalidArgumentsDoNotStartRunner() async throws {
+        let (controller, defaults, suite) = try await makeClaimedController(runID: "run-status")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let executor = IOSPhoneControlToolExecutor(runID: "run-status", controller: controller)
+
+        let status = await executor.execute(name: "phone_status", arguments: "{}", isUserInitiated: true)
+        guard case .filled(let statusText) = status else { return XCTFail("status must be a read-only filled result") }
+        XCTAssertTrue(statusText.contains("phase=authorized"))
+        XCTAssertEqual(controller.phase, .authorized)
+
+        let invalid = await executor.execute(name: "phone_observe", arguments: #"{"max_nodes":0}"#, isUserInitiated: true)
+        guard case .failed(let invalidText) = invalid else { return XCTFail("invalid args must fail before startup") }
+        XCTAssertEqual(try decodedObject(invalidText)["code"] as? String, "invalid_arguments")
+        XCTAssertEqual(controller.phase, .authorized)
+
+        let stopped = await executor.execute(name: "phone_stop", arguments: "{}", isUserInitiated: true)
+        guard case .filled(let stoppedText) = stopped else { return XCTFail("stop must return a filled result") }
+        XCTAssertEqual(try decodedObject(stoppedText)["outcome"] as? String, "stopped")
+        XCTAssertNil(controller.ownerRunID)
+    }
+
+    @MainActor
+    func testFirstObserveStartupFailureIsNotSentAndSecondCallCannotRestart() async throws {
+        let (controller, defaults, suite) = try await makeClaimedController(runID: "run-start")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let executor = IOSPhoneControlToolExecutor(runID: "run-start", controller: controller)
+
+        let first = await executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        guard case .failed(let firstText) = first else { return XCTFail("startup failure must be a normal failed tool result") }
+        let firstObject = try decodedObject(firstText)
+        XCTAssertEqual(firstObject["outcome"] as? String, "not_sent")
+        XCTAssertEqual(firstObject["retry_safe"] as? Bool, false)
+        XCTAssertEqual(firstObject["code"] as? String, "phone_control_start_failed")
+        XCTAssertTrue((firstObject["message"] as? String)?.contains("未发送任何手机动作") == true)
+        XCTAssertNil(controller.ownerRunID, "startup failure must await owner cleanup")
+        XCTAssertTrue(controller.hasPendingAuthorization, "a failed startup keeps the authorization window")
+
+        let second = await executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        guard case .denied(let secondText) = second else { return XCTFail("a cleaned run must not restart from a second tool call") }
+        XCTAssertEqual(try decodedObject(secondText)["code"] as? String, "run_not_authorized")
+    }
+
+    private func makeClaimedController(runID: String) async throws -> (IOSPhoneControlController, UserDefaults, String) {
+        let suite = "IOSPhoneControlToolExecutorTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let controller = IOSPhoneControlController(
+            defaults: defaults,
+            credentials: ToolExecutorPairingStore(data: Data([1]))
+        )
+        await controller.refreshPreparation()
+        controller.enabled = true
+        controller.selectedBundleIDs = ["app.test"]
+        try controller.authorizeNextTask(durationSeconds: 300)
+        XCTAssertTrue(controller.claim(runID: runID, onExpiration: {}))
+        return (controller, defaults, suite)
+    }
+
+    private func decodedObject(_ text: String) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    }
+
+
+
 }
 
 private final class PhoneToolFailureProtocol: URLProtocol {
@@ -75,4 +139,14 @@ private final class PhoneToolFailureProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private actor ToolExecutorPairingStore: IOSPhoneControlCredentialStoring {
+    let data: Data
+
+    init(data: Data) { self.data = data }
+
+    func loadPairing() -> Data? { data }
+    func savePairing(_ data: Data) { }
+    func deletePairing() { }
 }

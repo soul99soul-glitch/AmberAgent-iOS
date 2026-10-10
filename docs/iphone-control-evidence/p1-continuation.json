@@ -1,0 +1,238 @@
+{
+  "updated_at_utc": "2026-10-10T07:15:32.637882+00:00",
+  "baseline_commit": "6390cef4efb1de5c672f23ff46884b9538452357",
+  "workspace": {
+    "branch": "codex/iphone-control-p1",
+    "path": "build/iphone-control-p1",
+    "original_main_head": "13ceb5eece1821eeca04e0d3723c87d8261208e9",
+    "original_worktree_not_edited": true,
+    "reset_clean_stash_used": false,
+    "commit_or_push_this_continuation": false
+  },
+  "source": {
+    "implemented": [
+      "opt-in redacted framing diagnostics through Rust/C/Swift consumer",
+      "opt-in RPPairing magic validation",
+      "only typed PairVerifyFailed permits first setup"
+    ],
+    "independent_review": "p1_protocol_review: no remaining functional source blocker; separately reran Rust 11/11; Swift result reported separately"
+  },
+  "tests": {
+    "rust": {
+      "passed": 11,
+      "failed": 0,
+      "log": "build/p1/rust-tests.log"
+    },
+    "verify_regression_before_fix": {
+      "failed": 1,
+      "actual_code": "pairing_setup_failed",
+      "expected_code": "pairing_verify_failed",
+      "log": "build/p1/verify-regression-before.log"
+    },
+    "swift": {
+      "passed": 1,
+      "failed": 0,
+      "exit_code": 0,
+      "result": "build/p1/diagnostic-tests-jdk21.xcresult",
+      "summary": "build/p1/swift-test-summary.json",
+      "log": "build/p1/swift-tests-jdk21.log",
+      "scope": "new/older launch status JSON decode and visible diagnostic summary"
+    }
+  },
+  "build": {
+    "native_device": {
+      "exit_code": 0,
+      "target": "aarch64-apple-ios",
+      "log": "build/p1/native-device-build.log"
+    },
+    "native_simulator": {
+      "exit_code": 0,
+      "target": "aarch64-apple-ios-sim",
+      "evidence": "successful iosApp simulator test prebuild/link"
+    },
+    "main_simulator": {
+      "exit_code": 0,
+      "scheme": "iosApp",
+      "configuration": "Debug"
+    },
+    "signed_device": {
+      "status": "passed",
+      "scheme": "iosAppExperimentalGPL",
+      "configuration": "Release",
+      "bundle_id": "app.amber.ios",
+      "app_group": "group.app.amber.ios.experimental-gpl.watchkit",
+      "log": "build/p1/signed-device-build.log",
+      "exit_code": 0,
+      "signature_verification_passed": true,
+      "new_diagnostic_fields_and_verify_guard_embedded": true,
+      "artifact": "iosApp/build/P1Device/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+      "executable_sha256": "1d9d8e66b6e3c87e3e968389c41d38e56b7a194f9a78481c628e865d445fe311",
+      "signed_profile_expiration": "2027-09-22T03:51:38",
+      "historical_diagnostics_build": true,
+      "artifact_path_has_since_been_rebuilt": true
+    },
+    "latest_signed_device_evidence": "mac-initialization.json"
+  },
+  "build_environment": {
+    "installed_missing_rust_targets": [
+      "aarch64-apple-ios",
+      "aarch64-apple-ios-sim"
+    ],
+    "invalid_inherited_java_home": "JDK 17 path missing its runtime",
+    "java_home_override_for_commands": "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
+    "project_build_configuration_changed": false,
+    "python_artifact": "APFS copy of this repository existing artifact and receipt, retained provenance validation"
+  },
+  "physical_device": {
+    "model": "iPhone 18 Pro",
+    "ios": "27.2 Beta 24B5089g",
+    "usb_wired_confirmed": true,
+    "installed_base_app_confirmed": true,
+    "installed_bundle_id": "app.amber.ios",
+    "installed_base_app_launched_and_screenshot_read": true,
+    "new_diagnostic_build_installed": true,
+    "latest_connectivity": "USB available; install, launch and reads succeeded",
+    "conversations_metadata_before_update_entries": 345,
+    "conversation_contents_read": false,
+    "pairing_attempt_this_continuation": true,
+    "pairing_material_or_system_configuration_changed": true,
+    "did_install_probe_target_runner_this_continuation": true,
+    "app_group_metadata_before_update": "same group domain accessible; top-level metadata preserved after installation",
+    "new_diagnostic_binary_launched": true,
+    "conversations_metadata_preserved_after_update": {
+      "before_entries": 345,
+      "after_entries": 345,
+      "missing_entries": 0,
+      "size_changed_entries": 0,
+      "contents_read": false
+    },
+    "pairing_change_scope": "User-authorized one-time Mac USB RemotePairing creation and formal Amber Keychain import; no VPN/Developer Mode changes",
+    "latest_delivery_evidence": "cross-app-closure.json",
+    "single_runner_install_explicitly_authorized": true,
+    "did_install_probe_or_target_this_continuation": false,
+    "gate_build_installed_and_launched": true
+  },
+  "service_observation": {
+    "method": "finite dns-sd browse/resolve of _remotepairing._tcp.local.; no port scan or connection to pairing service",
+    "resolved_host": "iPhone-2.local.",
+    "resolved_port": 49152,
+    "boundary": "Mac-side discovery consistent with device name; not proof of same-device 127.0.0.1 identity or pairing",
+    "upstream_reference": "https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/tools/src/pair_rsd_ios.rs#L68-L104"
+  },
+  "acceptance": {
+    "P1_same_device_pairing": false,
+    "phone_owned_xctest": false,
+    "signed_status_and_unsigned_rejection": false,
+    "tree_reversible_action_new_tree": false,
+    "background_30_seconds_3_minutes": false,
+    "actual_model_multiround_and_reconnect": false,
+    "mac_owned_session_used": false
+  },
+  "source_sha256": {
+    "native/iphone-control/src/lib.rs": "ddafadde3dc8f2327980d5cca5c02f0548213f325b423b92e2e47b67a7cdcfa3",
+    "native/iphone-control/vendor/idevice/src/remote_pairing/socket.rs": "5c913819099993ecfd38ea665b099f6dfb6528d13a85080a8a7d325b6c22ad75",
+    "native/iphone-control/include/AmberIPhoneControl.h": "38f2147cdc224448c20b45bde078b5a350d6157fa53db83b9a9ccfcce53734a9",
+    "native/iphone-control/source-manifest.json": "a0d2dadb5a77bebbef950ab3cdc5146441df642b1bc5a95e047143a36dbbe084",
+    "iosApp/PhoneControlRuntime/PhoneControlSession.swift": "0da435c57982676b75d070251713e6506d471275473dd45477e2baae08629bb5",
+    "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift": "fdebdc1e153ae87d10de9eb1ccf468c7d63352ac3b969c3bb0e3f419f6dacaa0",
+    "native/iphone-control/README.md": "697e893ba4b4d25afc2a5026161f370b620c8f21d3f0febaa802863372e21786"
+  },
+  "delivery": {
+    "installation_this_continuation": "passed",
+    "install_exit_code": 0,
+    "changed_binary_launched": "passed",
+    "launch_exit_code": 0,
+    "process_id": 39525,
+    "process_from_new_bundle_confirmed": true,
+    "evidence": "device-delivery-p1-diagnostics.json",
+    "existing_amber_uninstalled": false,
+    "user_data_cleared": false,
+    "pairing_experiment_authorization": "one attempt granted and consumed; no retries",
+    "independent_review": "p1_delivery_review: no blocking findings; installation and control acceptance kept separate",
+    "historical_diagnostics_delivery": true,
+    "superseded_by": "mac-initialization.json (PID39739 secure USB import build)"
+  },
+  "diff_check_exit_code": 0,
+  "delivery_history": [
+    {
+      "installation_this_continuation": "not_performed",
+      "changed_binary_launched": "not_performed",
+      "reason": "Physical iPhone still unavailable at final check; no response confirming recovered USB connection",
+      "existing_amber_uninstalled": false,
+      "user_data_cleared": false,
+      "pairing_experiment_authorized_this_continuation": false
+    }
+  ],
+  "pairing_retest": {
+    "authorization": "one attempt granted and consumed",
+    "attempt_started": true,
+    "attempt_count_user_reported": 1,
+    "status": "failed while reading response magic: ConnectionReset/os54",
+    "diagnostic": {
+      "code": "pairing_handshake_failed",
+      "native_error_code": 1,
+      "native_error_subcode": 0,
+      "native_transport_stage": "read_magic",
+      "native_io_kind": "ConnectionReset",
+      "native_os_error_code": 54
+    },
+    "evidence": "pairing-retest.json",
+    "independent_review": "p1_reset_review: failure stage, shutdown, no material save and acceptance boundary confirmed",
+    "diagnostic_retest_complete": true,
+    "same_device_pairing_passed": false
+  },
+  "bootstrap_preparation": {
+    "source": "iosApp/PhoneControlProbe/Preparation/src/main.rs",
+    "source_sha256": "8905ebeba97b322dd3a524a2db7edff09f4a20daacbab00c2fdb22979b700f6a",
+    "source_changes": [
+      "Read-only --check-device mode before output creation, using ListDevices only",
+      "Both modes use configured usbmuxd address consistently",
+      "Redacted numeric/IO diagnostics instead of arbitrary protocol error text",
+      "Only typed PairVerifyFailed permits first setup",
+      "New per-attempt controller name avoids reusing another installation identity",
+      "Failed private output retained; existing file never overwritten",
+      "Fixed trusted USB RemotePairingLockdownService creation route with two explicit flows",
+      "Failed output retains current unverified identity; never imported automatically"
+    ],
+    "tests": {
+      "passed": 3,
+      "failed": 0,
+      "log": "build/p1/preparation-usb-tests.log"
+    },
+    "build": {
+      "exit_code": 0,
+      "artifact": "iosApp/PhoneControlProbe/Preparation/target/debug/amber-phone-prepare",
+      "log": "build/p1/preparation-usb-build.log"
+    },
+    "readonly_device_check": {
+      "initial_result": "DeviceNotFound/native22; cause not established",
+      "final_result": "target found, transport USB, parsed count1",
+      "evidence": [
+        "build/p1/preparation-device-check-final.log",
+        "build/p1/usbmuxd-list-summary.json",
+        "build/p1/usbmuxd-tag-summary.json"
+      ],
+      "raw_and_parsed_identity_match": true,
+      "pairing_records_read_or_created": false
+    },
+    "independent_review": "pairing_options: final source closure passed; no new device calls/rebuilds by reviewer",
+    "runtime_boundary": "Mac first initialization helper only; no XCTest launch, no model loop, no phone test app installation",
+    "next_decision": "Authorized Mac initialization and formal Amber import completed; phone-loopback acceptance and runner ownership remain unverified",
+    "remaining_unknown": [
+      "Imported material accepted by phone loopback endpoint",
+      "Phone-owned XCTest with approved runner",
+      "Self-discovery/connection for app-owned PairableHost alternative (not selected)"
+    ],
+    "latest_evidence": "mac-initialization.json",
+    "historical_initialization_source_snapshot": true,
+    "latest_readonly_checker_evidence": "cross-app-closure.json"
+  },
+  "secure_usb_import": {
+    "status": "installed_launched_imported",
+    "evidence": "mac-initialization.json",
+    "tests_passed": 6,
+    "tests_failed": 0,
+    "independent_source_review": "usb_import_review passed"
+  },
+  "latest_gate_source_and_delivery": "cross-app-closure.json"
+}

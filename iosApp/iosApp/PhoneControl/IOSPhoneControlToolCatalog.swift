@@ -21,13 +21,13 @@ enum IOSPhoneControlToolCatalog {
             ),
             declaration(
                 name: "phone_observe",
-                description: "读取同一部 iPhone 前台授权 App 的新鲜 UI tree，包含文字、元素 ref 和位置。默认不截图；仅在 UI 树不足以判断时显式设置 include_screenshot=true。ref 只属于最近一次观察，执行动作或切换 App 后必须重新观察。仅适用于用户已授权的有界手机自控任务。",
+                description: "读取同一部 iPhone 前台授权 App 的新鲜 UI tree，包含文字、元素 ref 和位置。首次使用会按本任务授权启动控制连接，启动失败必须停止本次手机操作，不重试或换用其他控制途径。默认不截图；仅在 UI 树不足以判断时显式设置 include_screenshot=true。ref 只属于最近一次观察，执行动作或切换 App 后必须重新观察。仅适用于用户已授权的手机自控任务。",
                 schema: #"{"type":"object","properties":{"max_nodes":{"type":"integer","minimum":1,"maximum":500,"description":"最多返回的 UI 节点数，默认 500。"},"include_screenshot":{"type":"boolean","default":false,"description":"明确需要视觉判断时才请求 PNG 截图。"}},"required":[],"additionalProperties":false}"#,
                 effect: "pure"
             ),
             declaration(
                 name: "phone_act",
-                description: "操作同一部 iPhone 的授权 App。launch 需要 bundle_id；tap/type/swipe 需要最近一次 phone_observe 的 ref；type 还需 text，向输入框追加文字；swipe 还需 direction，表示手指移动方向。每次动作都重新定位唯一元素，不自动重试。completed 只表示执行回执，须再次观察验证业务效果；unknown 表示可能已执行，必须停止任务并由用户核对，禁止重放。仅适用于用户已授权的有界手机自控任务。",
+                description: "操作同一部 iPhone 的授权 App。首次使用会按本任务授权启动控制连接，启动失败必须停止本次手机操作，不重试或换用其他控制途径。launch 需要 bundle_id；tap/type/swipe 需要最近一次 phone_observe 的 ref；type 还需 text，向输入框追加文字；swipe 还需 direction，表示手指移动方向。每次动作都重新定位唯一元素，不自动重试。completed 只表示执行回执，须再次观察验证业务效果；unknown 表示可能已执行，必须停止任务并由用户核对，禁止重放。仅适用于用户已授权的手机自控任务。",
                 schema: #"{"type":"object","properties":{"action":{"type":"string","enum":["launch","tap","type","swipe"]},"bundle_id":{"type":"string","minLength":1,"description":"launch 的授权 App bundle ID。"},"ref":{"type":"string","minLength":1,"description":"tap/type/swipe 的最新 UI tree 元素引用。"},"text":{"type":"string","minLength":1,"description":"type 追加输入的文字，不自动清空现有内容。"},"direction":{"type":"string","enum":["up","down","left","right"],"description":"swipe 的手指移动方向。"}},"required":["action"],"additionalProperties":false}"#,
                 effect: "sideEffect"
             ),

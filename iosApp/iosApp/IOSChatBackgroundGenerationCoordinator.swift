@@ -1267,6 +1267,7 @@ final class IOSChatBackgroundGenerationCoordinator {
               runState.finalizeTerminal(as: .cancellation) else {
             return false
         }
+        IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
         IOSPhoneControlController.shared.revoke(runID: job.runId)
         subAgentTimeoutTasks.removeValue(forKey: requestId)?.cancel()
         cancelDetachedResponseTransport(requestId: requestId, job: job)
@@ -1867,6 +1868,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             return true
         }
 
+        IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
         guard (try? await runStore.transitionFromAnyActive(
             runId: job.runId,
             to: .outcomeUnknown,
@@ -2010,6 +2012,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
 
         guard unknownToolCallIds.isEmpty else {
+            IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
             guard (try? await runStore.transitionFromAnyActive(
                 runId: job.runId,
                 to: .outcomeUnknown,
@@ -2197,6 +2200,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
             guard let self, self.activeBackgroundTasks[requestId] === execution,
                   runState.expireAndReserveTerminal(requireUnclaimed: true) == .persistFailure else { return }
+            IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
             IOSPhoneControlController.shared.revoke(runID: job.runId)
             self.keepAlive.abandonSystemAssertion(self.chatBackgroundAudioLeaseId(for: requestId), preservingAdoptedTask: true)
             await runState.waitForExpiredOperationExit()
@@ -2297,6 +2301,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             backgroundTask.setTaskCompleted(success: false)
 
             Task { @MainActor in
+                IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
                 IOSPhoneControlController.shared.revoke(runID: job.runId)
                 guard runState.finalizeTerminal(as: .expiration) else { return }
                 IOSBackgroundLifecycleLog.record(
@@ -3665,6 +3670,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         messages: [UIMessage],
         signal: IOSToolOutcomeUnknownSignal
     ) async {
+        IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
         let finalMessages = messages.applyingLastAssistantGenerationDuration(
             runState.generationDuration()
         )

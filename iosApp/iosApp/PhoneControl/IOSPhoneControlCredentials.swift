@@ -9,13 +9,16 @@ protocol IOSPhoneControlCredentialStoring: Sendable {
 }
 
 enum IOSPhoneControlCredentialError: LocalizedError {
-    case invalidPairing
+    case invalidPairing, tooLarge, usbMaterialMissing, usbMaterialChanged
     case keychain(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .invalidPairing:
             "需要有效的 RemotePairing plist，包含对应的 Ed25519 公私钥和 identifier；普通 lockdown 配对文件不能使用。"
+        case .tooLarge: "配对文件不能超过 1 MB。"
+        case .usbMaterialMissing: "尚未接收到电脑准备的配对材料。"
+        case .usbMaterialChanged: "配对已保存，但 USB 暂存材料已变化，未删除新文件。"
         case .keychain(let status):
             "无法读写本机配对钥匙串（\(status)）。"
         }
@@ -69,6 +72,32 @@ actor IOSPhoneControlCredentials: IOSPhoneControlCredentialStoring {
          kSecAttrService as String: service,
          kSecAttrAccount as String: account,
          kSecAttrSynchronizable as String: false]
+    }
+
+    nonisolated static var usbImportURL: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("amber-phone-control-usb.plist")
+    }
+
+    nonisolated static func readPairingFile(_ url: URL) throws -> Data {
+        let hasAccess = url.startAccessingSecurityScopedResource()
+        defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: 1_048_577) ?? Data()
+        guard data.count <= 1_048_576 else { throw IOSPhoneControlCredentialError.tooLarge }
+        return data
+    }
+
+    nonisolated static func readUSBPairingFile(_ url: URL) throws -> Data {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw IOSPhoneControlCredentialError.usbMaterialMissing
+        }
+        let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard info.isRegularFile == true, info.isSymbolicLink != true else {
+            throw IOSPhoneControlCredentialError.invalidPairing
+        }
+        return try readPairingFile(url)
     }
 
     /// Match idevice's RpPairingFile format, and reject mismatched keys before replacing a valid record.

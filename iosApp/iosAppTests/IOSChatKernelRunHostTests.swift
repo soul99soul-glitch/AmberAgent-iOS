@@ -15,6 +15,18 @@ final class IOSChatKernelRunHostTests: XCTestCase {
 
     private typealias F = IOSChatForegroundFixtures
 
+    override func setUp() async throws {
+        try await super.setUp()
+        await IOSBackgroundLifecycleLog.flushPendingPersistenceForTesting()
+        IOSBackgroundLifecycleLog.resetForTesting()
+    }
+
+    override func tearDown() async throws {
+        await IOSBackgroundLifecycleLog.flushPendingPersistenceForTesting()
+        IOSBackgroundLifecycleLog.resetForTesting()
+        try await super.tearDown()
+    }
+
     private final class YieldEventRecorder {
         var events: [String] = []
         var runId: String?
@@ -170,14 +182,16 @@ final class IOSChatKernelRunHostTests: XCTestCase {
 
     private func makeHost(
         harness: IOSChatForegroundHarness,
-        provider: IOSAgentTextProvider
+        provider: IOSAgentTextProvider,
+        phoneControl: IOSPhoneControlController = .shared
     ) -> ChatKernelRunHost {
         ChatKernelRunHost(
             dependencies: harness.dependencies,
             bindings: harness.bindings,
             backgroundExecution: harness.keepAlive,
             toolLedger: harness.ledger,
-            textProvider: provider
+            textProvider: provider,
+            phoneControl: phoneControl
         )
     }
 
@@ -1152,6 +1166,121 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertEqual(harness.log.terminalStatus(), terminalStatus.wireName)
     }
 
+    func testAuthorizedPhoneWindowDoesNotStartNativeOrBlockOrdinaryReply() async throws {
+        let suite = "KernelHostPhoneGate-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let phoneControl = IOSPhoneControlController(defaults: defaults, credentials: HostPhonePairingStore())
+        await phoneControl.refreshPreparation()
+        phoneControl.enabled = true
+        phoneControl.selectedBundleIDs = ["app.example.target"]
+        try phoneControl.authorizeNextTask(durationSeconds: 300)
+        let harness = makeHarness()
+        let provider = HostScriptedProvider(rounds: [textRound("hello")])
+        let host = makeHost(harness: harness, provider: provider, phoneControl: phoneControl)
+        let bridge = IosToolExposureBridge(tools: IOSPhoneControlToolCatalog.declarations)
+        bridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isSubset(of: Set(bridge.visibleTools().map(\.name))))
+        host.start(providerSetting: harness.providerSetting, params: harness.params,
+                   inputDigest: "phone-gate-test", conversationId: harness.conversationId,
+                   uploadMessages: harness.messages, toolExposureBridge: bridge,
+                   phoneControlUserInitiated: true)
+        let stopped = await waitForHostIdle(host)
+        XCTAssertTrue(stopped)
+        XCTAssertEqual(provider.callCount, 1)
+        XCTAssertTrue(phoneControl.hasPendingAuthorization)
+        XCTAssertEqual(harness.log.terminalStatus(), AgentRunStatus.completed.wireName)
+        XCTAssertEqual(harness.messages.last?.toText(), "hello")
+        XCTAssertEqual(phoneControl.phase, .authorized)
+        XCTAssertNil(phoneControl.ownerRunID)
+        let gate = try XCTUnwrap(IOSBackgroundLifecycleLog.recentEntries.last { $0.line.contains("phoneControlRunGate") })
+        XCTAssertTrue(gate.line.contains("nextAuthorized=true declared=true claimed=true"))
+        XCTAssertFalse(gate.line.contains("private_key"))
+        await phoneControl.stopCurrent()
+    }
+
+    func testClosingUnusedPhoneWindowDoesNotCancelOrdinaryProviderRun() async throws {
+        let suite = "KernelHostUnusedPhoneWindow-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let phoneControl = IOSPhoneControlController(defaults: defaults, credentials: HostPhonePairingStore())
+        await phoneControl.refreshPreparation()
+        phoneControl.enabled = true
+        phoneControl.selectedBundleIDs = ["app.example.target"]
+        try phoneControl.authorizeNextTask(durationSeconds: 300)
+        let harness = makeHarness()
+        let provider = HostBlockingProvider()
+        let host = makeHost(harness: harness, provider: provider, phoneControl: phoneControl)
+        let bridge = IosToolExposureBridge(tools: IOSPhoneControlToolCatalog.declarations)
+        bridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
+        host.start(providerSetting: harness.providerSetting, params: harness.params,
+                   inputDigest: "unused-phone-window", conversationId: harness.conversationId,
+                   uploadMessages: harness.messages, toolExposureBridge: bridge,
+                   phoneControlUserInitiated: true)
+        let providerStarted = await waitForCondition { provider.callCount == 1 }
+        XCTAssertTrue(providerStarted)
+        let runID = try XCTUnwrap(host.currentRunId)
+        XCTAssertFalse(phoneControl.hasRequestedSession(runID: runID))
+        await phoneControl.stopCurrent()
+        XCTAssertFalse(phoneControl.hasPendingAuthorization)
+        XCTAssertNil(phoneControl.ownerRunID)
+        XCTAssertTrue(host.isRunning)
+        XCTAssertNil(harness.log.terminalStatus())
+        host.cancel()
+        let stopped = await waitForHostIdle(host)
+        XCTAssertTrue(stopped)
+    }
+
+    func testKeepAliveExpirationPreservesPhoneOwnerOnlyWhenHandoffSucceeds() async throws {
+        for handoffSucceeds in [true, false] {
+            let suite = "KernelHostPhoneOwner-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let phoneControl = IOSPhoneControlController(defaults: defaults, credentials: HostPhonePairingStore())
+            await phoneControl.refreshPreparation()
+            phoneControl.enabled = true
+            phoneControl.selectedBundleIDs = ["app.example.target"]
+            try phoneControl.authorizeNextTask(durationSeconds: 300)
+
+            let harness = makeHarness()
+            let provider = HostBlockingProvider()
+            let host = makeHost(harness: harness, provider: provider, phoneControl: phoneControl)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let store = IOSConversationStore(baseDirectory: directory)
+            var handedRunID: String?
+            host.backgroundStartOverrideForTesting = { handoff, _ in
+                handedRunID = handoff.runId
+                return handoffSucceeds
+            }
+            start(host, harness: harness)
+            let started = await waitForCondition { provider.callCount == 1 }
+            XCTAssertTrue(started)
+            let runID = try XCTUnwrap(host.currentRunId)
+            XCTAssertTrue(phoneControl.claim(runID: runID, onExpiration: {}))
+            XCTAssertFalse(host.handoffCurrentGenerationToBackground(conversationStore: store, honorKeepAliveLease: true))
+            host.handleKeepAliveExpiration(runId: "stale-run", applicationState: .background)
+            XCTAssertTrue(phoneControl.statusText(runID: runID).contains("scope=app.example.target"))
+
+            host.handleKeepAliveExpiration(runId: runID, applicationState: .background)
+            XCTAssertEqual(handedRunID, runID)
+            if handoffSucceeds {
+                XCTAssertEqual(phoneControl.ownerRunID, runID)
+                XCTAssertTrue(phoneControl.statusText(runID: runID).contains("scope=app.example.target"))
+                XCTAssertFalse(host.isRunning)
+                XCTAssertNil(harness.log.terminalStatus())
+            } else {
+                XCTAssertFalse(phoneControl.hasPendingAuthorization)
+                XCTAssertFalse(phoneControl.statusText(runID: runID).contains("scope="))
+                let stopped = await waitForHostIdle(host)
+                XCTAssertTrue(stopped)
+                XCTAssertEqual(harness.log.terminalStatus(), AgentRunStatus.interrupted.wireName)
+            }
+            await phoneControl.stop(runID: runID)
+            XCTAssertNil(phoneControl.ownerRunID)
+        }
+    }
+
     func testHostHandsPreparedRunToBackgroundOwner() async throws {
         let harness = makeHarness()
         let provider = HostBlockingProvider()
@@ -1389,4 +1518,11 @@ final class IOSChatKernelRunHostTests: XCTestCase {
 
         executionGate.released = true
     }
+}
+
+// The ownership regression never starts native services or writes Keychain.
+private actor HostPhonePairingStore: IOSPhoneControlCredentialStoring {
+    func loadPairing() -> Data? { Data([1]) }
+    func savePairing(_ data: Data) { }
+    func deletePairing() { }
 }

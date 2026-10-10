@@ -1,0 +1,631 @@
+{
+  "updated_at_utc": "2026-10-10T13:22:54.002108+00:00",
+  "status": "in_progress",
+  "goal": "Phone-owned Amber automation: UI tree -> send one authorized message -> new UI tree confirming outcome",
+  "target": {
+    "app": "小米办公 Pro",
+    "bundle_id": "com.dancesuite.dance.ka.saxmsa667",
+    "recipient_exact": "刘剑崑",
+    "message_exact": "你好你好",
+    "send_replay_allowed": false,
+    "installed_metadata_identity": {
+      "name": "Miwork Pro",
+      "bundle_id": "com.dancesuite.dance.ka.saxmsa667",
+      "version": "7.72.25",
+      "verified_via_usb": true
+    }
+  },
+  "authorization": {
+    "external_message": "User explicitly requested this recipient and exact message",
+    "device_control": "User asked to continue until full third-party App closure",
+    "runner_install": "Explicitly authorized one pinned runner only; no probe/target; Mac cannot run or maintain test session",
+    "phone_scope_and_next_task": "User reports chat launched but agent searched web instead; requested stop and settings scope/grant observation; no blind retry",
+    "signing": "User confirmed Xcode logged into existing team; signed build-for-testing resumed for one fixed runner only",
+    "new_user_request": "Reusable 5min/30min/2h/unlimited windows implemented, independently reviewed, focused tested and installed in formal ExperimentalGPL app. Process-local, frozen App scope, single runId owner, unknown stop retained."
+  },
+  "bootstrap_evidence": "mac-initialization.json",
+  "runner": {
+    "source_commit": "955316e3fe12572f142fd7e75fb5d95c21fd9e03",
+    "bundle_id": "app.amber.selfcontrol.runner.xctrunner",
+    "module": "iPhoneUse",
+    "installed": true,
+    "signed_build": {
+      "exit_code": 65,
+      "log": "build/p1/runner-build-for-testing.log",
+      "cause": "No Xcode account; existing wildcard profile excludes selected device"
+    },
+    "unsigned_build": {
+      "exit_code": 0,
+      "log": "build/p1/runner-unsigned-build.log",
+      "artifact": "iosApp/build/P1RunnerUnsigned/Build/Products/Debug-iphoneos/iPhoneUse-Runner.app",
+      "executable_sha256": "26d1a9837de9735a1c9dcaef554144297f03d6291c8421aa04d6e8f6c9bc5833",
+      "xctest_plugin_sha256": "72fbea498ddd7df284c2aa5fc526ac3e0e504b1da7ee49739256cb3edfc7a098",
+      "bundle_module_plugin_match": true,
+      "all_pinned_source_hashes_match": true,
+      "installed": false,
+      "test_session_run": false
+    },
+    "signed_build_after_account_ready": {
+      "exit_code": 0,
+      "log": "build/p1/runner-signed-ready-build.log",
+      "artifact": "iosApp/build/P1Runner/Build/Products/Debug-iphoneos/iPhoneUse-Runner.app",
+      "strict_signature_passed": true,
+      "team": "TY4JTL3V2M",
+      "current_device_in_profile": true,
+      "profile_expiration": "2027-10-10T07:45:30",
+      "module_plugin_match": true,
+      "executable_sha256": "4dcccf6284b55eacb29d21c8df1f56869494be7001c3fbb47788629daba79d9c",
+      "xctest_plugin_sha256": "5032fbc2a51c14f83516f1b54384ceef147754acd54542499a3074175ce0de49",
+      "test_session_started_by_mac": false
+    },
+    "installation": {
+      "exit_code": 0,
+      "evidence": "build/p1/runner-install.json",
+      "device_app_metadata": "build/p1/runner-installed-app.json",
+      "bundle_id": "app.amber.selfcontrol.runner.xctrunner",
+      "was_launched_by_mac": false,
+      "mac_owned_xctest": false
+    }
+  },
+  "acceptance": {
+    "phone_pair_verify": false,
+    "phone_owned_xctest": false,
+    "signed_status_unsigned_rejection": false,
+    "third_party_tree": false,
+    "message_action": false,
+    "new_tree_confirms_send": false,
+    "mac_test_session_started": false,
+    "mac_model_loop": false
+  },
+  "next": "Restore existing trusted USB development connectivity (user unlock/system prompts) and install already signed formal-App artifact, then verify only bounded self responder system discovery. No repeat external-message task.",
+  "user_reported_run": {
+    "reported_behavior": "Looked for Xiaomi office web version; apparently did not find automation tools",
+    "native_start_diagnostic": "not observed",
+    "phone_action_outcome": "unverified",
+    "next": "Inspect current allowed App scope and one-shot grant; successful claim would start native before provider generation"
+  },
+  "background_owner_source_finding": {
+    "status": "confirmed source blocker for background handoff",
+    "file": "iosApp/iosApp/ChatKernelRunHost.swift",
+    "issue": "Premature revoke in handleKeepAliveExpiration before handoff; cancel path already revokes if transfer fails",
+    "fix": "Implemented: remove premature revoke; failure cancel still revokes same run; shared controller passed consistently from VM to Host",
+    "runtime_evidence": false,
+    "regression": {
+      "before_fix": {
+        "failed": 1,
+        "evidence": "build/p1/phone-owner-before-fix.xcresult",
+        "failure": "handoff succeeds but same-run scope no longer active"
+      },
+      "first_after_fix": {
+        "owner_and_start_failure_cases": "passed",
+        "overall_passed": 130,
+        "overall_failed": 2,
+        "overall_skipped": 1,
+        "evidence": "build/p1/phone-owner-after-fix.xcresult",
+        "unresolved_failures": [
+          "unchanged long-prose viewport frame metric",
+          "unchanged growing table frame metric"
+        ]
+      },
+      "final_suite": "completed; exact counts and unrelated failures in source_final_suite"
+    }
+  },
+  "current_status_task_observation": {
+    "source": "USB screenshot and exactly this current conversation payload; no unrelated conversations read",
+    "conversation_created_utc": "2026-10-10T07:28:56.098260Z",
+    "tool_calls": [
+      "tool_search",
+      "tool_search",
+      "tool_search",
+      "tool_search",
+      "tools_list"
+    ],
+    "phone_tool_calls": 0,
+    "screenshot": "/tmp/amber-p1-status-task-result.png",
+    "pairing_attempt_evidence": false,
+    "grant_at_task_start": "unknown; boolean diagnostic added for next build",
+    "model_reply": "No phone_status found; model reports 169 tools in local catalog",
+    "source_inference": "Successful Host claim starts native before provider, so these discovery tool calls show that this task did not claim phone control"
+  },
+  "startup_diagnostic_source": {
+    "status": "implemented not installed",
+    "event": "phoneControlRunGate",
+    "fields": [
+      "userInitiated",
+      "enabled",
+      "prepared",
+      "nextAuthorized",
+      "declared",
+      "claimed"
+    ],
+    "contains_only_booleans": true,
+    "pairing_keys_tokens_body_logged": false,
+    "authorized_phone_tools": "eager only on new user turn with real pending grant",
+    "independent_review": "control_closure_review: no remaining source blocker after test isolation and wiring corrections"
+  },
+  "source_final_suite": {
+    "evidence": "build/p1/phone-gate-final.xcresult",
+    "passed": 159,
+    "failed": 3,
+    "skipped": 1,
+    "total": 163,
+    "phone_owner_catalog_startup_and_phone_wiring": "passed",
+    "unrelated_wiring_failure": {
+      "baseline_source_identical": true,
+      "failed_conditions": [
+        {
+          "source": "coordinator",
+          "assertion": "True",
+          "expected_text": "AgentActivityPresentation.runningTool(toolName: toolName)"
+        }
+      ]
+    },
+    "frame_performance_failures": {
+      "status": "Repeated on unchanged replay rendering paths; attribution beyond unchanged source remains uncertain; no unrelated render changes or assertions weakened",
+      "test_names": [
+        "testLongProseViewportFollowStaysLineSizedAtTwentyFourKB",
+        "testPerfGrowingTableStreamingKeepsDisplayLinkResponsive"
+      ],
+      "isolated_repeat": {
+        "passed": 0,
+        "failed": 2,
+        "evidence": "build/p1/unchanged-frame-isolated.xcresult"
+      }
+    }
+  },
+  "new_gate_app_build": {
+    "exit_code": 0,
+    "destination": "generic/platform=iOS after Xcode device destination unavailable",
+    "scheme": "iosAppExperimentalGPL",
+    "configuration": "Release",
+    "bundle_id": "app.amber.ios",
+    "app_group": "group.app.amber.ios.experimental-gpl.watchkit",
+    "signature_verified": true,
+    "current_device_in_profile": true,
+    "executable_sha256": "2ba549ed714ce9ba30b8504f99b8a13eb882acb36557d8c8f44590fbbaa0d504",
+    "gate_diagnostics_embedded": true,
+    "log": "build/p1/phone-gate-generic-device-build.log"
+  },
+  "new_gate_app_delivery": {
+    "install_exit_code": 0,
+    "launch_exit_code": 0,
+    "process_id": 39839,
+    "conversation_files_before": 347,
+    "conversation_files_after": 347,
+    "missing_files": 0,
+    "size_changed_files": 0,
+    "contents_read": false,
+    "app_group_top_level_preserved": true,
+    "pairing_keychain_or_user_data_cleared": false,
+    "evidence": [
+      "build/p1/phone-gate-install.json",
+      "build/p1/phone-gate-launch.json"
+    ],
+    "new_bundle_process_confirmed": true
+  },
+  "unsigned_status_checker": {
+    "source": "iosApp/PhoneControlProbe/Preparation/src/main.rs",
+    "source_sha256": "60046daa835b8ce6d282acb24b3d3425dc475b10bdb0c7f7046c3fcea373577b",
+    "tests_passed": 5,
+    "tests_failed": 0,
+    "build_exit_code": 0,
+    "tests_log": "build/p1/preparation-auth-check-reviewed-tests.log",
+    "independent_review": "pairing_options: bounded read-only socket, no credential/identity/session, exact numeric output and body-not-consumed fixture passed",
+    "real_device_execution": "pending phone-owned running session",
+    "mac_xctest_or_model_loop": false
+  },
+  "phone_start_retest": {
+    "time_local": "2026-10-10 16:27:52",
+    "gate_flags": {
+      "userInitiated": true,
+      "enabled": true,
+      "prepared": true,
+      "nextAuthorized": true,
+      "declared": true,
+      "claimed": true
+    },
+    "outcome": "native startup failed before model/provider and before any phone action",
+    "diagnostic": {
+      "code": "pairing_handshake_failed",
+      "native_error_code": 1,
+      "native_error_subcode": 0,
+      "native_transport_stage": "read_magic",
+      "native_io_kind": "ConnectionReset",
+      "native_os_error_code": 54
+    },
+    "prerequisites_at_attempt": {
+      "mac_pairing_imported_to_keychain": true,
+      "signed_runner_installed": true
+    },
+    "followup_local": "16:27:58 second manually submitted user message without a fresh one-shot grant; declared/claimed false, tool discovery returned no phone tools",
+    "pair_verify_tunnel_rsd_xctest_reached": false,
+    "send_action_executed": false,
+    "response_length_body_read": false,
+    "receipt_byte_count": "not instrumented; cannot assert zero bytes"
+  },
+  "authorization_window_update": {
+    "source_implemented": true,
+    "choices_seconds": [
+      300,
+      1800,
+      7200,
+      0
+    ],
+    "unlimited_uses_nil_deadline": true,
+    "claim_consumes_window": false,
+    "claim_extends_deadline": false,
+    "restart_restores_window": false,
+    "unknown_clears_matching_window": true,
+    "focused_checks": {
+      "exit_code": 0,
+      "passed": 81,
+      "failed": 0,
+      "skipped": 0,
+      "result": "build/p1/phone-window-reviewed.xcresult",
+      "final_actor_timer_compile": {
+        "exit_code": 0,
+        "passed": 4,
+        "failed": 0,
+        "result": "build/p1/phone-window-final-diagnostics.xcresult"
+      }
+    },
+    "installed": true,
+    "independent_review": "No owner/deadline/stale-run blocker; settings wording explicitly distinguishes user stop from phone_stop run release.",
+    "initial_diagnostic_regression": {
+      "passed": 43,
+      "failed": 1,
+      "cause": "IPv6 numeric decoding depended on fixture interface; fixed by stripping interface scope before numeric decoding, final regression now passed."
+    },
+    "ui_simulator": {
+      "ordinary_options": "build/p1/window-ui-options.png",
+      "max_dynamic_type_options": "build/p1/window-ui-max-options-final.png",
+      "ordinary_preparation": "build/p1/window-ui-ordinary-top.png",
+      "four_options_visible_and_selectable": true,
+      "max_options_fit_without_overlap": true,
+      "font_restored_to_large": true,
+      "new_inspection_button_max_font": {
+        "artifact": "build/p1/window-ui-max-inspection-aligned.png",
+        "wrapped_two_lines": true,
+        "no_overlap_observed": true
+      }
+    },
+    "device_delivery": {
+      "artifact": "iosApp/build/P1Device/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+      "bundle_id": "app.amber.ios",
+      "executable_sha256": "bc6c9f044c4750ed71ea8356a43eb72fa0b4d206a88608400e20542e7ea20ae8",
+      "strict_signature_passed": true,
+      "app_group_verified": true,
+      "team_verified": true,
+      "current_device_in_profile": true,
+      "remote_pairing_bonjour_declared": true,
+      "scheme": "iosAppExperimentalGPL",
+      "configuration": "Release",
+      "build_exit_code": 0,
+      "build_log": "build/p1/phone-window-final-device-build.log",
+      "install_exit_code": 0,
+      "launch_exit_code": 0,
+      "pid": 39980,
+      "new_bundle_path_confirmed": true,
+      "same_process_still_running_after_service_click": true,
+      "conversation_files_before": 348,
+      "conversation_files_after": 348,
+      "missing_conversation_files": 0,
+      "conversation_files_with_changed_sizes": 2,
+      "size_change_attribution": "Not established; both grew 897 bytes at launch. Metadata only, no unrelated message content read.",
+      "app_group_top_names_retained": true,
+      "runner_reinstalled": false,
+      "probe_or_target_installed": false,
+      "mac_test_or_model_session_run": false
+    },
+    "superseded_device_build_attempts": [
+      {
+        "log": "build/p1/phone-window-generic-device-build.log",
+        "exit_code": 75,
+        "reason": "Stopped own build to correct new IPv6 diagnostic regression before delivery"
+      },
+      {
+        "log": "build/p1/phone-window-reviewed-device-build.log",
+        "exit_code": 75,
+        "reason": "Stopped own build to make main-runloop Timer actor ownership explicit before delivery"
+      }
+    ]
+  },
+  "service_identity_inspection": {
+    "source_implemented": true,
+    "mode": "read-only Bonjour _remotepairing._tcp; max4 records, 5sec deadline; no TCP, no TXT, no pairing",
+    "device_observed": true,
+    "device_build": "completed",
+    "independent_review": "No blocker: bounded Bonjour metadata only, cancellation identity guard, numeric IPv6 without interface, no TCP/TXT/pairing or endpoint changes.",
+    "device_ui_observed": true,
+    "current_observation": "Actual iPhone App stdout whitelist: started source=launch, resolved=1, port49152 familiesipv4,ipv6 local=true. Address-match candidate only; pairing and XCTest not yet established.",
+    "simulator_runtime": "Single UI click resolved two peer service records at port 49152 with IPv4/IPv6, no local match; proves diagnostic returns, not phone self-service identity.",
+    "next": "Deferred while fixing ordinary-chat regression; no phone service identity conclusion yet.",
+    "explicit_launch_trigger": {
+      "argument": "-amber-phone-service-inspection-once",
+      "only_this_process_launch": true,
+      "changes_pairing_or_scope_or_system_settings": false,
+      "starts_xctest_or_model_loop": false,
+      "source_review": "passed",
+      "focused_tests": {
+        "passed": 4,
+        "failed": 0
+      },
+      "simulator_runtime": "started once and completed resolved=3, all local=false; no pairing or control actions",
+      "device_build": "completed",
+      "device_executed": true,
+      "device_delivery": {
+        "artifact": "iosApp/build/P1Device/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+        "bundle_id": "app.amber.ios",
+        "executable_sha256": "a81126c86e95595f98cbdea25ffd05040bc683e5c80626b8661b31df10cd4f7b",
+        "strict_signature_passed": true,
+        "app_group_verified": true,
+        "current_device_in_profile": true,
+        "build_exit_code": 0,
+        "launch_success": true,
+        "pid": 40147,
+        "new_bundle_verified": true,
+        "explicit_read_only_argument_verified": true
+      },
+      "console_observation": {
+        "console_exit_code": 2,
+        "elapsed_seconds": 12.1,
+        "events": [
+          {
+            "started": true,
+            "source": "launch"
+          },
+          {
+            "resolved": 1
+          },
+          {
+            "port": 49152,
+            "families": "ipv4,ipv6",
+            "local": "true"
+          }
+        ],
+        "argument_errors": [],
+        "captured_other_output": false
+      },
+      "console_boundary": "Only live metadata whitelist retained; all other stdout/stderr discarded. App discovery is phone-owned. No XCTest/model session launched or maintained by Mac. Console exited2 at its explicit12sec timeout after full metadata result; not reported as exit0.",
+      "devicectl_argument_boundary": "Delimiter must precede bundle ID: options -- app.amber.ios -amber-phone-service-inspection-once. Initial bundle-first delimiter was forwarded literally; first persisted-ring read had no execution proof. An omitted delimiter failed argument parsing with exit64 before launch; corrected console run supplied direct runtime proof."
+    },
+    "usb_connectivity_episode": {
+      "usbmuxd_target_usb_present": true,
+      "coredevice_error": 4016,
+      "trusted_tunnel_unavailable": true,
+      "user_unlocked_phone": true,
+      "after_unlock_tunnel_state": "connected",
+      "after_unlock_preference_read_exit": 0,
+      "pairing_records_changed": false
+    }
+  },
+  "ordinary_chat_regression": {
+    "observed_on_device": true,
+    "installed_build_sha256": "bc6c9f044c4750ed71ea8356a43eb72fa0b4d206a88608400e20542e7ea20ae8",
+    "user_evidence": "User supplied current chat screen: hello and followup each blocked by local phone startup read_magic ConnectionReset/os54.",
+    "cause": "Reusable window exposed phone tools and Host eagerly started native before every user-turn provider request.",
+    "correction_source_implemented": true,
+    "correction": "Host only reserves frozen run scope. phone_status/phone_stop remain non-starting; first observe/act lazily starts in shared executor. Startup failure cleans matching owner, returns not_sent/retry_safe=false; same run cannot reconnect. Unused window stop/expiry no longer cancels ordinary provider run.",
+    "initial_test_build": "Failed on new test private property access; corrected to existing provider.callCount without changing production code.",
+    "focused_checks": {
+      "exit_code": 0,
+      "passed": 84,
+      "failed": 0,
+      "skipped": 0,
+      "result": "build/p1/phone-lazy-start-fixed.xcresult"
+    },
+    "device_build": "completed",
+    "correction_installed": true,
+    "device_ordinary_chat_acceptance": false,
+    "device_delivery": {
+      "artifact": "iosApp/build/P1Device/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+      "bundle_id": "app.amber.ios",
+      "executable_sha256": "8ebdb3e99a46300c553b05c2ba1f9287450de8a62f6cd0a17af022f2dafb0609",
+      "strict_signature_passed": true,
+      "app_group_verified": true,
+      "current_device_in_profile": true,
+      "build_exit_code": 0,
+      "launch_success": true,
+      "pid": 40107,
+      "new_bundle_process_verified": true,
+      "conversation_count_before": 349,
+      "conversation_count_after": 349,
+      "missing_count": 0,
+      "size_changed_count": 0
+    },
+    "user_runtime_evidence": "User supplied current task screen: phone_status returns authorized scope; phone_act launch returns phone_control_start_failed/not_sent/retry_safe=false; model stops and does not use web. This proves phone tool routing works; startup handshake remains failed."
+  },
+  "resolved_endpoint_update": {
+    "source_implemented": true,
+    "selected_endpoint": "exact unique local IPv4 from current Bonjour _remotepairing._tcp port49152 record, transient memory only",
+    "opaque_pairing_validated_before_dns": true,
+    "none_or_multiple_candidates": "stop before TCP",
+    "fallback_or_retry_added": false,
+    "wire_protocol_changed": false,
+    "source_review": "passed",
+    "focused_checks": {
+      "exit_code": 0,
+      "passed": 90,
+      "failed": 0,
+      "skipped": 0,
+      "result": "build/p1/phone-resolved-endpoint-fixed.xcresult"
+    },
+    "device_build": "completed",
+    "installed": true,
+    "new_handshake_attempted": true,
+    "initial_compile_failure": "New immutable service constants were actor-isolated in pure selector; corrected to nonisolated Sendable constants, then90/90 passed.",
+    "delivery": {
+      "artifact": "iosApp/build/P1Device/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+      "bundle_id": "app.amber.ios",
+      "executable_sha256": "8ac20b40226aedac19af856266056b8b6be918a78015ea441fa6bc3d12e48f7d",
+      "strict_signature_passed": true,
+      "app_group_verified": true,
+      "current_device_in_profile": true,
+      "build_exit_code": 0,
+      "launch_success": true,
+      "pid": 40218,
+      "new_bundle_process_verified": true,
+      "normal_launch_without_diagnostic_flag": true,
+      "conversation_metadata": {
+        "before": 349,
+        "after": 350,
+        "missing_count": 0,
+        "size_changed_count": 3
+      }
+    },
+    "next": "User asked to open a reusable window and submit the same authorized message task exactly once. No new handshake/result until actual phone-owned tool use.",
+    "phone_owned_result": {
+      "task_at_utc": "2026-10-10T10:23:18",
+      "authorization_claimed": true,
+      "fresh_discovery_source": "control",
+      "resolved_service_count": 1,
+      "port": 49152,
+      "local_match": true,
+      "selected_endpoint_source": "bonjour_self",
+      "selected_endpoint_is_loopback": false,
+      "first_phone_operation": "phone_observe",
+      "result": "phone_control_start_failed",
+      "native_phase": "pairing_handshake_failed",
+      "transport_stage": "read_magic",
+      "io_kind": "ConnectionReset",
+      "os_code": 54,
+      "outcome": "not_sent",
+      "retry_safe": false,
+      "pair_verify_reached": false,
+      "xctest_started": false,
+      "phone_ui_action_sent": false,
+      "message_sent": false
+    },
+    "hypothesis_result": "Verified non-loopback self IPv4 endpoint still resets before RPPairing response; fixed127 selection alone does not explain failure. No blind repeat; service role/system rejection investigation next."
+  },
+  "agent_reporting_issue": {
+    "observed": true,
+    "claim": "Model asserted com.dancesuite.dance.ka.saxmsa667 is not Miwork Pro based on naming and stale memory1109.",
+    "correction": "USB system metadata verifies Miwork Pro7.72.25 under this exact bundle ID; startup failure happens before target App identity/action. No scope change or re-pair is justified by this result.",
+    "memory_modified_by_this_agent": false
+  },
+  "self_responder_discovery": {
+    "status": "source_reviewed_build_passed_install_blocked",
+    "purpose": "Test only device-initiated self discovery/inbound connection; not pairing or XCTest",
+    "native_api": "amber_iphone_control_self_discovery_info",
+    "upstream_commit": "3854a5df4a5a6dee71ffce4d8befc2ea356a8065",
+    "native_tests": {
+      "passed": 13,
+      "failed": 0
+    },
+    "formal_app_only": true,
+    "ephemeral_memory_only": true,
+    "service_type": "_remotepairing-pairable-host._tcp",
+    "max_seconds": 60,
+    "system_background_expiration_may_stop_earlier": true,
+    "default_launch_enabled": false,
+    "reads_pairing_bytes": false,
+    "writes_pairing_bytes": false,
+    "saves_pairing_material": false,
+    "discovered_by_system_settings": false,
+    "phone_inbound_observed": false,
+    "actual_pairing_passed": false,
+    "source_checks": {
+      "first_swift_suite_passed": 10,
+      "first_swift_suite_failed": 0,
+      "final_affected_swift_tests_passed": 4,
+      "final_affected_swift_tests_failed": 0,
+      "final_swift_result": "build/p1/self-discovery-final.xcresult",
+      "native_tests_passed": 13,
+      "native_tests_failed": 0,
+      "independent_review": "passed: control_closure_review; lifecycle/UUID/privacy/FFI/TXT/default-launch boundaries; device proof remains absent",
+      "formal_release_build": "passed exit0",
+      "formal_release_log": "build/p1/self-discovery-device-build.log"
+    },
+    "subsequent_chain_limit": "Pinned PairableHost.accept returns PeerDevice, not a tunnel client. Even successful responder onboarding still requires a new host client using the newly generated pairing plist. Discovery success alone does not prove that next hop or automatic restart works.",
+    "system_ui_read": {
+      "usb_screenshot_supported": true,
+      "current_task_final_read": true,
+      "settings_launch_exit_code": 0,
+      "developer_deep_link_effective": false,
+      "actual_page": "Apps",
+      "pairing_entry_name": "awaiting user navigation",
+      "screenshots_private_and_removed": true
+    },
+    "artifact": {
+      "strict_signature_passed": true,
+      "bundle_id": "app.amber.ios",
+      "team": "TY4JTL3V2M",
+      "app_group": "group.app.amber.ios.experimental-gpl.watchkit",
+      "current_device_in_profile": true,
+      "executable_sha256": "ab7e3b1e10ede27f7227d39f84250742a6449aa9f25b11ae0ffd27c7ad75f6a3",
+      "bonjour_service_declared": true
+    },
+    "installation": {
+      "exit_code": 1,
+      "installed": false,
+      "error_domain": "com.apple.dt.CoreDeviceError",
+      "error_code": 4016,
+      "tunnel_state": "unavailable",
+      "ddi_services_available": false,
+      "evidence": "build/p1/self-discovery-install.log",
+      "user_unlock_requested": true
+    },
+    "phone_launch": false
+  },
+  "checkpoint_review": {
+    "scope": "Phone-control continuation in isolated codex/iphone-control-p1 from 6390cef; excludes original dirty main worktree",
+    "latest_user_instruction": "Commit and push current progress before further device work",
+    "verdict": "PARTIAL: source checkpoint ready; phone-control product acceptance remains open",
+    "closed_findings": [
+      {
+        "status": "fixed",
+        "finding": "Authorized window caused ordinary chat to eagerly start native pairing",
+        "evidence": "Shared executor lazy start, status/stop remain non-starting; focused Swift84 passed and corrected formal app installed"
+      },
+      {
+        "status": "fixed",
+        "finding": "Phone tools absent from initial authorized user turn",
+        "evidence": "VM eager exposure and same controller passed to Host; subsequent actual phone_status and phone_observe calls observed"
+      },
+      {
+        "status": "fixed",
+        "finding": "Premature owner revoke before successful background handoff",
+        "evidence": "Same-run ownership regression and cancellation/stale tests; source review closed"
+      },
+      {
+        "status": "fixed",
+        "finding": "Insufficient initial handshake failure location",
+        "evidence": "Opt-in transport stage and typed IO/OS/subcode; phone read_magic ConnectionReset OS54 observed"
+      },
+      {
+        "status": "fixed",
+        "finding": "One-shot grant too restrictive for experiments",
+        "evidence": "Reusable 5min/30min/2h/unlimited process-local windows; frozen scope/runId/unknown-stop retained and tested"
+      },
+      {
+        "status": "fixed",
+        "finding": "Self-discovery listener could publish without background time or auto-rename identity",
+        "evidence": "Invalid assertion guard, synchronous expiration cleanup, noAutoRename, final Swift4 passed; independent review closed"
+      }
+    ],
+    "still_open": [
+      {
+        "status": "still-open",
+        "finding": "Verified non-loopback self endpoint still resets during read_magic",
+        "evidence": "Actual one-shot phone task; no phone pairVerify/XCTest/action occurred"
+      },
+      {
+        "status": "still-open",
+        "finding": "New self-discovery artifact installation and runtime verification",
+        "evidence": "Signed formal Release build passed; install exited1 CoreDevice4016, trusted development tunnel unavailable"
+      },
+      {
+        "status": "still-open",
+        "finding": "Phone-owned signed runner, cross-App send confirmation, background and restart recovery",
+        "evidence": "No successful runtime acceptance; acceptance flags remain false"
+      }
+    ],
+    "publication_boundaries": {
+      "pairing_body_keys_token_included": false,
+      "raw_logs_or_private_material_included": false,
+      "original_uncommitted_work_included": false,
+      "historical_records_retained": true
+    }
+  }
+}
