@@ -909,6 +909,7 @@ enum Route: Hashable {
     case plugins
     case pluginDetail(id: String)
     case execution
+    case phoneControl
     case executionTask(id: String)
     case providers
     case providerAdd
@@ -1038,6 +1039,8 @@ private extension View {
                 )
             case .macGateway:
                 MacGatewaySettingsView()
+            case .phoneControl:
+                IOSPhoneControlSettingsView()
             case .subscription:
                 IOSSubscriptionView(store: storeCoordinator)
             case .capabilities:

@@ -777,6 +777,10 @@ final class ChatToolRuntime {
     ) -> [String: any IOSToolExecutor] {
         var executors: [String: any IOSToolExecutor] = [:]
         let availableToolNames = Set(params.tools.map(\.name))
+        let phoneExecutor = IOSPhoneControlToolExecutor(runID: runId)
+        for name in IOSPhoneControlToolCatalog.toolNames where availableToolNames.contains(name) {
+            executors[name] = phoneExecutor
+        }
         // Jev 自动批准复核：后台没有审批卡，收紧后各执行器按原逻辑返回"需回到 App 确认"。
         let recentUserTexts = messages.filter { $0.role == MessageRole.user }.suffix(3).map { $0.toText() }
         let tighten: @MainActor (String, String) async -> Bool = { [weak self] name, arguments in
@@ -1376,6 +1380,10 @@ final class ChatToolRuntime {
         var executors: [String: any IOSToolExecutor] = [:]
         for tool in params.tools {
             let name = tool.name
+            if IOSPhoneControlToolCatalog.isPhoneTool(name: name) {
+                executors[name] = IOSPhoneControlToolExecutor(runID: runId)
+                continue
+            }
             let kind = pendingKindForForegroundTool(named: name, executionPolicy: executionPolicy)
             guard let kind else { continue }
             executors[name] = IOSForegroundKernelToolExecutor(
@@ -1640,6 +1648,7 @@ final class ChatToolRuntime {
         // cannot resolve user attachments, and image gen is a paid side effect.
         "generate_image",
         "theme_pack_import",
+        "phone_status", "phone_observe", "phone_act", "phone_stop",
     ]).union(IOSRemoteTerminalToolCatalog.jobToolNames)
 
     /// P3-b: whitelist for one evaluation's `tools` object = the current

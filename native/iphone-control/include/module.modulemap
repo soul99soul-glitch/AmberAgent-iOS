@@ -1,0 +1,4 @@
+module AmberIPhoneControl {
+    header "AmberIPhoneControl.h"
+    export *
+}

@@ -1,0 +1,93 @@
+--- a/src/services/dvt/xctest/mod.rs
++++ b/src/services/dvt/xctest/mod.rs
+@@ -132,6 +132,8 @@
+     pub runner_env: Option<Dictionary>,
+     /// Additional arguments appended to the runner launch args.
+     pub runner_args: Option<Vec<String>>,
++    /// Explicit Swift/ObjC test module for non-WDA runners.
++    pub product_module_name: Option<String>,
+ }
+ 
+ impl TestConfig {
+@@ -224,6 +226,7 @@
+             tests_to_skip: None,
+             runner_env: None,
+             runner_args: None,
++            product_module_name: None,
+         })
+     }
+ 
+@@ -263,7 +266,9 @@
+         };
+ 
+         // productModuleName: config_name when a target app is set, else default WDA name
+-        let product_module_name = if self.target_bundle_id.is_some() {
++        let product_module_name = if let Some(module) = &self.product_module_name {
++            module.clone()
++        } else if self.target_bundle_id.is_some() {
+             config_name.to_owned()
+         } else {
+             "WebDriverAgentRunner".to_owned()
+@@ -1982,13 +1987,6 @@
+         listener: &mut L,
+         timeout: Option<std::time::Duration>,
+     ) -> Result<(), IdeviceError> {
+-        // 1. Session UUID + config path
+-        let session_id = uuid::Uuid::new_v4();
+-        let xctest_path = format!(
+-            "/tmp/{}.xctestconfiguration",
+-            session_id.to_string().to_uppercase()
+-        );
+-
+         // 2. iOS major version (needed for service selection and launch env)
+         let ios_major_version: u8 = {
+             let mut lockdown = LockdownClient::connect(&*self.provider).await?;
+@@ -2002,11 +2000,44 @@
+                 .unwrap_or(16u8)
+         };
+ 
+-        // 3. Build XCTestConfiguration
++        let conns = connect_testmanagerd(&*self.provider, ios_major_version).await?;
++        Self::run_connected(cfg, ios_major_version, conns, listener, timeout).await
++    }
++
++    /// Run through an already-authenticated RemotePairing RSD tunnel.
++    /// The caller owns discovery/version checks. No lockdown pairing or second
++    /// CoreDeviceProxy tunnel is opened, and no unsigned WDA readiness probe runs.
++    pub async fn run_rsd<L: XCUITestListener>(
++        mut handle: crate::tcp::handle::AdapterHandle,
++        handshake: RsdHandshake,
++        cfg: TestConfig,
++        ios_major_version: u8,
++        listener: &mut L,
++        timeout: Option<std::time::Duration>,
++    ) -> Result<(), IdeviceError> {
++        if ios_major_version < 17 {
++            return Err(IdeviceError::UnexpectedResponse("RSD XCTest requires iOS 17+".into()));
++        }
++        let dvt = rsd_connect(&mut handle, &handshake,
++            "com.apple.instruments.dtservicehub", "dtservicehub", true).await?;
++        let ctrl = rsd_connect(&mut handle, &handshake,
++            TESTMANAGERD_RSD_SERVICE, "testmanagerd-ctrl", false).await?;
++        let main = rsd_connect(&mut handle, &handshake,
++            TESTMANAGERD_RSD_SERVICE, "testmanagerd-main", false).await?;
++        let conns = TestManagerConnections { ctrl, main, dvt, rsd_handles: vec![handle] };
++        Self::run_connected(cfg, ios_major_version, conns, listener, timeout).await
++    }
++
++    async fn run_connected<L: XCUITestListener>(
++        cfg: TestConfig,
++        ios_major_version: u8,
++        mut conns: TestManagerConnections,
++        listener: &mut L,
++        timeout: Option<std::time::Duration>,
++    ) -> Result<(), IdeviceError> {
++        let session_id = uuid::Uuid::new_v4();
++        let xctest_path = format!("/tmp/{}.xctestconfiguration", session_id.to_string().to_uppercase());
+         let xctest_config = cfg.build_xctest_configuration(session_id, ios_major_version)?;
+-
+-        // 4. Connect to testmanagerd (ctrl + main) and DVT
+-        let mut conns = connect_testmanagerd(&*self.provider, ios_major_version).await?;
+         let mut ctrl_proxy = TestManagerProxy::open(&mut conns.ctrl, ios_major_version).await?;
+         let mut main_proxy = TestManagerProxy::open(&mut conns.main, ios_major_version).await?;
+         let mut process_control = XCTestProcessControlChannel::open(&mut conns.dvt).await?;

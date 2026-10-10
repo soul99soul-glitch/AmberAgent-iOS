@@ -215,7 +215,8 @@ final class ChatKernelRunHost {
         conversationId: KotlinUuid?,
         uploadMessages: [UIMessage],
         toolExposureBridge: IosToolExposureBridge? = nil,
-        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil,
+        phoneControlUserInitiated: Bool = false
     ) {
         if isRunning {
             cancel()
@@ -301,6 +302,15 @@ final class ChatKernelRunHost {
             subtitle: IOSAppLocalization.string("准备上下文", defaultValue: "准备上下文")
         )
 
+        // Only the explicit one-shot grant can create a local test session.
+        // Keep the same owner across a foreground/background handoff.
+        let phoneControlClaimed = phoneControlUserInitiated && bridge.fullToolDeclarations().contains {
+            IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name)
+        } && IOSPhoneControlController.shared.claim(runID: runId) { [weak self] in
+            if self?.currentRunId == runId { self?.cancel(cause: .backgroundInterruption) }
+            _ = IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
+        }
+
         let adapter = makeAdapter(runId: runId)
         self.adapter = adapter
 
@@ -336,6 +346,25 @@ final class ChatKernelRunHost {
                 return
             }
             guard self.currentRunId == runId else { return }
+            if phoneControlClaimed {
+                do {
+                    _ = try await IOSPhoneControlController.shared.start(runID: runId)
+                } catch {
+                    guard self.currentRunId == runId else { return }
+                    if self.cancelCause != nil {
+                        await self.finalizeTerminal(runId: runId)
+                    } else {
+                        await self.preambleFailed(rawMessage: error.localizedDescription,
+                                                  modelId: params.model.modelId, runId: runId)
+                    }
+                    return
+                }
+                guard self.currentRunId == runId else { return }
+                if self.cancelCause != nil {
+                    await self.finalizeTerminal(runId: runId)
+                    return
+                }
+            }
             // mcp sync(CG-C :1125-1128)。本轮工具目录已在 start 前由 VM 钉住
             // (toolExposureBridge),同步只保活连接并为后续轮次刷新目录,
             // 所以不阻塞首 token;本轮 MCP 调用由 mcpManager 等待同步完成。
@@ -1091,6 +1120,7 @@ final class ChatKernelRunHost {
         // cancelled 会制造 Finished(completed) 与取消消息互相矛盾的快照。
         if activeImageToolCall != nil, imageToolTerminalClaimed { return }
         cancelCause = cause
+        IOSPhoneControlController.shared.revoke(runID: runId)
         toolRuntime.discardPreparedThemeImport()
         let toolFailureReason: String
         switch cause {
@@ -2171,6 +2201,7 @@ final class ChatKernelRunHost {
     }
 
     private func outcomeUnknownTerminal(runId: String) async {
+        await IOSPhoneControlController.shared.stop(runID: runId)
         projection.discardProvisionalAssistant()
         let startedAt = currentStartedAt
         let inputDigest = currentInputDigest
@@ -2230,6 +2261,7 @@ final class ChatKernelRunHost {
     /// completed(CG-C handleCompletedStream 正常分支 :2732-2797 +
     /// 空回复分支 :2685-2730)。
     private func completedTerminal(runId: String) async {
+        await IOSPhoneControlController.shared.stop(runID: runId)
         projection.discardProvisionalAssistant()
         let startedAt = currentStartedAt
         let inputDigest = currentInputDigest
@@ -2392,6 +2424,7 @@ final class ChatKernelRunHost {
     /// 追加过输出上限提示,这里不再加泡,对齐 completeTruncatedStream
     /// :2802-2843 的 Watch/LiveActivity 形状)。
     private func failedTerminal(runId: String, requiresRecovery: Bool = false) async {
+        await IOSPhoneControlController.shared.stop(runID: runId)
         projection.discardProvisionalAssistant()
         let startedAt = currentStartedAt
         let inputDigest = currentInputDigest
@@ -2499,6 +2532,7 @@ final class ChatKernelRunHost {
     /// 尾的差异:恢复 steer leftover 进 composer,不走 handleSteerQueueAtTerminal,
     /// 也不 generationSucceeded。
     private func cancelledTerminal(runId: String) async {
+        await IOSPhoneControlController.shared.stop(runID: runId)
         // cancelledTerminal 不经过 teardownRun,单独补同名事件,保持三种终态
         // (完成/失败/取消)都能发出 RunTerminal。
         ChatPerfTrace.event("RunTerminal")
@@ -2592,6 +2626,7 @@ final class ChatKernelRunHost {
         recordJevRunCompletion(runId: runId, messages: terminalMessages)
         let terminalConversationId = conversationId
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
+        IOSPhoneControlController.shared.revoke(runID: runId)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
@@ -2623,6 +2658,7 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         ChatStreamRecorder.shared.finish(runId: runId)
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
+        IOSPhoneControlController.shared.revoke(runID: runId)
         let terminalMessages = bindings.getMessages()
         finishJevToolDiscoveryStep(
             runId: runId,
@@ -2717,6 +2753,7 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         ChatStreamRecorder.shared.finish(runId: runId)
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
+        IOSPhoneControlController.shared.revoke(runID: runId)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
@@ -2794,6 +2831,7 @@ final class ChatKernelRunHost {
     private func handleKeepAliveExpiration(runId: String) {
         guard currentRunId == runId,
               UIApplication.shared.applicationState != .active else { return }
+        IOSPhoneControlController.shared.revoke(runID: runId)
         if handoffCurrentGenerationToBackground(
             conversationStore: pendingBackgroundConversationStore
         ) {

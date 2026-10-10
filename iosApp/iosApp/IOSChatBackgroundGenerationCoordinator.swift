@@ -1267,6 +1267,7 @@ final class IOSChatBackgroundGenerationCoordinator {
               runState.finalizeTerminal(as: .cancellation) else {
             return false
         }
+        IOSPhoneControlController.shared.revoke(runID: job.runId)
         subAgentTimeoutTasks.removeValue(forKey: requestId)?.cancel()
         cancelDetachedResponseTransport(requestId: requestId, job: job)
         keepAlive.abandonSystemAssertion(chatBackgroundAudioLeaseId(for: requestId), preservingAdoptedTask: true)
@@ -1433,6 +1434,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             let staticNames = fullToolNames.filter {
                 !ToolKt.isExpandedMcpToolName(name: $0)
                     && !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0)
+                    && !IOSPhoneControlToolCatalog.isPhoneTool(name: $0)
             }
             if rebuiltNames != Set(staticNames) {
                 backgroundToolExposureLogger.error(
@@ -1475,6 +1477,11 @@ final class IOSChatBackgroundGenerationCoordinator {
                 effectClass: descriptor.effectClassRawValue
             )
         }
+        // Rebuild only the original run's phone catalog. A global switch or
+        // a new pending grant must never expand a restored task's authority.
+        let phoneDeclarations = IOSPhoneControlToolCatalog.declarations.filter {
+            handoff.fullToolNames.contains($0.name)
+        }
         let backgroundBridge = Self.makeBackgroundToolExposureBridge(
             fullToolNames: handoff.fullToolNames,
             handoffVisibleTools: handoff.params.tools,
@@ -1484,10 +1491,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             additionalDeclarations: {
                 let mcpDeclarations = toolRuntime.mcpExpandedDeclarations()
                 guard !handoff.fullToolNames.isEmpty else {
-                    return mcpDeclarations + dynamicDeclarations
+                    return mcpDeclarations + dynamicDeclarations + phoneDeclarations
                 }
                 return mcpDeclarations.filter { handoff.fullToolNames.contains($0.name) }
-                    + dynamicDeclarations
+                    + dynamicDeclarations + phoneDeclarations
             }(),
             dynamicSearchInfo: Dictionary(uniqueKeysWithValues: dynamicDescriptors.map {
                 ($0.toolId, $0.searchInfoJSON)
@@ -2190,6 +2197,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
             guard let self, self.activeBackgroundTasks[requestId] === execution,
                   runState.expireAndReserveTerminal(requireUnclaimed: true) == .persistFailure else { return }
+            IOSPhoneControlController.shared.revoke(runID: job.runId)
             self.keepAlive.abandonSystemAssertion(self.chatBackgroundAudioLeaseId(for: requestId), preservingAdoptedTask: true)
             await runState.waitForExpiredOperationExit()
             guard self.activeBackgroundTasks[requestId] === execution,
@@ -2289,6 +2297,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             backgroundTask.setTaskCompleted(success: false)
 
             Task { @MainActor in
+                IOSPhoneControlController.shared.revoke(runID: job.runId)
                 guard runState.finalizeTerminal(as: .expiration) else { return }
                 IOSBackgroundLifecycleLog.record(
                     "bgTaskExpired(claim=\(claim))",
@@ -3763,6 +3772,7 @@ final class IOSChatBackgroundGenerationCoordinator {
     private func releaseRuntimeOwnership(requestId: String) {
         subAgentTimeoutTasks.removeValue(forKey: requestId)?.cancel()
         let job = activeJobs[requestId]
+        if let job { IOSPhoneControlController.shared.revoke(runID: job.runId) }
         if let backgroundTask = activeBackgroundTasks[requestId] {
             let runState = activeRunStates[requestId]
             if runState == nil || runState?.claimSystemTaskCompletion() == true {
@@ -3786,6 +3796,7 @@ final class IOSChatBackgroundGenerationCoordinator {
     /// Drop the expired system-task owner but keep the runtime job and payload
     /// for one foreground retry in this process.
     private func pauseRuntimeOwnership(requestId: String) {
+        if let job = activeJobs[requestId] { IOSPhoneControlController.shared.revoke(runID: job.runId) }
         subAgentTimeoutTasks.removeValue(forKey: requestId)?.cancel()
         activeBackgroundTasks.removeValue(forKey: requestId)
         endChatBackgroundAudioKeepAlive(requestId: requestId)
@@ -4680,6 +4691,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         UserDefaults.standard.set(map, forKey: taskMapKey)
         for finishedRunId in finishedRunIds {
             IOSWebMountController.shared.releaseAgentOwnership(runId: finishedRunId)
+            IOSPhoneControlController.shared.revoke(runID: finishedRunId)
         }
         for job in terminatedJobs {
             publishTerminalEvent(for: job)

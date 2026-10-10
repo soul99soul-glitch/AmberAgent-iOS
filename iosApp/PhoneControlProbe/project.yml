@@ -1,0 +1,60 @@
+name: AmberPhoneControlProbe
+options:
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"
+packages:
+  AmberPhoneControl:
+    path: ../Packages/AmberPhoneControl
+targets:
+  PhoneControlProbe:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - ../PhoneControlRuntime
+    dependencies:
+      - package: AmberPhoneControl
+    info:
+      path: build/ProbeInfo.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.selfcontrol.probe
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Amber 自控验证
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: 验证本机开发通道，不扫描其他设备。
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/../../native/iphone-control/include"
+        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../native/iphone-control/target/aarch64-apple-ios/release"
+        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../native/iphone-control/target/aarch64-apple-ios-sim/release"
+        OTHER_LDFLAGS: ["$(inherited)", "-lamber_iphone_control"]
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+  PhoneControlTarget:
+    type: application
+    platform: iOS
+    sources: [TargetApp]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.selfcontrol.target
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Amber 自动化靶场
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+schemes:
+  PhoneControlProbe:
+    build:
+      targets:
+        PhoneControlProbe: all
+  PhoneControlTarget:
+    build:
+      targets:
+        PhoneControlTarget: all

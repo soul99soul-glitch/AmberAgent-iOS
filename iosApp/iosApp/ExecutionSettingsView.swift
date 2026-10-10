@@ -146,6 +146,14 @@ struct ExecutionSettingsView: View {
                 ) {
                     router.navigate(to: .sandbox)
                 }
+                Divider().overlay(AmberTheme.borderSoft).padding(.leading, 56)
+                ExecutionNavigationRow(
+                    systemImage: "iphone.gen3.radiowaves.left.and.right",
+                    title: "本机手机控制",
+                    subtitle: "UI 树优先，按目标 App 授权有界任务"
+                ) {
+                    router.navigate(to: .phoneControl)
+                }
             }
         }
     }

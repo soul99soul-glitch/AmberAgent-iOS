@@ -1,0 +1,26 @@
+[package]
+name = "amber-iphone-control"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+members = ["vendor/idevice"]
+
+[lib]
+name = "amber_iphone_control"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+idevice = { path = "vendor/idevice", default-features = false, features = ["ring", "tcp", "remote_pairing", "xctest"] }
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
+plist = "1.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1

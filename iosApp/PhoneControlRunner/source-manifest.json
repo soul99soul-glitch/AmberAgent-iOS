@@ -1,0 +1,50 @@
+{
+  "repository": "https://github.com/leeguooooo/iphone-use",
+  "commit": "955316e3fe12572f142fd7e75fb5d95c21fd9e03",
+  "files": [
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/IPURBridge.h",
+      "sha256": "25453983fe06831be878d228d69164aaea972aaf3b796ac119d1ad7387cb1129"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/IPURBridge.m",
+      "sha256": "81284b9e0f890b58c7a7fd6a906bbcc7ec0b6760936d2a624a47bfb819bfa2c7"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/IPURGeometry.h",
+      "sha256": "c1354f5596906db54d051afc00aa0f84e8dc256fb99bdeb93f1962566913a968"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/IPhoneUseRunnerUITests-Bridging-Header.h",
+      "sha256": "dd0d93f445165dc4a83cc17344a2f572032356d64cf32709bc4e04bee8c74cc5"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/RunnerActions.swift",
+      "sha256": "74d7f0937a0fdaed689104849f46b2dd2681aec98f848f4b0bffed3c8b664753"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/RunnerElements.swift",
+      "sha256": "63146e50442a25848fa0e2ef48458c4350856478ab61351afca6392702e07143"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/RunnerH264.swift",
+      "sha256": "2c390d27c18764c390ffa61325d1f1827ce0a0538a1210ad78a6d147c1d28157"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/RunnerHTTP.swift",
+      "sha256": "addab568dc598b688cead836c31e3c3f43770938995bfd319e6d337eab2a68e8"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/RunnerMJPEG.swift",
+      "sha256": "075a9d8b12c57fda765269708f3cd31f24a4b199909e6319ce35cb2cbcb7b105"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/RunnerTests.swift",
+      "sha256": "a3a69d0e0006f22ae842a5c850d1345bb30616e95139085b1fe328733d8a2ce2"
+    },
+    {
+      "upstream": "runner/IPhoneUseRunner/IPhoneUseRunnerUITests/RunnerWDA.swift",
+      "sha256": "be76f95f817b99beb783c89955d17e373156e3a61b401066f9d78dba73ab90ce"
+    }
+  ]
+}

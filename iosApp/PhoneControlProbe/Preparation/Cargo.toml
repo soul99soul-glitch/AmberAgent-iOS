@@ -1,0 +1,11 @@
+[package]
+name = "amber-phone-prepare"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+idevice = { path = "../../../native/iphone-control/vendor/idevice", default-features = false, features = ["ring", "usbmuxd", "tcp", "remote_pairing", "core_device_proxy", "tunnel_tcp_stack", "rsd"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }

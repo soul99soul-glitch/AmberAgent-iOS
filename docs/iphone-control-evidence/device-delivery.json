@@ -1,0 +1,39 @@
+{
+  "completed_at_utc": "2026-10-10T00:58:54.858479+00:00",
+  "authorization": "User explicitly requested installation to the physical phone; update existing Amber only.",
+  "device_model": "iPhone 18 Pro",
+  "bundle_id": "app.amber.ios",
+  "scheme": "iosAppExperimentalGPL",
+  "configuration": "Release",
+  "signing_team": "TY4JTL3V2M",
+  "signed_profile_expiration": "2027-09-30T09:52:05",
+  "build_exit_code": 0,
+  "signature_verification_passed": true,
+  "install_exit_code": 0,
+  "launch_exit_code": 0,
+  "process_id": 38729,
+  "process_from_new_bundle_confirmed": true,
+  "executable_sha256": "ee84758759cf6d885df01289d9a841f3443b778cfe867f145ffc3eabe63a1dd3",
+  "existing_app_group_containers_preserved": true,
+  "data_container_path_changed_by_update": true,
+  "existing_conversation_metadata": {
+    "file_entries": 343,
+    "nonempty_files_older_than_2026_10_10": 340,
+    "old_files_total_bytes": 48022580,
+    "contents_read": false
+  },
+  "did_uninstall_existing_amber": false,
+  "did_clear_user_data": false,
+  "did_install_probe_target_or_runner": false,
+  "did_start_phone_control_or_pairing": false,
+  "independent_phone_control_accepted": false,
+  "source_changes_this_delivery": "No product source change; prior reviewed source built with existing device variant.",
+  "build_log": "/tmp/amber-product-gpl-signed-device-build.log",
+  "device_tool_evidence": [
+    "/tmp/amber-product-install-result.json",
+    "/tmp/amber-product-launch-result.json",
+    "/tmp/amber-product-after-install.json",
+    "/tmp/amber-product-running-process.json",
+    "/tmp/amber-product-data-preservation.json"
+  ]
+}

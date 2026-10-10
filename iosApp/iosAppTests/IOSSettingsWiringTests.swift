@@ -32,6 +32,27 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(delegate.contains("MacGatewayStore.shared.didFailToRegisterForRemoteNotifications(error)"))
     }
 
+    func testPhoneControlSettingsReachPersistentRunScopedRuntime() throws {
+        let view = try source("iosApp/PhoneControl/IOSPhoneControlSettingsView.swift")
+        let execution = try source("iosApp/ExecutionSettingsView.swift")
+        let shell = try source("iosApp/AppShell.swift")
+        let owner = try source("iosApp/PhoneControl/IOSPhoneControlController.swift")
+        let host = try source("iosApp/ChatKernelRunHost.swift")
+        let chat = try source("iosApp/ChatViewModel.swift")
+        XCTAssertTrue(execution.contains("router.navigate(to: .phoneControl)"))
+        XCTAssertTrue(shell.contains("case .phoneControl:"))
+        XCTAssertTrue(shell.contains("IOSPhoneControlSettingsView()"))
+        XCTAssertTrue(view.contains("controller.enabled = $0"))
+        XCTAssertTrue(view.contains("controller.authorizeNextTask(durationSeconds:"))
+        XCTAssertTrue(owner.contains("defaults.set(enabled, forKey: Self.enabledPreferenceKey)"))
+        XCTAssertTrue(host.contains("phoneControlUserInitiated: Bool = false"))
+        XCTAssertTrue(host.contains("phoneControlUserInitiated && bridge.fullToolDeclarations()"))
+        XCTAssertTrue(chat.contains("includePhoneControlTools: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild"))
+        let autoResume = try XCTUnwrap(chat.range(of: "private func resumeYieldedRunIfReady"))
+        let endResume = try XCTUnwrap(chat.range(of: "/// 工具循环/新 run", range: autoResume.upperBound..<chat.endIndex))
+        XCTAssertFalse(chat[autoResume.lowerBound..<endResume.lowerBound].contains("phoneControlUserInitiated: true"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let iosAppRoot = testsDir.deletingLastPathComponent()

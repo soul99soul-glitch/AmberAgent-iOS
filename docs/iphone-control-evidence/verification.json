@@ -1,0 +1,118 @@
+{
+  "reviewed_at_utc": "2026-10-10T00:36:48.717391+00:00",
+  "baseline_commit": "dd2a7259b69950a7155690aed5b4575cb0db45d6",
+  "completion_boundary": "P0/P2/P3/P4 source and limited build/simulator evidence; P1 same-phone pairing/XCTest acceptance failed, product independence unverified",
+  "builds": [
+    {
+      "target": "iosApp",
+      "sdk": "iOS Simulator",
+      "code_signing_allowed": false,
+      "exit_code": 0,
+      "log": "/tmp/amber-phone-product-final-build.log",
+      "includes_final_source": true
+    },
+    {
+      "target": "iosApp",
+      "sdk": "generic iOS",
+      "code_signing_allowed": false,
+      "exit_code": 0,
+      "log": "/tmp/amber-phone-product-final-device-build.log",
+      "includes_final_source": true
+    }
+  ],
+  "targeted_tests": {
+    "first_result": "/tmp/amber-phone-control-tests.xcresult",
+    "first_passed": 9,
+    "first_failed": 1,
+    "fixture_fix": "Exact background catalog expected set now includes resident tool_search; no product behavior or assertions weakened.",
+    "affected_rerun_result": "/tmp/amber-phone-control-final-tests.xcresult",
+    "affected_rerun_passed": 6,
+    "affected_rerun_failed": 0,
+    "reused_unchanged_checks": [
+      "IOSPhoneControlToolExecutorTests (3)",
+      "IOSToolRecoveryTests/testRecoverySweepMarksSideEffectUnknownAndBlocksNextPendingToolCall (1)"
+    ],
+    "unique_checks_with_passing_evidence": 10,
+    "boundaries": "isolated credentials/defaults, URLProtocol response fixture, catalog, original Ledger; no native development services or Provider calls"
+  },
+  "independent_reviews": {
+    "P2": "p2_review: source ownership/cancellation/user origin",
+    "P3": "p3_review: declaration/executor/background/image/unknown Ledger",
+    "P4": "p4_review: settings/pairing source and captured simulator geometry"
+  },
+  "simulator": {
+    "id": "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+    "model": "iPhone 17 Pro",
+    "ios": "26.5",
+    "app_bundle_id": "app.amber.ios",
+    "main_product_installed_and_launched": true,
+    "task_launched_app_stopped": true,
+    "layout_states": [
+      "large/light",
+      "accessibility-extra-extra-extra-large/dark"
+    ],
+    "preferences_restored": {
+      "content_size": "large",
+      "appearance": "light"
+    },
+    "actions": "Settings navigation and scroll only; no pairing/import/authorization/model action",
+    "keychain_acceptance": false,
+    "unsigned_keychain_error": -34018
+  },
+  "physical_phone_this_continuation": {
+    "connected": false,
+    "installed": false,
+    "signed_or_deployed": false,
+    "pairing_or_network_changes": false
+  },
+  "previous_P1": {
+    "model": "iPhone 18 Pro",
+    "ios": "27.2 Beta 24B5089g",
+    "result": "self RemotePairing failed before consent/materials",
+    "native_error_code": 1,
+    "io_failure": true,
+    "runner_currently_installed": false,
+    "temporary_apps_uninstalled_previous_turn": [
+      "app.amber.selfcontrol.probe",
+      "app.amber.selfcontrol.target",
+      "app.amber.selfcontrol.runner.xctrunner"
+    ]
+  },
+  "unverified": [
+    "same-device RemotePairing consent/success",
+    "independent XCTest startup and signed action",
+    "real UI tree/action/new tree cycle",
+    "Amber background second/third model round",
+    "lock/reconnect/reboot recovery",
+    "signature expiry/renewal",
+    "signed product device installation"
+  ],
+  "current_source_sha256": {
+    "iosApp/PhoneControlRuntime/PhoneControlPairingSession.swift": "1b0aa89073672162284e1ce8336c0426540ac5430300881eb24773e521fa09fc",
+    "iosApp/PhoneControlRuntime/PhoneControlSession.swift": "60422051bce5ad0264bae7cf253ff31167bdd788596e556f4e283d54b092bdca",
+    "iosApp/iosApp/AppShell.swift": "a241074ce0a5becc57fa6cf995d00fa206425e132efc267b56a8e4180856bd04",
+    "iosApp/iosApp/ChatKernelRunHost.swift": "11d6d4d1b272188630efebcdcde07679f4c9ca4eab26958d7222ab458c83b5b0",
+    "iosApp/iosApp/ChatToolRuntime.swift": "224cc0fa98643cea861ccf7b505d61d785a165b69ff1eb36d7931576082ba405",
+    "iosApp/iosApp/ChatViewModel.swift": "e39bacf4c824e149a89ea90edd5881909a4d41958b5e16590810e10a2ef9135c",
+    "iosApp/iosApp/ExecutionSettingsView.swift": "eb4903a967c33ccf4f89f000b9f626cb7afd4dc3b5e55e3e1c53decdd6f8d1fd",
+    "iosApp/iosApp/IOSAgentRunLedger.swift": "64b9c3c8e35fc443a85e014d3fbf070117c625c8386a5f9fffcfdeaf6b797379",
+    "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift": "71215bee1485f500550be7d76bc469734f3fbaf7705da3e64806ba7fc5dc3615",
+    "iosApp/iosApp/PhoneControl/IOSPhoneControlController.swift": "f450b922a9a79425f4ca4ed251f585fbaf47c69916393db2c790b44d817c5bb6",
+    "iosApp/iosApp/PhoneControl/IOSPhoneControlCredentials.swift": "e7021898c138984c629ea18a7643bd8cac67605b1159ddda741910da10c70372",
+    "iosApp/iosApp/PhoneControl/IOSPhoneControlSettingsView.swift": "abf87a001ff95ff7cebb980e96f736232ba24cc42ab7dcdca1cbe076872c1305",
+    "iosApp/iosApp/PhoneControl/IOSPhoneControlToolCatalog.swift": "9348dcb3ba595c539dfb9c2b589af238f20e753223d29745b404c00741a23543",
+    "iosApp/iosApp/PhoneControl/IOSPhoneControlToolExecutor.swift": "0ed1461fc546792cfebfa2fcafcea9897701c2fda99fa7a3904e7aa2d854daf0",
+    "iosApp/project.yml": "cea475ef292eaf9bee4315bcd5e5a0eb01575d8b6b969478502117b1b345e48b"
+  },
+  "screenshots_sha256": {
+    "iphone-control-evidence/settings-accessibility-dark-duration-before.png": "2357ee2707203a8feec8b740f3175c00a665480caba048b74e0c2a10cdbd0b1b",
+    "iphone-control-evidence/settings-accessibility-dark-duration-fixed.png": "5621dc042677e54a60c92ac69289c0c1f95236a3ff8f93748ff46933e74554c5",
+    "iphone-control-evidence/settings-accessibility-dark-input-before.png": "a15a5953eec3a421fd5cbec16419f77b19b592f6eee9507507ad9eaba3b3fc89",
+    "iphone-control-evidence/settings-accessibility-dark-input-fixed.png": "a4bb6351ef963ae9d7b8a7375eca808d41feec82fed4d482373c4ca73ea10ded",
+    "iphone-control-evidence/settings-accessibility-dark-pairing-fixed.png": "5d4e26c3eacec87be8d11b0936a282f57145dd9c456cad437ec0084109e1a826",
+    "iphone-control-evidence/settings-accessibility-dark-pairing.png": "454f0555c38aca1ac776f93f94e5fc56bcd5a4af80f49eee0a75c9b39fbb9f5f",
+    "iphone-control-evidence/settings-accessibility-dark-top.png": "05aab47a4dac3f083770f1aed9045a970aecdd1572ea0dd559b911d6379114a4",
+    "iphone-control-evidence/settings-light.png": "fe5d7b139e6ec1db6275c6259008c96d48149085ad151e15e2e6d65d1337ea51"
+  },
+  "diff_check_exit_code": 0
+}

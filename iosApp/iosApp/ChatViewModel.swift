@@ -2234,7 +2234,7 @@ final class ChatViewModel {
         guard startsGenerationAfterInsertion, autoGenerateResponses else {
             let (digest, conversationId, _) = appendUserMessage(text: text, images: images)
             guard autoGenerateResponses else { return }
-            generateResponse(inputDigest: digest, conversationId: conversationId)
+            generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
             return
         }
         let token = UUID()
@@ -2279,7 +2279,7 @@ final class ChatViewModel {
             NSLog("[ChatViewModel] deferred generation dropped after conversation switch")
             return
         }
-        generateResponse(inputDigest: pending.inputDigest, conversationId: pending.conversationId)
+        generateResponse(inputDigest: pending.inputDigest, conversationId: pending.conversationId, phoneControlUserInitiated: true)
     }
 
     /// 需要 run 已存在的入口（再次发送、停止、新建会话、Watch 提问）先立即启动。
@@ -2689,7 +2689,7 @@ final class ChatViewModel {
                     userMessageId: userMessageId
                 ) else { return }
                 self.cacheVisionRecognitionTexts(texts)
-                self.generateResponse(inputDigest: digest, conversationId: conversationId)
+                self.generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
             }
         }
     }
@@ -3754,7 +3754,7 @@ final class ChatViewModel {
             }
             state.pendingAssistantRegeneration = nil
             let digest = chatInputDigest(for: regenerateDigestSeed())
-            generateResponse(inputDigest: digest, conversationId: conversationId)
+            generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
         } else {
             // A regenerated assistant reply has no immediate storage mutation.
             // Do not start an invisible run after a user switched to another chat.
@@ -3773,7 +3773,7 @@ final class ChatViewModel {
             state.messages = uploadMessages
             bumpMessageRevision(reason: .branchChange)
             let digest = chatInputDigest(for: regenerateDigestSeed())
-            generateResponse(inputDigest: digest, conversationId: conversation.id)
+            generateResponse(inputDigest: digest, conversationId: conversation.id, phoneControlUserInitiated: true)
         }
         let didStart = host(for: conversationId)?.isRunning == true
         if !didStart {
@@ -3823,7 +3823,7 @@ final class ChatViewModel {
                   ) else { return }
             state.pendingAssistantRegeneration = nil
             let digest = chatInputDigest(for: trimmed)
-            self.generateResponse(inputDigest: digest, conversationId: conversationId)
+            self.generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
         }
     }
 
@@ -3980,7 +3980,8 @@ final class ChatViewModel {
 
     // MARK: - Private
 
-    private func generateResponse(inputDigest: String, conversationId: KotlinUuid?) {
+    private func generateResponse(inputDigest: String, conversationId: KotlinUuid?,
+                                  phoneControlUserInitiated: Bool = false) {
         // generateResponse 本身完全同步（kernelRunHost.start 内部再起 Task），
         // 用 begin/defer-end 包住整个函数体即测到主线程被占用的时长。
         var kickoffInterval = ChatPerfTrace.begin("GenerationKickoff")
@@ -3997,7 +3998,7 @@ final class ChatViewModel {
         isLoading = true
 
         let providerSetting = makeProviderSetting()
-        let params = makeTextGenerationParams()
+        let params = makeTextGenerationParams(includePhoneControlTools: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild)
 
         guard let resolvedProvider = providerSetting else {
             isLoading = false
@@ -4015,7 +4016,8 @@ final class ChatViewModel {
             conversationId: conversationId,
             uploadMessages: messages,
             toolExposureBridge: lastAssembledToolExposureBridge,
-            recipeCatalogSnapshot: lastAssembledDynamicToolSnapshot
+            recipeCatalogSnapshot: lastAssembledDynamicToolSnapshot,
+            phoneControlUserInitiated: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild
         )
     }
 
@@ -4657,7 +4659,7 @@ final class ChatViewModel {
         return tools
     }
 
-    private func makeTextGenerationParams() -> TextGenerationParams {
+    private func makeTextGenerationParams(includePhoneControlTools: Bool = false) -> TextGenerationParams {
         let modelId = currentModelId
         let modelAbilities = currentModelAbilities
         let searchEnabled = sharedSettings.snapshot.enableWebSearch
@@ -4783,6 +4785,9 @@ final class ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSAppleAgentToolCatalog.toolNames).sorted()
         ))
+        if includePhoneControlTools, IOSPhoneControlController.shared.hasPendingAuthorization {
+            toolDeclarations.append(contentsOf: IOSPhoneControlToolCatalog.declarations)
+        }
         let mcpNetworkEnabled = isCapabilityPolicyEnabled("ios.mcp.tool_call")
         if mcpNetworkEnabled {
             toolDeclarations.append(ToolKt.createMcpCallToolDeclaration())

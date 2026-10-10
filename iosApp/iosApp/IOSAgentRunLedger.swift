@@ -902,6 +902,9 @@ enum IOSToolEffectClassMapping {
         if toolName == "runtime_status" {
             return .pure
         }
+        if toolName == "phone_status" || toolName == "phone_observe" {
+            return .pure
+        }
         if toolName == IOSWeatherToolCatalog.toolName
             || toolName == IOSHealthAgentToolCatalog.toolName
             || toolName == IOSAppleAgentToolCatalog.calendarEventsList
