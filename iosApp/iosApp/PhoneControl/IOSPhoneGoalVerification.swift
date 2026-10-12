@@ -1,0 +1,144 @@
+import AmberPhoneControl
+import Foundation
+
+struct IOSPhoneGoalVerificationResult: Codable, Equatable, Sendable {
+    enum Status: String, Codable, Sendable { case satisfied, unmet, insufficient }
+
+    let status: Status
+    let reason: String
+    let needsScreenshot: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case status, reason
+        case needsScreenshot = "needs_screenshot"
+    }
+}
+
+enum IOSPhoneGoalVerification {
+    static func evaluate(action: PhoneAction, expectation: IOSPhoneGoalExpectation,
+                         before: PhoneObservation?, after: PhoneObservation) -> IOSPhoneGoalVerificationResult {
+        if case .launch(let bundleID) = action {
+            guard after.bundleID == bundleID else {
+                return .init(status: .insufficient, reason: "launched_app_not_foreground", needsScreenshot: false)
+            }
+            // Launch intentionally changes the foreground App. An old App's tree
+            // cannot provide before-evidence, especially for an absence condition.
+            return evaluate(expectation: expectation, before: nil, after: after)
+        }
+        return evaluate(expectation: expectation, before: before, after: after)
+    }
+
+    static func hasMeaningfulChange(before: PhoneObservation, after: PhoneObservation) -> Bool {
+        // Different collectors may expose different nodes for an unchanged screen.
+        guard before.backend == after.backend else { return false }
+        guard before.bundleID == after.bundleID, before.processID == after.processID,
+              before.truncated == after.truncated, before.screenBounds == after.screenBounds,
+              before.nodes.count == after.nodes.count else { return true }
+        return zip(before.nodes, after.nodes).contains { lhs, rhs in
+            lhs.depth != rhs.depth || lhs.type != rhs.type || lhs.identifier != rhs.identifier
+                || lhs.label != rhs.label || lhs.value != rhs.value || lhs.rect != rhs.rect
+                || lhs.enabled != rhs.enabled || lhs.focused != rhs.focused
+        }
+    }
+
+    static func evaluate(expectation: IOSPhoneGoalExpectation, before: PhoneObservation?,
+                         after: PhoneObservation) -> IOSPhoneGoalVerificationResult {
+        func result(_ status: IOSPhoneGoalVerificationResult.Status, _ reason: String,
+                    screenshot: Bool = false) -> IOSPhoneGoalVerificationResult {
+            .init(status: status, reason: reason, needsScreenshot: screenshot)
+        }
+        guard (try? expectation.validate()) != nil else {
+            return result(.insufficient, "invalid_expectation")
+        }
+        if let before {
+            guard before.bundleID == after.bundleID, before.processID == after.processID else {
+                return result(.insufficient, "foreground_app_changed")
+            }
+            guard before.observationID != after.observationID else {
+                return result(.insufficient, "fresh_observation_required")
+            }
+            guard before.backend == after.backend else {
+                return result(.insufficient, "observation_backend_changed", screenshot: true)
+            }
+        }
+        guard let bounds = validScreenBounds(after) else {
+            return result(.insufficient, "screen_bounds_unavailable", screenshot: true)
+        }
+        guard after.nodes.contains(where: { hasVisibleFrame($0, within: bounds) }) else {
+            return result(.insufficient, "empty_tree", screenshot: true)
+        }
+        let matches = matchingNodes(target: expectation.target, in: after)
+        guard matches.count <= 1 else {
+            return result(.insufficient, "ambiguous_target", screenshot: true)
+        }
+        switch expectation.kind {
+        case .visible:
+            return matches.isEmpty
+                ? result(after.truncated ? .insufficient : .unmet,
+                         after.truncated ? "truncated_tree" : "target_not_visible", screenshot: true)
+                : result(.satisfied, "target_visible")
+        case .absent:
+            guard matches.isEmpty else { return result(.unmet, "target_still_visible") }
+            guard !after.truncated else { return result(.insufficient, "truncated_tree", screenshot: true) }
+            guard let before else { return result(.insufficient, "before_observation_required", screenshot: true) }
+            guard validScreenBounds(before) != nil else {
+                return result(.insufficient, "previous_screen_bounds_unavailable", screenshot: true)
+            }
+            guard before.screenBounds == after.screenBounds else {
+                return result(.insufficient, "screen_bounds_changed", screenshot: true)
+            }
+            let previous = matchingNodes(target: expectation.target, in: before)
+            guard previous.count == 1 else {
+                return result(.insufficient, previous.isEmpty ? "target_not_previously_visible" : "ambiguous_previous_target",
+                              screenshot: true)
+            }
+            guard let anchor = expectation.anchor,
+                  matchingNodes(target: anchor, in: after).count == 1 else {
+                return result(.insufficient, "visible_anchor_required", screenshot: true)
+            }
+            return result(.satisfied, "target_disappeared_with_visible_anchor")
+        case .valueEquals:
+            guard !after.truncated else { return result(.insufficient, "truncated_tree", screenshot: true) }
+            guard let node = matches.first else { return result(.unmet, "input_not_visible", screenshot: true) }
+            guard isTextInput(node) else { return result(.insufficient, "readable_text_input_required", screenshot: true) }
+            guard let value = node.value else { return result(.insufficient, "input_value_unavailable", screenshot: true) }
+            return value == expectation.value
+                ? result(.satisfied, "input_value_matches")
+                : result(.unmet, "input_value_differs")
+        }
+    }
+
+    /// Geometry excludes offscreen nodes; it cannot establish occlusion or hittability.
+    /// The runner still resolves an actionable ref immediately before acting.
+    static func matchingNodes(target: IOSPhoneGoalTarget, in observation: PhoneObservation,
+                              executable: Bool = false) -> [PhoneObservationNode] {
+        guard (try? target.validate()) != nil, let bounds = validScreenBounds(observation) else { return [] }
+        return observation.nodes.filter { node in
+            hasVisibleFrame(node, within: bounds)
+                && (target.label == nil || node.label == target.label)
+                && (target.identifier == nil || node.identifier == target.identifier)
+                && (target.type == nil || node.type == target.type)
+                && (!executable || (node.enabled && node.ref?.isEmpty == false))
+        }
+    }
+
+    static func isTextInput(_ node: PhoneObservationNode) -> Bool {
+        ["XCUIElementTypeTextField", "XCUIElementTypeTextView", "XCUIElementTypeSearchField"].contains(node.type)
+    }
+
+    private static func validScreenBounds(_ observation: PhoneObservation) -> PhoneElementRect? {
+        guard let bounds = observation.screenBounds,
+              [bounds.x, bounds.y, bounds.width, bounds.height, bounds.x + bounds.width,
+               bounds.y + bounds.height].allSatisfy(\.isFinite),
+              bounds.width > 0, bounds.height > 0 else { return nil }
+        return bounds
+    }
+
+    private static func hasVisibleFrame(_ node: PhoneObservationNode, within bounds: PhoneElementRect) -> Bool {
+        let frame = node.rect
+        return node.depth > 0 && [frame.x, frame.y, frame.width, frame.height].allSatisfy(\.isFinite)
+            && frame.width > 0 && frame.height > 0
+            && frame.x < bounds.x + bounds.width && frame.y < bounds.y + bounds.height
+            && frame.x + frame.width > bounds.x && frame.y + frame.height > bounds.y
+    }
+}

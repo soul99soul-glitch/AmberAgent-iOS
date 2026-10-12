@@ -139,3 +139,58 @@ struct IOSResolveAgentApprovalIntent: LiveActivityIntent {
         return .result()
     }
 }
+
+/// These controls act only on a live phone owner and never open or reclaim a run.
+struct IOSRequestPhoneHumanTakeoverIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "我来操作"
+    static let description = IntentDescription("暂停当前手机任务的自动操作。")
+    static let supportedModes: IntentModes = .background
+
+    @Parameter(title: "运行 ID")
+    var runId: String
+
+    init() { runId = "" }
+    init(runId: String) { self.runId = runId }
+
+    func perform() async throws -> some IntentResult {
+        #if !ACTIVITY_WIDGET_EXTENSION
+        try await MainActor.run {
+            let controller = IOSPhoneControlController.shared
+            guard controller.handoffState(runID: runId) == .automated else {
+                throw AgentActivityControlIntentError.unavailable
+            }
+            try controller.requestHumanTakeover(runID: runId)
+        }
+        #else
+        throw AgentActivityControlIntentError.unavailable
+        #endif
+        return .result()
+    }
+}
+
+struct IOSResumePhoneAutomationIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "继续自动操作"
+    static let description = IntentDescription("重新读取手机界面后继续当前任务。")
+    static let supportedModes: IntentModes = .background
+
+    @Parameter(title: "运行 ID")
+    var runId: String
+
+    init() { runId = "" }
+    init(runId: String) { self.runId = runId }
+
+    func perform() async throws -> some IntentResult {
+        #if !ACTIVITY_WIDGET_EXTENSION
+        try await MainActor.run {
+            let controller = IOSPhoneControlController.shared
+            guard controller.handoffState(runID: runId) == .paused else {
+                throw AgentActivityControlIntentError.unavailable
+            }
+            try controller.resumeAutomation(runID: runId)
+        }
+        #else
+        throw AgentActivityControlIntentError.unavailable
+        #endif
+        return .result()
+    }
+}

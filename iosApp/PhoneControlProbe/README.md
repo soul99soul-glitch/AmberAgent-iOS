@@ -41,3 +41,14 @@ cargo run --locked --manifest-path iosApp/PhoneControlProbe/Preparation/Cargo.to
 `--check-runner-auth <device-UDID>` 是独立的只读验收模式。仅在手机自己已启动 runner 后运行：通过既有 USB 信任连接固定的 runner 8100 端口，只发送一次无 token 的 `GET /status`，读取最多 1024 字节的第一行，必须返回 401。只输出状态数字，不读取或记录响应正文；5 秒整体超时，没有重试、配对材料读写、XCTest 启动或 Mac 模型循环。
 
 `--read-pairing-service-errors <device-UDID>` 是独立的只读系统诊断模式。先读取环境变量 `AMBER_PAIRING_SERVICE_PID`（必须是正的十进制 `u32`），再通过已有 USB 信任连接 `OsTraceRelay`，只请求该 PID 的 trace，接受最多 32 条且 `filename` basename 精确为 `remotepairingdeviced` 的记录。20 秒整体超时；输出只含 PID、level、固定原因布尔值和数值 `errorCode`，不输出 message、image name/path、DNS/IP、pairing 正文、key 或 token。原因布尔值只是 trace message 中明确关键词的线索，不能单独视为根因。诊断结束即关闭 trace 连接，不创建 archive、不启动或维持控制会话。
+
+
+## 首握手对照诊断
+
+以下模式均在 Mac 上运行，只发一次无凭据的 `attempt_pair_verify` 首握手，8 秒上限；不执行 `validate_pairing`、setup、tunnel 或 XCTest，也不生成输出 plist：
+
+- `--check-usb-handshake <UDID>`：通过已信任 USB lockdown 服务。
+- `--check-usbmux-network-handshake <UDID>`：通过 USBmux 到已核实的开发服务端口 49152。它会在手机端表现为 loopback 来源，不能等同于 App 的 Wi-Fi 地址路径。
+- `--check-network-handshake <numeric-address:port>`：连接明确给出的 Bonjour 地址，IPv6 scope 使用数字接口索引。只按显式端点连接，不扫描或重试。
+
+系统 trace 现在先输出 `pairing_service_trace=ready` 供复现脚本同步；仅保留错误或明确诊断关键词，避免普通 Bonjour 消息提前耗尽 32 条额度。每条含设备时间与固定字段，新增精确识别系统的本机来源拒绝语句。没有原始日志正文、地址、主机身份或凭据输出。

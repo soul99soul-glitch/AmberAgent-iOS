@@ -115,3 +115,49 @@
 "agent.activity.doneCount.readingWeb" = "Read %ld pages";
 "agent.activity.doneCount.readingDocument" = "Read %ld files";
 "agent.activity.doneCount.generatingImage" = "%ld images";
+
+// Phone control stages contain no app names, contacts, or input text.
+"agent.activity.phone.checkingStatus" = "Checking phone status";
+"agent.activity.phone.compact.checkingStatus" = "Status";
+"agent.activity.phone.connecting" = "Connecting to phone";
+"agent.activity.phone.compact.connecting" = "Connect";
+"agent.activity.phone.observing" = "Reading phone screen";
+"agent.activity.phone.compact.observing" = "Observe";
+"agent.activity.phone.openingApp" = "Opening app";
+"agent.activity.phone.compact.openingApp" = "Open app";
+"agent.activity.phone.tapping" = "Tapping control";
+"agent.activity.phone.compact.tapping" = "Tap";
+"agent.activity.phone.typing" = "Entering text";
+"agent.activity.phone.compact.typing" = "Type";
+"agent.activity.phone.swiping" = "Swiping screen";
+"agent.activity.phone.compact.swiping" = "Swipe";
+"agent.activity.phone.listingApps" = "Finding installed apps";
+"agent.activity.phone.compact.listingApps" = "Find apps";
+"agent.activity.phone.addingApp" = "Adding allowed app";
+"agent.activity.phone.compact.addingApp" = "Add app";
+"agent.activity.phone.waitingForModel" = "Waiting for model";
+"agent.activity.phone.compact.waitingForModel" = "Model";
+"agent.activity.phone.stopping" = "Stopping phone control";
+"agent.activity.phone.compact.stopping" = "Stopping";
+"agent.activity.phone.stopped" = "Phone control stopped";
+"agent.activity.phone.compact.stopped" = "Stopped";
+"agent.activity.phone.failed" = "Phone step failed";
+"agent.activity.phone.compact.failed" = "Failed";
+"agent.activity.phone.outcomeUnknown" = "Action outcome unknown";
+"agent.activity.phone.compact.outcomeUnknown" = "Unknown";
+"agent.activity.phone.verifying" = "Checking action result";
+"agent.activity.phone.compact.verifying" = "Check";
+"agent.activity.phone.deciding" = "Choosing next step";
+"agent.activity.phone.compact.deciding" = "Decide";
+"agent.activity.phone.waitingForUI" = "Waiting for screen update";
+"agent.activity.phone.compact.waitingForUI" = "Wait";
+
+// Human takeover states contain no task or app content.
+"agent.activity.phone.pausing" = "Handing control to you";
+"agent.activity.phone.compact.pausing" = "Taking over";
+"agent.activity.phone.paused" = "You are in control";
+"agent.activity.phone.compact.paused" = "Your turn";
+"agent.activity.phone.resuming" = "Reading the screen to continue";
+"agent.activity.phone.compact.resuming" = "Resuming";
+"agent.activity.control.humanTakeover" = "I’ll take over";
+"agent.activity.control.resumeAutomation" = "Continue";

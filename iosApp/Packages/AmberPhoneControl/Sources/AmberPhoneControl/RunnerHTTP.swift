@@ -52,7 +52,7 @@ struct RunnerHTTP: Sendable {
     }
 
     func request(method: String = "GET", path: String, query: [String: String] = [:],
-                 body: JSONValue? = nil) async throws -> RunnerResponse {
+                 body: JSONValue? = nil, timeoutInterval: TimeInterval? = nil) async throws -> RunnerResponse {
         try Task.checkCancellation()
         var components = URLComponents()
         components.scheme = "http"
@@ -70,6 +70,7 @@ struct RunnerHTTP: Sendable {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try body.map { try encoder.encode($0) } ?? Data()
         var request = URLRequest(url: url)
+        if let timeoutInterval { request.timeoutInterval = timeoutInterval }
         request.httpMethod = method
         request.httpBody = method == "POST" ? data : nil
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

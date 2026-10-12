@@ -110129,6 +110129,246 @@
           }
         }
       }
+    },
+    "手机效果检查": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phone effect checks"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手機效果檢查"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スマートフォン操作の結果確認"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰 동작 결과 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка действий телефона"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手机效果检查"
+          }
+        }
+      }
+    },
+    "手机快速操作": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quick phone actions"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手機快速操作"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スマートフォンのクイック操作"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰 빠른 동작"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Быстрые действия телефона"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手机快速操作"
+          }
+        }
+      }
+    },
+    "手机界面文字": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phone screen text"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手機介面文字"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スマートフォン画面のテキスト"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰 화면 텍스트"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текст на экране телефона"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手机界面文字"
+          }
+        }
+      }
+    },
+    "辅助检查带验收条件的手机操作。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Help check phone actions that include completion criteria."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輔助檢查帶驗收條件的手機操作。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了条件が指定されたスマートフォン操作の確認を補助します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "완료 조건이 지정된 휴대폰 동작의 확인을 돕습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Помогает проверять действия телефона с заданными условиями завершения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "辅助检查带验收条件的手机操作。"
+          }
+        }
+      }
+    },
+    "让手机快速操作工具逐步完成导航、搜索和草稿填写。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Let the quick phone action tool handle navigation, search, and draft entry step by step."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓手機快速操作工具逐步完成導覽、搜尋和草稿填寫。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クイック操作ツールで画面移動、検索、下書き入力を順に行います。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "빠른 동작 도구로 화면 이동, 검색, 초안 입력을 단계별로 수행합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Инструмент быстрых действий пошагово выполняет навигацию, поиск и ввод черновиков."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让手机快速操作工具逐步完成导航、搜索和草稿填写。"
+          }
+        }
+      }
+    },
+    "仅发送当前步骤需要的界面文字和元素信息，不发送截图。不会自动授权或恢复手机动作。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only screen text and element details needed for the current step are sent, never screenshots. This does not authorize or resume phone actions automatically."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅傳送目前步驟需要的介面文字和元素資訊，不傳送截圖。不會自動授權或恢復手機動作。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の手順に必要な画面テキストと要素情報のみ送信し、スクリーンショットは送信しません。操作を自動で許可・再開しません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 단계에 필요한 화면 텍스트와 요소 정보만 전송하며 스크린샷은 전송하지 않습니다. 휴대폰 동작을 자동으로 승인하거나 재개하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Передаются только нужные для текущего шага текст экрана и сведения об элементах, без снимков экрана. Действия не разрешаются и не возобновляются автоматически."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅发送当前步骤需要的界面文字和元素信息，不发送截图。不会自动授权或恢复手机动作。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -24,6 +24,18 @@ extension AgentActivityKeylineRole {
     }
 }
 
+private extension AgentPhoneControlActivityPhase {
+    var color: Color {
+        switch self {
+        case .failed: AgentIslandPalette.danger
+        case .outcomeUnknown: AgentIslandPalette.accent
+        case .paused: AgentIslandPalette.accent
+        case .waitingForModel, .pausing, .resuming, .stopped: AgentIslandPalette.secondary
+        default: AgentIslandPalette.primary
+        }
+    }
+}
+
 private func copy(_ key: String, _ state: AgentActivityAttributes.ContentState) -> String {
     AgentActivityCopy.text("agent.activity.\(key)", languageCode: state.languageCode)
 }
@@ -61,41 +73,60 @@ struct AgentActivityMark: View {
 /// 最小态：标志外一圈细环表示运行/待确认，右下角徽标表示完成/失败。
 struct AgentActivityMinimalMark: View {
     let phase: AgentActivityPhase
+    var phoneControlPhase: AgentPhoneControlActivityPhase? = nil
 
     /// 跟随 App 语言；失联读"暂停"，与界面一致。
     static func accessibilityLabel(state: AgentActivityAttributes.ContentState, phase: AgentActivityPhase) -> String {
         let presentation = state.presentation
         let status = switch phase {
-        case .running: presentation.stage.localizedTitle(languageCode: state.languageCode)
+        case .running: presentation.localizedStageTitle(languageCode: state.languageCode)
         case .reconnecting: copy("sub.reconnecting", state)
         case .stale: copy("status.paused", state)
         case .waitingForUser: copy("sub.waiting", state)
         case .completed: copy("sub.completed", state)
-        case .failed: copy("sub.failed", state)
+        case .failed: presentation.requiresPhoneOutcomeReview
+            ? AgentPhoneControlActivityPhase.outcomeUnknown.localizedTitle(languageCode: state.languageCode)
+            : copy("sub.failed", state)
         case .cancelled: copy("sub.cancelled", state)
         }
         return "\(presentation.kind.localizedTitle(languageCode: state.languageCode)), \(status)"
     }
 
     var body: some View {
-        AgentActivityMark(size: 20, faded: phase == .stale)
+        mark
             .padding(4)
             .overlay { ring }
             .overlay(alignment: .bottomTrailing) { badge }
     }
 
     @ViewBuilder
+    private var mark: some View {
+        if phase == .running, let phoneControlPhase {
+            Image(systemName: phoneControlPhase.symbolName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(phoneControlPhase.color)
+                .frame(width: 20, height: 20)
+        } else {
+            AgentActivityMark(size: 20, faded: phase == .stale)
+        }
+    }
+
+    @ViewBuilder
     private var ring: some View {
         switch phase {
         case .running, .reconnecting:
-            // 设计稿：上、右两段四分之一弧，一实一淡，表示"在转"而不是进度百分比。
-            ZStack {
-                Circle().trim(from: 0, to: 0.25)
-                    .stroke(AgentIslandPalette.primary, lineWidth: 1.5)
-                Circle().trim(from: 0.25, to: 0.5)
-                    .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
+            if phase == .running, let phoneControlPhase, !phoneControlPhase.isExecuting {
+                Circle().stroke(AgentIslandPalette.line, lineWidth: 1.5)
+            } else {
+                // 设计稿：上、右两段四分之一弧，一实一淡，表示"在转"而不是进度百分比。
+                ZStack {
+                    Circle().trim(from: 0, to: 0.25)
+                        .stroke(AgentIslandPalette.primary, lineWidth: 1.5)
+                    Circle().trim(from: 0.25, to: 0.5)
+                        .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
+                }
+                .rotationEffect(.degrees(-90))
             }
-            .rotationEffect(.degrees(-90))
         case .waitingForUser:
             Circle().stroke(AgentIslandPalette.accent, lineWidth: 1.5)
         case .stale, .completed, .failed, .cancelled:
@@ -109,7 +140,8 @@ struct AgentActivityMinimalMark: View {
         case .completed:
             badgeView(symbol: "checkmark", fill: AgentIslandPalette.ok)
         case .failed:
-            badgeView(symbol: "exclamationmark", fill: AgentIslandPalette.danger)
+            badgeView(symbol: phoneControlPhase == .outcomeUnknown ? "questionmark" : "exclamationmark",
+                      fill: phoneControlPhase == .outcomeUnknown ? AgentIslandPalette.accent : AgentIslandPalette.danger)
         case .running, .reconnecting, .waitingForUser, .stale, .cancelled:
             EmptyView()
         }
@@ -236,6 +268,10 @@ struct AgentActivityHeadline: View {
         let presentation = state.presentation
         switch phase {
         case .running:
+            if let phoneControlPhase = presentation.phoneControlPhase {
+                return tinted(phoneControlPhase.localizedTitle(languageCode: state.languageCode),
+                              phoneControlPhase.color, then: nil)
+            }
             // 展开态这里写当前操作的具体内容，底部步骤行只写阶段，两者同时可见。
             // 锁屏是共享表面，不写搜索词、网址、文件名。
             if !isLockScreen, let detail = presentation.stepDetail,
@@ -269,6 +305,10 @@ struct AgentActivityHeadline: View {
                 then: presentation.metric.localizedDetailText(languageCode: state.languageCode)
             )
         case .failed:
+            if presentation.requiresPhoneOutcomeReview {
+                return tinted(AgentPhoneControlActivityPhase.outcomeUnknown.localizedTitle(languageCode: state.languageCode),
+                              AgentIslandPalette.accent, then: nil)
+            }
             let reason = presentation.failureReason.map { copy("failure.\($0.rawValue)", state) }
                 ?? copy("sub.failed", state)
             return tinted(
@@ -382,7 +422,7 @@ struct AgentActivitySteps: View {
 
     /// 当前一步只写阶段名，具体内容在标题下方的副标题里。
     private var currentLabel: String {
-        state.presentation.stage.localizedTitle(languageCode: state.languageCode)
+        state.presentation.localizedStageTitle(languageCode: state.languageCode)
     }
 
     private func row(finished: [AgentActivityStep], detailed: Bool) -> some View {
@@ -395,8 +435,13 @@ struct AgentActivitySteps: View {
             }
             switch mode {
             case .running:
-                step(icon: Circle().fill(AgentIslandPalette.primary).frame(width: 6, height: 6),
-                     text: currentLabel, color: AgentIslandPalette.primary, weight: .semibold)
+                if let phoneControlPhase = state.presentation.phoneControlPhase {
+                    step(icon: Image(systemName: phoneControlPhase.symbolName).font(.system(size: 10)),
+                         text: currentLabel, color: phoneControlPhase.color, weight: .semibold)
+                } else {
+                    step(icon: Circle().fill(AgentIslandPalette.primary).frame(width: 6, height: 6),
+                         text: currentLabel, color: AgentIslandPalette.primary, weight: .semibold)
+                }
             case .paused:
                 // 阶段名带"正在"，配暂停图标自相矛盾；暂停时只写"暂停"。
                 step(icon: Image(systemName: "pause.fill").font(.system(size: 9)),
@@ -405,8 +450,14 @@ struct AgentActivitySteps: View {
                 step(icon: Image(systemName: "checkmark").font(.system(size: 9, weight: .heavy)),
                      text: text("status.done"), color: AgentIslandPalette.ok, weight: .semibold)
             case .failed:
-                step(icon: Image(systemName: "exclamationmark").font(.system(size: 9, weight: .heavy)),
-                     text: text("status.interrupted"), color: AgentIslandPalette.danger, weight: .semibold)
+                if state.presentation.requiresPhoneOutcomeReview {
+                    step(icon: Image(systemName: "questionmark").font(.system(size: 9, weight: .heavy)),
+                         text: AgentPhoneControlActivityPhase.outcomeUnknown.localizedCompactTitle(languageCode: state.languageCode),
+                         color: AgentIslandPalette.accent, weight: .semibold)
+                } else {
+                    step(icon: Image(systemName: "exclamationmark").font(.system(size: 9, weight: .heavy)),
+                         text: text("status.interrupted"), color: AgentIslandPalette.danger, weight: .semibold)
+                }
             }
         }
         .font(.system(size: 13))
@@ -445,6 +496,18 @@ private struct AgentActivityButtons: View {
                 }
                 Button(intent: approvalIntent(approval, allow: true)) {
                     label(copy("control.approveOnce", state), background: AgentIslandPalette.accent,
+                          foreground: .black, fills: true)
+                }
+            }
+            if controls.contains(.humanTakeover) {
+                Button(intent: IOSRequestPhoneHumanTakeoverIntent(runId: attributes.runId)) {
+                    label(copy("control.humanTakeover", state), background: AgentIslandPalette.line,
+                          foreground: AgentIslandPalette.primary, fills: true)
+                }
+            }
+            if controls.contains(.resumeAutomation) {
+                Button(intent: IOSResumePhoneAutomationIntent(runId: attributes.runId)) {
+                    label(copy("control.resumeAutomation", state), background: AgentIslandPalette.accent,
                           foreground: .black, fills: true)
                 }
             }
@@ -520,13 +583,16 @@ struct AgentActivityNarrowIndicator: View {
         switch phase {
         case .running:
             ZStack {
-                if let fraction = state.presentation.progressFraction {
+                if let phoneControlPhase = state.presentation.phoneControlPhase, !phoneControlPhase.isExecuting {
+                    Circle().stroke(AgentIslandPalette.line, lineWidth: 2)
+                } else if let fraction = state.presentation.progressFraction {
                     Circle().stroke(AgentIslandPalette.line, lineWidth: 2)
                     arc(to: max(0.04, fraction), color: AgentIslandPalette.primary)
                 } else {
                     spinningArcs(AgentIslandPalette.primary)
                 }
-                glyph(state.presentation.stage.narrowSymbolName, color: AgentIslandPalette.primary)
+                glyph(state.presentation.phoneControlPhase?.symbolName ?? state.presentation.stage.narrowSymbolName,
+                      color: state.presentation.phoneControlPhase?.color ?? AgentIslandPalette.primary)
             }
         case .reconnecting:
             ZStack {
@@ -538,7 +604,8 @@ struct AgentActivityNarrowIndicator: View {
         case .completed:
             badge("checkmark", fill: AgentIslandPalette.ok)
         case .failed:
-            badge("exclamationmark", fill: AgentIslandPalette.danger)
+            badge(state.presentation.requiresPhoneOutcomeReview ? "questionmark" : "exclamationmark",
+                  fill: state.presentation.requiresPhoneOutcomeReview ? AgentIslandPalette.accent : AgentIslandPalette.danger)
         case .stale:
             ZStack {
                 Circle().stroke(AgentIslandPalette.line, lineWidth: 2)
@@ -630,22 +697,24 @@ struct AgentActivityCompactStatus: View {
     private var title: String {
         switch phase {
         case .running:
-            state.presentation.stage.localizedCompactTitle(languageCode: state.languageCode)
+            state.presentation.localizedCompactStageTitle(languageCode: state.languageCode)
         case .reconnecting: copy("status.reconnecting", state)
         case .stale: copy("status.paused", state)
         case .waitingForUser: copy("status.confirm", state)
         case .completed: copy("status.done", state)
-        case .failed: copy("status.interrupted", state)
+        case .failed: state.presentation.requiresPhoneOutcomeReview
+            ? AgentPhoneControlActivityPhase.outcomeUnknown.localizedCompactTitle(languageCode: state.languageCode)
+            : copy("status.interrupted", state)
         case .cancelled: copy("status.stopped", state)
         }
     }
 
     private var color: Color {
         switch phase {
-        case .running: AgentIslandPalette.primary
+        case .running: state.presentation.phoneControlPhase?.color ?? AgentIslandPalette.primary
         case .waitingForUser: AgentIslandPalette.accent
         case .completed: AgentIslandPalette.ok
-        case .failed: AgentIslandPalette.danger
+        case .failed: state.presentation.requiresPhoneOutcomeReview ? AgentIslandPalette.accent : AgentIslandPalette.danger
         case .reconnecting, .stale, .cancelled: AgentIslandPalette.secondary
         }
     }
@@ -658,7 +727,8 @@ struct AgentActivityCompactStatus: View {
         case .completed:
             Image(systemName: "checkmark").font(.system(size: 11, weight: .heavy))
         case .failed:
-            Image(systemName: "exclamationmark").font(.system(size: 11, weight: .heavy))
+            Image(systemName: state.presentation.requiresPhoneOutcomeReview ? "questionmark" : "exclamationmark")
+                .font(.system(size: 11, weight: .heavy))
         case .stale:
             Image(systemName: "pause.fill").font(.system(size: 10))
         case .running, .reconnecting, .cancelled:

@@ -1,0 +1,196 @@
+{
+  "date": "2026-10-11",
+  "scope": "Close a visible in-app popup when the accessibility tree has no close-button node.",
+  "baseline_head": "69c2144db9838e7192d137d18572588539f1dee4",
+  "preserves_prior_dirty_work": true,
+  "root_cause": {
+    "device_trace": "a973d3d6-40d9-44d8-9708-dd19631ea43c",
+    "target_app": "com.meituan.itakeaway",
+    "observations": [
+      {
+        "node_count": 15,
+        "truncated": false,
+        "has_screenshot": false,
+        "only_containers": false
+      },
+      {
+        "node_count": 4,
+        "truncated": false,
+        "has_screenshot": false,
+        "only_containers": true
+      },
+      {
+        "node_count": 12,
+        "truncated": false,
+        "has_screenshot": true,
+        "only_containers": false
+      },
+      {
+        "node_count": 4,
+        "truncated": false,
+        "has_screenshot": false,
+        "only_containers": true
+      },
+      {
+        "node_count": 4,
+        "truncated": false,
+        "has_screenshot": true,
+        "only_containers": true
+      },
+      {
+        "node_count": 4,
+        "truncated": false,
+        "has_screenshot": true,
+        "only_containers": true
+      },
+      {
+        "node_count": 4,
+        "truncated": false,
+        "has_screenshot": true,
+        "only_containers": true
+      }
+    ],
+    "action_types": [
+      "launch",
+      "tap",
+      "swipe",
+      "swipe"
+    ],
+    "finding": "The model received screenshots and recognized the close X. The final AX trees contain only Application/Window/Other/Other, untruncated. The exposed action schema has no coordinate operation. No close-button tap was dispatched."
+  },
+  "implementation": {
+    "tool": "phone_act action=tap_point observation_id x y",
+    "coordinates": "Full screenshot normalized x/y in [0,1), mapped using runner /window/size points; never use AX root bounds.",
+    "binding": "Only a screenshot attached to the latest observation in the matching foreground app/process and screen geometry can supply the point.",
+    "dispatch": "One authenticated POST /tap through the existing on-device runner; action consumes its observation, unknown remains non-replayable.",
+    "verification_entry": "Explicit -amber-phone-popup-close-inspection-once uses the existing prompt handoff/new conversation/model path for a fixed close-only task. No setting/scope override."
+  },
+  "verification": {
+    "red_tool": "Actual iOS XCTest testScreenshotOnlyCloseButtonHasReachableAction failed once: old parser rejects tap_point. Assertion preserved in build/popup-close-20261011/red-assertion.log. Xcode diagnostic collection hung after test completion and was terminated; the failure is from the executed test, not inferred from compiler output.",
+    "package_tests": {
+      "passed": 40,
+      "failed": 0,
+      "log": "build/popup-client-green.log"
+    },
+    "ios_target_tests": {
+      "passed": 31,
+      "failed": 0,
+      "skipped": 0,
+      "result": "build/popup-close-20261011/green-tools.xcresult"
+    },
+    "independent_source_review": "passed; screenshot/provider path, schema, client, runner endpoint, state outcomes and existing ref behavior checked",
+    "visual_layout": "No layout changes; before and after physical-device screenshots inspected for the reported popup.",
+    "release_build": "passed",
+    "install": "passed",
+    "device_popup_closure": "passed: actual model screenshot -> one tap_point -> new screenshot confirms popup and dimming removed -> phone_stop",
+    "signing": "codesign --verify --deep --strict passed",
+    "independent_device_review": "passed: reviewer viewed both PNGs, matched bytes to tool image outputs, checked exactly one matching-ID tap followed by new observation and stop",
+    "normal_relaunch_without_inspection": "success"
+  },
+  "data_policy": "Raw conversation and screenshots stay in ignored local build evidence; this document contains only relevant redacted metadata.",
+  "commit_or_push": false,
+  "release_artifact": {
+    "bundle_id": "app.amber.ios",
+    "application_identifier": "TY4JTL3V2M.app.amber.ios",
+    "team": "TY4JTL3V2M",
+    "sha256": "2e2191ec35d6a6863eeb5f807fe990f0d6a3ef2ded53de947ff8974016f1367f",
+    "source_hashes_unchanged": true
+  },
+  "device_verification": {
+    "conversation_id": "15c66e83-3c9e-4562-baf4-8504bdfdbac9",
+    "steps": [
+      {
+        "tool": "phone_status",
+        "arguments": {}
+      },
+      {
+        "tool": "phone_act",
+        "arguments": {
+          "action": "launch",
+          "bundle_id": "com.meituan.itakeaway"
+        },
+        "outcome": "completed"
+      },
+      {
+        "tool": "phone_observe",
+        "arguments": {
+          "include_screenshot": true,
+          "max_nodes": 2000
+        },
+        "screenshot_observation_id": "09cf3bad-88ba-4f2d-82c4-94e487ad11df",
+        "screen_points": [
+          402,
+          874
+        ]
+      },
+      {
+        "tool": "phone_act",
+        "arguments": {
+          "action": "tap_point",
+          "observation_id": "09cf3bad-88ba-4f2d-82c4-94e487ad11df",
+          "x": 0.5,
+          "y": 0.758
+        },
+        "outcome": "completed"
+      },
+      {
+        "tool": "phone_observe",
+        "arguments": {
+          "include_screenshot": true,
+          "max_nodes": 2000
+        },
+        "screenshot_observation_id": "38428204-2973-4824-9ea0-74c04e0f778a",
+        "screen_points": [
+          402,
+          874
+        ]
+      },
+      {
+        "tool": "phone_stop",
+        "arguments": {},
+        "outcome": "stopped"
+      }
+    ],
+    "frames": [
+      {
+        "path": "build/popup-close-20261011/verification-frame-1.png",
+        "sha256": "6d8261b92b07933a772747ff373802fee76a0a800d4a10a9e8b54a7a167ff20d",
+        "pixels": [
+          1206,
+          2622
+        ]
+      },
+      {
+        "path": "build/popup-close-20261011/verification-frame-2.png",
+        "sha256": "ceaac0ac694de187137de4b1af6077e7821c017c45b5ad51abd842b90d9793b8",
+        "pixels": [
+          1206,
+          2622
+        ]
+      }
+    ],
+    "observed_by_parent": "Before image contains promotional popup and dimming. After image shows unobstructed homepage with no promotional popup or dimming. One tap_point dispatch; no purchasing, ordering or messaging tool actions.",
+    "scope": "Same physical iPhone, same target App/PID as the report; actual model selected normalized coordinates. No Mac-started runner."
+  },
+  "data_preservation": {
+    "conversations": {
+      "before_count": 353,
+      "after_count": 353,
+      "missing": [],
+      "added": [],
+      "size_or_modification_changes": 0
+    },
+    "group": {
+      "before_count": 3,
+      "after_count": 3,
+      "missing": [],
+      "added": [],
+      "size_or_modification_changes": 0
+    }
+  },
+  "limits": [
+    "This closes the reported popup scenario; it does not establish that every application or gesture is reliable.",
+    "Coordinates can target visually identifiable controls without AX refs; text entry and swipes retain their existing element-reference contracts.",
+    "This task does not extend prior acceptance claims for cold process restoration or all Live Activity states."
+  ]
+}

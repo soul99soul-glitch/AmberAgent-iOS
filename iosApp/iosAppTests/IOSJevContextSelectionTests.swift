@@ -975,6 +975,67 @@ final class IOSJevToolRetentionTests: XCTestCase {
         XCTAssertTrue(outputText(cleared.messages).contains(ContextCompactionEditTestSupport.compactedToolOutputMarker), "对照：未保留时照旧清空")
     }
 
+    func testPhoneScreensDoNotEgressThroughGenericRetentionScope() async {
+        var transport: JevStubTransport?
+        let service = makeService(mode: .active, keepProbability: 0.9, transport: &transport)
+        for name in ["phone_observe", "phone_act", "phone_run_goal"] {
+            let messages = [
+                message(.user, [UIMessagePart.Text(text: "检查当前页面", metadata: nil)]),
+                message(.tool, [UIMessagePart.Tool(
+                    toolCallId: name, toolName: name, input: "{}",
+                    output: [UIMessagePart.Text(text: readOutput, metadata: nil)],
+                    approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)]),
+                message(.assistant, [UIMessagePart.Text(text: "继续下一步", metadata: nil)]),
+            ]
+            XCTAssertTrue(service.retainedToolCallIds(messages: messages, conversationId: name, keepRecentMessages: 3).isEmpty)
+            await service.waitForPendingEvaluations()
+        }
+        XCTAssertEqual(transport?.calls, 0, "Phone evidence requires the separate phone-content data scope")
+    }
+
+    func testMixedHistoryDoesNotEgressPhoneActExpectationThroughGenericRetentionScope() async throws {
+        try await assertMixedHistoryExcludesPhoneParameters(
+            name: "phone_act",
+            input: #"{"expectation":{"kind":"visible","target":{"label":"PHONE_UI_PARAMETER_SENTINEL"}},"action":"tap","ref":"observation:7"}"#
+        )
+    }
+
+    func testMixedHistoryDoesNotEgressPhoneGoalTargetsThroughGenericRetentionScope() async throws {
+        try await assertMixedHistoryExcludesPhoneParameters(
+            name: "phone_run_goal",
+            input: #"{"actions":[{"action":"tap","target":{"label":"PHONE_UI_PARAMETER_SENTINEL"}}],"goal":"打开搜索页面","bundle_id":"app.test","completion":{"kind":"visible","target":{"identifier":"search"}}}"#
+        )
+    }
+
+    private func assertMixedHistoryExcludesPhoneParameters(name: String, input: String) async throws {
+        // Only generic retention is enabled; phone uses and their data scopes remain off.
+        // An ordinary result must trigger a request so this covers the full history outline.
+        for mode in [IOSJevMode.shadow, .active] {
+            var transport: JevStubTransport?
+            let service = makeService(mode: mode, keepProbability: 0.9, transport: &transport)
+            var messages = conversation()
+            messages.insert(message(.tool, [UIMessagePart.Tool(
+                toolCallId: "call-phone", toolName: name, input: input,
+                output: [UIMessagePart.Text(text: "PHONE_UI_OUTPUT_SENTINEL", metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+            )]), at: messages.count - 1)
+
+            _ = service.retainedToolCallIds(messages: messages, conversationId: "mixed-\(name)-\(mode.rawValue)",
+                                            keepRecentMessages: messages.count)
+            await service.waitForPendingEvaluations()
+
+            XCTAssertEqual(transport?.calls, 1, "The ordinary file_read candidate must still be evaluated in \(mode)")
+            let body = try XCTUnwrap(transport?.lastBody)
+            let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let state = try XCTUnwrap(request["state"] as? String)
+            XCTAssertTrue(state.contains("README 安装步骤"), "Retain the ordinary candidate's result sample")
+            XCTAssertFalse(String(decoding: body, as: UTF8.self).contains("PHONE_UI_PARAMETER_SENTINEL"),
+                           "Phone UI text in \(name) arguments requires its separate scope in \(mode)")
+            XCTAssertFalse(String(decoding: body, as: UTF8.self).contains("PHONE_UI_OUTPUT_SENTINEL"),
+                           "Phone results must also stay outside generic retention in \(mode)")
+        }
+    }
+
     func testLowKeepProbabilityClearsAsBefore() async {
         var transport: JevStubTransport?
         let service = makeService(mode: .active, keepProbability: 0.3, transport: &transport)

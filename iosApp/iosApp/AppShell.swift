@@ -378,6 +378,10 @@ struct AppShell: View {
             conversationActivityCenter.start()
             await openPendingAgentActivityIfReady()
             await openPendingAppDeepLinkIfReady()
+            #if DEBUG && targetEnvironment(simulator)
+            // Create the explicit preview after launch recovery has removed orphan cards.
+            await IOSPhoneControlActivityPreview.runIfRequested()
+            #endif
         }
         .onOpenURL { url in
             enqueueAppURL(url)
@@ -627,11 +631,9 @@ struct AppShell: View {
             if !chatViewModel.sendMessage() {
                 let message = chatViewModel.composerSendBlockReason(for: prompt)?.userVisibleMessage
                     ?? "请求已放入输入框，请检查当前状态后重试。"
-                conversationStore.publishUserVisibleError(IOSUserVisibleError(
-                    title: "未能发送请求",
-                    message: message,
-                    severity: .warning
-                ))
+                // An alert here races the root navigation transition. Keep the goal
+                // and its error together in the chat composer's existing status area.
+                chatViewModel.configurationError = message
             }
 
         case .activeTask:
@@ -910,6 +912,7 @@ enum Route: Hashable {
     case pluginDetail(id: String)
     case execution
     case phoneControl
+    case phoneSavedTasks
     case executionTask(id: String)
     case providers
     case providerAdd
@@ -1041,6 +1044,8 @@ private extension View {
                 MacGatewaySettingsView()
             case .phoneControl:
                 IOSPhoneControlSettingsView()
+            case .phoneSavedTasks:
+                IOSPhoneControlSavedTasksView(sharedSettings: sharedSettings)
             case .subscription:
                 IOSSubscriptionView(store: storeCoordinator)
             case .capabilities:

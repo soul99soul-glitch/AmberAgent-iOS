@@ -216,7 +216,15 @@ enum IOSRunRecovery {
                         actions[transaction.toolCallId] = .markRetryable
                     }
                 case .finished:
-                    if !completedOutputToolCallIds.contains(transaction.toolCallId) {
+                    if transaction.outcome == "completed_requires_replan" {
+                        // The current result may already be in the snapshot while
+                        // the rest of its batch is still pending. Keep the marker
+                        // even in that case until the applier's skips are saved.
+                        actions[transaction.toolCallId] = .replayResult(
+                            transaction.resultPayload ?? "",
+                            requiresReplan: true
+                        )
+                    } else if !completedOutputToolCallIds.contains(transaction.toolCallId) {
                         if let payload = transaction.resultPayload {
                             actions[transaction.toolCallId] = .replayResult(payload)
                         } else {

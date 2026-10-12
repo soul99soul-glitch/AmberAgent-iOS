@@ -37,6 +37,8 @@ struct AgentActivityPresentation: Codable, Hashable, Sendable {
     var failureReason: AgentActivityFailureReason?
     /// 待确认的审批请求。只有带请求 id 时岛上才出现「拒绝 / 允许一次」。
     var approval: AgentActivityApproval?
+    /// 手机控制只展示动作类别，不携带目标应用、联系人或输入内容；旧活动可缺省此字段。
+    var phoneControlPhase: AgentPhoneControlActivityPhase?
 
     init(
         kind: AgentActivityKind,
@@ -160,6 +162,71 @@ enum AgentActivityPhase: String, Codable, Hashable, Sendable {
     case cancelled
 }
 
+enum AgentPhoneControlActivityPhase: String, Codable, Hashable, Sendable, CaseIterable {
+    case checkingStatus
+    case connecting
+    case observing
+    case openingApp
+    case tapping
+    case typing
+    case swiping
+    case listingApps
+    case addingApp
+    case verifying
+    case deciding
+    case waitingForUI
+    case waitingForModel
+    case pausing
+    case paused
+    case resuming
+    case stopping
+    case stopped
+    case failed
+    case outcomeUnknown
+
+    var isExecuting: Bool {
+        switch self {
+        case .checkingStatus, .connecting, .observing, .openingApp, .tapping, .typing,
+             .swiping, .listingApps, .addingApp, .verifying, .deciding, .waitingForUI, .stopping:
+            true
+        case .waitingForModel, .pausing, .paused, .resuming, .stopped, .failed, .outcomeUnknown:
+            false
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .checkingStatus: "iphone"
+        case .connecting: "link"
+        case .observing: "eye"
+        case .openingApp: "app"
+        case .tapping: "hand.tap"
+        case .typing: "keyboard"
+        case .swiping: "hand.draw"
+        case .listingApps: "list.bullet"
+        case .addingApp: "plus.app"
+        case .verifying: "checkmark.circle"
+        case .deciding: "arrow.triangle.branch"
+        case .waitingForUI: "hourglass"
+        case .waitingForModel: "hourglass"
+        case .pausing: "hand.raised"
+        case .paused: "hand.raised.fill"
+        case .resuming: "arrow.trianglehead.clockwise"
+        case .stopping, .stopped: "stop.fill"
+        case .failed: "exclamationmark"
+        case .outcomeUnknown: "questionmark"
+        }
+    }
+
+    func localizedTitle(languageCode: String?) -> String {
+        AgentActivityCopy.text("agent.activity.phone.\(rawValue)", languageCode: languageCode)
+    }
+
+    func localizedCompactTitle(languageCode: String?) -> String {
+        AgentActivityCopy.text("agent.activity.phone.compact.\(rawValue)", languageCode: languageCode)
+    }
+}
+
 public enum AgentActivityStage: String, Codable, Hashable, Sendable {
     case preparing
     case thinking
@@ -223,6 +290,8 @@ enum AgentActivityInlineControl: Equatable {
     case deny
     case approve
     case retry
+    case humanTakeover
+    case resumeAutomation
 }
 
 enum AgentActivityInlineControlPolicy {
@@ -231,14 +300,23 @@ enum AgentActivityInlineControlPolicy {
         isStale: Bool,
         hasConversation: Bool
     ) -> [AgentActivityInlineControl] {
-        // 轻点整个岛/卡片即回到对话，按钮只留给确认和重试。
+        // 手机接管按钮直接作用于现有 run，轻点卡片仍可回到对话。
         guard hasConversation else { return [] }
         switch presentation.displayPhase(isStale: isStale) {
         case .waitingForUser:
             return presentation.approval == nil ? [] : [.deny, .approve]
         case .failed:
             return presentation.retryable == true ? [.retry] : []
-        case .running, .reconnecting, .stale, .completed, .cancelled:
+        case .running:
+            guard let phone = presentation.phoneControlPhase else { return [] }
+            switch phone {
+            case .paused: return [.resumeAutomation]
+            case .pausing, .resuming, .stopping, .stopped, .failed, .outcomeUnknown: return []
+            case .checkingStatus, .connecting, .observing, .openingApp, .tapping, .typing,
+                 .swiping, .listingApps, .addingApp, .verifying, .deciding, .waitingForUI, .waitingForModel:
+                return [.humanTakeover]
+            }
+        case .reconnecting, .stale, .completed, .cancelled:
             return []
         }
     }
@@ -385,6 +463,17 @@ extension AgentActivityPresentation {
     }
 
     static func runningTool(toolName: String) -> AgentActivityPresentation {
+        switch toolName {
+        case "phone_status": return .phoneControl(.checkingStatus)
+        case "phone_observe": return .phoneControl(.observing)
+        case "phone_act": return .phoneControl(.connecting)
+        case "phone_run_goal": return .phoneControl(.deciding)
+        case "phone_scroll_until": return .phoneControl(.observing)
+        case "phone_apps": return .phoneControl(.listingApps)
+        case "phone_add_app": return .phoneControl(.addingApp)
+        case "phone_stop": return .phoneControl(.stopping)
+        default: break
+        }
         if AgentActivityStepDetailPolicy.writeToolNames.contains(toolName) {
             return AgentActivityPresentation(
                 kind: .document,
@@ -442,6 +531,26 @@ extension AgentActivityPresentation {
                 )
             }
         }
+    }
+
+    static func phoneControl(_ phase: AgentPhoneControlActivityPhase) -> AgentActivityPresentation {
+        var presentation = AgentActivityPresentation(
+            kind: .workflow,
+            phase: .running,
+            stage: phase.isExecuting ? .runningTool : .preparing
+        )
+        presentation.phoneControlPhase = phase
+        return presentation
+    }
+
+    func localizedStageTitle(languageCode: String?) -> String {
+        phoneControlPhase?.localizedTitle(languageCode: languageCode)
+            ?? stage.localizedTitle(languageCode: languageCode)
+    }
+
+    func localizedCompactStageTitle(languageCode: String?) -> String {
+        phoneControlPhase?.localizedCompactTitle(languageCode: languageCode)
+            ?? stage.localizedCompactTitle(languageCode: languageCode)
     }
 
     static func waitingForUser(
@@ -540,6 +649,19 @@ extension AgentActivityPresentation {
         return presentation
     }
 
+    /// 引擎用通用 failed 结束整轮时，保留手机回执的“可能已执行”，不能改成可重试的普通失败。
+    func preservingUnknownPhoneOutcome(from previous: AgentActivityPresentation?) -> AgentActivityPresentation {
+        guard phase == .failed, previous?.phoneControlPhase == .outcomeUnknown else { return self }
+        var presentation = self
+        presentation.phoneControlPhase = .outcomeUnknown
+        presentation.retryable = false
+        return presentation
+    }
+
+    var requiresPhoneOutcomeReview: Bool {
+        phase == .failed && phoneControlPhase == .outcomeUnknown
+    }
+
     var progressFraction: Double? {
         guard case let .progress(completed, total, _) = metric, total > 0 else {
             return nil
@@ -618,7 +740,8 @@ enum AgentActivityStepHistoryPolicy {
         _ previous: AgentActivityPresentation,
         to current: [AgentActivityStep]
     ) -> [AgentActivityStep] {
-        guard previous.stage.isToolStage else { return current }
+        // 离开手机动作只说明收到回执或进入下一阶段，不能据此断言动作/业务已成功。
+        guard previous.stage.isToolStage, previous.phoneControlPhase == nil else { return current }
         var steps = current
         if let last = steps.last, last.stage == previous.stage {
             steps[steps.count - 1] = AgentActivityStep(
@@ -885,7 +1008,9 @@ extension AgentActivityPresentation {
         case .completed:
             AgentActivityCopy.text("agent.activity.fact.completed")
         case .failed:
-            AgentActivityCopy.text("agent.activity.fact.failed")
+            requiresPhoneOutcomeReview
+                ? AgentPhoneControlActivityPhase.outcomeUnknown.localizedCompactTitle(languageCode: nil)
+                : AgentActivityCopy.text("agent.activity.fact.failed")
         case .cancelled:
             AgentActivityCopy.text("agent.activity.fact.cancelled")
         }
@@ -894,7 +1019,7 @@ extension AgentActivityPresentation {
     func displaySymbolName(isStale: Bool) -> String {
         switch displayPhase(isStale: isStale) {
         case .running:
-            kind.symbolName
+            phoneControlPhase?.symbolName ?? kind.symbolName
         case .reconnecting:
             "wifi.exclamationmark"
         case .waitingForUser:
@@ -904,7 +1029,7 @@ extension AgentActivityPresentation {
         case .completed:
             "checkmark.circle.fill"
         case .failed:
-            "xmark.circle.fill"
+            requiresPhoneOutcomeReview ? "questionmark.circle.fill" : "xmark.circle.fill"
         case .cancelled:
             "stop.circle.fill"
         }
@@ -944,6 +1069,12 @@ enum AgentActivityLifecyclePolicy {
 
     /// 同一步骤持续输出时，最迟隔这么久把过期时间往后推一次；须短于运行态的过期时长。
     static let progressRefreshInterval: TimeInterval = 60
+
+    static func staleDate(for presentation: AgentActivityPresentation, now: Date) -> Date? {
+        // 人工操作无需执行心跳；等待超过运行态预算后仍须保留「继续」入口。
+        if presentation.phase == .running, presentation.phoneControlPhase == .paused { return nil }
+        return staleDate(for: presentation.phase, now: now)
+    }
 
     static func staleDate(for phase: AgentActivityPhase, now: Date) -> Date? {
         switch phase {

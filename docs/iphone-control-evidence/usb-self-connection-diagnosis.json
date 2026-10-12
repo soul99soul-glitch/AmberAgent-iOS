@@ -1,0 +1,158 @@
+{
+  "date": "2026-10-10",
+  "baseline_commit": "69c2144db9838e7192d137d18572588539f1dee4",
+  "device": {
+    "model": "iPhone 18 Pro",
+    "os": "27.2",
+    "build": "24B5089g",
+    "transport": "wired",
+    "developer_mode": "enabled"
+  },
+  "purpose": "Distinguish framing/credential failures from same-device route rejection before pair verification.",
+  "prior_dirty_files_preserved": [
+    "docs/iphone-self-control-plan.md",
+    "docs/iphone-control-evidence/device-delivery-69c2144-resume.json"
+  ],
+  "comparisons": [
+    {
+      "route": "mac_lan_ipv4",
+      "exit_code": 1,
+      "output": "preparation_failed: io=HostUnreachable, os=Some(65)"
+    },
+    {
+      "route": "mac_usb_lockdown",
+      "exit_code": 0,
+      "output": "handshake=accepted pairing_verification=not_attempted"
+    },
+    {
+      "route": "mac_usb_network_ipv6",
+      "exit_code": 1,
+      "output": "preparation_failed: io=HostUnreachable, os=Some(65)"
+    },
+    {
+      "route": "mac_usbmux_49152",
+      "exit_code": 1,
+      "output": "transport_stage=read_magic\npreparation_failed: native=1, subcode=0, io=UnexpectedEof, os=None"
+    }
+  ],
+  "source_changes": {
+    "mac_helper": "Explicit single greeting checks; trace readiness, timestamps and exact local-origin rejection classification; no raw log messages.",
+    "formal_app": "Exact launch-argument-only diagnostic reusing production discovery and native greeting, 8-second timeout; no credentials, pairing verification/setup, tunnel or XCTest."
+  },
+  "validation": {
+    "native_tests": {
+      "passed": 14,
+      "failed": 0
+    },
+    "mac_helper_tests": {
+      "passed": 7,
+      "failed": 0
+    },
+    "trace_formatter_after_simplification": {
+      "passed": 1,
+      "failed": 0
+    },
+    "independent_review": "No blocking issue. Production pairing status begins before TCP connect instead of after; no protocol/action sequence change. Diagnosis remains bounded if outer Swift task is cancelled."
+  },
+  "formal_app_device_reproduction": {
+    "command": "python3 build/p1-usb-20261010/capture-app-handshake.py",
+    "reproduction_exit_code": 1,
+    "started_at_utc": "2026-10-10T15:52:43.776603+00:00",
+    "app_metadata": [
+      "phoneControlHandshakeInspectionStarted | app=inactive bgRemaining=unlimited",
+      "phoneControlHandshakeInspectionEndpoint | app=active bgRemaining=unlimited | local=true family=ipv4 port=49152",
+      "phoneControlHandshakeInspection | app=active bgRemaining=unlimited | phase=failed pairing_handshake_failed, native=1, subcode=0, transport=read_magic, io=ConnectionReset, os=54"
+    ],
+    "daemon_rejection_metadata": [
+      "time=2026-10-10 15:52:50.000184548 pid=39281 level=error error=true fault=false rejectsSelf=true loopback=false invalidOrigin=false direction=false versionMismatch=false deviceInitiatedRequired=false authRejected=false errorCode=none"
+    ],
+    "trace_ready": true,
+    "console_exit_code": 2,
+    "trace_exit_code": 1,
+    "raw_console_saved": false,
+    "conclusion": "Current phone rejects App greeting to its own uniquely resolved IPv4 endpoint as originating from local machine before credential verification. Capture deadlines expired after the complete result."
+  },
+  "acceptance": {
+    "self_start_xctest": false,
+    "signed_status": false,
+    "tree_action_new_tree": false,
+    "background_control": false
+  },
+  "boundaries": {
+    "mac_xctest_or_model_loop": false,
+    "new_pairing_created": false,
+    "keychain_export": false,
+    "vpn_or_developer_mode_changed": false,
+    "external_message_sent": false,
+    "committed_or_pushed": false
+  },
+  "primary_references": [
+    "https://github.com/jkcoxson/idevice/blob/3854a5df4a5a6dee71ffce4d8befc2ea356a8065/idevice/src/remote_pairing/mod.rs#L319-L365",
+    "https://github.com/Mak5er/AirCard-iOS/issues/13#issuecomment-5916455412",
+    "https://github.com/jkcoxson/LocalDevVPN/blob/af3fd697803ada4ac2b8d518358f5ab0a534844c/TunnelProv/PacketTunnelProvider.swift#L53-L97"
+  ],
+  "usbmux_self_rejection": {
+    "started_at_utc": "2026-10-10T15:40:53.956215+00:00",
+    "trace_exit_code": 0,
+    "metadata": [
+      "time=2026-10-10 15:40:54.000662496 pid=39281 level=error error=true fault=false rejectsSelf=true loopback=true invalidOrigin=false direction=false versionMismatch=false deviceInitiatedRequired=false authRejected=false errorCode=none"
+    ],
+    "interpretation": "This phone rejects the loopback-origin USBmux connection to 49152. This alone does not prove the App Wi-Fi-address path has the same cause."
+  },
+  "route_candidate": {
+    "name": "LocalDevVPN",
+    "installed_on_target": false,
+    "repo": "https://github.com/jkcoxson/LocalDevVPN",
+    "source_commit": "af3fd697803ada4ac2b8d518358f5ab0a534844c",
+    "stars_at_check": 148,
+    "license_metadata": "NOASSERTION; no source copied",
+    "app_store": "https://apps.apple.com/us/app/localdevvpn/id6755608044",
+    "source_verified_behavior": "Only peer destination is routed to utun; default route excluded; IPv4 source/destination exchanged and reinjected locally. No remote server is used by this packet loop.",
+    "authorization": "User explicitly approved LocalDevVPN installation, VPN configuration and continued on-device validation in this turn. System consent still must be confirmed by the user.",
+    "remaining_verification": "First greeting over exact configured peer, existing pairing verification, TLS-PSK dynamic port, RSD, phone-owned runner, signed status and UI tree."
+  },
+  "research_review": {
+    "agent": "pairing_transport_review",
+    "scope": "Pinned/current idevice greeting versus published self-rejection evidence and concrete local packet route",
+    "findings": "Current upstream matches pinned revision; first greeting has no identity keys. Public loopback self-rejection supports live USBmux result. AirCard iOS27.2b3 patch concerns AirTraffic exploit and does not prove RemotePairing is patched."
+  },
+  "delivery": {
+    "build": "iosAppExperimentalGPL / Release",
+    "build_exit_code": 0,
+    "signature": {
+      "bundle_id": "app.amber.ios",
+      "team": "TY4JTL3V2M",
+      "app_groups": [
+        "group.app.amber.ios.experimental-gpl.watchkit"
+      ],
+      "current_device_in_profile": true,
+      "profile_expiration": "2027-09-30T09:52:05",
+      "executable_sha256": "2ed7d1b2c59e59766c28bd70f06e0e598f38587f24f49f8153bd5aaec3450a3c",
+      "strict_signature_verified": true,
+      "diagnostic_argument_present": true
+    },
+    "install_exit_code": 0,
+    "normal_launch_exit_code": 0,
+    "normal_process_pid": 41753,
+    "normal_process_matches_new_installation": true,
+    "diagnostic_running_after_restore": false
+  },
+  "data_preservation": {
+    "conversations": {
+      "before": 351,
+      "after": 351,
+      "missing_count": 0,
+      "added_count": 0,
+      "changed_entry_count": 7,
+      "size_changed_count": 0,
+      "message_bodies_read": false
+    },
+    "app_group": {
+      "before": 1,
+      "after": 1,
+      "missing_count": 0,
+      "added_count": 0,
+      "changed_entry_count": 0
+    }
+  }
+}

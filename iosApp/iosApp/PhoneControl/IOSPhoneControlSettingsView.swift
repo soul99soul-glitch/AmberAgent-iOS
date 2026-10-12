@@ -3,17 +3,23 @@ import UniformTypeIdentifiers
 
 struct IOSPhoneControlSettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var controller = IOSPhoneControlController.shared
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var controller: IOSPhoneControlController
     @State private var serviceInspection = IOSPhoneControlServiceInspection()
     @State private var bundleIDDraft = ""
-    @State private var durationSeconds = 300
     @State private var presentsPairingImporter = false
+    @State private var presentsAppPicker = false
     @State private var operation: Operation?
     @State private var errorMessage: String?
+    @State private var advancedPreparationExpanded: Bool
 
     private enum Operation: Equatable {
-        case importing, pairing, removing, stopping, inspecting
+        case preparingConnection, importing, pairing, removing, stopping, inspecting, checkingReadiness
+    }
+
+    init(controller: IOSPhoneControlController = .shared, advancedPreparationExpanded: Bool = false) {
+        _controller = State(initialValue: controller)
+        _advancedPreparationExpanded = State(initialValue: advancedPreparationExpanded)
     }
 
     var body: some View {
@@ -21,17 +27,17 @@ struct IOSPhoneControlSettingsView: View {
             AmberTheme.background.ignoresSafeArea()
             VStack(spacing: 0) {
                 header
-                if let errorMessage {
-                    footer(errorMessage, color: AmberTheme.accentRed)
-                        .accessibilityIdentifier("phoneControlError")
-                }
                 ScrollView {
                     VStack(spacing: 0) {
+                        if let errorMessage {
+                            footer(errorMessage, color: AmberTheme.accentRed)
+                                .accessibilityIdentifier("phoneControlError")
+                        }
                         enableSection
-                        preparationSection
-                        appsSection
-                        authorizationSection
                         statusSection
+                        savedTasksSection
+                        appsSection
+                        preparationSection
                     }
                     .padding(.bottom, 36)
                 }
@@ -42,7 +48,18 @@ struct IOSPhoneControlSettingsView: View {
         .toolbar(.hidden, for: .navigationBar)
         .tint(AmberTheme.accent)
         .task { await controller.refreshPreparation() }
-        .onDisappear { serviceInspection.cancel() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await controller.refreshPreparation() }
+            }
+        }
+        .onDisappear {
+            serviceInspection.cancel()
+            if operation == .checkingReadiness { controller.cancelReadinessCheck() }
+        }
+        .sheet(isPresented: $presentsAppPicker) {
+            IOSPhoneControlAppPicker(controller: controller)
+        }
         .fileImporter(
             isPresented: $presentsPairingImporter,
             allowedContentTypes: [.propertyList, .xml],
@@ -51,14 +68,11 @@ struct IOSPhoneControlSettingsView: View {
         )
     }
 
-    private var isWorking: Bool { operation != nil || controller.isUpdatingPairing }
-    private var canEditPreparation: Bool { !isWorking && !controller.isOccupied }
-    private var canAuthorize: Bool {
-        controller.enabled && controller.hasPreparedPairing
-            && !controller.selectedBundleIDs.isEmpty
-            && !controller.isOccupied && !controller.hasPendingAuthorization && !isWorking
+    private var isWorking: Bool {
+        operation != nil || controller.isPreparingConnection
+            || controller.isUpdatingPairing || controller.isLoadingApplications || controller.isCheckingReadiness
     }
-
+    private var canEditPreparation: Bool { !isWorking && !controller.isOccupied }
     private var header: some View {
         HStack(spacing: 8) {
             AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回运行环境", size: 44, symbolSize: 20) {
@@ -86,15 +100,42 @@ struct IOSPhoneControlSettingsView: View {
                     get: { controller.enabled },
                     set: { controller.enabled = $0 }
                 )) {
-                    rowText("允许手机控制工具", detail: "默认关闭；授权窗口可在多个任务间复用")
+                    rowText("允许手机控制工具", detail: "开启后持续有效，无需逐次授权")
                 }
                 .frame(minHeight: 52)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .disabled(isWorking)
                 .accessibilityIdentifier("phoneControlEnabled")
             }
             footer("优先读取界面元素树；树无法说明界面时才使用截图。界面文字和截图可能发送到你配置的模型。")
+        }
+    }
+
+    private var savedTasksSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "常用任务")
+            AmberFormGroup {
+                NavigationLink(value: Route.phoneSavedTasks) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "list.bullet.clipboard")
+                            .font(.system(size: 20))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(width: 24, height: 24)
+                            .accessibilityHidden(true)
+                        rowText("管理常用任务", detail: "保存目标和完成条件，下次直接运行")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(AmberTheme.muted)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("phoneControlSavedTasks")
+            }
         }
     }
 
@@ -103,10 +144,45 @@ struct IOSPhoneControlSettingsView: View {
             AmberSectionLabel(text: "准备")
             AmberFormGroup {
                 HStack(spacing: 12) {
+                    Image(systemName: "network.badge.shield.half.filled")
+                        .font(.system(size: 20))
+                        .foregroundStyle(AmberTheme.accent)
+                        .frame(width: 24, height: 24)
+                        .accessibilityHidden(true)
+                    rowText(localConnectionStatus.title, detail: localConnectionStatus.detail)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("phoneControlConnectionStatus")
+                if !controller.localTunnel.isPrepared || connectionFailed {
+                    rowDivider
+                    actionRow(
+                        controller.localTunnel.isPrepared ? "更新连接配置" : "准备本地连接",
+                        systemImage: "plus.circle",
+                        busy: controller.isPreparingConnection
+                    ) {
+                        operation = .preparingConnection
+                        errorMessage = nil
+                        Task {
+                            defer { operation = nil }
+                            do { try await controller.prepareConnection() }
+                            catch is CancellationError { }
+                            catch { errorMessage = error.localizedDescription }
+                        }
+                    }
+                    .disabled(!canEditPreparation)
+                    .accessibilityIdentifier("phoneControlPrepareConnection")
+                }
+            }
+            footer("仅建立手机内部连接，不转发上网流量。首次添加时需在系统弹窗中允许；之后由任务自动连接和断开。连接时可能中断其他 VPN。")
+                .padding(.bottom, 12)
+            AmberFormGroup {
+                HStack(spacing: 12) {
                     Image(systemName: controller.hasPreparedPairing ? "key.fill" : "key")
                         .font(.system(size: 20))
                         .foregroundStyle(AmberTheme.accent)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 24, height: 24)
                         .accessibilityHidden(true)
                     rowText(
                         controller.hasPreparedPairing ? "已保存配对文件" : "尚未导入配对文件",
@@ -132,70 +208,82 @@ struct IOSPhoneControlSettingsView: View {
                             catch { errorMessage = error.localizedDescription }
                         }
                     }
-                    .disabled(!canEditPreparation || controller.hasPreparedPairing)
+                    .disabled(!canEditPreparation || !controller.localTunnel.isPrepared || controller.hasPreparedPairing)
                     .accessibilityIdentifier("phoneControlPreparePairing")
                 }
-                rowDivider
-                actionRow(
-                    controller.hasPreparedPairing ? "更换配对文件" : "导入配对文件",
-                    systemImage: "square.and.arrow.down",
-                    busy: operation == .importing
-                ) {
-                    errorMessage = nil
-                    presentsPairingImporter = true
+            }
+            footer("首次配对需要系统允许开发连接。控制 runner 须单独签名安装；保存配置后，请使用上方的检查自动化确认实际连接和界面读取。")
+            AmberFormGroup {
+                actionRow("高级准备", systemImage: advancedPreparationExpanded ? "chevron.down" : "chevron.right",
+                          color: AmberTheme.muted) {
+                    advancedPreparationExpanded.toggle()
                 }
-                .disabled(!canEditPreparation)
-                .accessibilityIdentifier("phoneControlImportPairing")
-
-                rowDivider
-                actionRow("导入 USB 准备的配对材料", systemImage: "cable.connector", busy: operation == .importing) {
-                    operation = .importing
-                    errorMessage = nil
-                    Task {
-                        defer { operation = nil }
-                        do { try await controller.importUSBPreparedPairing(from: IOSPhoneControlCredentials.usbImportURL) }
-                        catch { errorMessage = error.localizedDescription }
-                    }
-                }
-                .disabled(!canEditPreparation)
-                .accessibilityIdentifier("phoneControlImportUSBPairing")
-
-                if controller.hasPreparedPairing {
+                .accessibilityIdentifier("phoneControlAdvancedPreparation")
+                .accessibilityValue(advancedPreparationExpanded ? "已展开" : "已折叠")
+                if advancedPreparationExpanded {
                     rowDivider
-                    actionRow("移除配对文件", systemImage: "trash", color: AmberTheme.accentRed,
-                              busy: operation == .removing) {
-                        operation = .removing
+                    actionRow(
+                        controller.hasPreparedPairing ? "更换配对文件" : "导入配对文件",
+                        systemImage: "square.and.arrow.down",
+                        busy: operation == .importing
+                    ) {
+                        errorMessage = nil
+                        presentsPairingImporter = true
+                    }
+                    .disabled(!canEditPreparation)
+                    .accessibilityIdentifier("phoneControlImportPairing")
+
+                    rowDivider
+                    actionRow("导入 USB 准备的配对材料", systemImage: "cable.connector", busy: operation == .importing) {
+                        operation = .importing
                         errorMessage = nil
                         Task {
                             defer { operation = nil }
-                            do { try await controller.removePairing() }
+                            do { try await controller.importUSBPreparedPairing(from: IOSPhoneControlCredentials.usbImportURL) }
                             catch { errorMessage = error.localizedDescription }
                         }
                     }
                     .disabled(!canEditPreparation)
+                    .accessibilityIdentifier("phoneControlImportUSBPairing")
+
+                    if controller.hasPreparedPairing {
+                        rowDivider
+                        actionRow("移除配对文件", systemImage: "trash", color: AmberTheme.accentRed,
+                                  busy: operation == .removing) {
+                            operation = .removing
+                            errorMessage = nil
+                            Task {
+                                defer { operation = nil }
+                                do { try await controller.removePairing() }
+                                catch { errorMessage = error.localizedDescription }
+                            }
+                        }
+                        .disabled(!canEditPreparation)
+                    }
+                    rowDivider
+                    actionRow("核对本机开发服务", systemImage: "network") {
+                        operation = .inspecting
+                        Task { @MainActor in
+                            await serviceInspection.inspectAndRecord(source: "settings")
+                            operation = nil
+                        }
+                    }
+                    .disabled(isWorking || controller.isOccupied)
+                    .accessibilityIdentifier("phoneControlInspectService")
                 }
             }
-            AmberFormGroup {
-                actionRow("核对本机开发服务", systemImage: "network") {
-                    operation = .inspecting
-                    Task { @MainActor in
-                        await serviceInspection.inspectAndRecord(source: "settings")
-                        operation = nil
+            .padding(.top, 12)
+            if advancedPreparationExpanded {
+                if let result = serviceInspection.summary {
+                    if result.services.isEmpty {
+                        footer("未取得可解析的开发服务记录，服务身份仍未知；这不代表服务不存在。")
+                    } else {
+                        ForEach(Array(result.services.enumerated()), id: \.offset) { _, service in
+                            footer("\(service.host):\(service.port) · \(service.addressFamilies.joined(separator: ", ")) · \(service.localAddressMatch == true ? "地址匹配本机" : "本机身份未确认")")
+                        }
                     }
                 }
-                .disabled(isWorking || controller.isOccupied)
-                .accessibilityIdentifier("phoneControlInspectService")
             }
-            if let result = serviceInspection.summary {
-                if result.services.isEmpty {
-                    footer("未取得可解析的开发服务记录，服务身份仍未知；这不代表服务不存在。")
-                } else {
-                    ForEach(Array(result.services.enumerated()), id: \.offset) { _, service in
-                        footer("\(service.host):\(service.port) · \(service.addressFamilies.joined(separator: ", ")) · \(service.localAddressMatch == true ? "地址匹配本机" : "本机身份未确认")")
-                    }
-                }
-            }
-            footer("首次配对需要系统允许开发连接，也可导入已准备的 RemotePairing plist。控制 runner 仍须开发签名并安装，配对不会代替安装。当前同机启动与后台持续控制仍待验证。")
         }
     }
 
@@ -203,6 +291,70 @@ struct IOSPhoneControlSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "允许控制的 App")
             AmberFormGroup {
+                appPickerButton
+                ForEach(controller.selectedBundleIDs.sorted(), id: \.self) { bundleID in
+                    rowDivider
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: controller.applicationName(for: bundleID))
+                                .font(.body)
+                            if controller.applicationName(for: bundleID) != bundleID {
+                                Text(verbatim: bundleID)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(AmberTheme.muted)
+                            }
+                        }
+                        .foregroundStyle(AmberTheme.foreground)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            controller.selectedBundleIDs.remove(bundleID)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .font(.system(size: 20))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .disabled(!canEditPreparation)
+                        .accessibilityLabel("移除 \(controller.applicationName(for: bundleID))")
+                    }
+                    .padding(.leading, 14)
+                    .padding(.trailing, 4)
+                    .padding(.vertical, 4)
+                }
+            }
+            footer(appSelectionDetail)
+            DisclosureGroup("手动填写 Bundle ID") {
+                manualAppEntry
+            }
+            .font(.subheadline)
+            .foregroundStyle(AmberTheme.muted)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+        }
+    }
+
+    private var appPickerButton: some View {
+        actionRow("从本机选择 App", systemImage: "apps.iphone") {
+            presentsAppPicker = true
+        }
+        .disabled(!canEditPreparation || !controller.localTunnel.isPrepared || !controller.hasPreparedPairing)
+        .accessibilityIdentifier("phoneControlChooseApp")
+    }
+
+    private var appSelectionDetail: String {
+        if !controller.localTunnel.isPrepared {
+            return "先在下方准备本地连接，再读取手机中的 App；无需连接电脑查询 ID。"
+        }
+        if !controller.hasPreparedPairing {
+            return "先完成下方的配对准备，再读取手机中的 App；无需连接电脑查询 ID。"
+        }
+        return "也可以直接让 Amber 查找并添加需要使用的 App。添加结果会保存在这里；无需连接电脑查询 ID。"
+    }
+
+    private var manualAppEntry: some View {
+        VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("App 的 Bundle ID")
                         .font(.body)
@@ -226,118 +378,6 @@ struct IOSPhoneControlSettingsView: View {
                     .disabled(!canEditPreparation || bundleIDDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("phoneControlAddApp")
 
-                ForEach(controller.selectedBundleIDs.sorted(), id: \.self) { bundleID in
-                    rowDivider
-                    HStack(spacing: 8) {
-                        Text(verbatim: bundleID)
-                            .font(.subheadline.monospaced())
-                            .foregroundStyle(AmberTheme.foreground)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Button {
-                            controller.selectedBundleIDs.remove(bundleID)
-                        } label: {
-                            Image(systemName: "minus.circle")
-                                .font(.system(size: 20))
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(AmberTheme.accentRed)
-                        .disabled(!canEditPreparation)
-                        .accessibilityLabel("移除 \(bundleID)")
-                    }
-                    .padding(.leading, 14)
-                    .padding(.trailing, 4)
-                    .padding(.vertical, 4)
-                }
-            }
-            footer(controller.selectedBundleIDs.isEmpty
-                ? "先添加至少一个 App。任务只获得授权时选中的应用范围。"
-                : "仅允许列表中的 App；修改列表会撤销授权窗口，运行中的任务仍保持原范围。")
-        }
-    }
-
-    private var authorizationSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: controller.isOccupied ? "当前任务授权" : "授权窗口")
-            AmberFormGroup {
-                let layout = dynamicTypeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                    : AnyLayout(HStackLayout(spacing: 12))
-                layout {
-                    Text("授权窗口时长")
-                        .font(.body)
-                        .foregroundStyle(AmberTheme.foreground)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Picker("授权窗口时长", selection: Binding(
-                        get: {
-                            if controller.hasPendingAuthorization || controller.isOccupied {
-                                return controller.authorizedDurationSeconds ?? durationSeconds
-                            }
-                            return durationSeconds
-                        },
-                        set: { durationSeconds = $0 }
-                    )) {
-                        Text("5 分钟").tag(300)
-                        Text("30 分钟").tag(1_800)
-                        Text("2 小时").tag(7_200)
-                        Text("无限制").tag(0)
-                    }
-                    .pickerStyle(.menu)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("phoneControlDuration")
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
-                .disabled(isWorking || controller.isOccupied || controller.hasPendingAuthorization)
-                rowDivider
-                if controller.isOccupied {
-                    rowText("当前任务范围", detail: controller.authorizationTargetSummary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                } else if controller.hasPendingAuthorization {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("授权窗口已开启")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(AmberTheme.foreground)
-                        Text(authorizationWindowDetail)
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .accessibilityIdentifier("phoneControlPendingAuthorization")
-                    rowDivider
-                    actionRow("关闭授权窗口", systemImage: "xmark.circle", color: AmberTheme.muted) {
-                        controller.discardPendingAuthorization()
-                    }
-                    .disabled(isWorking)
-                } else {
-                    actionRow("开启授权窗口", systemImage: "checkmark.shield") {
-                        errorMessage = nil
-                        do { try controller.authorizeNextTask(durationSeconds: durationSeconds) }
-                        catch { errorMessage = error.localizedDescription }
-                    }
-                    .disabled(!canAuthorize)
-                    .accessibilityIdentifier("phoneControlAuthorize")
-                }
-            }
-            footer(controller.isOccupied
-                ? "启动失败或任务正常结束后，授权窗口在到期前仍可复用；在设置中停止、取消聊天、改范围或到期会撤回。系统可能提前结束后台运行。"
-                : "授权不会启动控制。窗口从点击时开始固定计时，可供多个任务复用；在设置中停止、取消聊天、改范围或到期会撤回。系统可能提前结束后台运行。")
-        }
-    }
-
-    private var authorizationWindowDetail: String {
-        switch controller.authorizedDurationSeconds {
-        case 0:
-            "窗口从点击时开始生效，可供多个由你发起的任务复用，不设软件到期；系统仍可能结束后台运行。"
-        case let seconds?:
-            "窗口从点击时开始固定计时，将在 \(seconds / 60) 分钟后到期，可供多个由你发起的任务复用。"
-        default:
-            "窗口从点击时开始固定计时，可供多个由你发起的任务复用。"
         }
     }
 
@@ -345,7 +385,7 @@ struct IOSPhoneControlSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "当前状态")
             AmberFormGroup {
-                Text(verbatim: controller.statusMessage)
+                Text(verbatim: currentStatus)
                     .font(.subheadline)
                     .foregroundStyle(AmberTheme.foreground)
                     .fixedSize(horizontal: false, vertical: true)
@@ -353,7 +393,35 @@ struct IOSPhoneControlSettingsView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 14)
                     .accessibilityIdentifier("phoneControlStatus")
-                if controller.isOccupied {
+                rowDivider
+                if controller.isCheckingReadiness {
+                    actionRow("取消检查", systemImage: "xmark.circle", color: AmberTheme.muted) {
+                        controller.cancelReadinessCheck()
+                    }
+                    .accessibilityIdentifier("phoneControlCancelReadiness")
+                } else {
+                    actionRow("检查自动化", systemImage: "checkmark.circle", busy: operation == .checkingReadiness) {
+                        operation = .checkingReadiness
+                        errorMessage = nil
+                        Task {
+                            defer { operation = nil }
+                            do { try await controller.checkReadiness() }
+                            catch is CancellationError { }
+                            catch { errorMessage = error.localizedDescription }
+                        }
+                    }
+                    .disabled(isWorking || controller.isOccupied || !controller.enabled)
+                    .accessibilityIdentifier("phoneControlCheckReadiness")
+                }
+                if let report = controller.readinessReport {
+                    rowDivider
+                    readinessDetails(report)
+                }
+                if let runID = controller.ownerRunID, let handoff = controller.handoffState(runID: runID) {
+                    rowDivider
+                    humanControlRow(runID: runID, state: handoff)
+                }
+                if controller.isOccupied && !controller.isCheckingReadiness {
                     rowDivider
                     actionRow("停止当前控制任务", systemImage: "stop.circle", color: AmberTheme.accentRed,
                               busy: operation == .stopping) {
@@ -368,11 +436,138 @@ struct IOSPhoneControlSettingsView: View {
                     .accessibilityIdentifier("phoneControlStop")
                 }
             }
+            footer("检查会启动一次临时本地连接和已安装的 runner，读取当前界面后自动关闭连接；不会启动其他 App。")
         }
+    }
+
+    @ViewBuilder
+    private func humanControlRow(runID: String, state: IOSPhoneControlHandoffState) -> some View {
+        switch state {
+        case .automated:
+            actionRow("我来操作", systemImage: "hand.raised") {
+                errorMessage = nil
+                do { try controller.requestHumanTakeover(runID: runID) }
+                catch { errorMessage = error.localizedDescription }
+            }
+            .accessibilityIdentifier("phoneControlTakeover")
+        case .pausing:
+            actionRow("等待在途操作回执", systemImage: "pause.circle", color: AmberTheme.muted, busy: true) {}
+                .disabled(true)
+                .accessibilityIdentifier("phoneControlPausing")
+        case .paused:
+            actionRow("继续自动操作", systemImage: "play.circle") {
+                errorMessage = nil
+                do { try controller.resumeAutomation(runID: runID) }
+                catch { errorMessage = error.localizedDescription }
+            }
+            .accessibilityIdentifier("phoneControlResume")
+        case .resuming:
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    ProgressView().dynamicTypeSize(.large).frame(width: 24, height: 24)
+                    rowText("等待重新读取界面", detail: "Amber 会根据新的界面重新规划")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("phoneControlResuming")
+                rowDivider
+                actionRow("我来操作", systemImage: "hand.raised") {
+                    errorMessage = nil
+                    do { try controller.requestHumanTakeover(runID: runID) }
+                    catch { errorMessage = error.localizedDescription }
+                }
+                .accessibilityIdentifier("phoneControlTakeover")
+            }
+        }
+    }
+
+    private func readinessDetails(_ report: IOSPhoneControlReadinessReport) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let verified = report.connectionVerifiedAt {
+                Text("连接已验证 · \(verified.formatted(date: .omitted, time: .standard))")
+                Text("本次检查已收到签名 runner 的有效响应")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            if let read = report.uiReadAt {
+                Text("UI 已读取 · \(read.formatted(date: .omitted, time: .standard))")
+                Text(verbatim: "\(report.observedBundleID ?? "") · \(report.nodeCount ?? 0) 个界面元素")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            if let stage = report.failureStage, let message = report.failureMessage {
+                Text("检查失败：\(stage.title)")
+                    .foregroundStyle(AmberTheme.accentRed)
+                Text(verbatim: message)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.accentRed)
+            } else if report.wasCancelled {
+                Text("检查已取消")
+            } else if report.completedAt == nil {
+                Text("正在检查：\(report.stage.title)")
+            }
+            if let completed = report.completedAt {
+                Text("\(report.cleanupComplete ? "临时连接已关闭" : "临时连接尚未确认关闭") · \(completed.formatted(date: .abbreviated, time: .standard))")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+            }
+        }
+        .font(.subheadline)
+        .foregroundStyle(AmberTheme.foreground)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("phoneControlReadinessResult")
     }
 
     private var rowDivider: some View {
         Divider().overlay(AmberTheme.borderSoft).padding(.leading, 14)
+    }
+
+    private var currentStatus: String {
+        if let runID = controller.ownerRunID, let handoff = controller.handoffState(runID: runID), handoff != .automated {
+            return [handoff.statusMessage, controller.handoffFailure(runID: runID)]
+                .compactMap { $0 }.joined(separator: "\n")
+        }
+        guard controller.phase == .idle else { return controller.statusMessage }
+        if !controller.enabled { return "手机控制已关闭" }
+        if !controller.localTunnel.isPrepared { return "手机控制已开启，请先准备下方的本地连接" }
+        if !controller.hasPreparedPairing { return "手机控制已开启，请先完成下方的配对准备" }
+        if let report = controller.readinessReport, report.uiReadAt != nil, report.cleanupComplete {
+            return "最近检查已读取界面，临时连接已关闭；当前空闲"
+        }
+        return "配置已保存，当前空闲；请检查自动化确认连接和界面读取"
+    }
+
+    private var connectionFailed: Bool {
+        if case .failed = controller.localTunnel.state { return true }
+        return false
+    }
+
+    private var localConnectionStatus: (title: String, detail: String) {
+        if controller.isPreparingConnection {
+            return ("正在准备本地连接", "如系统弹出添加 VPN 配置，请点允许")
+        }
+        switch controller.localTunnel.state {
+        case .unprepared:
+            return ("尚未准备本地连接", "首次使用需要允许添加 VPN 配置")
+        case .ready:
+            let detail = controller.readinessReport?.connectionVerifiedAt == nil
+                ? "尚未验证自动化；请使用上方的检查自动化"
+                : "最近检查已验证连接；后续任务仍会重新连接"
+            return ("连接配置已保存", detail)
+        case .connecting:
+            return ("正在建立本地连接", "等待连接完成")
+        case .connected:
+            return ("本地连接已接通", "自动化是否可用，以 runner 启动和新的界面观察为准")
+        case .disconnecting:
+            return ("正在断开本地连接", "正在结束本次连接")
+        case .failed(let message):
+            return ("本地连接失败", message)
+        }
     }
 
     private func rowText(_ title: String, detail: String) -> some View {
@@ -389,7 +584,7 @@ struct IOSPhoneControlSettingsView: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 if busy {
-                    ProgressView().frame(width: 24, height: 24)
+                    ProgressView().dynamicTypeSize(.large).frame(width: 24, height: 24)
                 } else {
                     Image(systemName: systemImage)
                         .font(.system(size: 20))

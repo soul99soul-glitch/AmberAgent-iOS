@@ -32,7 +32,7 @@ struct IOSJevSettingsView: View {
     /// 已接线的用途（全部开放；网页操作由 wm_run_goal 工具真实驱动，意图路由
     /// 作用于 spawn_agent 缺省角色定义的边界，审批分诊只标注不授权，自动批准
     /// 复核只会收紧为人工审批）。
-    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .toolResultRetention, .modelRouting, .webActions, .subagentIntent, .approvalTriage, .autoApprovalGate, .completionCheck, .scriptJudgment]
+    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .toolResultRetention, .modelRouting, .webActions, .phoneVerification, .phoneActions, .subagentIntent, .approvalTriage, .autoApprovalGate, .completionCheck, .scriptJudgment]
 
     var body: some View {
         NavigationStack {
@@ -597,7 +597,7 @@ struct IOSJevSettingsView: View {
         let configuredMode = settings.mode(for: useCase)
         let effectiveMode = settings.effectiveMode(for: useCase)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
+            let summary = HStack(spacing: 12) {
                 Image(systemName: {
                     switch useCase {
                     case .toolDiscovery: "magnifyingglass"
@@ -605,6 +605,8 @@ struct IOSJevSettingsView: View {
                     case .contextSelection: "doc.text.magnifyingglass"
                     case .modelRouting: "arrow.triangle.branch"
                     case .webActions: "globe"
+                    case .phoneVerification: "checkmark.circle"
+                    case .phoneActions: "hand.tap"
                     case .subagentIntent: "signpost.and.arrowtriangle.up"
                     case .approvalTriage: "checklist"
                     case .scriptJudgment: "curlybraces"
@@ -620,6 +622,7 @@ struct IOSJevSettingsView: View {
                     Text(IOSAppLocalization.string(useCase.displayName, defaultValue: useCase.displayName))
                         .font(.body)
                         .foregroundStyle(AmberTheme.foreground)
+                        .fixedSize(horizontal: false, vertical: true)
                     // 脚本判断只有启用才注入 jev，没有"只观测"语义。
                     let detail = useCase == .scriptJudgment && effectiveMode != .active
                         ? "关闭：脚本中不提供 jev。" : effectiveMode.detail
@@ -629,30 +632,52 @@ struct IOSJevSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-                Menu {
-                    ForEach(IOSJevMode.allCases.filter { useCase != .scriptJudgment || $0 != .shadow }) { mode in
-                        Button {
-                            updateMode(mode, for: useCase)
-                        } label: {
-                            if mode == configuredMode {
-                                Label(mode.displayName, systemImage: "checkmark")
-                            } else {
-                                Text(mode.displayName)
-                            }
+            let modeMenu = Menu {
+                ForEach(IOSJevMode.allCases.filter { useCase != .scriptJudgment || $0 != .shadow }) { mode in
+                    Button {
+                        updateMode(mode, for: useCase)
+                    } label: {
+                        if mode == configuredMode {
+                            Label(mode.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(mode.displayName)
                         }
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(IOSAppLocalization.string(configuredMode.displayName, defaultValue: configuredMode.displayName))
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(configuredMode == .off ? AmberTheme.muted : AmberTheme.accent)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(AmberTheme.muted2)
-                    }
                 }
-                .accessibilityLabel("\(useCase.displayName)模式")
+            } label: {
+                HStack(spacing: 4) {
+                    Text(IOSAppLocalization.string(configuredMode.displayName, defaultValue: configuredMode.displayName))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(configuredMode == .off ? AmberTheme.muted : AmberTheme.accent)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AmberTheme.muted2)
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            .accessibilityLabel("\(useCase.displayName)模式")
+
+            if dynamicTypeSize.isAccessibilitySize {
+                summary
+                modeMenu.padding(.leading, 40)
+            } else {
+                HStack(spacing: 12) {
+                    summary
+                    modeMenu
+                }
+            }
+
+            if useCase == .phoneVerification || useCase == .phoneActions {
+                let purpose = useCase == .phoneVerification
+                    ? "辅助检查带验收条件的手机操作。"
+                    : "让手机快速操作工具逐步完成导航、搜索和草稿填写。"
+                Text(IOSAppLocalization.string(purpose, defaultValue: purpose))
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 40)
             }
             // 数据范围：请求需要的范围全部允许才发送。
             VStack(alignment: .leading, spacing: 4) {
@@ -667,6 +692,7 @@ struct IOSJevSettingsView: View {
                             Text(IOSAppLocalization.string(scope.displayName, defaultValue: scope.displayName))
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                         }
                         .contentShape(Rectangle())
@@ -674,6 +700,16 @@ struct IOSJevSettingsView: View {
                     .buttonStyle(.plain)
                     .padding(.leading, 40)
                 }
+            }
+            if useCase == .phoneVerification || useCase == .phoneActions {
+                Text(IOSAppLocalization.string(
+                    "仅发送当前步骤需要的界面文字和元素信息，不发送截图。不会自动授权或恢复手机动作。",
+                    defaultValue: "仅发送当前步骤需要的界面文字和元素信息，不发送截图。不会自动授权或恢复手机动作。"
+                ))
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 40)
             }
             if configuredMode == .active && effectiveMode == .shadow {
                 let hint = useCase == .scriptJudgment

@@ -1,0 +1,106 @@
+{
+  "recorded_at_utc": "2026-10-11T13:26:10.030217+00:00",
+  "source_head": "69c2144db9838e7192d137d18572588539f1dee4",
+  "scope": "Task-only Jev phone implementation, isolated from preserved phone-control WIP",
+  "review": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "high",
+    "service_tier": "priority",
+    "axes": [
+      "standards",
+      "spec",
+      "production callchain",
+      "rendered UI"
+    ],
+    "confirmed_product_findings": 2,
+    "fixed_product_findings": 2,
+    "reports": [
+      "standards.md",
+      "spec.md",
+      "callchain.md",
+      "ui.md"
+    ]
+  },
+  "fixes": [
+    "Exclude phone tool arguments from generic retention outline",
+    "Freeze configuration revision for entire goal invocation"
+  ],
+  "tests": {
+    "red": {
+      "passedTests": 1,
+      "failedTests": 3,
+      "totalTestCount": 4
+    },
+    "green": {
+      "result": "Passed",
+      "passedTests": 89,
+      "failedTests": 0,
+      "totalTestCount": 89
+    },
+    "visual_final": {
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalTestCount": 1
+    },
+    "results": [
+      "red-and-ui.xcresult",
+      "green.xcresult",
+      "ui-final.xcresult"
+    ]
+  },
+  "artifact": {
+    "bundle_id": "app.amber.ios",
+    "executable_sha256": "6bc1f70733e081319bb764b14a5a096532bf6505c1f97fcf1a1a1af508e52d45",
+    "executable_size": 121929840,
+    "app_path": "iosApp/build/P1ResumeDevice/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+    "scheme": "iosAppExperimentalGPL",
+    "configuration": "Release",
+    "build_exit_code": 0,
+    "signature_verified": true
+  },
+  "install": {
+    "success": true,
+    "in_place": true,
+    "bundle_id": "app.amber.ios",
+    "installation_url": "file:///private/var/containers/Bundle/Application/E17EA9DE-A0B5-4A1B-BCE8-27379C555FFD/iosAppExperimentalGPL.app/"
+  },
+  "launch": {
+    "success": true,
+    "pid": 45918,
+    "arguments": [],
+    "process_confirmed_running": true
+  },
+  "data_preservation": {
+    "before": 368,
+    "after": 368,
+    "missing": 0,
+    "added": 0,
+    "size_changed": 0,
+    "scope": "Conversation file metadata only; no message contents read"
+  },
+  "ui": {
+    "settings_final": "ui/settings-final/",
+    "valid_new_activity_images": [
+      "ui/deciding-lock.png",
+      "ui/waitingForUI-lock.png"
+    ],
+    "new_compact_states_captured": false,
+    "mode_fixture_isolated": true,
+    "visual_fixture_test_passed": true,
+    "preview_ended": true,
+    "simulator_live_activity_permission_prompt_allowed_for_preview": true,
+    "settings_final_independently_reviewed": true,
+    "confirmed_production_layout_findings": 0
+  },
+  "acceptance_boundaries": {
+    "real_jev_requests": false,
+    "physical_jev_goal_loop": false,
+    "background_goal_loop": false,
+    "new_phone_jev_uses_auto_enabled": false,
+    "physical_vpn_changed": false,
+    "mac_driven_physical_control": false,
+    "commit_or_push": false
+  },
+  "evidence_root": "build/jev-review-20261011"
+}

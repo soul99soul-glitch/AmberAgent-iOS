@@ -259,3 +259,62 @@ USB 读取用户指定的新普通聊天，实际四次 tool_search 与一次 to
 此阶段的后续边界也已核对：pinned PairableHost.accept仅返回PeerDevice，accepted socket未暴露为tunnel client，且responder声明allowsIncomingTunnelConnections=false。即使自发现和首次配对通过，仍需用新RpPairingFile另建host client来走CDTunnel/RSD/XCTest；不能假设旧49152路径已恢复。host altIRK与RpPairingFile中的对端altIRK不同，且稳定广播身份不保证系统重启后自动连接。真实配对、手机启动XCTest、签名接口、跨App闭环与后台流程继续保持未通过。
 
 该验证制品的正式ExperimentalGPL/Release构建已exit0，严格签名、同Bundle ID/App Group、团队和当前手机描述文件通过，执行文件SHA256为`ab7e3b1e10ede27f7227d39f84250742a6449aa9f25b11ae0ffd27c7ad75f6a3`。首次安装exit1，CoreDevice4016；只读设备状态确认tunnelState=unavailable、ddiServicesAvailable=false。已请求用户解锁与处理系统提示，没有自动修改信任/VPN/Developer Mode/配对设置。此制品尚未安装或启动，系统发现和入站验证仍未执行。
+
+### 69c2144 交接后的装机与有界服务发布验证
+
+2026-10-10，用户要求继续。当前工作目录和远端 main 均为 `69c2144`，工作区初始干净。USB 已恢复为 wired/paired，DDI 可用且兼容，设备无需输入锁屏密码；本轮未复现 CoreDevice 4016，也未改动信任、VPN 或 Developer Mode，旧错误根因仍未确定。
+
+原交接的 P1Device 产物不在当前目录，另一份缓存 Release 的执行文件指纹不同，因此从当前提交重新构建正式 ExperimentalGPL/Release。构建 exit 0，strict/deep codesign、`app.amber.ios`、原 App Group、团队及当前设备描述文件均通过；新执行文件 SHA256 为 `794efc50945fa5fcf57e0f15e4e04487c92a5d000e0c0155c4741d5f017dabba`。原位安装 exit 0，安装前后 350 个会话文件元数据无缺失或大小变化，App Group 顶层条目保持。启动后仍无文件缺失，两个已有会话文件大小变化，原因未确定，未读取消息正文。
+
+一次显式 self-discovery 启动取得真机 `Ready`、`Published` 和 60 秒后的 `Stopped(reason=deadline)`，没有入站连接事件。尝试打开系统设置返回成功，但截图未确认进入配对页；用户尚未回复手动导航请求，因此不能据此判定系统能否发现服务。发布及停止日志均为 `app=active`，也不作为后台存活证据。控制台在完整事件之后达到 72 秒观察超时，exit 2，未伪报 exit 0。原始控制台不落盘，只保留固定元数据；截图检查后已移除。首次启动命令的参数解析错误 exit 64 发生在 App 启动前，修正 `--` 分隔符后才执行上述一次实验。
+
+随后已无诊断参数重新启动正式 Amber，exit 0，PID `41091` 的执行路径匹配新安装目录。临时服务已停止。没有修改产品源码、重装或启动 runner、安装 probe/target、启动 Mac XCTest/模型循环或重发外部消息。既有握手重置、手机配对、XCTest、跨 App 操作及后台验收仍未通过。本轮新构建和设备证据见 [device-delivery-69c2144-resume.json](iphone-control-evidence/device-delivery-69c2144-resume.json)；没有重复源码单元测试、提交或推送。
+
+下一步需要用户停在「系统设置 → 隐私与安全性 → 开发者模式」并确认配对入口，再启动新的有界发现窗口观察“Amber 同机验证”。窗口已结束，不能要求用户现在寻找仍在广播的服务；系统发现、入站连接和真正配对须分别取证。
+
+用户随后提供两张显示时间 22:12 的截图。原始 `phone_observe(max_nodes=200)` 回执再次为 `phone_control_start_failed / pairing_handshake_failed / read_magic / ConnectionReset / os=54`，`outcome=not_sent`、`retry_safe=false`。聊天总结显示此前 `phone_status` 为 authorized、窗口剩余约 285 秒，但未提供该 status 的原始回执。源码复核确认失败在 `attempt_pair_verify` 的响应 magic 读取阶段，尚未进入 `validate_pairing`、隧道或 XCTest；不能据此认定配对材料过期。聊天建议重新授权或手动打开目标 App，没有解决此握手重置的证据。本次仅补充截图证据，未发起新的设备实验；下一步仍需系统配对页确认，而不是重发控制或消息任务。
+
+22:17 用户展示了系统已有配对记录详情；`AmberSelfControl-<pid>-<timestamp>` 的名称格式匹配 USB 初始化助手，名称时间戳精确对应当天 14:52:35，系统显示配对时间 14:52。此证据确认旧系统记录仍存在，不证明手机端已成功使用它。随后于 22:18:50 启动第二次有界发现，带 `--no-activate`；仍取得 Ready、Published、deadline 停止，没有入站事件，控制台观察超时 exit 2。用户接着提供的是 Amber 内“已保存配对文件／本机地址匹配”的设置页，未取得系统附近主机列表在窗口内的观察，因此系统发现结果仍无法判定。未改旧配对、凭据或产品源码。继续实验前先确认用户展示的系统配对详情页的上一层列表，避免在页面尚未就绪时再消耗发现窗口。
+
+### USB 日志定位与本地回环隧道续轮
+
+系统设置截图已确认 UI 自动化开启、既有 AmberSelfControl 配对记录仍存在。停止要求用户反复导航或重新授权：这些信息不足以解释 read_magic 的连接重置。
+
+正式 Amber 新增仅由明确启动参数触发的单次 greeting 诊断，与生产共用原生握手实现，不读配对凭据、不建立配对、不启动 runner。2026-10-10 15:52:50 UTC，手机向唯一解析出的自身 IPv4 开发服务握手，App 返回 read_magic / ConnectionReset / os=54；同步采集的 remotepairingdeviced 日志明确匹配“rejecting control channel connection originating from local machine”。失败发生在验证配对密钥之前。USB lockdown 路径同一 greeting 成功，只说明协议入口可工作，不证明手机自行控制。见 iphone-control-evidence/usb-self-connection-diagnosis.json。
+
+本次正式 Release 构建、签名、原位安装和恢复普通启动通过。会话文件 351 个，无缺失或大小变化；没有读取正文。Native 14/14、Mac 准备助手 7/7 通过，后续日志筛选简化定点测试通过。旧系统列表导航方案被上述直接设备证据取代，不再继续无效发现窗口。
+
+用户已明确允许新增 LocalDevVPN、添加 iOS VPN 配置，以及继续验证 Amber 握手、runner 和界面读取。已核对上游 af3fd697803ada4ac2b8d518358f5ab0a534844c：默认 interface 10.7.1.1/32、peer 10.7.0.1/32，数据包仅在本地虚拟接口交换源/目的地址。现有 Xcode 签名缺少 Network Extension 权限，本地 helper 构建未通过，已改用官方 App Store 安装并打开页面，等待用户完成系统安装和 VPN 许可；授权本身无需再次询问。Amber 接线改为固定默认 peer，实际 TCP 必须绑定匹配的 utun，缺少隧道时不回退到普通网络。此阶段仍待构建和真机验证，不能标记手机控制已成功。没有新建配对、重发外部消息、提交或推送。
+
+本地回环接线已完成构建和交付：原生 17/17、Swift 定点 14/14 通过；正式 Release、strict/deep codesign、原位安装与无诊断参数启动 exit 0。新二进制 SHA256 为 `9f992857d901b59142d2ad72a4825c1eeeb819483c028ce707abb5959bb52ff2`，新进程 PID 41825 与安装目录一致。会话 351→351、无缺失或大小变化，App Group 顶层无变化，未读取正文。仅一次有限改动审查，无阻断项。
+
+2026-10-11 真机单次诊断返回 `phase=failed / loopback_route_unavailable`：当前没有匹配默认地址的活动隧道，连接在 TCP 之前停止，没有手机动作。同步 daemon trace 首次未就绪（native=22），该脚本未启动 App；随后独立 App-only 诊断只启动一次，固定元数据已取得，控制台观察截止返回 exit 2，诊断判断脚本正确返回失败 exit 1。已恢复普通启动，不保留诊断任务。App Store 页面实际显示“获取”，最新安装清单仍无 LocalDevVPN；当前唯一前置阻断为用户完成官方 helper 安装、连接及系统 VPN 许可。不能宣称隧道握手、密钥验证、TLS/RSD、runner、界面树或后台控制已通过。后续不得重发旧的小米办公消息任务。详见 [localdevvpn-route.json](iphone-control-evidence/localdevvpn-route.json)。
+
+用户随后已安装官方 LocalDevVPN 1.3.0，并亲自确认 iOS 添加 VPN 配置。带 `--include-default-apps` 的系统清单确认 bundle `com.jkcoxson.LocalDevVPN`；此前不带该选项的开发 App 清单不能用于判断 App Store 安装状态。00:04 的页面截图显示“获取”仅代表截图时刻。隧道扩展 PID 41855 已运行。
+
+2026-10-11 00:15（本地时间），同一正式 Amber 沿默认 peer、绑定实际 utun 的单次诊断返回 `phase=stopped / handshake_ok`。这已解决原来的首握手本机来源拒绝，但尚未验证配对密钥。后续增加精确启动参数 `-amber-phone-readiness-inspection-once`：只读已有 Keychain，使用独立手机进程内 session、新 token 和仅 Amber 自身的 scope，验证启动及元素树后关闭，不发送动作、不启动模型、不改正式授权窗口。审查发现 stop 会覆盖原生失败状态，改为 typed `nativeLaunch` 错误携带快照；真实 native 无效材料启动测试确认清理后仍可取得失败原因。对应 Controller suite 9/9 通过；正式验证版正在构建，等待配对、TLS/RSD、runner 和只读树的真机结果。
+
+
+只读启动验证版已完成构建、签名与原位安装。首次观察到手机自主创建既有 runner 进程，但 60 秒就绪超时。随后仅增加固定原生阶段日志，正式制品 `5515a981…` 真机取得 `pairing → tunnel → discovering → starting` 和 `test_case_started / method_matches=false`，明确证明旧配对、TLS/RSD 及 XCTest 测试启动已通过。停在本机对事件的解析，而非系统再次拒绝授权。固定日志不记录原始方法名、UI 或密钥。
+
+针对真实 NSKeyedArchive 对象池构造的 dispatcher 回归测试复现了 `("", "")`：依赖保留 XCTTestIdentifier 的 `c: UID` 引用，本地 parser 却要求已展开数组。当前只修这个已由设备事件和失败测试共同证实的解码点，不同时修改其他猜测的 selector、channel 或 test-plan 发送模式。已安装验证版仍在超时后关闭本轮会话；尚无签名 HTTP、元素树或动作验收。
+
+
+identifier 解码修复已取得完整 red→green：原始对象池 dispatcher fixture 先失败，修复后启动、结束及非法引用 3 项通过；原生回归 17/17 通过，有限维护性审查与上游源码/补丁哈希重放核验通过。正式 Release、strict/deep 签名及原位安装成功，执行文件 SHA256 `5cb479b279871eaedbf41a69c1e92d3d327eeed1913447aecccdcfc9fac42b6b`。
+
+2026-10-11 00:41 真机沿同一路径返回 `method_matches=true → running → runner_ready ready=true authenticated=true → tree app_matches=true nodes=189 truncated=false`。这是手机进程自主启动既有 XCTest runner、签名接口及真实 Amber 元素树首次通过；Mac 只负责安装与启动 Amber，没有发起 XCTest 或模型循环。诊断未发送手机动作，未输出界面文字、token 或配对材料。随后原生 stopping/stopped、诊断 Finished；恢复无诊断参数普通启动 exit0，PID41979 与新安装目录一致。控制台被恢复普通启动中断而 exit1，验证脚本依据已完成成功事件 exit0；二者分别记录。
+
+更新前后会话文件 351→351，无缺失或新增，2 个已有文件大小变化、原因未确定，未读取正文；App Group 顶层无变化。跨 App 动作→新树、后台持续控制和模型实际任务仍未验证，不重发旧的办公消息任务。runner 进程在断开后短暂仍存在，另行核对系统退出，不能把原生 stopped 等同于进程已消失。详见 localdevvpn-route.json。
+
+
+收尾复核发现 native stopped 后 runner PID41975 超过两分钟仍存在；仅终止本次已确认的 runner 进程完成临时清理，未把它算作手机自主退出。源码根因是 Swift stop 只撤销本地 client 和 DTX，并未调用 runner 既有的签名 `/shutdown`。接线改为仅在本轮已取得签名 ready 后：先撤销 client 操作、保留本轮占用，发送一次 2 秒短超时的已签名关闭请求，再释放 native；确认失败保留 `runner_shutdown_failed` 并反馈到现有状态文案。未取得 ready 的失败启动不额外发送关闭请求。
+
+Package 22 项通过，包括同 token 签名、关闭等待期间动作拒绝、严格布尔确认、401/超时不重试及普通请求默认值保留。Swift 运行时/Controller 编译与定点测试、正式 Release 和手机退出结果继续验证。
+
+
+2026-10-11 00:59，关闭修正版正式 Release（SHA256 `ccc99bbd72131b635d4fcfb70e721fd46813199540646a93c3c899ad123482a6`）原位安装后，手机再次自主取得签名 ready、Amber 189 节点完整树，并返回签名 `/shutdown` accepted、native stopped、诊断 Finished。此处验证的是关闭请求确认，不把它等同于 XCTest 宿主进程已退出；后续用户任务另起 runner，无法用旧 PID 后来消失归因于这次关闭。
+
+随后用户报告：已打开小米办公 Pro 并进入刘剑崑聊天页，未点输入框、未输入。核对该轮工具回执：launch、联系人 tap、一次 swipe 均 completed；聊天页的 200/500 节点观察都被截断，树中没有输入控件，模型没有发出任何 type 请求。工具 cap500 低于 Package 已支持的 cap2000。当前将工具上限对齐到 2000、默认保留500，并通过独立固定 scope 的只读诊断在真机比较预算；未重放旧消息任务。
+
+
+输入框排查版已完成 Package 23 项、工具 Executor 5 项检查；后台诊断到期取消和断言释放经有限复核后无阻断。正式 Release 构建、严格签名与原位安装通过，执行文件 SHA256 `5dc1c120e9788f6424c0e56219da8523136dcd2893cedf454aee0bac16b3ddec`。安装前后会话文件352→352、App Group顶层1→1，均无缺失或大小变化。最新 CoreDevice lockState 返回 passcodeRequired=true，因此尚未启动新增的聊天页只读诊断，也未验证2000节点实际找到输入框、聚焦或输入。已请求用户解锁并回到目标聊天页；没有补发办公消息。最小回执证据见 input-composer-observation.json。

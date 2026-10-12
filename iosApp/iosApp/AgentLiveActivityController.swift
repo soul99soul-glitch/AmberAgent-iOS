@@ -154,6 +154,7 @@ final class AgentLiveActivityController {
     private let terminalLinger: (TimeInterval) async -> Void
     private let lingerAllowance: @MainActor () -> TimeInterval
     private let heartbeatSleep: (TimeInterval) async -> Void
+    private let phoneHandoffState: @MainActor (String) -> IOSPhoneControlHandoffState?
     private var lingering: [String: LingeringEnd] = [:]
     private var heartbeats: [String: Task<Void, Never>] = [:]
     /// 每张卡最后一次排队的写入。ActivityKit 的 update/end 会并发执行、不保证落地顺序，
@@ -168,11 +169,15 @@ final class AgentLiveActivityController {
         requestSystemCard: @escaping SystemCardRequester = AgentLiveActivityController.defaultRequestSystemCard,
         terminalLinger: @escaping (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
         lingerAllowance: @escaping @MainActor () -> TimeInterval = AgentLiveActivityController.defaultLingerAllowance,
-        heartbeatSleep: @escaping (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
+        heartbeatSleep: @escaping (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
+        phoneHandoffState: @escaping @MainActor (String) -> IOSPhoneControlHandoffState? = {
+            IOSPhoneControlController.shared.handoffState(runID: $0)
+        }
     ) {
         self.terminalLinger = terminalLinger
         self.lingerAllowance = lingerAllowance
         self.heartbeatSleep = heartbeatSleep
+        self.phoneHandoffState = phoneHandoffState
         self.fetchSystemSnapshot = fetchSystemSnapshot
         self.requestSystemCard = requestSystemCard
     }
@@ -186,6 +191,10 @@ final class AgentLiveActivityController {
         deepReadTaskId: String? = nil,
         presentation: AgentActivityPresentation
     ) {
+        let presentation = presentationForPhoneHandoff(
+            runId: runId, incoming: presentation,
+            previous: pendingStarts[runId]?.presentation ?? activitiesByRunId[runId]?.lastPresentation
+        )
         // 新任务开始时，上一张还在展示「完成 / 中断」的卡立即收起，不与新卡并存。
         if !lingering.isEmpty {
             let ended = takeLingering()
@@ -264,7 +273,7 @@ final class AgentLiveActivityController {
         conversationTitle: String?,
         deepReadTaskId: String?
     ) async {
-        guard let presentationForRequest = pendingStarts[runId]?.presentation else { return }
+        guard pendingStarts[runId] != nil else { return }
 
         let snapshot = await fetchSystemSnapshot()
 
@@ -279,6 +288,10 @@ final class AgentLiveActivityController {
             activities: snapshot.activities
         )
 
+        guard let latestPending = pendingStarts[runId] else { return }
+        let presentationForRequest = presentationForPhoneHandoff(
+            runId: runId, incoming: latestPending.presentation, previous: nil
+        )
         if activitiesByRunId[runId] == nil {
             guard let card = await requestSystemCard(
                 runId,
@@ -315,9 +328,25 @@ final class AgentLiveActivityController {
         // 新建卡片已用 presentationForRequest 初始化；被 reconcile 复用的既有卡片
         // (如审批恢复) 可能带着更早的展示，需要与 pending 期间收到的最新展示比较，
         // 不能只比 presentationForRequest。
-        if pending.presentation != activitiesByRunId[runId]?.lastPresentation {
-            await update(runId: runId, presentation: pending.presentation, force: true)
+        let latestPresentation = presentationForPhoneHandoff(
+            runId: runId, incoming: pending.presentation,
+            previous: activitiesByRunId[runId]?.lastPresentation
+        )
+        if latestPresentation != activitiesByRunId[runId]?.lastPresentation {
+            await update(runId: runId, presentation: latestPresentation, force: true)
         }
+    }
+
+    /// 执行器只更新这轮已有的卡片；迟到的回执不能新建活动或覆盖已提交的终态。
+    func updatePhoneControl(runID: String, phase: AgentPhoneControlActivityPhase) async {
+        if let pending = pendingStarts[runID] {
+            guard pending.revocation == nil, pending.presentation.phase == .running else { return }
+        } else {
+            guard let owned = activitiesByRunId[runID],
+                  owned.runId == runID,
+                  owned.lastPresentation.phase == .running else { return }
+        }
+        await update(runId: runID, presentation: .phoneControl(phase), force: true)
     }
 
     func update(
@@ -326,18 +355,23 @@ final class AgentLiveActivityController {
         force: Bool = false,
         minimumInterval: TimeInterval = 1.5
     ) async {
-        if pendingStarts[runId] != nil {
-            pendingStarts[runId]?.presentation = presentation
+        if let pending = pendingStarts[runId] {
+            guard pending.revocation == nil else { return }
+            pendingStarts[runId]?.presentation = presentationForPhoneHandoff(
+                runId: runId, incoming: presentation, previous: pending.presentation
+            )
             return
         }
         guard var owned = activitiesByRunId[runId], owned.runId == runId else { return }
+        var presentation = presentationForPhoneHandoff(
+            runId: runId, incoming: presentation, previous: owned.lastPresentation
+        )
 
         owned.stepHistory = AgentActivityStepHistoryPolicy.history(
             after: owned.lastPresentation,
             current: owned.stepHistory,
             next: presentation
         )
-        var presentation = presentation
         if presentation.phase == .running || presentation.phase == .reconnecting {
             presentation.recentSteps = owned.stepHistory.isEmpty ? nil : owned.stepHistory
         }
@@ -357,6 +391,31 @@ final class AgentLiveActivityController {
         if presentation.phase == .running, presentation.stage.isToolStage {
             startToolHeartbeatIfNeeded(runId: runId)
         }
+    }
+
+    /// 人工操作会改变界面；生成和工具进度不能在新观察完成前覆盖接管状态。
+    /// 未知动作回执与整轮终态仍优先于接管展示。
+    private func presentationForPhoneHandoff(
+        runId: String, incoming: AgentActivityPresentation, previous: AgentActivityPresentation?
+    ) -> AgentActivityPresentation {
+        guard incoming.phase == .running else { return incoming }
+        if let previous,
+           previous.phoneControlPhase == .outcomeUnknown
+            || [.completed, .failed, .cancelled].contains(previous.phase) {
+            return previous
+        }
+        if let phone = incoming.phoneControlPhase,
+           [.outcomeUnknown, .failed, .stopping, .stopped].contains(phone) {
+            return incoming
+        }
+        let phase: AgentPhoneControlActivityPhase
+        switch phoneHandoffState(runId) {
+        case .pausing?: phase = .pausing
+        case .paused?: phase = .paused
+        case .resuming?: phase = .resuming
+        case .automated?, nil: return incoming
+        }
+        return .phoneControl(phase)
     }
 
     /// 工具执行期间没有流式输出（终端命令、生图、子代理可能持续数分钟），
@@ -389,7 +448,10 @@ final class AgentLiveActivityController {
               owned.lastPresentation.phase == .running,
               now.timeIntervalSince(owned.lastUpdateAt) >= AgentActivityLifecyclePolicy.progressRefreshInterval
         else { return }
-        let presentation = owned.lastPresentation
+        let presentation = presentationForPhoneHandoff(
+            runId: runId, incoming: owned.lastPresentation, previous: owned.lastPresentation
+        )
+        owned.lastPresentation = presentation
         owned.lastUpdateAt = now
         activitiesByRunId[runId] = owned
         let cardId = owned.card.id
@@ -422,9 +484,9 @@ final class AgentLiveActivityController {
     ) async {
         // 请求在途：系统请求可能仍未返回，这里不阻塞等待，只记录撤销终态；
         // `resolvePendingStart` 落地后会立即用这份终态结束刚创建/复用的卡片。
-        if pendingStarts[runId] != nil {
+        if let pending = pendingStarts[runId] {
             pendingStarts[runId]?.revocation = PendingRevocation(
-                presentation: presentation,
+                presentation: presentation.preservingUnknownPhoneOutcome(from: pending.presentation),
                 dismissalDelay: dismissalDelay
             )
             return
@@ -433,6 +495,7 @@ final class AgentLiveActivityController {
         guard endingActivityIDs.insert(owned.card.id).inserted else { return }
 
         var terminalPresentation = presentation.preservingKind(from: owned.lastPresentation)
+            .preservingUnknownPhoneOutcome(from: owned.lastPresentation)
         let finishedSteps = AgentActivityStepHistoryPolicy.closing(
             last: owned.lastPresentation,
             current: owned.stepHistory
@@ -819,7 +882,7 @@ final class AgentLiveActivityController {
                     .rawValue
             ),
             staleDate: AgentActivityLifecyclePolicy.staleDate(
-                for: presentation.phase,
+                for: presentation,
                 now: now
             ),
             relevanceScore: AgentActivityLifecyclePolicy.relevanceScore(

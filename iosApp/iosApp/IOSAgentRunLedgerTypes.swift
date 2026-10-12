@@ -44,7 +44,7 @@ public enum IOSToolTransactionState: String, Sendable, Equatable {
 
 public enum IOSToolTransactionPreparation: Sendable, Equatable {
     case ready
-    case replay(resultPayload: String)
+    case replay(resultPayload: String, requiresReplan: Bool = false)
     case blocked(reason: String)
 }
 

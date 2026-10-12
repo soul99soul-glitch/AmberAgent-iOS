@@ -253,6 +253,166 @@ final class IOSToolRecoveryTests: XCTestCase {
         )
     }
 
+    private func toolBatch(_ tools: [UIMessagePart.Tool]) -> UIMessage {
+        UIMessage(
+            id: KotlinUuid.companion.random(), role: MessageRole.assistant,
+            parts: tools, annotations: [], createdAt: chatNowLocalDateTime(),
+            finishedAt: nil, modelId: nil, usage: nil, translation: nil
+        )
+    }
+
+    private final class RecoveryUnusedProvider: IOSAgentTextProvider, @unchecked Sendable {
+        func generateText(
+            providerSetting: ProviderSetting,
+            messages: [UIMessage],
+            params: TextGenerationParams
+        ) async throws -> MessageChunk {
+            XCTFail("pre-existing tool execution must not call the provider")
+            throw NSError(domain: "IOSToolRecoveryTests", code: 1)
+        }
+    }
+
+    private final class RecoveryRecordingExecutor: IOSToolExecutor {
+        private(set) var callIDs: [String] = []
+
+        func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+            XCTFail("engine must retain the full tool call")
+            return .failed("missing tool call identity")
+        }
+
+        func execute(tool: UIMessagePart.Tool, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+            callIDs.append(tool.toolCallId)
+            return .filled("{\"ok\":true}")
+        }
+    }
+
+    @MainActor
+    func testRecoveredHandbackPlanBlocksOldBatchBeforeEngineResume() async throws {
+        for currentResultWasSaved in [false, true] {
+            let database = makeDatabase()
+            let dao = database.agentRuntimeDao()
+            let ledger = IOSAgentRunLedger(dao: dao)
+            let runId = "recovered-handback-\(UUID().uuidString)"
+            try await insertRunningRun(dao: dao, runId: runId)
+            let started = await ledger.recordToolCallStarted(
+                runId: runId, toolCallId: "handback", toolName: "phone_run_goal",
+                argsDigest: chatInputDigest(for: "{}"), effectClass: .sideEffect
+            )
+            XCTAssertTrue(started)
+            let payload = IosToolOutputJsonBridge.shared.encode(parts: [
+                UIMessagePart.Text(text: "ledger fresh screen", metadata: nil),
+            ])
+            let finished = await ledger.recordToolCallTerminal(
+                runId: runId, toolCallId: "handback", outcome: "completed_requires_replan",
+                resultPayload: payload
+            )
+            XCTAssertTrue(finished)
+            let currentOutput: [UIMessagePart] = currentResultWasSaved
+                ? [UIMessagePart.Text(text: "persisted fresh screen", metadata: nil)] : []
+            let store = makeConversationStore()
+            await store.bootstrap()
+            await store.saveCurrent(messages: [
+                toolBatch([
+                    toolPart(toolCallId: "old-before", toolName: "phone_act"),
+                    toolPart(toolCallId: "handback", toolName: "phone_run_goal", output: currentOutput),
+                    toolPart(toolCallId: "old-after", toolName: "phone_observe"),
+                ]),
+                toolCallMessage(toolCallId: "next-provider-batch", toolName: "phone_act"),
+            ])
+            let conversationID = try XCTUnwrap(store.currentConversation?.id)
+            let loadedMessages = await store.messages(for: conversationID)
+            let messages = try XCTUnwrap(loadedMessages)
+
+            let loadedPlan = await IOSRunRecovery.planToolCallRecovery(runId: runId, messages: messages, dao: dao)
+            let plan = try XCTUnwrap(loadedPlan)
+            XCTAssertEqual(plan["handback"], .replayResult(payload, requiresReplan: true))
+            let plannedTransactions = await ledger.toolTransactions(runId: runId)
+            XCTAssertEqual(try XCTUnwrap(plannedTransactions).first?.state, .finished,
+                           "an already-saved current result must not erase the batch marker before apply")
+            let recovered = IOSToolCallRecoveryApplier.apply(plan, to: messages)
+            await store.saveCurrent(messages: recovered)
+            await IOSRunRecovery.finalizeToolCallRecovery(runId: runId, plan: plan, dao: dao)
+            let loadedRecovered = await store.messages(for: conversationID)
+            let persistedRecovered = try XCTUnwrap(loadedRecovered)
+            let tools = persistedRecovered.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+            let handback = try XCTUnwrap(tools.first { $0.toolCallId == "handback" })
+            XCTAssertEqual((handback.output.first as? UIMessagePart.Text)?.text,
+                           currentResultWasSaved ? "persisted fresh screen" : "ledger fresh screen")
+            for callID in ["old-before", "old-after"] {
+                let skipped = try XCTUnwrap(tools.first { $0.toolCallId == callID }?.output.first as? UIMessagePart.Text)
+                let receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(skipped.text.utf8)) as? [String: Any])
+                XCTAssertEqual(receipt["outcome"] as? String, "not_sent")
+                XCTAssertEqual(receipt["reason_code"] as? String, "replan_required")
+            }
+            XCTAssertTrue(tools.first { $0.toolCallId == "next-provider-batch" }?.output.isEmpty == true)
+
+            // Background and foreground recovery apply and persist the plan
+            // before the engine filters for empty outputs. Exercise that order.
+            let executor = RecoveryRecordingExecutor()
+            let engine = IOSAgentToolEngine(
+                provider: RecoveryUnusedProvider(),
+                executors: ["phone_run_goal": executor, "phone_act": executor, "phone_observe": executor],
+                ledger: IOSAgentRunLedger(dao: dao), ledgerRunId: runId
+            )
+            // KMP messages are immutable snapshots; the engine creates replacements.
+            // The test awaits completion before inspecting any engine-owned state.
+            nonisolated(unsafe) let engineMessages = persistedRecovered
+            let resumed = await engine.executePreExistingToolsOnly(messages: engineMessages)
+            XCTAssertEqual(executor.callIDs, ["next-provider-batch"])
+            XCTAssertNil(resumed.durabilityFailureMessage)
+            let resumedTransactions = await ledger.toolTransactions(runId: runId)
+            XCTAssertEqual(Set(try XCTUnwrap(resumedTransactions).map(\.toolCallId)), ["handback", "next-provider-batch"],
+                           "old batch calls must not even prepare a ledger transaction")
+        }
+    }
+
+    func testHandbackRecoveryPreservesUnknownAndTerminalResultsWithoutBlockingLaterBatch() throws {
+        let payload = IosToolOutputJsonBridge.shared.encode(parts: [UIMessagePart.Text(text: "restored terminal", metadata: nil)])
+        let messages = [
+            toolBatch([
+                toolPart(toolCallId: "handback", toolName: "phone_run_goal", output: [UIMessagePart.Text(text: "saved current", metadata: nil)]),
+                toolPart(toolCallId: "unknown", toolName: "phone_act"),
+                toolPart(toolCallId: "terminal", toolName: "phone_act"),
+                toolPart(toolCallId: "saved", toolName: "phone_act", output: [UIMessagePart.Text(text: "saved result", metadata: nil)]),
+                toolPart(toolCallId: "never-started", toolName: "phone_observe"),
+                toolPart(toolCallId: "unclaimed", toolName: "phone_act"),
+            ]),
+            toolCallMessage(toolCallId: "later", toolName: "phone_act"),
+        ]
+        let recovered = IOSToolCallRecoveryApplier.apply([
+            "handback": .replayResult(payload, requiresReplan: true),
+            "unknown": .markUnknown,
+            "terminal": .replayResult(payload),
+            "never-started": .markRetryable,
+        ], to: messages)
+        let tools = recovered.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+        XCTAssertEqual((tools.first { $0.toolCallId == "handback" }?.output.first as? UIMessagePart.Text)?.text, "saved current")
+        XCTAssertEqual((tools.first { $0.toolCallId == "saved" }?.output.first as? UIMessagePart.Text)?.text, "saved result")
+        XCTAssertEqual((tools.first { $0.toolCallId == "terminal" }?.output.first as? UIMessagePart.Text)?.text, "restored terminal")
+        let unknownOutput = try XCTUnwrap(tools.first { $0.toolCallId == "unknown" }?.output)
+        XCTAssertEqual((unknownOutput.first as? UIMessagePart.Text)?.text.contains(IOSToolCallRecoveryAction.markUnknown.toolPartMessage), true)
+        for callID in ["never-started", "unclaimed"] {
+            XCTAssertTrue((tools.first { $0.toolCallId == callID }?.output.first as? UIMessagePart.Text)?.text.contains("\"reason_code\":\"replan_required\"") == true)
+        }
+        XCTAssertTrue(tools.last?.output.isEmpty == true)
+    }
+
+    func testMalformedHandbackRecoveryPayloadStillBlocksOldBatch() {
+        let messages = [toolBatch([
+            toolPart(toolCallId: "old-before", toolName: "phone_act"),
+            toolPart(toolCallId: "handback", toolName: "phone_run_goal"),
+            toolPart(toolCallId: "old-after", toolName: "phone_act"),
+        ])]
+        let recovered = IOSToolCallRecoveryApplier.apply([
+            "handback": .replayResult("{", requiresReplan: true),
+        ], to: messages)
+        let tools = recovered.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+        XCTAssertTrue(tools.allSatisfy { !$0.output.isEmpty })
+        XCTAssertTrue((tools.first?.output.first as? UIMessagePart.Text)?.text.contains("\"reason_code\":\"replan_required\"") == true)
+        XCTAssertTrue((tools.last?.output.first as? UIMessagePart.Text)?.text.contains("\"reason_code\":\"replan_required\"") == true)
+        XCTAssertEqual((tools[1].output.first as? UIMessagePart.Text)?.text.contains("无法还原结果"), true)
+    }
+
     // MARK: - Layer 2: integration (real Room ledger + real IOSConversationStore)
 
     @MainActor

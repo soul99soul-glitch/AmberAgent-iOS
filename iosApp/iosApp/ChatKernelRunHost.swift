@@ -305,9 +305,8 @@ final class ChatKernelRunHost {
             subtitle: IOSAppLocalization.string("准备上下文", defaultValue: "准备上下文")
         )
 
-        // Reserve the window scope here; only a phone tool may start the local test session.
+        // Reserve this run's selected apps; only a phone tool may start the local test session.
         // Keep the same owner across a foreground/background handoff.
-        let hadPhoneAuthorization = phoneControl.hasPendingAuthorization
         let hasPhoneDeclarations = bridge.fullToolDeclarations().contains {
             IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name)
         }
@@ -319,7 +318,7 @@ final class ChatKernelRunHost {
         }
         if phoneControl.enabled || hasPhoneDeclarations {
             IOSBackgroundLifecycleLog.record("phoneControlRunGate",
-                detail: "userInitiated=\(phoneControlUserInitiated) enabled=\(phoneControl.enabled) prepared=\(phoneControl.hasPreparedPairing) nextAuthorized=\(hadPhoneAuthorization) declared=\(hasPhoneDeclarations) claimed=\(phoneControlClaimed)")
+                detail: "userInitiated=\(phoneControlUserInitiated) enabled=\(phoneControl.enabled) prepared=\(phoneControl.hasPreparedPairing) declared=\(hasPhoneDeclarations) claimed=\(phoneControlClaimed)")
         }
 
         let adapter = makeAdapter(runId: runId)
@@ -1112,7 +1111,6 @@ final class ChatKernelRunHost {
         // cancelled 会制造 Finished(completed) 与取消消息互相矛盾的快照。
         if activeImageToolCall != nil, imageToolTerminalClaimed { return }
         cancelCause = cause
-        phoneControl.revokeAuthorizationWindow(runID: runId)
         phoneControl.revoke(runID: runId)
         toolRuntime.discardPreparedThemeImport()
         let toolFailureReason: String
@@ -1628,7 +1626,7 @@ final class ChatKernelRunHost {
         callbacks.onToolOutcomeUnknown = { [weak self] signal in
             guard let self, self.currentRunId == runId else { return }
             self.toolOutcomeUnknownSignal = signal
-            self.phoneControl.revokeAuthorizationWindow(runID: runId)
+            self.phoneControl.revoke(runID: runId)
         }
         callbacks.onAssistantTurnStarted = { [weak self] in
             guard let self, self.currentRunId == runId else { return }
@@ -2195,7 +2193,6 @@ final class ChatKernelRunHost {
     }
 
     private func outcomeUnknownTerminal(runId: String) async {
-        phoneControl.revokeAuthorizationWindow(runID: runId)
         await phoneControl.stop(runID: runId)
         projection.discardProvisionalAssistant()
         let startedAt = currentStartedAt
@@ -2804,10 +2801,8 @@ final class ChatKernelRunHost {
     private func beginKeepAlive(runId: String, subtitle: String) {
         backgroundExecution.begin(
             runId,
-            title: IOSAppLocalization.string(
-                "Amber 正在生成",
-                defaultValue: "Amber 正在生成"
-            ),
+            // The system retains this title briefly after completion; the subtitle carries the phase.
+            title: "Amber",
             subtitle: subtitle,
             onExpire: { [weak self] in
                 guard let self, self.currentRunId == runId else { return }

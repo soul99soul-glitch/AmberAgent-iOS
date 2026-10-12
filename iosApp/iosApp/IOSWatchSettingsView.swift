@@ -48,14 +48,7 @@ struct IOSWatchSettingsView: View {
     }
 
     private var availableQuickActions: [WatchQuickAction] {
-        let settings = sharedSettings.snapshot
-        return settings.quickMessages.compactMap { message in
-            let id = message.id.toHexDashString()
-            let title = message.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            let prompt = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !id.isEmpty, !title.isEmpty, WatchQuickAction.supports(prompt: prompt) else { return nil }
-            return WatchQuickAction(id: id, title: title, prompt: prompt)
-        }
+        sharedSettings.savedQuickActions()
     }
 
     private var selectedAssistantName: String {

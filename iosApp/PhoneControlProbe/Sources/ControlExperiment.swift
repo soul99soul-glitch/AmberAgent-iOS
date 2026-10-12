@@ -99,7 +99,7 @@ final class ControlExperiment {
         let monitor = Task {
             var previous = ""
             while !Task.isCancelled {
-                if let status = try? await session.launchStatus() {
+                if let status = try? await session.launchStatus(runID: id) {
                     let text = "启动阶段：\(status.phase) · \(status.message)"
                     if text != previous { previous = text; await record(text) }
                 }

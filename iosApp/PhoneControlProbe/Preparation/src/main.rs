@@ -1,7 +1,8 @@
 use idevice::{
     IdeviceError, IdeviceService,
     remote_pairing::{
-        RemotePairingClient, RemotePairingLockdownService, RpPairingFile, RpPairingSocketProvider,
+        RemotePairingClient, RemotePairingLockdownService, RpPairingFile, RpPairingSocket,
+        RpPairingSocketProvider,
         errors::RemotePairingError,
     },
     services::os_trace_relay::{LogLevel, OsTraceRelayClient},
@@ -11,9 +12,11 @@ use std::{
     error::Error,
     fs::OpenOptions,
     io::{self, Write},
+    net::SocketAddr,
     os::unix::fs::OpenOptionsExt,
     path::Path,
     process::ExitCode,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -24,7 +27,7 @@ async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
         eprintln!(
-            "usage: amber-phone-prepare <device UDID> <new output plist> | --check-device <device UDID> | --check-runner-auth <device UDID> | --read-pairing-service-errors <device UDID>"
+            "usage: amber-phone-prepare <device UDID> <new output plist> | --check-device <device UDID> | --check-runner-auth <device UDID> | --check-network-handshake <numeric address:port> | --check-usb-handshake <device UDID> | --check-usbmux-network-handshake <device UDID> | --read-pairing-service-errors <device UDID>"
         );
         return ExitCode::from(2);
     }
@@ -59,6 +62,55 @@ fn diagnostic(error: &(dyn Error + 'static)) -> String {
 }
 
 async fn run(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args[1] == "--check-network-handshake" {
+        let endpoint: SocketAddr = args[2].parse()?;
+        return tokio::time::timeout(Duration::from_secs(8), async {
+            let socket = tokio::net::TcpStream::connect(endpoint).await?;
+            let stage = Arc::new(Mutex::new(None));
+            let mut client = RemotePairingClient::new(
+                RpPairingSocket::new_with_diagnostics(socket, stage.clone()),
+                "AmberHandshakeDiagnostics",
+            );
+            let result = check_handshake(&mut client).await;
+            println!("transport_stage={}", stage.lock().unwrap().unwrap_or("none"));
+            result
+        })
+        .await?;
+    }
+    if matches!(args[1].as_str(), "--check-usb-handshake" | "--check-usbmux-network-handshake") {
+        return tokio::time::timeout(Duration::from_secs(8), async {
+            let mut mux = UsbmuxdAddr::from_env_var()?.connect(0).await?;
+            let device = mux.get_device(&args[2]).await?;
+            if device.connection_type != Connection::Usb {
+                return Err(io::Error::from(io::ErrorKind::NotConnected).into());
+            }
+            if args[1] == "--check-usbmux-network-handshake" {
+                // This is the already discovered service port, not a scan.
+                let connection = mux.connect_to_device(
+                    device.device_id, 49152, "AmberHandshakeDiagnostics",
+                ).await?;
+                let socket = connection.get_socket()
+                    .ok_or(IdeviceError::NoEstablishedConnection)?;
+                let stage = Arc::new(Mutex::new(None));
+                let mut client = RemotePairingClient::new(
+                    RpPairingSocket::new_with_diagnostics(socket, stage.clone()),
+                    "AmberHandshakeDiagnostics",
+                );
+                let result = check_handshake(&mut client).await;
+                println!("transport_stage={}", stage.lock().unwrap().unwrap_or("none"));
+                return result;
+            }
+            let provider = device.to_provider(
+                UsbmuxdAddr::from_env_var()?,
+                "AmberHandshakeDiagnostics",
+            );
+            let mut client = RemotePairingLockdownService::connect(&provider)
+                .await?
+                .into_client("AmberHandshakeDiagnostics")?;
+            check_handshake(&mut client).await
+        })
+        .await?;
+    }
     if args[1] == "--read-pairing-service-errors" {
         let pid = pairing_service_pid()?;
         return tokio::time::timeout(
@@ -174,6 +226,16 @@ async fn run(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn check_handshake<R: RpPairingSocketProvider>(
+    client: &mut RemotePairingClient<R>,
+) -> Result<(), Box<dyn Error>> {
+    // The greeting precedes identity verification. Stop here: no pairing file,
+    // pair-verify/setup, tunnel, runner, or phone action belongs to this check.
+    client.attempt_pair_verify().await?;
+    println!("handshake=accepted pairing_verification=not_attempted");
+    Ok(())
+}
+
 async fn require_unsigned_status_rejection<
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 >(
@@ -241,6 +303,7 @@ async fn read_pairing_service_errors(udid: &str, pid: u32) -> Result<(), Box<dyn
     );
     let client = OsTraceRelayClient::connect(&provider).await?;
     let mut receiver = client.start_trace(Some(pid)).await?;
+    println!("pairing_service_trace=ready pid={pid}");
     let mut accepted = 0usize;
     while accepted < 32 {
         let log = receiver.next().await?;
@@ -251,7 +314,7 @@ async fn read_pairing_service_errors(udid: &str, pid: u32) -> Result<(), Box<dyn
         else {
             continue;
         };
-        println!("{line}");
+        println!("time={} {line}", log.timestamp);
         accepted += 1;
     }
     drop(receiver);
@@ -281,6 +344,7 @@ fn format_trace_metadata(
             "reject self connection",
             "rejects self connection",
             "self connection rejected",
+            "rejecting control channel connection originating from local machine",
             "self-pairing rejected",
             "same device rejected",
             "same-device rejected",
@@ -349,6 +413,12 @@ fn format_trace_metadata(
     let error_code = parse_error_code(&text)
         .map(|code| code.to_string())
         .unwrap_or_else(|| "none".into());
+    // Routine discovery chatter otherwise exhausts the bounded capture before
+    // the diagnostic connection starts. Keep failures and explicit clues only.
+    if !(error || fault || rejects_self || loopback || invalid_origin || direction
+        || version_mismatch || device_initiated_required || auth_rejected) {
+        return None;
+    }
     Some(format!(
         "pid={pid} level={} error={error} fault={fault} rejectsSelf={rejects_self} loopback={loopback} invalidOrigin={invalid_origin} direction={direction} versionMismatch={version_mismatch} deviceInitiatedRequired={device_initiated_required} authRejected={auth_rejected} errorCode={error_code}",
         level_name(level),
@@ -513,14 +583,20 @@ mod tests {
         assert!(!text.contains("private_key"));
         assert!(!text.contains("abc123"));
         assert!(!text.contains("/usr/libexec"));
+        let actual_rejection = format_trace_metadata(
+            39281, LogLevel::Error, "remotepairingdeviced",
+            "tcp-15: Rejecting control channel connection originating from local machine: [C30 connected 192.0.2.1:50072 tcp]",
+        ).unwrap();
+        assert!(actual_rejection.contains("rejectsSelf=true"));
+        assert!(actual_rejection.contains("loopback=false"));
+        assert!(!actual_rejection.contains("192.0.2.1"));
         let normal_same_device = format_trace_metadata(
             39281,
             LogLevel::Info,
             "remotepairingdeviced",
             "same-device advertisement discovered",
-        )
-        .unwrap();
-        assert!(normal_same_device.contains("rejectsSelf=false"));
+        );
+        assert!(normal_same_device.is_none());
         assert!(
             format_trace_metadata(
                 39281,

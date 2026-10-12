@@ -89,6 +89,17 @@ impl InstallationProxyClient {
         application_type: Option<&str>,
         bundle_identifiers: Option<Vec<String>>,
     ) -> Result<HashMap<String, plist::Value>, IdeviceError> {
+        self.get_apps_with_attributes(application_type, bundle_identifiers, None).await
+    }
+
+    /// Retrieves installed application information with an optional attribute
+    /// projection. `None` preserves get_apps' full metadata response.
+    pub async fn get_apps_with_attributes(
+        &mut self,
+        application_type: Option<&str>,
+        bundle_identifiers: Option<Vec<String>>,
+        return_attributes: Option<Vec<String>>,
+    ) -> Result<HashMap<String, plist::Value>, IdeviceError> {
         let application_type = application_type.unwrap_or("Any");
 
         let req = crate::plist!({
@@ -96,6 +107,7 @@ impl InstallationProxyClient {
             "ClientOptions": {
                 "ApplicationType": application_type,
                 "BundleIDs":? bundle_identifiers,
+                "ReturnAttributes":? return_attributes,
             }
         });
         self.idevice.send_plist(req).await?;

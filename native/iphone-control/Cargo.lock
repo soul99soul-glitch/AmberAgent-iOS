@@ -48,6 +48,7 @@ name = "amber-iphone-control"
 version = "0.1.0"
 dependencies = [
  "idevice",
+ "libc",
  "plist",
  "serde",
  "serde_json",

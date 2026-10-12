@@ -115,3 +115,49 @@
 "agent.activity.doneCount.readingWeb" = "웹 %ld개 읽음";
 "agent.activity.doneCount.readingDocument" = "파일 %ld개 읽음";
 "agent.activity.doneCount.generatingImage" = "이미지 %ld장";
+
+// Phone control stages contain no app names, contacts, or input text.
+"agent.activity.phone.checkingStatus" = "기기 상태 확인 중";
+"agent.activity.phone.compact.checkingStatus" = "상태 확인";
+"agent.activity.phone.connecting" = "기기 연결 중";
+"agent.activity.phone.compact.connecting" = "연결";
+"agent.activity.phone.observing" = "화면 읽는 중";
+"agent.activity.phone.compact.observing" = "화면 확인";
+"agent.activity.phone.openingApp" = "앱 여는 중";
+"agent.activity.phone.compact.openingApp" = "앱 열기";
+"agent.activity.phone.tapping" = "화면 탭하는 중";
+"agent.activity.phone.compact.tapping" = "탭";
+"agent.activity.phone.typing" = "텍스트 입력 중";
+"agent.activity.phone.compact.typing" = "입력";
+"agent.activity.phone.swiping" = "화면 스와이프 중";
+"agent.activity.phone.compact.swiping" = "스와이프";
+"agent.activity.phone.listingApps" = "설치된 앱 찾는 중";
+"agent.activity.phone.compact.listingApps" = "앱 찾기";
+"agent.activity.phone.addingApp" = "허용할 앱 추가 중";
+"agent.activity.phone.compact.addingApp" = "앱 추가";
+"agent.activity.phone.waitingForModel" = "모델 응답 대기 중";
+"agent.activity.phone.compact.waitingForModel" = "응답 대기";
+"agent.activity.phone.stopping" = "기기 제어 중지 중";
+"agent.activity.phone.compact.stopping" = "중지 중";
+"agent.activity.phone.stopped" = "기기 제어 중지됨";
+"agent.activity.phone.compact.stopped" = "중지됨";
+"agent.activity.phone.failed" = "기기 작업 단계 실패";
+"agent.activity.phone.compact.failed" = "단계 실패";
+"agent.activity.phone.outcomeUnknown" = "작업 결과 확인 필요";
+"agent.activity.phone.compact.outcomeUnknown" = "확인 필요";
+"agent.activity.phone.verifying" = "동작 결과 확인 중";
+"agent.activity.phone.compact.verifying" = "확인";
+"agent.activity.phone.deciding" = "다음 단계 선택 중";
+"agent.activity.phone.compact.deciding" = "선택";
+"agent.activity.phone.waitingForUI" = "화면 업데이트 대기 중";
+"agent.activity.phone.compact.waitingForUI" = "대기";
+
+// Human takeover states contain no task or app content.
+"agent.activity.phone.pausing" = "직접 조작으로 전환 중";
+"agent.activity.phone.compact.pausing" = "전환 중";
+"agent.activity.phone.paused" = "직접 조작 중";
+"agent.activity.phone.compact.paused" = "직접 조작";
+"agent.activity.phone.resuming" = "화면을 읽고 계속하는 중";
+"agent.activity.phone.compact.resuming" = "재개 중";
+"agent.activity.control.humanTakeover" = "직접 조작";
+"agent.activity.control.resumeAutomation" = "계속";

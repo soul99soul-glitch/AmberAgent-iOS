@@ -1648,8 +1648,8 @@ final class ChatToolRuntime {
         // cannot resolve user attachments, and image gen is a paid side effect.
         "generate_image",
         "theme_pack_import",
-        "phone_status", "phone_observe", "phone_act", "phone_stop",
     ]).union(IOSRemoteTerminalToolCatalog.jobToolNames)
+        .union(IOSPhoneControlToolCatalog.toolNames)
 
     /// P3-b: whitelist for one evaluation's `tools` object = the current
     /// round's visible tool set minus the exec exclusions. Same source for
@@ -3029,7 +3029,7 @@ final class ChatToolRuntime {
 
         var jev: [String: Any] = [
             "role": "internal_fast_judgment",
-            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环、为缺省角色定义的 spawn 荐角色并产出对齐标注、为待审批动作产出三态分诊标注（只标注不授权）、判断压缩前旧工具结果是否保留原文、在自动批准生效时复核高风险调用（只会收紧为人工审批）、在本轮改动未验证却宣称完成时提示用户；script_judgment 为 active 时 exec 脚本可经 `jev` 全局主动调用（数据范围为工具输出）。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
+            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环、为缺省角色定义的 spawn 荐角色并产出对齐标注、为待审批动作产出三态分诊标注（只标注不授权）、判断压缩前旧工具结果是否保留原文、在自动批准生效时复核高风险调用（只会收紧为人工审批）、在本轮改动未验证却宣称完成时提示用户；手机效果检查只辅助带验收条件的 phone_act 判断后续步骤，手机快速操作通过 phone_run_goal 执行当前界面的有限导航/搜索/草稿操作，真实完成仍由新界面证据核验；script_judgment 为 active 时 exec 脚本可经 `jev` 全局主动调用（数据范围为工具输出）。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
             "service": jevSettings.apiStyle.serviceIdentifier,
             "api_mode": jevSettings.apiStyle.statusValue,
             "model": jevSettings.modelConfigured ? jevSettings.activeModelVersion : NSNull(),
@@ -3116,6 +3116,8 @@ final class ChatToolRuntime {
         case .toolResultRetention: "tool_result_retention"
         case .autoApprovalGate: "auto_approval_gate"
         case .completionCheck: "completion_check"
+        case .phoneVerification: "phone_verification"
+        case .phoneActions: "phone_actions"
         }
     }
 

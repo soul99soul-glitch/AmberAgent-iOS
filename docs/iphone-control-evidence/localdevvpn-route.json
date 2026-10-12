@@ -1,0 +1,416 @@
+{
+  "date": "2026-10-11",
+  "baseline_commit": "69c2144db9838e7192d137d18572588539f1dee4",
+  "authorization": "User explicitly approved LocalDevVPN installation, iOS VPN configuration and continued handshake, phone-owned runner and UI observation validation. No new commit/push authorization.",
+  "source_review": {
+    "repo": "https://github.com/jkcoxson/LocalDevVPN",
+    "commit": "af3fd697803ada4ac2b8d518358f5ab0a534844c",
+    "license": "StosVPN License read; upstream private build clone retained under ignored build directory. No helper implementation copied into Amber.",
+    "interface": "10.7.1.1/32",
+    "peer": "10.7.0.1/32",
+    "packet_behavior": "Only peer destination included, default route excluded. IPv4 source/destination swap and local reinjection."
+  },
+  "helper_delivery": {
+    "local_build": "failed before installation: existing Xcode session has no account for provisioning Network Extension and Personal VPN capabilities; upstream deployment target 14 also unsupported by current SDK",
+    "app_store_open_exit_code": 0,
+    "app_store_page_verified": "LocalDevVPN detail page with Get button",
+    "installed": true,
+    "vpn_consent": "User confirmed tapping Allow",
+    "vpn_connected": true,
+    "last_observation": "Installed from App Store. Verified with --include-default-apps; earlier default app listings excluded store apps and cannot prove absence.",
+    "bundle_id": "com.jkcoxson.LocalDevVPN",
+    "version": "1.3.0",
+    "enable_url_launch_exit_code": 0,
+    "extension_pid": 41855
+  },
+  "changes": {
+    "swift": "Production control, explicit pairing and launch-only handshake inspection use fixed default peer. Settings button opens LocalDevVPN without starting or changing a VPN.",
+    "native": "Actual TCP sockets to fixed peer require a unique up utun with exact interface address and IP_BOUND_IF before connect, including dynamically assigned TLS ports. Missing/ambiguous/bind failure stops; no ordinary LAN fallback.",
+    "credentials": "Pair verification remains mandatory and never falls back to creating a new identity."
+  },
+  "verification": {
+    "native_tests": {
+      "passed": 17,
+      "failed": 0
+    },
+    "limited_maintainability_review": "No blocking findings in scoped native and Swift changes.",
+    "swift_tests": {
+      "passed": 14,
+      "failed": 0,
+      "exit_code": 0,
+      "scope": [
+        "IOSPhoneControlControllerTests",
+        "IOSPhoneControlToolExecutorTests",
+        "IOSSettingsWiringTests/testPhoneControlSettingsReachPersistentRunScopedRuntime"
+      ]
+    },
+    "formal_release_build": {
+      "configuration": "iosAppExperimentalGPL / Release",
+      "exit_code": 0,
+      "signature": {
+        "bundle_id": "app.amber.ios",
+        "team": "TY4JTL3V2M",
+        "app_groups": [
+          "group.app.amber.ios.experimental-gpl.watchkit"
+        ],
+        "current_device_in_profile": true,
+        "profile_expiration": "2027-09-30T09:52:05",
+        "executable_sha256": "9f992857d901b59142d2ad72a4825c1eeeb819483c028ce707abb5959bb52ff2",
+        "strict_signature_verified": true,
+        "diagnostic_argument_present": true
+      }
+    },
+    "install": {
+      "exit_code": 0,
+      "bundle_id": "app.amber.ios",
+      "in_place": true
+    },
+    "handshake": {
+      "result": "stopped before connecting: loopback_route_unavailable",
+      "capture_exit_code": 1,
+      "started_at_utc": "2026-10-10T16:12:27.072135+00:00",
+      "app_metadata": [
+        "phoneControlHandshakeInspectionStarted | app=inactive bgRemaining=unlimited",
+        "phoneControlHandshakeInspectionEndpoint | app=inactive bgRemaining=unlimited | source=localdevvpn family=ipv4 port=49152",
+        "phoneControlHandshakeInspection | app=inactive bgRemaining=unlimited | phase=failed loopback_route_unavailable"
+      ],
+      "raw_console_saved": false,
+      "credentials_or_control_actions": false,
+      "console_exit_code": 2
+    },
+    "pair_verification": "passed: native progressed from pairing to tunnel",
+    "tls_rsd": "passed: native progressed through discovering to starting and received XCTest test-case start callback",
+    "phone_owned_runner": "passed: same-device app-owned XCTest launch, testServe event and native running; no Mac XCTest start",
+    "ui_tree_action_new_tree": "Initial real-device tree passed; no action sent or follow-up tree after action. Cross-app and background acceptance still unverified.",
+    "background": "not verified",
+    "normal_launch": {
+      "exit_code": 0,
+      "activation": false,
+      "diagnostic_arguments": false,
+      "pid": 41825,
+      "process_matches_new_installation": true
+    },
+    "daemon_trace_attempt": {
+      "app_launched": false,
+      "result": "trace readiness failed with native=22; no retry of trace; separate App-only diagnostic then launched once",
+      "evidence": {
+        "started_at_utc": "2026-10-10T16:11:59.719572+00:00",
+        "trace_ready": false,
+        "app_metadata": [],
+        "trace_exit_code": 1,
+        "trace_metadata": [
+          "preparation_failed: native=22, subcode=0"
+        ],
+        "raw_console_saved": false,
+        "keychain_access": false,
+        "pairing_verify_setup_tunnel_or_xctest": false
+      }
+    },
+    "handshake_connected": {
+      "capture_exit_code": 0,
+      "started_at_utc": "2026-10-10T16:15:07.897809+00:00",
+      "app_metadata": [
+        "phoneControlHandshakeInspectionStarted | app=inactive bgRemaining=unlimited",
+        "phoneControlHandshakeInspectionEndpoint | app=inactive bgRemaining=unlimited | source=localdevvpn family=ipv4 port=49152",
+        "phoneControlHandshakeInspection | app=active bgRemaining=unlimited | phase=stopped handshake_ok"
+      ],
+      "raw_console_saved": false,
+      "credentials_or_control_actions": false,
+      "console_exit_code": 2
+    },
+    "readiness_diagnostic": {
+      "purpose": "Explicit user-authorized delivery verification; app-owned session, existing credentials, signed status and observe of Amber only, then cleanup. No action or model calls.",
+      "code_review": "Scoped review found cleanup overwrote the native status; fixed with typed nativeLaunch status in the thrown error. Follow-up confirmed status remains available after cleanup and no extra authority or secret logging.",
+      "build": {
+        "exit_code": 0,
+        "signature": {
+          "bundle_id": "app.amber.ios",
+          "team": "TY4JTL3V2M",
+          "app_groups": [
+            "group.app.amber.ios.experimental-gpl.watchkit"
+          ],
+          "current_device_in_profile": true,
+          "profile_expiration": "2027-09-30T09:52:05",
+          "executable_sha256": "dffc3a8ec1e3c9df1b75994f64c12433c08d9d6d0f46c1362df33da439abc594",
+          "strict_signature_verified": true,
+          "diagnostic_argument_present": true
+        }
+      },
+      "tests": {
+        "exit_code": 0,
+        "suite": "IOSPhoneControlControllerTests",
+        "new_case": "testNativeStartupFailureRemainsTypedAfterSessionCleanup"
+      },
+      "install_exit_code": 0,
+      "device_result": {
+        "started_at_utc": "2026-10-10T16:27:46.468585+00:00",
+        "app_metadata": [
+          "phoneControlReadinessInspectionStarted | app=inactive bgRemaining=unlimited",
+          "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=failed client=none phase=stopped",
+          "phoneControlReadinessInspectionFinished | app=active bgRemaining=unlimited"
+        ],
+        "raw_console_saved": false,
+        "ui_contents_saved": false,
+        "actions": false,
+        "model_calls": false,
+        "scope": [
+          "app.amber.ios"
+        ],
+        "console_exit_code": 2
+      },
+      "capture_exit_code": 1,
+      "runner_process_observed": 41920,
+      "runner_process_absent_after_capture": true,
+      "conclusion": "Phone-owned launch reached runner process creation; signed readiness and tree not obtained within Swift startup deadline. Timeout cleanup overwrote last native stage, so adding native fixed stage metadata before a bounded follow-up.",
+      "data_preservation": {
+        "conversations": {
+          "before": 351,
+          "after": 351,
+          "missing_count": 0,
+          "added_count": 0,
+          "size_changed_count": 1,
+          "changed_entry_count": 5,
+          "contents_read": false
+        },
+        "group": {
+          "before": 1,
+          "after": 1,
+          "missing_count": 0,
+          "added_count": 0,
+          "size_changed_count": 0,
+          "changed_entry_count": 0,
+          "contents_read": false
+        }
+      }
+    },
+    "unsigned_rejection": "Not verified: USB-only helper native=22 DeviceNotFound (device now localNetwork); direct known CoreDevice tunnel address:8100 HTTP probe failed TCP with curl exit7/http000.",
+    "native_stage_diagnostic": {
+      "build_exit_code": 0,
+      "signature": {
+        "bundle_id": "app.amber.ios",
+        "team": "TY4JTL3V2M",
+        "app_groups": [
+          "group.app.amber.ios.experimental-gpl.watchkit"
+        ],
+        "current_device_in_profile": true,
+        "profile_expiration": "2027-09-30T09:52:05",
+        "executable_sha256": "5515a981e911c7b952b7bac95d0c0b3e8dd6579efc7d5c2535caa62919579f90",
+        "strict_signature_verified": true,
+        "diagnostic_argument_present": true
+      },
+      "install_exit_code": 0,
+      "capture_exit_code": 1,
+      "device_result": {
+        "started_at_utc": "2026-10-10T16:36:21.629994+00:00",
+        "app_metadata": [
+          "phoneControlReadinessInspectionStarted | app=inactive bgRemaining=unlimited",
+          "phoneControlNativeStatus phase=pairing code=pairing",
+          "phoneControlNativeStatus phase=tunnel code=tunnel",
+          "phoneControlNativeStatus phase=discovering code=discovering",
+          "phoneControlNativeStatus phase=starting code=starting",
+          "phoneControlNativeTestEvent event=test_case_started method_matches=false",
+          "phoneControlNativeStatus phase=stopping code=stopping",
+          "phoneControlNativeStatus phase=stopped code=stopped",
+          "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=failed client=none phase=stopped",
+          "phoneControlReadinessInspectionFinished | app=active bgRemaining=unlimited"
+        ],
+        "raw_console_saved": false,
+        "ui_contents_saved": false,
+        "actions": false,
+        "model_calls": false,
+        "scope": [
+          "app.amber.ios"
+        ],
+        "console_exit_code": 2
+      },
+      "conclusion": "Pair verification, TLS/RSD, and XCTest test-case start callback confirmed. Listener receives no matching method name; modern identifier archive decoder leaves components as UID instead of string array. No authenticated HTTP attempted before running."
+    },
+    "identifier_decoding_fix": {
+      "failure_fixture": "Binary NSKeyedArchive object pool delivered empty class and method through actual dispatcher before fix; expected iPhoneUse.RunnerTests/testServe.",
+      "fixture_result_before": {
+        "failed": 1
+      },
+      "fixture_result_after": {
+        "passed": 3,
+        "failed": 0
+      },
+      "root_native_tests": {
+        "passed": 17,
+        "failed": 0
+      },
+      "scope": "Resolve XCTest identifier component object references for existing identifier callbacks; selector/channel/start-plan unchanged.",
+      "review": "One finite maintainability review passed.",
+      "provenance": "All pinned upstream file hashes verified after reversing local patch chain; patch and current local source hashes match.",
+      "release_build_exit_code": 0,
+      "signature": {
+        "bundle_id": "app.amber.ios",
+        "team": "TY4JTL3V2M",
+        "app_groups": [
+          "group.app.amber.ios.experimental-gpl.watchkit"
+        ],
+        "current_device_in_profile": true,
+        "profile_expiration": "2027-09-30T09:52:05",
+        "executable_sha256": "5cb479b279871eaedbf41a69c1e92d3d327eeed1913447aecccdcfc9fac42b6b",
+        "strict_signature_verified": true,
+        "diagnostic_argument_present": true
+      },
+      "install_exit_code": 0,
+      "device_result": {
+        "started_at_utc": "2026-10-10T16:41:22.402872+00:00",
+        "app_metadata": [
+          "phoneControlReadinessInspectionStarted | app=inactive bgRemaining=unlimited",
+          "phoneControlNativeStatus phase=pairing code=pairing",
+          "phoneControlNativeStatus phase=tunnel code=tunnel",
+          "phoneControlNativeStatus phase=discovering code=discovering",
+          "phoneControlNativeStatus phase=starting code=starting",
+          "phoneControlNativeTestEvent event=test_case_started method_matches=true",
+          "phoneControlNativeStatus phase=running code=running",
+          "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=runner_ready ready=true authenticated=true",
+          "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=tree app_matches=true nodes=189 truncated=false",
+          "phoneControlNativeStatus phase=stopping code=stopping",
+          "phoneControlNativeStatus phase=stopped code=stopped",
+          "phoneControlReadinessInspectionFinished | app=active bgRemaining=unlimited"
+        ],
+        "raw_console_saved": false,
+        "ui_contents_saved": false,
+        "actions": false,
+        "model_calls": false,
+        "scope": [
+          "app.amber.ios"
+        ],
+        "console_exit_code": 1
+      },
+      "capture_exit_code": 0,
+      "console_exit_note": "devicectl console exit1 after completed diagnostic when intentionally restoring normal launch; not a handshake or tree failure",
+      "data_preservation": {
+        "conversations": {
+          "before": 351,
+          "after": 351,
+          "missing_count": 0,
+          "added_count": 0,
+          "size_changed_count": 2,
+          "changed_entry_count": 5,
+          "contents_read": false
+        },
+        "group": {
+          "before": 1,
+          "after": 1,
+          "missing_count": 0,
+          "added_count": 0,
+          "size_changed_count": 0,
+          "changed_entry_count": 0,
+          "contents_read": false
+        }
+      },
+      "data_preservation_note": "All 351 conversation files remain; 2 existing file sizes changed across app launches, cause not established; no contents read. App Group top-level unchanged.",
+      "normal_launch": {
+        "exit_code": 0,
+        "diagnostic_arguments": false,
+        "activation": false,
+        "pid": 41979,
+        "process_matches_new_installation": true
+      },
+      "runner_cleanup": {
+        "native_stopped": true,
+        "process_present_after_two_minutes": true,
+        "process_pid": 41975,
+        "task_owned_mac_termination_exit_code": 0,
+        "production_gap": "PhoneRunnerClient.stop revoked local operations but did not call authenticated /shutdown. Fix in progress; no claim of autonomous process exit for this first success.",
+        "process_absent_after_task_owned_termination": true
+      }
+    },
+    "signed_readiness": {
+      "ready": true,
+      "authenticated": true,
+      "endpoint": "127.0.0.1:8100",
+      "new_per_launch_token": true
+    },
+    "ui_tree": {
+      "passed": true,
+      "app_matches_amber": true,
+      "nodes": 189,
+      "truncated": false,
+      "labels_values_or_tree_contents_exported": false
+    },
+    "ready_runner_shutdown_fix": {
+      "cause": "After signed ready and successful tree read, runtime stop left the runner process present for over two minutes; old cleanup only revoked client and closed DTX.",
+      "scope": "For this run after signed readiness: revoke local operations, send one signed POST /shutdown with 2s request timeout while DTX is open, validate strict boolean acknowledgement, then close native. Failure remains in run-bound stopped status and existing controller status UI.",
+      "package_tests": {
+        "passed": 22,
+        "failed": 0
+      },
+      "initial_controller_executor_tests": {
+        "passed": 14,
+        "failed": 0
+      },
+      "review": "Found cleanup error could be read by a later run that never started; fixed by required runID status lookup, clearing previous state on claim. Matching real-native failure test extended. Focused follow-up closed finding.",
+      "initial_release_build": "interrupted exit75 before installation to incorporate ownership correction",
+      "final_build": {
+        "exit_code": 0,
+        "signature": {
+          "bundle_id": "app.amber.ios",
+          "team": "TY4JTL3V2M",
+          "app_groups": [
+            "group.app.amber.ios.experimental-gpl.watchkit"
+          ],
+          "current_device_in_profile": true,
+          "profile_expiration": "2027-09-30T09:52:05",
+          "executable_sha256": "ccc99bbd72131b635d4fcfb70e721fd46813199540646a93c3c899ad123482a6",
+          "strict_signature_verified": true,
+          "diagnostic_argument_present": true
+        }
+      },
+      "final_controller_tests": {
+        "passed": 9,
+        "failed": 0,
+        "exit_code": 0,
+        "ownership_isolation_assertion": true
+      },
+      "device_result": {
+        "installed": true,
+        "ready": true,
+        "authenticated": true,
+        "amber_tree_nodes": 189,
+        "tree_truncated": false,
+        "signed_shutdown_acknowledged": true,
+        "native_stopped": true,
+        "diagnostic_finished": true,
+        "raw_console_saved": false,
+        "ui_contents_saved": false,
+        "actions_sent": false,
+        "host_process_exit_proven": false,
+        "host_process_note": "Shutdown ends testServe and listener, not an explicit process exit. Old PID absent later, but a subsequent user task started another runner; absence cannot be attributed to this shutdown.",
+        "evidence": "build/p1-localdevvpn-20261010/shutdown-device/result.json"
+      }
+    }
+  },
+  "boundaries": {
+    "new_pairing_created": false,
+    "runner_reinstalled": false,
+    "external_message_sent": false,
+    "committed_or_pushed": false,
+    "mac_physical_device_xctest_or_model_loop": false
+  },
+  "captured_at_utc": "2026-10-10T16:05:14.218951+00:00",
+  "data_preservation": {
+    "conversations": {
+      "before": 351,
+      "after": 351,
+      "missing_count": 0,
+      "added_count": 0,
+      "size_changed_count": 0,
+      "changed_entry_count": 3,
+      "contents_read": false
+    },
+    "group": {
+      "before": 1,
+      "after": 1,
+      "missing_count": 0,
+      "added_count": 0,
+      "size_changed_count": 0,
+      "changed_entry_count": 0,
+      "contents_read": false
+    }
+  },
+  "remaining_gate": "Signed readiness, Amber tree and signed shutdown acknowledgement passed. Subsequent user task launched Miwork and opened the contact, then stalled without any type request: all chat trees were truncated at the tool cap of 500 with no input controls. Wider read-only observation is in progress; real typing, sending and sustained background model tasks are not accepted yet."
+}

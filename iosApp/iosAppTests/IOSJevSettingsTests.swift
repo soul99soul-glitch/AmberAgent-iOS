@@ -44,6 +44,63 @@ final class IOSJevSettingsTests: XCTestCase {
         XCTAssertFalse(settings.canSend(useCase: .toolDiscovery, required: [.toolMetadata, .selectedTaskText]))
     }
 
+    func testPhoneUseCasesRequirePhoneContentAndKeepScopesIndependent() {
+        var settings = IOSJevSettings()
+        for useCase in [IOSJevUseCase.phoneVerification, .phoneActions] {
+            XCTAssertEqual(settings.mode(for: useCase), .off)
+            XCTAssertTrue(settings.allowedScopes(for: useCase).isEmpty)
+            XCTAssertEqual(useCase.defaultDataScopes, [.selectedTaskText, .phoneContent])
+            settings.setMode(.active, for: useCase)
+            XCTAssertEqual(settings.effectiveMode(for: useCase), .shadow)
+        }
+        settings.setPinnedModelVersion("jev-fixed-v3")
+        XCTAssertEqual(settings.effectiveMode(for: .phoneActions), .active)
+        settings.setScopes([.selectedTaskText, .webContent, .toolOutput], for: .phoneVerification)
+        XCTAssertFalse(settings.canSend(useCase: .phoneVerification, required: IOSJevUseCase.phoneVerification.defaultDataScopes),
+                       "网页或普通工具范围不能替代手机界面文字授权")
+        XCTAssertTrue(settings.canSend(useCase: .phoneActions, required: IOSJevUseCase.phoneActions.defaultDataScopes),
+                      "收紧效果检查的数据范围不改变快速操作的范围")
+    }
+
+    func testPhoneSettingsPersistScopeRevocationAndMode() {
+        let defaults = isolatedDefaults()
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        var settings = store.jevSettings
+        settings.setPinnedModelVersion("jev-fixed-v3")
+        settings.setMode(.active, for: .phoneVerification)
+        settings.setMode(.shadow, for: .phoneActions)
+        let beforeRevocation = settings.revision
+        settings.setScopes([.selectedTaskText], for: .phoneVerification)
+        store.updateJevSettings(settings)
+
+        let reloaded = IOSSharedSettingsStore(userDefaults: defaults).jevSettings
+        XCTAssertEqual(reloaded.effectiveMode(for: .phoneVerification), .active)
+        XCTAssertEqual(reloaded.effectiveMode(for: .phoneActions), .shadow)
+        XCTAssertGreaterThan(reloaded.revision, beforeRevocation)
+        XCTAssertFalse(reloaded.canSend(useCase: .phoneVerification, required: IOSJevUseCase.phoneVerification.defaultDataScopes))
+        XCTAssertEqual(reloaded.allowedScopes(for: .phoneActions), [.selectedTaskText, .phoneContent])
+    }
+
+    func testAddingPhonePolicyDoesNotMigrateExistingActiveUseCases() throws {
+        var settings = IOSJevSettings()
+        settings.setPinnedModelVersion("jev-fixed-v3")
+        settings.setMode(.active, for: .webActions)
+        settings.policy.webActionsMinConfidence = 0.73
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any])
+        var policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        policy.removeValue(forKey: "phoneActionsMinConfidence")
+        object["policy"] = policy
+
+        let decoded = try JSONDecoder().decode(IOSJevSettings.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(decoded.effectiveMode(for: .webActions), .active)
+        XCTAssertEqual(decoded.policy.webActionsMinConfidence, 0.73)
+        XCTAssertEqual(decoded.policy.phoneActionsMinConfidence, 0.8)
+        XCTAssertEqual(decoded.mode(for: .phoneVerification), .off)
+        XCTAssertEqual(decoded.mode(for: .phoneActions), .off)
+        XCTAssertEqual(decoded.policy.activeWaitBudgetMs(for: .phoneVerification), decoded.policy.deadlineMs)
+        XCTAssertEqual(decoded.policy.activeWaitBudgetMs(for: .phoneActions), decoded.policy.webActionsDeadlineMs)
+    }
+
     func testSetModeAndScopesBumpRevision() {
         var settings = IOSJevSettings()
         settings.setMode(.shadow, for: .memoryRecall)
@@ -298,6 +355,11 @@ final class IOSJevSettingsTests: XCTestCase {
         }
         XCTAssertEqual(reloaded.mode(for: .webActions), .off)
         XCTAssertEqual(reloaded.mode(for: .approvalTriage), .off)
+        for useCase in [IOSJevUseCase.phoneVerification, .phoneActions] {
+            XCTAssertEqual(reloaded.mode(for: useCase), .off)
+            XCTAssertTrue(reloaded.allowedScopes(for: useCase).isEmpty,
+                          "推荐配置不能悄悄开放手机文字范围")
+        }
         XCTAssertTrue(reloaded.allowedScopes(for: .modelRouting).contains(.modelMetadata))
     }
 

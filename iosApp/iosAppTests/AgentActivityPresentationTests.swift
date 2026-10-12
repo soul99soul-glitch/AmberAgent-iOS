@@ -1,8 +1,178 @@
 import XCTest
 import ActivityKit
+import AppIntents
 @testable import iosApp
 
 final class AgentActivityPresentationTests: XCTestCase {
+    func testPhonePresentationDecodesLegacyStateAndRoundTripsFiniteStages() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let original = AgentActivityPresentation.phoneControl(.observing)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(original)) as? [String: Any])
+        legacy.removeValue(forKey: "phoneControlPhase")
+        let decoded = try decoder.decode(AgentActivityPresentation.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(decoded.phoneControlPhase)
+        XCTAssertEqual(decoded.stage, .runningTool)
+
+        for phase in AgentPhoneControlActivityPhase.allCases {
+            let presentation = AgentActivityPresentation.phoneControl(phase)
+            XCTAssertEqual(try decoder.decode(AgentActivityPresentation.self, from: encoder.encode(presentation)), presentation)
+            XCTAssertEqual(presentation.phase, .running, "手机步骤回执不能提前结束整轮对话")
+            XCTAssertEqual(presentation.metric, .none)
+            XCTAssertNil(presentation.stepDetail)
+            XCTAssertEqual(presentation.stage.isToolStage, phase.isExecuting)
+        }
+    }
+
+    func testPhoneToolEventsUseFiniteCategoriesWithoutArguments() throws {
+        let expected: [String: AgentPhoneControlActivityPhase] = [
+            "phone_status": .checkingStatus, "phone_apps": .listingApps, "phone_add_app": .addingApp,
+            "phone_observe": .observing, "phone_act": .connecting, "phone_stop": .stopping,
+            "phone_run_goal": .deciding,
+            "phone_scroll_until": .observing,
+        ]
+        XCTAssertEqual(Set(expected.keys), IOSPhoneControlToolCatalog.toolNames)
+        for (tool, phase) in expected {
+            let presentation = AgentActivityPresentation.runningTool(
+                toolName: tool, input: #"{"action":"type","text":"private-message","bundle_id":"private.app"}"#
+            )
+            XCTAssertEqual(presentation.phoneControlPhase, phase)
+            XCTAssertNil(presentation.stepDetail)
+            let encoded = String(decoding: try JSONEncoder().encode(presentation), as: UTF8.self)
+            XCTAssertFalse(encoded.contains("private-message"))
+            XCTAssertFalse(encoded.contains("private.app"))
+        }
+    }
+
+    func testPhoneStagesHaveLocalizedCopyAndDistinctWaitingState() {
+        for language in ["en", "zh-Hans", "zh-Hant", "ja", "ko", "ru"] {
+            for phase in AgentPhoneControlActivityPhase.allCases {
+                let presentation = AgentActivityPresentation.phoneControl(phase)
+                XCTAssertFalse(presentation.localizedStageTitle(languageCode: language).hasPrefix("agent.activity."))
+                XCTAssertFalse(presentation.localizedCompactStageTitle(languageCode: language).hasPrefix("agent.activity."))
+            }
+        }
+        let waiting = AgentActivityPresentation.phoneControl(.waitingForModel)
+        XCTAssertEqual(waiting.stage, .preparing)
+        XCTAssertFalse(waiting.stage.isToolStage, "等待模型时不能继续工具心跳")
+        XCTAssertEqual(waiting.localizedCompactStageTitle(languageCode: "zh-Hans"), "等模型")
+        XCTAssertEqual(waiting.displaySymbolName(isStale: false), "hourglass")
+    }
+
+    func testPhoneTransitionsNeverInferSuccessfulHistoryFromStageChanges() {
+        typealias Policy = AgentActivityStepHistoryPolicy
+        let existing = [AgentActivityStep(stage: .searching)]
+        for phase in AgentPhoneControlActivityPhase.allCases {
+            let previous = AgentActivityPresentation.phoneControl(phase)
+            for next in [AgentActivityPresentation.phoneControl(.failed), .phoneControl(.outcomeUnknown),
+                         .phoneControl(.waitingForModel), .response(stage: .generating)] {
+                XCTAssertEqual(Policy.history(after: previous, current: existing, next: next), existing)
+            }
+            XCTAssertEqual(Policy.closing(last: previous, current: existing), existing)
+        }
+    }
+
+    func testPhoneDecisionAndVerificationStagesRemainRunningWithoutExposingTaskData() {
+        let expected: [(AgentPhoneControlActivityPhase, String, String)] = [
+            (.verifying, "核对操作结果", "核对"),
+            (.deciding, "选择下一步", "决策"),
+            (.waitingForUI, "等待界面更新", "等界面"),
+        ]
+        for (phase, title, compactTitle) in expected {
+            let presentation = AgentActivityPresentation.phoneControl(phase)
+            XCTAssertTrue(phase.isExecuting)
+            XCTAssertEqual(presentation.phase, .running)
+            XCTAssertEqual(presentation.stage, .runningTool)
+            XCTAssertEqual(presentation.localizedStageTitle(languageCode: "zh-Hans"), title)
+            XCTAssertEqual(presentation.localizedCompactStageTitle(languageCode: "zh-Hans"), compactTitle)
+            XCTAssertEqual(presentation.displaySymbolName(isStale: false), phase.symbolName)
+            XCTAssertNil(presentation.stepDetail)
+            XCTAssertEqual(presentation.metric, .none)
+        }
+    }
+
+    func testHumanTakeoverStagesRemainRunningWithoutExecutingIndicators() {
+        let expected: [(AgentPhoneControlActivityPhase, String, String)] = [
+            (.pausing, "正在交给你操作", "接手中"),
+            (.paused, "你正在操作", "你来操作"),
+            (.resuming, "重新读取界面后继续", "恢复中"),
+        ]
+        for (phase, title, compact) in expected {
+            let presentation = AgentActivityPresentation.phoneControl(phase)
+            XCTAssertEqual(presentation.phase, .running)
+            XCTAssertEqual(presentation.stage, .preparing)
+            XCTAssertFalse(phase.isExecuting)
+            XCTAssertFalse(presentation.stage.isToolStage, "人工操作期间不能继续工具执行心跳")
+            XCTAssertEqual(presentation.localizedStageTitle(languageCode: "zh-Hans"), title)
+            XCTAssertEqual(presentation.localizedCompactStageTitle(languageCode: "zh-Hans"), compact)
+            XCTAssertEqual(presentation.displaySymbolName(isStale: false), phase.symbolName)
+            XCTAssertNil(presentation.stepDetail)
+            XCTAssertEqual(presentation.metric, .none)
+        }
+    }
+
+    func testPhoneInlineControlsOnlyOfferTakeoverOrResumeForActionableStates() {
+        for phase in AgentPhoneControlActivityPhase.allCases {
+            let presentation = AgentActivityPresentation.phoneControl(phase)
+            let expected: [AgentActivityInlineControl]
+            switch phase {
+            case .paused: expected = [.resumeAutomation]
+            case .pausing, .resuming, .stopping, .stopped, .failed, .outcomeUnknown: expected = []
+            default: expected = [.humanTakeover]
+            }
+            XCTAssertEqual(AgentActivityInlineControlPolicy.controls(
+                presentation: presentation, isStale: false, hasConversation: true
+            ), expected)
+            XCTAssertEqual(AgentActivityInlineControlPolicy.controls(
+                presentation: presentation, isStale: true, hasConversation: true
+            ), [], "旧卡片不能提供自动化操作按钮")
+            XCTAssertEqual(AgentActivityInlineControlPolicy.controls(
+                presentation: presentation, isStale: false, hasConversation: false
+            ), [])
+        }
+    }
+
+    @MainActor
+    func testPhoneHandoffIntentsStayInBackgroundAndRejectMissingRunWithoutClaiming() async {
+        XCTAssertEqual(IOSRequestPhoneHumanTakeoverIntent.supportedModes, .background)
+        XCTAssertEqual(IOSResumePhoneAutomationIntent.supportedModes, .background)
+        let originalOwner = IOSPhoneControlController.shared.ownerRunID
+        let staleRunID = "missing-\(UUID().uuidString)"
+        do {
+            _ = try await IOSRequestPhoneHumanTakeoverIntent(runId: staleRunID).perform()
+            XCTFail("A missing or old run must not take over the current phone owner")
+        } catch { }
+        do {
+            _ = try await IOSResumePhoneAutomationIntent(runId: staleRunID).perform()
+            XCTFail("A cold or stale resume must not create a phone session")
+        } catch { }
+        XCTAssertEqual(IOSPhoneControlController.shared.ownerRunID, originalOwner)
+    }
+
+    func testUnknownPhoneOutcomeSurvivesOnlyFailedTerminalAndCannotOfferRetry() {
+        let unknown = AgentActivityPresentation.phoneControl(.outcomeUnknown)
+        let terminal = AgentActivityPresentation.failed(retryable: true)
+            .preservingUnknownPhoneOutcome(from: unknown)
+        XCTAssertEqual(terminal.phase, .failed)
+        XCTAssertEqual(terminal.stage, .failed)
+        XCTAssertEqual(terminal.phoneControlPhase, .outcomeUnknown)
+        XCTAssertTrue(terminal.requiresPhoneOutcomeReview)
+        XCTAssertEqual(terminal.retryable, false)
+        XCTAssertEqual(terminal.localizedCompactStageTitle(languageCode: "zh-Hans"), "待核对")
+        XCTAssertEqual(terminal.displaySymbolName(isStale: false), "questionmark.circle.fill")
+        XCTAssertEqual(AgentActivityInlineControlPolicy.controls(
+            presentation: terminal, isStale: false, hasConversation: true
+        ), [])
+
+        for otherTerminal in [AgentActivityPresentation.completed(), .cancelled()] {
+            XCTAssertEqual(otherTerminal.preservingUnknownPhoneOutcome(from: unknown), otherTerminal)
+        }
+        let genericFailure = AgentActivityPresentation.failed(retryable: true)
+        XCTAssertEqual(genericFailure.preservingUnknownPhoneOutcome(from: .phoneControl(.failed)), genericFailure)
+        XCTAssertEqual(genericFailure.preservingUnknownPhoneOutcome(from: nil), genericFailure)
+        XCTAssertFalse(unknown.requiresPhoneOutcomeReview, "运行中的未知回执尚未代替引擎提交整轮终态")
+    }
+
     func testActivityCopyReadsEverySupportedLanguageFromItsLocalizedTable() {
         let expected: [String: String] = [
             "en": "Generating",
@@ -242,6 +412,27 @@ final class AgentActivityPresentationTests: XCTestCase {
         )
     }
 
+    func testHumanPauseHasNoStaleDeadlineWhileTransitionsRetainRunningBudget() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        for phase in AgentPhoneControlActivityPhase.allCases {
+            let presentation = AgentActivityPresentation.phoneControl(phase)
+            let deadline = AgentActivityLifecyclePolicy.staleDate(for: presentation, now: now)
+            if phase == .paused {
+                XCTAssertNil(deadline, "人工操作不需要心跳续期，继续入口不能在 180 秒后消失")
+                XCTAssertEqual(AgentActivityInlineControlPolicy.controls(
+                    presentation: presentation, isStale: false, hasConversation: true
+                ), [.resumeAutomation])
+            } else {
+                XCTAssertEqual(deadline, now.addingTimeInterval(180), "过渡和普通运行仍会过期")
+            }
+        }
+        for presentation in [AgentActivityPresentation.response(stage: .generating),
+                             .reconnecting(), .waitingForUser(), .completed(), .failed(), .cancelled()] {
+            XCTAssertEqual(AgentActivityLifecyclePolicy.staleDate(for: presentation, now: now),
+                           AgentActivityLifecyclePolicy.staleDate(for: presentation.phase, now: now))
+        }
+    }
+
     func testRestoreRequiresBothDurableOwnershipAndUpdatableActivityState() {
         let ownedRunIds: Set<String> = ["background-run"]
 
@@ -287,7 +478,7 @@ final class AgentActivityPresentationTests: XCTestCase {
         )
     }
 
-    func testInlineControlsOnlyAppearForConfirmationAndRetry() {
+    func testGenericInlineControlsOnlyAppearForConfirmationAndRetry() {
         let controls = { (presentation: AgentActivityPresentation, isStale: Bool, hasConversation: Bool) in
             AgentActivityInlineControlPolicy.controls(
                 presentation: presentation,

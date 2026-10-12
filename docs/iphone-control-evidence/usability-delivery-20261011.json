@@ -1,0 +1,87 @@
+{
+  "base_commit": "69c2144db9838e7192d137d18572588539f1dee4",
+  "scope": [
+    "persistent phone control switch",
+    "on-device application catalog and exact app selection",
+    "phone execution Live Activity states"
+  ],
+  "simulator_tests": {
+    "phase1": {
+      "result": "Passed",
+      "passedTests": 49,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "phase2": {
+      "result": "Passed",
+      "passedTests": 25,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "phase3": {
+      "result": "Passed",
+      "passedTests": 64,
+      "failedTests": 0,
+      "skippedTests": 0
+    }
+  },
+  "reviews": {
+    "phase1": "passed",
+    "phase2": "passed after picker contrast fix",
+    "phase3": "passed after background FIFO and unknown terminal fixes",
+    "phase4_source": "passed",
+    "phase4_delivery": "passed; limitations agree with raw build, install and locked-launch evidence"
+  },
+  "visual_evidence": {
+    "settings_and_picker": "normal and 320pt accessibility3 rendered views reviewed",
+    "activity": "system compact, expanded, lock screen and accessibility-large reviewed",
+    "minimal": "source review only; system grouped both same-app previews"
+  },
+  "device_before": {
+    "conversation_entries": 352,
+    "app_group_root_entries": 1,
+    "lock_requires_passcode": true
+  },
+  "release": {
+    "build": "Release",
+    "bundle_id": "app.amber.ios",
+    "team": "TY4JTL3V2M",
+    "application_identifier": "TY4JTL3V2M.app.amber.ios",
+    "codesign_deep_strict": "passed",
+    "sha256": "82871f89597be84c18290509eb85570d7833822767f0b0634a421488ab2e5a47",
+    "size": 121158736,
+    "simulator_preview_absent": true,
+    "device_query_inspection_present": true
+  },
+  "device_install": "succeeded",
+  "device_query": {
+    "status": "not run",
+    "reason": "iOS denied launch while locked",
+    "core_device_error": 10002,
+    "underlying_error": "FBSOpenApplicationErrorDomain 7 Locked"
+  },
+  "cold_process_persistence": "not verified on locked device",
+  "preserves_original_dirty_work": true,
+  "committed": false,
+  "pushed": false,
+  "device_data_preservation": {
+    "conversations": {
+      "before_count": 352,
+      "after_count": 352,
+      "same_paths": true,
+      "same_metadata": false,
+      "same_sizes": true,
+      "same_last_modification_dates": true,
+      "extended_attributes_changed_count": 6,
+      "content_hashes_read": false
+    },
+    "group": {
+      "before_count": 1,
+      "after_count": 1,
+      "same_paths": true,
+      "same_metadata": true
+    }
+  },
+  "phase4": "source review, release, signing and installation passed; new device behavior acceptance blocked by lock",
+  "evidence_directory": "build/p2-phone-usability-20261011"
+}

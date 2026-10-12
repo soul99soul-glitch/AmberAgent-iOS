@@ -344,42 +344,29 @@ final class IOSWatchCompanionService {
     @discardableResult
     func saveQuickAction(id: String? = nil, title: String, prompt: String,
                          sharedSettings: IOSSharedSettingsStore) -> WatchQuickAction? {
-        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title.count <= 40, WatchQuickAction.supports(prompt: prompt) else { return nil }
-        let id = id ?? UUID().uuidString.lowercased()
-        guard updateQuickMessages(sharedSettings: sharedSettings, transform: { messages in
-            messages.removeAll { ($0["id"] as? String)?.lowercased() == id.lowercased() }
-            messages.append(["id": id, "title": title, "content": prompt])
-        }) else { return nil }
-        return WatchQuickAction(id: id, title: title, prompt: prompt)
+        do {
+            let action = try sharedSettings.saveQuickAction(id: id, title: title, prompt: prompt)
+            storageError = nil
+            return action
+        } catch {
+            storageError = error.localizedDescription
+            return nil
+        }
     }
 
     @discardableResult
     func deleteQuickAction(id: String, sharedSettings: IOSSharedSettingsStore) -> Bool {
         let selectedIDs = hasConfiguredQuickActionSelection ? selectedQuickActionIDs
-            : sharedSettings.snapshot.quickMessages.filter { WatchQuickAction.supports(prompt: $0.content) }
-                .prefix(Self.maxQuickActions).map { $0.id.toHexDashString() }
-        guard updateQuickMessages(sharedSettings: sharedSettings, transform: { messages in
-            messages.removeAll { ($0["id"] as? String)?.lowercased() == id.lowercased() }
-        }) else { return false }
-        setSelectedQuickActionIDs(selectedIDs.filter { $0.lowercased() != id.lowercased() })
-        return true
-    }
-
-    private func updateQuickMessages(sharedSettings: IOSSharedSettingsStore,
-                                    transform: (inout [[String: Any]]) -> Void) -> Bool {
+            : sharedSettings.savedQuickActions().prefix(Self.maxQuickActions).map(\.id)
         do {
-            let json = IosSettingsJsonBridge.shared.encode(settings: sharedSettings.snapshot)
-            guard var object = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return false }
-            var messages = object["quickMessages"] as? [[String: Any]] ?? []
-            transform(&messages)
-            object["quickMessages"] = messages
-            let data = try JSONSerialization.data(withJSONObject: object)
-            let settings = try IosSettingsJsonBridge.shared.decode(json: String(decoding: data, as: UTF8.self))
-            sharedSettings.restoreSnapshot(settings)
+            try sharedSettings.deleteQuickAction(id: id)
+            setSelectedQuickActionIDs(selectedIDs.filter { $0.lowercased() != id.lowercased() })
+            storageError = nil
             return true
-        } catch { return false }
+        } catch {
+            storageError = error.localizedDescription
+            return false
+        }
     }
 
     func setSelectedQuickActionIDs(_ ids: [String]) {
@@ -415,14 +402,7 @@ final class IOSWatchCompanionService {
             ? "Amber"
             : assistant.name
 
-        let available = settings.quickMessages
-            .compactMap { quickMessage -> WatchQuickAction? in
-                let id = quickMessage.id.toHexDashString()
-                let title = quickMessage.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                let prompt = quickMessage.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !id.isEmpty, !title.isEmpty, WatchQuickAction.supports(prompt: prompt) else { return nil }
-                return WatchQuickAction(id: id, title: title, prompt: prompt)
-            }
+        let available = sharedSettings.savedQuickActions()
         let availableByID = Dictionary(uniqueKeysWithValues: available.map { ($0.id.lowercased(), $0) })
         let configuredIDs = selectedQuickActionIDs.compactMap {
             availableByID[$0.lowercased()]?.id

@@ -144,18 +144,30 @@
   },
   "modified_files": [
     "src/services/dvt/xctest/mod.rs",
-    "src/remote_pairing/socket.rs"
+    "src/remote_pairing/socket.rs",
+    "src/services/dvt/xctest/types.rs",
+    "src/services/installation_proxy.rs"
   ],
   "patch_sha256": "c7d326e0303edc53c159850be2493fd1c9f56bad1dce6e9053889bb02db3b6fc",
   "additional_patches": [
     {
       "path": "patches/rppairing-diagnostics.patch",
       "sha256": "f713efe50f3f6d18be29b5676d33f1c41394ee1fbf28525002fa7b90fe1db9f5"
+    },
+    {
+      "path": "patches/xctest-identifier-decoding.patch",
+      "sha256": "6ffcdc1e3baf22f660b605f305a3768961793d76b156d7edd6abcdc7e43a37a3"
+    },
+    {
+      "path": "patches/installation-proxy-attributes.patch",
+      "sha256": "174f8cdc6b64776a0a6c4ac3f4e34fe9d14041a27f5b91946aca731609fd8bfe"
     }
   ],
   "local_files_sha256": {
-    "src/lib.rs": "cd1582f212f92509277e1a70c9ef6b54a8a888f4d67ce85bef937e267eb73e59",
-    "include/AmberIPhoneControl.h": "de4730820a3c69a7404d79758187faeb299297bc526809c601d13ced7b535320",
-    "README.md": "3c0d9e91a31d36eb713a686e2bcbb977aed0d01e36aa71c4d9e2b3487aa135bd"
+    "src/lib.rs": "d6154466819821c361b5fe4e0e751c1c419a288642a5045fdbfdca205de760d9",
+    "include/AmberIPhoneControl.h": "487a5eec0b54947d851aa99a9a2d0a3e65a947ec9bfb93b83fc20023f52c244c",
+    "README.md": "9b42210cb828378d8821ddeefc61b1c296869de4c44e8e262f30344416b2fb93",
+    "src/loopback_route.rs": "df6ae640abca660e399c1c60f0297301c00efac05617c874a673dde016618bbc",
+    "src/applications.rs": "ff7287b7b973f7574b49160df6e5dbd7d29cc88667959be134a3d9e9edd21ec0"
   }
 }

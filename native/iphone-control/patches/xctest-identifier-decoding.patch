@@ -1,0 +1,278 @@
+diff --git a/src/services/dvt/xctest/mod.rs b/src/services/dvt/xctest/mod.rs
+index 641a01cd..fb6be9ee 100644
+--- a/src/services/dvt/xctest/mod.rs
++++ b/src/services/dvt/xctest/mod.rs
+@@ -1113,6 +1113,13 @@ fn decode_aux_archive(aux: &AuxValue) -> Result<Value, IdeviceError> {
+     }
+ }
+ 
++fn decode_aux_identifier(aux: &AuxValue) -> Option<XCTTestIdentifier> {
++    match aux {
++        AuxValue::Array(bytes) => XCTTestIdentifier::from_archive_bytes(bytes),
++        _ => None,
++    }
++}
++
+ fn aux_as_string(aux: &AuxValue) -> Result<String, IdeviceError> {
+     if let AuxValue::String(s) = aux {
+         return Ok(s.clone());
+@@ -1272,8 +1279,7 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
+         // --- suite lifecycle (identifier-based, iOS 14+) ---
+         m if m == XCT_SUITE_DID_START_ID => {
+             if let Some(raw) = aux.first()
+-                && let Ok(decoded) = decode_aux_archive(raw)
+-                && let Some(id) = XCTTestIdentifier::from_plist(&decoded)
++                && let Some(id) = decode_aux_identifier(raw)
+             {
+                 let tc = id.test_class();
+                 if !tc.is_empty() && tc != "All tests" {
+@@ -1288,8 +1294,7 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
+         }
+         m if m == XCT_SUITE_DID_FINISH_ID => {
+             if let Some(raw) = aux.first()
+-                && let Ok(decoded) = decode_aux_archive(raw)
+-                && let Some(id) = XCTTestIdentifier::from_plist(&decoded)
++                && let Some(id) = decode_aux_identifier(raw)
+             {
+                 let tc = id.test_class().to_owned();
+                 if !tc.is_empty() && tc != "All tests" {
+@@ -1416,8 +1421,7 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
+         // --- case lifecycle (identifier-based, iOS 14+) ---
+         m if m == XCT_CASE_DID_START_ID => {
+             if let Some(raw) = aux.first()
+-                && let Ok(decoded) = decode_aux_archive(raw)
+-                && let Some(id) = XCTTestIdentifier::from_plist(&decoded)
++                && let Some(id) = decode_aux_identifier(raw)
+             {
+                 let method_name = id.test_method().unwrap_or("").to_owned();
+                 listener
+@@ -1427,8 +1431,7 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
+         }
+         m if m == XCT_CASE_DID_FINISH_ID => {
+             if let Some(raw) = aux.first()
+-                && let Ok(decoded) = decode_aux_archive(raw)
+-                && let Some(id) = XCTTestIdentifier::from_plist(&decoded)
++                && let Some(id) = decode_aux_identifier(raw)
+             {
+                 let test_class = id.test_class().to_owned();
+                 let method_name = id.test_method().unwrap_or("").to_owned();
+@@ -1450,12 +1453,9 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
+         }
+         m if m == XCT_CASE_DID_RECORD_ISSUE => {
+             if let (Some(id_raw), Some(issue_raw)) = (aux.first(), aux.get(1))
+-                && let (Ok(id_val), Ok(issue_val)) =
+-                    (decode_aux_archive(id_raw), decode_aux_archive(issue_raw))
+-                && let (Some(id), Some(issue)) = (
+-                    XCTTestIdentifier::from_plist(&id_val),
+-                    XCTIssue::from_plist(&issue_val),
+-                )
++                && let Some(id) = decode_aux_identifier(id_raw)
++                && let Ok(issue_val) = decode_aux_archive(issue_raw)
++                && let Some(issue) = XCTIssue::from_plist(&issue_val)
+             {
+                 let test_class = id.test_class().to_owned();
+                 let method_name = id.test_method().unwrap_or("").to_owned();
+@@ -1533,8 +1533,7 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
+         // --- activities (identifier-based) ---
+         m if m == XCT_CASE_WILL_START_ACTIVITY_ID => {
+             if let Some(id_raw) = aux.first()
+-                && let Ok(id_val) = decode_aux_archive(id_raw)
+-                && let Some(id) = XCTTestIdentifier::from_plist(&id_val)
++                && let Some(id) = decode_aux_identifier(id_raw)
+             {
+                 let method_name = id.test_method().unwrap_or("").to_owned();
+                 // aux[1] is an XCActivityRecord NSKeyedArchive blob
+@@ -1551,8 +1550,7 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
+         }
+         m if m == XCT_CASE_DID_FINISH_ACTIVITY_ID => {
+             if let Some(id_raw) = aux.first()
+-                && let Ok(id_val) = decode_aux_archive(id_raw)
+-                && let Some(id) = XCTTestIdentifier::from_plist(&id_val)
++                && let Some(id) = decode_aux_identifier(id_raw)
+             {
+                 let method_name = id.test_method().unwrap_or("").to_owned();
+                 // aux[1] is an XCActivityRecord NSKeyedArchive blob
+@@ -2175,6 +2173,136 @@ impl XCUITestService {
+     }
+ }
+ 
++#[cfg(test)]
++mod identifier_tests {
++    use super::*;
++
++    fn archived_identifier() -> Vec<u8> {
++        let uid = |index| Value::Uid(plist::Uid::new(index));
++        let objects = vec![
++            Value::String("$null".into()),
++            Value::Dictionary(crate::plist!(dict {
++                "$class": uid(2), "c": uid(3), "o": 2u64,
++            })),
++            Value::Dictionary(crate::plist!(dict {
++                "$classname": "XCTTestIdentifier",
++                "$classes": vec!["XCTTestIdentifier", "NSObject"],
++            })),
++            Value::Dictionary(crate::plist!(dict {
++                "$class": uid(4), "NS.objects": vec![uid(5), uid(6)],
++            })),
++            Value::Dictionary(crate::plist!(dict {
++                "$classname": "NSArray", "$classes": vec!["NSArray", "NSObject"],
++            })),
++            Value::String("iPhoneUse.RunnerTests".into()),
++            Value::String("testServe".into()),
++        ];
++        let archive = Value::Dictionary(crate::plist!(dict {
++            "$archiver": "NSKeyedArchiver", "$version": 100000u64,
++            "$top": crate::plist!(dict { "root": uid(1), }), "$objects": objects,
++        }));
++        let mut bytes = Vec::new();
++        archive.to_writer_binary(&mut bytes).unwrap();
++        bytes
++    }
++
++    fn configuration() -> XCTestConfiguration {
++        XCTestConfiguration {
++            test_bundle_url: "file:///Runner.app/PlugIns/iPhoneUse.xctest".into(),
++            session_identifier: uuid::Uuid::nil(),
++            product_module_name: "iPhoneUse".into(),
++            automation_framework_path: "/System/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework".into(),
++            target_application_bundle_id: None,
++            target_application_path: None,
++            target_application_environment: None,
++            target_application_arguments: Vec::new(),
++            tests_to_run: None,
++            tests_to_skip: None,
++            ide_capabilities: XCTCapabilities::ide_defaults(),
++        }
++    }
++
++    #[derive(Default)]
++    struct Listener {
++        starts: Vec<(String, String)>,
++        finishes: Vec<XCTestCaseResult>,
++    }
++
++    impl XCUITestListener for Listener {
++        async fn test_case_did_start(&mut self, class: &str, method: &str) -> Result<(), IdeviceError> {
++            self.starts.push((class.into(), method.into()));
++            Ok(())
++        }
++
++        async fn test_case_did_finish(&mut self, result: XCTestCaseResult) -> Result<(), IdeviceError> {
++            self.finishes.push(result);
++            Ok(())
++        }
++    }
++
++    #[tokio::test]
++    async fn identifier_archive_dispatches_test_case_start() {
++        let mut listener = Listener::default();
++        let mut done = false;
++        dispatch_xct_message(
++            XCT_CASE_DID_START_ID,
++            &[AuxValue::Array(archived_identifier())],
++            &configuration(),
++            &mut listener,
++            &mut done,
++        ).await.unwrap();
++        assert_eq!(listener.starts, vec![("iPhoneUse.RunnerTests".into(), "testServe".into())]);
++        assert!(!done);
++    }
++
++    #[tokio::test]
++    async fn identifier_archive_dispatches_test_case_finish() {
++        let mut listener = Listener::default();
++        dispatch_xct_message(
++            XCT_CASE_DID_FINISH_ID,
++            &[
++                AuxValue::Array(archived_identifier()),
++                AuxValue::String("passed".into()),
++                AuxValue::Double(0.25),
++            ],
++            &configuration(),
++            &mut listener,
++            &mut false,
++        ).await.unwrap();
++        assert_eq!(listener.finishes.len(), 1);
++        let result = &listener.finishes[0];
++        assert_eq!(result.test_class, "iPhoneUse.RunnerTests");
++        assert_eq!(result.method, "testServe");
++        assert_eq!(result.status, "passed");
++        assert_eq!(result.duration, 0.25);
++    }
++
++    #[test]
++    fn identifier_archive_rejects_invalid_references_and_types() {
++        let uid = |index| Value::Uid(plist::Uid::new(index));
++        for (index, key, value) in [
++            (1, "c", uid(99)),
++            (1, "c", uid(1)),
++            (1, "c", Value::Integer(3u64.into())),
++            (2, "$classname", Value::String("OtherClass".into())),
++            (3, "NS.objects", Value::Array(vec![uid(5), uid(99)])),
++            (3, "NS.objects", Value::Array(vec![uid(5), uid(1)])),
++            (3, "NS.objects", Value::Array(Vec::new())),
++            (4, "$classname", Value::String("NSDictionary".into())),
++        ] {
++            let mut archive = Value::from_reader(std::io::Cursor::new(archived_identifier())).unwrap();
++            let objects = archive.as_dictionary_mut().unwrap()
++                .get_mut("$objects").unwrap().as_array_mut().unwrap();
++            objects[index].as_dictionary_mut().unwrap().insert(key.into(), value);
++            let mut bytes = Vec::new();
++            archive.to_writer_binary(&mut bytes).unwrap();
++            assert!(decode_aux_identifier(&AuxValue::Array(bytes)).is_none(), "object {index}, key {key}");
++        }
++        assert!(decode_aux_identifier(&AuxValue::Array(vec![0])).is_none());
++        assert!(decode_aux_identifier(&AuxValue::U32(1)).is_none());
++    }
++}
++
+ #[cfg(all(test, feature = "wda"))]
+ mod tests {
+     use super::wda_port_overrides_from_runner_environment;
+diff --git a/src/services/dvt/xctest/types.rs b/src/services/dvt/xctest/types.rs
+index 2dd2a2c6..1679cf8d 100644
+--- a/src/services/dvt/xctest/types.rs
++++ b/src/services/dvt/xctest/types.rs
+@@ -629,6 +629,42 @@ pub struct XCTTestIdentifier {
+ }
+ 
+ impl XCTTestIdentifier {
++    /// Decode the identifier's referenced component array from its object pool.
++    /// The generic archive decoder preserves unknown XCTest classes verbatim,
++    /// leaving `c` as a UID rather than resolving it to the array expected below.
++    pub(crate) fn from_archive_bytes(bytes: &[u8]) -> Option<Self> {
++        let archive = Value::from_reader(std::io::Cursor::new(bytes)).ok()?;
++        let archive = archive.as_dictionary()?;
++        let objects = archive.get("$objects")?.as_array()?;
++        let object = |reference: &Value| match reference {
++            Value::Uid(uid) => objects.get(usize::try_from(uid.get()).ok()?),
++            _ => None,
++        };
++        let class_name = |fields: &Dictionary| {
++            object(fields.get("$class")?)?
++                .as_dictionary()?
++                .get("$classname")?
++                .as_string()
++        };
++        let root = object(archive.get("$top")?.as_dictionary()?.get("root")?)?
++            .as_dictionary()?;
++        if class_name(root)? != "XCTTestIdentifier" {
++            return None;
++        }
++        let array = object(root.get("c")?)?.as_dictionary()?;
++        if !matches!(class_name(array)?, "NSArray" | "NSMutableArray") {
++            return None;
++        }
++        let components = array.get("NS.objects")?.as_array()?
++            .iter()
++            .map(|reference| object(reference)?.as_string().map(str::to_owned))
++            .collect::<Option<Vec<_>>>()?;
++        if components.is_empty() {
++            return None;
++        }
++        Some(Self { components })
++    }
++
+     /// Returns the test class name (first component).
+     pub fn test_class(&self) -> &str {
+         self.components.first().map(|s| s.as_str()).unwrap_or("")

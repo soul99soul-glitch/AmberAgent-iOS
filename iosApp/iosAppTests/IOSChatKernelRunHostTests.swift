@@ -1166,7 +1166,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertEqual(harness.log.terminalStatus(), terminalStatus.wireName)
     }
 
-    func testAuthorizedPhoneWindowDoesNotStartNativeOrBlockOrdinaryReply() async throws {
+    func testEnabledPhoneControlDoesNotStartNativeOrBlockOrdinaryReply() async throws {
         let suite = "KernelHostPhoneGate-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -1174,7 +1174,6 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         await phoneControl.refreshPreparation()
         phoneControl.enabled = true
         phoneControl.selectedBundleIDs = ["app.example.target"]
-        try phoneControl.authorizeNextTask(durationSeconds: 300)
         let harness = makeHarness()
         let provider = HostScriptedProvider(rounds: [textRound("hello")])
         let host = makeHost(harness: harness, provider: provider, phoneControl: phoneControl)
@@ -1188,41 +1187,41 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         let stopped = await waitForHostIdle(host)
         XCTAssertTrue(stopped)
         XCTAssertEqual(provider.callCount, 1)
-        XCTAssertTrue(phoneControl.hasPendingAuthorization)
+        XCTAssertTrue(phoneControl.enabled)
         XCTAssertEqual(harness.log.terminalStatus(), AgentRunStatus.completed.wireName)
         XCTAssertEqual(harness.messages.last?.toText(), "hello")
-        XCTAssertEqual(phoneControl.phase, .authorized)
+        XCTAssertEqual(phoneControl.phase, .idle)
         XCTAssertNil(phoneControl.ownerRunID)
         let gate = try XCTUnwrap(IOSBackgroundLifecycleLog.recentEntries.last { $0.line.contains("phoneControlRunGate") })
-        XCTAssertTrue(gate.line.contains("nextAuthorized=true declared=true claimed=true"))
+        XCTAssertTrue(gate.line.contains("declared=true claimed=true"))
         XCTAssertFalse(gate.line.contains("private_key"))
         await phoneControl.stopCurrent()
     }
 
-    func testClosingUnusedPhoneWindowDoesNotCancelOrdinaryProviderRun() async throws {
-        let suite = "KernelHostUnusedPhoneWindow-\(UUID().uuidString)"
+    func testDisablingUnusedPhoneControlDoesNotCancelOrdinaryProviderRun() async throws {
+        let suite = "KernelHostUnusedPhoneSwitch-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let phoneControl = IOSPhoneControlController(defaults: defaults, credentials: HostPhonePairingStore())
         await phoneControl.refreshPreparation()
         phoneControl.enabled = true
         phoneControl.selectedBundleIDs = ["app.example.target"]
-        try phoneControl.authorizeNextTask(durationSeconds: 300)
         let harness = makeHarness()
         let provider = HostBlockingProvider()
         let host = makeHost(harness: harness, provider: provider, phoneControl: phoneControl)
         let bridge = IosToolExposureBridge(tools: IOSPhoneControlToolCatalog.declarations)
         bridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
         host.start(providerSetting: harness.providerSetting, params: harness.params,
-                   inputDigest: "unused-phone-window", conversationId: harness.conversationId,
+                   inputDigest: "unused-phone-switch", conversationId: harness.conversationId,
                    uploadMessages: harness.messages, toolExposureBridge: bridge,
                    phoneControlUserInitiated: true)
         let providerStarted = await waitForCondition { provider.callCount == 1 }
         XCTAssertTrue(providerStarted)
         let runID = try XCTUnwrap(host.currentRunId)
         XCTAssertFalse(phoneControl.hasRequestedSession(runID: runID))
-        await phoneControl.stopCurrent()
-        XCTAssertFalse(phoneControl.hasPendingAuthorization)
+        phoneControl.enabled = false
+        await phoneControl.stop(runID: runID)
+        XCTAssertFalse(phoneControl.enabled)
         XCTAssertNil(phoneControl.ownerRunID)
         XCTAssertTrue(host.isRunning)
         XCTAssertNil(harness.log.terminalStatus())
@@ -1240,7 +1239,6 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             await phoneControl.refreshPreparation()
             phoneControl.enabled = true
             phoneControl.selectedBundleIDs = ["app.example.target"]
-            try phoneControl.authorizeNextTask(durationSeconds: 300)
 
             let harness = makeHarness()
             let provider = HostBlockingProvider()
@@ -1257,7 +1255,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             let started = await waitForCondition { provider.callCount == 1 }
             XCTAssertTrue(started)
             let runID = try XCTUnwrap(host.currentRunId)
-            XCTAssertTrue(phoneControl.claim(runID: runID, onExpiration: {}))
+            XCTAssertTrue(phoneControl.claim(runID: runID, onStop: {}))
             XCTAssertFalse(host.handoffCurrentGenerationToBackground(conversationStore: store, honorKeepAliveLease: true))
             host.handleKeepAliveExpiration(runId: "stale-run", applicationState: .background)
             XCTAssertTrue(phoneControl.statusText(runID: runID).contains("scope=app.example.target"))
@@ -1270,7 +1268,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
                 XCTAssertFalse(host.isRunning)
                 XCTAssertNil(harness.log.terminalStatus())
             } else {
-                XCTAssertFalse(phoneControl.hasPendingAuthorization)
+                XCTAssertTrue(phoneControl.enabled)
                 XCTAssertFalse(phoneControl.statusText(runID: runID).contains("scope="))
                 let stopped = await waitForHostIdle(host)
                 XCTAssertTrue(stopped)

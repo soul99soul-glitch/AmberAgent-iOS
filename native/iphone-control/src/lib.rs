@@ -2,9 +2,16 @@
 //! occur on the C caller thread. Pairing material is exported only through the
 //! explicit first-setup result API, never through status or logs.
 
+mod loopback_route;
+mod applications;
+mod direct_probe;
+#[cfg(all(test, target_vendor = "apple"))]
+mod stderr_tests;
+
 use std::{
     collections::BTreeMap,
     ffi::{CStr, CString, c_char},
+    io::Write,
     net::SocketAddr,
     sync::{Arc, Mutex},
     thread::JoinHandle,
@@ -76,6 +83,7 @@ struct Session {
     status: Mutex<Status>,
     started: Notify,
     pairing_result: Mutex<Option<String>>,
+    applications: Mutex<applications::CatalogResult>,
 }
 
 impl Session {
@@ -96,7 +104,15 @@ impl Session {
         if status.pair_verify_error.is_none() {
             status.pair_verify_error = current.pair_verify_error.clone();
         }
+        let event = (status.phase != current.phase || status.code != current.code)
+            .then_some((status.phase, status.code));
         *current = status;
+        drop(current);
+        // A detached console can reject writes. State and cancellation must not
+        // depend on logging; retain only fixed, non-secret metadata here.
+        if let Some((phase, code)) = event {
+            let _ = writeln!(std::io::stderr().lock(), "phoneControlNativeStatus phase={phase} code={code}");
+        }
     }
 
     fn stage(&self, phase: &'static str, message: &'static str) {
@@ -127,20 +143,47 @@ struct Config {
     token: String,
 }
 
+struct ApplicationsConfig {
+    pairing: Vec<u8>,
+    endpoint: SocketAddr,
+}
+
 enum Operation {
     Control(Config),
+    Applications(ApplicationsConfig),
     FirstPairing(SocketAddr),
+    HandshakeInspection(SocketAddr),
+    RoutedHandshakeInspection(SocketAddr),
+    LockdownInspection(SocketAddr),
 }
 
 impl Operation {
     async fn run(self, session: Arc<Session>) -> Result<(), Failure> {
         match self {
             Self::Control(config) => run_session(config, session).await,
+            Self::Applications(config) => run_applications(config, session).await,
             Self::FirstPairing(endpoint) => run_first_pairing(endpoint, session).await,
+            Self::HandshakeInspection(endpoint) => {
+                let (_remote, _) = open_pairing_channel(endpoint).await?;
+                session.set(Status::new("stopped", "handshake_ok", "开发服务首握手已接受，未验证配对或启动控制。"));
+                Ok(())
+            }
+            Self::RoutedHandshakeInspection(endpoint) => {
+                let stream = loopback_route::connect_using_current_route(endpoint).await?;
+                let (_remote, _) = greet_pairing_channel(stream).await?;
+                session.set(Status::new("stopped", "handshake_ok", "当前 VPN 路由已通过开发服务首握手，未验证配对或启动控制。"));
+                Ok(())
+            }
+            Self::LockdownInspection(endpoint) => {
+                direct_probe::inspect_lockdown(endpoint).await?;
+                session.set(Status::new("stopped", "lockdown_query_ok", "传统开发服务已回应类型查询，未验证配对或启动控制。"));
+                Ok(())
+            }
         }
     }
 }
 
+#[derive(Clone)]
 struct Failure {
     code: &'static str,
     message: &'static str,
@@ -197,6 +240,23 @@ pub unsafe extern "C" fn amber_iphone_control_start(
     start_operation(config.map(Operation::Control))
 }
 
+/// Reads installed application metadata without launching XCTest or an app.
+/// # Safety
+/// Pairing must be readable for pairing_length bytes. Non-null endpoint must
+/// be a NUL-terminated numeric IP:port. All input is copied before returning.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amber_iphone_control_apps_start(
+    pairing: *const u8, pairing_length: usize, endpoint: *const c_char,
+) -> *mut AmberIPhoneControlHandle {
+    let config = (|| unsafe {
+        Ok(ApplicationsConfig {
+            pairing: read_pairing(pairing, pairing_length)?,
+            endpoint: read_endpoint(endpoint, "10.7.0.1:49152")?,
+        })
+    })();
+    start_operation(config.map(Operation::Applications))
+}
+
 /// Explicit first setup only. Performs the documented iOS system consent flow;
 /// the verify-only control start API above never calls this function.
 /// # Safety
@@ -207,20 +267,57 @@ pub unsafe extern "C" fn amber_iphone_control_pairing_start(endpoint: *const c_c
     start_operation(endpoint.map(Operation::FirstPairing))
 }
 
+/// A single credential-free greeting, using the control-start transport.
+/// # Safety
+/// endpoint must be a NUL-terminated numeric IP:port. NULL is rejected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amber_iphone_control_inspect_handshake(endpoint: *const c_char) -> *mut AmberIPhoneControlHandle {
+    let endpoint = unsafe { read_endpoint(endpoint, "") };
+    start_operation(endpoint.map(Operation::HandshakeInspection))
+}
+
+/// Diagnostic greeting using the kernel-selected, uniquely matching up utun.
+/// Does not change production routing, start a VPN, or access pairing material.
+/// # Safety
+/// endpoint must be a NUL-terminated numeric IPv4:port. NULL is rejected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amber_iphone_control_inspect_routed_handshake(endpoint: *const c_char) -> *mut AmberIPhoneControlHandle {
+    let endpoint = unsafe { read_endpoint(endpoint, "") }.and_then(loopback_route::validate_routed_endpoint);
+    start_operation(endpoint.map(Operation::RoutedHandshakeInspection))
+}
+
+/// One credential-free QueryType to an explicit IPv4 lockdown endpoint.
+/// # Safety
+/// endpoint must be a NUL-terminated IPv4:62078 string. NULL is rejected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amber_iphone_control_inspect_lockdown(endpoint: *const c_char) -> *mut AmberIPhoneControlHandle {
+    let endpoint = unsafe { read_endpoint(endpoint, "") }.and_then(direct_probe::validate_endpoint);
+    start_operation(endpoint.map(Operation::LockdownInspection))
+}
+
 fn start_operation(operation: Result<Operation, Failure>) -> *mut AmberIPhoneControlHandle {
     let session = Arc::new(Session {
         status: Mutex::new(Status::new("connecting", "connecting", "正在连接本机开发服务。")),
         started: Notify::new(),
         pairing_result: Mutex::new(None),
+        applications: Mutex::new(applications::CatalogResult::Pending),
     });
     let (stop, mut stopped) = watch::channel(false);
     let mut handle = Box::new(AmberIPhoneControlHandle { session: session.clone(), stop, thread: None });
     match operation {
         Err(error) => session.failure(error),
         Ok(operation) => {
-            let timeout_message = match &operation {
-                Operation::Control(_) => "90 秒内未收到 runner 测试启动事件，请检查本机路由、开发服务与签名。",
-                Operation::FirstPairing(_) => "90 秒内未完成系统配对确认，本次准备已停止。",
+            let (timeout, timeout_message) = match &operation {
+                Operation::Control(_) => (STARTUP_TIMEOUT, "90 秒内未收到 runner 测试启动事件，请检查本机路由、开发服务与签名。"),
+                Operation::Applications(_) => (applications::QUERY_TIMEOUT, "30 秒内未完成本机应用列表查询，本次查询已停止。"),
+                Operation::FirstPairing(_) => (STARTUP_TIMEOUT, "90 秒内未完成系统配对确认，本次准备已停止。"),
+                Operation::HandshakeInspection(_) | Operation::RoutedHandshakeInspection(_) => (Duration::from_secs(8), "8 秒内未完成开发服务首握手，诊断已停止。"),
+                Operation::LockdownInspection(_) => (Duration::from_secs(8), "8 秒内未完成传统开发服务类型查询，诊断已停止。"),
+            };
+            let timeout_failure = if matches!(&operation, Operation::LockdownInspection(_)) {
+                direct_probe::timeout_failure(timeout_message)
+            } else {
+                Failure::new("startup_timeout", timeout_message)
             };
             let task_session = session.clone();
             let thread = std::thread::Builder::new().name("amber-iphone-control".into()).spawn(move || {
@@ -239,8 +336,8 @@ fn start_operation(operation: Result<Operation, Failure>) -> *mut AmberIPhoneCon
                                     Ok(())
                                 }
                                 result = operation.run(task_session.clone()) => result,
-                                _ = startup_deadline(&task_session.started, STARTUP_TIMEOUT) => {
-                                    Err(Failure::new("startup_timeout", timeout_message))
+                                _ = startup_deadline(&task_session.started, timeout) => {
+                                    Err(timeout_failure)
                                 }
                             }
                         })
@@ -290,15 +387,19 @@ unsafe fn read_config(
     pairing: *const u8, length: usize, endpoint: *const c_char,
     bundle: *const c_char, module: *const c_char, token: *const c_char,
 ) -> Result<Config, Failure> {
-    if pairing.is_null() || length == 0 || length > 1024 * 1024 {
-        return Err(Failure::new("invalid_pairing", "需要已配对的 RemotePairing 文件。"));
-    }
     Config {
-        pairing: unsafe { std::slice::from_raw_parts(pairing, length) }.to_vec(),
+        pairing: unsafe { read_pairing(pairing, length)? },
         endpoint: unsafe { read_endpoint(endpoint, "10.7.0.1:49152")? },
         bundle_id: unsafe { read_string(bundle)? }, module: unsafe { read_string(module)? },
         token: unsafe { read_string(token)? },
     }.validate()
+}
+
+unsafe fn read_pairing(pairing: *const u8, length: usize) -> Result<Vec<u8>, Failure> {
+    if pairing.is_null() || length == 0 || length > 1024 * 1024 {
+        return Err(Failure::new("invalid_pairing", "需要已配对的 RemotePairing 文件。"));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(pairing, length) }.to_vec())
 }
 
 /// # Safety
@@ -311,6 +412,31 @@ pub unsafe extern "C" fn amber_iphone_control_status_json(handle: *const AmberIP
         unsafe { &*handle }.session.status.lock().unwrap_or_else(|p| p.into_inner()).clone()
     };
     CString::new(serde_json::to_string(&status).expect("status serializes")).expect("JSON has no NUL").into_raw()
+}
+
+/// Copies only normalized app metadata or a fixed error; never raw Info.plist.
+/// Reads the current handle's cache and never starts a connection. The same
+/// result shape is used for standalone queries and a running control session.
+/// # Safety
+/// Handle must be valid and not concurrently freed. Free the result exactly
+/// once using amber_iphone_control_string_free. NULL yields a fixed failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amber_iphone_control_apps_copy_json(handle: *const AmberIPhoneControlHandle) -> *mut c_char {
+    let result = if let Some(handle) = unsafe { handle.as_ref() } {
+        let result = handle.session.applications.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        if matches!(result, applications::CatalogResult::Pending) {
+            let status = handle.session.status.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            if matches!(status.phase, "failed" | "stopped") {
+                applications::CatalogResult::Failed { error: status }
+            } else { result }
+        } else { result }
+    } else {
+        applications::CatalogResult::Failed {
+            error: Status::new("failed", "invalid_handle", "应用列表查询不存在。"),
+        }
+    };
+    CString::new(serde_json::to_string(&result).expect("catalog serializes"))
+        .expect("JSON has no NUL").into_raw()
 }
 
 /// Copies private pairing XML only after successful explicit first setup.
@@ -383,6 +509,8 @@ struct Listener(Arc<Session>);
 
 impl XCUITestListener for Listener {
     async fn test_case_did_start(&mut self, _class: &str, method: &str) -> Result<(), IdeviceError> {
+        let _ = writeln!(std::io::stderr().lock(), "phoneControlNativeTestEvent event=test_case_started method_matches={}",
+            method == "testServe" || method == "testServe()");
         if method == "testServe" || method == "testServe()" {
             self.0.stage("running", "Runner 测试已启动，等待签名接口验证。");
             self.0.started.notify_one();
@@ -409,8 +537,7 @@ fn configure_runner(cfg: &mut TestConfig, module: &str, token: &str) -> Result<(
 }
 
 async fn run_first_pairing(endpoint: SocketAddr, session: Arc<Session>) -> Result<(), Failure> {
-    let stream = tokio::net::TcpStream::connect(endpoint).await
-        .map_err(|e| Failure::device("connection_failed", "无法连接本机配对服务。", e.into()))?;
+    let stream = loopback_route::connect(endpoint, "connection_failed", "无法连接本机配对服务。").await?;
     // Per-attempt identity avoids replacing another installation's record when
     // RpPairingFile::generate derives its identifier from the advertised name.
     let name = format!("Amber-{}", uuid::Uuid::new_v4());
@@ -444,24 +571,45 @@ async fn run_first_pairing(endpoint: SocketAddr, session: Arc<Session>) -> Resul
     Ok(())
 }
 
-async fn run_session(config: Config, session: Arc<Session>) -> Result<(), Failure> {
-    let mut pairing = RpPairingFile::from_bytes(&config.pairing)
-        .map_err(|e| Failure::device("invalid_pairing", "无法读取 RemotePairing 文件；普通 lockdown 配对文件不适用于此入口。", e))?;
-    let stream = tokio::net::TcpStream::connect(config.endpoint).await
-        .map_err(|e| Failure::device("connection_failed", "无法连接本机开发服务，请检查 loopback 路由和服务端口。", e.into()))?;
-    session.stage("pairing", "正在验证已有配对。");
+async fn open_pairing_channel(endpoint: SocketAddr) -> Result<(
+    RemotePairingClient<RpPairingSocket<tokio::net::TcpStream>>,
+    Arc<Mutex<Option<&'static str>>>,
+), Failure> {
+    let stream = loopback_route::connect(endpoint, "connection_failed", "无法连接本机开发服务，请检查 loopback 路由和服务端口。").await?;
+    greet_pairing_channel(stream).await
+}
+
+async fn greet_pairing_channel(stream: tokio::net::TcpStream) -> Result<(
+    RemotePairingClient<RpPairingSocket<tokio::net::TcpStream>>,
+    Arc<Mutex<Option<&'static str>>>,
+), Failure> {
     let stage = Arc::new(Mutex::new(None));
     let mut remote = RemotePairingClient::new(RpPairingSocket::new_with_diagnostics(stream, stage.clone()), "Amber");
     remote.attempt_pair_verify().await
         .map_err(|e| Failure::transport("pairing_handshake_failed", "开发服务配对握手失败。", e, &stage))?;
+    Ok((remote, stage))
+}
+
+struct DevelopmentConnection {
+    remote: RemotePairingClient<RpPairingSocket<tokio::net::TcpStream>>,
+    adapter: idevice::tcp::handle::AdapterHandle,
+    handshake: RsdHandshake,
+}
+
+async fn connect_development_services(
+    pairing_bytes: &[u8], endpoint: SocketAddr, session: &Session,
+) -> Result<DevelopmentConnection, Failure> {
+    let mut pairing = RpPairingFile::from_bytes(pairing_bytes)
+        .map_err(|e| Failure::device("invalid_pairing", "无法读取 RemotePairing 文件；普通 lockdown 配对文件不适用于此入口。", e))?;
+    session.stage("pairing", "正在验证已有配对。");
+    let (mut remote, stage) = open_pairing_channel(endpoint).await?;
     // Do not use connect(): it silently falls back to creating a new pairing.
     remote.validate_pairing(&mut pairing).await
         .map_err(|e| Failure::transport("pairing_rejected", "设备拒绝已有配对，请重新准备 RemotePairing 文件。", e, &stage))?;
     session.stage("tunnel", "正在建立本机开发隧道。");
     let port = remote.create_tcp_listener().await
         .map_err(|e| Failure::device("tunnel_rejected", "设备未允许建立开发隧道。", e))?;
-    let tunnel_stream = tokio::net::TcpStream::connect(SocketAddr::new(config.endpoint.ip(), port)).await
-        .map_err(|e| Failure::device("tunnel_connection_failed", "无法连接开发隧道。", e.into()))?;
+    let tunnel_stream = loopback_route::connect(SocketAddr::new(endpoint.ip(), port), "tunnel_connection_failed", "无法连接开发隧道。").await?;
     let tunnel = connect_tls_psk_tunnel_native(tunnel_stream, remote.encryption_key()).await
         .map_err(|e| Failure::device("tunnel_handshake_failed", "开发隧道握手失败。", e))?;
     let client_ip = tunnel.info.client_address.parse()
@@ -473,11 +621,36 @@ async fn run_session(config: Config, session: Arc<Session>) -> Result<(), Failur
     let mut adapter = idevice::tcp::adapter::Adapter::new(Box::new(tunnel.into_inner()), client_ip, server_ip);
     adapter.set_mss(mtu.saturating_sub(60));
     let mut adapter = adapter.to_async_handle();
-    session.stage("discovering", "正在查询开发服务与已安装 runner。");
+    session.stage("discovering", "正在查询本机开发服务。");
     let stream = adapter.connect(rsd_port).await
         .map_err(|_| Failure::new("rsd_connection_failed", "无法连接开发服务目录。"))?;
-    let mut handshake = RsdHandshake::new(stream).await
+    let handshake = RsdHandshake::new(stream).await
         .map_err(|e| Failure::device("rsd_handshake_failed", "开发服务目录握手失败。", e))?;
+    Ok(DevelopmentConnection { remote, adapter, handshake })
+}
+
+async fn cache_applications(session: &Session, installation: &mut InstallationProxyClient) -> Result<(), Failure> {
+    let result = applications::query(installation).await;
+    *session.applications.lock().unwrap_or_else(|p| p.into_inner()) = applications::CatalogResult::from_result(&result);
+    result.map(|_| ())
+}
+
+async fn run_applications(config: ApplicationsConfig, session: Arc<Session>) -> Result<(), Failure> {
+    let DevelopmentConnection { remote, mut adapter, mut handshake } =
+        connect_development_services(&config.pairing, config.endpoint, &session).await?;
+    let mut installation = InstallationProxyClient::connect_rsd(&mut adapter, &mut handshake).await
+        .map_err(|e| Failure::device("installation_service_failed", "无法连接本机应用查询服务。", e))?;
+    cache_applications(&session, &mut installation).await?;
+    drop(installation);
+    drop(adapter);
+    drop(remote);
+    session.set(Status::new("stopped", "apps_ready", "已读取本机应用列表。"));
+    Ok(())
+}
+
+async fn run_session(config: Config, session: Arc<Session>) -> Result<(), Failure> {
+    let DevelopmentConnection { remote, mut adapter, mut handshake } =
+        connect_development_services(&config.pairing, config.endpoint, &session).await?;
     let mut lockdown = LockdownClient::connect_rsd(&mut adapter, &mut handshake).await
         .map_err(|e| Failure::device("lockdown_rsd_failed", "无法通过已验证隧道读取设备信息。", e))?;
     let version = lockdown.get_value(Some("ProductVersion"), None).await
@@ -489,6 +662,9 @@ async fn run_session(config: Config, session: Arc<Session>) -> Result<(), Failur
         .map_err(|e| Failure::device("installation_service_failed", "无法查询 runner 安装信息。", e))?;
     let mut cfg = TestConfig::from_installation_proxy(&mut installation, &config.bundle_id, None).await
         .map_err(|e| Failure::device("runner_unavailable", "Runner 未安装、签名不可用或安装信息不完整。", e))?;
+    // The running session serves this snapshot without opening another tunnel.
+    // Catalog failure is retained for callers, not promoted to a control failure.
+    let _ = cache_applications(&session, &mut installation).await;
     drop(installation);
     configure_runner(&mut cfg, &config.module, &config.token)?;
     session.stage("starting", "正在启动本机 XCTest 控制会话。");
@@ -609,7 +785,7 @@ mod tests {
 
     #[test]
     fn cancellation_blocks_late_running_callback() {
-        let session = Session { status: Mutex::new(Status::new("starting", "starting", "")), started: Notify::new(), pairing_result: Mutex::new(None) };
+        let session = Session { status: Mutex::new(Status::new("starting", "starting", "")), started: Notify::new(), pairing_result: Mutex::new(None), applications: Mutex::new(applications::CatalogResult::Pending) };
         session.stage("stopping", "");
         session.stage("running", "");
         assert_eq!(session.status.lock().unwrap().phase, "stopping");
@@ -625,6 +801,71 @@ mod tests {
         startup_deadline(&started, Duration::from_millis(1)).await;
         started.notify_one();
         assert!(tokio::time::timeout(Duration::from_millis(10), startup_deadline(&started, Duration::from_millis(1))).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn handshake_inspection_stops_after_greeting_without_pairing_or_tunnel() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
+        let handle = unsafe { amber_iphone_control_inspect_handshake(endpoint.as_ptr()) };
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
+        let mut header = [0u8; 11];
+        stream.read_exact(&mut header).await.unwrap();
+        let mut body = vec![0; u16::from_be_bytes([header[9], header[10]]) as usize];
+        stream.read_exact(&mut body).await.unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(request["message"]["plain"]["_0"]["request"]["_0"]["handshake"]["_0"]["hostOptions"]["attemptPairVerify"], true);
+        let response = br#"{"message":{"plain":{"_0":{"response":{"_1":{"handshake":{"_0":{}}}}}}}}"#;
+        stream.write_all(b"RPPairing").await.unwrap();
+        stream.write_all(&(response.len() as u16).to_be_bytes()).await.unwrap();
+        stream.write_all(response).await.unwrap();
+        let mut extra = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut extra)).await.unwrap().unwrap();
+        assert!(extra.is_empty(), "diagnosis must not proceed to verify, setup or tunnel");
+        unsafe {
+            let status = (&*handle).session.status.lock().unwrap().clone();
+            assert_eq!(status.phase, "stopped");
+            assert_eq!(status.code, "handshake_ok");
+            assert!(amber_iphone_control_pairing_copy_plist(handle).is_null());
+            amber_iphone_control_free(handle);
+        }
+    }
+
+    #[test]
+    fn routed_handshake_inspection_rejects_invalid_input_before_starting_io() {
+        for input in [None, Some(""), Some("localhost:49152"), Some("[::1]:49152"), Some("10.7.0.1:0")] {
+            let endpoint = input.map(|text| CString::new(text).unwrap());
+            let pointer = endpoint.as_ref().map_or(std::ptr::null(), |endpoint| endpoint.as_ptr());
+            unsafe {
+                let handle = amber_iphone_control_inspect_routed_handshake(pointer);
+                assert!((*handle).thread.is_none());
+                assert_eq!((&*handle).session.status.lock().unwrap().code, "invalid_endpoint");
+                amber_iphone_control_free(handle);
+            }
+        }
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[tokio::test]
+    async fn routed_handshake_inspection_cannot_fall_back_to_a_loopback_tcp_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
+        let handle = unsafe { amber_iphone_control_inspect_routed_handshake(endpoint.as_ptr()) };
+        let status = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let status = unsafe { &*handle }.session.status.lock().unwrap().clone();
+                if matches!(status.phase, "stopped" | "failed") { break status; }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("route rejection must terminate");
+        assert_eq!(status.phase, "failed");
+        assert_eq!(status.code, "loopback_route_unavailable");
+        assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
+        unsafe {
+            assert!(amber_iphone_control_pairing_copy_plist(handle).is_null());
+            amber_iphone_control_free(handle);
+        }
     }
 
     #[tokio::test]
@@ -648,6 +889,67 @@ mod tests {
         }
         let eof = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await.unwrap().unwrap();
         assert_eq!(eof, 0, "free closed pending I/O rather than orphaning protocol tasks");
+    }
+
+    #[test]
+    fn app_query_abi_distinguishes_invalid_input_pending_empty_and_failure() {
+        unsafe fn result(handle: *const AmberIPhoneControlHandle) -> serde_json::Value {
+            let text = unsafe { amber_iphone_control_apps_copy_json(handle) };
+            let value = serde_json::from_str(unsafe { CStr::from_ptr(text) }.to_str().unwrap()).unwrap();
+            unsafe { amber_iphone_control_string_free(text) };
+            value
+        }
+        unsafe {
+            let invalid = amber_iphone_control_apps_start(std::ptr::null(), 0, std::ptr::null());
+            assert!((*invalid).thread.is_none());
+            assert_eq!(result(invalid)["state"], "failed");
+            assert_eq!(result(invalid)["error"]["code"], "invalid_pairing");
+            assert!(amber_iphone_control_pairing_copy_plist(invalid).is_null());
+            amber_iphone_control_free(invalid);
+        }
+
+        let (stop, _) = watch::channel(false);
+        let session = Arc::new(Session {
+            status: Mutex::new(Status::new("starting", "starting", "")),
+            started: Notify::new(), pairing_result: Mutex::new(None),
+            applications: Mutex::new(applications::CatalogResult::Pending),
+        });
+        let handle = Box::into_raw(Box::new(AmberIPhoneControlHandle { session: session.clone(), stop, thread: None }));
+        unsafe {
+            assert_eq!(result(handle)["state"], "pending");
+            *session.applications.lock().unwrap() = applications::CatalogResult::Ready { apps: vec![] };
+            assert_eq!(result(handle)["state"], "ready");
+            assert_eq!(result(handle)["apps"], serde_json::json!([]));
+            *session.applications.lock().unwrap() = applications::CatalogResult::Failed {
+                error: Status::new("failed", "applications_query_failed", "无法读取本机应用列表。"),
+            };
+            assert_eq!(result(handle)["state"], "failed");
+            assert_eq!(result(handle)["error"]["code"], "applications_query_failed");
+            assert_eq!(session.status.lock().unwrap().phase, "starting");
+            amber_iphone_control_free(handle);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_app_query_joins_and_closes_its_pending_connection() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
+        let pairing = RpPairingFile::generate("AmberCatalogUnitTest").to_bytes();
+        let handle = unsafe { amber_iphone_control_apps_start(pairing.as_ptr(), pairing.len(), endpoint.as_ptr()) };
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
+        let mut bytes = [0u8; 4096];
+        assert!(tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await.unwrap().unwrap() > 0);
+        unsafe {
+            let text = amber_iphone_control_apps_copy_json(handle);
+            let result: serde_json::Value = serde_json::from_str(CStr::from_ptr(text).to_str().unwrap()).unwrap();
+            assert_eq!(result["state"], "pending");
+            amber_iphone_control_string_free(text);
+            assert!(amber_iphone_control_pairing_copy_plist(handle).is_null());
+            amber_iphone_control_stop(handle);
+            amber_iphone_control_free(handle);
+        }
+        assert_eq!(tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await.unwrap().unwrap(), 0);
     }
 
     #[tokio::test]
@@ -804,6 +1106,7 @@ mod tests {
         let session = Arc::new(Session {
             status: Mutex::new(Status::new("waiting_for_consent", "waiting_for_consent", "")),
             started: Notify::new(), pairing_result: Mutex::new(Some("<plist>private-test-marker</plist>".into())),
+            applications: Mutex::new(applications::CatalogResult::Pending),
         });
         let handle = Box::into_raw(Box::new(AmberIPhoneControlHandle { session: session.clone(), stop, thread: None }));
         unsafe {

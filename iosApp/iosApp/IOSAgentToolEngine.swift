@@ -33,6 +33,9 @@ public enum IOSAgentToolOutcome: Sendable {
     /// Tool produced structured parts (e.g. an image part). Engine wraps them
     /// as the tool's output list.
     case filledParts([UIMessagePart])
+    /// Tool returned fresh context after human control. Preserve its output,
+    /// resolve the rest of this batch as not sent, and let the provider replan.
+    case replanRequired([UIMessagePart])
     /// Tool needs foreground user approval before it can run. The engine
     /// pauses and surfaces this so the caller can resume after approval.
     case needsApproval(String)
@@ -2142,8 +2145,18 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         var outputs: [(UIMessagePart.Tool, [UIMessagePart])] = []
         var firstApproval: IOSPendingToolApproval?
         var guardStopped = false
+        var requiresReplan = false
 
         for tool in tools {
+            if requiresReplan {
+                // These calls were planned before the human changed the state.
+                // Fill them before any exposure, guard, or ledger hook can run.
+                outputs.append((tool, [UIMessagePart.Text(
+                    text: toolReplanRequiredJSON(toolName: tool.toolName),
+                    metadata: nil
+                )]))
+                continue
+            }
             if firstApproval != nil {
                 // Approval pauses this batch. The caller owns whether and when
                 // the remaining calls resume after the user decides.
@@ -2224,7 +2237,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 ) {
                 case .ready:
                     break
-                case .replay(let resultPayload):
+                case .replay(let resultPayload, let replayRequiresReplan):
+                    requiresReplan = replayRequiresReplan
                     if let replayed = Self.decodeToolOutput(resultPayload) {
                         outputs.append((tool, replayed))
                     } else {
@@ -2307,6 +2321,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             case .filledParts(let parts):
                 outcome = "completed"
                 resultParts = parts
+            case .replanRequired(let parts):
+                outcome = "completed_requires_replan"
+                resultParts = parts
+                requiresReplan = true
             case .needsApproval(let reason):
                 outcome = "paused_for_approval"
                 firstApproval = IOSPendingToolApproval(
@@ -2407,7 +2425,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             outputs: outputs,
             pendingApproval: firstApproval,
             guardStopped: guardStopped,
-            wasCancelled: false,
+            wasCancelled: requiresReplan && Task.isCancelled,
             durabilityFailureMessage: nil,
             toolOutcomeUnknown: nil
         )
@@ -2511,6 +2529,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
 
     private func toolLoopGuardSkippedJSON(toolName: String) -> String {
         "{\"ok\":false,\"error\":\"tool_not_executed\",\"tool\":\"\(sanitized(toolName))\",\"reason\":\"batch stopped by repeated tool-call guard\"}"
+    }
+
+    private func toolReplanRequiredJSON(toolName: String) -> String {
+        "{\"ok\":false,\"outcome\":\"not_sent\",\"reason_code\":\"replan_required\",\"tool\":\"\(sanitized(toolName))\",\"message\":\"Human control changed the state; replan from the fresh tool result before sending another action.\"}"
     }
 
     /// Structured error for a tool call whose `input` failed `parseInputStrict()`

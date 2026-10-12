@@ -115,3 +115,49 @@
 "agent.activity.doneCount.readingWeb" = "读了 %ld 个网页";
 "agent.activity.doneCount.readingDocument" = "读了 %ld 个文件";
 "agent.activity.doneCount.generatingImage" = "出了 %ld 张图";
+
+// Phone control stages contain no app names, contacts, or input text.
+"agent.activity.phone.checkingStatus" = "正在检查手机状态";
+"agent.activity.phone.compact.checkingStatus" = "查状态";
+"agent.activity.phone.connecting" = "正在连接手机";
+"agent.activity.phone.compact.connecting" = "连接";
+"agent.activity.phone.observing" = "正在读取手机界面";
+"agent.activity.phone.compact.observing" = "观察";
+"agent.activity.phone.openingApp" = "正在打开应用";
+"agent.activity.phone.compact.openingApp" = "开应用";
+"agent.activity.phone.tapping" = "正在点击控件";
+"agent.activity.phone.compact.tapping" = "点击";
+"agent.activity.phone.typing" = "正在输入文字";
+"agent.activity.phone.compact.typing" = "输入";
+"agent.activity.phone.swiping" = "正在滑动界面";
+"agent.activity.phone.compact.swiping" = "滑动";
+"agent.activity.phone.listingApps" = "正在查找本机应用";
+"agent.activity.phone.compact.listingApps" = "查应用";
+"agent.activity.phone.addingApp" = "正在添加允许的应用";
+"agent.activity.phone.compact.addingApp" = "加应用";
+"agent.activity.phone.waitingForModel" = "等待模型继续";
+"agent.activity.phone.compact.waitingForModel" = "等模型";
+"agent.activity.phone.stopping" = "正在停止手机控制";
+"agent.activity.phone.compact.stopping" = "停止中";
+"agent.activity.phone.stopped" = "手机控制已停止";
+"agent.activity.phone.compact.stopped" = "已停止";
+"agent.activity.phone.failed" = "手机操作步骤失败";
+"agent.activity.phone.compact.failed" = "步骤失败";
+"agent.activity.phone.outcomeUnknown" = "手机动作结果待确认";
+"agent.activity.phone.compact.outcomeUnknown" = "待核对";
+"agent.activity.phone.verifying" = "核对操作结果";
+"agent.activity.phone.compact.verifying" = "核对";
+"agent.activity.phone.deciding" = "选择下一步";
+"agent.activity.phone.compact.deciding" = "决策";
+"agent.activity.phone.waitingForUI" = "等待界面更新";
+"agent.activity.phone.compact.waitingForUI" = "等界面";
+
+// Human takeover states contain no task or app content.
+"agent.activity.phone.pausing" = "正在交给你操作";
+"agent.activity.phone.compact.pausing" = "接手中";
+"agent.activity.phone.paused" = "你正在操作";
+"agent.activity.phone.compact.paused" = "你来操作";
+"agent.activity.phone.resuming" = "重新读取界面后继续";
+"agent.activity.phone.compact.resuming" = "恢复中";
+"agent.activity.control.humanTakeover" = "我来操作";
+"agent.activity.control.resumeAutomation" = "继续";

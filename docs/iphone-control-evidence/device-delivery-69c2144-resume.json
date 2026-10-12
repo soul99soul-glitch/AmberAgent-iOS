@@ -1,0 +1,225 @@
+{
+  "recorded_at_utc": "2026-10-10T13:52:55.639660+00:00",
+  "source_commit": "69c2144db9838e7192d137d18572588539f1dee4",
+  "scope": "Continue formal Amber device delivery and one bounded self-discovery observation; no product source changes",
+  "device": {
+    "model": "iPhone 18 Pro",
+    "os_version": "27.2",
+    "os_build": "24B5089g"
+  },
+  "connectivity": {
+    "transport": "wired",
+    "paired": true,
+    "developer_mode_enabled": true,
+    "passcode_required": false,
+    "ddi_is_usable": true,
+    "ddi_content_is_compatible": true,
+    "coredevice_4016_reproduced": false,
+    "cause_of_prior_4016": "not established; current connection recovered without changing trust, VPN or Developer Mode"
+  },
+  "build": {
+    "build_exit_code": 0,
+    "strict_deep_signature_passed": true,
+    "bundle_id": "app.amber.ios",
+    "team": "TY4JTL3V2M",
+    "app_group": "group.app.amber.ios.experimental-gpl.watchkit",
+    "current_device_in_profile": true,
+    "profile_expiration_utc": "2027-09-30T09:52:05Z",
+    "executable_sha256": "794efc50945fa5fcf57e0f15e4e04487c92a5d000e0c0155c4741d5f017dabba",
+    "bonjour_service_declared": true,
+    "diagnostic_launch_argument_present": true,
+    "app_path": "iosApp/build/P1ResumeDevice/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+    "reason": "Recorded P1Device artifact absent in current checkout; another cached Release executable had a different fingerprint, so rebuilt current source",
+    "log": "build/p1-resume-20261010/device-build.log"
+  },
+  "installation": {
+    "exit_code": 0,
+    "installed": true,
+    "existing_app_updated_in_place": true,
+    "uninstall_performed": false,
+    "bundle_path_verified_against_running_process": true,
+    "evidence": "build/p1-resume-20261010/install.json"
+  },
+  "data_preservation": {
+    "conversations": {
+      "before": 350,
+      "after": 350,
+      "missing": 0,
+      "added": 0,
+      "size_changed": 0
+    },
+    "app-group": {
+      "before": 1,
+      "after": 1,
+      "missing": 0,
+      "added": 0,
+      "size_changed": 0
+    },
+    "conversations_after_launch": {
+      "before": 350,
+      "after": 350,
+      "missing": 0,
+      "added": 0,
+      "size_changed": 2
+    },
+    "message_bodies_read": false,
+    "after_launch_size_changes_cause": "not established; two existing entries changed size after launch; no missing files",
+    "app_group_check_scope": "top-level entry names and sizes only"
+  },
+  "self_discovery": {
+    "formal_app_launched": true,
+    "diagnostic_pid": 41078,
+    "ready": true,
+    "published": true,
+    "stopped": true,
+    "stop_reason": "deadline",
+    "limit_seconds": 60,
+    "inbound_events": 0,
+    "system_pairing_page_confirmed": false,
+    "system_discovery_verdict": "not verified; no response was received to the manual-navigation request, and screenshots did not establish the pairing page",
+    "background_survival_verdict": "not verified; published and stopped events both report app=active",
+    "settings_launch_exit_code": 0,
+    "console_exit_code": 2,
+    "console_timeout_seconds": 72,
+    "console_exit_explanation": "devicectl console reached its observation timeout after the complete ready/published/deadline sequence; this is not an exit-0 console run",
+    "metadata": [
+      "phoneControlSelfDiscoveryReady | app=inactive bgRemaining=unlimited",
+      "phoneControlSelfDiscoveryPublished | app=active bgRemaining=unlimited",
+      "phoneControlSelfDiscoveryStopped | app=active bgRemaining=unlimited | reason=deadline"
+    ],
+    "metadata_evidence": "build/p1-resume-20261010/discovery-result.json",
+    "raw_console_saved": false,
+    "pairing_bytes_read_or_written": false,
+    "pairing_material_saved": false,
+    "temporary_advertisement_still_running": false
+  },
+  "restored_normal_launch": {
+    "exit_code": 0,
+    "pid": 41091,
+    "diagnostic_arguments": [],
+    "running_executable_matches_new_installation": true,
+    "evidence": "build/p1-resume-20261010/normal-launch.json"
+  },
+  "tooling_failures": [
+    {
+      "operation": "first diagnostic launch command",
+      "exit_code": 64,
+      "result": "CLI parsing rejected the dash-prefixed app argument before launch; added the required -- argument separator"
+    },
+    {
+      "operation": "first process query filter",
+      "result": "CoreDevice rejected CONTAINS on URL-valued executable; a read-only --search query subsequently verified the actual process path"
+    }
+  ],
+  "validation_boundary": {
+    "product_source_modified": false,
+    "unit_tests_rerun": false,
+    "unit_test_note": "No implementation change; reused prior source-test record, performed new signed build and device checks",
+    "runner_reinstalled_or_started": false,
+    "probe_or_target_installed": false,
+    "mac_xctest_or_model_loop_started": false,
+    "external_message_attempted": false,
+    "raw_screenshots_retained": false,
+    "git_commit_or_push_performed": false
+  },
+  "phone_control_accepted": false,
+  "unaccepted": [
+    "system discovery and same-device inbound connection",
+    "phone-owned pair verification",
+    "phone-owned XCTest launch",
+    "signed status and unsigned rejection",
+    "cross-app tree/action/new-tree",
+    "background multi-turn control",
+    "restart recovery"
+  ],
+  "next": "User opens Settings > Privacy & Security > Developer Mode and confirms the pairing entry; then start a fresh bounded discovery window and observe only Amber 同机验证. Do not repeat the external-message task or interpret no inbound event without the system page as failed discovery.",
+  "navigation_reference": "https://github.com/odometer112/locus/blob/main/README.md#how-it-works",
+  "user_supplied_failure_followup": {
+    "evidence_source": "Two user-provided screenshots; original attachments retained by user platform, not copied into repository",
+    "displayed_device_time": "22:12",
+    "raw_tool_result": {
+      "tool": "phone_observe",
+      "arguments": {
+        "max_nodes": 200
+      },
+      "ok": false,
+      "status": "failed",
+      "code": "phone_control_start_failed",
+      "native_phase": "pairing_handshake_failed",
+      "native_error_code": 1,
+      "subcode": 0,
+      "transport_stage": "read_magic",
+      "io_kind": "ConnectionReset",
+      "os_code": 54,
+      "outcome": "not_sent",
+      "retry_safe": false
+    },
+    "chat_summary_report": {
+      "evidence_level": "assistant summary visible in second screenshot; raw phone_status result not supplied",
+      "phase": "authorized",
+      "remaining_seconds_approximate": 285,
+      "claimed_no_target_launch_or_message": true
+    },
+    "source_verified_interpretation": "run_session fails in attempt_pair_verify before validate_pairing, tunnel or XCTest; read_exact of response magic was interrupted by reset. This does not establish invalid/expired pairing material or explain why the peer reset.",
+    "unsupported_remediation_in_chat_summary": [
+      "renew the authorization window as a fix for this handshake reset",
+      "manually open the target app as a fix for this handshake reset"
+    ],
+    "device_experiments_this_followup": false,
+    "new_discovery_window_started": false,
+    "next": "Wait for system Developer Mode pairing page confirmation before a fresh bounded discovery test; do not repeat an external-message task."
+  },
+  "system_record_and_second_discovery_followup": {
+    "user_screenshot_evidence": {
+      "system_record": {
+        "displayed_device_time": "22:17",
+        "displayed_paired_at": "2026-10-10 14:52",
+        "helper_identity_format_matches": true,
+        "identity_timestamp_in_asia_shanghai": "2026-10-10T14:52:35.948644+08:00",
+        "interpretation": "Name and timestamp match the previous USB initialization helper identity. Existing system trust record is visible; this does not verify current phone-owned protocol use."
+      },
+      "amber_settings": {
+        "displayed_device_time": "22:19",
+        "pairing_file_saved_label_visible": true,
+        "service_port": 49152,
+        "service_families": [
+          "ipv4",
+          "ipv6"
+        ],
+        "service_address_matches_this_phone_label_visible": true,
+        "system_nearby_host_list_visible": false
+      }
+    },
+    "bounded_discovery": {
+      "started_at_utc": "2026-10-10T14:18:50.287056+00:00",
+      "console_exit_code": 2,
+      "console_timeout_seconds": 72,
+      "metadata": [
+        "phoneControlSelfDiscoveryReady | app=active bgRemaining=unlimited",
+        "phoneControlSelfDiscoveryPublished | app=active bgRemaining=unlimited",
+        "phoneControlSelfDiscoveryStopped | app=active bgRemaining=unlimited | reason=deadline"
+      ],
+      "raw_console_saved": false,
+      "pairing_bytes_read_or_written": false,
+      "mac_xctest_or_model_loop_started": false,
+      "no_activate_launch_option": true,
+      "ready": true,
+      "published": true,
+      "stop_reason": "deadline",
+      "inbound_events": 0,
+      "system_host_list_confirmed_during_window": false,
+      "system_discovery_verdict": "inconclusive; supplied followup showed Amber settings, not the system host list",
+      "background_survival_verified": false,
+      "temporary_service_stopped": true,
+      "evidence": "build/p1-resume-20261010/system-discovery-2217/discovery-result.json"
+    },
+    "constraints": {
+      "existing_pairing_records_unchanged": true,
+      "credentials_not_read_or_written": true,
+      "new_pairing_not_attempted": true,
+      "external_message_not_attempted": true,
+      "screenshots_not_copied_to_repository": true
+    },
+    "next": "Wait for the parent list of the shown system pairing-record detail page; confirm the actual nearby-host entry before another bounded discovery window."
+  }
+}

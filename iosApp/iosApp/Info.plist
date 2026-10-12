@@ -11,6 +11,7 @@
 		<string>com.apple.developer.icloud-container-identifiers</string>
 		<string>com.apple.developer.icloud-services</string>
 		<string>com.apple.developer.journal.allow</string>
+		<string>com.apple.developer.networking.networkextension</string>
 		<string>com.apple.developer.usernotifications.time-sensitive</string>
 		<string>com.apple.developer.weatherkit</string>
 		<string>com.apple.security.application-groups</string>
@@ -19,6 +20,7 @@
 	<array>
 		<string>aps-environment</string>
 		<string>com.apple.developer.applesignin</string>
+		<string>com.apple.developer.networking.networkextension</string>
 		<string>com.apple.security.application-groups</string>
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>

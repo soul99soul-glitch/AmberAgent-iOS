@@ -115,3 +115,49 @@
 "agent.activity.doneCount.readingWeb" = "Страниц: %ld";
 "agent.activity.doneCount.readingDocument" = "Файлов: %ld";
 "agent.activity.doneCount.generatingImage" = "Картинок: %ld";
+
+// Phone control stages contain no app names, contacts, or input text.
+"agent.activity.phone.checkingStatus" = "Проверка телефона";
+"agent.activity.phone.compact.checkingStatus" = "Проверка";
+"agent.activity.phone.connecting" = "Подключение к телефону";
+"agent.activity.phone.compact.connecting" = "Связь";
+"agent.activity.phone.observing" = "Чтение экрана телефона";
+"agent.activity.phone.compact.observing" = "Экран";
+"agent.activity.phone.openingApp" = "Открытие приложения";
+"agent.activity.phone.compact.openingApp" = "Открытие";
+"agent.activity.phone.tapping" = "Нажатие на элемент";
+"agent.activity.phone.compact.tapping" = "Нажатие";
+"agent.activity.phone.typing" = "Ввод текста";
+"agent.activity.phone.compact.typing" = "Ввод";
+"agent.activity.phone.swiping" = "Прокрутка экрана";
+"agent.activity.phone.compact.swiping" = "Прокрутка";
+"agent.activity.phone.listingApps" = "Поиск установленных приложений";
+"agent.activity.phone.compact.listingApps" = "Приложения";
+"agent.activity.phone.addingApp" = "Добавление разрешённого приложения";
+"agent.activity.phone.compact.addingApp" = "Добавление";
+"agent.activity.phone.waitingForModel" = "Ожидание ответа модели";
+"agent.activity.phone.compact.waitingForModel" = "Ожидание";
+"agent.activity.phone.stopping" = "Остановка управления телефоном";
+"agent.activity.phone.compact.stopping" = "Остановка";
+"agent.activity.phone.stopped" = "Управление телефоном остановлено";
+"agent.activity.phone.compact.stopped" = "Остановлено";
+"agent.activity.phone.failed" = "Ошибка шага управления";
+"agent.activity.phone.compact.failed" = "Ошибка";
+"agent.activity.phone.outcomeUnknown" = "Результат действия неизвестен";
+"agent.activity.phone.compact.outcomeUnknown" = "Неизвестно";
+"agent.activity.phone.verifying" = "Проверка результата действия";
+"agent.activity.phone.compact.verifying" = "Проверка";
+"agent.activity.phone.deciding" = "Выбор следующего шага";
+"agent.activity.phone.compact.deciding" = "Выбор";
+"agent.activity.phone.waitingForUI" = "Ожидание обновления экрана";
+"agent.activity.phone.compact.waitingForUI" = "Ожидание";
+
+// Human takeover states contain no task or app content.
+"agent.activity.phone.pausing" = "Передаём управление вам";
+"agent.activity.phone.compact.pausing" = "Передача";
+"agent.activity.phone.paused" = "Вы управляете телефоном";
+"agent.activity.phone.compact.paused" = "Ваш ход";
+"agent.activity.phone.resuming" = "Читаем экран для продолжения";
+"agent.activity.phone.compact.resuming" = "Возобновление";
+"agent.activity.control.humanTakeover" = "Я управляю";
+"agent.activity.control.resumeAutomation" = "Продолжить";

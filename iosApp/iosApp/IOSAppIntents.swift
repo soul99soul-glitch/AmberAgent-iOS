@@ -214,11 +214,15 @@ struct IOSRunSavedActionIntent: IOSAmberNavigationIntent {
     @Parameter(title: LocalizedStringResource("快捷消息", table: "AppIntents"))
     var action: IOSSavedActionEntity
 
+    @Parameter(title: LocalizedStringResource("输入", table: "AppIntents"))
+    var input: String?
+
     func perform() async throws -> some IntentResult & OpensIntent & ProvidesDialog {
-        guard let content = await IOSAppIntentDataSource.savedActionContent(id: action.id) else {
-            throw IOSAppIntentError.missingSavedAction
+        let prompt = try await IOSSavedActionIntentResolver.resolve(id: action.id, input: input) {
+            try await $input.requestValue(IntentDialog(LocalizedStringResource(
+                "这条常用任务需要什么输入？", table: "AppIntents"
+            )))
         }
-        let prompt = try IOSAppIntentError.validatedPrompt(content)
         return try await openPrompt(
             prompt,
             dialog: IntentDialog(LocalizedStringResource(
@@ -226,6 +230,24 @@ struct IOSRunSavedActionIntent: IOSAmberNavigationIntent {
                 table: "AppIntents"
             ))
         )
+    }
+}
+
+@MainActor
+enum IOSSavedActionIntentResolver {
+    static func resolve(
+        id: String,
+        input: String?,
+        settingsStore: @MainActor () -> IOSSharedSettingsStore = { IOSSharedSettingsStore() },
+        requestInput: @MainActor () async throws -> String
+    ) async throws -> String {
+        do {
+            return try settingsStore().resolvedQuickActionPrompt(id: id, input: input)
+        } catch IOSSharedQuickActionError.missingInput {
+            let value = try await requestInput()
+            // The user may edit or delete the task while Siri is asking for input.
+            return try settingsStore().resolvedQuickActionPrompt(id: id, input: value)
+        }
     }
 }
 
@@ -243,15 +265,9 @@ private enum IOSAppIntentDataSource {
     }
 
     static func savedActions() -> [IOSSavedActionEntity] {
-        IOSSharedSettingsStore().snapshot.quickMessages.map {
-            IOSSavedActionEntity(id: $0.id.toHexDashString(), title: $0.title)
+        IOSSharedSettingsStore().savedQuickActions().map {
+            IOSSavedActionEntity(id: $0.id, title: $0.title)
         }
-    }
-
-    static func savedActionContent(id: String) -> String? {
-        IOSSharedSettingsStore().snapshot.quickMessages.first {
-            $0.id.toHexDashString().caseInsensitiveCompare(id) == .orderedSame
-        }?.content
     }
 }
 

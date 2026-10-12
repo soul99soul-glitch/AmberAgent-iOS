@@ -4664,7 +4664,7 @@ final class ChatViewModel {
     }
 
     private func makeTextGenerationParams(includePhoneControlTools: Bool = false) -> TextGenerationParams {
-        let includesAuthorizedPhoneTools = includePhoneControlTools && phoneControl.hasPendingAuthorization
+        let includesPhoneTools = includePhoneControlTools && phoneControl.enabled
         let modelId = currentModelId
         let modelAbilities = currentModelAbilities
         let searchEnabled = sharedSettings.snapshot.enableWebSearch
@@ -4790,7 +4790,7 @@ final class ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSAppleAgentToolCatalog.toolNames).sorted()
         ))
-        if includesAuthorizedPhoneTools {
+        if includesPhoneTools {
             toolDeclarations.append(contentsOf: IOSPhoneControlToolCatalog.declarations)
         }
         let mcpNetworkEnabled = isCapabilityPolicyEnabled("ios.mcp.tool_call")
@@ -4875,7 +4875,7 @@ final class ChatViewModel {
         // bridge instance is handed to the run coordinator, which owns it for
         // the whole run so hits become callable on the NEXT round.
         let exposureBridge = IosToolExposureBridge(tools: toolDeclarations, recipeSearchInfo: recipeSearchInfo)
-        if includesAuthorizedPhoneTools {
+        if includesPhoneTools {
             exposureBridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
         }
         exposureBridge.restoreExecutedTools(tools: recentToolsForExposure())

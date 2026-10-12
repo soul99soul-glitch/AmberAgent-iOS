@@ -1,0 +1,206 @@
+{
+  "recordedAt": "2026-10-11T17:17:10.329960+00:00",
+  "scope": "iphone automation reliability, handoff and saved tasks",
+  "baselineHead": "69c2144db9838e7192d137d18572588539f1dee4",
+  "committed": false,
+  "pushed": false,
+  "phases": {
+    "phase1": "implemented, independently reviewed, affected tests and simulator visuals passed",
+    "phase2": "implemented, independently reviewed, recovery call chain and simulator visuals passed",
+    "phase3": "implemented, independently reviewed, affected tests and normal simulator create/edit/parameter/run/delete/relaunch passed"
+  },
+  "build": [
+    {
+      "status": "succeeded",
+      "errorCount": 0,
+      "warningCount": 48,
+      "started": "2026-10-12T01:04:18.502+0800",
+      "ended": "2026-10-12T01:11:49.943+0800"
+    }
+  ],
+  "buildLogDiagnostic": "SwiftCompile emitted exit code 0 but produced no further output; final buildResult succeeded with no error summaries",
+  "signature": {
+    "components": [
+      {
+        "path": "iosAppExperimentalGPL.app",
+        "bundle": "app.amber.ios",
+        "team": "TY4JTL3V2M",
+        "groups": [
+          "group.app.amber.ios.watchkit"
+        ],
+        "watchGroup": null,
+        "watchScheme": null,
+        "urlTypes": [
+          {
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLName": "app.amber.ios.activity",
+            "CFBundleURLSchemes": [
+              "amber"
+            ]
+          }
+        ],
+        "companion": null,
+        "networkExtensions": [
+          "packet-tunnel-provider"
+        ]
+      },
+      {
+        "path": "iosAppExperimentalGPL.app/PlugIns/AmberAgentActivityWidgetExperimentalGPL.appex",
+        "bundle": "app.amber.ios.activity",
+        "team": "TY4JTL3V2M",
+        "groups": [],
+        "watchGroup": null,
+        "watchScheme": null,
+        "urlTypes": null,
+        "companion": null,
+        "networkExtensions": null
+      },
+      {
+        "path": "iosAppExperimentalGPL.app/PlugIns/AmberPhoneControlTunnelExperimentalGPL.appex",
+        "bundle": "app.amber.ios.phone-control-tunnel",
+        "team": "TY4JTL3V2M",
+        "groups": [],
+        "watchGroup": null,
+        "watchScheme": null,
+        "urlTypes": null,
+        "companion": null,
+        "networkExtensions": [
+          "packet-tunnel-provider"
+        ]
+      },
+      {
+        "path": "iosAppExperimentalGPL.app/Watch/AmberWatchAppExperimentalGPL.app",
+        "bundle": "app.amber.ios.watchkitapp",
+        "team": "TY4JTL3V2M",
+        "groups": [
+          "group.app.amber.ios.watchkit"
+        ],
+        "watchGroup": "group.app.amber.ios.watchkit",
+        "watchScheme": "amber-watch",
+        "urlTypes": [
+          {
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLName": "app.amber.ios.watchkitapp.watch",
+            "CFBundleURLSchemes": [
+              "amber-watch"
+            ]
+          }
+        ],
+        "companion": "app.amber.ios",
+        "networkExtensions": null
+      },
+      {
+        "path": "iosAppExperimentalGPL.app/Watch/AmberWatchAppExperimentalGPL.app/PlugIns/AmberWatchWidgetsExperimentalGPL.appex",
+        "bundle": "app.amber.ios.watchkitapp.widgets",
+        "team": "TY4JTL3V2M",
+        "groups": [
+          "group.app.amber.ios.watchkit"
+        ],
+        "watchGroup": "group.app.amber.ios.watchkit",
+        "watchScheme": "amber-watch",
+        "urlTypes": null,
+        "companion": null,
+        "networkExtensions": null
+      }
+    ],
+    "targetProvisioned": true,
+    "profileExpiry": "2027-10-11T03:11:51",
+    "signatureValid": true
+  },
+  "installation": {
+    "status": "succeeded",
+    "bundleIdentifier": "app.amber.ios",
+    "inPlace": true,
+    "executableSHA256": "55faaa2d2e4516c8348e7ac7d412ebeb3fed8d46b13fcec6b304d9af457d90ee"
+  },
+  "preferences": {
+    "preferencesBeforeCount": 200,
+    "preferencesAfterCount": 200,
+    "allPreferencesUnchanged": false,
+    "trackedKeys": {
+      "app.amber.ios.sharedSettingsJson": {
+        "presentBefore": true,
+        "presentAfter": true,
+        "unchanged": true
+      },
+      "app.amber.ios.settings": {
+        "presentBefore": true,
+        "presentAfter": true,
+        "unchanged": true
+      },
+      "app.amber.ios.phoneControl.enabled.v1": {
+        "presentBefore": true,
+        "presentAfter": true,
+        "unchanged": true
+      },
+      "app.amber.ios.phoneControl.scope.v1": {
+        "presentBefore": true,
+        "presentAfter": true,
+        "unchanged": true
+      },
+      "app.amber.ios.phoneControl.applicationNames.v1": {
+        "presentBefore": true,
+        "presentAfter": true,
+        "unchanged": true
+      },
+      "app.amber.ios.jevSettings.v1": {
+        "presentBefore": true,
+        "presentAfter": true,
+        "unchanged": true
+      }
+    },
+    "changedPreferenceKeys": [
+      "amber.watch.sequence.v3"
+    ],
+    "containerComparison": {
+      "bundleIdentifierUnchanged": true,
+      "groupIdentifiersUnchanged": true,
+      "groupContainerPathsUnchanged": true,
+      "dataContainerPathChanged": true
+    }
+  },
+  "normalLaunch": {
+    "status": "succeeded",
+    "followupAttemptCount": 1,
+    "arguments": [],
+    "processIdentifier": 47013,
+    "subsequentProcessQueryFoundMainProcess": true,
+    "evidence": "build/phone-automation-next-20261011/device-normal-launch-followup-20261012.json"
+  },
+  "readinessThisDelivery": "not run; followup scope was normal launch, with no Mac XCTest, additional runner/tunnel diagnostics or configuration changes",
+  "unverified": [
+    "physical readiness in final build",
+    "real provider execution of new actions and saved tasks",
+    "physical background handoff/resume",
+    "compact and expanded Dynamic Island",
+    "Siri and Watch system invocation",
+    "cellular-only",
+    "Wi-Fi to cellular transition",
+    "Loon coexistence"
+  ],
+  "cleanup": {
+    "ownSimulatorShutdown": true,
+    "temporarySavedTasksRemoved": true,
+    "activityPreviewRemoved": true,
+    "physicalDeviceReturnedToCooperatingThread": true
+  },
+  "evidenceRoot": "build/phone-automation-next-20261011",
+  "plan": "docs/iphone-automation-next-plan-20261011.md",
+  "initialNormalLaunch": {
+    "status": "blocked",
+    "attemptCount": 1,
+    "domain": "com.apple.dt.CoreDeviceError",
+    "code": 10002,
+    "underlyingDomain": "FBSOpenApplicationErrorDomain",
+    "underlyingCode": 7,
+    "reason": "Locked"
+  },
+  "followup": {
+    "recordedAt": "2026-10-11T17:27:35.524242+00:00",
+    "reinstalled": false,
+    "sameInstalledBundleURL": true,
+    "sameAppGroup": true,
+    "automationAndRendererSourcesUnchanged": true,
+    "deviceReturned": true
+  }
+}

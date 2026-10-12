@@ -2,7 +2,7 @@ import Foundation
 
 public struct PhoneControlProblem: Error, Sendable, Equatable, LocalizedError {
     public enum Kind: String, Sendable {
-        case invalidConfiguration, stopped, busy, staleObservation, appOutOfScope, appChanged
+        case invalidConfiguration, invalidAction, stopped, busy, staleObservation, appOutOfScope, appChanged
         case ambiguousElement, elementNotFound, unsupportedNode, runner, transport
         case malformedResponse, cancelled, previousOutcomeUnknown
     }
@@ -14,7 +14,7 @@ public struct PhoneControlProblem: Error, Sendable, Equatable, LocalizedError {
     public let wasDroppedBeforeExecution: Bool
     public var errorDescription: String? { message }
 
-    init(_ kind: Kind, _ message: String, statusCode: Int? = nil,
+    public init(_ kind: Kind, _ message: String, statusCode: Int? = nil,
          runnerCode: String? = nil, wasDroppedBeforeExecution: Bool = false) {
         self.kind = kind
         self.message = message
@@ -40,8 +40,16 @@ public enum PhoneSwipeDirection: String, Sendable, CaseIterable {
 public enum PhoneAction: Sendable, Equatable {
     case launch(bundleID: String)
     case tap(ref: String)
+    /// A point in the full screenshot, normalized to [0, 1) on both axes.
+    /// Requires screenshot evidence attached to this latest observation.
+    case tapPoint(observationID: String, x: Double, y: Double)
+    /// Finger movement between distinct full-screenshot points, normalized to [0, 1).
+    /// Requires screenshot evidence attached to this latest observation.
+    case swipePoint(observationID: String, startX: Double, startY: Double, endX: Double, endY: Double)
     /// Types into a newly resolved element. Does not clear or replace existing content.
     case type(ref: String, text: String)
+    /// Clears a newly resolved nonsecure text input. Observe again before typing replacement text.
+    case clear(ref: String)
     /// Direction describes the finger movement, not the content movement.
     case swipe(ref: String, direction: PhoneSwipeDirection)
     case home
@@ -56,11 +64,33 @@ public struct PhoneRunnerStatus: Sendable, Equatable {
     public let authenticationScheme: String
 }
 
+public struct PhoneScreenshot: Sendable, Equatable {
+    public let data: Data
+    public let observationID: String
+    /// Full screen dimensions in points, not screenshot pixels or an accessibility node's frame.
+    public let width: Double
+    public let height: Double
+
+    public init(data: Data, observationID: String, width: Double, height: Double) {
+        self.data = data
+        self.observationID = observationID
+        self.width = width
+        self.height = height
+    }
+}
+
 public struct PhoneElementRect: Sendable, Codable, Equatable {
     public let x: Double
     public let y: Double
     public let width: Double
     public let height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
 }
 
 public struct PhoneObservationNode: Sendable, Equatable {
@@ -74,6 +104,19 @@ public struct PhoneObservationNode: Sendable, Equatable {
     public let rect: PhoneElementRect
     public let enabled: Bool
     public let focused: Bool
+
+    public init(ref: String?, depth: Int, type: String, identifier: String?, label: String?,
+                value: String?, rect: PhoneElementRect, enabled: Bool, focused: Bool) {
+        self.ref = ref
+        self.depth = depth
+        self.type = type
+        self.identifier = identifier
+        self.label = label
+        self.value = value
+        self.rect = rect
+        self.enabled = enabled
+        self.focused = focused
+    }
 }
 
 public struct PhoneObservation: Sendable, Equatable {
@@ -83,6 +126,19 @@ public struct PhoneObservation: Sendable, Equatable {
     public let backend: String
     public let truncated: Bool
     public let nodes: [PhoneObservationNode]
+    /// Real screen geometry from /window/size, independent of the accessibility root frame.
+    public let screenBounds: PhoneElementRect?
+
+    public init(observationID: String, bundleID: String, processID: Int, backend: String,
+                truncated: Bool, nodes: [PhoneObservationNode], screenBounds: PhoneElementRect? = nil) {
+        self.observationID = observationID
+        self.bundleID = bundleID
+        self.processID = processID
+        self.backend = backend
+        self.truncated = truncated
+        self.nodes = nodes
+        self.screenBounds = screenBounds
+    }
 
     /// A text UI tree for the model; screens with little useful text may need a separate screenshot.
     public var compactText: String {

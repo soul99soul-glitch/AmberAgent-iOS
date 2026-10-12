@@ -50,6 +50,7 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
     @MainActor
     private final class CardRecorder {
         private(set) var deliveredPresentations: [AgentActivityPresentation] = []
+        private(set) var deliveredStaleDates: [Date?] = []
         private(set) var endCalls: [(presentation: AgentActivityPresentation, dismissalDelay: TimeInterval)] = []
         private(set) var requestCount = 0
         var activityState: ActivityState = .active
@@ -59,8 +60,9 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
             deliveredPresentations.append(presentation)
         }
 
-        func recordUpdate(_ presentation: AgentActivityPresentation) {
+        func recordUpdate(_ presentation: AgentActivityPresentation, staleDate: Date?) {
             deliveredPresentations.append(presentation)
+            deliveredStaleDates.append(staleDate)
         }
 
         func recordEnd(_ presentation: AgentActivityPresentation, dismissalDelay: TimeInterval) {
@@ -75,7 +77,9 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
         terminalLinger: @escaping (TimeInterval) async -> Void = { _ in },
         lingerAllowance: @escaping @MainActor () -> TimeInterval = { .infinity },
         heartbeatSleep: @escaping (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
-        beforeDelivery: @escaping @MainActor (AgentActivityPresentation) async -> Void = { _ in }
+        beforeDelivery: @escaping @MainActor (AgentActivityPresentation) async -> Void = { _ in },
+        beforeRequestReturns: @escaping @MainActor () async -> Void = { },
+        phoneHandoffState: @escaping @MainActor (String) -> IOSPhoneControlHandoffState? = { _ in nil }
     ) -> AgentLiveActivityController {
         AgentLiveActivityController(
             fetchSystemSnapshot: {
@@ -85,6 +89,7 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
             },
             requestSystemCard: { runId, _, _, _, presentation in
                 recorder.recordRequest(presentation)
+                await beforeRequestReturns()
                 return AgentLiveActivityController.SystemCardHandle(
                     id: "fake-\(runId)",
                     activityState: { recorder.activityState },
@@ -92,7 +97,7 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
                     currentUpdatedAt: { Date() },
                     performUpdate: { content in
                         await beforeDelivery(content.state.presentation)
-                        recorder.recordUpdate(content.state.presentation)
+                        recorder.recordUpdate(content.state.presentation, staleDate: content.staleDate)
                     },
                     performEnd: { presentation, dismissalDelay in
                         recorder.recordEnd(presentation, dismissalDelay: dismissalDelay)
@@ -101,7 +106,8 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
             },
             terminalLinger: terminalLinger,
             lingerAllowance: lingerAllowance,
-            heartbeatSleep: heartbeatSleep
+            heartbeatSleep: heartbeatSleep,
+            phoneHandoffState: phoneHandoffState
         )
     }
 
@@ -115,6 +121,249 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
         while !condition(), Date() < deadline {
             try? await Task.sleep(for: .milliseconds(10))
         }
+    }
+
+    func testPhoneUpdatesRequireExistingOwnershipAndKeepLatestPendingStage() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let controller = makeController(gate: gate, recorder: recorder)
+
+        await controller.updatePhoneControl(runID: "not-started", phase: .connecting)
+        XCTAssertEqual(recorder.requestCount, 0)
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .response(stage: .preparing))
+        await gate.waitUntilEntered()
+        await controller.updatePhoneControl(runID: "phone-run", phase: .connecting)
+        await controller.updatePhoneControl(runID: "phone-run", phase: .observing)
+        await controller.updatePhoneControl(runID: "other-run", phase: .typing)
+        await gate.release()
+        await waitUntil { recorder.deliveredPresentations.last?.phoneControlPhase == .observing }
+
+        XCTAssertEqual(recorder.requestCount, 1)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .observing)
+        XCTAssertTrue(controller.ownsActivity(runId: "phone-run", conversationId: "conv-1"))
+        await controller.updatePhoneControl(runID: "other-run", phase: .failed)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .observing)
+        await controller.end(runId: "phone-run", presentation: .cancelled())
+    }
+
+    func testPhoneReceiptCannotUndoPendingCancellationOrReviveEndedRun() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let controller = makeController(gate: gate, recorder: recorder)
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.typing))
+        await gate.waitUntilEntered()
+        await controller.end(runId: "phone-run", presentation: .cancelled())
+        await controller.updatePhoneControl(runID: "phone-run", phase: .waitingForModel)
+        await gate.release()
+        await waitUntil { !recorder.endCalls.isEmpty }
+
+        XCTAssertEqual(recorder.endCalls.map(\.presentation.phase), [.cancelled])
+        XCTAssertFalse(recorder.deliveredPresentations.contains { $0.phoneControlPhase == .waitingForModel })
+        let count = recorder.deliveredPresentations.count
+        await controller.updatePhoneControl(runID: "phone-run", phase: .typing)
+        XCTAssertEqual(recorder.deliveredPresentations.count, count)
+        XCTAssertEqual(recorder.requestCount, 1)
+        XCTAssertFalse(controller.ownsActivity(runId: "phone-run", conversationId: "conv-1"))
+
+        controller.start(runId: "new-run", conversationId: "conv-2", presentation: .phoneControl(.observing))
+        await waitUntil { recorder.requestCount == 2 }
+        await controller.updatePhoneControl(runID: "phone-run", phase: .typing)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .observing,
+                       "旧 run 回执不能盖掉新 run 的阶段")
+        await controller.end(runId: "new-run", presentation: .cancelled())
+    }
+
+    func testPhoneWaitingAndFailureStopToolHeartbeatWithoutSuccessfulHistory() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let beat = PendingGate()
+        let controller = makeController(gate: gate, recorder: recorder, heartbeatSleep: { _ in
+            await beat.markEntered()
+            await beat.waitForRelease()
+        })
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .response(stage: .preparing))
+        await gate.release()
+        await waitUntil { recorder.requestCount == 1 }
+        await controller.updatePhoneControl(runID: "phone-run", phase: .typing)
+        await beat.waitUntilEntered()
+        for phase: AgentPhoneControlActivityPhase in [.waitingForModel, .failed, .stopped, .pausing, .paused, .resuming, .outcomeUnknown] {
+            await controller.updatePhoneControl(runID: "phone-run", phase: phase)
+            XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, phase)
+            XCTAssertEqual(recorder.deliveredPresentations.last?.stage, .preparing)
+            XCTAssertNil(recorder.deliveredPresentations.last?.recentSteps)
+        }
+        let count = recorder.deliveredPresentations.count
+        await beat.release()
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(recorder.deliveredPresentations.count, count, "回执后的静默时间不继续工具心跳")
+        await controller.update(runId: "phone-run", presentation: .completed(), force: true)
+        await controller.updatePhoneControl(runID: "phone-run", phase: .observing)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phase, .completed)
+        await controller.end(runId: "phone-run", presentation: .completed())
+    }
+
+    func testPhonePausePublishesNoStaleDateAndResumeRestoresRunningDeadline() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let controller = makeController(gate: gate, recorder: recorder)
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.observing))
+        await gate.release()
+        await waitUntil { recorder.requestCount == 1 }
+        for phase: AgentPhoneControlActivityPhase in [.pausing, .paused, .resuming, .observing] {
+            let previousUpdates = recorder.deliveredStaleDates.count
+            await controller.updatePhoneControl(runID: "phone-run", phase: phase)
+            await waitUntil { recorder.deliveredStaleDates.count > previousUpdates }
+            XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, phase)
+            guard let deadline = recorder.deliveredStaleDates.last else {
+                XCTFail("The system card must receive the updated stale deadline")
+                continue
+            }
+            if phase == .paused {
+                XCTAssertNil(deadline)
+            } else {
+                let now = Date()
+                XCTAssertEqual(deadline?.timeIntervalSince(now) ?? 0, 180, accuracy: 2)
+            }
+        }
+        await controller.end(runId: "phone-run", presentation: .cancelled())
+    }
+
+    func testPhoneHandoffOverridesPendingStreamAndToolProgressForMatchingRunOnly() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        var handoff: IOSPhoneControlHandoffState = .pausing
+        let controller = makeController(gate: gate, recorder: recorder, phoneHandoffState: {
+            $0 == "phone-run" ? handoff : nil
+        })
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.typing))
+        await gate.waitUntilEntered()
+        await controller.update(runId: "phone-run", presentation: .response(stage: .generating), force: true)
+        handoff = .paused
+        await controller.updatePhoneControl(runID: "phone-run", phase: .waitingForModel)
+        await gate.release()
+        await waitUntil { recorder.deliveredPresentations.last?.phoneControlPhase == .paused }
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .paused)
+
+        await controller.update(runId: "phone-run", presentation: .response(stage: .thinking), force: true)
+        await controller.updatePhoneControl(runID: "other-run", phase: .typing)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .paused)
+        handoff = .resuming
+        await controller.updatePhoneControl(runID: "phone-run", phase: .observing)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .resuming)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.stage, .preparing)
+        handoff = .automated
+        await controller.updatePhoneControl(runID: "phone-run", phase: .waitingForModel)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .waitingForModel,
+                       "新观察完成后允许退出恢复展示，等待主模型重新规划")
+        await controller.end(runId: "phone-run", presentation: .cancelled())
+
+        controller.start(runId: "another-run", conversationId: "conv-2", presentation: .response(stage: .generating))
+        await waitUntil { recorder.requestCount == 2 }
+        XCTAssertNil(recorder.deliveredPresentations.last?.phoneControlPhase)
+        await controller.end(runId: "another-run", presentation: .cancelled())
+    }
+
+    func testPhoneHandoffIsRecheckedWhenSystemRequestReturns() async {
+        let gate = PendingGate()
+        let requestGate = PendingGate()
+        let recorder = CardRecorder()
+        var handoff: IOSPhoneControlHandoffState = .automated
+        let controller = makeController(gate: gate, recorder: recorder, beforeRequestReturns: {
+            await requestGate.markEntered()
+            await requestGate.waitForRelease()
+        }, phoneHandoffState: { $0 == "phone-run" ? handoff : nil })
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.observing))
+        await gate.release()
+        await requestGate.waitUntilEntered()
+        handoff = .paused
+        await requestGate.release()
+        await waitUntil { recorder.deliveredPresentations.last?.phoneControlPhase == .paused }
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .paused,
+                       "系统请求等待期间发生的接管不能被旧初始展示覆盖")
+        await controller.end(runId: "phone-run", presentation: .cancelled())
+    }
+
+    func testPhoneHandoffCannotHideUnknownReceiptOrReplaceTerminal() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let controller = makeController(gate: gate, recorder: recorder, phoneHandoffState: {
+            $0 == "phone-run" ? .paused : nil
+        })
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.observing))
+        await gate.release()
+        await waitUntil { recorder.requestCount == 1 }
+        await controller.updatePhoneControl(runID: "phone-run", phase: .outcomeUnknown)
+        await controller.update(runId: "phone-run", presentation: .response(stage: .generating), force: true)
+        await controller.updatePhoneControl(runID: "phone-run", phase: .paused)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .outcomeUnknown,
+                       "未知回执优先于接管和流式进度")
+        await controller.update(runId: "phone-run", presentation: .completed(), force: true)
+        await controller.update(runId: "phone-run", presentation: .response(stage: .thinking), force: true)
+        XCTAssertEqual(recorder.deliveredPresentations.last?.phase, .completed)
+        XCTAssertNil(recorder.deliveredPresentations.last?.phoneControlPhase)
+        await controller.end(runId: "phone-run", presentation: .completed())
+    }
+
+    func testPendingCancellationCannotBeReplacedByPhoneHandoff() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let controller = makeController(gate: gate, recorder: recorder, phoneHandoffState: { _ in .paused })
+        controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.typing))
+        await gate.waitUntilEntered()
+        await controller.end(runId: "phone-run", presentation: .cancelled())
+        await controller.update(runId: "phone-run", presentation: .response(stage: .generating), force: true)
+        await controller.updatePhoneControl(runID: "phone-run", phase: .resuming)
+        await gate.release()
+        await waitUntil { !recorder.endCalls.isEmpty }
+        XCTAssertEqual(recorder.endCalls.first?.presentation.phase, .cancelled)
+        XCTAssertFalse(controller.ownsActivity(runId: "phone-run", conversationId: "conv-1"))
+    }
+
+    func testUnknownPhoneOutcomeIsPreservedWhenFailedEndArrivesDuringPendingStart() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let controller = makeController(gate: gate, recorder: recorder, lingerAllowance: { 0 })
+        controller.start(runId: "phone-unknown", conversationId: "conv-1", presentation: .response(stage: .preparing))
+        await gate.waitUntilEntered()
+        await controller.updatePhoneControl(runID: "phone-unknown", phase: .outcomeUnknown)
+        await controller.end(runId: "phone-unknown", presentation: .failed(retryable: true))
+        await gate.release()
+        await waitUntil { !recorder.endCalls.isEmpty }
+
+        XCTAssertEqual(recorder.endCalls.count, 1)
+        XCTAssertEqual(recorder.endCalls.first?.presentation.phase, .failed)
+        XCTAssertEqual(recorder.endCalls.first?.presentation.phoneControlPhase, .outcomeUnknown)
+        XCTAssertEqual(recorder.endCalls.first?.presentation.retryable, false)
+        XCTAssertNil(recorder.endCalls.first?.presentation.recentSteps)
+        XCTAssertFalse(controller.ownsActivity(runId: "phone-unknown", conversationId: "conv-1"))
+    }
+
+    func testUnknownPhoneOutcomeRemainsVisibleThroughoutFailedTerminalLinger() async {
+        let gate = PendingGate()
+        let recorder = CardRecorder()
+        let linger = PendingGate()
+        let controller = makeController(gate: gate, recorder: recorder) { _ in
+            await linger.markEntered()
+            await linger.waitForRelease()
+        }
+        controller.start(runId: "phone-unknown", conversationId: "conv-1", presentation: .response(stage: .preparing))
+        await gate.release()
+        await waitUntil { recorder.requestCount == 1 }
+        await controller.updatePhoneControl(runID: "phone-unknown", phase: .outcomeUnknown)
+        await waitUntil { recorder.deliveredPresentations.last?.phoneControlPhase == .outcomeUnknown }
+        await controller.end(runId: "phone-unknown", presentation: .failed())
+        await linger.waitUntilEntered()
+
+        XCTAssertTrue(recorder.deliveredPresentations.last?.requiresPhoneOutcomeReview == true)
+        XCTAssertNil(recorder.deliveredPresentations.last?.recentSteps)
+        XCTAssertTrue(recorder.endCalls.isEmpty)
+        XCTAssertFalse(controller.ownsActivity(runId: "phone-unknown", conversationId: "conv-1"))
+        await controller.updatePhoneControl(runID: "phone-unknown", phase: .typing)
+        XCTAssertTrue(recorder.deliveredPresentations.last?.requiresPhoneOutcomeReview == true)
+        await linger.release()
+        await waitUntil { !recorder.endCalls.isEmpty }
+        XCTAssertTrue(recorder.endCalls.first?.presentation.requiresPhoneOutcomeReview == true)
+        XCTAssertEqual(recorder.endCalls.first?.presentation.retryable, false)
     }
 
     // a) start → 在途期间 update 两次 → 放行落地 → 系统卡片最终收到最后一次展示。

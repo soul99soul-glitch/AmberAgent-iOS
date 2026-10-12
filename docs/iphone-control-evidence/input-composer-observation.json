@@ -1,0 +1,115 @@
+{
+  "source": "Latest user-reported production task tool receipts only",
+  "user_report": "Target app and contact opened; input not focused or typed",
+  "calls": [
+    {
+      "tool": "phone_status"
+    },
+    {
+      "tool": "phone_observe",
+      "max_nodes": 200,
+      "truncated": false,
+      "input_role_count": 0,
+      "tree_rows": 0,
+      "scope_refused": true
+    },
+    {
+      "tool": "phone_act",
+      "action": "launch",
+      "completed": true
+    },
+    {
+      "tool": "phone_observe",
+      "max_nodes": 300,
+      "truncated": true,
+      "input_role_count": 0,
+      "tree_rows": 300,
+      "scope_refused": false
+    },
+    {
+      "tool": "phone_act",
+      "action": "tap",
+      "completed": true
+    },
+    {
+      "tool": "phone_observe",
+      "max_nodes": 200,
+      "truncated": true,
+      "input_role_count": 0,
+      "tree_rows": 200,
+      "scope_refused": false
+    },
+    {
+      "tool": "phone_observe",
+      "max_nodes": 500,
+      "truncated": true,
+      "input_role_count": 0,
+      "tree_rows": 500,
+      "scope_refused": false
+    },
+    {
+      "tool": "phone_act",
+      "action": "swipe",
+      "completed": true
+    },
+    {
+      "tool": "phone_observe",
+      "max_nodes": 500,
+      "truncated": true,
+      "input_role_count": 0,
+      "tree_rows": 500,
+      "scope_refused": false
+    }
+  ],
+  "type_requests": 0,
+  "ui_text_saved_in_evidence": false,
+  "claim": "Tree truncation is confirmed; a larger budget reaching the actual composer remains to be verified.",
+  "implementation": {
+    "tool_max_nodes": 2000,
+    "default_max_nodes": 500,
+    "runner_changed": false,
+    "screenshot_required": false,
+    "automatic_action_retry": false,
+    "background_diagnostic": "Exact input-only launch flag; fixed target scope; 500 and 2000 read-only observations; foreground/PID checks; no action calls."
+  },
+  "validation": {
+    "package_tests_passed": 23,
+    "tool_tests_passed": 5,
+    "failed": 0,
+    "review": "One background expiration issue corrected and rechecked; no remaining blocker.",
+    "device": "Installed, awaiting unlock and target chat foreground for read-only comparison; no typing acceptance claimed.",
+    "release_build": "passed",
+    "artifact": {
+      "bundle_id": "app.amber.ios",
+      "team": "TY4JTL3V2M",
+      "app_groups": [
+        "group.app.amber.ios.experimental-gpl.watchkit"
+      ],
+      "current_device_in_profile": true,
+      "profile_expiration": "2027-09-30T09:52:05",
+      "executable_sha256": "5dc1c120e9788f6424c0e56219da8523136dcd2893cedf454aee0bac16b3ddec",
+      "strict_signature_verified": true,
+      "diagnostic_argument_present": true
+    },
+    "installed": true,
+    "data_preservation": {
+      "conversations": {
+        "before": 352,
+        "after": 352,
+        "missing": 0,
+        "added": 0,
+        "size_changed": 0,
+        "contents_read": false
+      },
+      "group": {
+        "before": 1,
+        "after": 1,
+        "missing": 0,
+        "added": 0,
+        "size_changed": 0,
+        "contents_read": false
+      }
+    },
+    "raw_conversation_and_screenshot_task_copies_removed": true
+  }
+}

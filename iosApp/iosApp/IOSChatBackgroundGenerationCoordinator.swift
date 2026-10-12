@@ -1267,7 +1267,6 @@ final class IOSChatBackgroundGenerationCoordinator {
               runState.finalizeTerminal(as: .cancellation) else {
             return false
         }
-        IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
         IOSPhoneControlController.shared.revoke(runID: job.runId)
         subAgentTimeoutTasks.removeValue(forKey: requestId)?.cancel()
         cancelDetachedResponseTransport(requestId: requestId, job: job)
@@ -1276,6 +1275,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         Task { @MainActor [originalJob = job] in
             await expiredRunState?.waitForExpiredOperationExit()
             await runState.waitForExpiredOperationExit()
+            await IOSPhoneControlController.shared.stop(runID: originalJob.runId)
             let job: IOSChatBackgroundRuntimeJob
             if originalJob.mode == .continueModel {
                 guard let prepared = await self.prepareOrdinaryJobForResume(job: originalJob, requestId: requestId) else {
@@ -1540,6 +1540,23 @@ final class IOSChatBackgroundGenerationCoordinator {
         Task { @MainActor in
             controller.noteProgress(runId: runId)
         }
+    }
+
+    /// Phone receipts and engine stages must share the background stream. Direct ActivityKit
+    /// updates could otherwise be overwritten by older stages still waiting in its consumer.
+    static func routingPhoneActivity(
+        executors: [String: any IOSToolExecutor],
+        runID: String,
+        events: AsyncStream<AgentActivityPresentation>.Continuation
+    ) -> [String: any IOSToolExecutor] {
+        var routed = executors
+        let phoneExecutor = IOSPhoneControlToolExecutor(runID: runID, reportActivity: { phase in
+            events.yield(.phoneControl(phase))
+        })
+        for name in IOSPhoneControlToolCatalog.toolNames where routed[name] != nil {
+            routed[name] = phoneExecutor
+        }
+        return routed
     }
 
     private func publishRunningPresentation(
@@ -1868,7 +1885,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             return true
         }
 
-        IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
+        IOSPhoneControlController.shared.revoke(runID: job.runId)
         guard (try? await runStore.transitionFromAnyActive(
             runId: job.runId,
             to: .outcomeUnknown,
@@ -2012,7 +2029,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
 
         guard unknownToolCallIds.isEmpty else {
-            IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
+            IOSPhoneControlController.shared.revoke(runID: job.runId)
             guard (try? await runStore.transitionFromAnyActive(
                 runId: job.runId,
                 to: .outcomeUnknown,
@@ -2130,6 +2147,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         messages: [UIMessage],
         runState: IOSChatBackgroundRunState
     ) async {
+        await IOSPhoneControlController.shared.stop(runID: job.runId)
         var stamped = messages.applyingLastAssistantGenerationDuration(runState.generationDuration())
         let miniAppApplication = job.saveMiniAppIfPresent?(stamped, job.conversationId)
         if let miniAppApplication {
@@ -2200,10 +2218,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
             guard let self, self.activeBackgroundTasks[requestId] === execution,
                   runState.expireAndReserveTerminal(requireUnclaimed: true) == .persistFailure else { return }
-            IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
             IOSPhoneControlController.shared.revoke(runID: job.runId)
             self.keepAlive.abandonSystemAssertion(self.chatBackgroundAudioLeaseId(for: requestId), preservingAdoptedTask: true)
             await runState.waitForExpiredOperationExit()
+            await IOSPhoneControlController.shared.stop(runID: job.runId)
             guard self.activeBackgroundTasks[requestId] === execution,
                   runState.finalizeTerminal(as: .expiration) else { return }
             // The same ledger gate used by foreground recovery preserves any
@@ -2301,7 +2319,6 @@ final class IOSChatBackgroundGenerationCoordinator {
             backgroundTask.setTaskCompleted(success: false)
 
             Task { @MainActor in
-                IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
                 IOSPhoneControlController.shared.revoke(runID: job.runId)
                 guard runState.finalizeTerminal(as: .expiration) else { return }
                 IOSBackgroundLifecycleLog.record(
@@ -2364,43 +2381,33 @@ final class IOSChatBackgroundGenerationCoordinator {
             )
         )
 
-        let engine = IOSAgentToolEngine(
-            provider: provider,
-            executors: job.toolRuntime.backgroundToolExecutors(
+        let presentationEvents = AsyncStream<AgentActivityPresentation>.makeStream()
+        func makeExecutors(_ params: TextGenerationParams) -> [String: any IOSToolExecutor] {
+            let executors = job.toolRuntime.backgroundToolExecutors(
                 providerSetting: requestProvider,
-                params: requestParams,
+                params: params,
                 runId: job.runId,
                 toolExposureBridge: job.toolExposureBridge,
-                // P1-c: run 锚定会话——后台 job 的 spawn/list/interrupt 以
-                // 本 job 的 conversationId 为父，不读 VM 当前会话。
                 conversationId: job.conversationId,
-                // Pad-image enrich must use the job-frozen display snapshot.
                 messages: job.displayMessages,
                 executionPolicy: job.executionPolicy,
                 dynamicToolSnapshot: job.dynamicToolSnapshot
-            ),
-            // M2: 传了 toolExposureBridge 的路径，每轮 replacingTools 后按当轮
-            // effectiveParams 重建 executor 表——tool_search 命中工具下一轮
-            // 「声明且可执行」；闭包捕获的是当轮 params/bridge（与首次注册
-            // 同一入口）。未传桥的 SubAgent/Novel 路径（本文件外构造点）保持
-            // 静态表不变。
-            // G7: 后台续跑单独维持有界预算，允许子代理工具链完成多个回合，
-            // 同时避免无人盯屏时无限耗电。前台设置仍只控制前台续跑。
+            )
+            return Self.routingPhoneActivity(
+                executors: executors,
+                runID: job.runId,
+                events: presentationEvents.continuation
+            )
+        }
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: makeExecutors(requestParams),
             configuration: Self.backgroundToolLoopConfiguration,
             ledger: toolLedger,
             ledgerRunId: job.runId,
-            executorRebuilder: { params in
-                job.toolRuntime.backgroundToolExecutors(
-                    providerSetting: requestProvider,
-                    params: params,
-                    runId: job.runId,
-                    toolExposureBridge: job.toolExposureBridge,
-                    conversationId: job.conversationId,
-                    messages: job.displayMessages,
-                    executionPolicy: job.executionPolicy,
-                    dynamicToolSnapshot: job.dynamicToolSnapshot
-                )
-            }
+            // tool_search changes visibility each round. Rebuilt phone executors must use
+            // the same presentation queue as the initially registered executors.
+            executorRebuilder: makeExecutors
         )
         // P1-d: 后台引擎 mailbox drain——每轮批量执行后，或纯文本终态收口前，
         // 把本会话信封渲染折入下一轮 upload 并持久化进会话（后台无 UI 上屏，
@@ -2417,7 +2424,6 @@ final class IOSChatBackgroundGenerationCoordinator {
                 conversationId: job.conversationId
             )
         }
-        let presentationEvents = AsyncStream<AgentActivityPresentation>.makeStream()
         let presentationConsumer = Task { @MainActor in
             for await presentation in presentationEvents.stream {
                 await self.publishRunningPresentation(
@@ -2617,6 +2623,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         await presentationConsumer.value
         runState.clearOperationTask()
         guard runState.reserveTerminal() else { return }
+        // Keep background execution until the runner exits and its local tunnel disconnects.
+        await IOSPhoneControlController.shared.stop(runID: job.runId)
 
         progress.completedUnitCount = 3
         backgroundTask.updateTitle(
@@ -3025,6 +3033,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         partialAssistantText: String? = nil
     ) async {
         guard runState.reserveTerminal() else { return }
+        await IOSPhoneControlController.shared.stop(runID: job.runId)
         await failAfterTerminalReservation(
             job: job,
             backgroundTask: backgroundTask,
@@ -3237,12 +3246,25 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
 
+        let durableRun: IOSDurableRunStore.Snapshot?
+        do {
+            durableRun = try await runStore.snapshot(runId: mappedRunId)
+        } catch {
+            guard activeBackgroundTasks[requestId] == nil,
+                  activeDetachedResponseTasks[requestId] == nil,
+                  !backgroundInterruptedRequestIds.contains(requestId),
+                  !foregroundResumeInFlightRequestIds.contains(requestId),
+                  !automaticallyResumedRequestIds.contains(requestId) else { return }
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
+            releaseRuntimeOwnership(requestId: requestId)
+            return
+        }
         let hasPreservedOutcomeUnknown = preservingOutcomeUnknownRunIds.contains(mappedRunId)
         let hasOutcomeUnknownEvidence: Bool?
         if hasPreservedOutcomeUnknown {
             hasOutcomeUnknownEvidence = true
         } else {
-            hasOutcomeUnknownEvidence = await hasOutcomeUnknownRecoveryEvidence(runId: mappedRunId)
+            hasOutcomeUnknownEvidence = await hasOutcomeUnknownRecoveryEvidence(run: durableRun)
         }
         guard activeBackgroundTasks[requestId] == nil,
               activeDetachedResponseTasks[requestId] == nil,
@@ -3265,7 +3287,27 @@ final class IOSChatBackgroundGenerationCoordinator {
             finish(runId: mappedRunId, requestId: requestId)
             return
         }
-
+        if let durableRun, durableRun.status.isTerminal, durableRun.finishedAt != nil {
+            // Startup recovery may already have persisted an interrupted terminal.
+            // Its old checkpoint must not append another failure or replace that terminal.
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
+            await IOSPhoneControlController.shared.stop(runID: mappedRunId)
+            let controller = dependencies?.liveActivityController ?? .shared
+            _ = controller.adoptExistingActivity(runId: mappedRunId)
+            let presentation: AgentActivityPresentation
+            switch durableRun.status {
+            case .completed: presentation = .completed()
+            case .cancelled: presentation = .cancelled()
+            default: presentation = .failed()
+            }
+            await controller.end(runId: mappedRunId, presentation: presentation)
+            IOSBackgroundLifecycleLog.record(
+                "staleBackgroundTerminalPreserved",
+                detail: "run=\(mappedRunId) status=\(durableRun.status.wireName)"
+            )
+            finish(runId: mappedRunId, requestId: requestId)
+            return
+        }
         // `.queue`/遗留 request 不会因应用被杀而自行消失；先撤掉它，防止
         // 扫尾后系统又唤起一张已经被标记停止的后台卡。
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
@@ -3300,16 +3342,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
     }
 
-    private func hasOutcomeUnknownRecoveryEvidence(runId: String) async -> Bool? {
-        let snapshot: IOSDurableRunStore.Snapshot?
-        do {
-            snapshot = try await runStore.snapshot(runId: runId)
-        } catch {
-            // 无法读取 durable evidence 时不能把可能的副作用改写成普通
-            // expiration failure；由调用方保留 task-map/payload，交给下一次
-            // 冷启动重试对账。
-            return nil
-        }
+    private func hasOutcomeUnknownRecoveryEvidence(run snapshot: IOSDurableRunStore.Snapshot?) async -> Bool? {
         guard let snapshot else {
             return false
         }
@@ -3320,7 +3353,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard runStatus == .running || runStatus == .recoveryPending else {
             return false
         }
-        guard let transactionStates = await toolLedger.toolTransactions(runId: runId)?.map(\.state) else {
+        guard let transactionStates = await toolLedger.toolTransactions(runId: snapshot.runId)?.map(\.state) else {
             return nil
         }
         return Self.preservesOutcomeUnknownStaleRecovery(
@@ -3352,6 +3385,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         partialAssistantText: String?,
         terminalReason: String? = nil
     ) async -> Bool {
+        await IOSPhoneControlController.shared.stop(runID: job.runId)
         let reconciledBase = Self.reconciledDisplayPrefix(
             resultMessages: job.messagesSnapshot.messages,
             uploadMessageCount: job.uploadMessages.count,
@@ -3476,6 +3510,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
         await expiredRunState.waitForExpiredOperationExit()
+        await IOSPhoneControlController.shared.stop(runID: job.runId)
         guard backgroundInterruptedRequestIds.contains(requestId),
               activeJobs[requestId]?.runId == job.runId else {
             return
@@ -3670,7 +3705,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         messages: [UIMessage],
         signal: IOSToolOutcomeUnknownSignal
     ) async {
-        IOSPhoneControlController.shared.revokeAuthorizationWindow(runID: job.runId)
+        IOSPhoneControlController.shared.revoke(runID: job.runId)
         let finalMessages = messages.applyingLastAssistantGenerationDuration(
             runState.generationDuration()
         )
@@ -4029,6 +4064,11 @@ final class IOSChatBackgroundGenerationCoordinator {
                 detail: resolvedTerminalReason
             )
             if !didRecord {
+                let actualStatus = try? await runStore.snapshot(runId: runId)?.status.wireName
+                IOSBackgroundLifecycleLog.record(
+                    "backgroundRunTerminalConflict",
+                    detail: "run=\(runId) target=\(status.wireName) actual=\(actualStatus ?? "unavailable")"
+                )
                 let detail = IOSAppLocalization.string(
                     "运行终态发生冲突，后台任务已保留等待恢复。",
                     defaultValue: "运行终态发生冲突，后台任务已保留等待恢复。"
@@ -4560,6 +4600,11 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard handoff.mode == .resumeResponse, handoff.responseId != nil else {
             return false
         }
+        return persistBackgroundCheckpointForTesting(handoff)
+    }
+
+    @discardableResult
+    func persistBackgroundCheckpointForTesting(_ handoff: IOSChatBackgroundHandoff) -> Bool {
         let requestId = requestIdentifier(for: handoff.runId)
         do {
             try persist(handoff: handoff, requestId: requestId)

@@ -115,3 +115,49 @@
 "agent.activity.doneCount.readingWeb" = "%ld ページ確認";
 "agent.activity.doneCount.readingDocument" = "%ld ファイル確認";
 "agent.activity.doneCount.generatingImage" = "%ld 枚生成";
+
+// Phone control stages contain no app names, contacts, or input text.
+"agent.activity.phone.checkingStatus" = "端末の状態を確認中";
+"agent.activity.phone.compact.checkingStatus" = "状態確認";
+"agent.activity.phone.connecting" = "端末に接続中";
+"agent.activity.phone.compact.connecting" = "接続";
+"agent.activity.phone.observing" = "画面を読み取り中";
+"agent.activity.phone.compact.observing" = "画面確認";
+"agent.activity.phone.openingApp" = "アプリを開いています";
+"agent.activity.phone.compact.openingApp" = "アプリ";
+"agent.activity.phone.tapping" = "画面をタップ中";
+"agent.activity.phone.compact.tapping" = "タップ";
+"agent.activity.phone.typing" = "テキストを入力中";
+"agent.activity.phone.compact.typing" = "入力";
+"agent.activity.phone.swiping" = "画面をスワイプ中";
+"agent.activity.phone.compact.swiping" = "スワイプ";
+"agent.activity.phone.listingApps" = "インストール済みアプリを検索中";
+"agent.activity.phone.compact.listingApps" = "アプリ検索";
+"agent.activity.phone.addingApp" = "操作対象アプリを追加中";
+"agent.activity.phone.compact.addingApp" = "アプリ追加";
+"agent.activity.phone.waitingForModel" = "モデルの応答待ち";
+"agent.activity.phone.compact.waitingForModel" = "応答待ち";
+"agent.activity.phone.stopping" = "端末操作を停止中";
+"agent.activity.phone.compact.stopping" = "停止中";
+"agent.activity.phone.stopped" = "端末操作を停止しました";
+"agent.activity.phone.compact.stopped" = "停止済み";
+"agent.activity.phone.failed" = "端末の操作に失敗";
+"agent.activity.phone.compact.failed" = "操作失敗";
+"agent.activity.phone.outcomeUnknown" = "操作結果の確認が必要";
+"agent.activity.phone.compact.outcomeUnknown" = "要確認";
+"agent.activity.phone.verifying" = "操作結果を確認中";
+"agent.activity.phone.compact.verifying" = "確認";
+"agent.activity.phone.deciding" = "次の手順を選択中";
+"agent.activity.phone.compact.deciding" = "選択";
+"agent.activity.phone.waitingForUI" = "画面の更新を待機中";
+"agent.activity.phone.compact.waitingForUI" = "待機";
+
+// Human takeover states contain no task or app content.
+"agent.activity.phone.pausing" = "手動操作に切り替え中";
+"agent.activity.phone.compact.pausing" = "切替中";
+"agent.activity.phone.paused" = "手動操作中";
+"agent.activity.phone.compact.paused" = "手動操作";
+"agent.activity.phone.resuming" = "画面を読み取り再開中";
+"agent.activity.phone.compact.resuming" = "再開中";
+"agent.activity.control.humanTakeover" = "自分で操作";
+"agent.activity.control.resumeAutomation" = "続ける";

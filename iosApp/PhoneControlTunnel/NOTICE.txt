@@ -1,0 +1,18 @@
+Amber phone-control local connection
+
+PacketTunnelProvider.swift adapts the NetworkExtension setup and packet-loop
+structure from Jitterbug, Copyright © 2021 osy. All rights reserved.
+Jitterbug is licensed under the Apache License, Version 2.0; the full license
+is included in LICENSE-Jitterbug.txt.
+
+Reference revision: b0449f18c9663c732ee16beefe6df60fa0cea137
+https://github.com/osy/Jitterbug/blob/b0449f18c9663c732ee16beefe6df60fa0cea137/JitterbugTunnel/PacketTunnelProvider.swift
+
+Amber changes the address plan, restricts routing and packet reflection to
+one local peer, validates packet lengths, and serializes provider lifecycle
+callbacks. LocalPacketReflection.swift is Amber's implementation of the
+address swap; Jitterbug's packetReplaceIp helper is not included.
+
+LocalDevVPN was also inspected to understand the address plan already proven
+on the test device. Its provider implementation is not copied into this
+extension. This is source-informed integration, not a clean-room claim.

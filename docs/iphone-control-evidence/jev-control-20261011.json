@@ -1,0 +1,98 @@
+{
+  "recorded_at_utc": "2026-10-11T12:59:24.507690+00:00",
+  "source_head": "69c2144db9838e7192d137d18572588539f1dee4",
+  "source_state": "Working tree includes preserved pre-existing phone-control changes; no commit or push",
+  "scope": [
+    "phone_act optional postcondition verification",
+    "phone_run_goal Jev candidate loop",
+    "independent Jev settings and phone text scope",
+    "verification/decision/UI-wait activity stages"
+  ],
+  "reviews": {
+    "phase_1": "passed after viewport and collector consistency fixes",
+    "phase_2": "passed after scope/revision, unreadable input, stale screenshot and launch evidence fixes",
+    "phase_3": "actual settings and simulator activity images reviewed; invalid symbol fixed and rechecked",
+    "maintainability": "one bounded pass completed"
+  },
+  "tests": {
+    "app_unique_latest": {
+      "unique_test_count": 219,
+      "latest_results": {
+        "Passed": 219
+      }
+    },
+    "package": {
+      "command": "swift test --package-path iosApp/Packages/AmberPhoneControl",
+      "passed": 52,
+      "failed": 0,
+      "exit_code": 0,
+      "completed_at_local": "2026-10-11 20:36:18 +08:00",
+      "evidence": "phone_evidence tool output session 37278 chunk 282f2e; no standalone log retained"
+    },
+    "xcode_results": [
+      "integration-tests.xcresult",
+      "final-regression.xcresult",
+      "launch-and-wiring-regression.xcresult"
+    ],
+    "initial_failures_resolved": [
+      "Service fixture missing actual screen bounds",
+      "Existing source-wiring assertion omitted input parameter"
+    ]
+  },
+  "build": {
+    "scheme": "iosAppExperimentalGPL",
+    "configuration": "Release",
+    "exit_code": 0,
+    "deep_strict_signature_verification": true,
+    "bundle_id": "app.amber.ios",
+    "version": "1.0.0",
+    "build": "1",
+    "executable_sha256": "2f2791e55b326f795aa850caab860bc8c63bdc194ef73fd68a680fa12142526d",
+    "app_path": "iosApp/build/P1ResumeDevice/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+    "executable_size": 121929840
+  },
+  "install": {
+    "success": true,
+    "bundle_id": "app.amber.ios",
+    "in_place_update": true,
+    "uninstall_performed": false
+  },
+  "launch": {
+    "success": true,
+    "arguments": [],
+    "pid": 45836,
+    "process_confirmed_running": true,
+    "executable_matches_installed_bundle": true
+  },
+  "data_preservation": {
+    "before": 368,
+    "after_install": 368,
+    "missing": 0,
+    "added": 0,
+    "size_changed": 0,
+    "scope": "conversation file names and sizes only; message contents not read"
+  },
+  "ui_evidence": [
+    "ui-review-final/jev-settings-page-3.png",
+    "ui-review-final/activity-verifying-compact.png",
+    "ui-review-final/activity-verifying-lock.png",
+    "ui-review-final/review.md"
+  ],
+  "acceptance_boundaries": {
+    "real_jev_requests_this_task": false,
+    "new_jev_uses_auto_enabled": false,
+    "physical_device_jev_goal_loop_accepted": false,
+    "physical_device_background_jev_loop_accepted": false,
+    "measured_speed_improvement": false,
+    "simulator_activity_preview_ended": true,
+    "mac_driven_phone_control": false,
+    "vpn_configuration_changed": false
+  },
+  "remaining_acceptance": [
+    "Enable the two new uses and required data scopes with a pinned Jev model",
+    "On-phone navigation and draft input verified from a fresh observation",
+    "Popup evidence/visual handback with real runner",
+    "Real provider latency and foreground/background activity updates"
+  ],
+  "followup_review_record": "jev-review-20261011.json"
+}

@@ -86,6 +86,65 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
     }
 
     @MainActor
+    func testStaleSweepPreservesTerminalAlreadyWrittenByStartupRecovery() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecoveredBackground-\(UUID().uuidString)", isDirectory: true)
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.bootstrap()
+        let conversationId = try XCTUnwrap(store.currentConversation?.id)
+        let fixture = DurableCancelFixture(name: "recovered-background", conversationId: conversationId)
+        var handoff = fixture.handoff
+        handoff.mode = .continueModel
+        handoff.responseId = nil
+        let settings = makeSettings(for: fixture)
+        let runtime = ChatToolRuntime(
+            settingsStore: SettingsStore(), sharedSettings: settings, localToolExecutor: nil,
+            searchTransport: HandoffTestSearchTransport(), mcpManager: IOSMcpManager(serverProvider: { [] })
+        )
+        let coordinator = IOSChatBackgroundGenerationCoordinator(
+            keepAlive: .shared, provider: IOSChatBackgroundProvider()
+        )
+        defer {
+            coordinator.discardDurableResponse(runId: handoff.runId)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let runStore = IOSDurableRunStore()
+        let started = try await runStore.startChatRun(
+            runId: handoff.runId, startedAt: handoff.startedAt,
+            inputDigest: handoff.inputDigest, conversationId: conversationId.toHexDashString()
+        )
+        XCTAssertTrue(started)
+        coordinator.configure(conversationStore: store, toolRuntime: runtime, sharedSettings: settings)
+        XCTAssertTrue(coordinator.persistBackgroundCheckpointForTesting(handoff))
+        let beforeMessages = await store.messages(for: conversationId)
+
+        // AppShell performs generic interrupted-run recovery before the stale-job sweep.
+        let recovered = await IOSRunRecovery.recoverInterruptedRuns(
+            candidateRunIds: [handoff.runId],
+            excludingRunIds: coordinator.startupRecoveryExclusionRunIds
+        )
+        XCTAssertEqual(recovered, 1)
+        let beforeSnapshot = try await runStore.snapshot(runId: handoff.runId)
+        let beforeRun = try XCTUnwrap(beforeSnapshot)
+        XCTAssertEqual(beforeRun.status, .interrupted)
+        coordinator.finalizeStalePersistedJobsIfNeeded()
+        let deadline = Date().addingTimeInterval(5)
+        while coordinator.hasPendingConversationWrites, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(coordinator.hasPendingConversationWrites, "A durable terminal must release its stale checkpoint")
+        XCTAssertNil(store.lastUserVisibleError, "Startup recovery must not try to replace interrupted with failed")
+        let afterMessages = await store.messages(for: conversationId)
+        XCTAssertEqual(afterMessages?.map(\.id), beforeMessages?.map(\.id), "Stale checkpoint content must not overwrite the recovered transcript")
+        let afterSnapshot = try await runStore.snapshot(runId: handoff.runId)
+        let afterRun = try XCTUnwrap(afterSnapshot)
+        XCTAssertEqual(afterRun.status, beforeRun.status)
+        XCTAssertEqual(afterRun.finishedAt, beforeRun.finishedAt)
+        XCTAssertEqual(afterRun.terminalReason, beforeRun.terminalReason)
+    }
+
+    @MainActor
     func testForegroundAutoResumeUsesLedgerGateInsteadOfToolDeclarations() {
         XCTAssertTrue(
             IOSChatBackgroundGenerationCoordinator
@@ -174,10 +233,7 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
         )
         XCTAssertTrue(didStartTool)
 
-        let sharedSettings = IOSSharedSettingsStore(
-            userDefaults: UserDefaults(suiteName: "resume-unknown-\(UUID().uuidString)")!
-        )
-        _ = sharedSettings.addProvider(fixture.provider)
+        let sharedSettings = makeSettings(for: fixture)
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
             sharedSettings: sharedSettings,
@@ -261,10 +317,7 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
         )
         XCTAssertTrue(didStartRun)
 
-        let sharedSettings = IOSSharedSettingsStore(
-            userDefaults: UserDefaults(suiteName: "resume-safe-\(UUID().uuidString)")!
-        )
-        _ = sharedSettings.addProvider(fixture.provider)
+        let sharedSettings = makeSettings(for: fixture)
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
             sharedSettings: sharedSettings,
@@ -361,10 +414,7 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
 
-        let sharedSettings = IOSSharedSettingsStore(
-            userDefaults: UserDefaults(suiteName: "\(fixture.name)-\(UUID().uuidString)")!
-        )
-        _ = sharedSettings.addProvider(fixture.provider)
+        let sharedSettings = makeSettings(for: fixture)
         let store = IOSConversationStore(baseDirectory: directory)
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
@@ -396,6 +446,32 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
                 "取消即使终态 transcript 保存失败，也必须清理 durable response owner"
             )
         }
+    }
+
+    @MainActor
+    private func makeSettings(for fixture: DurableCancelFixture) -> IOSSharedSettingsStore {
+        // Durable-job ownership must not depend on the test host's Keychain access
+        // just to establish the checkpoint's provider fixture.
+        var credentials: [String: String] = [:]
+        let settings = IOSSharedSettingsStore(
+            userDefaults: UserDefaults(suiteName: "\(fixture.name)-\(UUID().uuidString)")!,
+            loadCredential: { credentials[$0] },
+            storeCredential: { key, value in
+                credentials[key] = value
+                return true
+            },
+            deleteCredential: { key in
+                credentials.removeValue(forKey: key)
+                return true
+            }
+        )
+        settings.addProvider(fixture.provider)
+        XCTAssertNil(settings.credentialPersistenceError)
+        XCTAssertTrue(
+            settings.snapshot.providers.contains { $0.id == fixture.provider.id },
+            "Durable response hydration requires the checkpoint's provider in settings"
+        )
+        return settings
     }
 }
 
@@ -492,5 +568,46 @@ private struct DurableCancelFixture {
         self.name = name
         self.provider = provider
         self.handoff = handoff
+    }
+}
+
+@MainActor
+final class IOSChatBackgroundPhoneActivityTests: XCTestCase {
+    func testPhoneReceiptRemainsAfterQueuedToolStartWhenPresentationConsumerIsDelayed() async throws {
+        let events = AsyncStream<AgentActivityPresentation>.makeStream()
+        let unchanged = BackgroundActivityUnchangedExecutor()
+        let executors = IOSChatBackgroundGenerationCoordinator.routingPhoneActivity(
+            executors: ["phone_status": unchanged, "runtime_status": unchanged],
+            runID: "phone-status-queue-test",
+            events: events.continuation
+        )
+        XCTAssertEqual(Set(executors.keys), ["phone_status", "runtime_status"], "Routing must not expose more phone tools")
+        let other = try XCTUnwrap(executors["runtime_status"] as? BackgroundActivityUnchangedExecutor)
+        XCTAssertTrue(other === unchanged)
+        guard case .filled(let otherText) = await other.execute(name: "runtime_status", arguments: "{}", isUserInitiated: false) else {
+            return XCTFail("Non-phone executors must remain unchanged")
+        }
+        XCTAssertEqual(otherText, "unrelated executor")
+
+        // A slow ActivityKit write can leave earlier engine stages buffered. Hold the
+        // consumer until the real phone executor has returned its read-only receipt.
+        events.continuation.yield(.response(stage: .thinking))
+        events.continuation.yield(.runningTool(toolName: "phone_status"))
+        let phone = try XCTUnwrap(executors["phone_status"] as? IOSPhoneControlToolExecutor)
+        guard case .filled = await phone.execute(name: "phone_status", arguments: "{}", isUserInitiated: false) else {
+            return XCTFail("The status tool must execute without an approval pause")
+        }
+        events.continuation.finish()
+        var presentations: [AgentActivityPresentation] = []
+        for await presentation in events.stream { presentations.append(presentation) }
+        XCTAssertEqual(presentations.map(\.phoneControlPhase), [nil, .checkingStatus, .checkingStatus, .waitingForModel])
+        XCTAssertEqual(presentations.last?.stage, .preparing)
+    }
+}
+
+@MainActor
+private final class BackgroundActivityUnchangedExecutor: IOSToolExecutor {
+    func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+        .filled("unrelated executor")
     }
 }

@@ -197,7 +197,7 @@ struct AmberAgentActivityWidget: Widget {
                     }
                 }
             } minimal: {
-                AgentActivityMinimalMark(phase: phase)
+                AgentActivityMinimalMark(phase: phase, phoneControlPhase: context.state.presentation.phoneControlPhase)
                     // 标志和圆环都不是可读元素，需合成一个元素才能挂上标签。
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(AgentActivityMinimalMark.accessibilityLabel(state: context.state, phase: phase))

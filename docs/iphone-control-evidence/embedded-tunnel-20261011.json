@@ -1,0 +1,946 @@
+{
+  "date": "2026-10-11",
+  "status": "connection_recovered_on_wifi_runner_verified_popup_target_absent",
+  "phase_1_evidence": "direct-entry-20261011.json",
+  "implementation": {
+    "extension_targets": [
+      "AmberPhoneControlTunnel",
+      "AmberPhoneControlTunnelExperimentalGPL"
+    ],
+    "interface": "10.7.1.1/32",
+    "included_route": "10.7.0.1/32",
+    "default_route": "excluded",
+    "dns_configuration": false,
+    "ipv6_route": false,
+    "external_server": false,
+    "runtime_dependencies": [
+      "NetworkExtension.framework"
+    ],
+    "host_manager": "IOSPhoneControlLocalTunnel",
+    "diagnostic_argument": "-amber-phone-embedded-tunnel-inspection-once",
+    "production_controller_or_settings_integrated": true
+  },
+  "signing": {
+    "attempted": true,
+    "succeeded": true,
+    "xcodebuild_exit_code": 0,
+    "xcode_account_list_count": 1,
+    "signature": "valid",
+    "bundles": [
+      {
+        "bundle_id": "app.amber.ios",
+        "network_extension_entitlement": "packet-tunnel-provider",
+        "profile_includes_device": true,
+        "signed_profile_match": true,
+        "sha256": "c84467f7c62968298e4ffa103056583e56687edf02704a088d092427b1d188c1"
+      },
+      {
+        "bundle_id": "app.amber.ios.phone-control-tunnel",
+        "network_extension_entitlement": "packet-tunnel-provider",
+        "profile_includes_device": true,
+        "signed_profile_match": true,
+        "sha256": "3c851d8727f3bc46dd1b0068a7d81c4c82d2a27e9b9a9049692d9202261ea6b8"
+      }
+    ]
+  },
+  "verification": {
+    "extension_unsigned_build": "passed independently; final corrected extension also embedded in full Release build",
+    "full_app_unsigned_release_build": "passed after final /32 and stop-result corrections",
+    "initial_ios_tests": {
+      "passed": 51,
+      "failed": 0
+    },
+    "manager_final_isolated_host_tests": {
+      "passed": 14,
+      "failed": 0
+    },
+    "final_ios_manager_tests": {
+      "passed": 14,
+      "failed": 0,
+      "result": "Passed"
+    },
+    "packet_fixture_assertions": 32,
+    "independent_review": "passed; subnet /32 and actual disconnection-return issues fixed and independently rechecked",
+    "signed_installation": true,
+    "system_vpn_permission": true,
+    "embedded_tunnel_start": true,
+    "embedded_handshake": true,
+    "embedded_runner_or_actions": "runner_and_tree_passed; first model popup action missed close target; follow-up validation pending",
+    "unsigned_artifact": {
+      "signed": false,
+      "bundles": [
+        {
+          "bundle_id": "app.amber.ios",
+          "sha256": "68349d8216fe79eaff2cfc739d39ea02c8168d6cfbc44d3027b512858492da51"
+        },
+        {
+          "bundle_id": "app.amber.ios.phone-control-tunnel",
+          "sha256": "a8c33139b5e748d510c683d46e03903e684fa8ad3de6ec45bf3a256642eaa902"
+        }
+      ]
+    },
+    "data_preservation": {
+      "conversations": {
+        "before_count": 355,
+        "after_count": 355,
+        "missing_count": 0,
+        "added_count": 0,
+        "size_or_modification_changes": 0
+      },
+      "group": {
+        "before_count": 3,
+        "after_count": 3,
+        "missing_count": 0,
+        "added_count": 0,
+        "size_or_modification_changes": 0
+      }
+    },
+    "embedded_disconnect": true,
+    "embedded_handshake_evidence": {
+      "started_at_utc": "2026-10-11T03:34:45.418796+00:00",
+      "raw_console_saved": false,
+      "app_metadata": [
+        "phoneControlEmbeddedTunnelInspection | app=inactive bgRemaining=unlimited | stage=prepare",
+        "phoneControlEmbeddedTunnelInspection | app=inactive bgRemaining=unlimited | stage=start",
+        "phoneControlEmbeddedTunnelInspection | app=inactive bgRemaining=unlimited | stage=connected",
+        "phoneControlHandshakeInspectionStarted | app=inactive bgRemaining=unlimited",
+        "phoneControlHandshakeInspectionEndpoint | app=inactive bgRemaining=unlimited | source=amber_embedded family=ipv4 port=49152",
+        "phoneControlNativeStatus phase=stopped code=handshake_ok",
+        "phoneControlHandshakeInspection | app=active bgRemaining=unlimited | phase=stopped handshake_ok",
+        "phoneControlEmbeddedTunnelInspection | app=active bgRemaining=unlimited | stage=cleanup disconnected=true"
+      ],
+      "console_exit_code": 2,
+      "handshake_ok": true,
+      "cleanup_disconnected": true
+    },
+    "first_confirmation_attempt": "Configuration/start completed after the initial console collection ended; that attempt has no handshake/cleanup terminal record. A subsequent configured launch completed greeting and disconnection."
+  },
+  "preserved_working_baseline": {
+    "installed_bundle_id": "app.amber.ios",
+    "executable_sha256": "52954e6983d83700ff013c4ef15070e7465095c750b8790fcbc14b0a5bba14bb",
+    "transport": "LocalDevVPN",
+    "last_greeting": "handshake_ok",
+    "normal_launch": "passed",
+    "signed_artifact_backup": "build/embedded-tunnel-20261011/last-installed-localdevvpn.app",
+    "note": "Signed backup of previous external-helper build; current installed build is the signed phase-3 artifact."
+  },
+  "committed": false,
+  "pushed": false,
+  "previous_signing_blocker": {
+    "attempted": true,
+    "succeeded": false,
+    "xcodebuild_exit_code": 65,
+    "errors": [
+      "No Accounts: Add a new account in Accounts settings.",
+      "Provisioning profile does not include Network Extensions capability or com.apple.developer.networking.networkextension entitlement."
+    ],
+    "xcode_account_list_count": 0,
+    "cached_profile_count": 7,
+    "cached_packet_tunnel_profile_count": 0,
+    "developer_account_login_requested": true,
+    "latest_xcode_account_list_count": 0
+  },
+  "phase3": {
+    "source_review": "passed; immutable owner-specific stop receipt and successful disconnection recovery fixed and rechecked",
+    "signed_release_build": "passed",
+    "artifact": {
+      "signature": "valid",
+      "bundles": [
+        {
+          "bundle_id": "app.amber.ios",
+          "network_extension_entitlement": "packet-tunnel-provider",
+          "profile_includes_device": true,
+          "signed_profile_match": true,
+          "sha256": "18e2ee4317eaab5edacf42fb04db4c88f324149f08991c010c19b268cb6144ff"
+        },
+        {
+          "bundle_id": "app.amber.ios.phone-control-tunnel",
+          "network_extension_entitlement": "packet-tunnel-provider",
+          "profile_includes_device": true,
+          "signed_profile_match": true,
+          "sha256": "3c851d8727f3bc46dd1b0068a7d81c4c82d2a27e9b9a9049692d9202261ea6b8"
+        }
+      ]
+    },
+    "installed": true,
+    "data_preservation": {
+      "conversations": {
+        "before_count": 355,
+        "after_count": 355,
+        "missing_count": 0,
+        "added_count": 0,
+        "size_or_modification_changes": 0
+      },
+      "group": {
+        "before_count": 3,
+        "after_count": 3,
+        "missing_count": 0,
+        "added_count": 0,
+        "size_or_modification_changes": 0
+      }
+    },
+    "final_affected_tests": {
+      "passed": 43,
+      "failed": 0,
+      "skipped": 0
+    },
+    "other_unchanged_suites_passed": [
+      "IOSPhoneControlLocalTunnelTests",
+      "IOSChatBackgroundExecutionTests",
+      "IOSChatBackgroundPhoneActivityTests",
+      "IOSSettingsWiringTests/testPhoneControlSettingsReachPersistentRunScopedRuntime"
+    ],
+    "fixture_repair": "Unsigned simulator background tests could not seed a Provider through real Keychain. Existing in-memory credential seam now establishes and asserts fixture prerequisites; all original behavior assertions retained and the suite passed.",
+    "route_tests": {
+      "passed": 3,
+      "failed": 0
+    },
+    "visual_review": "normal and accessibility layouts, configured and initial setup; new footer spacing corrected; independently reviewed final PNGs",
+    "first_device_apps_check": {
+      "started_at_utc": "2026-10-11T03:36:15.469731+00:00",
+      "mode": "apps",
+      "raw_console_saved": false,
+      "metadata": [
+        "phoneControlNativeStatus phase=pairing code=pairing",
+        "phoneControlNativeStatus phase=tunnel code=tunnel",
+        "phoneControlNativeStatus phase=discovering code=discovering",
+        "phoneControlNativeStatus phase=stopped code=apps_ready",
+        "phoneControlAppsInspection stage=phone_apps outcome=filled success=true count=138 cancelled=false",
+        "phoneControlAppsInspection stage=phone_add_app outcome=filled success=true count=138 cancelled=false",
+        "phoneControlAppsInspection stage=restored success=true enabled=true scope_matches=true name_matches=true owner_absent=true runner_not_started=true",
+        "phoneControlAppsInspection result=finished owner_absent=true"
+      ],
+      "console_exit_code": 1
+    }
+  },
+  "phase4": {
+    "runner_readiness": {
+      "started_at_utc": "2026-10-11T03:36:58.477919+00:00",
+      "mode": "readiness",
+      "raw_console_saved": false,
+      "metadata": [
+        "phoneControlReadinessInspectionStarted | app=inactive bgRemaining=unlimited | input=false",
+        "phoneControlNativeStatus phase=pairing code=pairing",
+        "phoneControlNativeStatus phase=tunnel code=tunnel",
+        "phoneControlNativeStatus phase=discovering code=discovering",
+        "phoneControlNativeStatus phase=starting code=starting",
+        "phoneControlNativeStatus phase=running code=running",
+        "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=runner_ready ready=true authenticated=true",
+        "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=tree app_matches=true budget=200 nodes=189 truncated=false backend=private-ax inputs=0",
+        "phoneControlNativeStatus phase=stopping code=stopping",
+        "phoneControlNativeStatus phase=stopped code=stopped",
+        "phoneControlReadinessInspectionFinished | app=active bgRemaining=unlimited | disconnected=true"
+      ],
+      "console_exit_code": 1
+    },
+    "apps_to_runner_restart": "passed without another VPN permission or separate helper-app switch",
+    "model_task_conversation_id": "74fd6cfb-aaeb-447d-91c7-0e4144753ebd",
+    "model_task_status": "completed_with_business_goal_unmet",
+    "first_model_task": {
+      "conversation_id": "74fd6cfb-aaeb-447d-91c7-0e4144753ebd",
+      "run_status": "completed",
+      "result": "coupon popup remained after tap; not accepted as successful close",
+      "point": {
+        "x": 0.498,
+        "y": 0.673
+      },
+      "visually_reviewed_target_center_approximately": {
+        "x": 0.5,
+        "y": 0.697
+      },
+      "action_receipt": "completed",
+      "stop_cleanup_complete": true,
+      "separate_interference": "Historical stale-background-terminal conflict was separately repaired and device-verified after USB reconnection; popup-close behavior remains unaccepted."
+    },
+    "stale_checkpoint_repair": {
+      "device_cause": "Four old continue_model checkpoints remained while corresponding ledger rows were already interrupted/process_killed. New phone run was completed.",
+      "red_test": "testStaleSweepPreservesTerminalAlreadyWrittenByStartupRecovery reproduced stale ownership, terminal conflict alert, and unwanted transcript append (three failed assertions).",
+      "fix": "Respect persisted terminal after outcome-unknown guard; stop only matching phone owner/activity and remove stale checkpoint without changing ledger or transcript. Keep ordinary CAS failure reporting.",
+      "independent_review": "passed",
+      "device_revalidation": "passed after USB reconnection: eight old checkpoints cleared, pending map zero; eight original ledger terminal rows unchanged and their transcript file metadata unchanged"
+    },
+    "visual_grounding_review": {
+      "reviewer": "Devin / Claude Opus 5.5",
+      "finding": "Full-image normalized coordinates map directly to screen points. No confirmed crop/scale error. First model tap missed visual target.",
+      "change": "Tool and receipt text ask for target bounds/center and fresh observation to assess no-change results. No backend rewrite, coordinate offset, grid, automatic retry, or pixel-coordinate change.",
+      "limits": "Prompt guidance does not establish improved pointing accuracy; new device close-action check remains pending."
+    },
+    "final_regression_tests": {
+      "passed": 29,
+      "failed": 0,
+      "skipped": 0,
+      "suites": [
+        "IOSChatBackgroundStaleSweepTests",
+        "IOSChatBackgroundExecutionTests",
+        "IOSPhoneControlToolExecutorTests",
+        "IOSPhoneControlCatalogTests"
+      ]
+    },
+    "final_signed_artifact": {
+      "signature": "valid",
+      "bundles": [
+        {
+          "bundle_id": "app.amber.ios",
+          "network_extension_entitlement": "packet-tunnel-provider",
+          "profile_includes_device": true,
+          "signed_profile_match": true,
+          "sha256": "701053057e219829d7729aa9ab50f65093962204cb7d9f744e535a2afc9faf89"
+        },
+        {
+          "bundle_id": "app.amber.ios.phone-control-tunnel",
+          "network_extension_entitlement": "packet-tunnel-provider",
+          "profile_includes_device": true,
+          "signed_profile_match": true,
+          "sha256": "3c851d8727f3bc46dd1b0068a7d81c4c82d2a27e9b9a9049692d9202261ea6b8"
+        }
+      ]
+    },
+    "final_signed_build": "passed",
+    "final_fix_installed": true,
+    "remaining_device_checks": [
+      "When the reported coupon popup is actually present, choose X center, dispatch one permitted close, and verify disappearance with a fresh observation. Do not count automatic timeout as a successful close.",
+      "Longer background multi-turn behavior and Dynamic Island terminal visual presentation remain separate acceptance gates; this Wi-Fi comparison does not prove them."
+    ],
+    "previous_delivery_blocker": {
+      "state": "device unavailable",
+      "last_connection_utc": "2026-10-11T03:46:00Z",
+      "connection_details": {
+        "pairing_state": "paired",
+        "tunnel_state": "unavailable",
+        "ddi_services_available": false,
+        "developer_mode": "enabled"
+      },
+      "file_access_error": "CoreDevice 4016: no assertable device states",
+      "usb_enumeration": "no iPhone visible",
+      "cause": "not determined; no VPN/network/device settings were changed to recover it"
+    },
+    "delivery_resume": {
+      "transport": "USB",
+      "installed": true,
+      "metadata_preservation": {
+        "conversations": {
+          "before_count": 362,
+          "after_count": 362,
+          "missing_count": 0,
+          "added_count": 0,
+          "size_or_modification_changes": 0
+        },
+        "group": {
+          "before_count": 3,
+          "after_count": 3,
+          "missing_count": 0,
+          "added_count": 0,
+          "size_or_modification_changes": 0
+        }
+      },
+      "terminal_preservation": {
+        "terminal_rows": 8,
+        "existing_terminal_metadata_unchanged": true
+      },
+      "postlaunch_file_check": {
+        "before_count": 362,
+        "postlaunch_count": 362,
+        "changed_files": [
+          "5d0d64e0-d8a7-440b-8349-697dc8872f72.json",
+          "index.json"
+        ],
+        "old_checkpoint_transcripts_changed": [],
+        "missing_count": 0
+      }
+    },
+    "wifi_model_task": {
+      "conversation_id": "336adbfc-b362-40e4-9a52-c364a968fc4a",
+      "flow": "normal model and phone tools; phone-owned session using embedded tunnel",
+      "launch_and_cross_app_observation": "passed: Meituan launched; fresh screenshots and UI tree returned",
+      "tap_result": "elementNotFound / not_sent: transient skip control disappeared before execution",
+      "new_observation": "opening ad disappeared; home page visible without requested coupon popup",
+      "popup_close_acceptance": "not_tested_target_absent; automatic ad dismissal is not successful clicking",
+      "stop_cleanup_complete": true,
+      "terminal_metadata": {
+        "runs": [
+          {
+            "run_id": "A81A61D2-491A-417E-86A0-1C9D69079A63",
+            "conversation_id": "336adbfc-b362-40e4-9a52-c364a968fc4a",
+            "status": "completed",
+            "started_at": 1791714821750,
+            "finished_at": 1791714842547,
+            "interrupted_reason": null,
+            "terminal_reason": null
+          }
+        ],
+        "matching_pending_checkpoints": [],
+        "lifecycle": [
+          {
+            "at": "2026-10-11 10:34:02.593412",
+            "line": "[BGLifecycle] → keepAliveEnd(A81A61D2-491A-417E-86A0-1C9D69079A63) | app=background bgRemaining=unlimited | keepAlive=0 adopted=0 audio=1 location=1"
+          }
+        ]
+      },
+      "screenshots": [
+        {
+          "path": "build/embedded-tunnel-20261011/device-popup-close-wifi/frame-1.png",
+          "sha256": "c656af222bc2e30f6404ee7cc415b59f5879135dbfabeb3a31b43984531e7907"
+        },
+        {
+          "path": "build/embedded-tunnel-20261011/device-popup-close-wifi/frame-2.png",
+          "sha256": "dbb359252e0390a4c9781042479412907640e42ae75ed6c3bd47e230150d05ba"
+        }
+      ],
+      "unrelated_business_actions": false,
+      "product_source_changed_this_round": false
+    }
+  },
+  "current_installed_artifact": {
+    "signature": "valid",
+    "bundles": [
+      {
+        "bundle_id": "app.amber.ios",
+        "network_extension_entitlement": "packet-tunnel-provider",
+        "profile_includes_device": true,
+        "signed_profile_match": true,
+        "sha256": "701053057e219829d7729aa9ab50f65093962204cb7d9f744e535a2afc9faf89"
+      },
+      {
+        "bundle_id": "app.amber.ios.phone-control-tunnel",
+        "network_extension_entitlement": "packet-tunnel-provider",
+        "profile_includes_device": true,
+        "signed_profile_match": true,
+        "sha256": "3c851d8727f3bc46dd1b0068a7d81c4c82d2a27e9b9a9049692d9202261ea6b8"
+      }
+    ]
+  },
+  "later_user_report": {
+    "screenshot_status_bar_time": "17:15; not a verified failure occurrence timestamp",
+    "tool": "phone_act",
+    "card_input": {
+      "recovered_from_transaction": true
+    },
+    "failure": {
+      "code": "phone_control_start_failed",
+      "native_code": "connection_failed",
+      "io": "ConnectionRefused",
+      "os": 61,
+      "native": 1,
+      "subcode": 0,
+      "outcome": "not_sent",
+      "retry_safe": false
+    },
+    "source_location": "native/iphone-control/src/lib.rs open_pairing_channel; loopback_route::connect before RemotePairing greeting/verification/RSD/XCTest",
+    "interpretation": "The restored tool receipt records an initial development-service TCP connection refusal. It does not prove pairing invalidity or runner failure, or represent a newly executed probe at screenshot time.",
+    "installed_source_endpoint": "10.7.0.1:49152",
+    "network_hypothesis": "No Wi-Fi icon visible; cellular-only network state is a lead, not an established cause. Earlier successful device validation was on Wi-Fi.",
+    "primary_reference": "https://github.com/StikDebug/StikJIT/blob/main/INTEGRATION.md",
+    "next_check": "No further connection replay needed. Exact popup-X acceptance awaits the relevant popup; do not manufacture it or count automatic ad dismissal as a successful tap.",
+    "result": "Same-version Wi-Fi comparison restored greeting and authenticated runner without changing pairing or code."
+  },
+  "connection_refused_diagnosis": {
+    "production_source_changed_this_round": false,
+    "readiness": {
+      "started_at_utc": "2026-10-11T10:08:50.798049+00:00",
+      "mode": "readiness",
+      "raw_console_saved": false,
+      "metadata": [
+        "phoneControlReadinessInspectionStarted | app=active bgRemaining=unlimited | input=false",
+        "phoneControlNativeStatus phase=pairing code=pairing",
+        "phoneControlNativeStatus phase=failed code=connection_failed",
+        "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=failed client=none phase=failed connection_failed, native=1, subcode=0, io=ConnectionRefused, os=61",
+        "phoneControlReadinessInspectionFinished | app=active bgRemaining=unlimited | disconnected=true"
+      ],
+      "console_exit_code": 1
+    },
+    "external_localdevvpn_greeting": {
+      "metadata": [
+        "phoneControlHandshakeInspectionStarted | app=inactive bgRemaining=unlimited",
+        "phoneControlHandshakeInspectionEndpoint | app=inactive bgRemaining=unlimited | source=existing_local_tunnel family=ipv4 port=49152",
+        "phoneControlNativeStatus phase=failed code=connection_failed",
+        "phoneControlHandshakeInspection | app=inactive bgRemaining=unlimited | phase=failed connection_failed, native=1, subcode=0, io=ConnectionRefused, os=61"
+      ],
+      "console_exit": 2
+    },
+    "embedded_greeting": {
+      "started_at_utc": "2026-10-11T10:19:53.471131+00:00",
+      "raw_console_saved": false,
+      "app_metadata": [
+        "phoneControlEmbeddedTunnelInspection | app=inactive bgRemaining=unlimited | stage=prepare",
+        "phoneControlEmbeddedTunnelInspection | app=inactive bgRemaining=unlimited | stage=start",
+        "phoneControlEmbeddedTunnelInspection | app=active bgRemaining=unlimited | stage=connected",
+        "phoneControlHandshakeInspectionStarted | app=active bgRemaining=unlimited",
+        "phoneControlHandshakeInspectionEndpoint | app=active bgRemaining=unlimited | source=amber_embedded family=ipv4 port=49152",
+        "phoneControlNativeStatus phase=failed code=connection_failed",
+        "phoneControlHandshakeInspection | app=active bgRemaining=unlimited | phase=failed connection_failed, native=1, subcode=0, io=ConnectionRefused, os=61",
+        "phoneControlEmbeddedTunnelInspection | app=active bgRemaining=unlimited | stage=cleanup disconnected=true"
+      ],
+      "console_exit_code": 2,
+      "handshake_ok": false,
+      "cleanup_disconnected": true
+    },
+    "bonjour": {
+      "metadata": [
+        "phoneControlServiceInspectionStarted | app=inactive bgRemaining=unlimited | source=launch",
+        "phoneControlServiceInspection | app=active bgRemaining=unlimited | resolved=1",
+        "phoneControlServiceRecord | app=active bgRemaining=unlimited | port=49152 families=ipv4,ipv6 local=true"
+      ],
+      "console_exit": 2
+    },
+    "direct_ipv6": {
+      "metadata": [
+        "phoneControlDirectInspectionStarted | app=inactive bgRemaining=unlimited | mode=ipv6",
+        "phoneControlServiceInspection | app=active bgRemaining=unlimited | resolved=1",
+        "phoneControlServiceRecord | app=active bgRemaining=unlimited | port=49152 families=ipv4,ipv6 local=true",
+        "phoneControlIPv6Candidates | app=active bgRemaining=unlimited | ipv6=1 explicit_scope=1 embedded_scope=0 unscoped=0 conflicting_scope=0 local_match=1 candidates=1 wifi_candidates=0",
+        "phoneControlDirectInspectionEndpoint | app=active bgRemaining=unlimited | mode=ipv6 source=unique_self localdevvpn_address_present=false",
+        "phoneControlNativeStatus phase=failed code=pairing_handshake_failed",
+        "phoneControlDirectInspectionFinished | app=active bgRemaining=unlimited | mode=ipv6 phase=failed pairing_handshake_failed, native=1, subcode=0, transport=read_magic, io=ConnectionReset, os=54"
+      ],
+      "console_exit": 2
+    },
+    "direct_wifi_ipv4": {
+      "metadata": [
+        "phoneControlDirectInspectionStarted | app=inactive bgRemaining=unlimited | mode=lockdown",
+        "phoneControlServiceInspection | app=active bgRemaining=unlimited | resolved=1",
+        "phoneControlServiceRecord | app=active bgRemaining=unlimited | port=49152 families=ipv4,ipv6 local=true",
+        "phoneControlIPv6Candidates | app=active bgRemaining=unlimited | ipv6=1 explicit_scope=1 embedded_scope=0 unscoped=0 conflicting_scope=0 local_match=1 candidates=1 wifi_candidates=0",
+        "phoneControlDirectInspectionFinished | app=active bgRemaining=unlimited | mode=lockdown result=not_tested endpoint=unavailable services=1"
+      ],
+      "console_exit": 2
+    },
+    "trusted_usb_service_greeting": "handshake=accepted pairing_verification=not_attempted",
+    "usbmux_network_port_greeting": "transport_stage=read_magic\npreparation_failed: native=1, subcode=0, io=UnexpectedEof, os=None",
+    "ddi_usable": true,
+    "packet_header_capture": {
+      "raw_capture_saved": false,
+      "error": null,
+      "headers": [
+        {
+          "device_timestamp": "1791713995.601190",
+          "interface": "utun",
+          "io": 1,
+          "source_role": "local_interface",
+          "source_port": 64124,
+          "destination_port": 49152,
+          "syn": true,
+          "ack": false,
+          "rst": false,
+          "fin": false,
+          "tcp_payload_length": 0
+        },
+        {
+          "device_timestamp": "1791713995.601445",
+          "interface": "utun",
+          "io": 16,
+          "source_role": "reflected_peer",
+          "source_port": 64124,
+          "destination_port": 49152,
+          "syn": true,
+          "ack": false,
+          "rst": false,
+          "fin": false,
+          "tcp_payload_length": 0
+        },
+        {
+          "device_timestamp": "1791713995.601462",
+          "interface": "utun",
+          "io": 1,
+          "source_role": "local_interface",
+          "source_port": 49152,
+          "destination_port": 64124,
+          "syn": false,
+          "ack": true,
+          "rst": true,
+          "fin": false,
+          "tcp_payload_length": 0
+        },
+        {
+          "device_timestamp": "1791713995.601503",
+          "interface": "utun",
+          "io": 16,
+          "source_role": "reflected_peer",
+          "source_port": 49152,
+          "destination_port": 64124,
+          "syn": false,
+          "ack": true,
+          "rst": true,
+          "fin": false,
+          "tcp_payload_length": 0
+        }
+      ]
+    },
+    "packet_conclusion": "For this attempt the SYN was reflected into the phone and a RST/ACK returned from 49152 before any greeting. This narrows failure to local TCP acceptance; it does not distinguish absence of a listener on this interface from a kernel/network policy rejection.",
+    "daemon_error": "Unable to lookup agent <private> data from kernel",
+    "daemon_error_causality": "not established; temporal correlation only",
+    "wifi_hypothesis": "Confirmed recovery after connecting usable Wi-Fi on the same installed artifact and pairing; exact OS listener/network policy remains undetermined.",
+    "devin_consultation": {
+      "provider": "devin",
+      "model": "claude-opus-5.5",
+      "result": "provider refusal: cyber verification policy; no new analysis received; not retried to bypass the restriction"
+    },
+    "cleanup": "Temporary external LocalDevVPN was disabled; subsequent Amber diagnostic confirmed own-tunnel disconnected=true. No business action, pairing reset or runner reinstall.",
+    "raw_packets_or_credentials_saved": false,
+    "independent_review": {
+      "reviewer": "connection_refused_audit",
+      "result": "packet decoding and narrow interpretation confirmed; nine in-memory header fixtures passed, no device access",
+      "limits": "io numeric enum names not relied on; no TCP sequence numbers retained; cannot identify daemon policy or distinguish absent listener from kernel/interface refusal"
+    },
+    "wifi_comparison": {
+      "user_confirmed_connected_wifi": true,
+      "app_rebuilt_reinstalled_or_pairing_changed": false,
+      "greeting": {
+        "started_at_utc": "2026-10-11T10:32:30.201325+00:00",
+        "raw_console_saved": false,
+        "app_metadata": [
+          "phoneControlEmbeddedTunnelInspection | app=inactive bgRemaining=unlimited | stage=prepare",
+          "phoneControlEmbeddedTunnelInspection | app=active bgRemaining=unlimited | stage=start",
+          "phoneControlEmbeddedTunnelInspection | app=active bgRemaining=unlimited | stage=connected",
+          "phoneControlHandshakeInspectionStarted | app=active bgRemaining=unlimited",
+          "phoneControlHandshakeInspectionEndpoint | app=active bgRemaining=unlimited | source=amber_embedded family=ipv4 port=49152",
+          "phoneControlNativeStatus phase=stopped code=handshake_ok",
+          "phoneControlHandshakeInspection | app=active bgRemaining=unlimited | phase=stopped handshake_ok",
+          "phoneControlEmbeddedTunnelInspection | app=active bgRemaining=unlimited | stage=cleanup disconnected=true"
+        ],
+        "console_exit_code": 1,
+        "handshake_ok": true,
+        "cleanup_disconnected": true
+      },
+      "packet_header_capture": {
+        "raw_capture_saved": false,
+        "error": null,
+        "headers": [
+          {
+            "device_timestamp": "1791714752.616107",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": true,
+            "ack": false,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616293",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": true,
+            "ack": false,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616383",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": true,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616450",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": true,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616480",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616509",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616538",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616576",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616688",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 188
+          },
+          {
+            "device_timestamp": "1791714752.616731",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 188
+          },
+          {
+            "device_timestamp": "1791714752.616747",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.616791",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.622471",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 434
+          },
+          {
+            "device_timestamp": "1791714752.622570",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 434
+          },
+          {
+            "device_timestamp": "1791714752.622604",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.622657",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.622831",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": true,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.622899",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": true,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.622916",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.622947",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.624213",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": true,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.624248",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 49152,
+            "destination_port": 64285,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": true,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.624285",
+            "interface": "utun",
+            "io": 1,
+            "source_role": "local_interface",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          },
+          {
+            "device_timestamp": "1791714752.624332",
+            "interface": "utun",
+            "io": 16,
+            "source_role": "reflected_peer",
+            "source_port": 64285,
+            "destination_port": 49152,
+            "syn": false,
+            "ack": true,
+            "rst": false,
+            "fin": false,
+            "tcp_payload_length": 0
+          }
+        ]
+      },
+      "runner_readiness": {
+        "started_at_utc": "2026-10-11T10:33:04.634016+00:00",
+        "mode": "readiness",
+        "raw_console_saved": false,
+        "metadata": [
+          "phoneControlReadinessInspectionStarted | app=inactive bgRemaining=unlimited | input=false",
+          "phoneControlNativeStatus phase=pairing code=pairing",
+          "phoneControlNativeStatus phase=tunnel code=tunnel",
+          "phoneControlNativeStatus phase=discovering code=discovering",
+          "phoneControlNativeStatus phase=starting code=starting",
+          "phoneControlNativeStatus phase=running code=running",
+          "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=runner_ready ready=true authenticated=true",
+          "phoneControlReadinessInspection | app=active bgRemaining=unlimited | result=tree app_matches=true budget=200 nodes=187 truncated=false backend=private-ax inputs=0",
+          "phoneControlNativeStatus phase=stopping code=stopping",
+          "phoneControlNativeStatus phase=stopped code=stopped",
+          "phoneControlReadinessInspectionFinished | app=active bgRemaining=unlimited | disconnected=true"
+        ],
+        "console_exit_code": 1
+      },
+      "conclusion": "Same installed version and pairing recovered after user connected usable Wi-Fi: initial TCP greeting, authenticated runner, 187-node UI read and cleanup passed. Previous failure is network-state-related on this device; no code change needed for this recovery.",
+      "limits": "Does not establish Apple internal listener policy or universal failure on cellular; precise popup-close not verified.",
+      "independent_review": "TCP header comparison and narrow network-state conclusion passed; no RST in captured Wi-Fi connection."
+    }
+  }
+}

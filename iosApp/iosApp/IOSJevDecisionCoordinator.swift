@@ -537,7 +537,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             refundBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, budgetDay: budgetDay)
             return .skipped("config_changed")
         }
-        let deadline = chunk.parts.contains(where: { $0.part.useCase == .webActions })
+        let deadline = chunk.parts.contains(where: { $0.part.useCase == .webActions || $0.part.useCase == .phoneActions })
             ? settings.policy.webActionsDeadlineMs : settings.policy.deadlineMs
         do {
             let decision = try await deps.client.decide(

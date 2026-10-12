@@ -134,7 +134,10 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
             return .blocked(reason: "tool call identity changed for an existing transaction")
         }
         if existing.state == .finished, let payload = existing.resultPayload {
-            return .replay(resultPayload: payload)
+            return .replay(
+                resultPayload: payload,
+                requiresReplan: existing.outcome == "completed_requires_replan"
+            )
         }
         return .blocked(reason: "tool transaction is already \(existing.state.rawValue)")
     }
@@ -902,7 +905,7 @@ enum IOSToolEffectClassMapping {
         if toolName == "runtime_status" {
             return .pure
         }
-        if toolName == "phone_status" || toolName == "phone_observe" {
+        if toolName == "phone_status" || toolName == "phone_observe" || toolName == "phone_apps" {
             return .pure
         }
         if toolName == IOSWeatherToolCatalog.toolName
@@ -1082,10 +1085,10 @@ enum IOSToolCallRecoveryAction: Equatable {
     /// persisted tool part still has an empty output: the side effect ran to
     /// completion, only the write of its result never made it to disk.
     case markResultLost
-    /// A terminal result exists in the transaction row even though the
-    /// conversation snapshot did not yet contain it. Apply the stored parts;
-    /// never invoke the executor again.
-    case replayResult(String)
+    /// Apply a stored terminal result without invoking the executor again.
+    /// A handback's batch barrier also survives when its result is already
+    /// present in the conversation snapshot.
+    case replayResult(String, requiresReplan: Bool = false)
 
     /// User-visible text (I-3), rendered via `ChatToolOutputFormatter.failureReason(from:)`
     /// as the tool timeline's failed-step detail — the same JSON shape for
@@ -1102,7 +1105,7 @@ enum IOSToolCallRecoveryAction: Equatable {
         case .markResultLost:
             return "工具已执行完成，但结果在应用中断中丢失（不会重复执行）。"
         case .replayResult:
-            return "工具结果已从安全恢复记录中还原。"
+            return "工具已执行完成，但安全恢复记录无法还原结果（不会重复执行）。"
         }
     }
 }
@@ -1221,6 +1224,35 @@ enum IOSToolCallRecoveryApplier {
     ) -> [UIMessage] {
         guard !actions.isEmpty else { return messages }
         var result = messages
+        // The dispatch sorter may have reordered calls from the same provider
+        // response. A recovered handback invalidates every still-pending call
+        // in its assistant message, regardless of the original part order.
+        for message in messages where message.role == MessageRole.assistant {
+            let tools = message.parts.compactMap { $0 as? UIMessagePart.Tool }
+            guard tools.contains(where: { tool in
+                if case .replayResult(_, requiresReplan: true)? = actions[tool.toolCallId] {
+                    return true
+                }
+                return false
+            }) else { continue }
+            for tool in tools where tool.output.isEmpty {
+                if let action = actions[tool.toolCallId] {
+                    switch action {
+                    case .markUnknown, .markResultLost, .replayResult:
+                        // Preserve evidence of an already dispatched call;
+                        // only calls that never crossed that boundary are skipped.
+                        continue
+                    case .markRetryable, .markApprovalInterrupted:
+                        break
+                    }
+                }
+                result = replacingToolOutput(
+                    toolCallId: tool.toolCallId,
+                    output: replanRequiredOutput(toolName: tool.toolName),
+                    in: result
+                )
+            }
+        }
         // Deterministic order so tests (and any future logging) aren't at the
         // mercy of Dictionary's iteration order.
         for toolCallId in actions.keys.sorted() {
@@ -1251,7 +1283,7 @@ enum IOSToolCallRecoveryApplier {
         for action: IOSToolCallRecoveryAction,
         toolName: String
     ) -> [UIMessagePart] {
-        if case .replayResult(let payload) = action,
+        if case .replayResult(let payload, _) = action,
            let replayed = try? IosToolOutputJsonBridge.shared.decode(json: payload) {
             return replayed
         }
@@ -1259,6 +1291,20 @@ enum IOSToolCallRecoveryApplier {
             text: failureJSON(toolName: toolName, reason: action.toolPartMessage),
             metadata: nil
         )]
+    }
+
+    private static func replanRequiredOutput(toolName: String) -> [UIMessagePart] {
+        let payload: [String: Any] = [
+            "ok": false,
+            "outcome": "not_sent",
+            "reason_code": "replan_required",
+            "tool": toolName,
+            "message": "人工接管改变了当前状态；请根据交还后的工具结果重新规划。",
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        let text = data.flatMap { String(data: $0, encoding: .utf8) }
+            ?? "人工接管后，此工具未发送，需要重新规划。"
+        return [UIMessagePart.Text(text: text, metadata: nil)]
     }
 
     private static func recoveredToolMessage(

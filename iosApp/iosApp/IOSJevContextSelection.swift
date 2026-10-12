@@ -1110,6 +1110,9 @@ final class IOSJevToolRetentionService {
             let message = messages[index]
             for part in message.parts {
                 guard let tool = part as? UIMessagePart.Tool,
+                      // Phone screens are transient evidence with their own Jev data scope.
+                      // Do not send them through the generic tool-output retention use.
+                      !IOSPhoneControlToolCatalog.isPhoneTool(name: tool.toolName),
                       IOSContextCompactionCoordinator.wouldClearToolResult(tool, in: message),
                       seenToolCallIds.insert(tool.toolCallId).inserted else { continue }
                 let text = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
@@ -1190,7 +1193,11 @@ final class IOSJevToolRetentionService {
                     }
                 } else if let tool = part as? UIMessagePart.Tool, tool.isExecuted {
                     let label = labels[tool.toolCallId].map { "[\($0)] " } ?? ""
-                    let input = tool.input.split(whereSeparator: \.isNewline).joined(separator: " ")
+                    // Phone arguments can also contain screen labels and values.
+                    // Generic retention may include their metadata, never that content.
+                    let input = IOSPhoneControlToolCatalog.isPhoneTool(name: tool.toolName)
+                        ? ""
+                        : tool.input.split(whereSeparator: \.isNewline).joined(separator: " ")
                     outline.append("\(label)工具 \(tool.toolName)(\(input.prefix(120))) → \(IOSContextCompactionCoordinator.toolOutputCharacterCount(tool)) 字")
                 }
             }

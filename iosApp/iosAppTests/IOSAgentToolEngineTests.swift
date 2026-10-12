@@ -578,16 +578,20 @@ final class IOSAgentToolEngineTests: XCTestCase {
     actor RecordingLedger: IOSAgentRunLedgering {
         private let preparation: IOSToolTransactionPreparation
         private let requestSnapshotResult: Bool
+        private let terminalResult: Bool
         private var finishedOutcomes: [String] = []
+        private var preparedCallIDs: [String] = []
         private var startedCount = 0
         private var requestSnapshots: [IOSRunRequestSnapshot] = []
 
         init(
             preparation: IOSToolTransactionPreparation = .ready,
-            requestSnapshotResult: Bool = true
+            requestSnapshotResult: Bool = true,
+            terminalResult: Bool = true
         ) {
             self.preparation = preparation
             self.requestSnapshotResult = requestSnapshotResult
+            self.terminalResult = terminalResult
         }
 
         func recordRequestSnapshot(
@@ -606,7 +610,8 @@ final class IOSAgentToolEngineTests: XCTestCase {
             argsDigest: String,
             effectClass: IOSToolEffectClass
         ) async -> IOSToolTransactionPreparation {
-            preparation
+            preparedCallIDs.append(toolCallId)
+            return preparation
         }
 
         func recordToolCallStarted(
@@ -642,7 +647,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             sourceRef: String? = nil
         ) async -> Bool {
             finishedOutcomes.append(outcome)
-            return true
+            return terminalResult
         }
 
         func recordApprovalDenied(
@@ -659,6 +664,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
         }
 
         func starts() -> Int { startedCount }
+        func preparedIDs() -> [String] { preparedCallIDs }
         func snapshots() -> [IOSRunRequestSnapshot] { requestSnapshots }
     }
 
@@ -667,15 +673,20 @@ final class IOSAgentToolEngineTests: XCTestCase {
     final class RecordingExecutor: IOSToolExecutor {
         let result: IOSAgentToolOutcome
         private let events: AssistantTextRecorder?
+        private let cancelOnExecute: Bool
         private(set) var calls: [(name: String, arguments: String, isUserInitiated: Bool)] = []
-        init(_ result: IOSAgentToolOutcome, events: AssistantTextRecorder? = nil) {
+        init(_ result: IOSAgentToolOutcome, events: AssistantTextRecorder? = nil, cancelOnExecute: Bool = false) {
             self.result = result
             self.events = events
+            self.cancelOnExecute = cancelOnExecute
         }
 
         func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
             calls.append((name, arguments, isUserInitiated))
             events?.append("execute:\(name)")
+            if cancelOnExecute {
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
             return result
         }
     }
@@ -1935,6 +1946,194 @@ final class IOSAgentToolEngineTests: XCTestCase {
         let outcomes = await ledger.outcomes()
         XCTAssertEqual(starts, 0)
         XCTAssertTrue(outcomes.isEmpty)
+    }
+
+    private func humanControlBatch() -> UIMessage {
+        makeMessage(role: MessageRole.assistant, parts: [
+            UIMessagePart.Tool(toolCallId: "handback", toolName: "phone_run_goal", input: "{}", output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil),
+            UIMessagePart.Tool(toolCallId: "old-launch", toolName: "phone_act", input: "{\"action\":\"launch\",\"bundle_id\":\"app.old\"}", output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil),
+        ])
+    }
+
+    func testHumanHandbackSkipsOldBatchAndAllowsNewProviderPlan() async throws {
+        let freshResult = "{\"reason_code\":\"human_control_returned\",\"tree\":\"fresh-screen\"}"
+        let provider = ParamsRecordingProvider([
+            humanControlBatch(),
+            toolCallMessage(toolCallId: "new-launch", toolName: "phone_act", input: "{\"action\":\"launch\",\"bundle_id\":\"app.new\"}"),
+            assistantText("done"),
+        ])
+        let handback = RecordingExecutor(.replanRequired([UIMessagePart.Text(text: freshResult, metadata: nil)]))
+        let launch = RecordingExecutor(.filled("{\"ok\":true}"))
+        let ledger = RecordingLedger()
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["phone_run_goal": handback, "phone_act": launch],
+            configuration: .init(maxSteps: 4),
+            ledger: ledger,
+            ledgerRunId: "human-handback"
+        )
+
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("continue after human control")],
+            params: makeParams(tools: ["phone_run_goal", "phone_act"])
+        )
+
+        XCTAssertEqual(handback.calls.count, 1)
+        XCTAssertEqual(launch.calls.map(\.arguments), ["{\"action\":\"launch\",\"bundle_id\":\"app.new\"}"])
+        XCTAssertEqual(provider.recordedMessages.count, 3)
+        let replanningTools = provider.recordedMessages[1].flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+        let handbackOutput = try XCTUnwrap(replanningTools.first { $0.toolCallId == "handback" }?.output.first as? UIMessagePart.Text)
+        XCTAssertEqual(handbackOutput.text, freshResult)
+        let skippedOutput = try XCTUnwrap(replanningTools.first { $0.toolCallId == "old-launch" }?.output.first as? UIMessagePart.Text)
+        let skipped = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(skippedOutput.text.utf8)) as? [String: Any])
+        XCTAssertEqual(skipped["outcome"] as? String, "not_sent")
+        XCTAssertEqual(skipped["reason_code"] as? String, "replan_required")
+        let prepared = await ledger.preparedIDs()
+        let starts = await ledger.starts()
+        let outcomes = await ledger.outcomes()
+        XCTAssertEqual(prepared, ["handback", "new-launch"])
+        XCTAssertEqual(starts, 2)
+        XCTAssertEqual(outcomes, ["completed_requires_replan", "completed"])
+        XCTAssertEqual(result.messages.last?.toText(), "done")
+        XCTAssertNil(result.toolOutcomeUnknown)
+        XCTAssertNil(result.durabilityFailureMessage)
+    }
+
+    func testDurableHumanHandbackReplayPreservesBatchBarrier() async throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("handback-replay-\(UUID().uuidString).db").path
+        let database = IosDatabaseFactory.shared.createDatabase(atFilePath: path)
+        let dao = database.agentRuntimeDao()
+        let runId = "handback-replay-\(UUID().uuidString)"
+        let run = AgentRunEntity(
+            runId: runId, parentRunId: nil,
+            agentDescriptorId: IOSDurableRunStore.Descriptor.chat,
+            agentVersion: IOSDurableRunStore.Descriptor.chatVersion,
+            conversationId: nil, messageNodeId: nil, producesMessageId: nil, assistantId: nil,
+            status: "running", inputDigest: "digest", inputSnapshotRef: nil,
+            inputSchemaVersion: 1, startedAt: 1, finishedAt: nil, interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            dao.insertRunIfAbsent(run: run) { _, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
+        let freshParts: [UIMessagePart] = [UIMessagePart.Text(text: "fresh-screen", metadata: nil)]
+        let handback = RecordingExecutor(.replanRequired(freshParts))
+        let launch = RecordingExecutor(.filled("{\"ok\":true}"))
+        let firstLedger = IOSAgentRunLedger(dao: dao)
+        let firstEngine = IOSAgentToolEngine(
+            provider: ScriptedProvider([]),
+            executors: ["phone_run_goal": handback, "phone_act": launch],
+            ledger: firstLedger, ledgerRunId: runId
+        )
+        let firstResult = await firstEngine.executePreExistingToolsOnly(messages: [humanControlBatch()])
+        XCTAssertNil(firstResult.durabilityFailureMessage)
+        XCTAssertEqual(handback.calls.count, 1)
+        XCTAssertTrue(launch.calls.isEmpty)
+
+        let replayLedger = IOSAgentRunLedger(dao: dao)
+        let replayEngine = IOSAgentToolEngine(
+            provider: ScriptedProvider([]),
+            executors: ["phone_run_goal": handback, "phone_act": launch],
+            ledger: replayLedger, ledgerRunId: runId
+        )
+        let replayResult = await replayEngine.executePreExistingToolsOnly(messages: [humanControlBatch()])
+
+        XCTAssertEqual(handback.calls.count, 1, "terminal replay must not dispatch the handback again")
+        XCTAssertTrue(launch.calls.isEmpty, "terminal replay must retain the barrier before the old launch")
+        XCTAssertNil(replayResult.durabilityFailureMessage)
+        let replayTools = replayResult.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+        XCTAssertEqual((replayTools.first?.output.first as? UIMessagePart.Text)?.text, "fresh-screen")
+        let skipped = try XCTUnwrap(replayTools.last?.output.first as? UIMessagePart.Text)
+        XCTAssertTrue(skipped.text.contains("\"reason_code\":\"replan_required\""))
+        let storedTransactions = await replayLedger.toolTransactions(runId: runId)
+        let transactions = try XCTUnwrap(storedTransactions)
+        XCTAssertEqual(transactions.count, 1, "the old launch must not even prepare a transaction")
+        XCTAssertEqual(transactions.first?.outcome, "completed_requires_replan")
+        XCTAssertEqual(transactions.first?.resultPayload, IosToolOutputJsonBridge.shared.encode(parts: freshParts))
+    }
+
+    func testMalformedHumanHandbackReplayStillSkipsOldBatch() async {
+        let ledger = RecordingLedger(preparation: .replay(resultPayload: "{", requiresReplan: true))
+        let executor = RecordingExecutor(.filled("unexpected"))
+        let engine = IOSAgentToolEngine(
+            provider: ScriptedProvider([]),
+            executors: ["phone_run_goal": executor, "phone_act": executor],
+            ledger: ledger, ledgerRunId: "malformed-handback-replay"
+        )
+
+        let result = await engine.executePreExistingToolsOnly(messages: [humanControlBatch()])
+
+        XCTAssertTrue(executor.calls.isEmpty)
+        let tools = result.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+        XCTAssertTrue((tools.first?.output.first as? UIMessagePart.Text)?.text.contains("tool_result_replay_failed") == true)
+        XCTAssertTrue((tools.last?.output.first as? UIMessagePart.Text)?.text.contains("\"reason_code\":\"replan_required\"") == true)
+        let prepared = await ledger.preparedIDs()
+        let starts = await ledger.starts()
+        XCTAssertEqual(prepared, ["handback"])
+        XCTAssertEqual(starts, 0)
+    }
+
+    func testCancelledHumanHandbackDoesNotRequestAnotherProviderRound() async {
+        let provider = ScriptedProvider([humanControlBatch(), assistantText("must not run")])
+        let handback = RecordingExecutor(.replanRequired([UIMessagePart.Text(text: "fresh-screen", metadata: nil)]), cancelOnExecute: true)
+        let launch = RecordingExecutor(.filled("unexpected"))
+        let ledger = RecordingLedger()
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["phone_run_goal": handback, "phone_act": launch],
+            ledger: ledger, ledgerRunId: "cancelled-handback"
+        )
+        let setting = makeProviderSetting()
+        let messages = [userMessage("continue")]
+        let params = makeParams(tools: ["phone_run_goal", "phone_act"])
+        let task = Task {
+            await engine.run(
+                providerSetting: setting,
+                messages: messages,
+                params: params
+            )
+        }
+
+        let result = await task.value
+
+        XCTAssertTrue(result.wasCancelled)
+        XCTAssertEqual(provider.callCount, 1)
+        XCTAssertTrue(launch.calls.isEmpty)
+        let tools = result.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+        XCTAssertEqual((tools.first?.output.first as? UIMessagePart.Text)?.text, "fresh-screen")
+        XCTAssertTrue((tools.last?.output.first as? UIMessagePart.Text)?.text.contains("\"outcome\":\"not_sent\"") == true)
+        let outcomes = await ledger.outcomes()
+        XCTAssertEqual(outcomes, ["completed_requires_replan"])
+    }
+
+    func testHumanHandbackTerminalWriteFailureStopsBeforePublishingOrReplanning() async {
+        let provider = ScriptedProvider([humanControlBatch(), assistantText("must not run")])
+        let handback = RecordingExecutor(.replanRequired([UIMessagePart.Text(text: "fresh-screen", metadata: nil)]))
+        let launch = RecordingExecutor(.filled("unexpected"))
+        let ledger = RecordingLedger(terminalResult: false)
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["phone_run_goal": handback, "phone_act": launch],
+            ledger: ledger, ledgerRunId: "failed-handback-terminal"
+        )
+
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("continue")],
+            params: makeParams(tools: ["phone_run_goal", "phone_act"])
+        )
+
+        XCTAssertNotNil(result.durabilityFailureMessage)
+        XCTAssertEqual(provider.callCount, 1)
+        XCTAssertTrue(launch.calls.isEmpty)
+        XCTAssertTrue(result.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.allSatisfy { $0.output.isEmpty })
+        let prepared = await ledger.preparedIDs()
+        XCTAssertEqual(prepared, ["handback"])
     }
 
     func testCompletedToolEchoIsRemovedWhenSameTurnAlsoContainsTextAndANewTool() async {

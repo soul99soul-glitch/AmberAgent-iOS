@@ -82,7 +82,7 @@ private final class NativePhonePairingHandle: @unchecked Sendable {
     private var handle: OpaquePointer?
 
     init() throws {
-        handle = "127.0.0.1:49152".withCString { amber_iphone_control_pairing_start($0) }
+        handle = IOSPhoneControlLoopbackRoute.endpoint.withCString { amber_iphone_control_pairing_start($0) }
         guard handle != nil else { throw PhoneControlPairingError.unavailable }
     }
 

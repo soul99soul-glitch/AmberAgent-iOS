@@ -629,6 +629,42 @@ pub struct XCTTestIdentifier {
 }
 
 impl XCTTestIdentifier {
+    /// Decode the identifier's referenced component array from its object pool.
+    /// The generic archive decoder preserves unknown XCTest classes verbatim,
+    /// leaving `c` as a UID rather than resolving it to the array expected below.
+    pub(crate) fn from_archive_bytes(bytes: &[u8]) -> Option<Self> {
+        let archive = Value::from_reader(std::io::Cursor::new(bytes)).ok()?;
+        let archive = archive.as_dictionary()?;
+        let objects = archive.get("$objects")?.as_array()?;
+        let object = |reference: &Value| match reference {
+            Value::Uid(uid) => objects.get(usize::try_from(uid.get()).ok()?),
+            _ => None,
+        };
+        let class_name = |fields: &Dictionary| {
+            object(fields.get("$class")?)?
+                .as_dictionary()?
+                .get("$classname")?
+                .as_string()
+        };
+        let root = object(archive.get("$top")?.as_dictionary()?.get("root")?)?
+            .as_dictionary()?;
+        if class_name(root)? != "XCTTestIdentifier" {
+            return None;
+        }
+        let array = object(root.get("c")?)?.as_dictionary()?;
+        if !matches!(class_name(array)?, "NSArray" | "NSMutableArray") {
+            return None;
+        }
+        let components = array.get("NS.objects")?.as_array()?
+            .iter()
+            .map(|reference| object(reference)?.as_string().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()?;
+        if components.is_empty() {
+            return None;
+        }
+        Some(Self { components })
+    }
+
     /// Returns the test class name (first component).
     pub fn test_class(&self) -> &str {
         self.components.first().map(|s| s.as_str()).unwrap_or("")

@@ -1,0 +1,153 @@
+{
+  "date": "2026-10-11",
+  "status": "phase_1_complete_no_usable_direct_entry",
+  "device": {
+    "model": "iPhone 18 Pro",
+    "os": "27.2",
+    "build": "24B5089g",
+    "transport_from_mac": "localNetwork"
+  },
+  "artifact": {
+    "bundle_id": "app.amber.ios",
+    "application_identifier": "TY4JTL3V2M.app.amber.ios",
+    "signature": "valid",
+    "device_provisioned": true,
+    "new_lockdown_symbol": true,
+    "sha256": "be44e2a7c59155a23af725928ef7fe53a5f10f517cb4f03b595f7ca09d408476"
+  },
+  "installation": "succeeded",
+  "data_metadata_comparison": {
+    "conversations": {
+      "before_count": 355,
+      "after_count": 355,
+      "missing_count": 0,
+      "added_count": 0,
+      "size_or_modification_changes": 0
+    },
+    "group": {
+      "before_count": 3,
+      "after_count": 3,
+      "missing_count": 0,
+      "added_count": 0,
+      "size_or_modification_changes": 0
+    }
+  },
+  "first_attempts": {
+    "ipv6": {
+      "started_at_utc": "2026-10-11T02:34:15.907461+00:00",
+      "mode": "ipv6",
+      "app_metadata": [
+        "phoneControlDirectInspectionStarted | app=inactive bgRemaining=unlimited | mode=ipv6",
+        "phoneControlServiceInspectionStarted | app=inactive bgRemaining=unlimited | source=direct_ipv6",
+        "phoneControlServiceInspection | app=active bgRemaining=unlimited | resolved=1",
+        "phoneControlServiceRecord | app=active bgRemaining=unlimited | port=49152 families=ipv4,ipv6 local=true",
+        "phoneControlDirectInspectionFinished | app=active bgRemaining=unlimited | mode=ipv6 result=not_tested endpoint=unavailable services=1"
+      ],
+      "raw_console_saved": false,
+      "pairing_credentials_accessed": false,
+      "trace_metadata": [
+        "preparation_failed: native=22, subcode=0"
+      ],
+      "trace_ready": false,
+      "console_exit_code": 2,
+      "trace_exit_code": 1
+    },
+    "lockdown": {
+      "started_at_utc": "2026-10-11T02:34:47.760066+00:00",
+      "mode": "lockdown",
+      "app_metadata": [
+        "phoneControlDirectInspectionStarted | app=inactive bgRemaining=unlimited | mode=lockdown",
+        "phoneControlServiceInspectionStarted | app=inactive bgRemaining=unlimited | source=direct_lockdown",
+        "phoneControlServiceInspection | app=active bgRemaining=unlimited | resolved=1",
+        "phoneControlServiceRecord | app=active bgRemaining=unlimited | port=49152 families=ipv4,ipv6 local=true",
+        "phoneControlDirectInspectionEndpoint | app=active bgRemaining=unlimited | mode=lockdown source=unique_self localdevvpn_address_present=false",
+        "phoneControlNativeStatus phase=failed code=lockdown_connection_failed",
+        "phoneControlDirectInspectionFinished | app=active bgRemaining=unlimited | mode=lockdown phase=failed lockdown_connection_failed, native=1, subcode=0, transport=lockdown_connect, io=PermissionDenied, os=1"
+      ],
+      "raw_console_saved": false,
+      "pairing_credentials_accessed": false,
+      "trace_metadata": [],
+      "trace_ready": false,
+      "console_exit_code": 2
+    }
+  },
+  "restoration": {
+    "console_exit_code": 2,
+    "metadata": [
+      "phoneControlHandshakeInspectionStarted | app=inactive bgRemaining=unlimited",
+      "phoneControlHandshakeInspectionEndpoint | app=inactive bgRemaining=unlimited | source=localdevvpn family=ipv4 port=49152",
+      "phoneControlNativeStatus phase=stopped code=handshake_ok",
+      "phoneControlHandshakeInspection | app=active bgRemaining=unlimited | phase=stopped handshake_ok"
+    ]
+  },
+  "interpretation": {
+    "ipv6": "Revised probe selected the one actual en0 scoped link-local endpoint among two local IPv6 candidates; LocalDevVPN address absent. Greeting failed at read_magic with ConnectionReset/os=54 before any pairing credentials. No simultaneous daemon trace; exact rejection predicate is not claimed.",
+    "lockdown": "Direct same-device Wi-Fi IPv4 socket connect denied with EPERM (1). QueryType was not sent; trusted session and CoreDeviceProxy were not attempted.",
+    "trace": "USB absent; simultaneous remote-pairing daemon trace unavailable. No daemon-specific rejection reason inferred.",
+    "scope_fix": "Darwin embedded-scope loss was reproduced in a fixture and fixed. Device revision logged embedded_scope=0 and two candidates, with one Wi-Fi candidate; do not claim embedded scope was the observed device cause."
+  },
+  "credentials_used_in_probes": false,
+  "phone_actions_sent": false,
+  "production_route_changed": false,
+  "committed": false,
+  "pushed": false,
+  "scope_revision": {
+    "artifact": {
+      "bundle_id": "app.amber.ios",
+      "application_identifier": "TY4JTL3V2M.app.amber.ios",
+      "signature": "valid",
+      "device_provisioned": true,
+      "new_lockdown_symbol": true,
+      "sha256": "52954e6983d83700ff013c4ef15070e7465095c750b8790fcbc14b0a5bba14bb"
+    },
+    "build": "Release, SWIFT_COMPILATION_MODE=incremental, -O",
+    "installation": "succeeded",
+    "data_metadata_comparison": {
+      "before_count": 355,
+      "after_count": 355,
+      "missing_count": 0,
+      "added_count": 0,
+      "size_or_modification_changes": 0
+    },
+    "probe": {
+      "started_at_utc": "2026-10-11T02:46:37.425793+00:00",
+      "mode": "ipv6",
+      "app_metadata": [
+        "phoneControlDirectInspectionStarted | app=inactive bgRemaining=unlimited | mode=ipv6",
+        "phoneControlServiceInspectionStarted | app=inactive bgRemaining=unlimited | source=direct_ipv6",
+        "phoneControlServiceInspection | app=active bgRemaining=unlimited | resolved=1",
+        "phoneControlServiceRecord | app=active bgRemaining=unlimited | port=49152 families=ipv4,ipv6 local=true",
+        "phoneControlIPv6Candidates | app=active bgRemaining=unlimited | ipv6=2 explicit_scope=1 embedded_scope=0 unscoped=1 conflicting_scope=0 local_match=2 candidates=2 wifi_candidates=1",
+        "phoneControlDirectInspectionEndpoint | app=active bgRemaining=unlimited | mode=ipv6 source=unique_self localdevvpn_address_present=false",
+        "phoneControlNativeStatus phase=failed code=pairing_handshake_failed",
+        "phoneControlDirectInspectionFinished | app=active bgRemaining=unlimited | mode=ipv6 phase=failed pairing_handshake_failed, native=1, subcode=0, transport=read_magic, io=ConnectionReset, os=54"
+      ],
+      "raw_console_saved": false,
+      "pairing_credentials_accessed": false,
+      "trace_metadata": [
+        "preparation_failed: native=22, subcode=0"
+      ],
+      "trace_ready": false,
+      "console_exit_code": 2,
+      "trace_exit_code": 1
+    },
+    "tests": {
+      "swift_ios_passed": 26,
+      "failed": 0,
+      "rust_passed": 32,
+      "rust_failed": 0
+    },
+    "review": "independent subagent reviewed scope parsing, endpoint identity, lifecycle and redacted diagnostics; no outstanding issue",
+    "restoration": {
+      "console_exit_code": 2,
+      "metadata": [
+        "phoneControlHandshakeInspectionStarted | app=inactive bgRemaining=unlimited",
+        "phoneControlHandshakeInspectionEndpoint | app=inactive bgRemaining=unlimited | source=localdevvpn family=ipv4 port=49152",
+        "phoneControlNativeStatus phase=stopped code=handshake_ok",
+        "phoneControlHandshakeInspection | app=active bgRemaining=unlimited | phase=stopped handshake_ok"
+      ]
+    },
+    "normal_app_relaunch": "succeeded, without diagnostic arguments"
+  },
+  "next_phase": "Embed one local packet tunnel in Amber; verify signing and minimal start before production controller/settings integration."
+}

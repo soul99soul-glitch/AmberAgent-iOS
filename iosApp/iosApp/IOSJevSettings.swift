@@ -9,7 +9,7 @@ import UIKit
 
 /// Jev 用途，均已接线（工具发现/记忆召回 = Phase 1，上下文筛选 = Phase 2，
 /// 模型调度/网页操作 = Phase 3，意图路由 = 增强 Phase C，压缩保留/自动批准
-/// 复核/完成校验 = v2）；webActions 的调用入口是 wm_run_goal 工具。
+/// 复核/完成校验 = v2）；手机用途分别由带验收条件的 phone_act 与 phone_run_goal 驱动。
 enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
     // 声明顺序即设置页行与用量统计的展示顺序（持久化用 rawValue，与顺序无关）。
     case toolDiscovery
@@ -19,6 +19,8 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
     case toolResultRetention
     case modelRouting
     case webActions
+    case phoneVerification
+    case phoneActions
     case subagentIntent
     case approvalTriage
     /// 自动批准生效时复核高风险调用，只会收紧为人工审批。
@@ -37,6 +39,8 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
         case .contextSelection: "上下文筛选"
         case .modelRouting: "模型调度"
         case .webActions: "网页操作"
+        case .phoneVerification: "手机效果检查"
+        case .phoneActions: "手机快速操作"
         case .subagentIntent: "意图路由"
         case .approvalTriage: "审批分诊"
         case .scriptJudgment: "脚本判断"
@@ -46,7 +50,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// 该用途需要外发的数据范围（Phase 1 实际使用的只有前两类）。
+    /// 该用途需要外发的数据范围；范围缺一项便不发送。
     var defaultDataScopes: Set<IOSJevDataScope> {
         switch self {
         case .toolDiscovery: [.toolMetadata, .selectedTaskText]
@@ -54,6 +58,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
         case .contextSelection: [.selectedTaskText, .toolOutput]
         case .modelRouting: [.selectedTaskText, .modelMetadata]
         case .webActions: [.webContent, .selectedTaskText]
+        case .phoneVerification, .phoneActions: [.selectedTaskText, .phoneContent]
         case .subagentIntent: [.selectedTaskText, .toolMetadata]
         case .approvalTriage: [.toolMetadata, .selectedTaskText]
         case .scriptJudgment: [.toolOutput]
@@ -97,6 +102,7 @@ enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable, Sendable {
     case personalMemory
     case toolOutput
     case webContent
+    case phoneContent
 
     var id: String { rawValue }
 
@@ -108,6 +114,7 @@ enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable, Sendable {
         case .personalMemory: "个人记忆内容"
         case .toolOutput: "文件 / 工具输出"
         case .webContent: "网页内容"
+        case .phoneContent: "手机界面文字"
         }
     }
 }
@@ -195,6 +202,7 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
         contextSelectionMinConfidence = try container.decodeIfPresent(Double.self, forKey: .contextSelectionMinConfidence)
         modelRoutingMinConfidence = try container.decodeIfPresent(Double.self, forKey: .modelRoutingMinConfidence)
         webActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .webActionsMinConfidence) ?? 0.5
+        phoneActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .phoneActionsMinConfidence) ?? 0.8
         subagentIntentMinConfidence = try container.decodeIfPresent(Double.self, forKey: .subagentIntentMinConfidence)
         memoryInjectionMinProbability = try container.decodeIfPresent(Double.self, forKey: .memoryInjectionMinProbability) ?? 0.8
         cacheMaxEntries = try container.decodeIfPresent(Int.self, forKey: .cacheMaxEntries) ?? 128
@@ -211,7 +219,7 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
         case dailyRequestBudget, dailyRequestBodyBudgetBytes, toolDiscoveryMinScore
         case memoryRecallMinScore, contextSelectionMinScore, modelRoutingMinScore
         case toolDiscoveryMinConfidence, memoryRecallMinConfidence, contextSelectionMinConfidence
-        case modelRoutingMinConfidence, webActionsMinConfidence, subagentIntentMinConfidence
+        case modelRoutingMinConfidence, webActionsMinConfidence, phoneActionsMinConfidence, subagentIntentMinConfidence
         case memoryInjectionMinProbability
         case cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
     }
@@ -219,7 +227,7 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
     var policyVersion: Int = IOSJevPolicy.currentPolicyVersion
     /// 前台单次判断总 deadline（排队 + 网络 + 重试 + 解析），毫秒。
     var deadlineMs: Int = 1_200
-    /// webActions 循环的决策 deadline：一次超时烧掉整轮（观察+决策），
+    /// 网页和手机短目标循环的决策 deadline：一次超时烧掉整轮（观察+决策），
     /// 且移动网络+网关多一跳时尾部超 1.2s 并不少见——给更长视野把
     /// "超时"换成"慢一点的决策"。其余用途保持 1.2s 的轻快判断语义。
     var webActionsDeadlineMs: Int = 2_500
@@ -267,6 +275,8 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
     var modelRoutingMinConfidence: Double? = nil
     /// webActions 置信下限（原循环内硬编码 0.5 收编进版本化 policy）。
     var webActionsMinConfidence: Double = 0.5
+    /// 手机短目标只执行清单中可唯一定位的动作；低置信选择交回主模型。
+    var phoneActionsMinConfidence: Double = 0.8
     /// 意图路由：角色 Choice 的置信弃权线（nil = 不门控）；对齐回执是 Noul，
     /// 无 confidence 字段，以 0.5 概率为分界线，不走该字段。
     var subagentIntentMinConfidence: Double? = nil
@@ -289,8 +299,8 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
         case .contextSelection: t2WaitBudgetMs
         case .modelRouting, .subagentIntent: t3WaitBudgetMs
         case .toolDiscovery: onDemandWaitBudgetMs
-        case .approvalTriage, .scriptJudgment, .toolResultRetention, .autoApprovalGate, .completionCheck: deadlineMs
-        case .webActions: webActionsDeadlineMs
+        case .approvalTriage, .scriptJudgment, .toolResultRetention, .autoApprovalGate, .completionCheck, .phoneVerification: deadlineMs
+        case .webActions, .phoneActions: webActionsDeadlineMs
         }
     }
 }
