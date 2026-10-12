@@ -3246,25 +3246,12 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
 
-        let durableRun: IOSDurableRunStore.Snapshot?
-        do {
-            durableRun = try await runStore.snapshot(runId: mappedRunId)
-        } catch {
-            guard activeBackgroundTasks[requestId] == nil,
-                  activeDetachedResponseTasks[requestId] == nil,
-                  !backgroundInterruptedRequestIds.contains(requestId),
-                  !foregroundResumeInFlightRequestIds.contains(requestId),
-                  !automaticallyResumedRequestIds.contains(requestId) else { return }
-            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
-            releaseRuntimeOwnership(requestId: requestId)
-            return
-        }
         let hasPreservedOutcomeUnknown = preservingOutcomeUnknownRunIds.contains(mappedRunId)
         let hasOutcomeUnknownEvidence: Bool?
         if hasPreservedOutcomeUnknown {
             hasOutcomeUnknownEvidence = true
         } else {
-            hasOutcomeUnknownEvidence = await hasOutcomeUnknownRecoveryEvidence(run: durableRun)
+            hasOutcomeUnknownEvidence = await hasOutcomeUnknownRecoveryEvidence(runId: mappedRunId)
         }
         guard activeBackgroundTasks[requestId] == nil,
               activeDetachedResponseTasks[requestId] == nil,
@@ -3287,27 +3274,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             finish(runId: mappedRunId, requestId: requestId)
             return
         }
-        if let durableRun, durableRun.status.isTerminal, durableRun.finishedAt != nil {
-            // Startup recovery may already have persisted an interrupted terminal.
-            // Its old checkpoint must not append another failure or replace that terminal.
-            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
-            await IOSPhoneControlController.shared.stop(runID: mappedRunId)
-            let controller = dependencies?.liveActivityController ?? .shared
-            _ = controller.adoptExistingActivity(runId: mappedRunId)
-            let presentation: AgentActivityPresentation
-            switch durableRun.status {
-            case .completed: presentation = .completed()
-            case .cancelled: presentation = .cancelled()
-            default: presentation = .failed()
-            }
-            await controller.end(runId: mappedRunId, presentation: presentation)
-            IOSBackgroundLifecycleLog.record(
-                "staleBackgroundTerminalPreserved",
-                detail: "run=\(mappedRunId) status=\(durableRun.status.wireName)"
-            )
-            finish(runId: mappedRunId, requestId: requestId)
-            return
-        }
+
         // `.queue`/遗留 request 不会因应用被杀而自行消失；先撤掉它，防止
         // 扫尾后系统又唤起一张已经被标记停止的后台卡。
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
@@ -3342,7 +3309,16 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
     }
 
-    private func hasOutcomeUnknownRecoveryEvidence(run snapshot: IOSDurableRunStore.Snapshot?) async -> Bool? {
+    private func hasOutcomeUnknownRecoveryEvidence(runId: String) async -> Bool? {
+        let snapshot: IOSDurableRunStore.Snapshot?
+        do {
+            snapshot = try await runStore.snapshot(runId: runId)
+        } catch {
+            // 无法读取 durable evidence 时不能把可能的副作用改写成普通
+            // expiration failure；由调用方保留 task-map/payload，交给下一次
+            // 冷启动重试对账。
+            return nil
+        }
         guard let snapshot else {
             return false
         }
@@ -3353,7 +3329,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard runStatus == .running || runStatus == .recoveryPending else {
             return false
         }
-        guard let transactionStates = await toolLedger.toolTransactions(runId: snapshot.runId)?.map(\.state) else {
+        guard let transactionStates = await toolLedger.toolTransactions(runId: runId)?.map(\.state) else {
             return nil
         }
         return Self.preservesOutcomeUnknownStaleRecovery(
@@ -4064,11 +4040,6 @@ final class IOSChatBackgroundGenerationCoordinator {
                 detail: resolvedTerminalReason
             )
             if !didRecord {
-                let actualStatus = try? await runStore.snapshot(runId: runId)?.status.wireName
-                IOSBackgroundLifecycleLog.record(
-                    "backgroundRunTerminalConflict",
-                    detail: "run=\(runId) target=\(status.wireName) actual=\(actualStatus ?? "unavailable")"
-                )
                 let detail = IOSAppLocalization.string(
                     "运行终态发生冲突，后台任务已保留等待恢复。",
                     defaultValue: "运行终态发生冲突，后台任务已保留等待恢复。"
@@ -4600,11 +4571,6 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard handoff.mode == .resumeResponse, handoff.responseId != nil else {
             return false
         }
-        return persistBackgroundCheckpointForTesting(handoff)
-    }
-
-    @discardableResult
-    func persistBackgroundCheckpointForTesting(_ handoff: IOSChatBackgroundHandoff) -> Bool {
         let requestId = requestIdentifier(for: handoff.runId)
         do {
             try persist(handoff: handoff, requestId: requestId)

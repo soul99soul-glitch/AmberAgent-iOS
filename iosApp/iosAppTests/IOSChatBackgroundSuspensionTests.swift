@@ -86,65 +86,6 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
     }
 
     @MainActor
-    func testStaleSweepPreservesTerminalAlreadyWrittenByStartupRecovery() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RecoveredBackground-\(UUID().uuidString)", isDirectory: true)
-        let store = IOSConversationStore(baseDirectory: directory)
-        await store.bootstrap()
-        let conversationId = try XCTUnwrap(store.currentConversation?.id)
-        let fixture = DurableCancelFixture(name: "recovered-background", conversationId: conversationId)
-        var handoff = fixture.handoff
-        handoff.mode = .continueModel
-        handoff.responseId = nil
-        let settings = makeSettings(for: fixture)
-        let runtime = ChatToolRuntime(
-            settingsStore: SettingsStore(), sharedSettings: settings, localToolExecutor: nil,
-            searchTransport: HandoffTestSearchTransport(), mcpManager: IOSMcpManager(serverProvider: { [] })
-        )
-        let coordinator = IOSChatBackgroundGenerationCoordinator(
-            keepAlive: .shared, provider: IOSChatBackgroundProvider()
-        )
-        defer {
-            coordinator.discardDurableResponse(runId: handoff.runId)
-            try? FileManager.default.removeItem(at: directory)
-        }
-        let runStore = IOSDurableRunStore()
-        let started = try await runStore.startChatRun(
-            runId: handoff.runId, startedAt: handoff.startedAt,
-            inputDigest: handoff.inputDigest, conversationId: conversationId.toHexDashString()
-        )
-        XCTAssertTrue(started)
-        coordinator.configure(conversationStore: store, toolRuntime: runtime, sharedSettings: settings)
-        XCTAssertTrue(coordinator.persistBackgroundCheckpointForTesting(handoff))
-        let beforeMessages = await store.messages(for: conversationId)
-
-        // AppShell performs generic interrupted-run recovery before the stale-job sweep.
-        let recovered = await IOSRunRecovery.recoverInterruptedRuns(
-            candidateRunIds: [handoff.runId],
-            excludingRunIds: coordinator.startupRecoveryExclusionRunIds
-        )
-        XCTAssertEqual(recovered, 1)
-        let beforeSnapshot = try await runStore.snapshot(runId: handoff.runId)
-        let beforeRun = try XCTUnwrap(beforeSnapshot)
-        XCTAssertEqual(beforeRun.status, .interrupted)
-        coordinator.finalizeStalePersistedJobsIfNeeded()
-        let deadline = Date().addingTimeInterval(5)
-        while coordinator.hasPendingConversationWrites, Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        XCTAssertFalse(coordinator.hasPendingConversationWrites, "A durable terminal must release its stale checkpoint")
-        XCTAssertNil(store.lastUserVisibleError, "Startup recovery must not try to replace interrupted with failed")
-        let afterMessages = await store.messages(for: conversationId)
-        XCTAssertEqual(afterMessages?.map(\.id), beforeMessages?.map(\.id), "Stale checkpoint content must not overwrite the recovered transcript")
-        let afterSnapshot = try await runStore.snapshot(runId: handoff.runId)
-        let afterRun = try XCTUnwrap(afterSnapshot)
-        XCTAssertEqual(afterRun.status, beforeRun.status)
-        XCTAssertEqual(afterRun.finishedAt, beforeRun.finishedAt)
-        XCTAssertEqual(afterRun.terminalReason, beforeRun.terminalReason)
-    }
-
-    @MainActor
     func testForegroundAutoResumeUsesLedgerGateInsteadOfToolDeclarations() {
         XCTAssertTrue(
             IOSChatBackgroundGenerationCoordinator
@@ -233,7 +174,10 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
         )
         XCTAssertTrue(didStartTool)
 
-        let sharedSettings = makeSettings(for: fixture)
+        let sharedSettings = IOSSharedSettingsStore(
+            userDefaults: UserDefaults(suiteName: "resume-unknown-\(UUID().uuidString)")!
+        )
+        _ = sharedSettings.addProvider(fixture.provider)
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
             sharedSettings: sharedSettings,
@@ -317,7 +261,10 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
         )
         XCTAssertTrue(didStartRun)
 
-        let sharedSettings = makeSettings(for: fixture)
+        let sharedSettings = IOSSharedSettingsStore(
+            userDefaults: UserDefaults(suiteName: "resume-safe-\(UUID().uuidString)")!
+        )
+        _ = sharedSettings.addProvider(fixture.provider)
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
             sharedSettings: sharedSettings,
@@ -414,7 +361,10 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
 
-        let sharedSettings = makeSettings(for: fixture)
+        let sharedSettings = IOSSharedSettingsStore(
+            userDefaults: UserDefaults(suiteName: "\(fixture.name)-\(UUID().uuidString)")!
+        )
+        _ = sharedSettings.addProvider(fixture.provider)
         let store = IOSConversationStore(baseDirectory: directory)
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
@@ -446,32 +396,6 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
                 "取消即使终态 transcript 保存失败，也必须清理 durable response owner"
             )
         }
-    }
-
-    @MainActor
-    private func makeSettings(for fixture: DurableCancelFixture) -> IOSSharedSettingsStore {
-        // Durable-job ownership must not depend on the test host's Keychain access
-        // just to establish the checkpoint's provider fixture.
-        var credentials: [String: String] = [:]
-        let settings = IOSSharedSettingsStore(
-            userDefaults: UserDefaults(suiteName: "\(fixture.name)-\(UUID().uuidString)")!,
-            loadCredential: { credentials[$0] },
-            storeCredential: { key, value in
-                credentials[key] = value
-                return true
-            },
-            deleteCredential: { key in
-                credentials.removeValue(forKey: key)
-                return true
-            }
-        )
-        settings.addProvider(fixture.provider)
-        XCTAssertNil(settings.credentialPersistenceError)
-        XCTAssertTrue(
-            settings.snapshot.providers.contains { $0.id == fixture.provider.id },
-            "Durable response hydration requires the checkpoint's provider in settings"
-        )
-        return settings
     }
 }
 
