@@ -1,0 +1,76 @@
+{
+  "recordedUTC": "2026-10-12T03:02:40.356633+00:00",
+  "testRuns": {
+    "defaultFinal": {
+      "resultBundle": "/tmp/amber-task-ui-process-final-regression-r3.xcresult",
+      "result": "Passed",
+      "passedTests": 236,
+      "failedTests": 0,
+      "skippedTests": 2,
+      "totalTestCount": 238
+    },
+    "captionAffectedFinal": {
+      "resultBundle": "/tmp/amber-task-ui-final-caption-regression.xcresult",
+      "result": "Passed",
+      "passedTests": 109,
+      "failedTests": 0,
+      "skippedTests": 1,
+      "totalTestCount": 110
+    },
+    "componentAXPrevious": {
+      "resultBundle": "/tmp/amber-task-ui-component-ax-r3.xcresult",
+      "result": "Failed",
+      "passedTests": 3,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "totalTestCount": 5
+    },
+    "componentAXRepaired": {
+      "resultBundle": "/tmp/amber-task-ui-component-ax-r4.xcresult",
+      "result": "Passed",
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 2
+    }
+  },
+  "build": {
+    "resultBundle": "/tmp/amber-task-ui-final-device-build-r2.xcresult",
+    "status": "succeeded",
+    "errorCount": 0,
+    "warningCount": 48
+  },
+  "finalBuildIdentity": {
+    "appPath": "iosApp/build/IntelligentUIAdaptiveDevice/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+    "bundleID": "app.amber.ios",
+    "appGroup": "group.app.amber.ios.watchkit",
+    "applicationIdentifier": "TY4JTL3V2M.app.amber.ios",
+    "mainURLSchemes": [
+      "amber"
+    ],
+    "watchURLSchemes": [
+      "amber-watch"
+    ],
+    "watchCompanionBundleID": "app.amber.ios",
+    "executableSHA256": "64f30534b6b6a1620c01449ee0cd3d9a56a0eb3627c0a96f240107f44db70ed2",
+    "signatureVerification": "passed",
+    "sourceManifestUnchanged": true,
+    "releaseFixtureMarkerAbsent": true,
+    "entitlementDiagnosticsMirrorMatches": true
+  },
+  "device": {
+    "beforeSettingsCopyExitCode": 1,
+    "privateEvidenceDirectory": "/var/folders/2c/0pbv0ybx6h1crqbxq9zft5780000gn/T/amber-task-ui-final-device-oz2z3ubl",
+    "deviceState": "unavailable",
+    "install": "not_executed",
+    "normalLaunch": "not_executed",
+    "settingsComparison": "not_executed",
+    "reason": "Device could not fulfill CoreDevice connectivity/power assertion requirements before settings snapshot; final install not started."
+  },
+  "unverified": [
+    "natural request through actual provider",
+    "physical native-card interactions",
+    "actual two-run durable study acceptance"
+  ],
+  "componentAXClosure": "Three cases passed in r3; the two selector failures were repaired and both passed in r4. Fixed DEBUG fixture exercises production views and owners, without provider or durable storage acceptance."
+}

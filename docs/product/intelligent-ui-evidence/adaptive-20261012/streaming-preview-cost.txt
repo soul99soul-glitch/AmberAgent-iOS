@@ -1,0 +1,9 @@
+taskUI: 29 identical NSString-bridge chunks; last UTF16 length 691
+old median total=2.080ms perChunk=0.0717ms
+new median total=2.664ms perChunk=0.0919ms
+scanner calls old=0 new=28; maximum validated component nodes=5; final full cards old/new=1/1
+ordinaryProse: 180 identical NSString-bridge chunks; last UTF16 length 23000
+old median total=0.166ms perChunk=0.0009ms
+new median total=0.166ms perChunk=0.0009ms
+scanner calls old=0 new=0; maximum validated component nodes=0; final full cards old/new=0/0
+-Onone Foundation-only detector+Protocol.parse vs detector+incremental preview+Protocol.parse; 40 alternating passes; construction excluded; no SwiftUI/layout/provider evidence

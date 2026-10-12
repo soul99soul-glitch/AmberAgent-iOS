@@ -1,0 +1,73 @@
+{
+  "appBinarySHA256": "55faaa2d2e4516c8348e7ac7d412ebeb3fed8d46b13fcec6b304d9af457d90ee",
+  "sourceStatus": "current production fast plain renderer; no product changes after signed r3",
+  "finalSimulatorF": {
+    "total": 142,
+    "passed": 138,
+    "failed": 2,
+    "skipped": 2,
+    "resultPath": "/tmp/amber-task-ui-final-simulator-f.xcresult",
+    "failures": [
+      "LongProse24KB viewport follow",
+      "GrowingTable display-link p95 43.6804ms > 40ms"
+    ],
+    "skips": [
+      "Conditional reasoning cost sample",
+      "Unit hosting AX unavailable"
+    ]
+  },
+  "profileCurrent": {
+    "sampleFile": "/tmp/amber-task-ui-profile-current.sample.txt",
+    "durationSeconds": 12,
+    "sampleIntervalMilliseconds": 1,
+    "longProseTestRootSamples": 2355,
+    "rawMarkdownProbeSamplesWithoutRecursiveDoubleCount": 167,
+    "probeShareOfTestSamples": 0.07091295116772824,
+    "taskDetectorSamples": 2,
+    "limitations": [
+      "Includes startup and settle; inclusive samples are not exclusive CPU percent.",
+      "Profiled run is diagnostic and is not a clean performance gate.",
+      "RawMarkdown probe does not run in GrowingTable test."
+    ]
+  },
+  "pending": "Physical production UI interaction and same-marker durable Room/draft acceptance; current device locked.",
+  "originalRendererG": {
+    "total": 37,
+    "passed": 34,
+    "failed": 2,
+    "skipped": 1,
+    "resultPath": "/tmp/amber-task-ui-original-g-replay.xcresult",
+    "longProseGrowthSnapshots": 48,
+    "longProseTextGrowthP95": 36,
+    "growingTableFrameGapP95Milliseconds": 49.134750152006745,
+    "limitations": [
+      "Original renderer had also passed an earlier control; both observations retained.",
+      "Device UI preflight started late in this replay; do not describe the entire run as isolated from other test orchestration."
+    ]
+  },
+  "observerRepair": {
+    "file": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+    "scope": "NSString literal candidate prefilter before original raw Markdown marker checks",
+    "originalChecksPreserved": true,
+    "samplingFrequencyUnchanged": true,
+    "allThresholdsAndAssertionsUnchanged": true,
+    "semanticCasesPassed": 118,
+    "directLiteralReplacementRejected": "Combining mark and VS16 false positives; original String checks remain final."
+  },
+  "finalSimulatorI": {
+    "result": "Passed",
+    "total": 142,
+    "passed": 140,
+    "failed": 0,
+    "skipped": 2,
+    "resultPath": "/tmp/amber-task-ui-final-simulator-i.xcresult",
+    "longProseOriginalGatePassed": true,
+    "growingTableOriginalGatePassed": true,
+    "skips": [
+      "Conditional reasoning cost sample",
+      "Unit hosting AX unavailable"
+    ],
+    "compilerLoadDuringGate": "none",
+    "productionRendererReferenceRestored": true
+  }
+}

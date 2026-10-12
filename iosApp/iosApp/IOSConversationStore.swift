@@ -113,6 +113,7 @@ final class IOSConversationStore {
 
     let artifactStore: IOSConversationArtifactStore
     let recapStore: IOSConversationRecapStore
+    let intelligentUIStateStore: IOSIntelligentUIStateStore
 
     /// Shared by the foreground panel and background completion callbacks.
     /// The generator holds this store as unowned to keep ownership one-way.
@@ -226,6 +227,7 @@ final class IOSConversationStore {
 #if DEBUG
     var beforePersistForTesting: ((Conversation) async -> Void)?
     var beforeDeleteForTesting: (() async throws -> Void)?
+    var beforeMessageLoadForTesting: ((KotlinUuid) -> Void)?
 #endif
 
     // MARK: - Init
@@ -265,6 +267,9 @@ final class IOSConversationStore {
         self.recapStore = IOSConversationRecapStore(
             fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("conversation-recaps.json")
         )
+        self.intelligentUIStateStore = IOSIntelligentUIStateStore(
+            fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("task-ui-drafts.json")
+        )
         self.listPreviewsFileURL = previewsURL
         self.listIconsFileURL = iconsURL
         let edgeDao: (() -> ThreadEdgeDao)? = threadEdgeDaoProvider
@@ -287,6 +292,9 @@ final class IOSConversationStore {
         }
         if let error = recapStore.storageError {
             publishIOError(operation: "读取回顾", detail: error.localizedDescription)
+        }
+        if let error = intelligentUIStateStore.storageError {
+            publishIOError(operation: "读取任务卡草稿", detail: error)
         }
     }
 
@@ -418,6 +426,7 @@ final class IOSConversationStore {
         }
         await waitForConversationWritesToDrain()
         try await storage.importConversations(serializedConversations: documents)
+        await clearIntelligentUIDrafts(for: restoredIds)
         // 被备份覆盖的会话，其消息 ID 与本机收藏不再对应；收藏不随备份恢复。
         recapGenerator.invalidate(
             conversationIDs: Array(restoredIds),
@@ -705,13 +714,33 @@ final class IOSConversationStore {
             if Self.sameMessageIdentity(current, baseMessages) {
                 nextMessages = completedMessages
             } else {
-                // M1: 后台 mailbox drain 折入的信封已在 drain 持久化时进入
-                // current（displayMessages 快照不含 drain）。终态保存若照旧把
-                // completedMessages 的整段 suffix 追加，折入信封会二次落盘，
-                // 且「会话期间已有新内容」notice 是误导（差异全部来自后台自己
-                // 折入的信封，不是用户新内容）。按消息 id 去重：已落盘的折入
-                // 信封跳过；差异全部来自 drain 时以 current 为终态不插 notice。
+                // Drain envelopes keep their persisted identity. A generated assistant may
+                // already be checkpointed with that same UUID, so its terminal projection
+                // must replace the checkpoint rather than disappear as a duplicate.
                 let generatedSuffix = Array(completedMessages.dropFirst(baseMessages.count))
+                let baseIDs = Set(baseMessages.map { String(describing: $0.id) })
+                let completedAssistants = generatedSuffix.reduce(into: [String: UIMessage]()) { result, message in
+                    let messageID = String(describing: message.id)
+                    if message.role == .assistant, !baseIDs.contains(messageID) {
+                        result[messageID] = message
+                    }
+                }
+                let baselineAssistants = baseMessages.reduce(into: [String: UIMessage]()) { result, message in
+                    if message.role == .assistant { result[String(describing: message.id)] = message }
+                }
+                let terminalAssistants = completedMessages.reduce(into: [String: UIMessage]()) { result, message in
+                    if message.role == .assistant { result[String(describing: message.id)] = message }
+                }
+                let mergedCurrent = current.map { message -> UIMessage in
+                    guard message.role == .assistant else { return message }
+                    let messageID = String(describing: message.id)
+                    if let generated = completedAssistants[messageID] { return generated }
+                    guard let checkpoint = baselineAssistants[messageID],
+                          let terminal = terminalAssistants[messageID] else { return message }
+                    return Self.messageByApplyingIntelligentUITerminalMetadata(
+                        to: message, checkpoint: checkpoint, terminal: terminal
+                    )
+                }
                 let currentIds = Set(current.map { String(describing: $0.id) })
                 let freshSuffix = generatedSuffix.filter { !currentIds.contains(String(describing: $0.id)) }
                 let completedIds = Set(completedMessages.map { String(describing: $0.id) })
@@ -719,17 +748,16 @@ final class IOSConversationStore {
                     completedIds.contains(String(describing: $0.id))
                 }
                 if freshSuffix.isEmpty {
-                    // 终态相对 base 的新增已全部落盘（折入信封先到）——不重复写。
-                    nextMessages = current
+                    nextMessages = mergedCurrent
                 } else if differenceIsOnlyDrain {
                     // 磁盘差异只是后台自己折入的信封：无用户侧新内容，不插 notice。
-                    nextMessages = current + freshSuffix
+                    nextMessages = mergedCurrent + freshSuffix
                 } else {
                     let notice = UIMessage.companion.assistant(prompt: IOSAppLocalization.string(
                         "后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。",
                         defaultValue: "后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。"
                     ))
-                    nextMessages = current + [notice] + freshSuffix
+                    nextMessages = mergedCurrent + [notice] + freshSuffix
                 }
             }
             guard await save(
@@ -1015,6 +1043,7 @@ final class IOSConversationStore {
         onDeletionCommitted([id] + descendants)
         let deletedConversationKeys = ([id] + descendants).map { $0.toHexDashString() }
         recapGenerator.invalidate(conversationIDs: deletedConversationKeys)
+        await clearIntelligentUIDrafts(for: Set(deletedConversationKeys))
         do {
             for deletedID in [id] + descendants {
                 try artifactStore.removeConversation(deletedID.toHexDashString())
@@ -1053,6 +1082,16 @@ final class IOSConversationStore {
             }
         }
         return true
+    }
+
+    /// Local drafts do not follow restored documents or survive deletion of their source.
+    private func clearIntelligentUIDrafts(for conversationIDs: Set<String>) async {
+        intelligentUIStateStore.removeConversations(conversationIDs)
+        do {
+            try await intelligentUIStateStore.flush()
+        } catch {
+            publishIOError(operation: "清理任务卡草稿", detail: error.localizedDescription)
+        }
     }
 
     /// 重命名：partial update，不改 messages。
@@ -1141,6 +1180,9 @@ final class IOSConversationStore {
         }
         guard !isDeletedConversation(id) else { return nil }
         do {
+#if DEBUG
+            beforeMessageLoadForTesting?(id)
+#endif
             return try await storage.loadConversation(id: id)?.currentMessages as? [UIMessage]
         } catch {
             publishIOError(operation: "加载会话", detail: "\(id): \(error)")
@@ -1346,6 +1388,43 @@ final class IOSConversationStore {
         return zip(lhs, rhs).allSatisfy { left, right in
             String(describing: left.id) == String(describing: right.id)
         }
+    }
+
+    /// Recovery can advance the baseline past a pending card. Only finalize the same
+    /// run's unchanged text part; retain current content and all unrelated metadata.
+    private static func messageByApplyingIntelligentUITerminalMetadata(
+        to current: UIMessage, checkpoint: UIMessage, terminal: UIMessage
+    ) -> UIMessage {
+        var changed = false
+        let jsonBridge = IosToolOutputJsonBridge.shared
+        let parts: [UIMessagePart] = current.parts.enumerated().map { index, part in
+            guard index < checkpoint.parts.count, index < terminal.parts.count,
+                  let currentText = part as? UIMessagePart.Text,
+                  let checkpointText = checkpoint.parts[index] as? UIMessagePart.Text,
+                  let terminalText = terminal.parts[index] as? UIMessagePart.Text,
+                  let runID = jsonBridge.metadataString(part: checkpointText, key: IOSIntelligentUITerminal.runIDKey),
+                  jsonBridge.metadataString(part: checkpointText, key: IOSIntelligentUITerminal.completedKey) == nil,
+                  jsonBridge.metadataString(part: currentText, key: IOSIntelligentUITerminal.completedKey) == nil,
+                  jsonBridge.metadataString(part: terminalText, key: IOSIntelligentUITerminal.completedKey) == "completed",
+                  jsonBridge.metadataString(part: currentText, key: IOSIntelligentUITerminal.runIDKey) == runID,
+                  jsonBridge.metadataString(part: terminalText, key: IOSIntelligentUITerminal.runIDKey) == runID,
+                  jsonBridge.metadataString(part: checkpointText, key: MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY) == nil,
+                  jsonBridge.metadataString(part: currentText, key: MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY) == nil,
+                  jsonBridge.metadataString(part: terminalText, key: MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY) == nil,
+                  checkpointText.text == terminalText.text, currentText.text == terminalText.text else { return part }
+            changed = true
+            // Keep nested JsonObject values in Kotlin; Swift collection bridges erase their type.
+            return jsonBridge.mergeTextMetadata(part: currentText, updates: [
+                IOSIntelligentUITerminal.completedKey: "completed",
+                IOSIntelligentUITerminal.runIDKey: runID
+            ])
+        }
+        guard changed else { return current }
+        return UIMessage(
+            id: current.id, role: current.role, parts: parts, annotations: current.annotations,
+            createdAt: current.createdAt, finishedAt: current.finishedAt, modelId: current.modelId,
+            usage: current.usage, translation: current.translation
+        )
     }
 
     private static func completedToolOutputs(in messages: [UIMessage]) -> [String: UIMessagePart.Tool] {

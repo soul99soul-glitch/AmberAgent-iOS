@@ -800,3 +800,23 @@ targets:
           - watchsimulator
     scheme:
       gatherCoverageData: false
+
+  IOSIntelligentUIAcceptance:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: iosAppUITests/IOSIntelligentUIAcceptanceTests.swift
+      - path: iosAppUITests/IOSIntelligentUIComponentAXAcceptanceTests.swift
+    dependencies:
+      - target: iosApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.intelligent-ui-acceptance
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: iosApp
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: 1,2
+    scheme:
+      gatherCoverageData: false
+      testTargets:
+        - IOSIntelligentUIAcceptance

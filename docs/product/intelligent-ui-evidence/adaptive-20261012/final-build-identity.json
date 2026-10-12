@@ -1,0 +1,18 @@
+{
+  "appPath": "iosApp/build/IntelligentUIAdaptiveDevice/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+  "bundleID": "app.amber.ios",
+  "appGroup": "group.app.amber.ios.watchkit",
+  "applicationIdentifier": "TY4JTL3V2M.app.amber.ios",
+  "mainURLSchemes": [
+    "amber"
+  ],
+  "watchURLSchemes": [
+    "amber-watch"
+  ],
+  "watchCompanionBundleID": "app.amber.ios",
+  "executableSHA256": "64f30534b6b6a1620c01449ee0cd3d9a56a0eb3627c0a96f240107f44db70ed2",
+  "signatureVerification": "passed",
+  "sourceManifestUnchanged": true,
+  "releaseFixtureMarkerAbsent": true,
+  "entitlementDiagnosticsMirrorMatches": true
+}

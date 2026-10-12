@@ -2,6 +2,8 @@ package app.amber.core.storage.conversation
 
 import app.amber.core.model.Conversation
 import app.amber.core.model.ConversationMemoryMode
+import app.amber.ai.core.MessageRole
+import app.amber.ai.ui.UIMessagePart
 import kotlinx.serialization.Serializable
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -30,6 +32,8 @@ data class ConversationSummary(
     val messageCount: Int,
     /** P2-a：会话记忆模式。随 [Conversation.memoryMode] 派生，旧 index.json 缺字段解码为 ENABLED。 */
     val memoryMode: ConversationMemoryMode = ConversationMemoryMode.ENABLED,
+    /** 首页恢复图片任务时，仅这些会话需要读取正文；按当前选中分支派生。 */
+    val hasImageGenerationTool: Boolean = false,
 )
 
 /**
@@ -99,4 +103,10 @@ fun Conversation.toSummary(): ConversationSummary = ConversationSummary(
     isPinned = isPinned,
     messageCount = messageNodes.size,
     memoryMode = memoryMode,
+    hasImageGenerationTool = messageNodes.any { node ->
+        val message = node.messages.getOrNull(node.selectIndex)
+        message?.role == MessageRole.ASSISTANT && message.parts.any { part ->
+            part is UIMessagePart.Tool && part.toolName == "generate_image"
+        }
+    },
 )

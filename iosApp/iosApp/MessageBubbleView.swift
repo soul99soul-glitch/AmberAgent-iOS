@@ -388,7 +388,10 @@ struct MessageBubbleView: View {
                             hasEverStreamed: hasEverStreamed,
                             liveRenderingEnabled: liveMarkdownRenderingEnabled,
                             frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
-                            onGenerativeWidgetAction: onGenerativeWidgetAction
+                            onGenerativeWidgetAction: onGenerativeWidgetAction,
+                            isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
+                            sourceMessageID: message.id.toHexDashString(),
+                            sourceTextPartIndex: partIndex
                         )
                     }
                     .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)

@@ -74,6 +74,11 @@ struct ChatAssistantMarkdownView: View {
     var liveRenderingEnabled = true
     var frozenMarkdownSnapshot: String?
     var onGenerativeWidgetAction: (String) -> Void = { _ in }
+    var isSourceMessageComplete = true
+    var sourceMessageID: String? = nil
+    var sourceTextPartIndex: Int = 0
+    @State private var taskSegments: [IOSIntelligentUISegment] = []
+    @State private var taskPreview: IOSIntelligentUIStreamingPreview?
 
     // 渲染器选择已硬编码：block 渲染器无条件参与竞争，coalesced 合并默认开启。
     // 不再暴露 microsoft/liyanan/streamingBlock/coalesced 开关给用户。
@@ -101,7 +106,10 @@ struct ChatAssistantMarkdownView: View {
         hasEverStreamed: Bool = false,
         liveRenderingEnabled: Bool = true,
         frozenMarkdownSnapshot: String? = nil,
-        onGenerativeWidgetAction: @escaping (String) -> Void = { _ in }
+        onGenerativeWidgetAction: @escaping (String) -> Void = { _ in },
+        isSourceMessageComplete: Bool = true,
+        sourceMessageID: String? = nil,
+        sourceTextPartIndex: Int = 0
     ) {
         self.markdown = markdown
         self.renderCacheNamespace = renderCacheNamespace
@@ -112,6 +120,9 @@ struct ChatAssistantMarkdownView: View {
         self.liveRenderingEnabled = liveRenderingEnabled
         self.frozenMarkdownSnapshot = frozenMarkdownSnapshot
         self.onGenerativeWidgetAction = onGenerativeWidgetAction
+        self.isSourceMessageComplete = isSourceMessageComplete
+        self.sourceMessageID = sourceMessageID
+        self.sourceTextPartIndex = sourceTextPartIndex
         // 流式尾行的 view struct 每个 delta 重建,State(initialValue:) 首帧之后
         // 全部被丢弃——eager 种子扫描曾按"微秒级"评估保留,采样实测占主线程
         // ~6.6%(24KB×逐字节×每 delta×两次 body eval),证伪。改为:只有
@@ -148,6 +159,111 @@ struct ChatAssistantMarkdownView: View {
         let renderedMarkdown = renderedMarkdownText
         let liveStreaming = isStreaming && liveRenderingEnabled
         Group {
+            if widgetSettings.enabled && (mayContainWidgetPayload || !taskSegments.isEmpty) {
+                if !taskSegments.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(taskSegments.enumerated()), id: \.offset) { index, segment in
+                            switch segment {
+                            case .text(let text):
+                                visualContent(text, liveStreaming: liveStreaming, segmentIdentity: "task:\(index)")
+                            case .card(let definition):
+                                if isStreaming {
+                                    IOSIntelligentUIStreamingPreviewView(preview: .complete(definition))
+                                        .id(taskCardIdentity(definition.cardID))
+                                } else {
+                                    ChatIntelligentUIBlock(definition: definition,
+                                                           isMessageComplete: isSourceMessageComplete,
+                                                           interactionEnabled: widgetSettings.enableActions,
+                                                           messageID: sourceMessageID, textPartIndex: sourceTextPartIndex)
+                                        .id(taskCardIdentity(definition.cardID))
+                                }
+                            case .loading:
+                                if let taskPreview {
+                                    IOSIntelligentUIStreamingPreviewView(preview: taskPreview)
+                                } else {
+                                    Label("正在组织任务界面…", systemImage: "ellipsis")
+                                        .font(.footnote).foregroundStyle(AmberTheme.muted)
+                                }
+                            case .invalid(let raw, let reason):
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Label(reason, systemImage: "exclamationmark.circle")
+                                        .font(.footnote).foregroundStyle(AmberTheme.accentRed)
+                                    DisclosureGroup("查看原始内容") {
+                                        Text(raw).font(.caption.monospaced()).textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    visualContent(renderedMarkdown, liveStreaming: liveStreaming)
+                }
+            } else {
+                markdownText(renderedMarkdown, liveStreaming: liveStreaming)
+            }
+        }
+        .onAppear {
+            if renderedMarkdownSnapshot.isEmpty {
+                renderedMarkdownSnapshot = markdown
+            }
+            updateTaskSegments(reconcile: true)
+            updateWidgetPayloadLatch(with: markdown)
+            if isStreaming && liveRenderingEnabled {
+                updateTableRendererLatch(with: renderedMarkdown)
+            }
+        }
+        .onChange(of: markdown) { _, newValue in
+            updateTaskSegments()
+            updateWidgetPayloadLatch(with: newValue)
+            if isStreaming,
+               liveRenderingEnabled,
+               !hasUsedBlockMarkdownRenderer {
+                updateTableRendererLatch(with: newValue)
+            }
+        }
+        .onChange(of: isStreaming) { _, newValue in
+            if newValue && liveRenderingEnabled {
+                renderedMarkdownSnapshot = markdown
+                if !hasUsedBlockMarkdownRenderer {
+                    updateTableRendererLatch(with: markdown)
+                }
+            } else if !newValue {
+                renderedMarkdownSnapshot = markdown
+                // Completion may replace the cumulative stream with one final full
+                // message. Reconcile once here instead of validating the whole prefix
+                // on every append-only chunk.
+                reconcileFinalWidgetPayloadLatch(with: markdown)
+            }
+            updateTaskSegments(reconcile: true)
+        }
+        .onChange(of: liveRenderingEnabled) { _, newValue in
+            // Capture once at the live/frozen boundary. Mirroring every live delta
+            // into @State only schedules a duplicate body update.
+            renderedMarkdownSnapshot = markdown
+            updateTaskSegments(reconcile: true)
+            if ChatStreamingMarkdownRendererPolicy.initialBlockRendererLatch(
+                isStreaming: isStreaming,
+                hasEverStreamed: hasEverStreamed,
+                liveRenderingEnabled: newValue
+            ) {
+                hasUsedBlockMarkdownRenderer = true
+            }
+            if newValue && isStreaming {
+                if !hasUsedBlockMarkdownRenderer {
+                    updateTableRendererLatch(with: markdown)
+                }
+            }
+        }
+        .onChange(of: frozenMarkdownSnapshot) { _, _ in updateTaskSegments(reconcile: true) }
+        .onChange(of: sourceMessageID) { _, _ in resetTaskSource() }
+        .onChange(of: sourceTextPartIndex) { _, _ in resetTaskSource() }
+        .onChange(of: renderCacheNamespace) { _, _ in resetTaskSource() }
+        .environment(\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)
+    }
+
+    @ViewBuilder
+    private func visualContent(_ renderedMarkdown: String, liveStreaming: Bool, segmentIdentity: String? = nil) -> some View {
+        let widgetSettings = IOSGenerativeWidgetSettings(generativeUiSetting)
             // 探测走增量 latch(mayContainWidgetPayload @State),不再每次 body 求值
             // 对全文做 13+ 次 caseInsensitive 扫描(32KB 实测 46ms/次,是长内容
             // 流式掉帧的头号单项)。latch 基于完整 markdown,对 frozen snapshot
@@ -170,7 +286,7 @@ struct ChatAssistantMarkdownView: View {
                                 markdownText(
                                     content,
                                     liveStreaming: liveStreaming,
-                                    cacheIdentitySuffix: "widget:\(id)"
+                                    cacheIdentitySuffix: [segmentIdentity, "widget:\(id)"].compactMap { $0 }.joined(separator: ":")
                                 )
                             case .widget(let widget):
                                 IOSGenerativeWidgetCard(
@@ -185,61 +301,51 @@ struct ChatAssistantMarkdownView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    markdownText(renderedMarkdown, liveStreaming: liveStreaming)
+                    markdownText(renderedMarkdown, liveStreaming: liveStreaming, cacheIdentitySuffix: segmentIdentity ?? "document")
                 }
             } else {
-                markdownText(renderedMarkdown, liveStreaming: liveStreaming)
+                markdownText(renderedMarkdown, liveStreaming: liveStreaming, cacheIdentitySuffix: segmentIdentity ?? "document")
             }
+    }
+
+    private func updateTaskSegments(reconcile: Bool = false) {
+        let text = renderedMarkdownText
+        if reconcile || !isStreaming {
+            detection.taskUI.reconcileFinalText(text)
+        } else {
+            detection.taskUI.update(with: text)
         }
-        .onAppear {
-            if renderedMarkdownSnapshot.isEmpty {
-                renderedMarkdownSnapshot = markdown
-            }
-            updateWidgetPayloadLatch(with: markdown)
-            if isStreaming && liveRenderingEnabled {
-                updateTableRendererLatch(with: renderedMarkdown)
-            }
+        guard detection.taskUI.mayContainPayload else {
+            if !taskSegments.isEmpty { taskSegments = [] }
+            if taskPreview != nil { taskPreview = nil }
+            if reconcile { detection.taskPreview.reset() }
+            return
         }
-        .onChange(of: markdown) { _, newValue in
-            updateWidgetPayloadLatch(with: newValue)
-            if isStreaming,
-               liveRenderingEnabled,
-               !hasUsedBlockMarkdownRenderer {
-                updateTableRendererLatch(with: newValue)
-            }
+        if isStreaming {
+            if reconcile { detection.taskPreview.reconcile(text) }
+            else { detection.taskPreview.update(with: text) }
+            if detection.taskPreview.preview != taskPreview { taskPreview = detection.taskPreview.preview }
+        } else {
+            detection.taskPreview.reset()
+            if taskPreview != nil { taskPreview = nil }
         }
-        .onChange(of: isStreaming) { _, newValue in
-            if newValue && liveRenderingEnabled {
-                renderedMarkdownSnapshot = markdown
-                if !hasUsedBlockMarkdownRenderer {
-                    updateTableRendererLatch(with: markdown)
-                }
-            } else if !newValue {
-                renderedMarkdownSnapshot = markdown
-                // Completion may replace the cumulative stream with one final full
-                // message. Reconcile once here instead of validating the whole prefix
-                // on every append-only chunk.
-                reconcileFinalWidgetPayloadLatch(with: markdown)
-            }
-        }
-        .onChange(of: liveRenderingEnabled) { _, newValue in
-            // Capture once at the live/frozen boundary. Mirroring every live delta
-            // into @State only schedules a duplicate body update.
-            renderedMarkdownSnapshot = markdown
-            if ChatStreamingMarkdownRendererPolicy.initialBlockRendererLatch(
-                isStreaming: isStreaming,
-                hasEverStreamed: hasEverStreamed,
-                liveRenderingEnabled: newValue
-            ) {
-                hasUsedBlockMarkdownRenderer = true
-            }
-            if newValue && isStreaming {
-                if !hasUsedBlockMarkdownRenderer {
-                    updateTableRendererLatch(with: markdown)
-                }
-            }
-        }
-        .environment(\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)
+        let parsed = IOSIntelligentUIProtocol.parse(text, isStreaming: isStreaming)
+        let next = parsed.contains { segment in
+            if case .text = segment { return false }
+            return true
+        } ? parsed : []
+        if next != taskSegments { taskSegments = next }
+    }
+
+    private func resetTaskSource() {
+        detection.taskPreview.reset()
+        if taskPreview != nil { taskPreview = nil }
+        if !taskSegments.isEmpty { taskSegments = [] }
+        updateTaskSegments(reconcile: true)
+    }
+
+    private func taskCardIdentity(_ cardID: String) -> String {
+        "\(sourceMessageID ?? renderCacheNamespace ?? "message"):text:\(sourceTextPartIndex):task:\(cardID)"
     }
 
     private var renderedMarkdownText: String {
@@ -1005,6 +1111,8 @@ private final class ChatStreamingDetectionBox {
 
     var table: ChatStreamingTableDetectionState
     var widget: IOSGenerativeWidgetPayloadDetector
+    var taskUI = IOSIntelligentUIPayloadDetector()
+    var taskPreview = IOSIntelligentUIStreamingPreviewScanner()
     /// 渲染 config 记忆化。此前每次 body 求值都重建 config,其中
     /// `UIColor(AmberTheme.xxx)` 每次产生新的 dynamic-provider UIColor 实例,
     /// `isEqual` 恒 false → `MarkdownRenderConfig ==` 每 delta 必假 →

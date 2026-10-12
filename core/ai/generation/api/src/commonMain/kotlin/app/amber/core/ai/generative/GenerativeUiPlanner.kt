@@ -316,7 +316,7 @@ object GenerativeUiPlanner {
         "流程图", "架构图", "组织图", "时序图", "思维导图", "结构图",
         "类图", "状态图", "ER 图", "er图", "用例图", "活动图", "部署图",
         "树状图", "网络拓扑图", "拓扑图", "依赖图", "调用图", "数据流图",
-        "甘特图", "燃尽图", "象限图", "三省六部制",
+        "甘特图", "燃尽图", "象限图",
         // Folk-equivalents the reviewer flagged as missing
         "家族树", "家谱图", "时间线", "时间轴", "鱼骨图", "韦恩图",
         // English — structural visualization terms

@@ -1588,6 +1588,10 @@ struct ChatView: View {
                 onViewportStateChange: applyCollectionViewportState,
                 onDismissKeyboard: dismissKeyboard
             )
+            .environment(\.intelligentUIHost, viewModel.intelligentUIHost)
+            .environment(\.intelligentUIConversationID, currentConversationIdString)
+            .environment(\.intelligentUIBusy, viewModel.isGenerationActive || viewModel.isLoading || viewModel.isIntelligentUISubmissionInFlight)
+            .environment(\.chatMessageEditingAllowed, !viewModel.isIntelligentUISubmissionInFlight)
             .environment(\.chatArtifactPinAction, artifactPinHandler)
             .id(NativeChatTimelineSessionIdentity.viewID(conversationId: conversationStore.currentConversation?.id))
         }

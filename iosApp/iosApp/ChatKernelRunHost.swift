@@ -1257,7 +1257,9 @@ final class ChatKernelRunHost {
             providerSetting: handoff.providerSetting,
             params: handoff.params,
             uploadMessages: handoff.uploadMessages,
-            displayMessages: bindings.getMessages(),
+            displayMessages: IOSIntelligentUITerminal.markSourcesPending(
+                bindings.getMessages(), baseline: displayBaseline, runID: handoff.runId
+            ),
             mode: handoff.mode,
             responseId: handoff.responseId,
             responseSequenceNumber: handoff.responseSequenceNumber,
@@ -2102,8 +2104,12 @@ final class ChatKernelRunHost {
             providerId: providerSetting.id.toHexDashString(),
             providerSetting: providerSetting,
             params: params.replacingTools(backgroundVisibleTools),
-            uploadMessages: uploadMessages,
-            displayMessages: bindings.getMessages(),
+            uploadMessages: IOSIntelligentUITerminal.markSourcesPending(
+                uploadMessages, baseline: displayBaseline, runID: runId
+            ),
+            displayMessages: IOSIntelligentUITerminal.markSourcesPending(
+                bindings.getMessages(), baseline: displayBaseline, runID: runId
+            ),
             mode: .continueModel,
             generativeUiRequirement: currentGenerativeUiRequirement,
             generativeUiFallbackAttempted: currentGenerativeUiFallbackAttempted,
@@ -2336,12 +2342,27 @@ final class ChatKernelRunHost {
             bindings.bumpMessageRevision(.toolResultAppended, 1)
         }
 
+        let miniAppFailed = miniAppApplication?.outcome == .failed
+        let unstampedFinalSnapshot = finalSnapshot
+        if !miniAppFailed {
+            finalSnapshot = IOSIntelligentUITerminal.markCompleted(
+                finalSnapshot, baseline: displayBaseline, runID: runId
+            )
+            if finalSnapshot != unstampedFinalSnapshot {
+                bindings.setMessages(finalSnapshot)
+                bindings.bumpMessageRevision(.toolResultAppended, 1)
+            }
+        }
         let summary = ChatGenerationSupport.watchSummary(from: finalSnapshot)
         let didPersist = await bindings.persistMessages(conversationId)
         if didPersist {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
         }
-        let miniAppFailed = miniAppApplication?.outcome == .failed
+        if !didPersist, finalSnapshot != unstampedFinalSnapshot {
+            finalSnapshot = unstampedFinalSnapshot
+            bindings.setMessages(finalSnapshot)
+            bindings.bumpMessageRevision(.toolResultAppended, 1)
+        }
         if !didPersist, let miniAppApplication {
             if miniAppApplication.rollback() {
                 bindings.setMessages(miniAppApplication.rollbackMessages)

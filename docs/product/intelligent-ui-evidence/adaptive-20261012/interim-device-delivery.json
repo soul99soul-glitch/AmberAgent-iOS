@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-12",
+  "scope": "decision/form/explore/study interim build; streaming preview and numeric linking pending",
+  "bundleID": "app.amber.ios",
+  "appGroup": "group.app.amber.ios.watchkit",
+  "executableSHA256": "f787d61675196393099d5d785607608dca10272e96dc21164a37d2b95f73d623",
+  "build": {
+    "result": "succeeded",
+    "evidence": "/tmp/amber-adaptive-ui-device-build-r2.xcresult"
+  },
+  "install": {
+    "result": "succeeded",
+    "evidence": "/tmp/amber-adaptive-ui-device-install.json"
+  },
+  "normalLaunch": {
+    "result": "succeeded",
+    "processIdentifier": 47683,
+    "evidence": "/tmp/amber-adaptive-ui-device-normal-launch.json"
+  },
+  "settingsComparison": {
+    "app.amber.ios.sharedSettingsJson": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "semanticEqual": true,
+      "bytesEqual": false
+    },
+    "app.amber.ios.phoneControl.enabled.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "semanticEqual": true,
+      "bytesEqual": true
+    },
+    "app.amber.ios.phoneControl.scope.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "semanticEqual": true,
+      "bytesEqual": true
+    },
+    "app.amber.ios.phoneControl.applicationNames.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "semanticEqual": true,
+      "bytesEqual": true
+    },
+    "app.amber.ios.jevSettings.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "semanticEqual": true,
+      "bytesEqual": true
+    }
+  },
+  "physicalUIAcceptance": {
+    "result": "not_executed",
+    "reason": "XCTest runner disconnected from IDE before test methods started; exit 74",
+    "attempts": 2,
+    "evidence": "/tmp/amber-adaptive-ui-physical-acceptance-r2.xcresult"
+  },
+  "simulatorAppBootstrap": {
+    "passedTests": 1,
+    "failedTests": 0,
+    "evidence": "/tmp/amber-adaptive-ui-simulator-bootstrap-r2.xcresult"
+  },
+  "studyVisual": {
+    "passedTests": 1,
+    "visualReview": "confirmed selected-choice contrast repaired, no new compact/dark/accessibility layout defects",
+    "evidence": "/tmp/amber-adaptive-ui-ax-rerun.xcresult"
+  },
+  "durableStudyGate": "not_run_without_actual_provider_and_UI_completion"
+}

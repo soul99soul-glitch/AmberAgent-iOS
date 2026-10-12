@@ -1,0 +1,14 @@
+Build: swiftc -Onone; 30 rounds median. Snapshot construction and initial reconcile excluded.
+OLD UTF8 detector:
+Exact replay fixture: initial UTF16 26298; UTF8 78032; 60 updates x 12 Chinese units
+Native Swift median 0.407ms / 60 delta updates; min 0.382 max 1.559
+Foreign NSString bridge median 87.678ms / 60 delta updates; min 74.193 max 119.700
+NSString surrogate and chunk-boundary behavior checks passed; sink 0
+
+NEW UTF16 detector:
+Exact replay fixture: initial UTF16 26298; UTF8 78032; 60 updates x 12 Chinese units
+Native Swift median 2.984ms / 60 delta updates; min 2.888 max 4.330
+Foreign NSString bridge median 0.042ms / 60 delta updates; min 0.041 max 0.097
+NSString surrogate and chunk-boundary behavior checks passed; sink 0
+
+These results measure detection cost only. Full UI replay gates are reported separately.

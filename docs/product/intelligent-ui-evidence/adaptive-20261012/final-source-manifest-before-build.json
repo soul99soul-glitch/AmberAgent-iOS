@@ -1,0 +1,22 @@
+{
+  "capturedUTC": "2026-10-12T02:51:35.604753+00:00",
+  "files": {
+    "iosApp/iosApp/IOSIntelligentUIAcceptanceFixtureView.swift": "d27033f395b8a0a47b0976fcff1c9affb2879a11a4ead4b55268c0543409662a",
+    "iosApp/iosApp/IOSIntelligentUICard.swift": "c9ea5e56979681ddf38994e5893d222f66de533101240e88b87b3ee39b169f04",
+    "iosApp/iosApp/IOSIntelligentUIComponentView.swift": "f1e1ce732d8c39ca4411ebdded194561b88eec251b157ff452b8f0eadce8db1e",
+    "iosApp/iosApp/IOSIntelligentUIComponents.swift": "7c05db357723c5a7326d5e51899eb6ab6c0c05418c7c66ae370782ecccde3fbd",
+    "iosApp/iosApp/IOSIntelligentUIProtocol.swift": "9fb34ecf08f21fb85986f9cff6c34508f70fa268e403f4df82f233762390fa4f",
+    "iosApp/iosApp/IOSIntelligentUIStateStore.swift": "1f04e82dfcb5286a258f708e30421c840c9a6726f1ee5362cddd69931f3d7694",
+    "iosApp/iosApp/IOSIntelligentUIStreamingPreview.swift": "9b7a4d81a1d7ad7d5a45f612c9f53c1f7b4dc5bca12688517067d5fe45756368",
+    "iosApp/iosApp/IOSIntelligentUIStreamingPreviewView.swift": "16c4467c77ceaacfa02de7cbe8ec376ea0aa437e6cf234031262e9ded0e343c1",
+    "iosApp/iosApp/IOSIntelligentUIStudy.swift": "feeaa3bbfb5d3c4cb1694af69270ddd27358e1dbd7c3e608c0279f6aae0d1c3f",
+    "iosApp/iosApp/IOSIntelligentUIStudyView.swift": "97133c9c7f35cc4e91703b322c0a7760bccd03bcfc5a23301a8ad96e083dc8e2",
+    "iosApp/iosApp/ChatIntelligentUISupport.swift": "8365ef8edfeafaff47ab3bbf3216e14668e09d0968e9282e677ec83b688941e7",
+    "iosApp/iosApp/ChatAssistantMarkdownView.swift": "d023c0803ea08c41a1f7ae3b21667b903e3b5d218681f388fe4da87edbcf5e90",
+    "iosApp/iosApp/ChatGenerationSupport.swift": "e07c1eddc6b9a276388c19b07ef5117d1fb7e3d812d73aebf440a50072ddf265",
+    "iosApp/iosApp/ChatViewModel.swift": "15a41cd63e644a7a38f535358edd649e214589c7ec549bc41a4ba87b61d5cf1c",
+    "iosApp/iosApp/ChatKernelRunHost.swift": "e003c97b88795e726d9611bf26e0af9e6cf0fd82515bad91b778bd9376b829ff",
+    "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift": "feed62fbeacc572f096f326eae46d71d47df4f3c6eaab081fd53b38417d6934b",
+    "iosApp/iosApp/AmberAgentApp.swift": "1fed19439ede2830f9b4e42d7a4d36fb7da61ef608fe4cda8baab5138c049b3c"
+  }
+}

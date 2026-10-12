@@ -14,6 +14,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -112,9 +114,25 @@ object IosChatBackgroundPayloadJsonBridge {
     )
 }
 
-/** Swift bridge for the short-lived durable tool-result payload. */
+/** Swift JSON bridge for message parts and durable tool-result payloads. */
 object IosToolOutputJsonBridge {
     fun encode(parts: List<UIMessagePart>): String = JsonInstant.encodeToString(parts)
+
+    // Swift dictionaries bridge as ordinary maps, not Kotlin JsonObject instances.
+    // Rebuild the JSON owner before a text part reaches serializers or providers.
+    fun textPart(text: String, metadata: Map<String, JsonElement>?): UIMessagePart.Text =
+        UIMessagePart.Text(text = text, metadata = metadata?.let { JsonObject(it) })
+
+    fun metadataString(part: UIMessagePart, key: String): String? =
+        (part.metadata?.get(key) as? JsonPrimitive)?.contentOrNull
+
+    // Existing nested JSON must stay in Kotlin: Foundation bridges objects and
+    // arrays as collections, which cannot return through a JsonElement dictionary.
+    fun mergeTextMetadata(part: UIMessagePart.Text, updates: Map<String, String>): UIMessagePart.Text {
+        if (updates.isEmpty()) return part
+        val metadata = JsonObject(part.metadata.orEmpty() + updates.mapValues { JsonPrimitive(it.value) })
+        return if (metadata == part.metadata) part else part.copy(metadata = metadata)
+    }
 
     // Keep JsonObject/JsonArray access in Kotlin; Foundation collection bridges
     // do not preserve their JSON-specific type when Swift reconstructs them.

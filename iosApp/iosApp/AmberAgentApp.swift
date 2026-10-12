@@ -69,6 +69,12 @@ struct AmberAgentApp: App {
             Group {
 #if CHAT_PERF_REPLAY
                 ChatPerfReplayView()
+#elseif DEBUG && INTELLIGENT_UI_COMPONENT_ACCEPTANCE
+                if let kind = IOSIntelligentUIAcceptanceFixtureView.Kind.requested {
+                    IOSIntelligentUIAcceptanceFixtureView(kind: kind)
+                } else {
+                    AppShell(settingsStore: settingsStore)
+                }
 #else
                 AppShell(settingsStore: settingsStore)
 #endif

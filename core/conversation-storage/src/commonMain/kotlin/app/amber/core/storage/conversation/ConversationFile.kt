@@ -41,6 +41,7 @@ expect class ConversationFile(path: String) {
  * 版本同时包含文件身份、大小、修改时间和 metadata change time，避免外部替换后
  * 恰好恢复原大小/mtime 时继续复用旧摘要。
  */
+@kotlinx.serialization.Serializable
 internal data class ConversationFileVersion(
     val device: Long,
     val inode: Long,

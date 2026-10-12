@@ -239,11 +239,21 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         static func hasRawMarkdown(in view: UIView) -> Bool {
             if let textView = view as? ParagraphUIView,
                let text = textView.text {
-                if text.contains("**") || text.contains("## ") { return true }
-                if text.contains(" | ") && text.contains("|") { return true }
-                for line in text.split(separator: "\n") {
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") { return true }
+                // UITextView supplies a foreign String. Avoid grapheme splitting
+                // and searching every frame without an ASCII marker candidate.
+                // Keep the original checks: literal search alone would also match
+                // markers whose final character has a combining mark.
+                let nativeText = text as NSString
+                if nativeText.range(of: "**", options: .literal).location != NSNotFound && text.contains("**") { return true }
+                if nativeText.range(of: "## ", options: .literal).location != NSNotFound && text.contains("## ") { return true }
+                if nativeText.range(of: " | ", options: .literal).location != NSNotFound &&
+                    text.contains(" | ") && text.contains("|") { return true }
+                if nativeText.range(of: "- ", options: .literal).location != NSNotFound ||
+                    nativeText.range(of: "* ", options: .literal).location != NSNotFound {
+                    for line in text.split(separator: "\n") {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") { return true }
+                    }
                 }
             }
             for subview in view.subviews {

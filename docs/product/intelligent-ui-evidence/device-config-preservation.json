@@ -1,0 +1,11 @@
+{
+  "device": "00008160-001939111420000A",
+  "os": "iOS 27.2 (24B5089g)",
+  "settingsUnchanged": true,
+  "sharedSettingsUnchanged": true,
+  "effectiveProvider": "DeepSeek",
+  "effectiveModel": "deepseek-flash",
+  "globalProvider": "opencode go",
+  "globalModel": "hy4-preview",
+  "resolution": "current assistant chatModelId takes precedence"
+}

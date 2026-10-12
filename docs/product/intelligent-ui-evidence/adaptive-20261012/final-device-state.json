@@ -1,0 +1,9 @@
+{
+  "beforeSettingsCopyExitCode": 1,
+  "privateEvidenceDirectory": "/var/folders/2c/0pbv0ybx6h1crqbxq9zft5780000gn/T/amber-task-ui-final-device-oz2z3ubl",
+  "deviceState": "unavailable",
+  "install": "not_executed",
+  "normalLaunch": "not_executed",
+  "settingsComparison": "not_executed",
+  "reason": "Device could not fulfill CoreDevice connectivity/power assertion requirements before settings snapshot; final install not started."
+}

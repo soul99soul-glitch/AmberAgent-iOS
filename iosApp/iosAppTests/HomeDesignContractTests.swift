@@ -131,7 +131,8 @@ final class HomeDesignContractTests: XCTestCase {
                 updateAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: updateAtMs),
                 isPinned: isPinned,
                 messageCount: messageCount,
-                memoryMode: .enabled
+                memoryMode: .enabled,
+                hasImageGenerationTool: false
             )
         }
 

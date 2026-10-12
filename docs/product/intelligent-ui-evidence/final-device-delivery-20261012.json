@@ -1,0 +1,88 @@
+{
+  "evidenceDate": "2026-10-12",
+  "product": "iosAppExperimentalGPL",
+  "bundle": "app.amber.ios",
+  "appGroup": "group.app.amber.ios.watchkit",
+  "mainURLScheme": "amber",
+  "watchURLScheme": "amber-watch",
+  "mainExecutableSHA256": "55faaa2d2e4516c8348e7ac7d412ebeb3fed8d46b13fcec6b304d9af457d90ee",
+  "buildResult": "succeeded",
+  "buildErrors": 0,
+  "buildWarnings": 48,
+  "installOutcome": "success",
+  "rootReadOnlyLockState": {
+    "passcodeRequired": true,
+    "unlockedSinceBoot": true
+  },
+  "trackedSettings": {
+    "app.amber.ios.sharedSettingsJson": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "unchanged": true
+    },
+    "app.amber.ios.settings": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "unchanged": true
+    },
+    "app.amber.ios.phoneControl.enabled.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "unchanged": true
+    },
+    "app.amber.ios.phoneControl.scope.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "unchanged": true
+    },
+    "app.amber.ios.phoneControl.applicationNames.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "unchanged": true
+    },
+    "app.amber.ios.jevSettings.v1": {
+      "presentBefore": true,
+      "presentAfter": true,
+      "unchanged": true
+    }
+  },
+  "changedPreferenceKeys": [
+    "amber.watch.sequence.v3"
+  ],
+  "containerComparison": {
+    "bundleIdentifierUnchanged": true,
+    "groupIdentifiersUnchanged": true,
+    "groupContainerPathsUnchanged": true,
+    "dataContainerPathChanged": true
+  },
+  "rendererSourceSHA256": {
+    "ChatAssistantMarkdownView.swift": "76b93f9e03a3fc943fed25f479f9d275f84528120c52bbeffd55be1ec2fada80",
+    "IOSIntelligentUIProtocol.swift": "31eb75e4cca764c82002713214383cb8fcc2a5a1d65c865d91dface9e931cffb",
+    "IOSIntelligentUIComponentView.swift": "24b6c766f3a0038d5b9fdbfd99f79a2bd49576df7d11dda594f98d313a19cf2d"
+  },
+  "productionUIInteractionPassed": false,
+  "offlineDurableAcceptancePassed": false,
+  "sourceEvidenceDirectory": "build/phone-automation-next-20261011",
+  "normalLaunchFollowup": {
+    "outcome": "success",
+    "processIdentifier": 47013,
+    "arguments": [],
+    "evidence": "build/phone-automation-next-20261011/device-normal-launch-followup-20261012.json"
+  },
+  "rootUIAcceptanceR4": {
+    "outcome": "runner failed before launch",
+    "executedProductMethods": 0,
+    "resultPath": "/tmp/amber-task-ui-device-acceptance-r4.xcresult",
+    "preflightBlocker": "device locked again",
+    "runnerFailure": "Lost pending connection to the test runner before launch",
+    "productionUIInteractionPassed": false,
+    "offlineDurableAcceptancePassed": false
+  },
+  "firstNormalLaunchAttempt": {
+    "outcome": "failed",
+    "errorCode": 10002,
+    "blocker": "FBS Locked",
+    "evidence": "build/phone-automation-next-20261011/device-normal-launch-r3.json"
+  },
+  "normalLaunchOutcome": "success"
+}

@@ -358,6 +358,30 @@ final class ChatViewModel {
     /// 持久化存储（由 AppShell 注入）。nil 时退化为纯内存模式（向后兼容旧调用方）。
     weak var conversationStore: IOSConversationStore?
 
+    @ObservationIgnored private var cachedIntelligentUIHost: IOSIntelligentUIHost?
+    private var intelligentUISubmissionsInFlight: Set<String> = []
+
+    var isIntelligentUISubmissionInFlight: Bool {
+        intelligentUISubmissionsInFlight.contains(currentConversationId?.toHexDashString() ?? "")
+    }
+
+    private func rejectIntelligentUISubmissionMutationIfNeeded() -> Bool {
+        guard isIntelligentUISubmissionInFlight else { return false }
+        configurationError = "任务卡选择正在保存，请等待完成后修改消息或切换分支。"
+        return true
+    }
+
+    var intelligentUIHost: IOSIntelligentUIHost? {
+        guard let store = conversationStore else { return nil }
+        if let host = cachedIntelligentUIHost, host.stateStore === store.intelligentUIStateStore { return host }
+        let host = IOSIntelligentUIHost(stateStore: store.intelligentUIStateStore) { [weak self] submission in
+            guard let self else { return .failure("聊天页面已关闭，请重新打开会话。") }
+            return await self.submitIntelligentUI(submission)
+        }
+        cachedIntelligentUIHost = host
+        return host
+    }
+
     /// 当前会话 id，与 conversationStore.currentConversation.id 同步。
     /// 留作快速访问；切换会话后由 reloadFromStore() 刷新。
     var currentConversationId: KotlinUuid? {
@@ -595,7 +619,13 @@ final class ChatViewModel {
             imageGenerationResumeCache.removeAll()
             imageGenerationResumeCacheStoreID = storeID
         }
-        let summaries = conversationStore.summaries
+        // The selected conversation is already in memory and may have changed
+        // branches before the list summary refreshes. Historical conversations
+        // need a persisted image-tool marker before their messages are loaded.
+        let currentConversationID = conversationStore.currentConversation?.id
+        let summaries = conversationStore.summaries.filter {
+            $0.hasImageGenerationTool || $0.id == currentConversationID
+        }
         let liveConversationIDs = Set(summaries.map { $0.id.toHexDashString() })
         imageGenerationResumeCache = imageGenerationResumeCache.filter {
             liveConversationIDs.contains($0.key)
@@ -912,6 +942,9 @@ final class ChatViewModel {
         if currentConversationIsOrchestratedChild {
             return .orchestratedThread
         }
+        if isIntelligentUISubmissionInFlight {
+            return .generationActive
+        }
         if retryMutationRunId != nil {
             return .generationActive
         }
@@ -1170,6 +1203,7 @@ final class ChatViewModel {
         IOSChatBackgroundGenerationCoordinator.shared.onRunTerminal = {
             [weak self] conversationId, runId, finalMessages in
             guard let self else { return }
+            self.refreshIntelligentUIReceipts(messages: finalMessages, conversationID: conversationId.toHexDashString())
             let terminal = try? await self.runStore.snapshot(runId: runId)
             await self.orchestrationToolService.notifyRunTerminal(
                 conversationId: conversationId,
@@ -1470,6 +1504,9 @@ final class ChatViewModel {
                 },
                 onRunTerminal: { [weak self] conversationId, runId, terminalStatus, finalMessages in
                     self?.observeYieldedChildResults(state: state, runId: runId)
+                    if let conversationId {
+                        self?.refreshIntelligentUIReceipts(messages: finalMessages, conversationID: conversationId.toHexDashString())
+                    }
                     // 只是在等子代理的前台让出不是最终答复。
                     if terminalStatus.wireName == AgentRunStatus.completed.wireName,
                        state.waitingForChildRunId != runId {
@@ -1564,6 +1601,7 @@ final class ChatViewModel {
             run === selectedRun || run.host?.isRunning == true
                 || run.state.waitingForChildRunId != nil || !run.state.inputText.isEmpty
         }
+        refreshIntelligentUIReceipts(messages: messages, conversationID: store.currentConversation?.id.toHexDashString())
         refreshContextCompactBoundaries()
         // P1-a: 队列随会话切换重灌（冷启动恢复：只进队列 UI，不自动发送）。
         bumpMessageRevision(reason: reason)
@@ -2028,6 +2066,19 @@ final class ChatViewModel {
             return false
         }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let continuation: IOSIntelligentUISubmission?
+        do { continuation = try intelligentUIContinuation(for: text) }
+        catch {
+            configurationError = error.localizedDescription
+            return false
+        }
+        let prompt = continuation?.prompt(request: text) ?? text
+        let metadata: [String: Kotlinx_serialization_jsonJsonElement]?
+        do { metadata = try continuation?.metadata }
+        catch {
+            configurationError = error.localizedDescription
+            return false
+        }
         let hasImages = !pendingImages.isEmpty
         if let blockReason = composerSendBlockReason(for: text) {
             if case .configuration(let issue) = blockReason {
@@ -2057,7 +2108,7 @@ final class ChatViewModel {
                 return false
             case .fallback:
                 configurationError = nil
-                startVisionFallbackAndSend(text: text, images: pendingImages)
+                startVisionFallbackAndSend(text: prompt, images: pendingImages, metadata: metadata)
                 return true
             case .ready, .none:
                 break
@@ -2065,11 +2116,143 @@ final class ChatViewModel {
         }
         configurationError = nil
         sendUserMessage(
-            text: text,
+            text: prompt,
             images: pendingImages,
+            metadata: metadata,
             startsGenerationAfterInsertion: startsGenerationAfterInsertion
         )
         return true
+    }
+
+    /// Only an exact, explicit reference attaches the user's latest card draft to ordinary chat.
+    private func intelligentUIContinuation(for text: String) throws -> IOSIntelligentUISubmission? {
+        let intent = text.trimmingCharacters(in: CharacterSet(charactersIn: "。.!！?？"))
+        guard ["按这个继续", "基于选择继续", "按当前选择继续"].contains(intent),
+              let store = conversationStore, let conversationID = currentConversationId?.toHexDashString(),
+              let source = store.intelligentUIStateStore.activeSource(for: conversationID) else { return nil }
+        guard sharedSettings.snapshot.agentRuntime.generativeUi.enabled,
+              sharedSettings.snapshot.agentRuntime.generativeUi.enableActions else {
+            throw IOSIntelligentUIProtocolError(reason: "任务卡交互已关闭，请在设置中启用后继续。")
+        }
+        guard !isGenerationActive, !isLoading else { throw IOSIntelligentUIProtocolError(reason: "当前回复结束后可按任务卡选择继续。") }
+        guard let message = messages.first(where: { $0.id.toHexDashString() == source.messageID }),
+              message.role == .assistant, message.parts.indices.contains(source.textPartIndex),
+              let textPart = message.parts[source.textPartIndex] as? UIMessagePart.Text,
+              IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed" else {
+            throw IOSIntelligentUIProtocolError(reason: "最近操作的任务卡不在当前分支或尚未完成，请重新选择当前方案。")
+        }
+        let definition = IOSIntelligentUIProtocol.parse(textPart.text, isStreaming: false).compactMap { segment -> IOSIntelligentUICardDefinition? in
+            if case .card(let card) = segment, card.cardID == source.cardID { return card }
+            return nil
+        }.first
+        guard let definition else { throw IOSIntelligentUIProtocolError(reason: "任务卡内容已变更，请重新选择。") }
+        store.intelligentUIStateStore.register(source: source, definition: definition)
+        let draft = store.intelligentUIStateStore.draft(for: source, definition: definition)
+        return try IOSIntelligentUISubmission(source: source, definition: definition, draft: draft)
+    }
+
+    private func refreshIntelligentUIReceipts(messages: [UIMessage], conversationID: String?) {
+        guard let conversationID else { return }
+        intelligentUIHost?.refreshReceipts(messages: messages, conversationID: conversationID)
+    }
+
+    /// Card input is independent of the composer and becomes runnable only after its user message is saved.
+    func submitIntelligentUI(_ submission: IOSIntelligentUISubmission) async -> IOSIntelligentUISubmitResult {
+        guard let store = conversationStore, let conversationID = currentConversationId,
+              conversationID.toHexDashString() == submission.source.conversationID else {
+            return .failure("任务卡不属于当前会话，请返回原会话后提交。")
+        }
+        guard sharedSettings.snapshot.agentRuntime.generativeUi.enabled,
+              sharedSettings.snapshot.agentRuntime.generativeUi.enableActions else {
+            return .failure("任务卡交互已关闭，请在设置中启用后提交。")
+        }
+        guard !store.isImportingConversationDocuments else { return .failure("正在恢复会话，请等待完成后再提交。") }
+        guard !intelligentUISubmissionsInFlight.contains(submission.source.conversationID) else {
+            return .failure("这张任务卡正在提交。")
+        }
+        guard !isGenerationActive, !isLoading, retryMutationRunId == nil else { return .failure("当前回复结束后可提交。") }
+        guard !currentConversationIsOrchestratedChild else { return .failure("此会话由父线程编排，暂不支持直接输入。") }
+        guard !hasPendingUserGate else { return .failure("请先处理当前待确认的操作。") }
+        if autoGenerateResponses, let issue = configurationIssue { return .failure(issue.message) }
+        guard let sourceMessage = messages.first(where: { $0.id.toHexDashString() == submission.source.messageID }),
+              sourceMessage.role == .assistant,
+              sourceMessage.parts.indices.contains(submission.source.textPartIndex),
+              let textPart = sourceMessage.parts[submission.source.textPartIndex] as? UIMessagePart.Text else {
+            return .failure("任务卡来源已不在当前分支，请使用当前方案。")
+        }
+        guard IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed" else {
+            return .failure("任务卡所在回复尚未成功完成，请重新生成后选择。")
+        }
+        let cards = IOSIntelligentUIProtocol.parse(textPart.text, isStreaming: false).compactMap { segment -> IOSIntelligentUICardDefinition? in
+            if case .card(let definition) = segment { return definition }
+            return nil
+        }
+        guard let definition = cards.first(where: { $0.cardID == submission.source.cardID }) else {
+            return .failure("任务卡内容已变更，请重新选择。")
+        }
+        store.intelligentUIStateStore.register(source: submission.source, definition: definition)
+        let draft = store.intelligentUIStateStore.draft(for: submission.source, definition: definition)
+        guard submission.matches(draft) else { return .failure("任务卡选择已变更，请按当前选择重新提交。") }
+        let metadata: [String: Kotlinx_serialization_jsonJsonElement]
+        do {
+            let expected = try IOSIntelligentUISubmission(source: submission.source, definition: definition, draft: draft)
+            guard expected.goal == submission.goal, expected.question == submission.question,
+                  expected.option == submission.option, expected.inputs == submission.inputs,
+                  expected.taskKind == submission.taskKind, expected.studySummary == submission.studySummary,
+                  submission.inputs.allSatisfy({ $0.value.count <= 2_000 }) else {
+                return .failure("提交内容与当前任务卡选择不一致，请重新提交。")
+            }
+            metadata = try submission.metadata
+        } catch { return .failure(error.localizedDescription) }
+        refreshIntelligentUIReceipts(messages: messages, conversationID: submission.source.conversationID)
+        guard intelligentUIHost?.receipts[submission.source]?.matches(draft) != true else {
+            return .failure("此选择已经提交；修改后可以再提交。")
+        }
+        intelligentUISubmissionsInFlight.insert(submission.source.conversationID)
+        defer { intelligentUISubmissionsInFlight.remove(submission.source.conversationID) }
+        let run = currentRun
+        let insertion = appendUserMessage(text: submission.prompt(), images: [], metadata: metadata,
+                                          consumesComposer: false, persistsImmediately: false)
+        let snapshot = run.state.messages
+        let baseline = store.writeBaseline(for: conversationID)
+        let saved = await persistMessagesSnapshot(snapshot, targetConversationId: conversationID,
+                                                  pendingRegeneration: nil, store: store,
+                                                  writeBaseline: baseline, state: run.state)
+        guard saved else {
+            run.state.messages.removeAll { $0.id.toHexDashString() == insertion.messageId }
+            if currentRun === run { bumpMessageRevision(reason: .userAppend) }
+            return .failure("任务卡选择未能保存，请重试。")
+        }
+        let durableMessages: [UIMessage]?
+        if store.currentConversation?.id == conversationID {
+            durableMessages = store.currentMessages
+        } else {
+            durableMessages = await store.messages(for: conversationID)
+        }
+        guard let durableMessages,
+              durableMessages.contains(where: { message in
+                  message.id.toHexDashString() == insertion.messageId && message.parts.contains { part in
+                      guard let text = part as? UIMessagePart.Text,
+                            let raw = IosToolOutputJsonBridge.shared.metadataString(part: text, key: IOSIntelligentUISubmission.metadataKey),
+                            let persisted = try? JSONDecoder().decode(IOSIntelligentUISubmission.self, from: Data(raw.utf8)) else { return false }
+                      return persisted.id == submission.id
+                  }
+              }) else { return .failure("任务卡提交已不在当前保存分支，请重新选择后提交。") }
+        run.state.messages = durableMessages
+        refreshIntelligentUIReceipts(messages: durableMessages, conversationID: submission.source.conversationID)
+        guard let durableSource = durableMessages.first(where: { $0.id.toHexDashString() == submission.source.messageID }),
+              durableSource.parts.indices.contains(submission.source.textPartIndex),
+              let durableText = durableSource.parts[submission.source.textPartIndex] as? UIMessagePart.Text,
+              durableText.text == textPart.text,
+              IosToolOutputJsonBridge.shared.metadataString(part: durableText, key: IOSIntelligentUITerminal.completedKey) == "completed" else { return .saved }
+        guard currentRun === run, currentConversationId == conversationID, autoGenerateResponses,
+              !store.isImportingConversationDocuments, !isGenerationActive, !isLoading, !hasPendingUserGate,
+              retryMutationRunId == nil, !currentConversationIsOrchestratedChild,
+              configurationIssue == nil,
+              sharedSettings.snapshot.agentRuntime.generativeUi.enabled,
+              sharedSettings.snapshot.agentRuntime.generativeUi.enableActions else { return .saved }
+        generateResponse(inputDigest: insertion.digest, conversationId: conversationID, phoneControlUserInitiated: true)
+        return .started
     }
 
     /// Starts a Watch question through the same provider, tool and persistence
@@ -2200,12 +2383,15 @@ final class ChatViewModel {
     @discardableResult
     private func appendUserMessage(
         text: String,
-        images: [PendingChatImage]
+        images: [PendingChatImage],
+        metadata: [String: Kotlinx_serialization_jsonJsonElement]? = nil,
+        consumesComposer: Bool = true,
+        persistsImmediately: Bool = true
     ) -> (digest: String, conversationId: KotlinUuid?, messageId: String) {
         currentRun.state.clearChildResultWait()
-        let prompt = Self.promptText(userText: text, selectedFilePreview: pendingSelectedFilePreview)
+        let prompt = Self.promptText(userText: text, selectedFilePreview: consumesComposer ? pendingSelectedFilePreview : nil)
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
-        let userMsg = makeUserMessage(prompt: prompt, images: images)
+        let userMsg = makeUserMessage(prompt: prompt, images: images, metadata: metadata)
         pendingAssistantRegeneration = nil
         // iMessage 式上屏:仅把这条用户消息的插入放进动画事务,驱动消息行的入场 transition。
         // 批量加载/切换会话走 `messages = store.currentMessages`(不在事务内),不会逐条动画。
@@ -2213,16 +2399,20 @@ final class ChatViewModel {
             messages.append(userMsg)
             bumpMessageRevision(reason: .userAppend)
         }
-        inputText = ""
         invalidateSuggestionRequest()
         chatSuggestions = []
-        pendingSelectedFilePreview = nil
-        clearPendingImages()
-        selectedFileContextError = nil
+        if consumesComposer {
+            inputText = ""
+            pendingSelectedFilePreview = nil
+            clearPendingImages()
+            selectedFileContextError = nil
+        }
         let runConversationId = currentConversationId
         // 用户消息立即落盘：即使随后生成崩溃/被杀进程，用户输入也不会丢。
-        Task { @MainActor [weak self] in
-            _ = await self?.persistMessages(conversationId: runConversationId)
+        if persistsImmediately {
+            Task { @MainActor [weak self] in
+                _ = await self?.persistMessages(conversationId: runConversationId)
+            }
         }
         return (digest, runConversationId, ChatMessageProjector.messageId(for: userMsg))
     }
@@ -2233,16 +2423,17 @@ final class ChatViewModel {
     private func sendUserMessage(
         text: String,
         images: [PendingChatImage],
+        metadata: [String: Kotlinx_serialization_jsonJsonElement]? = nil,
         startsGenerationAfterInsertion: Bool = false
     ) {
         guard startsGenerationAfterInsertion, autoGenerateResponses else {
-            let (digest, conversationId, _) = appendUserMessage(text: text, images: images)
+            let (digest, conversationId, _) = appendUserMessage(text: text, images: images, metadata: metadata)
             guard autoGenerateResponses else { return }
             generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
             return
         }
         let token = UUID()
-        let (digest, conversationId, _) = appendUserMessage(text: text, images: images)
+        let (digest, conversationId, _) = appendUserMessage(text: text, images: images, metadata: metadata)
         deferredGenerationStart = DeferredGenerationStart(
             token: token,
             run: currentRun,
@@ -2661,8 +2852,10 @@ final class ChatViewModel {
     /// OCR fallback: the user message (with its image) is shown in the chat immediately;
     /// a recognition indicator runs on the user side while the vision model reads each
     /// image, then the main model responds. On failure the message stays and an error shows.
-    private func startVisionFallbackAndSend(text: String, images: [PendingChatImage]) {
-        let (digest, conversationId, userMessageId) = appendUserMessage(text: text, images: images)
+    private func startVisionFallbackAndSend(
+        text: String, images: [PendingChatImage], metadata: [String: Kotlinx_serialization_jsonJsonElement]? = nil
+    ) {
+        let (digest, conversationId, userMessageId) = appendUserMessage(text: text, images: images, metadata: metadata)
         guard autoGenerateResponses else { return }
         let requestId = UUID()
         visionRecognitionRequestId = requestId
@@ -3189,13 +3382,16 @@ final class ChatViewModel {
     /// Builds the user message: a plain text message when there are no images, or a
     /// multi-part message (text + `UIMessagePart.Image`) the KMP providers turn into
     /// real image blocks. Image URLs are self-contained `data:` URLs.
-    private func makeUserMessage(prompt: String, images: [PendingChatImage]) -> UIMessage {
-        guard !images.isEmpty else {
+    private func makeUserMessage(
+        prompt: String, images: [PendingChatImage],
+        metadata: [String: Kotlinx_serialization_jsonJsonElement]? = nil
+    ) -> UIMessage {
+        guard !images.isEmpty || metadata != nil else {
             return UIMessage.companion.user(prompt: prompt)
         }
         var parts: [UIMessagePart] = []
         if !prompt.isEmpty {
-            parts.append(UIMessagePart.Text(text: prompt, metadata: nil))
+            parts.append(IosToolOutputJsonBridge.shared.textPart(text: prompt, metadata: metadata))
         }
         for image in images {
             parts.append(UIMessagePart.Image(url: image.dataUrl, metadata: nil))
@@ -3712,7 +3908,7 @@ final class ChatViewModel {
     ///   retention is surfaced via selectVariant for nodes that already have
     ///   multiple siblings).
     func regenerate(atMessageIndex index: Int) {
-        guard !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
+        guard !rejectIntelligentUISubmissionMutationIfNeeded(), !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
               !currentConversationIsOrchestratedChild,
               let store = conversationStore,
               let conversation = store.currentConversation,
@@ -3795,7 +3991,7 @@ final class ChatViewModel {
     /// text replaces the selected variant; the conversation is truncated after
     /// the edited user turn (Android's editMessage = append-variant + re-run).
     func editMessage(atMessageIndex index: Int, newText: String) {
-        guard !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
+        guard !rejectIntelligentUISubmissionMutationIfNeeded(), !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
               !currentConversationIsOrchestratedChild else { return }
         let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -3833,7 +4029,7 @@ final class ChatViewModel {
 
     /// Delete a single message (and its node). No generation.
     func deleteMessage(atMessageIndex index: Int) {
-        guard !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
+        guard !rejectIntelligentUISubmissionMutationIfNeeded(), !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
               !currentConversationIsOrchestratedChild,
               let store = conversationStore,
               let conversation = store.currentConversation,
@@ -3857,7 +4053,7 @@ final class ChatViewModel {
 
     /// Switch the visible variant of a node (no generation).
     func selectVariant(messageIndex: Int, variantIndex: Int) {
-        guard !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
+        guard !rejectIntelligentUISubmissionMutationIfNeeded(), !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
               !currentConversationIsOrchestratedChild,
               let store = conversationStore,
               let conversation = store.currentConversation,
@@ -3895,6 +4091,7 @@ final class ChatViewModel {
             return false
         }
         state.messages = store.currentMessages
+        refreshIntelligentUIReceipts(messages: state.messages, conversationID: conversationId.toHexDashString())
         bumpMessageRevision(reason: .branchChange)
         return true
     }
@@ -4134,8 +4331,7 @@ final class ChatViewModel {
         guard message.role == MessageRole.assistant else { return false }
         return message.parts.contains { part in
             guard let text = part as? UIMessagePart.Text else { return false }
-            return text.metadata?[MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY]?
-                .jsonPrimitiveOrNull?.content == MessageKt.LOCAL_GENERATION_ERROR_METADATA_VALUE
+            return IosToolOutputJsonBridge.shared.metadataString(part: text, key: MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY) == MessageKt.LOCAL_GENERATION_ERROR_METADATA_VALUE
         }
     }
 
@@ -4149,8 +4345,7 @@ final class ChatViewModel {
     private static func isOutputLimitNotice(_ message: UIMessage) -> Bool {
         message.parts.contains { part in
             guard let text = part as? UIMessagePart.Text else { return false }
-            return text.metadata?[MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY]?
-                .jsonPrimitiveOrNull?.content == MessageKt.LOCAL_OUTPUT_LIMIT_NOTICE_METADATA_VALUE
+            return IosToolOutputJsonBridge.shared.metadataString(part: text, key: MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY) == MessageKt.LOCAL_OUTPUT_LIMIT_NOTICE_METADATA_VALUE
         }
     }
 

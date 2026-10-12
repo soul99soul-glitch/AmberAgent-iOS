@@ -1,6 +1,7 @@
 package app.amber.core.storage.conversation
 
 import app.amber.ai.ui.UIMessage
+import app.amber.ai.ui.UIMessagePart
 import app.amber.ai.core.MessageRole
 import app.amber.core.agent.utils.JsonInstant
 import app.amber.core.model.Conversation
@@ -339,6 +340,82 @@ class JsonConversationStorageTest {
         val summaries = storage.listSummaries()
         assertEquals(3, decodeCount, "只修改一个会话时只应重新解码一个文件")
         assertEquals("A changed", summaries.single { it.id == idA }.title)
+    }
+
+    @Test
+    fun coldSummaryCacheDetectsExternalChangesAndIgnoresMetadataFiles() = runTest {
+        val changed = sampleConversation(id = Uuid.random(), title = "before")
+        val removed = sampleConversation(id = Uuid.random())
+        val retained = sampleConversation(id = Uuid.random(), title = "retained")
+        listOf(changed, removed, retained).forEach { storage.saveConversation(it) }
+        storage.listSummaries()
+
+        val file = File(tempDir.child("${changed.id}.json").path)
+        val modified = Files.getLastModifiedTime(file.toPath())
+        val originalSize = file.length()
+        file.writeText(JsonInstant.encodeToString(changed.copy(title = "edited")))
+        Files.setLastModifiedTime(file.toPath(), modified)
+        assertEquals(originalSize, file.length(), "同大小和 mtime 也必须识别变化")
+        tempDir.child("${removed.id}.json").delete()
+        val added = sampleConversation(id = Uuid.random(), title = "added")
+        tempDir.child("${added.id}.json").writeText(JsonInstant.encodeToString(added))
+        tempDir.child("conversation-recaps.json").writeText("{\"recaps\":\"${"x".repeat(100_000)}\"}")
+
+        val reopened = JsonConversationStorage(tempDir)
+        var decoded = 0
+        reopened.beforeSummaryDecodeForTesting = { decoded++ }
+        val summaries = reopened.listSummaries()
+        assertEquals(setOf("edited", "retained", "added"), summaries.map { it.title }.toSet())
+        assertEquals(2, decoded, "只读变化及新增的正文，不读未变会话和旁路元数据")
+        assertEquals(summaries.toSet(), JsonInstant.decodeFromString<List<ConversationSummary>>(
+            tempDir.child("index.json").readText()!!,
+        ).toSet())
+        assertEquals(summaries, JsonConversationStorage(tempDir).listSummaries())
+    }
+
+    @Test
+    fun corruptOrUnwritablePersistentCacheStillLoadsCanonicalConversations() = runTest {
+        val conversation = sampleConversation(id = Uuid.random(), title = "canonical")
+        storage.saveConversation(conversation)
+        storage.listSummaries()
+        val cacheFile = tempDir.child("summary-cache-v1.cache")
+        cacheFile.writeText("{ broken")
+        tempDir.child("index.json").writeText("{ broken")
+
+        assertEquals(listOf(conversation.toSummary()), JsonConversationStorage(tempDir).listSummaries())
+        cacheFile.delete()
+        cacheFile.mkdirs()
+        val reopened = JsonConversationStorage(tempDir)
+        assertEquals(listOf(conversation.toSummary()), reopened.listSummaries())
+        reopened.updateMetadata(conversation.id, title = "renamed", isPinned = true)
+        val afterRestart = JsonConversationStorage(tempDir).listSummaries().single()
+        assertEquals("renamed", afterRestart.title)
+        assertTrue(afterRestart.isPinned)
+        assertEquals(conversation.currentMessages, reopened.loadConversation(conversation.id)?.currentMessages)
+    }
+
+    @Test
+    fun imageGenerationSummaryTracksSelectedAssistantToolAcrossSavesAndRestarts() = runTest {
+        val imageTool = UIMessagePart.Tool(toolCallId = "image-1", toolName = "generate_image", input = "{}")
+        val ordinary = UIMessage.assistant("plain answer")
+        val imageMessage = ordinary.copy(parts = listOf(imageTool))
+        val conversation = sampleConversation(id = Uuid.random()).copy(
+            messageNodes = listOf(MessageNode(messages = listOf(ordinary, imageMessage), selectIndex = 0)),
+        )
+        storage.saveConversation(conversation)
+        assertFalse(storage.listSummaries().single().hasImageGenerationTool)
+        val selectedImage = conversation.copy(
+            messageNodes = listOf(conversation.messageNodes.single().copy(selectIndex = 1)),
+        )
+        storage.saveConversation(selectedImage)
+        assertTrue(JsonConversationStorage(tempDir).listSummaries().single().hasImageGenerationTool)
+
+        storage.saveConversation(conversation.copy(
+            messageNodes = listOf(MessageNode(messages = listOf(imageMessage.copy(role = MessageRole.USER)))),
+        ))
+        assertFalse(JsonConversationStorage(tempDir).listSummaries().single().hasImageGenerationTool)
+        storage.importConversations(listOf(JsonInstant.encodeToString(selectedImage)))
+        assertTrue(JsonConversationStorage(tempDir).listSummaries().single().hasImageGenerationTool)
     }
 
     @Test

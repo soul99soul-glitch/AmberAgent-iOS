@@ -11,6 +11,15 @@ import kotlin.test.assertTrue
 
 class GenerativeUiPlannerTest {
     @Test
+    fun learningTopicDoesNotRequireAnSvgButExplicitDiagramStillDoes() {
+        val setting = GenerativeUiSetting(enabled = true)
+        val learning = listOf(userMessage("用智能 UI 帮我学习三省六部制，直接翻卡和做选择题"))
+        assertFalse(GenerativeUiPlanner.widgetRequirement(setting, learning).required)
+        val diagram = listOf(userMessage("画一个三省六部制流程图"))
+        assertTrue(GenerativeUiPlanner.widgetRequirement(setting, diagram).required)
+    }
+
+    @Test
     fun diagramRouteRequiresFinalWidgetAndInjectsPrompt() {
         val messages = listOf(userMessage("画一个流程图解释这件事"))
         val setting = GenerativeUiSetting(enabled = true)

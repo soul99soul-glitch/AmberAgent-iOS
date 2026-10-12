@@ -1704,7 +1704,9 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard !Task.isCancelled else { return }
         switch outcome {
         case .completed:
-            var messages = accumulator.messages
+            var messages = IOSIntelligentUITerminal.markSourcesPending(
+                accumulator.messages, baseline: job.displayMessages, runID: job.runId
+            )
             if let transcriptRequest,
                let index = messages.indices.reversed().first(where: {
                    $0 >= job.displayMessages.count && messages[$0].role == MessageRole.assistant
@@ -1966,11 +1968,19 @@ final class IOSChatBackgroundGenerationCoordinator {
         let unknownToolCallIds = plan.actions.compactMap { toolCallId, action -> String? in
             Self.isOutcomeUnknownRecoveryAction(action) ? toolCallId : nil
         }
-        let recoveredUploadMessages = IOSToolCallRecoveryApplier.apply(plan, to: snapshotMessages)
-        let recoveredDisplayMessages = Self.reconciledMessages(
-            resultMessages: recoveredUploadMessages,
-            uploadMessageCount: job.uploadMessages.count,
-            displayMessages: job.displayMessages
+        let recoveredUploadMessages = IOSIntelligentUITerminal.markSourcesPending(
+            IOSToolCallRecoveryApplier.apply(plan, to: snapshotMessages),
+            baseline: job.displayMessages,
+            runID: job.runId
+        )
+        let recoveredDisplayMessages = IOSIntelligentUITerminal.markSourcesPending(
+            Self.reconciledMessages(
+                resultMessages: recoveredUploadMessages,
+                uploadMessageCount: job.uploadMessages.count,
+                displayMessages: job.displayMessages
+            ),
+            baseline: job.displayMessages,
+            runID: job.runId
         )
 
         guard await job.conversationStore.saveBackgroundCompletion(
@@ -2152,6 +2162,11 @@ final class IOSChatBackgroundGenerationCoordinator {
         let miniAppApplication = job.saveMiniAppIfPresent?(stamped, job.conversationId)
         if let miniAppApplication {
             stamped = miniAppApplication.messages
+        }
+        if miniAppApplication?.outcome != .failed {
+            stamped = IOSIntelligentUITerminal.markCompleted(
+                stamped, baseline: job.displayMessages, runID: job.runId
+            )
         }
         let didSave = await job.conversationStore.saveBackgroundCompletion(
             baseMessages: job.displayMessages,
@@ -2762,6 +2777,20 @@ final class IOSChatBackgroundGenerationCoordinator {
             : nil
         let watchSummary = Self.backgroundSummary(from: finalMessages)
 
+        let successfulGeneration = Self.backgroundTerminalStatus(
+            didSave: true,
+            singleToolFailureReason: singleToolFailureReason,
+            guardStopped: guardStoppedNotice != nil,
+            miniAppFailed: miniAppFailed,
+            hitStepLimit: result.hitStepLimit,
+            generativeUiRepairFailed: generativeUiRepairFailed
+        ) == .completed
+        if successfulGeneration {
+            finalMessages = IOSIntelligentUITerminal.markCompleted(
+                finalMessages, baseline: job.displayMessages, runID: job.runId
+            )
+        }
+
         let didSave: Bool
         switch job.mode {
         case .continueModel, .resumeResponse:
@@ -3246,12 +3275,25 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
 
+        let durableRun: IOSDurableRunStore.Snapshot?
+        do {
+            durableRun = try await runStore.snapshot(runId: mappedRunId)
+        } catch {
+            guard activeBackgroundTasks[requestId] == nil,
+                  activeDetachedResponseTasks[requestId] == nil,
+                  !backgroundInterruptedRequestIds.contains(requestId),
+                  !foregroundResumeInFlightRequestIds.contains(requestId),
+                  !automaticallyResumedRequestIds.contains(requestId) else { return }
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
+            releaseRuntimeOwnership(requestId: requestId)
+            return
+        }
         let hasPreservedOutcomeUnknown = preservingOutcomeUnknownRunIds.contains(mappedRunId)
         let hasOutcomeUnknownEvidence: Bool?
         if hasPreservedOutcomeUnknown {
             hasOutcomeUnknownEvidence = true
         } else {
-            hasOutcomeUnknownEvidence = await hasOutcomeUnknownRecoveryEvidence(runId: mappedRunId)
+            hasOutcomeUnknownEvidence = await hasOutcomeUnknownRecoveryEvidence(run: durableRun)
         }
         guard activeBackgroundTasks[requestId] == nil,
               activeDetachedResponseTasks[requestId] == nil,
@@ -3274,7 +3316,27 @@ final class IOSChatBackgroundGenerationCoordinator {
             finish(runId: mappedRunId, requestId: requestId)
             return
         }
-
+        if let durableRun, durableRun.status.isTerminal, durableRun.finishedAt != nil {
+            // Startup recovery may already have persisted an interrupted terminal.
+            // Its old checkpoint must not append another failure or replace that terminal.
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
+            await IOSPhoneControlController.shared.stop(runID: mappedRunId)
+            let controller = dependencies?.liveActivityController ?? .shared
+            _ = controller.adoptExistingActivity(runId: mappedRunId)
+            let presentation: AgentActivityPresentation
+            switch durableRun.status {
+            case .completed: presentation = .completed()
+            case .cancelled: presentation = .cancelled()
+            default: presentation = .failed()
+            }
+            await controller.end(runId: mappedRunId, presentation: presentation)
+            IOSBackgroundLifecycleLog.record(
+                "staleBackgroundTerminalPreserved",
+                detail: "run=\(mappedRunId) status=\(durableRun.status.wireName)"
+            )
+            finish(runId: mappedRunId, requestId: requestId)
+            return
+        }
         // `.queue`/遗留 request 不会因应用被杀而自行消失；先撤掉它，防止
         // 扫尾后系统又唤起一张已经被标记停止的后台卡。
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
@@ -3309,16 +3371,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
     }
 
-    private func hasOutcomeUnknownRecoveryEvidence(runId: String) async -> Bool? {
-        let snapshot: IOSDurableRunStore.Snapshot?
-        do {
-            snapshot = try await runStore.snapshot(runId: runId)
-        } catch {
-            // 无法读取 durable evidence 时不能把可能的副作用改写成普通
-            // expiration failure；由调用方保留 task-map/payload，交给下一次
-            // 冷启动重试对账。
-            return nil
-        }
+    private func hasOutcomeUnknownRecoveryEvidence(run snapshot: IOSDurableRunStore.Snapshot?) async -> Bool? {
         guard let snapshot else {
             return false
         }
@@ -3329,7 +3382,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard runStatus == .running || runStatus == .recoveryPending else {
             return false
         }
-        guard let transactionStates = await toolLedger.toolTransactions(runId: runId)?.map(\.state) else {
+        guard let transactionStates = await toolLedger.toolTransactions(runId: snapshot.runId)?.map(\.state) else {
             return nil
         }
         return Self.preservesOutcomeUnknownStaleRecovery(
@@ -4040,6 +4093,11 @@ final class IOSChatBackgroundGenerationCoordinator {
                 detail: resolvedTerminalReason
             )
             if !didRecord {
+                let actualStatus = try? await runStore.snapshot(runId: runId)?.status.wireName
+                IOSBackgroundLifecycleLog.record(
+                    "backgroundRunTerminalConflict",
+                    detail: "run=\(runId) target=\(status.wireName) actual=\(actualStatus ?? "unavailable")"
+                )
                 let detail = IOSAppLocalization.string(
                     "运行终态发生冲突，后台任务已保留等待恢复。",
                     defaultValue: "运行终态发生冲突，后台任务已保留等待恢复。"
@@ -4571,6 +4629,11 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard handoff.mode == .resumeResponse, handoff.responseId != nil else {
             return false
         }
+        return persistBackgroundCheckpointForTesting(handoff)
+    }
+
+    @discardableResult
+    func persistBackgroundCheckpointForTesting(_ handoff: IOSChatBackgroundHandoff) -> Bool {
         let requestId = requestIdentifier(for: handoff.runId)
         do {
             try persist(handoff: handoff, requestId: requestId)

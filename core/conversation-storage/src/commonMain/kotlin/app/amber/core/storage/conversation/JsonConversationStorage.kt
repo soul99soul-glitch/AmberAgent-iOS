@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
@@ -21,6 +22,7 @@ class ConversationStorageException(
  * 文件 JSON 持久化的实现。目录布局（PLAN_CONVERSATION_PERSISTENCE.md 已定）：
  *
  *   {baseDir}/index.json          # List<ConversationSummary>，派生缓存
+ *   {baseDir}/summary-cache-v1.cache # 摘要及正文文件指纹，跨进程复用
  *   {baseDir}/{conversationId}.json   # 完整 Conversation
  *
  * 写策略：每个 save/delete 同时落 {id}.json 与 index.json；index 损坏可从
@@ -41,6 +43,7 @@ class JsonConversationStorage(
     private val operationMutex = Mutex()
     private val indexFile: ConversationFile get() = baseDir.child(INDEX_FILENAME)
     private val summaryCache = mutableMapOf<String, SummaryCacheEntry>()
+    private var didLoadSummaryCache = false
     /**
      * Recent complete snapshots avoid decoding the same conversation again when the user
      * switches away and back. Keep this intentionally small: the current conversation is
@@ -377,14 +380,30 @@ class JsonConversationStorage(
     }
 
     private fun readConversationFileSummaries(): List<ConversationSummary> {
+        if (!didLoadSummaryCache) {
+            // Use filenames, not sandbox paths: iOS may relocate the app container.
+            // The cache has its own versioned filename and is excluded from JSON backups.
+            val text = baseDir.child(SUMMARY_CACHE_FILENAME).readText()
+            if (text != null) {
+                runCatching {
+                    JsonInstant.decodeFromString<Map<String, SummaryCacheEntry>>(text)
+                }.getOrNull()?.let { summaryCache.putAll(it) }
+            }
+            didLoadSummaryCache = true
+        }
+        val previousCache = summaryCache.toMap()
         val files = baseDir.listFilesByExtension("json")
-            .filterNot { it.path.endsWith(INDEX_FILENAME) }
-        val currentPaths = files.mapTo(mutableSetOf()) { it.path }
-        summaryCache.entries.removeAll { it.key !in currentPaths }
-        return files.mapNotNull { file ->
+            .filter { file ->
+                // Previews, recaps and other sidecars are not conversation documents.
+                runCatching { Uuid.parse(file.path.substringAfterLast(separatorChar()).removeSuffix(".json")) }.isSuccess
+            }
+        val currentNames = files.mapTo(mutableSetOf()) { it.path.substringAfterLast(separatorChar()) }
+        summaryCache.entries.removeAll { it.key !in currentNames }
+        val summaries = files.mapNotNull { file ->
+            val name = file.path.substringAfterLast(separatorChar())
             val before = file.fileVersion()
             if (before != null) {
-                summaryCache[file.path]?.takeIf { it.version == before }?.let {
+                summaryCache[name]?.takeIf { it.version == before }?.let {
                     return@mapNotNull it.summary
                 }
             }
@@ -398,14 +417,23 @@ class JsonConversationStorage(
             }
             val after = file.fileVersion()
             if (summary != null && before != null && before == after) {
-                summaryCache[file.path] = SummaryCacheEntry(before, summary)
+                summaryCache[name] = SummaryCacheEntry(before, summary)
             } else {
-                summaryCache.remove(file.path)
+                summaryCache.remove(name)
             }
             summary
         }
+        if (summaryCache != previousCache) {
+            // A cache failure must not hide canonical conversations or fail a saved turn.
+            runCatching {
+                baseDir.child(SUMMARY_CACHE_FILENAME)
+                    .writeText(SUMMARY_STORAGE_JSON.encodeToString(summaryCache))
+            }
+        }
+        return summaries
     }
 
+    @Serializable
     private data class SummaryCacheEntry(
         val version: ConversationFileVersion,
         val summary: ConversationSummary,
@@ -437,6 +465,7 @@ class JsonConversationStorage(
 
     private companion object {
         const val INDEX_FILENAME = "index.json"
+        const val SUMMARY_CACHE_FILENAME = "summary-cache-v1.cache"
         const val MAX_CONVERSATION_CACHE_ENTRIES = 2
     }
 }

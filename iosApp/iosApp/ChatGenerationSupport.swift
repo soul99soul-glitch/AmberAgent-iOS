@@ -207,6 +207,34 @@ struct IOSGenerativeUiRequestPlan {
     let requirement: IOSGenerativeUiRequirement
 }
 
+enum IOSIntelligentUIRequestPolicy {
+    static func prefersNativeUI(in messages: [UIMessage], expectsSlides: Bool) -> Bool {
+        guard let user = messages.last(where: { $0.role == .user }) else { return false }
+        let parts = user.parts.compactMap { $0 as? UIMessagePart.Text }
+        let text = parts.map(\.text).joined(separator: "\n")
+        // Production receipts carry a frozen goal and inputs, not a new media request.
+        if parts.contains(where: {
+            IosToolOutputJsonBridge.shared.metadataString(part: $0, key: IOSIntelligentUISubmission.metadataKey) != nil
+        }) { return true }
+        guard !expectsSlides else { return false }
+        // Named visual media keep their existing artifact route. Task content such as
+        // "时间线" must not override an explicit native interface or its submitted result.
+        let artifact = #"(?i)svg|html|ppt|powerpoint|slides|幻灯片|演示文稿|show-widget|\[route:|vector\s+(graphic|image|diagram|art)|矢量图|mini\s*app|小应用"#
+        guard text.range(of: artifact, options: .regularExpression) == nil else { return false }
+        let refusal = #"(?i)(不要|不用|不需要|无需|别用|不使用)(使用|用)?\s*(智能\s*ui|intelligent\s*ui|task-ui)|(without|no|don't\s+use|do\s+not\s+use)\s+(intelligent\s*ui|task-ui)"#
+        guard text.range(of: refusal, options: .regularExpression) == nil else { return false }
+        return text.range(of: #"(?i)智能\s*ui|intelligent\s*ui|task-ui"#, options: .regularExpression) != nil
+    }
+
+    static func prompt(
+        setting: GenerativeUiSetting,
+        suppressForMiniApp: Bool = false
+    ) -> String {
+        guard setting.enabled, setting.enableActions, !suppressForMiniApp else { return "" }
+        return IOSIntelligentUIProtocol.capabilityPrompt
+    }
+}
+
 enum IOSGenerativeUiRequestPolicy {
     static func plan(
         setting: GenerativeUiSetting,
@@ -229,18 +257,22 @@ enum IOSGenerativeUiRequestPolicy {
         // G6: keyword routing only injects prompt guidance — it never clears
         // the tool catalog. Whether the model uses tools is its own choice.
         let basePrompt = GenerativeUiPromptCatalog.shared.build(setting: setting, model: params.model)
-        let routePrompt = GenerativeUiPlanner.shared.buildPrompt(
+        let taskPrompt = IOSIntelligentUIRequestPolicy.prompt(setting: setting)
+        let prefersNativeUI = !taskPrompt.isEmpty && IOSIntelligentUIRequestPolicy.prefersNativeUI(
+            in: messages, expectsSlides: sharedRequirement.expectSlides
+        )
+        let routePrompt = prefersNativeUI ? "" : GenerativeUiPlanner.shared.buildPrompt(
             setting: setting,
             messages: messages,
             hasImageGenTool: hasImageGenTool
         )
-        let prompt = [basePrompt, routePrompt]
+        let prompt = [basePrompt, routePrompt, taskPrompt]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
         return IOSGenerativeUiRequestPlan(
             params: params,
             uploadMessages: prompt.isEmpty ? messages : [systemMessage(prompt)] + messages,
-            requirement: IOSGenerativeUiRequirement(sharedRequirement)
+            requirement: prefersNativeUI ? .none : IOSGenerativeUiRequirement(sharedRequirement)
         )
     }
 

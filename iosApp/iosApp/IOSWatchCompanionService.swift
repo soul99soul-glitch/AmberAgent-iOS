@@ -262,15 +262,21 @@ final class IOSWatchCompanionService {
         guard !normalized.isEmpty else { return true }
 
         var candidate = recentActivities
+        // Normalized IDs are run:<runId>. Fold each identity once instead of
+        // comparing every recovered run against the growing history array.
+        var indexByID: [String: Int] = [:]
+        for (index, activity) in candidate.enumerated() {
+            let key = activity.id.folding(options: .caseInsensitive, locale: nil)
+            if indexByID[key] == nil { indexByID[key] = index }
+        }
         for activity in normalized {
-            if let index = candidate.firstIndex(where: {
-                $0.runId?.lowercased() == activity.runId?.lowercased()
-                    || $0.id.caseInsensitiveCompare(activity.id) == .orderedSame
-            }) {
+            let key = activity.id.folding(options: .caseInsensitive, locale: nil)
+            if let index = indexByID[key] {
                 if candidate[index].phase == "failed", activity.phase == "completed" {
                     candidate[index] = activity
                 }
             } else {
+                indexByID[key] = candidate.count
                 candidate.append(activity)
             }
         }
