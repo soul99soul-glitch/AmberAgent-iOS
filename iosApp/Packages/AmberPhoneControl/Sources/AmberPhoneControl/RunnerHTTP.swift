@@ -145,6 +145,11 @@ indirect enum JSONValue: Codable, Sendable, Equatable {
     var string: String? { if case .string(let value) = self { value } else { nil } }
     var array: [JSONValue]? { if case .array(let value) = self { value } else { nil } }
     var number: Double? { if case .number(let value) = self { value } else { nil } }
+    var integer: Int? {
+        guard let value = number, value.isFinite, value.rounded() == value,
+              value >= Double(Int.min), value < Double(Int.max) else { return nil }
+        return Int(value)
+    }
     var bool: Bool? {
         switch self {
         case .bool(let value): value

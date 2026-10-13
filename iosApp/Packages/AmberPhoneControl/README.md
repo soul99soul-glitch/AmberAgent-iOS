@@ -18,9 +18,14 @@ let opened = await client.act(.launch(bundleID: "example.target"))
 let observation = try await client.observe()
 // Give observation.compactText to the model; it selects a node's local ref.
 let result = await client.act(.tap(ref: selectedRef))
+// A sequence can bind the action to a stable page anchor from that same observation.
+let guarded = await client.act(.tap(ref: selectedRef), pageAnchorRef: pageAnchorRef)
 ```
 
 - `observe()` only reads the UI tree. `screenshot()` remains an explicit, standalone PNG request.
+- `waitForStability()` explicitly calls the runner's bounded `/wda/settle` endpoint after a
+  transition. It consumes old references; call `observe()` afterwards. `stable` and `blank`
+  describe the captured screen, not business success. Ordinary clicks do not wait automatically.
 - If a visible target is absent from the accessibility tree, call `screenshotObservation()` after
   `observe()`. It returns the PNG, that observation's ID, and full-screen width/height in points.
   Use `.tapPoint(observationID: screenshot.observationID, x: x, y: y)` with coordinates normalized
@@ -33,7 +38,17 @@ let result = await client.act(.tap(ref: selectedRef))
   one `POST /swipe` lasting 300 ms; observe again to check the gesture's effect.
 - `act()` performs at most one mutation request. Element actions first match a fresh tree by exact
   type, identity, value and frame through plural `/elements`, then require a single result and
-  recheck the foreground process. A new observation, failed screenshot, or action consumes previous
+  recheck the foreground process. Passing `pageAnchorRef` for `tap`, `type`, `clear`, or element
+  `swipe` adds one unique `/elements` check using the anchor's type, identity, label, and nonsecure
+  value, without requiring its frame or enabled state. A missing, changed, ambiguous, or stale
+  anchor returns `.unsent(.staleObservation)` before mutation; other action kinds reject the
+  parameter as `.invalidAction`. Optional `pageAnchorRegion` keeps the anchor center inside a
+  screen-point rectangle without freezing its exact frame. `requireUnchangedObservation` is used
+  for live Jev decisions: one additional bounded `/source` read before dispatch checks process,
+  backend, completeness, and semantic tree content against the decision's observation. It ignores
+  unrelated frame/focus animation; the action target still has its existing exact-frame lookup.
+  A changed page returns `.unsent` without clicking. Both options default off for existing callers.
+  A new observation, failed screenshot, or action consumes previous
   references and visual evidence. An independent legacy `screenshot()` does not authorize a visual
   action. Visual actions do not retry or silently fall back to another targeting method.
 - `.completed` acknowledges execution, not the intended business result. Observe again to verify.

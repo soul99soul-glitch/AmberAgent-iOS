@@ -126,6 +126,77 @@ final class IOSPhoneGoalVerificationTests: XCTestCase {
         XCTAssertEqual(evaluate(.init(kind: .visible, target: target), after: after).status, .satisfied)
     }
 
+    func testMatchingNodesCollapsesOnlyAContainedSameLabelTextChild() {
+        let target = IOSPhoneGoalTarget(label: "继续")
+        let parent = node(identifier: "continue", label: "继续", depth: 1, type: "XCUIElementTypeButton", x: 20, width: 180, y: 20, height: 80)
+        let child = node(identifier: "continue-label", label: "继续", depth: 2, type: "XCUIElementTypeStaticText", x: 40, width: 120, y: 40, height: 32)
+        let sibling = node(identifier: "other-continue", label: "继续", depth: 1, type: "XCUIElementTypeOther", x: 240, width: 120, y: 20, height: 44)
+
+        let matches: [PhoneObservationNode] = IOSPhoneGoalVerification.matchingNodes(
+            target: target, in: observation([parent, child, sibling]))
+
+        XCTAssertEqual(matches.map(\.identifier), ["continue", "other-continue"])
+    }
+
+    func testExplicitTypeKeepsTheRequestedTextChildPrecise() {
+        let target = IOSPhoneGoalTarget(label: "继续", type: "XCUIElementTypeStaticText")
+        let parent = node(identifier: "continue", label: "继续", depth: 1, type: "XCUIElementTypeButton", x: 20, width: 180, y: 20, height: 80)
+        let child = node(identifier: "continue-label", label: "继续", depth: 2, type: "XCUIElementTypeStaticText", x: 40, width: 120, y: 40, height: 32)
+
+        let matches: [PhoneObservationNode] = IOSPhoneGoalVerification.matchingNodes(
+            target: target, in: observation([parent, child]))
+        XCTAssertEqual(matches.map(\.identifier), ["continue-label"])
+    }
+
+    func testRegionVerifiesSameLabelAfterItMovesFromSourceToTargetArea() {
+        let sourceRegion = IOSPhoneGoalRegion(x: 0, y: 0.60, width: 1, height: 0.30)
+        let targetRegion = IOSPhoneGoalRegion(x: 0, y: 0.35, width: 1, height: 0.25)
+        let source = IOSPhoneGoalTarget(label: "go", type: "XCUIElementTypeStaticText", region: sourceRegion)
+        let target = IOSPhoneGoalTarget(label: "go", type: "XCUIElementTypeStaticText", region: targetRegion)
+        let before = observation([node(label: "go", type: "XCUIElementTypeStaticText", y: 626)], id: "before")
+        let after = observation([node(label: "go", type: "XCUIElementTypeStaticText", y: 399)])
+
+        XCTAssertTrue(IOSPhoneGoalVerification.matchingNodes(target: source, in: before).count == 1)
+        XCTAssertTrue(IOSPhoneGoalVerification.matchingNodes(target: source, in: after).isEmpty)
+        XCTAssertTrue(IOSPhoneGoalVerification.matchingNodes(target: target, in: after).count == 1)
+
+        let moved = IOSPhoneGoalExpectation(kind: .absent, target: source, anchor: target)
+        XCTAssertEqual(evaluate(moved, before: before, after: after).status, .satisfied)
+    }
+
+    func testRegionDoesNotPassWhenSameLabelStaysInSourceArea() {
+        let targetRegion = IOSPhoneGoalRegion(x: 0, y: 0.35, width: 1, height: 0.25)
+        let target = IOSPhoneGoalTarget(label: "go", type: "XCUIElementTypeStaticText", region: targetRegion)
+        let after = observation([node(label: "go", type: "XCUIElementTypeStaticText", y: 626)])
+
+        XCTAssertEqual(evaluate(.init(kind: .visible, target: target), after: after).status, .unmet)
+    }
+
+    func testRegionSelectsOneOfDuplicateLabels() {
+        let targetRegion = IOSPhoneGoalRegion(x: 0, y: 0.35, width: 1, height: 0.25)
+        let target = IOSPhoneGoalTarget(label: "go", type: "XCUIElementTypeStaticText", region: targetRegion)
+        let after = observation([
+            node(label: "go", type: "XCUIElementTypeStaticText", y: 626),
+            node(label: "go", type: "XCUIElementTypeStaticText", y: 399),
+        ])
+
+        XCTAssertEqual(IOSPhoneGoalVerification.matchingNodes(target: target, in: after).count, 1)
+        XCTAssertEqual(evaluate(.init(kind: .visible, target: target), after: after).status, .satisfied)
+    }
+
+    func testTargetRegionRejectsNonFiniteOrOutOfBoundsRectangles() {
+        let invalid = [
+            IOSPhoneGoalRegion(x: -0.01, y: 0, width: 0.2, height: 0.2),
+            IOSPhoneGoalRegion(x: 0, y: 0, width: 0, height: 0.2),
+            IOSPhoneGoalRegion(x: 0.9, y: 0, width: 0.2, height: 0.2),
+            IOSPhoneGoalRegion(x: 0, y: 0, width: 0.2, height: .infinity),
+        ]
+
+        for region in invalid {
+            XCTAssertThrowsError(try IOSPhoneGoalTarget(label: "go", region: region).validate())
+        }
+    }
+
     func testValueComparisonNeedsUniqueReadableInputAndMatchesExactly() {
         let input = IOSPhoneGoalTarget(identifier: "query")
         let expected = IOSPhoneGoalExpectation(kind: .valueEquals, target: input, value: "星巴克")
@@ -184,8 +255,9 @@ final class IOSPhoneGoalVerificationTests: XCTestCase {
 
     private func node(identifier: String? = nil, label: String? = nil, value: String? = nil,
                       depth: Int = 1, type: String = "XCUIElementTypeButton", enabled: Bool = true,
-                      width: Double = 44, y: Double = 0) -> PhoneObservationNode {
+                      x: Double = 0, width: Double = 44, y: Double = 0,
+                      height: Double = 44) -> PhoneObservationNode {
         .init(ref: "ref", depth: depth, type: type, identifier: identifier, label: label, value: value,
-              rect: .init(x: 0, y: y, width: width, height: 44), enabled: enabled, focused: false)
+              rect: .init(x: x, y: y, width: width, height: height), enabled: enabled, focused: false)
     }
 }

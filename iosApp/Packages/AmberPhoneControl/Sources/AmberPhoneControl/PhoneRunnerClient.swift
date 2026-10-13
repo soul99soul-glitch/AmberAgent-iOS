@@ -81,6 +81,35 @@ public actor PhoneRunnerClient {
                                  requiresAuthentication: required, authenticationScheme: scheme)
     }
 
+    /// Waits for the current screen to settle on the device. The previous observation is consumed;
+    /// call observe() afterwards before using any element reference or trusting the new screen.
+    public func waitForStability() async throws -> PhoneScreenStability {
+        try beginOperation()
+        defer { operationInFlight = false }
+        snapshot = nil
+
+        let before = try await activeApp()
+        try checkScope(before)
+        try checkCanContinue()
+        let response = try await http.request(path: "/wda/settle", query: [
+            "budget_ms": "2000", "quiet_ms": "150",
+        ])
+        try checkCanContinue()
+        let after = try await activeApp()
+        try checkSameApp(before, after)
+        try checkCanContinue()
+
+        guard let stable = response.value["stable"]?.bool,
+              let waitedMs = response.value["waited_ms"]?.integer,
+              waitedMs >= 0,
+              let frames = response.value["frames"]?.integer,
+              frames >= 0,
+              let blank = response.value["blank"]?.bool else {
+            throw PhoneControlProblem(.malformedResponse, "Runner settle response lacks valid stability details.")
+        }
+        return PhoneScreenStability(stable: stable, waitedMs: waitedMs, frames: frames, blank: blank)
+    }
+
     public func observe(maxNodes: Int = 500, includeScreenSize: Bool = false) async throws -> PhoneObservation {
         try beginOperation()
         defer { operationInFlight = false }
@@ -88,8 +117,9 @@ public actor PhoneRunnerClient {
         snapshot = nil
         let before = try await activeApp()
         try checkScope(before)
+        let effectiveMaxNodes = min(2_000, max(1, maxNodes))
         let response = try await http.request(path: "/source", query: [
-            "format": "json", "max_nodes": String(min(2_000, max(1, maxNodes))),
+            "format": "json", "max_nodes": String(effectiveMaxNodes),
         ])
         guard let sourcePID = response.header("X-IPU-Pid").flatMap(Int.init), sourcePID == before.pid else {
             throw PhoneControlProblem(.appChanged, "The source tree does not belong to the checked foreground process.")
@@ -124,7 +154,8 @@ public actor PhoneRunnerClient {
                                            backend: response.header("X-IPU-Backend") ?? "unknown",
                                            truncated: response.header("X-IPU-Truncated") == "1", nodes: nodes,
                                            screenBounds: bounds)
-        snapshot = Snapshot(id: id, app: before, references: references, observation: observation)
+        snapshot = Snapshot(id: id, app: before, references: references, tree: tree,
+                            sourceMaxNodes: effectiveMaxNodes, observation: observation)
         return observation
     }
 
@@ -185,7 +216,10 @@ public actor PhoneRunnerClient {
     }
 
     /// Sends at most one screen-changing request, after fresh lookup and scope checks.
-    public func act(_ action: PhoneAction) async -> PhoneActionResult {
+    /// An optional page anchor must still uniquely match before an element action is sent.
+    public func act(_ action: PhoneAction, pageAnchorRef: String? = nil,
+                    pageAnchorRegion: PhoneElementRect? = nil,
+                    requireUnchangedObservation: Bool = false) async -> PhoneActionResult {
         do {
             try beginOperation()
         } catch {
@@ -201,6 +235,29 @@ public actor PhoneRunnerClient {
             }
             let path: String
             var body: [String: JSONValue] = [:]
+            if pageAnchorRef != nil {
+                switch action {
+                case .tap, .type, .clear, .swipe: break
+                default:
+                    throw PhoneControlProblem(.invalidAction, "A page anchor is supported only for element actions.")
+                }
+            }
+            if pageAnchorRegion != nil, pageAnchorRef == nil {
+                throw PhoneControlProblem(.invalidAction, "A page anchor region requires a page anchor reference.")
+            }
+            if let pageAnchorRegion {
+                guard [pageAnchorRegion.x, pageAnchorRegion.y, pageAnchorRegion.width, pageAnchorRegion.height]
+                    .allSatisfy({ $0.isFinite }), pageAnchorRegion.width > 0, pageAnchorRegion.height > 0 else {
+                    throw PhoneControlProblem(.invalidAction, "A page anchor region must have finite positive dimensions.")
+                }
+            }
+            if requireUnchangedObservation {
+                switch action {
+                case .tap, .type, .clear, .swipe: break
+                default:
+                    throw PhoneControlProblem(.invalidAction, "Unchanged-observation checking is supported only for element actions.")
+                }
+            }
             switch action {
             case .launch(let bundleID):
                 guard allowedBundleIDs.contains(bundleID) else {
@@ -234,6 +291,10 @@ public actor PhoneRunnerClient {
             case .tap(let ref), .type(let ref, _), .clear(let ref), .swipe(let ref, _):
                 guard let observed, let node = observed.references[ref] else {
                     throw PhoneControlProblem(.staleObservation, "This reference is not part of the latest observation. Observe again.")
+                }
+                let pageAnchor = pageAnchorRef.flatMap { observed.references[$0] }
+                if pageAnchorRef != nil, pageAnchor == nil {
+                    throw PhoneControlProblem(.staleObservation, "This page anchor is not part of the latest observation. Observe again.")
                 }
                 guard node.enabled else {
                     throw PhoneControlProblem(.unsupportedNode, "The observed element is disabled.")
@@ -276,6 +337,23 @@ public actor PhoneRunnerClient {
                           || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else {
                     throw PhoneControlProblem(.malformedResponse, "Element lookup returned an invalid reference.")
                 }
+                if let pageAnchor {
+                    try checkCanContinue()
+                    let anchorFound = try await http.request(method: "POST", path: "/elements", body: .object([
+                        "using": .string("predicate string"),
+                        "value": .string(pageAnchor.pageAnchorPredicate(region: pageAnchorRegion)),
+                    ]))
+                    try checkCanContinue()
+                    guard let matches = anchorFound.value.array else {
+                        throw PhoneControlProblem(.malformedResponse, "Page anchor lookup did not return an array.")
+                    }
+                    guard matches.count == 1 else {
+                        throw PhoneControlProblem(.staleObservation, "The page anchor changed or is ambiguous. Observe again.")
+                    }
+                }
+                if requireUnchangedObservation {
+                    try await verifyUnchangedObservation(observed)
+                }
                 try checkSameApp(observed.app, try await activeApp())
                 switch action {
                 case .tap: path = "/element/\(elementID)/click"
@@ -302,6 +380,29 @@ public actor PhoneRunnerClient {
             }
             outcomeUnknown = true
             return .unknown(problem)
+        }
+    }
+
+    private func verifyUnchangedObservation(_ observed: Snapshot?) async throws {
+        guard let observed else {
+            throw PhoneControlProblem(.staleObservation, "Observe the foreground application before checking the screen state.")
+        }
+        guard !observed.observation.truncated else {
+            throw PhoneControlProblem(.staleObservation, "The decision observation was truncated. Observe the full tree again.")
+        }
+        try checkCanContinue()
+        let response = try await http.request(path: "/source", query: [
+            "format": "json", "max_nodes": String(observed.sourceMaxNodes),
+        ])
+        try checkCanContinue()
+        guard response.header("X-IPU-Pid") == String(observed.app.pid),
+              response.header("X-IPU-Backend") == observed.observation.backend,
+              response.header("X-IPU-Truncated") == "0" else {
+            throw PhoneControlProblem(.staleObservation, "The screen provenance changed before the action. Observe again.")
+        }
+        let tree = try SourceNode(response.value)
+        guard observed.tree.semanticallyEquals(tree) else {
+            throw PhoneControlProblem(.staleObservation, "The screen changed before the action. Observe again.")
         }
     }
 
@@ -393,6 +494,8 @@ private struct Snapshot: Sendable {
     let id: String
     let app: ActiveApp
     let references: [String: SourceNode]
+    let tree: SourceNode
+    let sourceMaxNodes: Int
     var observation: PhoneObservation
     var screenshotSize: ScreenSize?
 }
@@ -445,15 +548,47 @@ private struct SourceNode: Sendable {
     }
 
     var predicate: String {
-        var terms = ["type == \(Self.literal(type))", "enabled == true"]
+        makePredicate(forPageAnchor: false)
+    }
+
+    var pageAnchorPredicate: String {
+        pageAnchorPredicate(region: nil)
+    }
+
+    func pageAnchorPredicate(region: PhoneElementRect? = nil) -> String {
+        makePredicate(forPageAnchor: true, region: region)
+    }
+
+    private func makePredicate(forPageAnchor: Bool, region: PhoneElementRect? = nil) -> String {
+        var terms = ["type == \(Self.literal(type))"]
+        terms.append(forPageAnchor ? "visible == true" : "enabled == true")
         if let identifier { terms.append("rawIdentifier == \(Self.literal(identifier))") }
         else if let label { terms.append("label == \(Self.literal(label))") }
         // A reference is to this observed appearance, not whichever row later reuses its label.
         if let label, identifier != nil { terms.append("label == \(Self.literal(label))") }
         if let value, !isSecure { terms.append("value == \(Self.literal(value))") }
-        terms.append(contentsOf: ["rect.x == \(rect.x)", "rect.y == \(rect.y)",
-                                  "rect.width == \(rect.width)", "rect.height == \(rect.height)"])
+        if !forPageAnchor {
+            terms.append(contentsOf: ["rect.x == \(rect.x)", "rect.y == \(rect.y)",
+                                      "rect.width == \(rect.width)", "rect.height == \(rect.height)"])
+        }
+        if forPageAnchor, let region {
+            terms.append(contentsOf: [
+                "rect.x + rect.width / 2.0 >= \(region.x)",
+                "rect.x + rect.width / 2.0 <= \(region.x + region.width)",
+                "rect.y + rect.height / 2.0 >= \(region.y)",
+                "rect.y + rect.height / 2.0 <= \(region.y + region.height)",
+            ])
+        }
         return terms.joined(separator: " AND ")
+    }
+
+    func semanticallyEquals(_ other: SourceNode) -> Bool {
+        let leftValue = isSecure ? nil : value
+        let rightValue = other.isSecure ? nil : other.value
+        return type == other.type && identifier == other.identifier && label == other.label
+            && leftValue == rightValue && enabled == other.enabled
+            && children.count == other.children.count
+            && zip(children, other.children).allSatisfy { $0.semanticallyEquals($1) }
     }
 
     private static func literal(_ value: String) -> String {

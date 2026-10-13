@@ -2,6 +2,41 @@
 
 日期：2026-10-11。用户授权两项一起实现；保留当前隧道、授权、runner 和已有未提交工作。此轮不改 Loon 接入、不提交或推送。
 
+## 2026-10-12 通用连续操作修复
+
+目标：修复真实运行中批量路径未执行、重复主模型往返的问题；不按 App 包名、题型或固定按钮文字分支。
+
+- 保留 `phone_run_goal` 一个入口。省略 `actions` / `steps` 时，从每轮新观察生成具名点击候选，Jev 在目标范围内连续选择；明确步骤仍使用 `steps`，准确输入仍由主模型提供。空数组或 null 不作为自动模式的别名。
+- 目标匹配先筛选动作支持的控件，再判断真实歧义；显式类型允许已有单步支持的 `StaticText` / `Other`。两个真实同名目标不能随意选第一个。
+- 可选 `target.region` 使用屏幕比例矩形，匹配元素中心；让「内容在目标区域出现」成为可核验条件，避免把「原文字仍可见」误当选中。它同样适用于列表移动、分栏选择等场景。
+- 无验收条件的成功 `phone_act` 也返回一次新观察，保留执行回执但不声称业务成功。后置读屏失败不能抹去已执行事实。
+- 参数继续严格校验；未知的外层 `identifier` 明确指出应放进 `target`，不自动猜测或改写参数。
+- 自由选择仍使用现有 Jev 模式、数据范围、版本和预算。新树截断、App/进程/屏幕上下文变化、无进展、未知回执及人工接手均停止；不会靠放宽这些条件提速。
+
+本轮收口：
+
+- Swift package 74 项测试通过；App 七组定点测试 123 项全部通过，覆盖声明/解析往返、前后台目录、人工接手、Jev 请求构造、循环、验收与真实 Runner 客户端的 HTTP 边界。
+- 明确序列两次点击使用三次观察；live 两次点击使用三次观察及两次派发前内容复核，均在一次工具调用内完成。Jev 的 HTTP 响应由受控 transport 提供，不能据此声称真实决策准确率或速度已改善。
+- 独立 review 确认并修复：动态决策期间换页仍匹配同名按钮、完成条件未传给 Jev、区域锚点在派发前丢失约束、弹窗覆盖下误报完成。加载/弹窗只读等待及 handoff 截图检查已贯通。
+- 初次运行发现两处新增 fixture 计数断言不符，后续统一接口时发现测试闭包与参数顺序编译错误；均已修正后完整重跑，没有削弱生产验收条件。
+- 最新 App 结果：`Test-iosApp-2026.10.12_17-00-09-+0800.xcresult`，构建日志 `/tmp/amber-general-phone-fixes-closure.log`。`git diff --check` 通过。
+- Live 模式生成点击候选；输入和滑动仍使用已有显式 actions/steps 或滚动工具。没有新增 App 特例、设置或依赖。
+- 修复版 Release 已原位安装到 iPhone18Pro 并启动，签名/五个组件标识与既有安装一致，375 个会话索引条目保留，Jev 与手机控制四项设置字节一致，当前模型仍为 deepseek-flash。两项全局 JSON 启动后重写，只有安装前字节哈希，未据此声称所有配置逐字段相同。安装证据在 `iosApp/build/PhoneSequenceDevice-20261012/install-verification-live/`。真实 Jev 决策质量、页面切换时序和端到端速度仍待实测；未提交或推送。
+
+## 17:17 真机复测后的定点修复
+
+真实运行 `9ECB29CE-DE27-4FFC-9B5B-371916EA39AA` 未进入 live 路径：三次 root actions、一次 steps；三次 actions 中一次因省略 type 的 Other 词块被拒，另外两次在第一个词之后用最终 completion 做远端中间复核而 handback；steps 的题干同时匹配 Other 和 StaticText，被误判 page_changed。单步观察复用已生效，但没有消除这些返回主模型的路径。
+
+本次只修正现有共享路径：
+
+- 删除非 sequence loop 的中间 advise 分支，候选清单与 live 共用后续选择及派发前上下文复核。中间未达到最终 completion 不等于无法继续；界面无变化、unknown、预算和作用域检查仍有效。
+- 共享目标匹配只合并真实祖先控件及其同 label、包含在控件内的 StaticText；兄弟或跨分支重名仍是歧义。点击、锚点、验收、live 候选共用，显式 type 仍精确匹配。
+- 具名 Other/StaticText 无需模型补 type 才能点击。新工具声明收敛为目标模式和 steps；旧 root actions 请求仍可执行，用于承接既有参数和冻结任务。
+- 按最新明确的模式契约分流：live 目标已达成时可零动作 completed；显式旧 actions 在尚未派发动作时发现 completion 已满足，返回 completion_already_satisfied handback，保留新观察并提示修正结果条件或使用 steps。visible/disabled verifier 不变。
+- 不猜测或改写模型写错的区域；工具描述要求基于真实 rect/屏幕尺寸计算，并选择能证明目标完成的条件。
+
+验证状态：已加入真实失败形状的 root actions 三动作回归。源码编译通过；测试事件流显示新增集成 fixture 的 JSON 格式有误，已改用 JSONSerialization 构造。用户明确要求停止继续测试、安装真机手测，已停止模拟器测试，不宣称本轮测试全部通过。真机 Release 包已原位安装并启动，运行进程已核对；376 个会话索引条目保留，6 项关键设置按解析后的内容比较一致。安装证据位于 `iosApp/build/PhoneSequenceDevice-20261012/install-verification-continuation/`；功能与提速效果按用户要求留待手动测试。
+
 ## 完成标准
 
 - `phone_act` 可附带明确的界面验收条件，执行回执与效果核验分别返回；执行后用新观察核验，并返回给主模型。不为了取前态而覆盖已有 ref / screenshot observation。
@@ -46,3 +81,24 @@
 主模型可在原有 `phone_act` 上附加验收条件，也可把当前 App 内的小目标交给 `phone_run_goal`。Jev 只判断下一项候选，定位、执行和证据判定由本机负责。完成条件只说明所指定的界面条件成立，不能据此推断消息已送达或付款成功。
 
 未开启两项时没有新增 Jev 出站；`phone_act` 的本地验收仍可用。截图在必要时返回主模型，不发送给 Jev。不能唯一定位、效果不清或候选用尽时返回最新观察，不自动重放短循环。
+
+### 最小回归补齐（源码，尚未运行或重装）
+
+按用户指定四点更新已有用例，不增加测试框架：
+
+1. legacy actions 共三个动作，可执行候选按 2→1→1 变化；只在首轮分支调用一次 choose，后两步本地执行，零中间 advise，最终由本地 completion 验收。
+2. legacy/live 均要求派发前上下文复核；选中目标自身不变、另一节点在 Jev 返回后变化时，`/source` 检查拒绝动作，零点击。
+3. 初始已可见且 disabled：live 返回 completed；显式旧 actions 返回 completion_already_satisfied handback。均零动作，并保留新观察；只读等待后尚未派发动作的情况按同一模式契约处理。
+4. sequence 的同标签 Other/StaticText 父子锚点可折叠；同级 Button、跨分支同标签仍有歧义且不点击。Catalog 继续断言无 root actions，原 parser 用例继续保留。
+
+只执行 Swift 语法检查与 diff 格式检查，遵守用户停止长时间模拟器测试的要求。本节变更尚未安装，真机仍是前一修复包。
+
+后续范围收敛：恢复 legacy 原有的 bundleID/PID guard，backend/screenBounds 一致性仅约束 live；派发前 `requireUnchangedObservation`、verifier 的原有证据要求及空候选 handback 保留。新增一个参数化回归，覆盖旋转发生在动作后/只读等待后：legacy 使用新 ref 继续，live 保持原有边界。只做语法和 diff 检查，未运行 XCTest、未重新装机。
+
+结果诊断补齐：非 sequence loop 在当前观察含 alert 时返回空 candidate_diagnostics，不再把弹窗下的 legacy actions 标为 eligible。新增同一回归覆盖直接 handback 和等待预算耗尽，执行/等待策略不变。仅语法及 diff 检查，未运行 XCTest 或重装。
+
+唯一候选执行规则按后续用户优先级统一：Active 下 legacy/live/sequence 仅有一个可执行候选时本地执行；多个候选继续交给 Jev，Shadow 仍只观察。live 单候选也不再额外调用 Jev 判断目标相关性。集成用例断言 selection_calls=1、local_actions=2、candidateIDs 仅一批 [a0,a1]；需要 Jev 回调的取消/超时/等待用例改为双候选，派发前上下文检查不变。仅语法和 diff 检查，未运行 XCTest 或重新装机。
+
+单候选回归断言已同步：NavigationAndTyping 的 chooseCount=0；LiveCandidatesFollow 的候选数为 1→2→1，chooseCount=1、local_actions=2。无进展、alert、Shadow 和 unknown 的用例按相同规则更新。语法/diff 检查通过，未运行 XCTest、未装机，实际速度与决策效果待手测。
+
+最终模式分流已同步到 loop 枚举、结果文案和回归断言；executor 沿用 steps.isEmpty 输出 not_sent/retry_safe，并由 status 输出 goal_satisfied=false。没有修改 visible verifier，也不在 live 目标已达成时强制点击。仅语法/diff 检查，未运行 XCTest 或重装。

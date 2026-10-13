@@ -7,8 +7,59 @@ import XCTest
 
 @MainActor
 final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
+    func testSuccessfulActionWithoutExpectationReturnsReceiptAndFreshTree() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        let initial = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        guard case .filledParts = initial else { return XCTFail("Initial observation must use the real runner") }
+        let runner = try await harness.session.runner(runID: UUID())
+        let beforeObservation = await runner.latestObservation
+        let before = try XCTUnwrap(beforeObservation)
+
+        let outcome = await harness.executor.execute(name: "phone_act", arguments: launchArguments,
+                                                     isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome,
+              let receiptText = parts.first as? UIMessagePart.Text else {
+            return XCTFail("A completed action must retain its receipt and attach the fresh tree")
+        }
+        let receipt = try object(receiptText.text)
+        XCTAssertEqual(receipt["outcome"] as? String, "completed")
+        XCTAssertEqual(receipt["retry_safe"] as? Bool, false)
+        XCTAssertEqual(receipt["fresh_observation_available"] as? Bool, true)
+        XCTAssertNotNil(receipt["observation_id"] as? String)
+        XCTAssertNil(receipt["verification"], "No expectation must not claim business verification")
+        XCTAssertTrue(parts.dropFirst().compactMap { ($0 as? UIMessagePart.Text)?.text }
+            .contains { $0.contains("screen-2") })
+        XCTAssertEqual(harness.http.sourceCount, 2)
+        XCTAssertEqual(harness.http.mutationPaths, ["/wda/apps/activate"])
+        let afterObservation = await runner.latestObservation
+        let after = try XCTUnwrap(afterObservation)
+        XCTAssertNotEqual(before.observationID, after.observationID)
+        await harness.controller.stop(runID: harness.runID)
+    }
+
+    func testFailedPostActionReadKeepsAcknowledgedReceipt() async throws {
+        let harness = try await Harness(firstSourceError: .cannotConnectToHost)
+        defer { harness.dispose() }
+
+        let outcome = await harness.executor.execute(name: "phone_act", arguments: launchArguments,
+                                                     isUserInitiated: true)
+        guard case .filled(let text) = outcome else {
+            return XCTFail("A failed follow-up read must not hide the action receipt")
+        }
+        let receipt = try object(text)
+        XCTAssertEqual(receipt["outcome"] as? String, "completed")
+        XCTAssertEqual(receipt["retry_safe"] as? Bool, false)
+        let observation = try XCTUnwrap(receipt["post_action_observation"] as? [String: Any])
+        XCTAssertEqual(observation["status"] as? String, "unavailable")
+        XCTAssertNil(receipt["verification"])
+        XCTAssertEqual(harness.http.sourceCount, 1)
+        XCTAssertEqual(harness.http.mutationPaths, ["/wda/apps/activate"])
+        await harness.controller.stop(runID: harness.runID)
+    }
+
     func testIdleTakeoverThenResumeReplacesLateTapCoordinatesAndGoalWithFreshEvidence() async throws {
-        for kind in ["tap", "tap_point", "goal"] {
+        for kind in ["tap", "tap_point", "goal", "sequence"] {
             let harness = try await Harness()
             defer { harness.dispose() }
             let initial = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
@@ -25,6 +76,9 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
             case "tap_point":
                 name = "phone_act"
                 arguments = #"{"action":"tap_point","observation_id":"\#(old.observationID)","x":0.5,"y":0.5}"#
+            case "sequence":
+                name = "phone_run_goal"
+                arguments = #"{"goal":"Open the item","bundle_id":"app.test","steps":[{"page_anchor":{"label":"screen-1"},"actions":[{"action":"tap","target":{"identifier":"item"}}],"expectation":{"kind":"visible","target":{"identifier":"done"}}}],"completion":{"kind":"visible","target":{"identifier":"done"}}}"#
             default:
                 name = "phone_run_goal"
                 arguments = #"{"goal":"Open the item","bundle_id":"app.test","actions":[{"action":"tap","target":{"identifier":"item"}}],"completion":{"kind":"visible","target":{"identifier":"done"}}}"#

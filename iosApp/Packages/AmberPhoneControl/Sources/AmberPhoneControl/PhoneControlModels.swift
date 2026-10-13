@@ -64,6 +64,21 @@ public struct PhoneRunnerStatus: Sendable, Equatable {
     public let authenticationScheme: String
 }
 
+/// The result of waiting for the runner to observe a settled screen.
+public struct PhoneScreenStability: Sendable, Equatable {
+    public let stable: Bool
+    public let waitedMs: Int
+    public let frames: Int
+    public let blank: Bool
+
+    public init(stable: Bool, waitedMs: Int, frames: Int, blank: Bool) {
+        self.stable = stable
+        self.waitedMs = waitedMs
+        self.frames = frames
+        self.blank = blank
+    }
+}
+
 public struct PhoneScreenshot: Sendable, Equatable {
     public let data: Data
     public let observationID: String

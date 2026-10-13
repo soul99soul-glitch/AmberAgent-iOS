@@ -1,7 +1,7 @@
 import AmberPhoneControl
 import Foundation
 
-/// Jev selects among caller-owned actions. It never creates refs, coordinates, input text,
+/// Jev selects among observed or caller-specified actions. It never creates refs, coordinates, input text,
 /// or evidence of completion; the executor and local verifier retain those responsibilities.
 @MainActor
 final class IOSJevPhoneControlService {
@@ -42,7 +42,8 @@ final class IOSJevPhoneControlService {
     init(deps: Dependencies) { self.deps = deps }
 
     func chooseAction(goal: String, observation: PhoneObservation, candidates: [Candidate],
-                      recentSteps: [String], runID: String) async -> Selection {
+                      recentSteps: [String], expectation: IOSPhoneGoalExpectation? = nil,
+                      runID: String) async -> Selection {
         guard !Task.isCancelled else { return .handback("cancelled") }
         let settings = deps.settingsProvider()
         guard settings.effectiveMode(for: .phoneActions) != .off else { return .handback("mode_off") }
@@ -50,13 +51,15 @@ final class IOSJevPhoneControlService {
             return .handback("scope_not_allowed")
         }
         let ids = Set(candidates.map(\.id))
-        guard !candidates.isEmpty, ids.count == candidates.count,
-              ids.allSatisfy({ !$0.isEmpty }), ids.isDisjoint(with: Self.reservedOptions),
-              candidates.count + Self.reservedOptions.count <= min(64, settings.policy.maxCandidates) else {
+        guard ids.count == candidates.count,
+              ids.allSatisfy({ !$0.isEmpty }), ids.isDisjoint(with: Self.reservedOptions) else {
             return .handback("invalid_candidates")
         }
+        guard candidates.count + Self.reservedOptions.count <= min(64, settings.policy.maxCandidates) else {
+            return .handback("candidate_budget_exceeded")
+        }
         guard let state = Self.state(goal: goal, candidates: candidates, recentSteps: recentSteps,
-                                    before: nil, after: observation, expectation: nil, verification: nil,
+                                    before: nil, after: observation, expectation: expectation, verification: nil,
                                     maximumBytes: settings.policy.maxStateBytes) else {
             return .handback("state_too_large")
         }
@@ -65,7 +68,7 @@ final class IOSJevPhoneControlService {
         options["needs_screenshot"] = "The UI tree lacks enough information; ask the main model for visual inspection."
         options["wait"] = "The UI explicitly indicates loading or an animation; wait for a fresh observation."
         let outcome = await decide(useCase: .phoneActions, state: state, options: options,
-                                   instructions: "Choose one next step for the goal from the current snapshot and recent steps. Do not repeat an ineffective action. Select wait only for visible evidence of a pending UI transition.",
+                                   instructions: "Choose one next step for the goal from the current snapshot and recent steps. Follow the goal's specified order and stop when new reasoning or missing input is required. Do not repeat an ineffective action or act outside the goal. Hand back final actions that send messages, publish, pay, delete, or sign in. Select wait only for visible evidence of a pending UI transition.",
                                    runID: runID, settings: settings)
         guard !Task.isCancelled else { return .handback("cancelled") }
         guard settingsAreCurrent(settings, useCase: .phoneActions) else { return .handback("config_changed") }
@@ -181,6 +184,7 @@ final class IOSJevPhoneControlService {
         let bundleID: String
         let processID: Int
         let treeTruncated: Bool
+        let screenBounds: [Double]?
         var omittedNodes: Int
         var nodes: [NodeState]
 
@@ -190,6 +194,7 @@ final class IOSJevPhoneControlService {
             bundleID = observation.bundleID
             processID = observation.processID
             treeTruncated = observation.truncated
+            screenBounds = observation.screenBounds.map { [$0.x, $0.y, $0.width, $0.height] }
             omittedNodes = observation.nodes.count - required.count
             nodes = required.map { NodeState($0) }
         }
@@ -202,6 +207,7 @@ final class IOSJevPhoneControlService {
         let value: String?
         let enabled: Bool
         let focused: Bool
+        let rect: [Double]
 
         init(_ node: PhoneObservationNode, textLimit: Int? = nil) {
             func limited(_ value: String?) -> String? {
@@ -214,6 +220,7 @@ final class IOSJevPhoneControlService {
             value = limited(node.value)
             enabled = node.enabled
             focused = node.focused
+            rect = [node.rect.x, node.rect.y, node.rect.width, node.rect.height]
         }
     }
 

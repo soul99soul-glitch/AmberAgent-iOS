@@ -134,11 +134,14 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         }
     }
 
-    private func dispatch(_ action: PhoneAction, runner: PhoneRunnerClient) async -> PhoneActionResult {
+    private func dispatch(_ action: PhoneAction, pageAnchorRef: String? = nil,
+                          pageAnchorRegion: PhoneElementRect? = nil, requireUnchangedObservation: Bool = false,
+                          runner: PhoneRunnerClient) async -> PhoneActionResult {
         guard !Task.isCancelled, controller.canDispatchAction(runID: runID) else {
             return .unsent(.init(.stopped, "自动操作已暂停或停止；本次动作未发送。"))
         }
-        return await runner.act(action)
+        return await runner.act(action, pageAnchorRef: pageAnchorRef, pageAnchorRegion: pageAnchorRegion,
+                                requireUnchangedObservation: requireUnchangedObservation)
     }
 
     private func perform(_ request: Request) async -> IOSAgentToolOutcome {
@@ -237,7 +240,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             case .ready(let runner):
                 await reportActivity(Self.actionActivity(action))
                 guard !Task.isCancelled else { return Self.applicationFailure(CancellationError()) }
-                return Self.actionOutcome(await dispatch(action, runner: runner))
+                let receipt = await dispatch(action, runner: runner)
+                guard receipt == .completed else { return Self.actionOutcome(receipt) }
+                return await verifyCompletedAction(action, expectation: nil, before: nil, runner: runner)
             }
         case .verifiedAct(let action, let expectation):
             switch await prepareRunner() {
@@ -286,10 +291,11 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             case .ready(let runner):
                 let loop = IOSPhoneGoalLoop(deps: .init(
                     observe: { try await runner.observe(maxNodes: 1_000, includeScreenSize: true) },
-                    act: { await self.dispatch($0, runner: runner) },
-                    choose: { [jev, runID] goal, observation, candidates, recent in
+                    act: { await self.dispatch($0, pageAnchorRef: $1, pageAnchorRegion: $2,
+                                               requireUnchangedObservation: $3, runner: runner) },
+                    choose: { [jev, runID] goal, observation, candidates, recent, expectation in
                         await jev.chooseAction(goal: goal, observation: observation, candidates: candidates,
-                                               recentSteps: recent, runID: runID)
+                                               recentSteps: recent, expectation: expectation, runID: runID)
                     },
                     advise: { [jev, runID] goal, expectation, before, after, verification in
                         await jev.adviseAfterAction(goal: goal, expectation: expectation, before: before,
@@ -298,7 +304,8 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     mode: { Self.phoneActionMode() },
                     isCurrent: { [controller, runID] in controller.canDispatchAction(runID: runID) },
                     reportActivity: reportActivity,
-                    configurationRevision: { IOSSharedSettingsStore.loadPersistedJevSettings().revision }
+                    configurationRevision: { IOSSharedSettingsStore.loadPersistedJevSettings().revision },
+                    waitForStability: { try await runner.waitForStability() }
                 ))
                 let result = await loop.run(request)
                 var fields: [String: Any] = [
@@ -312,6 +319,10 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     "retry_safe": result.steps.isEmpty && result.status != .unknown,
                 ]
                 if let verification = result.verification { fields["verification"] = Self.object(verification) }
+                if request.steps != nil {
+                    fields["verified_step_count"] = result.verifiedStepCount
+                    if let checked = result.stepVerification { fields["step_verification"] = Self.object(checked) }
+                }
                 if let problem = result.unknownProblem { fields["code"] = problem.kind.rawValue }
                 if result.status == .unknown {
                     return .outcomeUnknown([UIMessagePart.Text(text: Self.json(fields), metadata: nil)])
@@ -322,13 +333,40 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         }
     }
 
-    private func verifyCompletedAction(_ action: PhoneAction, expectation: IOSPhoneGoalExpectation, before: PhoneObservation?,
+    private func verifyCompletedAction(_ action: PhoneAction, expectation: IOSPhoneGoalExpectation?, before: PhoneObservation?,
                                        runner: PhoneRunnerClient) async -> IOSAgentToolOutcome {
         var fields: [String: Any] = ["outcome": "completed", "retry_safe": false,
                                     "message": "动作已收到执行回执；业务效果以 verification 为准，不重放该动作。"]
         guard !Task.isCancelled, controller.ownerRunID == runID else {
-            fields["verification"] = ["status": "insufficient", "reason": "run_stopped_after_action"]
+            if expectation != nil {
+                fields["verification"] = ["status": "insufficient", "reason": "run_stopped_after_action"]
+            }
             return .filled(Self.json(fields))
+        }
+
+        // A plain phone_act has no business postcondition to evaluate, but the
+        // fresh tree still lets the model continue without a second phone_observe.
+        guard let expectation else {
+            fields["message"] = "动作已收到执行回执；本次未提供业务验收条件，业务效果尚未确认，不重放该动作。"
+            guard controller.canDispatchAction(runID: runID) else {
+                return .filled(Self.json(fields))
+            }
+            await reportActivity(.observing)
+            do {
+                let after = try await runner.observe(maxNodes: 1_000, includeScreenSize: true)
+                guard !Task.isCancelled, controller.ownerRunID == runID else {
+                    return .filled(Self.json(fields))
+                }
+                return await observationResult(fields: fields, observation: after,
+                                               needsScreenshot: false, runner: runner)
+            } catch {
+                // The action receipt remains authoritative even when the follow-up
+                // read fails; a missing tree is not proof of business success.
+                fields["post_action_observation"] = [
+                    "status": "unavailable", "reason": error.localizedDescription,
+                ]
+                return .filled(Self.json(fields))
+            }
         }
         await reportActivity(.verifying)
         do {
@@ -360,9 +398,10 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
 
     private func observationResult(fields: [String: Any], observation: PhoneObservation?,
                                    needsScreenshot: Bool, runner: PhoneRunnerClient) async -> IOSAgentToolOutcome {
+        var fields = fields
         var parts: [UIMessagePart] = [UIMessagePart.Text(text: Self.json(fields), metadata: nil)]
         if let observation { parts.append(UIMessagePart.Text(text: observation.compactText, metadata: nil)) }
-        if needsScreenshot, observation != nil, !Task.isCancelled, controller.ownerRunID == runID {
+        if needsScreenshot, observation != nil, !Task.isCancelled, controller.canDispatchAction(runID: runID) {
             do {
                 let screenshot = try await runner.screenshotObservation()
                 parts.append(UIMessagePart.Text(text: Self.json([
@@ -376,6 +415,17 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     "screenshot_available": false, "reason": error.localizedDescription,
                 ]), metadata: nil))
             }
+        }
+        if let observation {
+            let latest = await runner.latestObservation
+            let reusable = latest?.observationID == observation.observationID
+                && controller.canDispatchAction(runID: runID) && !Task.isCancelled
+            fields["observation_id"] = observation.observationID
+            fields["fresh_observation_available"] = reusable
+            fields["next_step_hint"] = reusable
+                ? "已返回最新界面及可用 ref；若无需新的截图，不必重复 phone_observe。连续操作优先调用 phone_run_goal：提供小目标和 completion 让 Jev 根据最新界面连续选点；已知准确顺序时用 steps。只规划未完成内容，禁止整体重放。"
+                : "该观察已不可用于后续动作；任务仍获授权时重新 phone_observe，禁止重放已派发步骤。"
+            parts[0] = UIMessagePart.Text(text: Self.json(fields), metadata: nil)
         }
         return .filledParts(parts)
     }
@@ -491,16 +541,18 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             try request.validate()
             return .scrollUntil(request)
         case "phone_run_goal":
-            guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "actions", "completion", "max_steps"]) else {
+            guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "actions", "steps", "completion", "max_steps"]) else {
                 throw InvalidArguments("phone_run_goal 包含未知参数。")
             }
+            guard object["actions"] == nil || object["steps"] == nil else {
+                throw InvalidArguments("phone_run_goal 只能提供 actions 或 steps 其中一个。")
+            }
             try validateExpectationObject(object["completion"])
-            guard let actions = object["actions"] as? [[String: Any]] else { throw InvalidArguments("actions 必须是动作数组。") }
-            for action in actions {
-                guard Set(action.keys).isSubset(of: ["action", "target", "text", "direction"]) else {
-                    throw InvalidArguments("候选动作包含未知参数。")
-                }
-                try validateTargetObject(action["target"])
+            if let actions = object["actions"] {
+                try validateGoalActionsObject(actions)
+            }
+            if let steps = object["steps"] {
+                try validateSequenceStepsObject(steps)
             }
             let request = try JSONDecoder().decode(IOSPhoneGoalRequest.self, from: data)
             try request.validate()
@@ -564,17 +616,60 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     }
 
     private static func validateExpectationObject(_ value: Any?) throws {
-        guard let object = value as? [String: Any],
-              Set(object.keys).isSubset(of: ["kind", "target", "value", "anchor"]) else {
-            throw InvalidArguments("验收条件需包含 kind 和 target；仅支持 value、anchor 可选参数。")
+        guard let object = value as? [String: Any] else {
+            throw InvalidArguments("验收条件必须是包含 kind 和 target 的对象。")
+        }
+        let unknown = Set(object.keys).subtracting(["kind", "target", "value", "anchor"])
+        guard unknown.isEmpty else {
+            throw InvalidArguments("验收条件包含未知字段：\(unknown.sorted().joined(separator: ", "))；label、identifier、type、region 必须放在 target 内。")
+        }
+        guard object["kind"] != nil, object["target"] != nil else {
+            throw InvalidArguments("验收条件缺少 kind 或 target。")
         }
         try validateTargetObject(object["target"])
         if let anchor = object["anchor"] { try validateTargetObject(anchor) }
     }
 
+    private static func validateGoalActionsObject(_ value: Any?) throws {
+        guard let actions = value as? [[String: Any]] else {
+            throw InvalidArguments("actions 必须是动作数组。")
+        }
+        for action in actions {
+            guard Set(action.keys).isSubset(of: ["action", "target", "text", "direction"]) else {
+                throw InvalidArguments("候选动作包含未知参数。")
+            }
+            try validateTargetObject(action["target"])
+        }
+    }
+
+    private static func validateSequenceStepsObject(_ value: Any?) throws {
+        guard let steps = value as? [[String: Any]] else {
+            throw InvalidArguments("steps 必须是步骤数组。")
+        }
+        for step in steps {
+            guard Set(step.keys).isSubset(of: ["page_anchor", "actions", "expectation", "wait_for_stability"]) else {
+                throw InvalidArguments("步骤包含未知参数。")
+            }
+            try validateTargetObject(step["page_anchor"])
+            try validateGoalActionsObject(step["actions"])
+            try validateExpectationObject(step["expectation"])
+            if let wait = step["wait_for_stability"], !(wait is Bool) {
+                throw InvalidArguments("wait_for_stability 必须是布尔值。")
+            }
+        }
+    }
+
     private static func validateTargetObject(_ value: Any?) throws {
-        guard let object = value as? [String: Any], Set(object.keys).isSubset(of: ["label", "identifier", "type"]) else {
-            throw InvalidArguments("目标仅接受精确 label、identifier 和元素 type。")
+        guard let object = value as? [String: Any], Set(object.keys).isSubset(of: ["label", "identifier", "type", "region"]) else {
+            throw InvalidArguments("目标仅接受精确 label、identifier、元素 type 和 region。")
+        }
+        guard object["label"] != nil || object["identifier"] != nil else {
+            throw InvalidArguments("目标至少需要 label 或 identifier；type 和 region 不能单独定位目标。")
+        }
+        if let region = object["region"] {
+            guard let bounds = region as? [String: Any], Set(bounds.keys) == ["x", "y", "width", "height"] else {
+                throw InvalidArguments("region 必须且仅包含屏幕比例 x、y、width、height。")
+            }
         }
     }
 

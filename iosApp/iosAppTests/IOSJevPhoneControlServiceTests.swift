@@ -154,6 +154,35 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         XCTAssertEqual(transport.calls, 0)
     }
 
+    func testExcessLiveCandidatesReturnExplicitBudgetFailureWithoutTruncatingChoices() async {
+        let transport = transport()
+        let service = service(SettingsBox(settings()), transport: transport)
+        let candidates = (0..<64).map { Service.Candidate(id: "n\($0)", description: "Observed item \($0)") }
+        let result = await service.chooseAction(goal: "Open the requested item", observation: observation(),
+            candidates: candidates, recentSteps: [], runID: "phone-fixture")
+        XCTAssertEqual(result, .handback("candidate_budget_exceeded"))
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testReadOnlyChoiceIncludesCompletionAndCannotInventAnAction() async throws {
+        let transport = transport("wait")
+        let service = service(SettingsBox(settings()), transport: transport)
+        let result = await service.chooseAction(goal: "Wait for results", observation: observation(),
+            candidates: [], recentSteps: [], expectation: expectation, runID: "phone-fixture")
+        XCTAssertEqual(result, .wait)
+        let body = try XCTUnwrap(transport.lastBody)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let questions = try XCTUnwrap(request["questions"] as? [String: [String: Any]])
+        let options = try XCTUnwrap(questions["single.next_step"]?["criteria"] as? [String: Any])
+        XCTAssertEqual(Set(options.keys), ["handback", "wait", "needs_screenshot"])
+        let state = try XCTUnwrap(request["state"] as? String)
+        let data = try XCTUnwrap(state.split(separator: "\n", maxSplits: 1).last?.data(using: .utf8))
+        let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let expected = try XCTUnwrap(decoded["expectation"] as? [String: Any])
+        XCTAssertEqual(expected["kind"] as? String, "visible")
+        XCTAssertEqual((expected["target"] as? [String: Any])?["label"] as? String, "结果")
+    }
+
     func testSettingsChangeWhileRequestIsInFlightDiscardsAction() async {
         let box = SettingsBox(settings())
         let transport = JevStubTransport { _ in
@@ -261,6 +290,8 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         let afterNodes = try XCTUnwrap(observations[1]["nodes"] as? [[String: Any]])
         XCTAssertEqual(beforeNodes.first?["label"] as? String, maliciousLabel)
         XCTAssertEqual(afterNodes.first?["value"] as? String, "loading")
+        XCTAssertEqual(afterNodes.first?["rect"] as? [Double], [1, 1, 80, 40])
+        XCTAssertEqual(observations[1]["screenBounds"] as? [Double], [0, 0, 402, 874])
         XCTAssertFalse(state.contains("\n## phoneActions.single\n"), "UI text must not create a new coordinator section")
     }
 
@@ -288,5 +319,79 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
                                                 candidates: [candidate], recentSteps: [], runID: "phone-fixture")
         XCTAssertEqual(result, .handback("state_too_large"))
         XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testSequenceUsesRealJevChoiceToTapFreshRefAndSkipsVerificationWhenLocallySatisfied() async throws {
+        let box = SettingsBox(settings())
+        let transport = transport("a1")
+        let jev = service(box, transport: transport)
+        let before = observation(id: "question", nodes: [
+            node("题目", ref: "question-ref"), node("左", ref: "left-ref"), node("右", ref: "right-ref"),
+        ])
+        let after = observation(id: "answered", nodes: [
+            node("题目", ref: "question-after-ref"), node("已选右", ref: "selected-right-ref"),
+            node("完成", ref: "done-ref"),
+        ])
+        let step = IOSPhoneSequenceStep(
+            pageAnchor: .init(label: "题目"),
+            actions: [
+                .init(action: .tap, target: .init(label: "左")),
+                .init(action: .tap, target: .init(label: "右")),
+            ],
+            expectation: .init(kind: .visible, target: .init(label: "已选右"))
+        )
+        let request = IOSPhoneGoalRequest(
+            goal: "选择右侧答案", bundleID: "app.fixture", steps: [step],
+            completion: .init(kind: .visible, target: .init(label: "完成"))
+        )
+        var observations = [before, after]
+        var actions: [PhoneAction] = []
+        var observeCount = 0
+        var adviseCount = 0
+        let loop = IOSPhoneGoalLoop(deps: .init(
+            observe: {
+                observeCount += 1
+                return observations.removeFirst()
+            },
+            act: { action, pageAnchorRef, region, requireUnchanged in
+                XCTAssertEqual(pageAnchorRef, "question-ref")
+                XCTAssertNil(region)
+                XCTAssertFalse(requireUnchanged)
+                actions.append(action)
+                return .completed
+            },
+            choose: { goal, current, candidates, recentSteps, expectation in
+                await jev.chooseAction(goal: goal, observation: current, candidates: candidates,
+                                       recentSteps: recentSteps, expectation: expectation, runID: "jev-sequence-fixture")
+            },
+            advise: { goal, expectation, before, after, verification in
+                adviseCount += 1
+                return await jev.adviseAfterAction(goal: goal, expectation: expectation, before: before,
+                                                   after: after, verification: verification,
+                                                   runID: "jev-sequence-fixture")
+            },
+            mode: { box.get().effectiveMode(for: .phoneActions) },
+            isCurrent: { true },
+            reportActivity: { _ in },
+            configurationRevision: { box.get().revision }
+        ))
+
+        let result = await loop.run(request)
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.reasonCode, .completed)
+        XCTAssertEqual(result.verifiedStepCount, 1)
+        XCTAssertEqual(result.stepVerification?.status, .satisfied)
+        XCTAssertEqual(result.steps, ["s0/a1: completed"])
+        XCTAssertEqual(actions, [.tap(ref: "right-ref")])
+        XCTAssertEqual(observeCount, 2)
+        XCTAssertEqual(transport.calls, 1, "Only the real phoneActions selection should leave the app")
+        XCTAssertEqual(adviseCount, 0, "Local step and goal evidence must skip phoneVerification")
+
+        let body = try XCTUnwrap(transport.lastBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let questions = try XCTUnwrap(json["questions"] as? [String: [String: Any]])
+        let criteria = try XCTUnwrap(questions["single.next_step"]?["criteria"] as? [String: Any])
+        XCTAssertEqual(Set(criteria.keys), ["a0", "a1", "handback", "needs_screenshot", "wait"])
     }
 }

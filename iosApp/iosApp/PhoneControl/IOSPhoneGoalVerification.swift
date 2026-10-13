@@ -113,12 +113,49 @@ enum IOSPhoneGoalVerification {
     static func matchingNodes(target: IOSPhoneGoalTarget, in observation: PhoneObservation,
                               executable: Bool = false) -> [PhoneObservationNode] {
         guard (try? target.validate()) != nil, let bounds = validScreenBounds(observation) else { return [] }
-        return observation.nodes.filter { node in
+        let matches = observation.nodes.enumerated().filter { _, node in
             hasVisibleFrame(node, within: bounds)
                 && (target.label == nil || node.label == target.label)
                 && (target.identifier == nil || node.identifier == target.identifier)
                 && (target.type == nil || node.type == target.type)
+                && center(of: node, within: bounds, fallsInside: target.region)
                 && (!executable || (node.enabled && node.ref?.isEmpty == false))
+        }
+        // A control often exposes its label both on the control and on a nested
+        // StaticText. Keep the control match, while preserving same-label
+        // controls in other branches or positions as real ambiguity.
+        guard target.type == nil else { return matches.map { $0.element } }
+        return collapseLabelChildMatches(matches, in: observation).map { $0.node }
+    }
+
+    /// Removes only a named StaticText that is a DFS descendant of a matching
+    /// named control whose frame contains it. The depth stack checks active
+    /// ancestry only, keeping sibling matches distinct without rescanning the tree.
+    static func collapseLabelChildMatches(
+        _ matches: [(offset: Int, element: PhoneObservationNode)],
+        in observation: PhoneObservation
+    ) -> [(node: PhoneObservationNode, index: Int)] {
+        let matchingIndices = Set(matches.map { $0.offset })
+        var ancestors: [Int] = []
+        var childIndices = Set<Int>()
+        for (index, node) in observation.nodes.enumerated() {
+            while let last = ancestors.last, observation.nodes[last].depth >= node.depth {
+                ancestors.removeLast()
+            }
+            if matchingIndices.contains(index), node.type == "XCUIElementTypeStaticText",
+               let label = node.label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               ancestors.contains(where: { parentIndex in
+                   let parent = observation.nodes[parentIndex]
+                   return matchingIndices.contains(parentIndex) && parent.type != "XCUIElementTypeStaticText"
+                       && parent.label == label && rectContains(parent.rect, node.rect)
+               }) {
+                childIndices.insert(index)
+            }
+            ancestors.append(index)
+        }
+
+        return matches.compactMap { match in
+            childIndices.contains(match.offset) ? nil : (node: match.element, index: match.offset)
         }
     }
 
@@ -126,7 +163,7 @@ enum IOSPhoneGoalVerification {
         ["XCUIElementTypeTextField", "XCUIElementTypeTextView", "XCUIElementTypeSearchField"].contains(node.type)
     }
 
-    private static func validScreenBounds(_ observation: PhoneObservation) -> PhoneElementRect? {
+    static func validScreenBounds(_ observation: PhoneObservation) -> PhoneElementRect? {
         guard let bounds = observation.screenBounds,
               [bounds.x, bounds.y, bounds.width, bounds.height, bounds.x + bounds.width,
                bounds.y + bounds.height].allSatisfy(\.isFinite),
@@ -134,11 +171,27 @@ enum IOSPhoneGoalVerification {
         return bounds
     }
 
-    private static func hasVisibleFrame(_ node: PhoneObservationNode, within bounds: PhoneElementRect) -> Bool {
+    static func hasVisibleFrame(_ node: PhoneObservationNode, within bounds: PhoneElementRect) -> Bool {
         let frame = node.rect
         return node.depth > 0 && [frame.x, frame.y, frame.width, frame.height].allSatisfy(\.isFinite)
             && frame.width > 0 && frame.height > 0
             && frame.x < bounds.x + bounds.width && frame.y < bounds.y + bounds.height
             && frame.x + frame.width > bounds.x && frame.y + frame.height > bounds.y
+    }
+
+    private static func rectContains(_ parent: PhoneElementRect, _ child: PhoneElementRect) -> Bool {
+        parent.x <= child.x && parent.y <= child.y
+            && parent.x + parent.width >= child.x + child.width
+            && parent.y + parent.height >= child.y + child.height
+    }
+
+    private static func center(of node: PhoneObservationNode, within bounds: PhoneElementRect,
+                              fallsInside region: IOSPhoneGoalRegion?) -> Bool {
+        guard let region else { return true }
+        let frame = node.rect
+        let x = (frame.x + frame.width / 2 - bounds.x) / bounds.width
+        let y = (frame.y + frame.height / 2 - bounds.y) / bounds.height
+        return x >= region.x && x <= region.x + region.width
+            && y >= region.y && y <= region.y + region.height
     }
 }

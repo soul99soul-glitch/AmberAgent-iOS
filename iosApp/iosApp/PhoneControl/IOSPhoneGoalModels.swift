@@ -1,14 +1,43 @@
 import Foundation
 
+struct IOSPhoneGoalRegion: Codable, Equatable, Sendable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+
+    init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    func validate() throws {
+        let values = [x, y, width, height]
+        guard values.allSatisfy(\.isFinite),
+              (0..<1).contains(x), (0..<1).contains(y),
+              width > 0, width <= 1, height > 0, height <= 1,
+              x + width <= 1, y + height <= 1 else {
+            throw IOSPhoneGoalValidationError.invalid(
+                "target region must be a finite rectangle inside normalized screen bounds."
+            )
+        }
+    }
+}
+
 struct IOSPhoneGoalTarget: Codable, Equatable, Sendable {
     let label: String?
     let identifier: String?
     let type: String?
+    let region: IOSPhoneGoalRegion?
 
-    init(label: String? = nil, identifier: String? = nil, type: String? = nil) {
+    init(label: String? = nil, identifier: String? = nil, type: String? = nil,
+         region: IOSPhoneGoalRegion? = nil) {
         self.label = label
         self.identifier = identifier
         self.type = type
+        self.region = region
     }
 
     func validate() throws {
@@ -21,6 +50,7 @@ struct IOSPhoneGoalTarget: Codable, Equatable, Sendable {
         if let type {
             try IOSPhoneGoalValidationError.requireText(type, maximum: 128, field: "target type")
         }
+        try region?.validate()
     }
 }
 
@@ -98,15 +128,52 @@ struct IOSPhoneGoalActionSpec: Codable, Equatable, Sendable {
     }
 }
 
+struct IOSPhoneSequenceStep: Codable, Equatable, Sendable {
+    let pageAnchor: IOSPhoneGoalTarget
+    let actions: [IOSPhoneGoalActionSpec]
+    let expectation: IOSPhoneGoalExpectation
+    let waitForStability: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case actions, expectation
+        case pageAnchor = "page_anchor"
+        case waitForStability = "wait_for_stability"
+    }
+
+    init(pageAnchor: IOSPhoneGoalTarget, actions: [IOSPhoneGoalActionSpec],
+         expectation: IOSPhoneGoalExpectation, waitForStability: Bool = false) {
+        self.pageAnchor = pageAnchor
+        self.actions = actions
+        self.expectation = expectation
+        self.waitForStability = waitForStability
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pageAnchor = try container.decode(IOSPhoneGoalTarget.self, forKey: .pageAnchor)
+        actions = try container.decode([IOSPhoneGoalActionSpec].self, forKey: .actions)
+        expectation = try container.decode(IOSPhoneGoalExpectation.self, forKey: .expectation)
+        waitForStability = try container.decodeIfPresent(Bool.self, forKey: .waitForStability) ?? false
+    }
+
+    func validate() throws {
+        try pageAnchor.validate()
+        try IOSPhoneGoalRequest.validateActions(actions)
+        try expectation.validate()
+    }
+}
+
 struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
     let goal: String
     let bundleID: String
     let actions: [IOSPhoneGoalActionSpec]
+    let steps: [IOSPhoneSequenceStep]?
     let completion: IOSPhoneGoalExpectation
     let maxSteps: Int
+    let usesLiveCandidates: Bool
 
     enum CodingKeys: String, CodingKey {
-        case goal, actions, completion
+        case goal, actions, steps, completion
         case bundleID = "bundle_id"
         case maxSteps = "max_steps"
     }
@@ -116,17 +183,52 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         self.goal = goal
         self.bundleID = bundleID
         self.actions = actions
+        self.steps = nil
         self.completion = completion
         self.maxSteps = maxSteps
+        self.usesLiveCandidates = false
+    }
+
+    init(goal: String, bundleID: String, steps: [IOSPhoneSequenceStep],
+         completion: IOSPhoneGoalExpectation, maxSteps: Int? = nil) {
+        self.goal = goal
+        self.bundleID = bundleID
+        self.actions = []
+        self.steps = steps
+        self.completion = completion
+        self.maxSteps = maxSteps ?? steps.count
+        self.usesLiveCandidates = false
+    }
+
+    init(goal: String, bundleID: String, completion: IOSPhoneGoalExpectation, maxSteps: Int = 6) {
+        self.goal = goal
+        self.bundleID = bundleID
+        self.actions = []
+        self.steps = nil
+        self.completion = completion
+        self.maxSteps = maxSteps
+        self.usesLiveCandidates = true
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         goal = try container.decode(String.self, forKey: .goal)
         bundleID = try container.decode(String.self, forKey: .bundleID)
-        actions = try container.decode([IOSPhoneGoalActionSpec].self, forKey: .actions)
+        steps = try container.decodeIfPresent([IOSPhoneSequenceStep].self, forKey: .steps)
+        actions = try container.decodeIfPresent([IOSPhoneGoalActionSpec].self, forKey: .actions) ?? []
         completion = try container.decode(IOSPhoneGoalExpectation.self, forKey: .completion)
-        maxSteps = try container.decodeIfPresent(Int.self, forKey: .maxSteps) ?? 6
+        maxSteps = try container.decodeIfPresent(Int.self, forKey: .maxSteps) ?? steps?.count ?? 6
+        usesLiveCandidates = !container.contains(.actions) && !container.contains(.steps)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(goal, forKey: .goal)
+        try container.encode(bundleID, forKey: .bundleID)
+        if let steps { try container.encode(steps, forKey: .steps) }
+        else if !usesLiveCandidates { try container.encode(actions, forKey: .actions) }
+        try container.encode(completion, forKey: .completion)
+        try container.encode(maxSteps, forKey: .maxSteps)
     }
 
     func validate() throws {
@@ -135,8 +237,23 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         guard bundleID.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
             throw IOSPhoneGoalValidationError.invalid("bundle_id cannot contain whitespace.")
         }
-        guard (1...12).contains(actions.count), (1...12).contains(maxSteps) else {
-            throw IOSPhoneGoalValidationError.invalid("A goal needs 1–12 candidate actions and max_steps must be 1–12.")
+        guard (1...12).contains(maxSteps) else {
+            throw IOSPhoneGoalValidationError.invalid("max_steps must be 1–12.")
+        }
+        if let steps {
+            guard actions.isEmpty, (1...12).contains(steps.count) else {
+                throw IOSPhoneGoalValidationError.invalid("Provide either actions or 1–12 ordered steps.")
+            }
+            for step in steps { try step.validate() }
+        } else if !usesLiveCandidates {
+            try Self.validateActions(actions)
+        }
+        try completion.validate()
+    }
+
+    static func validateActions(_ actions: [IOSPhoneGoalActionSpec]) throws {
+        guard (1...12).contains(actions.count) else {
+            throw IOSPhoneGoalValidationError.invalid("Provide 1–12 candidate actions.")
         }
         for (index, action) in actions.enumerated() {
             try action.validate()
@@ -144,7 +261,6 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
                 throw IOSPhoneGoalValidationError.invalid("Candidate actions cannot contain identical duplicates.")
             }
         }
-        try completion.validate()
     }
 }
 
