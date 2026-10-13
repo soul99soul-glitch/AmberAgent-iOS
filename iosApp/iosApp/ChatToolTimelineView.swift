@@ -1827,12 +1827,7 @@ struct ChatToolTimeline: View {
                         .foregroundStyle(AmberTheme.accentGreen)
                         .contentTransition(.symbolEffect(.replace.downUp))
                 case .active:
-                    ProgressView()
-                        .controlSize(.mini)
-                        // The decorative spinner shares a fixed slot with the
-                        // other status glyphs; only the capsule text scales.
-                        .dynamicTypeSize(.large)
-                        .tint(AmberTheme.accent)
+                    IOSGenerationActivityIndicator()
                 case .cancelled:
                     Image(systemName: "minus")
                         .font(.system(size: 12, weight: .bold))

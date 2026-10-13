@@ -3,10 +3,15 @@ import SwiftUI
 /// A visible construction preview. It never reads the conversation owner or drafts.
 struct IOSIntelligentUIStreamingPreviewView: View {
     let preview: IOSIntelligentUIStreamingPreview
+    var generationNamespace: String? = nil
+    var isAnimating = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(preview.isRootComplete ? "界面已生成，等待回复完成" : "正在生成任务界面", systemImage: "rectangle.and.pencil.and.ellipsis")
+            HStack(spacing: 6) {
+                IOSGenerationActivityIndicator(isActive: isAnimating)
+                Text(preview.isRootComplete ? "界面已生成，等待回复完成" : "正在生成任务界面")
+            }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.accent)
                 .fixedSize(horizontal: false, vertical: true)
@@ -14,10 +19,12 @@ struct IOSIntelligentUIStreamingPreviewView: View {
                 Text(goal).font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("task-ui-preview-goal")
+                    .nativeGenerationReveal(key: motionKey("goal"))
             }
             if let question = preview.question {
                 Text(question).font(.subheadline).foregroundStyle(AmberTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                    .nativeGenerationReveal(key: motionKey("question"))
             }
             if !preview.options.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -33,12 +40,14 @@ struct IOSIntelligentUIStreamingPreviewView: View {
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         .padding(10)
                         .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10))
+                        .nativeGenerationReveal(key: motionKey("option:\(option.id)"))
                     }
                 }
             }
             ForEach(preview.components) { component in
                 IOSIntelligentUIComponentView(
                     component: component, draftValues: .constant([:]), isEnabled: false, canSubmit: false,
+                    generationNamespace: generationNamespace,
                     fieldLabels: fieldLabels,
                     fieldComponents: fieldComponents,
                     requiredFieldIDs: Set(preview.fields.filter(\.required).map(\.id)),
@@ -57,6 +66,7 @@ struct IOSIntelligentUIStreamingPreviewView: View {
                         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(AmberTheme.borderSoft))
                 }
+                .nativeGenerationReveal(key: motionKey("field:\(field.id)"))
             }
             ForEach(Array(preview.studyPrompts.enumerated()), id: \.element.id) { index, item in
                 VStack(alignment: .leading, spacing: 6) {
@@ -68,6 +78,7 @@ struct IOSIntelligentUIStreamingPreviewView: View {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10))
                 .accessibilityIdentifier("task-ui-preview-study-\(item.id)")
+                .nativeGenerationReveal(key: motionKey("study:\(item.id)"))
             }
             if !counts.isEmpty {
                 Text("已收到：" + counts.joined(separator: " · "))
@@ -90,6 +101,8 @@ struct IOSIntelligentUIStreamingPreviewView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("task-ui-streaming-preview")
     }
+
+    private func motionKey(_ element: String) -> String? { generationNamespace.map { "\($0):\(element)" } }
 
     private var fieldLabels: [String: String] { Dictionary(uniqueKeysWithValues: preview.fields.map { ($0.id, $0.label) }) }
 

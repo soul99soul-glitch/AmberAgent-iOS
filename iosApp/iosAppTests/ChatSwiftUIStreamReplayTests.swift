@@ -21,6 +21,26 @@ import Shared
 @MainActor
 final class ChatSwiftUIStreamReplayTests: XCTestCase {
 
+    func testNativeTimelineRevealsReceivedIntelligentUIComponents() {
+        let id = KotlinUuid.companion.random()
+        let prefix = "```task-ui\n" + #"{"version":1,"card_id":"motion","kind":"explore","goal":"NATIVE RECEIVED","components":["#
+        let first = #"{"id":"first","kind":"body","text":"FIRST RECEIVED"}"#
+        let second = #"{"id":"second","kind":"body","text":"SECOND RECEIVED"}"#
+        let fixture = makeFixture { model in
+            model.isGenerationActive = true
+            model.messages = [makeUserMessage("生成任务界面"), makeAssistantMessage(id: id, text: prefix + first, finished: false)]
+            model.send(.streamDelta)
+        }
+        defer { fixture.tearDown() }
+        let key = "native-generation:\(id.toHexDashString()):text:0:task:0:component:"
+        XCTAssertTrue(pumpUntil(timeout: 3) { ChatLiveEntranceRegistry.hasRevealed(key + "first") })
+
+        fixture.model.messages[1] = makeAssistantMessage(id: id, text: prefix + first + "," + second, finished: false)
+        fixture.model.send(.streamDelta)
+        XCTAssertTrue(pumpUntil(timeout: 3) { ChatLiveEntranceRegistry.hasRevealed(key + "second") })
+        XCTAssertFalse(ChatLiveEntranceRegistry.claim(key + "first"), "接收新组件不能让旧组件重播")
+    }
+
     // MARK: - Harness
 
     private final class HarnessModel: ObservableObject {

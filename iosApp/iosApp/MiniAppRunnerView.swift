@@ -14,6 +14,7 @@ struct MiniAppRunnerView: View {
     @Environment(RouterPath.self) private var router
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(IOSMiniAppBridgePolicy.systemCapabilitiesPreferenceKey) private var systemCapabilitiesEnabled = true
 
     let appId: String
@@ -30,6 +31,7 @@ struct MiniAppRunnerView: View {
     @State private var bridgeLog: [String] = []
     @State private var didInitialLoad = false
     @State private var didMarkRun = false
+    @State private var pendingGenerationReveal = false
     @State private var presentedSheet: MiniAppRunnerSheet?
     @State private var isRunnerActive = false
     @StateObject private var hostConfirmationOwner = MiniAppHostConfirmationOwner()
@@ -290,6 +292,8 @@ struct MiniAppRunnerView: View {
                 repository: repository,
                 policy: bridgePolicy,
                 theme: miniAppThemePayload,
+                generationRevealRequested: pendingGenerationReveal,
+                reduceMotion: reduceMotion,
                 aiGenerateHandler: miniAppAIGenerateHandler,
                 hostHandler: miniAppHostHandler,
                 launchHandler: { targetAppId in
@@ -317,6 +321,9 @@ struct MiniAppRunnerView: View {
                 onBridgeLog: { bridgeLog = $0 },
                 onToast: { message in
                     actionMessage = message
+                },
+                onGenerationRevealConsumed: {
+                    pendingGenerationReveal = false
                 },
                 onClose: {
                     systemBridge.close()
@@ -1048,6 +1055,7 @@ struct MiniAppRunnerView: View {
 
     private func loadApp(markRun: Bool) {
         guard let app else {
+            pendingGenerationReveal = false
             generatedHtml = Self.missingAppHtml(appId: appId)
             loadedHtml = ""
             observedAppHTMLHash = ""
@@ -1059,6 +1067,9 @@ struct MiniAppRunnerView: View {
         observedAppHTMLHash = app.htmlHash
         runnerError = nil
         didInitialLoad = true
+        pendingGenerationReveal = markRun &&
+            app.runCount == 0 &&
+            app.id != IOSMiniAppFixtures.sampleId
         if actionMessage == nil,
            let latestAudit = repository.auditLogs(appId: app.id, limit: 1).first,
            latestAudit.method == "ai.generate",

@@ -7,6 +7,7 @@ struct IOSIntelligentUIComponentView: View {
     @Binding var draftValues: [String: String]
     var isEnabled: Bool
     var canSubmit: Bool = true
+    var generationNamespace: String? = nil
     var fieldLabels: [String: String] = [:]
     var fieldComponents: [String: IOSIntelligentUIComponent] = [:]
     var requiredFieldIDs: Set<String> = []
@@ -90,6 +91,7 @@ struct IOSIntelligentUIComponentView: View {
             .tint(effectiveAccentInk)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("task-ui-component-\(component.id)")
+            .nativeGenerationReveal(key: component.kind.family == "layout" ? nil : generationNamespace.map { "\($0):component:\(component.id)" })
     }
 
     private var styleBackground: Color {
@@ -115,7 +117,8 @@ struct IOSIntelligentUIComponentView: View {
 
     private func child(_ node: IOSIntelligentUIComponent) -> IOSIntelligentUIComponentView {
         IOSIntelligentUIComponentView(component: node, draftValues: $draftValues, isEnabled: isEnabled,
-                                      canSubmit: canSubmit, fieldLabels: fieldLabels, fieldComponents: fieldComponents, requiredFieldIDs: requiredFieldIDs, onSubmit: onSubmit, onReset: onReset)
+                                      canSubmit: canSubmit, generationNamespace: generationNamespace,
+                                      fieldLabels: fieldLabels, fieldComponents: fieldComponents, requiredFieldIDs: requiredFieldIDs, onSubmit: onSubmit, onReset: onReset)
     }
 
     private var childColumn: some View {

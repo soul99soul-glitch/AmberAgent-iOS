@@ -1,4 +1,5 @@
 import SwiftUI
+@preconcurrency import WebKit
 import XCTest
 @testable import iosApp
 
@@ -6,6 +7,71 @@ import XCTest
 /// Screenshots need visual review; fitting the viewport alone is not sufficient.
 @MainActor
 final class IOSMiniAppVisualEvidenceTests: XCTestCase {
+    func testGeneratedMiniAppRevealsOnlyOnFirstRun() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("MiniAppGenerationVisual.\(UUID().uuidString)")
+        let repository = IOSMiniAppRepository(baseDirectory: root, seedOnMissingStore: false)
+        let app = try repository.saveGenerated(IOSMiniAppGeneratedOutput(
+            title: "生成卡片", description: "首次运行揭示动画",
+            permissions: [],
+            html: """
+            <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+            html,body{margin:0;padding:0;background:#fff}main{height:240px;margin:16px;padding:24px;border-radius:16px;background:#f1f5f9;font:16px -apple-system,sans-serif;box-sizing:border-box}h2{margin:0 0 12px}
+            </style></head><body><main><h2>Amber 生成结果</h2><p>首次打开时显示结构揭示。</p></main></body></html>
+            """
+        ))
+        XCTAssertEqual(app.runCount, 0)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previousWindow = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        let size = CGSize(width: 393, height: 780)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousWindow?.makeKey()
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let firstHost = UIHostingController(
+            rootView: MiniAppRunnerView(appId: app.id, repository: repository)
+                .environment(RouterPath())
+        )
+        window.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = firstHost
+        window.makeKeyAndVisible()
+        firstHost.view.frame = window.bounds
+        firstHost.view.layoutIfNeeded()
+
+        let firstWebView = try await findWebView(in: firstHost.view)
+        try await wait(in: firstWebView, for: "document.readyState === 'complete' && document.querySelector('main h2') !== null")
+        try await wait(in: firstWebView, for: "document.querySelector('.t-gen') !== null")
+        XCTAssertEqual(repository.get(app.id)?.runCount, 1)
+
+        window.rootViewController = nil
+        try await Task.yield()
+
+        let secondHost = UIHostingController(
+            rootView: MiniAppRunnerView(appId: app.id, repository: repository)
+                .environment(RouterPath())
+        )
+        window.rootViewController = secondHost
+        window.makeKeyAndVisible()
+        secondHost.view.frame = window.bounds
+        secondHost.view.layoutIfNeeded()
+
+        let secondWebView = try await findWebView(in: secondHost.view)
+        try await wait(in: secondWebView, for: "document.readyState === 'complete' && document.querySelector('main h2') !== null")
+        var replayed = false
+        for _ in 0..<12 {
+            replayed = (try? await secondWebView.evaluateJavaScript("document.querySelector('.t-gen') !== null")) as? Bool == true
+            if replayed { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertFalse(replayed, "历史 MiniApp 不应再次播放揭示动画")
+        XCTAssertEqual(repository.get(app.id)?.runCount, 2)
+    }
+
     func testDisabledSystemPermissionRowsAtCompactWidths() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MiniAppGrantsVisual.\(UUID().uuidString)")
         let repository = IOSMiniAppRepository(baseDirectory: root, seedOnMissingStore: false)
@@ -94,6 +160,34 @@ final class IOSMiniAppVisualEvidenceTests: XCTestCase {
     private func firstScrollView(in view: UIView) -> UIScrollView? {
         if let scroll = view as? UIScrollView { return scroll }
         return view.subviews.lazy.compactMap { self.firstScrollView(in: $0) }.first
+    }
+
+    private func findWebView(in view: UIView) async throws -> WKWebView {
+        func find(_ node: UIView) -> WKWebView? {
+            if let webView = node as? WKWebView { return webView }
+            return node.subviews.lazy.compactMap(find).first
+        }
+        for _ in 0..<120 {
+            if let webView = find(view) { return webView }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw NSError(
+            domain: "IOSMiniAppVisualEvidenceTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "MiniApp WKWebView missing"]
+        )
+    }
+
+    private func wait(in webView: WKWebView, for condition: String) async throws {
+        for _ in 0..<120 {
+            if (try? await webView.evaluateJavaScript(condition)) as? Bool == true { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw NSError(
+            domain: "IOSMiniAppVisualEvidenceTests",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for WKWebView condition: \(condition)"]
+        )
     }
 
     private func capture(_ view: UIView, size: CGSize, name: String) throws {

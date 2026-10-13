@@ -90,6 +90,8 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
     let repository: IOSMiniAppRepository
     let policy: IOSMiniAppBridgePolicy
     let theme: IOSMiniAppThemePayload
+    let generationRevealRequested: Bool
+    let reduceMotion: Bool
     let aiGenerateHandler: IOSMiniAppBridgeRuntime.AIGenerateHandler?
     let hostHandler: IOSMiniAppBridgeRuntime.HostHandler?
     let launchHandler: IOSMiniAppBridgeRuntime.LaunchHandler?
@@ -101,13 +103,19 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
     let onValidationError: (String) -> Void
     let onBridgeLog: ([String]) -> Void
     let onToast: (String) -> Void
+    let onGenerationRevealConsumed: () -> Void
     let onClose: () -> Void
+
+    private static let generationRevealSelector = "[data-amber-reveal], main, #app"
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             onValidationError: onValidationError,
             onBridgeLog: onBridgeLog,
             onClose: onClose,
+            generationRevealRequested: generationRevealRequested,
+            reduceMotion: reduceMotion,
+            onGenerationRevealConsumed: onGenerationRevealConsumed,
             onBlockedNavigation: { url in
                 onToast(IOSAppLocalization.formatted(
                     "已阻止小应用打开外部链接：%@",
@@ -146,6 +154,7 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             )
         }
         let userContent = WKUserContentController()
+        IOSUIGenerationMotion.install(in: userContent)
         if externalImagesAllowed {
             userContent.addUserScript(WKUserScript(
                 source: IOSMiniAppImageSchemeHandler.bootstrapScript,
@@ -456,11 +465,19 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         webView.isInspectable = policy.webViewDebugEnabled
+        context.coordinator.generationRevealRequested = generationRevealRequested
+        if context.coordinator.reduceMotion != reduceMotion {
+            context.coordinator.reduceMotion = reduceMotion
+            if reduceMotion {
+                IOSUIGenerationMotion.cancel(in: webView)
+            }
+        }
         let externalImagesAllowed = allowsExternalImages
         if context.coordinator.loadedHTML != html ||
             context.coordinator.externalImagesAllowed != externalImagesAllowed {
             do {
                 try MiniAppHtmlValidator.validate(html)
+                IOSUIGenerationMotion.cancel(in: webView)
                 context.coordinator.loadedHTML = html
                 context.coordinator.externalImagesAllowed = externalImagesAllowed
                 context.coordinator.currentTheme = theme
@@ -476,6 +493,7 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         }
         // Theme-only change: refresh getTheme snapshot + CSS vars; do not remount WKWebView.
         if context.coordinator.currentTheme != theme {
+            IOSUIGenerationMotion.cancel(in: webView)
             context.coordinator.currentTheme = theme
             webView.evaluateJavaScript(IOSMiniAppThemeBridge.applyThemeJavaScript(theme), completionHandler: nil)
         }
@@ -500,6 +518,7 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        IOSUIGenerationMotion.cancel(in: webView)
         webView.stopLoading()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amberNative")
         webView.navigationDelegate = nil
@@ -522,10 +541,13 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         let onBridgeLog: ([String]) -> Void
         let onClose: () -> Void
         let onBlockedNavigation: (URL) -> Void
+        let onGenerationRevealConsumed: () -> Void
         var bridge: MiniAppBridge?
         var deviceCapabilities: IOSMiniAppDeviceCapabilities?
         var loadedHTML = ""
         var externalImagesAllowed = false
+        var generationRevealRequested: Bool
+        var reduceMotion: Bool
         var currentTheme = IOSMiniAppThemeBridge.payload(
             paper: .neutral,
             dark: false,
@@ -535,16 +557,24 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         private var isClosed = false
         private var isAwaitingTrustedDocument = false
         private var isTrustedMainDocument = false
+        private var didPlayGenerationReveal = false
+        private var isPreparingGenerationReveal = false
 
         init(
             onValidationError: @escaping (String) -> Void,
             onBridgeLog: @escaping ([String]) -> Void,
             onClose: @escaping () -> Void,
+            generationRevealRequested: Bool,
+            reduceMotion: Bool,
+            onGenerationRevealConsumed: @escaping () -> Void,
             onBlockedNavigation: @escaping (URL) -> Void
         ) {
             self.onValidationError = onValidationError
             self.onBridgeLog = onBridgeLog
             self.onClose = onClose
+            self.generationRevealRequested = generationRevealRequested
+            self.reduceMotion = reduceMotion
+            self.onGenerationRevealConsumed = onGenerationRevealConsumed
             self.onBlockedNavigation = onBlockedNavigation
         }
 
@@ -567,6 +597,30 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             isTrustedMainDocument = trusted
             bridge?.setTrustedMainDocument(trusted)
             if !trusted { deviceCapabilities?.suspend() }
+        }
+
+        private func playGenerationRevealIfNeeded(in webView: WKWebView) {
+            guard generationRevealRequested,
+                  !didPlayGenerationReveal,
+                  !isPreparingGenerationReveal,
+                  isTrustedMainDocument else { return }
+            isPreparingGenerationReveal = true
+            IOSUIGenerationMotion.play(
+                in: webView,
+                selector: MiniAppRunnerWebView.generationRevealSelector,
+                reduceMotion: reduceMotion
+            ) { [weak self] consumed in
+                guard let self, !isClosed else { return }
+                isPreparingGenerationReveal = false
+                if consumed {
+                    didPlayGenerationReveal = true
+                    onGenerationRevealConsumed()
+                }
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            playGenerationRevealIfNeeded(in: webView)
         }
 
         func webView(

@@ -168,7 +168,9 @@ struct ChatAssistantMarkdownView: View {
                                 visualContent(text, liveStreaming: liveStreaming, segmentIdentity: "task:\(index)")
                             case .card(let definition):
                                 if isStreaming {
-                                    IOSIntelligentUIStreamingPreviewView(preview: .complete(definition))
+                                    IOSIntelligentUIStreamingPreviewView(preview: .complete(definition),
+                                        generationNamespace: liveStreaming ? taskGenerationNamespace(index) : nil,
+                                        isAnimating: liveStreaming)
                                         .id(taskCardIdentity(definition.cardID))
                                 } else {
                                     ChatIntelligentUIBlock(definition: definition,
@@ -179,9 +181,15 @@ struct ChatAssistantMarkdownView: View {
                                 }
                             case .loading:
                                 if let taskPreview {
-                                    IOSIntelligentUIStreamingPreviewView(preview: taskPreview)
+                                    IOSIntelligentUIStreamingPreviewView(preview: taskPreview,
+                                        generationNamespace: liveStreaming ? taskGenerationNamespace(index) : nil,
+                                        isAnimating: liveStreaming)
+                                        .id(taskGenerationNamespace(index))
                                 } else {
-                                    Label("正在组织任务界面…", systemImage: "ellipsis")
+                                    HStack(spacing: 6) {
+                                        IOSGenerationActivityIndicator(isActive: liveStreaming)
+                                        Text("正在组织任务界面…")
+                                    }
                                         .font(.footnote).foregroundStyle(AmberTheme.muted)
                                 }
                             case .invalid(let raw, let reason):
@@ -291,6 +299,7 @@ struct ChatAssistantMarkdownView: View {
                             case .widget(let widget):
                                 IOSGenerativeWidgetCard(
                                     widget: widget,
+                                    isStreaming: liveStreaming,
                                     generativeUiSetting: generativeUiSetting,
                                     onAction: onGenerativeWidgetAction
                                 )
@@ -346,6 +355,10 @@ struct ChatAssistantMarkdownView: View {
 
     private func taskCardIdentity(_ cardID: String) -> String {
         "\(sourceMessageID ?? renderCacheNamespace ?? "message"):text:\(sourceTextPartIndex):task:\(cardID)"
+    }
+
+    private func taskGenerationNamespace(_ index: Int) -> String {
+        "\(sourceMessageID ?? renderCacheNamespace ?? "message"):text:\(sourceTextPartIndex):task:\(index)"
     }
 
     private var renderedMarkdownText: String {

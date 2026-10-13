@@ -11,7 +11,9 @@ private let widgetStreamUpdateDelay: TimeInterval = 0.016
 @MainActor
 struct IOSGenerativeWidgetCard: View {
     @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let widget: IOSGenerativeWidget
+    var isStreaming = false
     var generativeUiSetting: GenerativeUiSetting?
     var onAction: (String) -> Void = { _ in }
 
@@ -20,6 +22,8 @@ struct IOSGenerativeWidgetCard: View {
     @State private var svgDocument: IOSGenerativeWidgetSVGDocument?
     @State private var isExportingSVG = false
     @State private var svgExportError: IOSGenerativeWidgetSVGExportError?
+    @State private var fullHTMLRevealState = IOSUIGenerationRevealState()
+    @State private var fullHTMLRevealPending = false
 
     private func expandedPresentation(fullScreen: Bool) -> Binding<IOSGenerativeWidgetSheetTarget?> {
         let isFullHTML = widget.renderer == IOSGuizangHtmlDeckValidator.renderer
@@ -33,7 +37,9 @@ struct IOSGenerativeWidgetCard: View {
     private func expandedView(_ target: IOSGenerativeWidgetSheetTarget) -> some View {
         switch target {
         case .widget(let widget, let html, let settings):
-            IOSGenerativeWidgetExpandedSheet(widget: widget, html: html, settings: settings)
+            IOSGenerativeWidgetExpandedSheet(widget: widget, html: html, settings: settings,
+                                             generationRevealRequested: fullHTMLRevealPending,
+                                             onGenerationRevealConsumed: { fullHTMLRevealPending = false })
         }
     }
 
@@ -81,6 +87,9 @@ struct IOSGenerativeWidgetCard: View {
         .fullScreenCover(item: expandedPresentation(fullScreen: true)) { target in
             expandedView(target)
         }
+        .onAppear { updateFullHTMLReveal() }
+        .onChange(of: isStreaming) { _, _ in updateFullHTMLReveal() }
+        .onChange(of: widget.complete) { _, _ in updateFullHTMLReveal() }
         .fileExporter(
             isPresented: $isExportingSVG,
             document: svgDocument,
@@ -97,6 +106,13 @@ struct IOSGenerativeWidgetCard: View {
                 message: Text(error.message),
                 dismissButton: .default(Text("知道了"))
             )
+        }
+    }
+
+    private func updateFullHTMLReveal() {
+        guard widget.renderer == IOSGuizangHtmlDeckValidator.renderer else { return }
+        if fullHTMLRevealState.update(isStreaming: isStreaming, complete: widget.complete) {
+            fullHTMLRevealPending = true
         }
     }
 
@@ -153,6 +169,9 @@ struct IOSGenerativeWidgetCard: View {
                     interactive: false,
                     fillContainer: false,
                     height: $measuredHeight,
+                    isStreaming: isStreaming && widget.renderer != IOSGuizangHtmlDeckValidator.renderer,
+                    complete: widget.complete,
+                    reduceMotion: reduceMotion,
                     onTap: {
                         guard canOpenExpanded else { return }
                         sheet = .widget(widget, sanitized.html, settings)
@@ -421,15 +440,21 @@ private struct IOSGenerativeWidgetExpandedSheet: View {
     let widget: IOSGenerativeWidget
     let html: String
     let settings: IOSGenerativeWidgetSettings
+    var generationRevealRequested = false
+    var onGenerationRevealConsumed: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var measuredHeight: CGFloat = 520
 
     var body: some View {
         NavigationStack {
             Group {
                 if widget.renderer == IOSGuizangHtmlDeckValidator.renderer, let specJson = widget.specJson {
-                    IOSFullHTMLDeckWebView(specJson: specJson)
+                    IOSFullHTMLDeckWebView(specJson: specJson,
+                                           generationRevealRequested: generationRevealRequested,
+                                           reduceMotion: reduceMotion,
+                                           onGenerationRevealConsumed: onGenerationRevealConsumed)
                 } else if shouldUseRichSandbox, let specJson = widget.specJson {
                     IOSRichSandboxWebView(
                         renderer: widget.renderer,
@@ -558,6 +583,9 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
     let interactive: Bool
     let fillContainer: Bool
     @Binding var height: CGFloat
+    var isStreaming = false
+    var complete = true
+    var reduceMotion = false
     var onTap: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
@@ -579,6 +607,7 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         let userContent = WKUserContentController()
+        IOSUIGenerationMotion.install(in: userContent)
         userContent.add(context.coordinator, name: "amberWidget")
         config.userContentController = userContent
 
@@ -598,7 +627,8 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         context.coordinator.minHeight = minHeight
         context.coordinator.maxHeight = maxHeight
         context.coordinator.onTap = onTap
-        context.coordinator.push(html: stableStreamingHTML(html) ?? html)
+        context.coordinator.push(html: stableStreamingHTML(html) ?? html,
+                                 isStreaming: isStreaming, complete: complete, reduceMotion: reduceMotion)
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -618,6 +648,11 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         private weak var webView: WKWebView?
         private var latestHTML: String = ""
         private var pendingPush: DispatchWorkItem?
+        private var revealState = IOSUIGenerationRevealState()
+        private var pendingReveal = false
+        private var revealInFlight = false
+        private var reduceMotion = false
+        private var documentReady = false
 
         init(minHeight: CGFloat, maxHeight: CGFloat, onResize: @escaping (CGFloat) -> Void, onTap: (() -> Void)?) {
             self.minHeight = minHeight
@@ -633,11 +668,16 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         func close() {
             pendingPush?.cancel()
             pendingPush = nil
+            if let webView { IOSUIGenerationMotion.cancel(in: webView) }
             webView = nil
         }
 
-        func push(html: String) {
-            guard html != latestHTML else { return }
+        func push(html: String, isStreaming: Bool, complete: Bool, reduceMotion: Bool) {
+            let reveal = revealState.update(isStreaming: isStreaming, complete: complete)
+            pendingReveal = pendingReveal || reveal
+            if reduceMotion, let webView { IOSUIGenerationMotion.cancel(in: webView) }
+            self.reduceMotion = reduceMotion
+            guard html != latestHTML || reveal else { return }
             latestHTML = html
             pendingPush?.cancel()
             let work = DispatchWorkItem { [weak self] in
@@ -649,10 +689,17 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
 
         private func flushLatestHTML() {
             pendingPush = nil
-            guard let webView, !latestHTML.isEmpty else { return }
+            guard documentReady, let webView, !latestHTML.isEmpty else { return }
             webView.evaluateJavaScript(
                 "window.__amberWidgetSetHtml && window.__amberWidgetSetHtml(\(jsStringLiteral(latestHTML)));"
             )
+            if pendingReveal, !revealInFlight {
+                revealInFlight = true
+                IOSUIGenerationMotion.play(in: webView, selector: "#root", reduceMotion: reduceMotion) { [weak self] consumed in
+                    self?.revealInFlight = false
+                    if consumed { self?.pendingReveal = false }
+                }
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -677,6 +724,7 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            documentReady = true
             pendingPush?.cancel()
             flushLatestHTML()
         }
@@ -847,9 +895,12 @@ private struct IOSRichSandboxWebView: UIViewRepresentable {
 @MainActor
 private struct IOSFullHTMLDeckWebView: UIViewRepresentable {
     let specJson: String
+    let generationRevealRequested: Bool
+    let reduceMotion: Bool
+    let onGenerationRevealConsumed: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(specJson: specJson)
+        Coordinator(specJson: specJson, onGenerationRevealConsumed: onGenerationRevealConsumed)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -861,6 +912,7 @@ private struct IOSFullHTMLDeckWebView: UIViewRepresentable {
             IOSFullHTMLRemoteResourceSchemeHandler(),
             forURLScheme: IOSGuizangHtmlDeckValidator.remoteResourceScheme
         )
+        IOSUIGenerationMotion.install(in: config.userContentController)
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.scrollView.bounces = false
@@ -871,9 +923,14 @@ private struct IOSFullHTMLDeckWebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.specJson = specJson
+        context.coordinator.generationRevealRequested = generationRevealRequested
+        context.coordinator.reduceMotion = reduceMotion
+        if reduceMotion { IOSUIGenerationMotion.cancel(in: webView) }
+        context.coordinator.playGenerationRevealIfNeeded(in: webView)
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        IOSUIGenerationMotion.cancel(in: webView)
         webView.navigationDelegate = nil
         webView.stopLoading()
         webView.loadHTMLString("", baseURL: nil)
@@ -883,10 +940,17 @@ private struct IOSFullHTMLDeckWebView: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         var specJson: String
+        var generationRevealRequested = false
+        var reduceMotion = false
+        private let onGenerationRevealConsumed: () -> Void
+        private var documentReady = false
+        private var revealInFlight = false
+        private var didPlayGenerationReveal = false
         private weak var webView: WKWebView?
 
-        init(specJson: String) {
+        init(specJson: String, onGenerationRevealConsumed: @escaping () -> Void) {
             self.specJson = specJson
+            self.onGenerationRevealConsumed = onGenerationRevealConsumed
         }
 
         func attach(webView: WKWebView) {
@@ -909,6 +973,24 @@ private struct IOSFullHTMLDeckWebView: UIViewRepresentable {
             }
             let html = IOSGuizangHtmlDeckValidator.prepareRuntimeHtml(deck)
             webView.loadHTMLString(html, baseURL: URL(string: "amber-full-html://deck/"))
+        }
+
+        func playGenerationRevealIfNeeded(in webView: WKWebView) {
+            guard documentReady, generationRevealRequested, !revealInFlight, !didPlayGenerationReveal else { return }
+            revealInFlight = true
+            IOSUIGenerationMotion.play(in: webView, selector: "[data-amber-reveal], main, #app", reduceMotion: reduceMotion) { [weak self] consumed in
+                guard let self, self.webView != nil else { return }
+                revealInFlight = false
+                if consumed {
+                    didPlayGenerationReveal = true
+                    onGenerationRevealConsumed()
+                }
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            documentReady = webView.url?.scheme == "amber-full-html"
+            playGenerationRevealIfNeeded(in: webView)
         }
 
         func webView(
@@ -1142,7 +1224,10 @@ private func receiverHTML(interactive: Bool, fillContainer: Bool) -> String {
         }
       }
       window.__amberWidgetSetHtml=function(html){
-        if(root.innerHTML!==html){ root.innerHTML=html; clampSvgOverflow(); applyMotionPreference(); }
+        if(root.innerHTML!==html){
+          if(window.__amberGenerationCancel) window.__amberGenerationCancel();
+          root.innerHTML=html; clampSvgOverflow(); applyMotionPreference();
+        }
         report();
       };
       new ResizeObserver(report).observe(root);

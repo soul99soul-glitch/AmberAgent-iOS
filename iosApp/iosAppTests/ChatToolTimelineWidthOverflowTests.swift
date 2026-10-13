@@ -194,6 +194,73 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         )
     }
 
+    func testActiveStatusHostingFitsSearchImageAndGenericToolRows() {
+        let tools: [(name: String, input: String)] = [
+            ("search_web", #"{"query":"天气"}"#),
+            ("generate_image", #"{"prompt":"一只猫"}"#),
+            ("custom_tool", "{}")
+        ]
+
+        for item in tools {
+            let tool = UIMessagePart.Tool(
+                toolCallId: "call_active_\(item.name)",
+                toolName: item.name,
+                input: item.input,
+                output: [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            let step = ChatToolStepModel(tool: tool)
+            XCTAssertEqual(step.state, .active, item.name)
+
+            let host = UIHostingController(rootView: ChatToolTimeline(
+                steps: [step],
+                onTapStep: { _ in }
+            ))
+            let fitted = host.sizeThatFits(in: CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: UIView.layoutFittingExpandedSize.height
+            ))
+
+            XCTAssertLessThanOrEqual(fitted.width, columnWidth + 1, item.name)
+            XCTAssertEqual(fitted.height, 44, accuracy: 0.5, item.name)
+        }
+    }
+
+    func testTerminalStatusHostingKeepsTheSameToolRowHeight() {
+        let active = ChatToolStepModel(
+            visualKind: .generic,
+            title: "调用工具",
+            state: .active
+        )
+        let terminalStates: [ChatToolStepState] = [.done, .cancelled, .failed]
+        let proposal = CGSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: UIView.layoutFittingExpandedSize.height
+        )
+
+        func height(for step: ChatToolStepModel) -> CGFloat {
+            UIHostingController(rootView: ChatToolTimeline(steps: [step]))
+                .sizeThatFits(in: proposal)
+                .height
+        }
+
+        let activeHeight = height(for: active)
+        for state in terminalStates {
+            XCTAssertEqual(
+                height(for: ChatToolStepModel(
+                    visualKind: .generic,
+                    title: "调用工具",
+                    state: state
+                )),
+                activeHeight,
+                accuracy: 0.5,
+                "状态 \(state) 不应改变工具行高度"
+            )
+        }
+    }
+
     /// 流式 tool 参数会按 `input + delta` 拼 JSON。未完成 JSON 不得回退成胶囊标题，
     /// 否则「搜索 {\"query\":...」先撑宽、解析成功后再缩回短 query。
     func testSearchCapsuleTitleIgnoresIncompleteJSONAndKeepsVerb() {

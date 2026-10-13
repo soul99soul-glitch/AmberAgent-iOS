@@ -21,15 +21,47 @@ final class IOSSkillMcpToolsTests: XCTestCase {
 
         let installed = IOSBuiltinSkills.installIfMissing(into: store, enableWith: settings)
 
-        XCTAssertEqual(Set(installed), Set(["skill-creator", "visual-svg", "provider-setup"]))
-        XCTAssertEqual(Set(store.listSkillDirNames()), Set(["skill-creator", "visual-svg", "provider-setup"]))
+        XCTAssertEqual(Set(installed), Set(IOSBuiltinSkills.factorySeedNames))
+        XCTAssertEqual(Set(store.listSkillDirNames()), Set(IOSBuiltinSkills.factorySeedNames))
         XCTAssertTrue(settings.isSkillEnabled("skill-creator"))
         XCTAssertFalse(settings.isSkillEnabled("visual-svg"), "optional seed must not auto-enable")
+        XCTAssertFalse(settings.isSkillEnabled("amber-ui-design"), "optional seed must not auto-enable")
         XCTAssertFalse(settings.isSkillEnabled("会议准备"))
         XCTAssertFalse(settings.isSkillEnabled("监控文档"))
 
         let second = IOSBuiltinSkills.installIfMissing(into: store, enableWith: settings)
         XCTAssertTrue(second.isEmpty, "second install must not overwrite existing builtins")
+    }
+
+    func testAmberUIDesignSeedParsesAsBuiltinSkill() throws {
+        let root = tempRoot()
+        let store = IOSSkillFileStore(baseDirectory: root)
+        _ = IOSBuiltinSkills.installIfMissing(into: store)
+
+        let factory = try XCTUnwrap(IOSBuiltinSkills.markdown(for: "amber-ui-design"))
+        XCTAssertTrue(IOSBuiltinSkills.isFactorySnapshot(factory))
+        XCTAssertEqual(try store.readSkillMarkdown(dirName: "amber-ui-design"), factory)
+
+        let scanned = IosSkillFactory.shared.listSkills(documentsDir: root.path)
+        XCTAssertEqual(scanned.count, IOSBuiltinSkills.factorySeedNames.count)
+        XCTAssertTrue(scanned.contains { $0.name == "amber-ui-design" })
+        XCTAssertTrue(IosSkillFactory.shared.listIssues(documentsDir: root.path).isEmpty)
+    }
+
+    func testOptionalAmberUIDesignSeedCanBeDeletedAndRestored() throws {
+        let store = IOSSkillFileStore(baseDirectory: tempRoot())
+        _ = IOSBuiltinSkills.installIfMissing(into: store)
+        let factory = try XCTUnwrap(IOSBuiltinSkills.markdown(for: "amber-ui-design"))
+
+        try store.deleteSkill(dirName: "amber-ui-design")
+        IOSBuiltinSkills.markOptionalSeedRemoved("amber-ui-design", store: store)
+        XCTAssertTrue(IOSBuiltinSkills.isOptionalSeedRemoved("amber-ui-design", store: store))
+        _ = IOSBuiltinSkills.installIfMissing(into: store)
+        XCTAssertFalse(store.listSkillDirNames().contains("amber-ui-design"))
+
+        try IOSBuiltinSkills.restoreFactoryContent(name: "amber-ui-design", into: store)
+        XCTAssertEqual(try store.readSkillMarkdown(dirName: "amber-ui-design"), factory)
+        XCTAssertFalse(IOSBuiltinSkills.isOptionalSeedRemoved("amber-ui-design", store: store))
     }
 
     func testOptionalVisualSvgSeedIsDeletableAndRestorable() throws {

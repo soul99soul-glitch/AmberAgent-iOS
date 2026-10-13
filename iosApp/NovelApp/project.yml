@@ -79,6 +79,16 @@ targets:
       - path: ../iosApp/IOSGenerativeWidgetParser.swift
       - path: ../iosApp/IOSGenerativeWidgetRenderer.swift
       - path: ../iosApp/IOSGenerativeWidgetSanitizer.swift
+      - path: ../iosApp/IOSUIGenerationMotion.swift
+      - path: ../iosApp/IOSNativeGenerationMotion.swift
+      - path: ../iosApp/generative-libs/ui-generation.js
+        buildPhase: resources
+      - path: ../iosApp/generative-libs/ui-generation.css
+        buildPhase: resources
+      - path: ../iosApp/generative-libs/amber-ui-generation.js
+        buildPhase: resources
+      - path: ../iosApp/generative-libs/transitions-ui-generation-LICENSE.txt
+        buildPhase: resources
       - path: ../iosApp/IOSGoogleWebViewSearch.swift
       - path: ../iosApp/IOSGrokOAuthClient.swift
       - path: ../iosApp/IOSGrokWebProvider.swift
