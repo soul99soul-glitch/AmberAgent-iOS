@@ -764,9 +764,8 @@ extension RunnerTests {
     if !paths.isEmpty {
       if let error = timed("Synthesize", { IPURBridge.synthesizeTouchPaths(paths, name: "ipu-w3c-actions") }) {
         // A single tap can still go through the public coordinate API.
-        if paths.count == 1, let down = paths[0].first, paths[0].count == 2,
-           let x = (down["x"] as? NSNumber)?.doubleValue, let y = (down["y"] as? NSNumber)?.doubleValue {
-          try tapPoint(CGPoint(x: x, y: y))
+        if let point = W3CActions.singleTapFallbackPoint(paths) {
+          try tapPoint(point)
           used.append("xcui-coordinate")
         } else {
           throw RunnerError.failed("actions failed: \(error)")
@@ -1094,10 +1093,25 @@ extension RunnerTests {
   /// WDA picks the last button to accept and the first to dismiss when no name is given.
   private func alertPress(_ request: HTTPRequest, accept: Bool) throws -> HTTPResponse {
     let body = (try? request.jsonObject()) ?? [:]
+    let guarded = body["exact_name"] as? Bool == true
+    func staleAlert() -> HTTPResponse {
+      var response = HTTPResponse.error(409, "stale element reference", "The observed alert or its exact button changed; nothing was tapped. Observe again.")
+      response.headers["X-IPU-Dropped"] = "1"
+      return response
+    }
     alertCache = nil
-    guard let alert = findAlert() else { throw RunnerError.noSuchAlert() }
+    guard let alert = findAlert() else {
+      if guarded { return staleAlert() }
+      throw RunnerError.noSuchAlert()
+    }
     let button: (label: String, rect: CGRect)?
-    if let name = body["name"] as? String, !name.isEmpty {
+    if guarded {
+      guard let index = AlertMatch.guardedButtonIndex(body: body, text: alert.text,
+          pid: Int(alert.pid), buttons: alert.buttons.map(\.label)) else {
+        return staleAlert()
+      }
+      button = alert.buttons[index]
+    } else if let name = body["name"] as? String, !name.isEmpty {
       button = alert.buttons.first { $0.label == name }
         ?? alert.buttons.first { $0.label.localizedCaseInsensitiveCompare(name) == .orderedSame }
       guard button != nil else {

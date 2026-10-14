@@ -4,6 +4,9 @@ import app.amber.ai.core.ReasoningLevel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class ReasoningWireTest {
     @Test
@@ -57,6 +60,45 @@ class ReasoningWireTest {
         val off = plan("api.deepseek.com", OpenAIBrand.DEEPSEEK, "deepseek-v4-pro", ReasoningLevel.OFF)
         assertEquals("disabled", off.thinkingType)
         assertNull(off.reasoningEffort)
+    }
+
+    @Test
+    fun deepSeekFlashAliasSerializesRequestedLowHighMaxEffort() {
+        for ((level, effort) in listOf(
+            ReasoningLevel.LOW to "low",
+            ReasoningLevel.HIGH to "high",
+            ReasoningLevel.MAX to "max",
+        )) {
+            val fields = plan("api.deepseek.com", OpenAIBrand.DEEPSEEK, "deepseek-flash", level)
+            val body = buildJsonObject { putOpenAICompatibleThinking(fields) }
+            assertEquals("enabled", body["thinking"]?.jsonObject?.get("type")?.jsonPrimitive?.content)
+            assertEquals(effort, body["reasoning_effort"]?.jsonPrimitive?.content, level.name)
+        }
+    }
+
+    @Test
+    fun deepSeekFlashAliasKeepsAutoDefaultAndExplicitOff() {
+        val auto = plan("api.deepseek.com", OpenAIBrand.DEEPSEEK, "deepseek-flash", ReasoningLevel.AUTO)
+        assertEquals("enabled", auto.thinkingType)
+        assertNull(auto.reasoningEffort)
+
+        val off = plan("api.deepseek.com", OpenAIBrand.DEEPSEEK, "deepseek-flash", ReasoningLevel.OFF)
+        assertEquals("disabled", off.thinkingType)
+        assertNull(off.reasoningEffort)
+    }
+
+    @Test
+    fun legacyDeepSeekModelsAndUnrecognizedFlashNamesDoNotSendEffort() {
+        for (id in listOf(
+            "deepseek-chat", "deepseek-reasoner", "deepseek-v3", "deepseek-v3.2",
+            "deepseek-v3-flash", "deepseek-flash-lite", "deepseek-pro", "other-flash",
+        )) {
+            for (level in ReasoningLevel.entries) {
+                val fields = plan("api.deepseek.com", OpenAIBrand.DEEPSEEK, id, level)
+                assertEquals(if (level.isEnabled) "enabled" else "disabled", fields.thinkingType, id)
+                assertNull(fields.reasoningEffort, "$id / $level")
+            }
+        }
     }
 
     @Test

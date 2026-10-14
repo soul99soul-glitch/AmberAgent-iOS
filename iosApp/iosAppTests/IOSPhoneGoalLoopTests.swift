@@ -28,16 +28,16 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.actions, [.tap(ref: "home:search"), .type(ref: "search:input", text: "星巴克")])
         XCTAssertEqual(fixture.candidateBatches, [["a0"], ["a1"]])
         XCTAssertEqual(fixture.observeCount, 3)
-        XCTAssertEqual(fixture.adviceCount, 1)
+        XCTAssertEqual(fixture.adviceCount, 0, "A fresh next candidate is assessed by the next choice, without a separate remote review")
         XCTAssertEqual(result.steps, ["a0: completed", "a1: completed"])
         XCTAssertEqual(result.reasonCode, .completed)
         XCTAssertEqual(result.candidateDiagnostics.map(\.reasonCode), [.alreadyExecuted, .alreadyExecuted])
         XCTAssertEqual(result.metrics.observeMs, 30, accuracy: 0.001)
         XCTAssertEqual(result.metrics.chooseMs, 40, accuracy: 0.001)
         XCTAssertEqual(result.metrics.actMs, 60, accuracy: 0.001)
-        XCTAssertEqual(result.metrics.adviseMs, 40, accuracy: 0.001)
+        XCTAssertEqual(result.metrics.adviseMs, 0, accuracy: 0.001)
         XCTAssertEqual(result.metrics.selectionCalls, 2)
-        XCTAssertEqual(result.metrics.reviewCalls, 1)
+        XCTAssertEqual(result.metrics.reviewCalls, 0)
     }
 
     func testCompletedReceiptWithUnchangedScreenCannotBecomeSuccessOrRepeatTap() async {
@@ -50,6 +50,26 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.chooseCount, 1)
         XCTAssertEqual(fixture.observeCount, 2)
         XCTAssertTrue(result.needsScreenshot)
+        XCTAssertEqual(result.steps, ["a0: completed"])
+    }
+
+    func testFreshIntermediateCandidateStillRequiresTheNextDecision() async {
+        let fixture = Fixture([
+            observation("home", [node("home:search", id: "search")]),
+            observation("search", [node("search:input", id: "query", type: "XCUIElementTypeSearchField", value: "")]),
+        ])
+        fixture.selections = [.action("a0"), .handback("needs a revised plan")]
+        let request = IOSPhoneGoalRequest(
+            goal: "打开搜索并填写草稿", bundleID: "app.test",
+            actions: [.init(action: .tap, target: .init(identifier: "search")),
+                      .init(action: .type, target: .init(identifier: "query"), text: "draft")],
+            completion: .init(kind: .valueEquals, target: .init(identifier: "query"), value: "draft"))
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.status, .handback)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "home:search")])
+        XCTAssertEqual(fixture.chooseCount, 2)
+        XCTAssertEqual(fixture.adviceCount, 0)
         XCTAssertEqual(result.steps, ["a0: completed"])
     }
 
@@ -347,7 +367,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         let metrics = IOSPhoneGoalLoop.Metrics(observeMs: 12, chooseMs: 23, actMs: 34, adviseMs: 45,
                                                selectionCalls: 2, reviewCalls: 1)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(metrics)) as? [String: NSNumber])
-        XCTAssertEqual(Set(json.keys), ["observe_ms", "choose_ms", "act_ms", "advise_ms", "selection_calls", "review_calls"])
+        XCTAssertEqual(Set(json.keys), ["observe_ms", "choose_ms", "act_ms", "advise_ms", "wait_ms", "total_ms", "selection_calls", "review_calls"])
         XCTAssertEqual(json["selection_calls"], 2)
         XCTAssertEqual(json["review_calls"], 1)
     }

@@ -99,7 +99,9 @@ final class IOSPhoneControlCatalogTests: XCTestCase {
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_add_app", input: "{}"), .sideEffect)
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_act", input: "{}"), .sideEffect)
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_run_goal", input: "{}"), .sideEffect)
+        XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_run_flow", input: "{}"), .sideEffect)
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_scroll_until", input: "{}"), .sideEffect)
+        XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_collect_list", input: "{}"), .sideEffect)
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_stop", input: "{}"), .sideEffect)
         XCTAssertTrue(ChatToolRuntime.execNestedToolWhitelist(visibleToolNames: IOSPhoneControlToolCatalog.toolNames).isEmpty)
     }
@@ -113,6 +115,88 @@ final class IOSPhoneControlCatalogTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(tool.parametersJsonSchema()).utf8)) as? [String: Any])
         XCTAssertEqual(Set(object["required"] as? [String] ?? []), ["target", "container", "direction"])
         XCTAssertEqual(object["additionalProperties"] as? Bool, false)
+    }
+
+    func testObservationCatalogMakesOCRExplicitAndActionCatalogIncludesGuardedGestures() throws {
+        let observe = try XCTUnwrap(IOSPhoneControlToolCatalog.declarations.first { $0.name == "phone_observe" })
+        let observeObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(observe.parametersJsonSchema()).utf8)) as? [String: Any])
+        let observeProperties = try XCTUnwrap(observeObject["properties"] as? [String: Any])
+        let screenText = try XCTUnwrap(observeProperties["include_screen_text"] as? [String: Any])
+        XCTAssertEqual(screenText["type"] as? String, "boolean")
+        XCTAssertEqual(screenText["default"] as? Bool, false)
+        XCTAssertFalse((observeObject["required"] as? [String] ?? []).contains("include_screen_text"))
+
+        let action = try XCTUnwrap(IOSPhoneControlToolCatalog.declarations.first { $0.name == "phone_act" })
+        let actionObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(action.parametersJsonSchema()).utf8)) as? [String: Any])
+        let actionProperties = try XCTUnwrap(actionObject["properties"] as? [String: Any])
+        let kinds = try XCTUnwrap(actionProperties["action"] as? [String: Any])
+        XCTAssertTrue(Set(["long_press", "long_press_point", "tap_alert"]).isSubset(of: Set(kinds["enum"] as? [String] ?? [])))
+        let duration = try XCTUnwrap(actionProperties["duration_ms"] as? [String: Any])
+        XCTAssertEqual(duration["type"] as? String, "integer")
+        XCTAssertEqual(duration["minimum"] as? Int, 300)
+        XCTAssertEqual(duration["maximum"] as? Int, 3000)
+        XCTAssertEqual(duration["default"] as? Int, 750)
+    }
+
+    func testListCollectionFrozenCatalogPreservesBoundsWithoutGrantingItToOldRuns() throws {
+        let tool = try XCTUnwrap(IOSPhoneControlToolCatalog.declarations.first { $0.name == "phone_collect_list" })
+        let bridge = IOSChatBackgroundGenerationCoordinator.makeBackgroundToolExposureBridge(
+            fullToolNames: [tool.name], handoffVisibleTools: [tool], additionalDeclarations: [tool])
+        let restored = try XCTUnwrap(bridge.fullToolDeclarations().first { $0.name == tool.name })
+        XCTAssertEqual(restored.parametersJsonSchema(), tool.parametersJsonSchema())
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(restored.parametersJsonSchema()).utf8)) as? [String: Any])
+        XCTAssertEqual(Set(object["required"] as? [String] ?? []), ["container", "direction"])
+        XCTAssertEqual(object["additionalProperties"] as? Bool, false)
+        let properties = try XCTUnwrap(object["properties"] as? [String: Any])
+        let direction = try XCTUnwrap(properties["direction"] as? [String: Any])
+        XCTAssertEqual(Set(direction["enum"] as? [String] ?? []), ["up", "down"])
+        let swipes = try XCTUnwrap(properties["max_swipes"] as? [String: Any])
+        XCTAssertEqual(swipes["minimum"] as? Int, 0)
+        XCTAssertEqual(swipes["maximum"] as? Int, 8)
+        let items = try XCTUnwrap(properties["max_items"] as? [String: Any])
+        XCTAssertEqual(items["minimum"] as? Int, 1)
+        XCTAssertEqual(items["maximum"] as? Int, 200)
+
+        let oldRun = IOSChatBackgroundGenerationCoordinator.makeBackgroundToolExposureBridge(
+            fullToolNames: ["phone_observe"],
+            handoffVisibleTools: IOSPhoneControlToolCatalog.declarations.filter { $0.name == "phone_observe" },
+            additionalDeclarations: IOSPhoneControlToolCatalog.declarations.filter { $0.name == "phone_observe" })
+        XCTAssertFalse(oldRun.fullToolDeclarations().contains { $0.name == tool.name },
+                       "A catalog update cannot extend an existing run's frozen phone-tool grant")
+    }
+
+    func testOrderedFlowIsRegisteredWithSemanticStepsAndFrozenGrant() throws {
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.contains("phone_run_flow"))
+        let tool = try XCTUnwrap(IOSPhoneControlToolCatalog.declarations.first { $0.name == "phone_run_flow" })
+        let bridge = IOSChatBackgroundGenerationCoordinator.makeBackgroundToolExposureBridge(
+            fullToolNames: [tool.name], handoffVisibleTools: [tool], additionalDeclarations: [tool])
+        let restored = try XCTUnwrap(bridge.fullToolDeclarations().first { $0.name == tool.name })
+        XCTAssertEqual(restored.parametersJsonSchema(), tool.parametersJsonSchema())
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(restored.parametersJsonSchema()).utf8)) as? [String: Any])
+        XCTAssertEqual(Set(object["required"] as? [String] ?? []), ["goal", "bundle_id", "steps", "completion"])
+        XCTAssertEqual(object["additionalProperties"] as? Bool, false)
+        let properties = try XCTUnwrap(object["properties"] as? [String: Any])
+        let steps = try XCTUnwrap(properties["steps"] as? [String: Any])
+        XCTAssertEqual(steps["minItems"] as? Int, 1)
+        XCTAssertEqual(steps["maxItems"] as? Int, 12)
+        XCTAssertNotEqual(steps["uniqueItems"] as? Bool, true, "Repeated operations retain their explicit order")
+        let step = try XCTUnwrap(steps["items"] as? [String: Any])
+        XCTAssertEqual(Set(step["required"] as? [String] ?? []), ["operation", "expectation"])
+        XCTAssertEqual(step["additionalProperties"] as? Bool, false)
+        let stepProperties = try XCTUnwrap(step["properties"] as? [String: Any])
+        let operation = try XCTUnwrap(stepProperties["operation"] as? [String: Any])
+        let operationProperties = try XCTUnwrap(operation["properties"] as? [String: Any])
+        let action = try XCTUnwrap(operationProperties["action"] as? [String: Any])
+        XCTAssertEqual(Set(action["enum"] as? [String] ?? []), ["tap", "type", "swipe"])
+        XCTAssertNil(operationProperties["ref"])
+        XCTAssertNil(operationProperties["observation_id"])
+        XCTAssertNil(operationProperties["x"])
+        XCTAssertNotNil(stepProperties["expectation"])
+
+        let frozenGoal = try XCTUnwrap(IOSPhoneControlToolCatalog.declarations.first { $0.name == "phone_run_goal" })
+        let oldRun = IOSChatBackgroundGenerationCoordinator.makeBackgroundToolExposureBridge(
+            fullToolNames: [frozenGoal.name], handoffVisibleTools: [frozenGoal], additionalDeclarations: [frozenGoal])
+        XCTAssertFalse(oldRun.fullToolDeclarations().contains { $0.name == tool.name })
     }
 
     private func assertGoalSchema(_ tool: Tool, file: StaticString = #filePath, line: UInt = #line) throws {

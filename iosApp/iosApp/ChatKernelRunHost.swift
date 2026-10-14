@@ -144,6 +144,15 @@ final class ChatKernelRunHost {
     private var lastJevToolOutcomeAssistantMessageId: String?
     private var keepaliveHeld = false
     private var didReportFirstDeltaThisRound = false
+    private var reportsPhoneWorkProgress = false
+    private var lastPhoneProgressContent: [PhoneProgressContent] = []
+    private var reportedPhoneToolResults: Set<String> = []
+
+    private enum PhoneProgressContent: Equatable {
+        case text(String)
+        case reasoning(String)
+        case tool(String, String)
+    }
     /// 适配器已进入 run()(决定 cancel 是否调用 adapter.cancel——进入前
     /// working 还是空的,取消填充会把空数组发布成 transcript)。
     private var adapterDidStart = false
@@ -284,6 +293,9 @@ final class ChatKernelRunHost {
         adapterDidStart = false
         keepaliveHeld = false
         didReportFirstDeltaThisRound = false
+        reportsPhoneWorkProgress = false
+        lastPhoneProgressContent = []
+        reportedPhoneToolResults = []
         streamClock = ChatGenerationSpeedClock()
         didRecordJevFirstDelta = false
         jevModelStepCount = 0
@@ -298,13 +310,6 @@ final class ChatKernelRunHost {
         )
         // 生成一开始就拿后台执行权(CG-C :1084-1104 同款纪律与注释语义)。
         beginKeepAlive(runId: runId, subtitle: params.model.displayName)
-        backgroundExecution.updateProgress(
-            runId,
-            completed: 0,
-            total: 4,
-            subtitle: IOSAppLocalization.string("准备上下文", defaultValue: "准备上下文")
-        )
-
         // Reserve this run's selected apps; only a phone tool may start the local test session.
         // Keep the same owner across a foreground/background handoff.
         let hasPhoneDeclarations = bridge.fullToolDeclarations().contains {
@@ -316,6 +321,20 @@ final class ChatKernelRunHost {
             if self?.currentRunId == runId { self?.cancel(cause: .backgroundInterruption) }
             _ = IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
         }
+        reportsPhoneWorkProgress = phoneControlClaimed
+        if phoneControlClaimed {
+            reportedPhoneToolResults = Set(uploadMessages.flatMap(\.parts).compactMap { part in
+                guard let tool = part as? UIMessagePart.Tool, !tool.output.isEmpty else { return nil }
+                return tool.toolCallId
+            })
+        }
+        // Phone loops have no fixed number of turns; only actual work advances their progress.
+        backgroundExecution.updateProgress(
+            runId,
+            completed: 0,
+            total: phoneControlClaimed ? -1 : 4,
+            subtitle: IOSAppLocalization.string("准备上下文", defaultValue: "准备上下文")
+        )
         if phoneControl.enabled || hasPhoneDeclarations {
             IOSBackgroundLifecycleLog.record("phoneControlRunGate",
                 detail: "userInitiated=\(phoneControlUserInitiated) enabled=\(phoneControl.enabled) prepared=\(phoneControl.hasPreparedPairing) declared=\(hasPhoneDeclarations) claimed=\(phoneControlClaimed)")
@@ -489,6 +508,9 @@ final class ChatKernelRunHost {
         adapter = nil
         adapterDidStart = false
         keepaliveHeld = true
+        reportsPhoneWorkProgress = false
+        lastPhoneProgressContent = []
+        reportedPhoneToolResults = []
         citationTracker = nil
         streamClock = ChatGenerationSpeedClock()
         didRecordJevFirstDelta = false
@@ -1306,6 +1328,9 @@ final class ChatKernelRunHost {
         guard currentRunId == runId,
               cancelCause == nil,
               var handoff = backgroundHandoff else { return }
+        let isNewCheckpoint = handoff.responseId != responseId
+            || handoff.responseSequenceNumber == nil
+            || sequenceNumber > (handoff.responseSequenceNumber ?? -1)
         durableResponseCursor = (responseId, sequenceNumber)
         handoff.mode = .resumeResponse
         handoff.responseId = responseId
@@ -1315,6 +1340,9 @@ final class ChatKernelRunHost {
         }
         backgroundHandoff = handoff
         durableCheckpointPersisted = true
+        if isNewCheckpoint, canReportPhoneWorkProgress(runId: runId) {
+            backgroundExecution.advanceProgress(runId)
+        }
         if pendingBackgroundConversationStore != nil {
             _ = detachDurableResponse(runId: runId)
         }
@@ -1589,6 +1617,7 @@ final class ChatKernelRunHost {
         var callbacks = ChatRunKernelAdapter.Callbacks()
         callbacks.onMessagesUpdated = { [weak self] messages in
             guard let self, self.currentRunId == runId else { return }
+            self.recordPhoneToolResultProgress(runId: runId, messages: messages)
             self.recordJevNextModelStepIfNeeded(runId: runId, messages: messages)
             self.activeToolExecutionName = nil
             self.activeToolEffectClass = nil
@@ -1639,10 +1668,11 @@ final class ChatKernelRunHost {
                 self.bindings.getMessages().clearingLastAssistantGenerationDuration()
             )
             self.projection.discardProvisionalAssistant()
+            self.lastPhoneProgressContent = []
             self.backgroundExecution.updateProgress(
                 runId,
-                completed: 1,
-                total: 4,
+                completed: self.reportsPhoneWorkProgress ? 0 : 1,
+                total: self.reportsPhoneWorkProgress ? -1 : 4,
                 subtitle: IOSAppLocalization.string("正在生成回复", defaultValue: "正在生成回复")
             )
             // 审批恢复(含 recipe 再暂停恢复)后首轮:keepalive 已还在暂停时
@@ -1691,8 +1721,8 @@ final class ChatKernelRunHost {
             self.activeToolEffectClass = IOSToolEffectClassMapping.forToolName(toolName, input: input)
             self.backgroundExecution.updateProgress(
                 runId,
-                completed: 3,
-                total: 4,
+                completed: self.reportsPhoneWorkProgress ? 0 : 3,
+                total: self.reportsPhoneWorkProgress ? -1 : 4,
                 subtitle: IOSAppLocalization.string("正在执行工具", defaultValue: "正在执行工具")
             )
             let presentation = AgentActivityPresentation.runningTool(toolName: toolName, input: input)
@@ -1743,14 +1773,15 @@ final class ChatKernelRunHost {
                 ChatPerfTrace.event("FirstDelta")
                 self.backgroundExecution.updateProgress(
                     runId,
-                    completed: 2,
-                    total: 4,
+                    completed: self.reportsPhoneWorkProgress ? 0 : 2,
+                    total: self.reportsPhoneWorkProgress ? -1 : 4,
                     subtitle: IOSAppLocalization.string("正在接收回复", defaultValue: "正在接收回复")
                 )
             }
         }
         callbacks.onAssistantMessageSnapshot = { [weak self] message in
             guard let self, self.currentRunId == runId else { return }
+            self.recordPhoneModelProgress(runId: runId, message: message)
             self.projection.publishProvisionalAssistant(message)
             // 同一步骤长时间输出时续期灵动岛，避免仍在输出却被系统判为过期。
             self.dependencies.liveActivityController.noteProgress(runId: runId)
@@ -2662,8 +2693,8 @@ final class ChatKernelRunHost {
         if terminalEvent == .generationCompleted {
             backgroundExecution.updateProgress(
                 runId,
-                completed: 4,
-                total: 4,
+                completed: reportsPhoneWorkProgress ? 0 : 4,
+                total: reportsPhoneWorkProgress ? -1 : 4,
                 subtitle: IOSAppLocalization.string("回复已完成", defaultValue: "回复已完成")
             )
         }
@@ -2815,9 +2846,49 @@ final class ChatKernelRunHost {
         approvalWaiter = nil
         adapterDidStart = false
         didReportFirstDeltaThisRound = false
+        reportsPhoneWorkProgress = false
+        lastPhoneProgressContent = []
+        reportedPhoneToolResults = []
     }
 
     // MARK: - keepalive
+
+    private func canReportPhoneWorkProgress(runId: String) -> Bool {
+        reportsPhoneWorkProgress && currentRunId == runId && cancelCause == nil
+            && !didFinalizeTerminal && keepaliveHeld && phoneControl.handoffState(runID: runId) != nil
+    }
+
+    private func recordPhoneModelProgress(runId: String, message: UIMessage) {
+        guard canReportPhoneWorkProgress(runId: runId) else { return }
+        let content: [PhoneProgressContent] = message.parts.compactMap { part in
+            if let text = part as? UIMessagePart.Text, !text.text.isEmpty {
+                return .text(text.text)
+            }
+            if let reasoning = part as? UIMessagePart.Reasoning, !reasoning.reasoning.isEmpty {
+                return .reasoning(reasoning.reasoning)
+            }
+            if let tool = part as? UIMessagePart.Tool, !tool.input.isEmpty {
+                return .tool(tool.toolCallId, tool.input)
+            }
+            return nil
+        }
+        // A replayed snapshot or a metadata-only chunk is not additional work.
+        guard !content.isEmpty, content != lastPhoneProgressContent else { return }
+        lastPhoneProgressContent = content
+        backgroundExecution.advanceProgress(runId)
+    }
+
+    private func recordPhoneToolResultProgress(runId: String, messages: [UIMessage]) {
+        guard canReportPhoneWorkProgress(runId: runId) else { return }
+        let completed = Set(messages.flatMap(\.parts).compactMap { part -> String? in
+            guard let tool = part as? UIMessagePart.Tool, !tool.output.isEmpty else { return nil }
+            return tool.toolCallId
+        })
+        let newResults = completed.subtracting(reportedPhoneToolResults)
+        reportedPhoneToolResults.formUnion(completed)
+        guard !newResults.isEmpty else { return }
+        backgroundExecution.advanceProgress(runId, by: Int64(newResults.count))
+    }
 
     private func beginKeepAlive(runId: String, subtitle: String) {
         backgroundExecution.begin(
@@ -2835,6 +2906,9 @@ final class ChatKernelRunHost {
             }
         )
         keepaliveHeld = true
+        if reportsPhoneWorkProgress {
+            backgroundExecution.updateProgress(runId, completed: 0, total: -1)
+        }
     }
 
     /// 租约到期且 App 已不在前台时先尝试把模型轮交给后台协调器；无法安全

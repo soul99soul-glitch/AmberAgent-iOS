@@ -149,6 +149,8 @@ struct ChatToolDetailSheet: View {
                         subAgentSections
                     } else if isCouncil {
                         councilSections
+                    } else if let presentation = ChatToolStepModel(tool: tool).phonePresentation {
+                        phoneSections(presentation)
                     } else {
                         toolSections
                     }
@@ -172,6 +174,32 @@ struct ChatToolDetailSheet: View {
     }
 
     // MARK: - Normal tool
+
+    @ViewBuilder private func phoneSections(_ presentation: ChatPhoneToolPresentation) -> some View {
+        section("执行状态") {
+            Label(presentation.statusTitle, systemImage: presentation.state.iconName)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(presentation.state.color)
+                .fixedSize(horizontal: false, vertical: true)
+            if let summary = presentation.summary { statusLine(summary) }
+            if let notice = presentation.notice {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        if presentation.state != .done, let reason = presentation.reason {
+            section("执行说明") {
+                Text(reason)
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        DisclosureGroup("调用详情") { toolSections }
+    }
 
     @ViewBuilder private var toolSections: some View {
         section("工具") {
@@ -545,6 +573,9 @@ struct ChatToolDetailSheet: View {
     }
 
     private var friendlyName: String {
+        if IOSPhoneControlToolCatalog.isPhoneTool(name: tool.toolName) {
+            return ChatToolStepModel.friendlyToolTitle(tool.toolName, executed: executed)
+        }
         if ["spawn_agent", "followup_task", "send_message", "list_agents", "interrupt_agent", "wait_agent"].contains(tool.toolName) {
             return ChatToolStepModel.friendlyToolTitle(tool.toolName, executed: executed)
         }

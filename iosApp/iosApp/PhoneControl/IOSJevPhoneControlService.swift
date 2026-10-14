@@ -181,6 +181,7 @@ final class IOSJevPhoneControlService {
         let bundleID: String
         let processID: Int
         let treeTruncated: Bool
+        let screenStability: PhoneScreenStability?
         var omittedNodes: Int
         var nodes: [NodeState]
 
@@ -190,6 +191,7 @@ final class IOSJevPhoneControlService {
             bundleID = observation.bundleID
             processID = observation.processID
             treeTruncated = observation.truncated
+            screenStability = observation.screenStability
             omittedNodes = observation.nodes.count - required.count
             nodes = required.map { NodeState($0) }
         }
@@ -245,29 +247,34 @@ final class IOSJevPhoneControlService {
                           })
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        func encoded() -> Data? {
-            guard let data = try? encoder.encode(state), data.count <= budget else { return nil }
-            return data
-        }
-        guard var data = encoded() else { return nil }
+        guard let initial = try? encoder.encode(state), initial.count <= budget else { return nil }
+        var byteCount = initial.count
+        // Array entries are encoded independently with the same escaping rules. Track
+        // their exact contribution instead of re-encoding the growing state per node.
         for step in recentSteps.suffix(5).reversed() {
-            state.recentSteps.insert(String(step.prefix(1_000)), at: 0)
-            guard let next = encoded() else { state.recentSteps.removeFirst(); break }
-            data = next
+            let text = String(step.prefix(1_000))
+            guard let encoded = try? encoder.encode(text) else { return nil }
+            let addedBytes = encoded.count + (state.recentSteps.isEmpty ? 0 : 1)
+            guard byteCount + addedBytes <= budget else { break }
+            state.recentSteps.insert(text, at: 0)
+            byteCount += addedBytes
         }
         // Current UI has priority after the mandatory before/after target evidence.
         for index in source.indices.reversed() {
             for node in source[index].nodes where !required[index].contains(node) {
-                state.observations[index].nodes.append(NodeState(node, textLimit: 512))
-                state.observations[index].omittedNodes -= 1
-                guard let next = encoded() else {
-                    state.observations[index].nodes.removeLast()
-                    state.observations[index].omittedNodes += 1
-                    break
-                }
-                data = next
+                let entry = NodeState(node, textLimit: 512)
+                guard let encoded = try? encoder.encode(entry) else { return nil }
+                let previousOmitted = state.observations[index].omittedNodes
+                let omitted = previousOmitted - 1
+                let addedBytes = encoded.count + (state.observations[index].nodes.isEmpty ? 0 : 1)
+                    + String(omitted).utf8.count - String(previousOmitted).utf8.count
+                guard byteCount + addedBytes <= budget else { break }
+                state.observations[index].nodes.append(entry)
+                state.observations[index].omittedNodes = omitted
+                byteCount += addedBytes
             }
         }
+        guard let data = try? encoder.encode(state), data.count <= budget else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }

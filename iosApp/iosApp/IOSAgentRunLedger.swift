@@ -1299,11 +1299,11 @@ enum IOSToolCallRecoveryApplier {
             "outcome": "not_sent",
             "reason_code": "replan_required",
             "tool": toolName,
-            "message": "人工接管改变了当前状态；请根据交还后的工具结果重新规划。",
+            "message": "前一步要求重新规划；请根据最新工具结果决定后续动作。",
         ]
         let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         let text = data.flatMap { String(data: $0, encoding: .utf8) }
-            ?? "人工接管后，此工具未发送，需要重新规划。"
+            ?? "前一步要求重新规划，此工具未发送。"
         return [UIMessagePart.Text(text: text, metadata: nil)]
     }
 

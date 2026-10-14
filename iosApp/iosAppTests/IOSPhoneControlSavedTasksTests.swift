@@ -74,6 +74,96 @@ final class IOSPhoneControlSavedTasksTests: XCTestCase {
         XCTAssertEqual(reloaded.savedQuickActions(), fixture.store.savedQuickActions())
     }
 
+    func testRenderedSearchExamplePersistsAndParameterizedRunConsumesAllSteps() async throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        do {
+            let editor = try SavedTasksHostingFixture(root: IOSPhoneControlSavedTaskEditor(
+                sharedSettings: fixture.store, draft: .init()))
+            defer { editor.tearDown() }
+            try await editor.activate(label: "填入搜索示例")
+            XCTAssertEqual(editor.element(value: "备忘录搜索")?.accessibilityValue, "备忘录搜索")
+            XCTAssertEqual(editor.element(value: IOSPhoneControlSavedTaskExample.prompt)?.accessibilityValue,
+                           IOSPhoneControlSavedTaskExample.prompt)
+            XCTAssertNil(editor.element(label: "填入搜索示例"), "A filled prompt must no longer offer replacement")
+            try await editor.activate(label: "保存任务")
+        }
+
+        let reloaded = IOSSharedSettingsStore(userDefaults: fixture.defaults)
+        let action = try XCTUnwrap(reloaded.savedQuickActions().first)
+        XCTAssertEqual(action.title, "备忘录搜索")
+        XCTAssertEqual(action.prompt, IOSPhoneControlSavedTaskExample.prompt)
+        XCTAssertTrue(action.isTemplate)
+
+        let inbox = IOSDeepLinkInbox()
+        var prepared: [URL] = []
+        var submitted: [URL] = []
+        var receivedPrompt: String?
+        inbox.installHandler { url in
+            submitted.append(url)
+            if case .agentPrompt(let id) = IOSAppDeepLink.parse(url) {
+                receivedPrompt = inbox.consumePromptHandoff(id: id)
+            }
+        }
+        do {
+            let runInput = try SavedTasksHostingFixture(root: IOSPhoneControlSavedTaskRunInput(
+                sharedSettings: reloaded, action: action, inbox: inbox, input: "  跨部门会议  ",
+                onPrepared: { prepared.append($0) }))
+            defer { runInput.tearDown() }
+            try await runInput.activate(label: "运行任务")
+            XCTAssertEqual(prepared.count, 1)
+            XCTAssertTrue(submitted.isEmpty, "The input sheet must prepare without navigating")
+            XCTAssertNil(receivedPrompt)
+        }
+        let url = try XCTUnwrap(prepared.first)
+        XCTAssertNil(URLComponents(url: url, resolvingAgainstBaseURL: false)?.query,
+                     "The URL carries only an opaque handoff identifier")
+        inbox.submit(url)
+        XCTAssertEqual(submitted, [url])
+        XCTAssertEqual(receivedPrompt, """
+        在备忘录中搜索 跨部门会议。
+        1. 打开备忘录，确认已进入备忘录页面。
+        2. 找到并点开搜索框，确认搜索框为空；若有旧内容，先清空并确认。
+        3. 在空的搜索框中输入 跨部门会议，核对搜索框显示的完整内容与本次输入一致。
+        4. 确认已经进入搜索结果页，停留在该页。不要打开、改写或删除笔记。
+        每一步都根据当前画面重新定位并核验结果；遇到不匹配时停止并说明。
+        """)
+        guard case .agentPrompt(let id) = IOSAppDeepLink.parse(url) else {
+            return XCTFail("Expected the existing opaque prompt handoff")
+        }
+        XCTAssertNil(inbox.consumePromptHandoff(id: id), "A submitted search must not replay")
+        XCTAssertEqual(reloaded.savedQuickActions(), [action], "Per-run input must preserve the saved template")
+    }
+
+    func testRenderedSearchExampleKeepsEnteredTitle() async throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let host = try SavedTasksHostingFixture(root: IOSPhoneControlSavedTaskEditor(
+            sharedSettings: fixture.store, draft: .init(title: "我的记录查询")))
+        defer { host.tearDown() }
+        try await host.activate(label: "填入搜索示例")
+        XCTAssertEqual(host.element(value: "我的记录查询")?.accessibilityValue, "我的记录查询")
+        try await host.activate(label: "保存任务")
+        XCTAssertEqual(fixture.store.savedQuickActions().first?.title, "我的记录查询")
+        XCTAssertEqual(fixture.store.savedQuickActions().first?.prompt, IOSPhoneControlSavedTaskExample.prompt)
+    }
+
+    func testRenderedSearchExampleCannotReplaceNonemptyOrExistingTask() async throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let action = try fixture.store.saveQuickAction(title: "已有任务", prompt: "保留原目标。")
+        for draft in [IOSPhoneControlSavedTaskDraft(title: "新目标", prompt: "保留新输入。"),
+                      IOSPhoneControlSavedTaskDraft(action: action)] {
+            let host = try SavedTasksHostingFixture(root: IOSPhoneControlSavedTaskEditor(
+                sharedSettings: fixture.store, draft: draft))
+            defer { host.tearDown() }
+            try await host.waitForElement(label: "保存任务")
+            XCTAssertNil(host.element(label: "填入搜索示例"))
+            XCTAssertEqual(host.element(value: draft.prompt)?.accessibilityValue, draft.prompt)
+        }
+        XCTAssertEqual(fixture.store.savedQuickActions(), [action])
+    }
+
     func testRenderedEditorValidationLeavesFieldsAndErrorVisible() async throws {
         let fixture = try SavedTasksStoreFixture()
         defer { fixture.tearDown() }

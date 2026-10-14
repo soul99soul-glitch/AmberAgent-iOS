@@ -2532,7 +2532,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     }
 
     private func toolReplanRequiredJSON(toolName: String) -> String {
-        "{\"ok\":false,\"outcome\":\"not_sent\",\"reason_code\":\"replan_required\",\"tool\":\"\(sanitized(toolName))\",\"message\":\"Human control changed the state; replan from the fresh tool result before sending another action.\"}"
+        "{\"ok\":false,\"outcome\":\"not_sent\",\"reason_code\":\"replan_required\",\"tool\":\"\(sanitized(toolName))\",\"message\":\"The previous tool requires replanning; use its latest result before sending another action.\"}"
     }
 
     /// Structured error for a tool call whose `input` failed `parseInputStrict()`

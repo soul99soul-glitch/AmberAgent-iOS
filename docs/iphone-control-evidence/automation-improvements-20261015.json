@@ -1,0 +1,177 @@
+{
+  "recordedAtUTC": "2026-10-14T17:24:42.164617+00:00",
+  "baseCommit": "8a0e6df8f0c6ad779691917dd7832abc60a0cb6c",
+  "branch": "feature/adaptive-task-ui",
+  "protectedPreexistingWIP": [
+    "iosApp/iosApp/IOSIntelligentUIComponents.swift",
+    "iosApp/iosApp/IOSIntelligentUIProtocol.swift",
+    "iosApp/iosAppTests/IOSIntelligentUIProtocolTests.swift"
+  ],
+  "phase1": {
+    "review": "logic_and_actual_UI_completed",
+    "localJevPayloadMedianMs": {
+      "before": 100.077,
+      "after": 1.084,
+      "nodes": 500,
+      "samples": 30,
+      "device": "Mac M4",
+      "boundary": "local CPU only; no provider/network/phone time"
+    },
+    "twoStepControlledCalls": {
+      "before": {
+        "choose": 2,
+        "review": 1
+      },
+      "after": {
+        "choose": 2,
+        "review": 0
+      },
+      "observationsUnchanged": 3,
+      "actionsUnchanged": 2
+    }
+  },
+  "phase2": {
+    "review": "logic_and_actual_UI_completed",
+    "confirmedRepairs": [
+      "anonymous list identity merge",
+      "unknown displayed as success",
+      "AX3 phone status truncation"
+    ],
+    "ocr": "explicit request only, same captured PNG; no invented native ref",
+    "alerts": "authorized App tree only; guarded exact context; no SpringBoard scope expansion"
+  },
+  "phase3": {
+    "review": "logic_and_actual_UI_completed",
+    "confirmedUIRepair": "validation errors moved next to Save/Run; full frame asserted inside actual bottom-scroll viewport",
+    "unrelatedExpandedRegression": {
+      "test": "IOSAgentToolEngineTests/testForegroundProviderCreateRedactsCanonicalInputAndNextRequest",
+      "failure": "ProviderSetting.OpenAI nil",
+      "comparison": "same failure with isolated test and base-commit Engine substituted into current test project; not a full base-commit checkout",
+      "countedAsPass": false
+    }
+  },
+  "firstDeviceDelivery": {
+    "AppReleaseBuild": true,
+    "RunnerBuildForTesting": true,
+    "signaturesChecked": true,
+    "overwriteInstalledWithoutUninstall": true,
+    "normalLaunchAndSubsequentProcessSurvival": true,
+    "readiness": {
+      "signedRunnerReady": true,
+      "freshTreeObserved": true,
+      "observedTreeMetadata": [
+        {
+          "app_matches": "true",
+          "budget": "200",
+          "nodes": "187",
+          "truncated": "false",
+          "backend": "private-ax",
+          "inputs": "0"
+        }
+      ],
+      "runnerShutdownAccepted": true,
+      "tunnelDisconnected": true
+    },
+    "retainedData": {
+      "criticalSettingsHashesUnchanged": 6,
+      "preferenceKeysRetained": 212,
+      "conversationPathsSizesModificationDatesUnchanged": 390,
+      "conversationBodiesCompared": false,
+      "entireKeychainCompared": false,
+      "appGroupIdentifiersAndContainerPathsUnchanged": true
+    }
+  },
+  "duolingoFollowup": {
+    "completedReasoningSeconds": 72.538,
+    "recordedActionSeconds": 3.402,
+    "recordedObservationSeconds": 4.756,
+    "recordedSettleSeconds": 2.844,
+    "toolCalls": {
+      "phone_act": 7,
+      "phone_observe": 3,
+      "phone_run_goal": 0,
+      "phone_run_flow": 0
+    },
+    "provider": "DeepSeek",
+    "model": "deepseek-flash",
+    "storedReasoning": "AUTO",
+    "storedAbilitiesEmpty": true,
+    "terminalNetworkDomain": "NSURLErrorDomain",
+    "terminalNetworkCode": -1005,
+    "systemTaskExpiredSecondsAfterBackground": 35.736,
+    "specificOSExpirationReasonKnown": false,
+    "processSuspensionTraceCaptured": false,
+    "readinessAndUserTaskOverlapped": false,
+    "oldScreenshotGuardRejectedWithoutDispatch": true,
+    "additionalGate": {
+      "result": "passed",
+      "passed": 175,
+      "failed": 0,
+      "skippedOptInPerformance": 1,
+      "path": "build/phone-automation-20261014/duolingo-followup-final.xcresult"
+    },
+    "firstAppGate": {
+      "passed": 164,
+      "failed": 2,
+      "skippedOptInPerformance": 1,
+      "failures": "stored AUTO fixture serial name and asynchronous owner cleanup expectation; followup repairs retained assertions"
+    },
+    "storedEmptySwiftBoundary": "passed after fixture serial name correction; runtime Model includes REASONING and LOW reaches generation params without rewriting stored abilities",
+    "approvalProgressRegression": "red: approved tool result returned but restored lease stayed at 0 before next model chunk",
+    "review": "independent logic and normal/320pt AX3 UI completed",
+    "progressScope": "claimed phone tasks in Host, approval resume and local Coordinator continueModel; remote durable resumeDetachedResponse transport not covered",
+    "implementationAndDelivery": "completed; physical Duolingo behavior not replayed",
+    "kmpRegression": {
+      "reasoningFamilyAndRegistryPassed": 42,
+      "realProviderRequestBodyPassed": 28
+    },
+    "storedReasoningPreserved": "AUTO; this delivery does not automatically lower the saved thinking level"
+  },
+  "physicalBehaviorNotValidated": [
+    "before-after click speed",
+    "complete new semantic flow",
+    "long press menu",
+    "alert context change",
+    "OCR cold start",
+    "cellular cold start",
+    "Duolingo after followup repairs"
+  ],
+  "localEvidenceDirectory": "build/phone-automation-20261014/",
+  "privacy": "No credentials, pairing bytes, raw settings, UI text or conversation bodies in this record. Only nonsecret reasoning-mode metadata is retained.",
+  "updatedAtUTC": "2026-10-14T18:09:36.173962+00:00",
+  "latestDeviceDelivery": {
+    "revision": "r3 after Duolingo followup",
+    "AppReleaseBuild": true,
+    "GradleSharedFrameworkIncluded": true,
+    "signedBundleCountVerified": 5,
+    "workingTreeSourceHashesMatched": true,
+    "includesProtectedPreexistingWIP": true,
+    "overwriteInstalledWithoutUninstall": true,
+    "normalLaunchWithoutArguments": true,
+    "subsequentProcessSurvival": true,
+    "RunnerSourceUnchangedSinceSignedInstalledBuild": true,
+    "readinessRepeatedForThisRevision": false,
+    "retainedData": {
+      "beforePreferenceKeyCount": 213,
+      "afterPreferenceKeyCount": 214,
+      "missingPreferenceKeys": 0,
+      "criticalSettingSemanticsUnchanged": 6,
+      "criticalSettingRawHashesUnchanged": 4,
+      "equivalentJsonRepresentationWithKeyOrderDifferences": 2,
+      "storedReasoningAbilitiesAndModelIdentifierUnchanged": true,
+      "conversationEntries": 390,
+      "conversationPathsSizesResourcesUnchanged": true,
+      "userConversationUUIDModificationDatesUnchanged": true,
+      "onlyModificationDateChange": "summary-cache-v1.cache; size unchanged at 201554 bytes",
+      "systemDataProtectionAttributeChanges": 2,
+      "conversationBodiesCompared": false,
+      "entireKeychainCompared": false,
+      "appGroupIdentifiersAndContainerPathsUnchanged": true,
+      "appGroupFileMetadataUnchanged": 3,
+      "appDataAndBundleContainerPathsReallocated": true,
+      "addedNoncriticalPreference": "memory Markdown signature cache keyed by App data-container path",
+      "afterSnapshotCompletedBeforeNormalLaunch": true,
+      "earlierCacheAndPreferenceWriteTriggerKnown": false
+    }
+  }
+}

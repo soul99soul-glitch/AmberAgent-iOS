@@ -190,6 +190,14 @@ private final class IOSChatBackgroundExecution: @unchecked Sendable {
                                 total: progress.totalUnitCount, subtitle: subtitle)
     }
 
+    @MainActor func advancePhoneWorkProgress(by units: Int64) {
+        if systemTask != nil {
+            progress.completedUnitCount += units
+        }
+        // Local continuation can reuse a lease that already reported work.
+        keepAlive.advanceProgress(leaseId, by: units)
+    }
+
     func setTaskCompleted(success: Bool) {
         systemTask?.setTaskCompleted(success: success)
     }
@@ -287,6 +295,9 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
     private var speedClock = ChatGenerationSpeedClock()
     private var presentationStage: AgentActivityStage = .preparing
     private var lastProgressRefreshAt: Date?
+    private var phoneProgressText = ""
+    private var phoneProgressReasoning = ""
+    private var reportedPhoneToolResults: Set<String> = []
 
     var isExpired: Bool {
         lock.lock()
@@ -350,7 +361,37 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
         lock.lock()
         speedClock.resetRound()
         presentationStage = .preparing
+        phoneProgressText = ""
+        phoneProgressReasoning = ""
         lock.unlock()
+    }
+
+    func claimPhoneContentProgress(_ content: String, reasoning: Bool = false) -> Bool {
+        guard !content.isEmpty else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        guard terminalOwner == nil, !terminalFinalized else { return false }
+        if reasoning {
+            guard content != phoneProgressReasoning else { return false }
+            phoneProgressReasoning = content
+        } else {
+            guard content != phoneProgressText else { return false }
+            phoneProgressText = content
+        }
+        return true
+    }
+
+    func claimPhoneToolResultProgress(in messages: [UIMessage]) -> Int64 {
+        let completed = Set(messages.flatMap(\.parts).compactMap { part -> String? in
+            guard let tool = part as? UIMessagePart.Tool, !tool.output.isEmpty else { return nil }
+            return tool.toolCallId
+        })
+        lock.lock()
+        defer { lock.unlock() }
+        guard terminalOwner == nil, !terminalFinalized else { return 0 }
+        let count = completed.subtracting(reportedPhoneToolResults).count
+        reportedPhoneToolResults.formUnion(completed)
+        return Int64(count)
     }
 
     func nextPresentationStage(_ candidate: AgentActivityStage) -> AgentActivityStage? {
@@ -1542,6 +1583,22 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
     }
 
+    private nonisolated func reportPhoneWorkProgress(
+        units: Int64, runId: String, requestId: String,
+        runState: IOSChatBackgroundRunState, execution: IOSChatBackgroundExecution
+    ) {
+        guard units > 0 else { return }
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.activeJobs[requestId]?.runId == runId,
+                  self.activeRunStates[requestId] === runState,
+                  self.activeBackgroundTasks[requestId] === execution,
+                  runState.allowsRunningPresentation,
+                  IOSPhoneControlController.shared.handoffState(runID: runId) != nil else { return }
+            execution.advancePhoneWorkProgress(by: units)
+        }
+    }
+
     /// Phone receipts and engine stages must share the background stream. Direct ActivityKit
     /// updates could otherwise be overwritten by older stages still waiting in its consumer.
     static func routingPhoneActivity(
@@ -2299,8 +2356,14 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
         let assistantTextSnapshot = IOSChatBackgroundAssistantTextSnapshot()
         let progress = backgroundTask.progress
-        progress.totalUnitCount = 4
-        progress.completedUnitCount = 0
+        let reportsPhoneWorkProgress = job.mode != .singleToolOnly
+            && IOSPhoneControlController.shared.handoffState(runID: job.runId) != nil
+        progress.totalUnitCount = reportsPhoneWorkProgress ? -1 : 4
+        if reportsPhoneWorkProgress {
+            _ = runState.claimPhoneToolResultProgress(in: job.uploadMessages)
+        } else {
+            progress.completedUnitCount = 0
+        }
         backgroundTask.updateTitle(
             IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
             subtitle: IOSAppLocalization.string("准备上下文", defaultValue: "准备上下文")
@@ -2387,7 +2450,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             )
         await publishRunningPresentation(runningPresentation, for: job, runState: runState)
 
-        progress.completedUnitCount = 1
+        if !reportsPhoneWorkProgress { progress.completedUnitCount = 1 }
         backgroundTask.updateTitle(
             IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
             subtitle: IOSAppLocalization.string(
@@ -2465,6 +2528,32 @@ final class IOSChatBackgroundGenerationCoordinator {
             return { try await preparer.prepare($0) }
         }
         let initialUploadPreparer = uploadPreparer(params: requestParams)
+        let recordModelText: @Sendable (String) -> Void = { [weak self] text in
+            if !text.isEmpty { Self.noteVisibleProgress(runState, job: job) }
+            assistantTextSnapshot.replace(with: text)
+            if reportsPhoneWorkProgress, runState.claimPhoneContentProgress(text) {
+                self?.reportPhoneWorkProgress(units: 1, runId: job.runId, requestId: backgroundTask.identifier,
+                                              runState: runState, execution: backgroundTask)
+            }
+        }
+        let recordModelReasoning: (@Sendable (String) -> Void)?
+        if reportsPhoneWorkProgress {
+            recordModelReasoning = { [weak self] reasoning in
+                if runState.claimPhoneContentProgress(reasoning, reasoning: true) {
+                    Self.noteVisibleProgress(runState, job: job)
+                    self?.reportPhoneWorkProgress(units: 1, runId: job.runId, requestId: backgroundTask.identifier,
+                                                  runState: runState, execution: backgroundTask)
+                }
+            }
+        } else {
+            recordModelReasoning = nil
+        }
+        let recordToolResults: @Sendable ([UIMessage]) -> Void = { [weak self] messages in
+            guard reportsPhoneWorkProgress else { return }
+            let units = runState.claimPhoneToolResultProgress(in: messages)
+            self?.reportPhoneWorkProgress(units: units, runId: job.runId, requestId: backgroundTask.identifier,
+                                          runState: runState, execution: backgroundTask)
+        }
         let operationTask = Task { () -> IOSAgentToolEngineResult in
             switch job.mode {
             case .continueModel, .resumeResponse:
@@ -2498,13 +2587,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                             AgentActivityPresentation.response(stage: stage)
                         )
                     },
-                    onAssistantText: { text in
-                        if !text.isEmpty {
-                            Self.noteVisibleProgress(runState, job: job)
-                        }
-                        assistantTextSnapshot.replace(with: text)
-                    },
+                    onAssistantText: recordModelText,
+                    onAssistantReasoning: recordModelReasoning,
                     onMessagesUpdated: { messages in
+                        recordToolResults(messages)
                         job.messagesSnapshot.replace(with: messages)
                     }
                 )
@@ -2599,13 +2685,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                             AgentActivityPresentation.response(stage: stage)
                         )
                     },
-                    onAssistantText: { text in
-                        if !text.isEmpty {
-                            Self.noteVisibleProgress(runState, job: job)
-                        }
-                        assistantTextSnapshot.replace(with: text)
-                    },
+                    onAssistantText: recordModelText,
+                    onAssistantReasoning: recordModelReasoning,
                     onMessagesUpdated: { messages in
+                        recordToolResults(messages)
                         job.messagesSnapshot.replace(
                             with: retryBase + Array(messages.dropFirst(retryUploadMessageCount))
                         )
@@ -2641,7 +2724,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         // Keep background execution until the runner exits and its local tunnel disconnects.
         await IOSPhoneControlController.shared.stop(runID: job.runId)
 
-        progress.completedUnitCount = 3
+        if !reportsPhoneWorkProgress { progress.completedUnitCount = 3 }
         backgroundTask.updateTitle(
             IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
             subtitle: IOSAppLocalization.string("正在保存结果", defaultValue: "正在保存结果")
@@ -2922,7 +3005,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             runId: job.runId,
             presentation: terminalPresentation
         )
-        progress.completedUnitCount = progress.totalUnitCount
+        if progress.totalUnitCount >= 0 { progress.completedUnitCount = progress.totalUnitCount }
         if runState.claimSystemTaskCompletion() {
             finish(runId: job.runId, requestId: backgroundTask.identifier)
             backgroundTask.setTaskCompleted(success: succeeded)
@@ -3025,7 +3108,9 @@ final class IOSChatBackgroundGenerationCoordinator {
             IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
             subtitle: IOSAppLocalization.string("回复达到输出上限", defaultValue: "回复达到输出上限")
         )
-        backgroundTask.progress.completedUnitCount = backgroundTask.progress.totalUnitCount
+        if backgroundTask.progress.totalUnitCount >= 0 {
+            backgroundTask.progress.completedUnitCount = backgroundTask.progress.totalUnitCount
+        }
         if runState.claimSystemTaskCompletion() {
             backgroundTask.setTaskCompleted(success: true)
         }

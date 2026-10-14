@@ -29,6 +29,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
         }
         if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(name) { return .terminal }
         if IOSAppleAgentToolCatalog.toolNames.contains(name) { return .apple }
+        if IOSPhoneControlToolCatalog.isPhoneTool(name: name) { return .apple }
         switch name {
         case "search_web": return .search
         case "scrape_web": return .web
@@ -379,6 +380,118 @@ struct ChatSubAgentPixelAvatar: View {
     }
 }
 
+/// Phone receipts distinguish a dispatched action from a verified business result.
+/// Only counts and evidence availability belong in the capsule; UI text and parameters
+/// remain in the explicitly expanded detail sheet.
+struct ChatPhoneToolPresentation {
+    let state: ChatToolStepState
+    let statusTitle: String
+    let titleSuffix: String?
+    let summary: String?
+    let notice: String?
+    let reason: String?
+
+    init(toolName: String, executed: Bool, analysis: ChatToolOutputAnalysis) {
+        guard executed else {
+            state = .active
+            statusTitle = Self.localized("进行中")
+            titleSuffix = nil
+            summary = nil
+            notice = nil
+            reason = nil
+            return
+        }
+        let result = analysis.firstJSONObject ?? [:]
+        let prior = result["prior_tool_receipt"] as? [String: Any]
+        let priorResult = (prior?["result"] as? String).flatMap {
+            $0.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
+        let receipt = priorResult ?? result
+        let status = (result["status"] as? String)?.lowercased()
+        let outcome = (result["outcome"] as? String)?.lowercased()
+        let verification = result["verification"] as? [String: Any]
+        let verificationStatus = verification?["status"] as? String
+        let isUnknown = status == "unknown" || outcome == "unknown" || prior?["kind"] as? String == "unknown"
+        let isHandback = status == "handback"
+        let needsVerification = verificationStatus == "unmet" || verificationStatus == "insufficient"
+            || (toolName == "phone_act" && outcome == "completed" && result["fresh_observation_available"] as? Bool == false)
+
+        if isUnknown {
+            state = .failed
+            statusTitle = Self.localized("结果未知，需核对")
+            titleSuffix = Self.localized("待核对")
+            notice = Self.localized("动作可能已经执行。请先核对手机实际结果，不要重放该动作或整个流程。")
+        } else if isHandback {
+            state = .cancelled
+            statusTitle = Self.localized("已交回，待继续")
+            titleSuffix = Self.localized("待继续")
+            notice = Self.localized("本次自动步骤已结束；保留已有执行回执，根据最新界面继续，不能整体重放。")
+        } else if needsVerification {
+            state = .cancelled
+            statusTitle = Self.localized("已执行，待核验")
+            titleSuffix = Self.localized("待核验")
+            notice = Self.localized("动作已有执行回执，验收条件尚未确认。重新观察核验，不能据此重放动作。")
+        } else if analysis.failureReason != nil || (outcome == "not_sent" && status != "completed")
+                    || result["cleanup_complete"] as? Bool == false {
+            state = .failed
+            statusTitle = Self.localized(outcome == "not_sent" ? "未执行" : "执行失败")
+            titleSuffix = nil
+            notice = nil
+        } else {
+            state = .done
+            statusTitle = Self.localized(toolName == "phone_act" && verificationStatus != "satisfied" ? "已执行" : "已完成")
+            titleSuffix = nil
+            notice = nil
+        }
+
+        var facts: [String] = []
+        if let steps = receipt["steps"] as? [Any] {
+            let count = steps.filter { step in
+                if let text = step as? String { return text.hasSuffix(": completed") }
+                let object = step as? [String: Any]
+                return ((object?["outcome"] ?? object?["status"]) as? String) == "completed"
+            }.count
+            facts.append(Self.formatted("已确认执行 %ld 步", count))
+        } else if toolName == "phone_act", receipt["outcome"] as? String == "completed" {
+            facts.append(Self.localized("已有动作执行回执"))
+        } else if outcome == "not_sent" {
+            facts.append(Self.localized("本次未发送手机动作"))
+        }
+        if let count = receipt["swipe_count"] as? Int { facts.append(Self.formatted("已派发 %ld 次滑动", count)) }
+        if let items = result["items"] as? [Any] { facts.append(Self.formatted("已采集 %ld 项", items.count)) }
+        if let count = result["screen_count"] as? Int { facts.append(Self.formatted("观察 %ld 屏", count)) }
+        if result["coverage"] as? String == "observed_screens_only" { facts.append(Self.localized("仅覆盖已观察页面")) }
+        let hasTree = analysis.textParts.contains { $0.hasPrefix("app=") && $0.components(separatedBy: "\n").first?.contains(" observation=") == true }
+        if hasTree || result["fresh_observation_available"] as? Bool == true {
+            facts.append(Self.localized("已附新界面"))
+        } else if result["fresh_observation_available"] as? Bool == false {
+            facts.append(Self.localized("尚无新界面"))
+        }
+        for object in analysis.jsonObjects {
+            if let ocr = object["screen_text"] as? [String: Any], let items = ocr["items"] as? [Any] {
+                facts.append(Self.formatted("OCR 识别 %ld 项文字", items.count))
+            }
+        }
+        if toolName == "phone_act", outcome == "completed", verification == nil {
+            facts.append(Self.localized("业务结果尚未验收"))
+        } else if verificationStatus == "satisfied" {
+            facts.append(Self.localized("验收条件已满足"))
+        }
+        summary = facts.isEmpty ? nil : facts.joined(separator: "；")
+        reason = [result["reason"], verification?["reason"], result["observation_error"], result["detail"], result["message"]]
+            .compactMap { $0 as? String }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { String($0.prefix(512)) }
+    }
+
+    private static func localized(_ key: String) -> String {
+        IOSAppLocalization.string(key, defaultValue: key)
+    }
+
+    private static func formatted(_ key: String, _ count: Int) -> String {
+        IOSAppLocalization.formatted(key, defaultValue: key, arguments: [count])
+    }
+}
+
 struct ChatToolStepModel: Identifiable {
     let id: String
     /// 顶栏活动岛 / Live Activity 用的 SF Symbol（胶囊 leading 用 `koboyoMark`）。
@@ -392,8 +505,10 @@ struct ChatToolStepModel: Identifiable {
     let subAgentPresentation: ChatSubAgentCapsulePresentation?
     /// Carried for subagent steps so the detail sheet can read the live prompt + streaming output.
     let tool: UIMessagePart.Tool?
+    let phonePresentation: ChatPhoneToolPresentation?
 
     var koboyoMark: ChatKoboyoMark { visualKind.koboyoMark }
+    var statusTitle: String { phonePresentation?.statusTitle ?? state.accessibilityTitle }
 
     /// Runtime child status may refine an accepted orchestration receipt only
     /// after the tool step itself has completed successfully. A target id on a
@@ -416,7 +531,8 @@ struct ChatToolStepModel: Identifiable {
         state: ChatToolStepState,
         isSubAgent: Bool = false,
         subAgentPresentation: ChatSubAgentCapsulePresentation? = nil,
-        tool: UIMessagePart.Tool? = nil
+        tool: UIMessagePart.Tool? = nil,
+        phonePresentation: ChatPhoneToolPresentation? = nil
     ) {
         self.id = id
         self.visualKind = visualKind
@@ -427,12 +543,24 @@ struct ChatToolStepModel: Identifiable {
         self.isSubAgent = isSubAgent
         self.subAgentPresentation = subAgentPresentation
         self.tool = tool
+        self.phonePresentation = phonePresentation
     }
 
     init(tool: UIMessagePart.Tool) {
         let stableID = Self.stableID(for: tool)
         let kind = ChatToolVisualKind.resolve(toolName: tool.toolName)
         let outputAnalysis = ChatToolOutputFormatter.analysis(for: tool)
+        if IOSPhoneControlToolCatalog.isPhoneTool(name: tool.toolName) {
+            let presentation = ChatPhoneToolPresentation(toolName: tool.toolName,
+                                                       executed: !tool.output.isEmpty,
+                                                       analysis: outputAnalysis)
+            let title = Self.friendlyToolTitle(tool.toolName, executed: !tool.output.isEmpty)
+            self.init(id: stableID, visualKind: .apple,
+                      title: presentation.titleSuffix.map { title + " · " + $0 } ?? title,
+                      detail: presentation.summary, state: presentation.state, tool: tool,
+                      phonePresentation: presentation)
+            return
+        }
         // `.contains` (不是 `==`):流式合并偶发把工具名拼成 "subagent_dispatchsubagent_dispatch",
         // 用包含匹配才不会漏判、掉进裸名回退。
         if tool.toolName.contains("subagent_dispatch") {
@@ -766,6 +894,16 @@ struct ChatToolStepModel: Identifiable {
     /// 未单独映射的工具:给一个友好中文标签,不显示裸工具名。状态由胶囊上的对勾/转圈表示,不再加文字。
     static func friendlyToolTitle(_ name: String, executed: Bool) -> String {
         let known: [String: String] = [
+            "phone_status": Self.localized("查看手机状态"),
+            "phone_apps": Self.localized("查看手机应用"),
+            "phone_add_app": Self.localized("添加控制应用"),
+            "phone_observe": Self.localized("观察手机界面"),
+            "phone_act": Self.localized("操作手机"),
+            "phone_run_goal": Self.localized("执行手机目标"),
+            "phone_run_flow": Self.localized("执行手机流程"),
+            "phone_scroll_until": Self.localized("滚动查找目标"),
+            "phone_collect_list": Self.localized("采集手机列表"),
+            "phone_stop": Self.localized("停止手机控制"),
             "spawn_agent": Self.localized("创建子代理"),
             "followup_task": Self.localized("追加子代理任务"),
             "send_message": Self.localized("发送会话消息"),
@@ -1714,7 +1852,7 @@ struct ChatToolTimeline: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityTitle(for: step))
         .accessibilityValue(
-            [runtimeState?.accessibilityTitle ?? state.accessibilityTitle, step.detail]
+            [runtimeState?.accessibilityTitle ?? step.statusTitle, step.detail]
                 .compactMap { $0?.nilIfBlank }
                 .joined(separator: "，")
         )
@@ -1726,9 +1864,8 @@ struct ChatToolTimeline: View {
     }
 
     private func accessibilityTitle(for step: ChatToolStepModel) -> String {
-        let state = displayState(for: step)
         let runtimeStatus = runtimeState(for: step)
-        let statusTitle = runtimeStatus?.accessibilityTitle ?? state.accessibilityTitle
+        let statusTitle = runtimeStatus?.accessibilityTitle ?? step.statusTitle
         guard let presentation = step.subAgentPresentation else {
             return IOSAppLocalization.formatted(
                 "%@，状态：%@",
@@ -1794,11 +1931,16 @@ struct ChatToolTimeline: View {
 
     @ViewBuilder
     private func titleLabel(for step: ChatToolStepModel) -> some View {
-        Text(step.title)
+        let title = Text(step.title)
             .font(.footnote.weight(.medium))
             .foregroundStyle(AmberTheme.foreground2)
-            .lineLimit(1)
-            .truncationMode(.tail)
+        if step.phonePresentation != nil, dynamicTypeSize.isAccessibilitySize {
+            title.lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            title.lineLimit(1)
+                .truncationMode(.tail)
+        }
     }
 
     @ViewBuilder

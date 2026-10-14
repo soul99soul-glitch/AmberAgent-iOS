@@ -43,6 +43,16 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         JevStubTransport { _ in (Self.payload(choice, confidence: confidence), jevResponse(200)) }
     }
 
+    private func outboundState(_ transport: JevStubTransport) throws -> (text: String, json: [String: Any]) {
+        let body = try XCTUnwrap(transport.lastBody)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let state = try XCTUnwrap(request["state"] as? String)
+        let text = try XCTUnwrap(state.split(separator: "\n", maxSplits: 1).last.map(String.init))
+        let data = try XCTUnwrap(text.data(using: .utf8))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return (text, json)
+    }
+
     private func node(_ label: String = "搜索", value: String? = nil, ref: String = "r1") -> PhoneObservationNode {
         .init(ref: ref, depth: 1, type: "XCUIElementTypeButton", identifier: nil,
               label: label, value: value, rect: .init(x: 1, y: 1, width: 80, height: 40),
@@ -287,6 +297,115 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         let result = await service.chooseAction(goal: String(repeating: "大", count: 20_000), observation: observation(),
                                                 candidates: [candidate], recentSteps: [], runID: "phone-fixture")
         XCTAssertEqual(result, .handback("state_too_large"))
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testExactStateBudgetKeepsEscapedUnicodeAndRecentStepOrder() async throws {
+        let labels = (0..<10).map { "搜索/\"结果\"\\\n👨‍👩‍👧‍👦 \($0)" }
+        let nodes = labels.enumerated().map { node($0.element, ref: "r\($0.offset)") }
+        let steps = (0..<7).map { "第\($0)步/\"完成\"" }
+        let candidates: [Service.Candidate] = [.init(id: "a2", description: "第二项"), candidate]
+        let fullTransport = transport()
+        _ = await service(SettingsBox(settings()), transport: fullTransport).chooseAction(
+            goal: "搜索结果", observation: observation(nodes: nodes), candidates: candidates,
+            recentSteps: steps, runID: "full-budget"
+        )
+        let full = try outboundState(fullTransport)
+        for delta in [0, -1] {
+            var limited = settings()
+            limited.policy.maxStateBytes = full.text.utf8.count + 128 + delta
+            let limitedTransport = transport()
+            let result = await service(SettingsBox(limited), transport: limitedTransport).chooseAction(
+                goal: "搜索结果", observation: observation(nodes: nodes), candidates: candidates,
+                recentSteps: steps, runID: "exact-budget-\(delta)"
+            )
+            XCTAssertEqual(result, .action("a1"))
+            let state = try outboundState(limitedTransport)
+            XCTAssertLessThanOrEqual(state.text.utf8.count, limited.policy.maxStateBytes - 128)
+            XCTAssertEqual(state.json["recentSteps"] as? [String], Array(steps.suffix(5)))
+            let sentCandidates = try XCTUnwrap(state.json["candidates"] as? [[String: String]])
+            XCTAssertEqual(sentCandidates.compactMap { $0["id"] }, ["a2", "a1"])
+            let observations = try XCTUnwrap(state.json["observations"] as? [[String: Any]])
+            let sentNodes = try XCTUnwrap(observations.first?["nodes"] as? [[String: Any]])
+            XCTAssertEqual(sentNodes.compactMap { $0["label"] as? String }, Array(labels.prefix(10 + delta)))
+            XCTAssertEqual(observations.first?["omittedNodes"] as? Int, -delta)
+        }
+    }
+
+    func testScreenStabilitySummaryIsSentWholeWithinExactStateBudget() async throws {
+        let base = observation(nodes: (0..<10).map { node("结果\($0)", ref: "r\($0)") })
+        let observed = PhoneObservation(
+            observationID: base.observationID, bundleID: base.bundleID, processID: base.processID,
+            backend: base.backend, truncated: base.truncated, nodes: base.nodes, screenBounds: base.screenBounds,
+            screenStability: .init(stable: false, blank: true, waitedMs: 239.5, frames: 3,
+                                   changedPixels: 82, captureMs: 15.5, budgetMs: 250)
+        )
+        let fullTransport = transport()
+        _ = await service(SettingsBox(settings()), transport: fullTransport).chooseAction(
+            goal: "等待搜索结果", observation: observed, candidates: [candidate],
+            recentSteps: ["已搜索"], runID: "stability-full"
+        )
+        let full = try outboundState(fullTransport)
+        var limited = settings()
+        limited.policy.maxStateBytes = full.text.utf8.count + 128
+        let limitedTransport = transport()
+        let result = await service(SettingsBox(limited), transport: limitedTransport).chooseAction(
+            goal: "等待搜索结果", observation: observed, candidates: [candidate],
+            recentSteps: ["已搜索"], runID: "stability-exact"
+        )
+        XCTAssertEqual(result, .action("a1"))
+        let state = try outboundState(limitedTransport)
+        XCTAssertEqual(state.text, full.text)
+        XCTAssertEqual(state.text.utf8.count, limited.policy.maxStateBytes - 128)
+        let observations = try XCTUnwrap(state.json["observations"] as? [[String: Any]])
+        let stability = try XCTUnwrap(observations.first?["screenStability"] as? [String: Any])
+        XCTAssertEqual(stability["stable"] as? Bool, false)
+        XCTAssertEqual(stability["blank"] as? Bool, true)
+        XCTAssertEqual(stability["waitedMs"] as? Double, 239.5)
+        XCTAssertEqual(stability["frames"] as? Int, 3)
+        XCTAssertEqual(stability["changedPixels"] as? Int, 82)
+        XCTAssertEqual(stability["captureMs"] as? Double, 15.5)
+        XCTAssertEqual(stability["budgetMs"] as? Int, 250)
+    }
+
+    func testAuxiliaryTreePressureKeepsWholeRequiredBeforeAndAfterEvidence() async throws {
+        let longValue = String(repeating: "已输入的正文", count: 180)
+        let targetBefore = node("输入框", value: "旧正文", ref: "before-target")
+        let targetAfter = node("输入框", value: longValue, ref: "after-target")
+        let anchor = node("首页", ref: "anchor")
+        let auxiliary = (0..<300).map { node(String(repeating: "页面内容", count: 200), ref: "aux-\($0)") }
+        let expected = IOSPhoneGoalExpectation(kind: .absent, target: .init(label: "输入框"),
+                                               anchor: .init(label: "首页"))
+        let transport = transport("handback")
+        _ = await service(SettingsBox(settings()), transport: transport).adviseAfterAction(
+            goal: "关闭输入框", expectation: expected,
+            before: observation(nodes: auxiliary + [targetBefore, anchor]),
+            after: observation(id: "o2", nodes: auxiliary + [targetAfter, anchor]),
+            verification: unmet, runID: "mandatory-evidence"
+        )
+        let state = try outboundState(transport)
+        let observations = try XCTUnwrap(state.json["observations"] as? [[String: Any]])
+        XCTAssertEqual(observations.compactMap { $0["phase"] as? String }, ["before", "after"])
+        let beforeNodes = try XCTUnwrap(observations[0]["nodes"] as? [[String: Any]])
+        let afterNodes = try XCTUnwrap(observations[1]["nodes"] as? [[String: Any]])
+        XCTAssertEqual(beforeNodes.prefix(2).compactMap { $0["label"] as? String }, ["输入框", "首页"])
+        XCTAssertEqual(afterNodes.prefix(2).compactMap { $0["label"] as? String }, ["输入框", "首页"])
+        XCTAssertEqual(beforeNodes.first?["value"] as? String, "旧正文")
+        XCTAssertEqual(afterNodes.first?["value"] as? String, longValue)
+        XCTAssertGreaterThan(observations[0]["omittedNodes"] as? Int ?? 0, 0)
+        XCTAssertGreaterThan(observations[1]["omittedNodes"] as? Int ?? 0, 0)
+        XCTAssertLessThanOrEqual(state.text.utf8.count, 48 * 1_024 - 128)
+    }
+
+    func testOversizedRequiredEvidenceHandsBackBeforeSending() async {
+        let transport = transport("wait")
+        let target = node("输入框", value: String(repeating: "大", count: 20_000))
+        let result = await service(SettingsBox(settings()), transport: transport).adviseAfterAction(
+            goal: "等待输入完成", expectation: .init(kind: .visible, target: .init(label: "输入框")),
+            before: observation(nodes: [target]), after: observation(id: "o2", nodes: [target]),
+            verification: unmet, runID: "oversized-evidence"
+        )
+        XCTAssertEqual(result, .handback)
         XCTAssertEqual(transport.calls, 0)
     }
 }

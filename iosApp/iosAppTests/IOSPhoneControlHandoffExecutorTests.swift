@@ -1,12 +1,248 @@
 import AmberPhoneControl
+import CoreGraphics
+import CoreText
 import CryptoKit
 import Foundation
+import ImageIO
 import XCTest
 @preconcurrency import Shared
 @testable import iosApp
 
 @MainActor
 final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
+    func testTreeObservationDoesNotCaptureOrRecognizeScreenTextByDefault() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome else { return XCTFail("Native observation must succeed without screenshot support") }
+        XCTAssertTrue(parts.allSatisfy { $0 is UIMessagePart.Text })
+        XCTAssertFalse(parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.contains { $0.contains("screen_text") })
+        XCTAssertFalse(harness.http.paths.contains("/screenshot"))
+        XCTAssertTrue(harness.http.mutationPaths.isEmpty)
+    }
+
+    func testScreenTextOnlyUsesOneCapturedObservationWithoutSendingAnImage() async throws {
+        let harness = try await Harness(screenshotPNG: makeTextScreenshot())
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(
+            name: "phone_observe", arguments: #"{"include_screen_text":true}"#, isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome else { return XCTFail("Explicit OCR must return native and recognized text evidence") }
+        XCTAssertTrue(parts.allSatisfy { $0 is UIMessagePart.Text }, "OCR-only must not consume an image input slot")
+        let objects = parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+        }
+        let metadata = try XCTUnwrap(objects.first { $0["screenshot_observation_id"] != nil })
+        let recognized = try XCTUnwrap(objects.first { $0["screen_text"] != nil }?["screen_text"] as? [String: Any])
+        let screenshotID = try XCTUnwrap(metadata["screenshot_observation_id"] as? String)
+        XCTAssertEqual(recognized["observation_id"] as? String, screenshotID)
+        XCTAssertEqual(recognized["source"] as? String, "ocr")
+        XCTAssertEqual(recognized["coordinate_space"] as? String, "screenshot_normalized_top_left")
+        let items = try XCTUnwrap(recognized["items"] as? [[String: Any]])
+        XCTAssertTrue(items.contains { ($0["text"] as? String)?.contains("Amber Search 42") == true }, "Recognize pixels from the fixture, rather than native tree labels")
+        XCTAssertTrue(items.allSatisfy { $0["ref"] == nil })
+        let runner = try await harness.session.runner(runID: UUID())
+        let latest = await runner.latestObservation
+        XCTAssertEqual(latest?.observationID, screenshotID)
+        XCTAssertEqual(harness.http.paths.filter { $0 == "/screenshot" }.count, 1)
+        XCTAssertEqual(harness.http.sourceCount, 1)
+        XCTAssertTrue(harness.http.mutationPaths.isEmpty)
+    }
+
+    func testLongPressFreshLookupRunsOnceAndReturnsNewReferences() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        let initial = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        guard case .filledParts = initial else { return XCTFail("Initial observation must succeed") }
+        let runner = try await harness.session.runner(runID: UUID())
+        let previous = await runner.latestObservation
+        let old = try XCTUnwrap(previous)
+        let ref = try XCTUnwrap(old.nodes[1].ref)
+        let outcome = await harness.executor.execute(
+            name: "phone_act", arguments: #"{"action":"long_press","ref":"\#(ref)"}"#, isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome,
+              let receipt = parts.first as? UIMessagePart.Text else { return XCTFail("A completed long press must include fresh effect evidence") }
+        let fields = try object(receipt.text)
+        XCTAssertEqual(fields["outcome"] as? String, "completed")
+        XCTAssertEqual(fields["retry_safe"] as? Bool, false)
+        XCTAssertEqual(fields["fresh_observation_available"] as? Bool, true)
+        let latest = await runner.latestObservation
+        let fresh = try XCTUnwrap(latest)
+        XCTAssertNotEqual(fresh.observationID, old.observationID)
+        XCTAssertNotEqual(fresh.nodes[1].ref, ref)
+        XCTAssertEqual(fresh.nodes[1].label, "screen-2")
+        let freshRef = try XCTUnwrap(fresh.nodes[1].ref)
+        XCTAssertTrue(parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.contains { $0.contains(freshRef) })
+        XCTAssertEqual(harness.http.mutationPaths, ["/elements", "/wda/element/FRESH/touchAndHold"])
+        XCTAssertEqual(harness.http.sourceCount, 2)
+        XCTAssertEqual(harness.http.paths.filter { $0 == "/wda/settle" }.count, 1)
+    }
+
+    func testListCollectionUsesBoundedSwipeAndMergesOnlyAdjacentOverlap() async throws {
+        for maxSwipes in [0, 1] {
+            let harness = try await Harness(listPages: true)
+            defer { harness.dispose() }
+            let outcome = await harness.executor.execute(
+                name: "phone_collect_list",
+                arguments: #"{"container":{"identifier":"list"},"direction":"up","max_swipes":\#(maxSwipes)}"#,
+                isUserInitiated: true)
+            guard case .filledParts(let parts) = outcome,
+                  let receipt = parts.first as? UIMessagePart.Text else { return XCTFail("Collection must return rows and its latest tree") }
+            let fields = try object(receipt.text)
+            XCTAssertEqual(fields["status"] as? String, "completed")
+            XCTAssertEqual(fields["reason"] as? String, "swipe_budget_exhausted")
+            XCTAssertEqual(fields["coverage"] as? String, "observed_screens_only")
+            XCTAssertEqual(fields["screen_count"] as? Int, maxSwipes + 1)
+            XCTAssertEqual(fields["swipe_count"] as? Int, maxSwipes)
+            XCTAssertEqual(fields["outcome"] as? String, maxSwipes == 0 ? "not_sent" : "completed")
+            XCTAssertEqual(fields["retry_safe"] as? Bool, maxSwipes == 0)
+            let rows = try XCTUnwrap(fields["items"] as? [[String: Any]])
+            let expected = maxSwipes == 0 ? ["A", "B"] : ["A", "B", "C"]
+            XCTAssertEqual(rows.compactMap { $0["text"] as? String }, expected)
+            XCTAssertEqual(rows.compactMap { $0["identifier"] as? String }, expected.map { "row-\($0)" })
+            XCTAssertEqual(harness.http.sourceCount, maxSwipes + 1)
+            XCTAssertEqual(harness.http.paths.filter { $0 == "/wda/settle" }.count, maxSwipes)
+            XCTAssertEqual(harness.http.mutationPaths, maxSwipes == 0 ? [] : ["/elements", "/wda/element/FRESH/swipe"])
+            XCTAssertFalse(harness.http.paths.contains("/screenshot"))
+            let runner = try await harness.session.runner(runID: UUID())
+            let fresh = await runner.latestObservation
+            XCTAssertTrue(parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.contains { $0.contains(fresh?.observationID ?? "missing latest observation") })
+            await harness.controller.stop(runID: harness.runID)
+        }
+    }
+
+    func testOrderedFlowCompletesTwoVerifiedStepsAndReturnsLatestTree() async throws {
+        let harness = try await Harness(flowMode: .completes)
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_run_flow", arguments: flowArguments, isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome,
+              let receipt = parts.first as? UIMessagePart.Text else { return XCTFail("A completed flow must return its verified receipt and latest tree") }
+        let fields = try object(receipt.text)
+        XCTAssertEqual(fields["status"] as? String, "completed")
+        XCTAssertEqual(fields["outcome"] as? String, "completed")
+        XCTAssertEqual(fields["retry_safe"] as? Bool, false)
+        XCTAssertEqual(fields["goal_satisfied"] as? Bool, true)
+        XCTAssertEqual(fields["fresh_observation_available"] as? Bool, true)
+        let steps = try XCTUnwrap(fields["steps"] as? [[String: Any]])
+        XCTAssertEqual(steps.compactMap { $0["index"] as? Int }, [0, 1])
+        XCTAssertEqual(steps.compactMap { $0["outcome"] as? String }, ["completed", "completed"])
+        XCTAssertTrue(steps.allSatisfy { ($0["verification"] as? [String: Any])?["status"] as? String == "satisfied" })
+        XCTAssertEqual(harness.http.mutationPaths, ["/elements", "/element/FRESH/click", "/elements", "/element/FRESH/click"])
+        XCTAssertEqual(harness.http.sourceCount, 3, "Each following step must use the prior step's fresh verified tree")
+        XCTAssertEqual(harness.http.paths.filter { $0 == "/wda/settle" }.count, 2)
+        XCTAssertFalse(harness.http.paths.contains("/screenshot"))
+        let runner = try await harness.session.runner(runID: UUID())
+        let latest = await runner.latestObservation
+        let fresh = try XCTUnwrap(latest)
+        XCTAssertTrue(fresh.nodes.contains { $0.identifier == "done" })
+        XCTAssertTrue(parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.contains { $0.contains(fresh.observationID) })
+    }
+
+    func testAcknowledgedFlowStepWithUnmetPostconditionRequiresReplanBeforeNextStep() async throws {
+        let harness = try await Harness(screenshotPNG: makeTextScreenshot(), flowMode: .unmetAfterFirstStep)
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_run_flow", arguments: flowArguments, isUserInitiated: true)
+        guard case .replanRequired(let parts) = outcome,
+              let receipt = parts.first as? UIMessagePart.Text else { return XCTFail("Failed postconditions must create a typed replan barrier") }
+        let fields = try object(receipt.text)
+        XCTAssertEqual(fields["status"] as? String, "handback")
+        XCTAssertEqual(fields["reason_code"] as? String, "step_verification_failed: target_not_visible")
+        XCTAssertEqual(fields["outcome"] as? String, "completed", "A failed business condition cannot erase the first action's acknowledged receipt")
+        XCTAssertEqual(fields["retry_safe"] as? Bool, false)
+        XCTAssertEqual(fields["goal_satisfied"] as? Bool, false)
+        let steps = try XCTUnwrap(fields["steps"] as? [[String: Any]])
+        XCTAssertEqual(steps.count, 1)
+        XCTAssertEqual(steps.first?["outcome"] as? String, "completed")
+        XCTAssertEqual((steps.first?["verification"] as? [String: Any])?["status"] as? String, "unmet")
+        XCTAssertEqual(harness.http.mutationPaths, ["/elements", "/element/FRESH/click"])
+        XCTAssertGreaterThanOrEqual(harness.http.sourceCount, 2)
+        XCTAssertLessThanOrEqual(harness.http.sourceCount, 5, "Read-only postcondition checks must stay bounded")
+    }
+
+    func testHumanTakeoverStopsOriginalFlowAndPreservesAcknowledgedStepReceipt() async throws {
+        let gate = HandoffReplyGate()
+        let paused = expectation(description: "Flow receipt acknowledges the requested pause")
+        let harness = try await Harness(postGate: gate, flowMode: .completes, onHandoff: { _, state in
+            if state == .paused { paused.fulfill() }
+        })
+        defer { harness.dispose(); gate.release() }
+        let execution = PendingExecution()
+        let task = execution.start(executor: harness.executor, name: "phone_run_flow", arguments: flowArguments)
+        defer { task.cancel() }
+        await fulfillment(of: [gate.started], timeout: 2)
+        try harness.controller.requestHumanTakeover(runID: harness.runID)
+        XCTAssertEqual(harness.controller.handoffState(runID: harness.runID), .pausing)
+        gate.release()
+        await fulfillment(of: [paused], timeout: 2)
+        XCTAssertNil(execution.outcome)
+        XCTAssertEqual(harness.http.sourceCount, 1, "Paused flow must not read or dispatch its remaining steps")
+        try harness.controller.resumeAutomation(runID: harness.runID)
+        await fulfillment(of: [execution.finished], timeout: 2)
+        let receipt = try handback(XCTUnwrap(execution.outcome))
+        let prior = try XCTUnwrap(receipt["prior_tool_receipt"] as? [String: Any])
+        XCTAssertEqual(prior["kind"] as? String, "filled")
+        let original = try object(XCTUnwrap(prior["result"] as? String))
+        XCTAssertEqual(original["outcome"] as? String, "completed")
+        XCTAssertEqual(original["retry_safe"] as? Bool, false)
+        let acknowledged = try XCTUnwrap(original["steps"] as? [[String: Any]])
+        XCTAssertEqual(acknowledged.count, 1)
+        XCTAssertEqual(acknowledged.first?["index"] as? Int, 0)
+        XCTAssertEqual(acknowledged.first?["outcome"] as? String, "completed")
+        XCTAssertEqual(receipt["fresh_observation_available"] as? Bool, true)
+        XCTAssertEqual(harness.http.sourceCount, 2, "Resume returns new evidence without continuing the old flow")
+        XCTAssertEqual(harness.http.mutationPaths, ["/elements", "/element/FRESH/click"])
+        await harness.controller.stop(runID: harness.runID)
+    }
+
+    func testUnknownFlowStepDoesNotObserveReplayOrDispatchNextStep() async throws {
+        let harness = try await Harness(unknownMutation: true, flowMode: .completes)
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_run_flow", arguments: flowArguments, isUserInitiated: true)
+        guard case .outcomeUnknown(let parts) = outcome,
+              let receipt = parts.first as? UIMessagePart.Text else { return XCTFail("Dispatched flow uncertainty must remain a typed unknown") }
+        let fields = try object(receipt.text)
+        XCTAssertEqual(fields["outcome"] as? String, "unknown")
+        XCTAssertEqual(fields["retry_safe"] as? Bool, false)
+        let steps = try XCTUnwrap(fields["steps"] as? [[String: Any]])
+        XCTAssertEqual(steps.count, 1)
+        XCTAssertEqual(steps.first?["outcome"] as? String, "unknown")
+        XCTAssertEqual(harness.http.mutationPaths, ["/elements", "/element/FRESH/click"])
+        XCTAssertEqual(harness.http.sourceCount, 1)
+        XCTAssertFalse(harness.http.paths.contains("/wda/settle"))
+        XCTAssertFalse(harness.http.paths.contains("/screenshot"))
+    }
+
+    func testAcknowledgedActionReturnsFreshReferencesWithoutAnotherModelRound() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_act", arguments: launchArguments, isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome,
+              let receipt = parts.first as? UIMessagePart.Text else { return XCTFail("Action must return its receipt and fresh tree") }
+        let fields = try object(receipt.text)
+        XCTAssertEqual(fields["outcome"] as? String, "completed")
+        XCTAssertEqual(fields["retry_safe"] as? Bool, false)
+        XCTAssertEqual(fields["fresh_observation_available"] as? Bool, true)
+        XCTAssertTrue(parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.contains { $0.contains("screen-1") })
+        XCTAssertEqual(fields["visual_actions_available"] as? Bool, false)
+        XCTAssertFalse(parts.contains { $0 is UIMessagePart.Image })
+        XCTAssertEqual(harness.http.mutationPaths, ["/wda/apps/activate"])
+        XCTAssertEqual(harness.http.sourceCount, 1)
+        XCTAssertEqual(harness.http.paths.filter { $0 == "/wda/settle" }.count, 1)
+    }
+
+    func testReadFailureAfterActionKeepsCompletedReceiptAndDoesNotReplay() async throws {
+        let harness = try await Harness(firstSourceError: .networkConnectionLost)
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_act", arguments: launchArguments, isUserInitiated: true)
+        guard case .filled(let text) = outcome else { return XCTFail("An acknowledged action must survive a failed effect read") }
+        let fields = try object(text)
+        XCTAssertEqual(fields["outcome"] as? String, "completed")
+        XCTAssertEqual(fields["retry_safe"] as? Bool, false)
+        XCTAssertEqual(fields["fresh_observation_available"] as? Bool, false)
+        XCTAssertNotNil(fields["observation_error"])
+        XCTAssertEqual(harness.http.mutationPaths, ["/wda/apps/activate"])
+        XCTAssertEqual(harness.http.sourceCount, 1)
+    }
+
     func testIdleTakeoverThenResumeReplacesLateTapCoordinatesAndGoalWithFreshEvidence() async throws {
         for kind in ["tap", "tap_point", "goal"] {
             let harness = try await Harness()
@@ -248,6 +484,30 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
 
     private var launchArguments: String { #"{"action":"launch","bundle_id":"app.test"}"# }
 
+    private var flowArguments: String {
+        #"{"goal":"Advance two ordered steps","bundle_id":"app.test","steps":[{"operation":{"action":"tap","target":{"identifier":"item"}},"expectation":{"kind":"visible","target":{"identifier":"stage-1"}}},{"operation":{"action":"tap","target":{"identifier":"item"}},"expectation":{"kind":"visible","target":{"identifier":"done"}}}],"completion":{"kind":"visible","target":{"identifier":"done"}}}"#
+    }
+
+    private func makeTextScreenshot() throws -> Data {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 402, height: 874, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 402, height: 874))
+        let font = CTFontCreateWithName("Helvetica" as CFString, 32, nil)
+        let text = NSAttributedString(string: "Amber Search 42", attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 0, alpha: 1),
+        ])
+        context.textPosition = CGPoint(x: 50, y: 650)
+        CTLineDraw(CTLineCreateWithAttributedString(text), context)
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
     private func object(_ text: String) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
     }
@@ -292,12 +552,15 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
 
         init(postGate: HandoffReplyGate? = nil, sourceGate: HandoffReplyGate? = nil,
              unknownMutation: Bool = false, firstSourceError: URLError.Code? = nil,
+             listPages: Bool = false, screenshotPNG: Data? = nil,
+             flowMode: HandoffFlowMode? = nil,
              onHandoff: @escaping @MainActor (String, IOSPhoneControlHandoffState) -> Void = { _, _ in }) async throws {
             let runID = "handoff-\(UUID().uuidString)"
             let suite = "IOSPhoneControlHandoffExecutorTests.\(UUID().uuidString)"
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             let http = HandoffHTTPFixture(postGate: postGate, sourceGate: sourceGate,
-                                          unknownMutation: unknownMutation, firstSourceError: firstSourceError)
+                                          unknownMutation: unknownMutation, firstSourceError: firstSourceError,
+                                          listPages: listPages, screenshotPNG: screenshotPNG, flowMode: flowMode)
             let session = HandoffSessionStub(fixture: http)
             let key = Curve25519.Signing.PrivateKey()
             let pairing = try PropertyListSerialization.data(fromPropertyList: [
@@ -354,25 +617,36 @@ private actor HandoffSessionStub: IOSPhoneControlSessionServing {
     func cachedApplications(runID: UUID) -> [PhoneControlInstalledApp] { [] }
 }
 
+private enum HandoffFlowMode {
+    case completes, unmetAfterFirstStep
+}
+
 private final class HandoffHTTPFixture: @unchecked Sendable {
     let port: UInt16
     private let postGate: HandoffReplyGate?
     private let sourceGate: HandoffReplyGate?
     private let unknownMutation: Bool
     private let firstSourceError: URLError.Code?
+    private let listPages: Bool
+    private let screenshotPNG: Data?
+    private let flowMode: HandoffFlowMode?
     private let lock = NSLock()
     private var requests: [(String, String)] = []
     private var sources = 0
+    private var clicks = 0
     var paths: [String] { lock.withLock { requests.map { $0.1 } } }
     var mutationPaths: [String] { lock.withLock { requests.filter { $0.0 == "POST" }.map { $0.1 } } }
     var sourceCount: Int { lock.withLock { sources } }
 
     init(postGate: HandoffReplyGate?, sourceGate: HandoffReplyGate?, unknownMutation: Bool,
-         firstSourceError: URLError.Code?) {
+         firstSourceError: URLError.Code?, listPages: Bool, screenshotPNG: Data?, flowMode: HandoffFlowMode?) {
         self.postGate = postGate
         self.sourceGate = sourceGate
         self.unknownMutation = unknownMutation
         self.firstSourceError = firstSourceError
+        self.listPages = listPages
+        self.screenshotPNG = screenshotPNG
+        self.flowMode = flowMode
         port = HandoffHTTPProtocol.nextPort()
         HandoffHTTPProtocol.register(self)
     }
@@ -390,10 +664,35 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
         case "/status": return (#"{"value":{"ready":true,"sessionId":"handoff","auth":{"required":true,"scheme":"IPU-HMAC-SHA256"}}}"#, nil)
         case "/wda/activeAppInfo": return (#"{"value":{"bundleId":"app.test","pid":42}}"#, nil)
         case "/window/size": return (#"{"value":{"width":402,"height":874}}"#, nil)
+        case "/wda/settle": return (#"{"value":{"stable":true,"blank":false,"waited_ms":160,"frames":4,"changed_px":0,"capture_ms":2,"budget_ms":700}}"#, nil)
         case "/source":
             if sourceIndex == 1, let firstSourceError { throw URLError(firstSourceError) }
+            if listPages { return (try listSource(index: sourceIndex), nil) }
+            if let flowMode { return (try flowSource(mode: flowMode), nil) }
             let body = #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":402,"height":874},"children":[{"type":"XCUIElementTypeButton","rawIdentifier":"item","label":"screen-\#(sourceIndex)","rect":{"x":20,"y":100,"width":80,"height":44},"children":[]}]}}"#
             return (body, sourceIndex == 1 ? sourceGate : nil)
+        case "/elements":
+            XCTAssertEqual(request.httpMethod, "POST")
+            let fields = try requestObject(request)
+            XCTAssertEqual(fields["using"] as? String, "predicate string")
+            XCTAssertTrue((fields["value"] as? String)?.contains(listPages ? "list" : "item") == true)
+            return (#"{"value":[{"element-6066-11e4-a52e-4f735466cecf":"FRESH"}]}"#, nil)
+        case "/wda/element/FRESH/touchAndHold":
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(try requestObject(request)["duration"] as? Double, 0.75)
+            return (#"{"value":null}"#, nil)
+        case "/element/FRESH/click":
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertNotNil(flowMode)
+            lock.withLock { clicks += 1 }
+            return (unknownMutation ? #"{"value":{"error":"unknown error","message":"tap receipt lost"}}"# : #"{"value":null}"#, postGate)
+        case "/wda/element/FRESH/swipe":
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(try requestObject(request)["direction"] as? String, "up")
+            return (#"{"value":null}"#, nil)
+        case "/screenshot":
+            let data = try XCTUnwrap(screenshotPNG, "Only explicit screenshot/OCR tests supply image support")
+            return (#"{"value":"\#(data.base64EncodedString())"}"#, nil)
         case "/wda/apps/activate":
             XCTAssertEqual(request.httpMethod, "POST")
             return (unknownMutation ? #"{"value":{"error":"unknown error","message":"activation receipt lost"}}"# : #"{"value":null}"#, postGate)
@@ -401,6 +700,55 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
             XCTFail("Unexpected runner request \(path)")
             throw URLError(.badURL)
         }
+    }
+
+    private func requestObject(_ request: URLRequest) throws -> [String: Any] {
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var bytes = [UInt8](repeating: 0, count: 4_096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: bytes.count)
+                if count <= 0 { break }
+                data.append(contentsOf: bytes.prefix(count))
+            }
+        }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func listSource(index: Int) throws -> String {
+        let labels = index == 1 ? ["A", "B"] : ["B", "C"]
+        let rows: [[String: Any]] = labels.enumerated().map { offset, label in
+            ["type": "XCUIElementTypeCell", "rawIdentifier": "row-\(label)", "label": label,
+             "rect": ["x": 20, "y": 140 + offset * 80, "width": 320, "height": 60], "children": []]
+        }
+        let source: [String: Any] = ["value": [
+            "type": "XCUIElementTypeApplication", "rect": ["x": 0, "y": 0, "width": 402, "height": 874],
+            "children": [["type": "XCUIElementTypeScrollView", "rawIdentifier": "list",
+                          "rect": ["x": 10, "y": 100, "width": 380, "height": 600], "children": rows]],
+        ]]
+        return String(decoding: try JSONSerialization.data(withJSONObject: source), as: UTF8.self)
+    }
+
+    private func flowSource(mode: HandoffFlowMode) throws -> String {
+        let count = lock.withLock { clicks }
+        var children: [[String: Any]] = [
+            ["type": "XCUIElementTypeButton", "rawIdentifier": "item", "label": "Advance",
+             "rect": ["x": 20, "y": 100, "width": 120, "height": 44], "children": []],
+        ]
+        if mode == .completes, count >= 1 {
+            children.append(["type": "XCUIElementTypeStaticText", "rawIdentifier": "stage-1", "label": "First step complete",
+                             "rect": ["x": 20, "y": 180, "width": 300, "height": 44], "children": []])
+        }
+        if mode == .completes, count >= 2 {
+            children.append(["type": "XCUIElementTypeStaticText", "rawIdentifier": "done", "label": "Finished",
+                             "rect": ["x": 20, "y": 250, "width": 300, "height": 44], "children": []])
+        }
+        let source: [String: Any] = ["value": [
+            "type": "XCUIElementTypeApplication", "rect": ["x": 0, "y": 0, "width": 402, "height": 874], "children": children,
+        ]]
+        return String(decoding: try JSONSerialization.data(withJSONObject: source), as: UTF8.self)
     }
 }
 

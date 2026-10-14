@@ -77,8 +77,179 @@ final class IOSPhoneControlToolExecutorTests: XCTestCase {
             #"{"max_nodes":0}"#, #"{"max_nodes":2001}"#,
             #"{"max_nodes":1.5}"#, #"{"max_nodes":true}"#,
             #"{"include_screenshot":1}"#,
+            #"{"include_screen_text":1}"#,
+            #"{"include_screen_text":true,"recognition_languages":["en"]}"#,
         ] {
             XCTAssertThrowsError(try IOSPhoneControlToolExecutor.request(name: "phone_observe", arguments: invalid))
+        }
+    }
+
+    func testScreenTextIsAnExplicitIndependentObservationOption() throws {
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_observe", arguments: #"{"include_screen_text":true}"#),
+            .observe(maxNodes: 500, includeScreenshot: false, includeScreenText: true)
+        )
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_observe", arguments: #"{"include_screen_text":true,"include_screenshot":true}"#),
+            .observe(maxNodes: 500, includeScreenshot: true, includeScreenText: true)
+        )
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_observe", arguments: #"{"include_screen_text":false}"#),
+            .observe(maxNodes: 500, includeScreenshot: false, includeScreenText: false)
+        )
+    }
+
+    func testLongPressDefaultsAndDurationBoundsPreserveFreshTargetContracts() throws {
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_act", arguments: #"{"action":"long_press","ref":"frame:1"}"#),
+            .act(.longPress(ref: "frame:1", durationMs: 750))
+        )
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_act", arguments: #"{"action":"long_press_point","observation_id":"frame","x":0.5,"y":0.25}"#),
+            .act(.longPressPoint(observationID: "frame", x: 0.5, y: 0.25, durationMs: 750))
+        )
+        for duration in [300, 3000] {
+            XCTAssertEqual(
+                try IOSPhoneControlToolExecutor.request(name: "phone_act", arguments: #"{"action":"long_press","ref":"frame:1","duration_ms":\#(duration)}"#),
+                .act(.longPress(ref: "frame:1", durationMs: duration))
+            )
+            XCTAssertEqual(
+                try IOSPhoneControlToolExecutor.request(name: "phone_act", arguments: #"{"action":"long_press_point","observation_id":"frame","x":0.5,"y":0.25,"duration_ms":\#(duration)}"#),
+                .act(.longPressPoint(observationID: "frame", x: 0.5, y: 0.25, durationMs: duration))
+            )
+        }
+        for invalid in [
+            #"{"action":"long_press","ref":"frame:1","duration_ms":299}"#,
+            #"{"action":"long_press","ref":"frame:1","duration_ms":3001}"#,
+            #"{"action":"long_press","ref":"frame:1","duration_ms":750.5}"#,
+            #"{"action":"long_press","ref":"frame:1","duration_ms":true}"#,
+            #"{"action":"long_press","ref":""}"#,
+            #"{"action":"long_press","ref":"frame:1","x":0.5,"y":0.25}"#,
+            #"{"action":"long_press_point","x":0.5,"y":0.25}"#,
+            #"{"action":"long_press_point","observation_id":"frame","x":1,"y":0.25}"#,
+            #"{"action":"long_press_point","observation_id":"frame","x":0.5,"y":0.25,"duration_ms":299}"#,
+            #"{"action":"long_press_point","observation_id":"frame","x":0.5,"y":0.25,"ref":"frame:1"}"#,
+        ] {
+            XCTAssertThrowsError(try IOSPhoneControlToolExecutor.request(name: "phone_act", arguments: invalid), invalid)
+        }
+        XCTAssertEqual(IOSPhoneControlToolExecutor.actionActivity(.longPress(ref: "frame:1", durationMs: 750)), .tapping)
+        XCTAssertEqual(IOSPhoneControlToolExecutor.actionActivity(.longPressPoint(observationID: "frame", x: 0.5, y: 0.25, durationMs: 750)), .tapping)
+    }
+
+    func testAlertTapRequiresObservedReferenceAndCannotSelectByUnboundText() throws {
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_act", arguments: #"{"action":"tap_alert","ref":"frame:3"}"#),
+            .act(.tapAlert(ref: "frame:3"))
+        )
+        for invalid in [
+            #"{"action":"tap_alert"}"#,
+            #"{"action":"tap_alert","ref":""}"#,
+            #"{"action":"tap_alert","name":"Allow"}"#,
+            #"{"action":"tap_alert","ref":"frame:3","text":"Allow"}"#,
+            #"{"action":"tap_alert","ref":"frame:3","duration_ms":750}"#,
+        ] {
+            XCTAssertThrowsError(try IOSPhoneControlToolExecutor.request(name: "phone_act", arguments: invalid), invalid)
+        }
+        XCTAssertEqual(IOSPhoneControlToolExecutor.actionActivity(.tapAlert(ref: "frame:3")), .tapping)
+    }
+
+    func testListCollectionHasBoundedDefaultsAndAllowsCurrentScreenOnly() throws {
+        let target = IOSPhoneGoalTarget(identifier: "list")
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_collect_list", arguments: #"{"container":{"identifier":"list"},"direction":"up"}"#),
+            .collectList(.init(container: target, direction: .up, maxSwipes: 3, maxItems: 50))
+        )
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_collect_list", arguments: #"{"container":{"identifier":"list"},"direction":"down","max_swipes":0,"max_items":1}"#),
+            .collectList(.init(container: target, direction: .down, maxSwipes: 0, maxItems: 1))
+        )
+        XCTAssertEqual(
+            try IOSPhoneControlToolExecutor.request(name: "phone_collect_list", arguments: #"{"container":{"identifier":"list"},"direction":"up","max_swipes":8,"max_items":200}"#),
+            .collectList(.init(container: target, direction: .up, maxSwipes: 8, maxItems: 200))
+        )
+        for invalid in [
+            #"{"container":{"identifier":"list"},"direction":"left"}"#,
+            #"{"container":{"identifier":"list"},"direction":"up","max_swipes":-1}"#,
+            #"{"container":{"identifier":"list"},"direction":"up","max_swipes":9}"#,
+            #"{"container":{"identifier":"list"},"direction":"up","max_items":0}"#,
+            #"{"container":{"identifier":"list"},"direction":"up","max_items":201}"#,
+            #"{"container":{"identifier":"list"},"direction":"up","max_swipes":1.5}"#,
+            #"{"container":{"identifier":"list"},"direction":"up","max_items":true}"#,
+            #"{"container":{},"direction":"up"}"#,
+            #"{"container":{"identifier":"list","ref":"old:1"},"direction":"up"}"#,
+            #"{"container":{"identifier":"list"},"direction":"up","collect_all":true}"#,
+        ] {
+            XCTAssertThrowsError(try IOSPhoneControlToolExecutor.request(name: "phone_collect_list", arguments: invalid), invalid)
+        }
+    }
+
+    func testOrderedFlowAllowsRepeatedSemanticStepsWithinItsBound() throws {
+        let operation: [String: Any] = ["action": "tap", "target": ["identifier": "item"]]
+        let expectation: [String: Any] = ["kind": "visible", "target": ["identifier": "item"]]
+        let step = ["operation": operation, "expectation": expectation]
+        for count in [1, 2, 12] {
+            let input: [String: Any] = [
+                "goal": "Advance the same control in order", "bundle_id": "app.test",
+                "steps": Array(repeating: step, count: count),
+                "completion": ["kind": "visible", "target": ["identifier": "done"]],
+            ]
+            let arguments = String(decoding: try JSONSerialization.data(withJSONObject: input), as: UTF8.self)
+            guard case .runFlow(let request) = try IOSPhoneControlToolExecutor.request(name: "phone_run_flow", arguments: arguments) else {
+                return XCTFail("Ordered flows must parse into the dedicated flow request")
+            }
+            XCTAssertEqual(request.steps.count, count, "Repeated operations retain their explicit order")
+            XCTAssertTrue(request.steps.allSatisfy { $0.operation.target.identifier == "item" })
+        }
+    }
+
+    func testOrderedFlowRejectsUnknownNestedArgumentsAndUnsupportedOperations() throws {
+        let operation: [String: Any] = ["action": "tap", "target": ["identifier": "item"]]
+        let expectation: [String: Any] = ["kind": "visible", "target": ["identifier": "item"]]
+        let step = ["operation": operation, "expectation": expectation]
+        let baseline: [String: Any] = [
+            "goal": "Advance the control", "bundle_id": "app.test", "steps": [step],
+            "completion": ["kind": "visible", "target": ["identifier": "done"]],
+        ]
+        var invalidInputs: [[String: Any]] = []
+        var input = baseline
+        input["max_steps"] = 2
+        invalidInputs.append(input)
+        input = baseline
+        input["steps"] = []
+        invalidInputs.append(input)
+        input["steps"] = Array(repeating: step, count: 13)
+        invalidInputs.append(input)
+        for action in ["launch", "clear", "long_press", "tap_point"] {
+            input = baseline
+            input["steps"] = [["operation": ["action": action, "target": ["identifier": "item"]],
+                                "expectation": expectation]]
+            invalidInputs.append(input)
+        }
+        for (field, value) in [("ref", "old:1"), ("observation_id", "old-frame")] {
+            var unboundOperation = operation
+            unboundOperation[field] = value
+            input = baseline
+            input["steps"] = [["operation": unboundOperation, "expectation": expectation]]
+            invalidInputs.append(input)
+        }
+        input = baseline
+        input["steps"] = [["operation": ["action": "tap", "target": ["identifier": "item", "ref": "old:1"]],
+                            "expectation": expectation]]
+        invalidInputs.append(input)
+        input["steps"] = [["operation": operation, "expectation": expectation, "retry": true]]
+        invalidInputs.append(input)
+        input["steps"] = [["operation": operation,
+                            "expectation": ["kind": "visible", "target": ["identifier": "item"], "observation_id": "old-frame"]]]
+        invalidInputs.append(input)
+        input = baseline
+        input["completion"] = ["kind": "visible", "target": ["identifier": "done", "x": 0.5]]
+        invalidInputs.append(input)
+        input = baseline
+        input["steps"] = [["operation": operation]]
+        invalidInputs.append(input)
+        for invalid in invalidInputs {
+            let arguments = String(decoding: try JSONSerialization.data(withJSONObject: invalid), as: UTF8.self)
+            XCTAssertThrowsError(try IOSPhoneControlToolExecutor.request(name: "phone_run_flow", arguments: arguments), arguments)
         }
     }
 

@@ -14,6 +14,18 @@ struct IOSPhoneControlSavedTaskDraft: Identifiable {
     }
 }
 
+enum IOSPhoneControlSavedTaskExample {
+    static let title = "备忘录搜索"
+    static let prompt = """
+    在备忘录中搜索 {输入}。
+    1. 打开备忘录，确认已进入备忘录页面。
+    2. 找到并点开搜索框，确认搜索框为空；若有旧内容，先清空并确认。
+    3. 在空的搜索框中输入 {输入}，核对搜索框显示的完整内容与本次输入一致。
+    4. 确认已经进入搜索结果页，停留在该页。不要打开、改写或删除笔记。
+    每一步都根据当前画面重新定位并核验结果；遇到不匹配时停止并说明。
+    """
+}
+
 struct IOSPhoneControlSavedTasksView: View {
     @Environment(\.dismiss) private var dismiss
     private let sharedSettings: IOSSharedSettingsStore
@@ -182,7 +194,6 @@ struct IOSPhoneControlSavedTaskEditor: View {
             savedTaskHeader(draft.actionID == nil ? "创建任务" : "编辑任务", backLabel: "取消编辑") { dismiss() }
             ScrollView {
                 VStack(spacing: 16) {
-                    if let errorMessage { savedTaskError(errorMessage) }
                     AmberFormGroup {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("任务标题").font(.headline)
@@ -199,7 +210,20 @@ struct IOSPhoneControlSavedTaskEditor: View {
                                 .accessibilityIdentifier("phoneSavedTaskEditorPrompt")
                         }.padding(14)
                     }
+                    if draft.actionID == nil && draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        AmberFormGroup {
+                            savedTaskAction("填入搜索示例", systemImage: "text.badge.plus") {
+                                if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    draft.title = IOSPhoneControlSavedTaskExample.title
+                                }
+                                draft.prompt = IOSPhoneControlSavedTaskExample.prompt
+                            }
+                            .accessibilityIdentifier("phoneSavedTaskFillSearchExample")
+                        }
+                    }
+                    savedTaskFootnote("可以把目标写成步骤，并为每步写清完成条件。Amber 会根据当前画面重新定位，每步执行后再核验结果。")
                     savedTaskFootnote("标题最多 40 字，任务内容最多 2000 字。需要每次填写内容时，在任务中写入 {输入}；也支持 {輸入} 和 {input}，它们共用同一项输入。")
+                    if let errorMessage { savedTaskError(errorMessage) }
                     AmberFormGroup {
                         savedTaskAction("保存任务", systemImage: "checkmark") { save() }
                             .accessibilityIdentifier("phoneSavedTaskSave")
@@ -243,7 +267,6 @@ struct IOSPhoneControlSavedTaskRunInput: View {
             savedTaskHeader("填写任务输入", backLabel: "取消运行") { dismiss() }
             ScrollView {
                 VStack(spacing: 16) {
-                    if let errorMessage { savedTaskError(errorMessage) }
                     AmberFormGroup {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(verbatim: action.title).font(.headline)
@@ -262,6 +285,7 @@ struct IOSPhoneControlSavedTaskRunInput: View {
                         }.padding(14)
                     }
                     savedTaskFootnote("这项输入会填入模板中的所有输入占位符。运行后，Amber 会在新对话中处理本次目标。")
+                    if let errorMessage { savedTaskError(errorMessage) }
                     AmberFormGroup {
                         savedTaskAction("运行任务", systemImage: "play.fill") { run() }
                             .disabled(hasPreparedHandoff)

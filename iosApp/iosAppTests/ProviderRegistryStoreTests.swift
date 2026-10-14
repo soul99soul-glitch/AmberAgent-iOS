@@ -411,6 +411,14 @@ final class ProviderRegistryStoreTests: XCTestCase {
         XCTAssertFalse(snapshotFailure.contains("服务商配置"))
     }
 
+    func testURLSessionConnectionLossIsNotClassifiedFromDigitsInDiagnosticAddresses() {
+        let error = #"Exception in http request: Error Domain=NSURLErrorDomain Code=-1005 "网络连接已中断。" UserInfo={NSErrorPeerAddressKey=<CFData 0x1401 [0x1e404e5a8]>, NSErrorFailingURLStringKey=https://api.deepseek.com/v1/chat/completions}"#
+        let message = ChatViewModel.userFacingGenerationError(error, modelId: "deepseek-flash")
+        XCTAssertTrue(message.hasPrefix("网络连接失败"))
+        XCTAssertFalse(message.contains("API Key 无效"))
+        XCTAssertFalse(message.contains("模型不可用"))
+    }
+
     private func makeSettings(
         baseUrl: String = "https://api.example.com/v1",
         apiKey: String,

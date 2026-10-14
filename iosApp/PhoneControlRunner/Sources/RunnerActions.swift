@@ -16,6 +16,18 @@ enum W3CActions {
   /// The shortest hold an explicit pause between down and up gets.
   static let minimumHold = 0.01
 
+  static func singleTapFallbackPoint(_ paths: [[[String: Any]]]) -> CGPoint? {
+    guard paths.count == 1, paths[0].count == 2,
+          let down = paths[0].first, let up = paths[0].last,
+          down["type"] as? String == "down", up["type"] as? String == "up",
+          let downAt = (down["t"] as? NSNumber)?.doubleValue,
+          let upAt = (up["t"] as? NSNumber)?.doubleValue,
+          upAt - downAt <= tapHold,
+          let x = (down["x"] as? NSNumber)?.doubleValue,
+          let y = (down["y"] as? NSNumber)?.doubleValue else { return nil }
+    return CGPoint(x: x, y: y)
+  }
+
   /// Turns one W3C pointer source's `actions` into touch paths (one per down…up). Moves while the
   /// pointer is down are sampled every ~16 ms; a down…up with no time between them is held for
   /// `tapHold` so iOS sees a tap, and one with time between them for at least `minimumHold`.
@@ -206,6 +218,18 @@ enum ScreenOrientation {
 enum AlertMatch {
   static func same(_ text: String?, _ buttons: [String], _ otherText: String?, _ otherButtons: [String]) -> Bool {
     (text ?? "") == (otherText ?? "") && buttons == otherButtons
+  }
+
+  /// Amber supplies the observed dialog and one exact button; legacy WDA defaults
+  /// remain in the caller and never enter this guarded selection.
+  static func guardedButtonIndex(body: [String: Any], text: String, pid: Int, buttons: [String]) -> Int? {
+    guard let expectedText = body["expected_text"] as? String,
+          let expectedPID = (body["expected_pid"] as? NSNumber)?.intValue,
+          let expectedButtons = body["expected_buttons"] as? [String],
+          let name = body["name"] as? String,
+          expectedPID == pid, same(expectedText, expectedButtons, text, buttons) else { return nil }
+    let matches = buttons.indices.filter { buttons[$0] == name }
+    return matches.count == 1 ? matches[0] : nil
   }
 }
 

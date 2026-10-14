@@ -205,7 +205,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             } catch {
                 return Self.applicationFailure(error)
             }
-        case .observe(let maxNodes, let includeScreenshot):
+        case .observe(let maxNodes, let includeScreenshot, let includeScreenText):
             switch await prepareRunner() {
             case .outcome(let outcome):
                 return outcome
@@ -215,15 +215,15 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     try Task.checkCancellation()
                     let observation = try await runner.observe(maxNodes: maxNodes, includeScreenSize: true)
                     var parts: [UIMessagePart] = [UIMessagePart.Text(text: observation.compactText, metadata: nil)]
-                    if includeScreenshot {
-                        let screenshot = try await runner.screenshotObservation()
-                        parts.append(UIMessagePart.Text(text: Self.json([
-                            "screenshot_observation_id": screenshot.observationID,
-                            "screen_width_points": screenshot.width,
-                            "screen_height_points": screenshot.height,
-                            "tap_point_coordinates": "x/y 为整张截图上的位置比例，左上角是 (0,0)，中心是 (0.5,0.5)，范围 0 <= x,y < 1。只用于图中明确可见但没有可用 ref 的目标；使用本次 screenshot_observation_id 作为 observation_id，不能直接传图片像素。",
-                        ]), metadata: nil))
-                        parts.append(Self.imagePart(screenshot.data))
+                    if let diagnostics = observation.diagnostics {
+                        parts.append(UIMessagePart.Text(text: Self.json(["observation_metrics": Self.object(diagnostics)]), metadata: nil))
+                    }
+                    parts.append(UIMessagePart.Text(text: Self.json([
+                        "alerts": Self.object(observation.alerts), "alert_actions_supported": observation.alertActionsSupported,
+                    ]), metadata: nil))
+                    if includeScreenshot || includeScreenText {
+                        parts += try await screenshotEvidence(runner: runner, includeImage: includeScreenshot,
+                                                              includeScreenText: includeScreenText)
                     }
                     return .filledParts(parts)
                 } catch {
@@ -237,7 +237,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             case .ready(let runner):
                 await reportActivity(Self.actionActivity(action))
                 guard !Task.isCancelled else { return Self.applicationFailure(CancellationError()) }
-                return Self.actionOutcome(await dispatch(action, runner: runner))
+                let receipt = await dispatch(action, runner: runner)
+                guard receipt == .completed else { return Self.actionOutcome(receipt) }
+                return await observeCompletedAction(runner: runner)
             }
         case .verifiedAct(let action, let expectation):
             switch await prepareRunner() {
@@ -273,6 +275,67 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 return await observationResult(fields: fields, observation: result.observation,
                                                needsScreenshot: false, runner: runner)
             }
+        case .collectList(let request):
+            switch await prepareRunner() {
+            case .outcome(let outcome): return outcome
+            case .ready(let runner):
+                let collector = IOSPhoneListCollection(deps: .init(
+                    observe: { try await runner.observe(maxNodes: 1_000, includeScreenSize: true) },
+                    act: { await self.dispatch($0, runner: runner) },
+                    isCurrent: { [controller, runID] in controller.canDispatchAction(runID: runID) },
+                    reportActivity: reportActivity,
+                    observeAfterAction: {
+                        try await runner.observe(maxNodes: 1_000, includeScreenSize: true, settleBudgetMs: 700)
+                    }))
+                let result = await collector.run(request)
+                var fields: [String: Any] = [
+                    "status": result.status.rawValue, "reason": result.reason,
+                    "items": Self.object(result.items), "coverage": result.coverage.rawValue,
+                    "deduplication": result.deduplication.rawValue,
+                    "screen_count": result.screenCount, "swipe_count": result.swipeCount,
+                    "item_limit_reached": result.reachedItemLimit,
+                    "outcome": result.status == .unknown ? "unknown" : (result.swipeCount == 0 ? "not_sent" : "completed"),
+                    "retry_safe": result.swipeCount == 0 && result.status != .unknown,
+                ]
+                if let problem = result.unknownProblem { fields["code"] = problem.kind.rawValue }
+                if result.status == .unknown {
+                    return .outcomeUnknown([UIMessagePart.Text(text: Self.json(fields), metadata: nil)])
+                }
+                return await observationResult(fields: fields, observation: result.observation,
+                                               needsScreenshot: false, runner: runner)
+            }
+        case .runFlow(let request):
+            switch await prepareRunner() {
+            case .outcome(let outcome): return outcome
+            case .ready(let runner):
+                let flow = IOSPhoneFlow(deps: .init(
+                    observe: { try await runner.observe(maxNodes: 1_000, includeScreenSize: true) },
+                    act: { await self.dispatch($0, runner: runner) },
+                    isCurrent: { [controller, runID] in controller.canDispatchAction(runID: runID) },
+                    reportActivity: reportActivity,
+                    observeAfterAction: {
+                        try await runner.observe(maxNodes: 1_000, includeScreenSize: true, settleBudgetMs: 700)
+                    }))
+                let result = await flow.run(request)
+                let acknowledged = result.steps.contains { $0.outcome == "completed" }
+                var fields: [String: Any] = [
+                    "status": result.status.rawValue, "reason": Self.flowReason(result.reason),
+                    "reason_code": result.reason,
+                    "steps": Self.object(result.steps), "metrics": Self.object(result.metrics),
+                    "goal_satisfied": result.status == .completed,
+                    "fresh_observation_available": result.observation != nil,
+                    "outcome": result.status == .unknown ? "unknown" : (acknowledged ? "completed" : "not_sent"),
+                    "retry_safe": !acknowledged && result.status != .unknown,
+                ]
+                if let verification = result.verification { fields["verification"] = Self.object(verification) }
+                if let problem = result.unknownProblem { fields["code"] = problem.kind.rawValue }
+                if result.status == .unknown {
+                    return .outcomeUnknown([UIMessagePart.Text(text: Self.json(fields), metadata: nil)])
+                }
+                return await observationResult(fields: fields, observation: result.observation,
+                                               needsScreenshot: result.needsScreenshot, runner: runner,
+                                               requiresReplan: result.status == .handback)
+            }
         case .runGoal(let request):
             guard Self.phoneActionMode() != .off else {
                 return .filled(Self.json([
@@ -298,7 +361,10 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     mode: { Self.phoneActionMode() },
                     isCurrent: { [controller, runID] in controller.canDispatchAction(runID: runID) },
                     reportActivity: reportActivity,
-                    configurationRevision: { IOSSharedSettingsStore.loadPersistedJevSettings().revision }
+                    configurationRevision: { IOSSharedSettingsStore.loadPersistedJevSettings().revision },
+                    observeAfterAction: {
+                        try await runner.observe(maxNodes: 1_000, includeScreenSize: true, settleBudgetMs: 700)
+                    }
                 ))
                 let result = await loop.run(request)
                 var fields: [String: Any] = [
@@ -319,6 +385,36 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 return await observationResult(fields: fields, observation: result.observation,
                                                needsScreenshot: result.needsScreenshot, runner: runner)
             }
+        }
+    }
+
+    private func observeCompletedAction(runner: PhoneRunnerClient) async -> IOSAgentToolOutcome {
+        var fields: [String: Any] = [
+            "outcome": "completed", "retry_safe": false,
+            "visual_actions_available": false,
+            "message": "动作已有执行回执；附带的新树可直接用 ref 核验和定位。原截图已失效，下一次坐标动作先重新截图；不能据此宣称业务完成或重放动作。",
+        ]
+        if let diagnostics = await runner.latestOperationDiagnostics {
+            fields["action_metrics"] = Self.object(diagnostics)
+        }
+        guard !Task.isCancelled, controller.canDispatchAction(runID: runID) else {
+            fields["fresh_observation_available"] = false
+            return .filled(Self.json(fields))
+        }
+        await reportActivity(.verifying)
+        do {
+            let after = try await runner.observe(maxNodes: 1_000, includeScreenSize: true, settleBudgetMs: 700)
+            guard !Task.isCancelled, controller.canDispatchAction(runID: runID) else {
+                fields["fresh_observation_available"] = false
+                return .filled(Self.json(fields))
+            }
+            fields["fresh_observation_available"] = true
+            return await observationResult(fields: fields, observation: after, needsScreenshot: false, runner: runner)
+        } catch {
+            // Reading the effect cannot change an acknowledged mutation to not_sent.
+            fields["fresh_observation_available"] = false
+            fields["observation_error"] = error.localizedDescription
+            return .filled(Self.json(fields))
         }
     }
 
@@ -359,29 +455,69 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     }
 
     private func observationResult(fields: [String: Any], observation: PhoneObservation?,
-                                   needsScreenshot: Bool, runner: PhoneRunnerClient) async -> IOSAgentToolOutcome {
+                                   needsScreenshot: Bool, runner: PhoneRunnerClient,
+                                   requiresReplan: Bool = false) async -> IOSAgentToolOutcome {
+        var fields = fields
+        if let stability = observation?.screenStability { fields["screen_stability"] = Self.object(stability) }
+        if let diagnostics = observation?.diagnostics { fields["observation_metrics"] = Self.object(diagnostics) }
+        if let observation {
+            fields["alerts"] = Self.object(observation.alerts)
+            fields["alert_actions_supported"] = observation.alertActionsSupported
+        }
         var parts: [UIMessagePart] = [UIMessagePart.Text(text: Self.json(fields), metadata: nil)]
         if let observation { parts.append(UIMessagePart.Text(text: observation.compactText, metadata: nil)) }
         if needsScreenshot, observation != nil, !Task.isCancelled, controller.ownerRunID == runID {
             do {
-                let screenshot = try await runner.screenshotObservation()
-                parts.append(UIMessagePart.Text(text: Self.json([
-                    "screenshot_observation_id": screenshot.observationID,
-                    "screen_width_points": screenshot.width, "screen_height_points": screenshot.height,
-                    "message": "已附新截图交由主模型定位；坐标为整张图的 0 到 1 比例，不可重放之前的动作。",
-                ]), metadata: nil))
-                parts.append(Self.imagePart(screenshot.data))
+                parts += try await screenshotEvidence(runner: runner, includeImage: true, includeScreenText: false)
             } catch {
                 parts.append(UIMessagePart.Text(text: Self.json([
                     "screenshot_available": false, "reason": error.localizedDescription,
                 ]), metadata: nil))
             }
         }
-        return .filledParts(parts)
+        return requiresReplan ? .replanRequired(parts) : .filledParts(parts)
+    }
+
+    private func screenshotEvidence(runner: PhoneRunnerClient, includeImage: Bool,
+                                    includeScreenText: Bool) async throws -> [UIMessagePart] {
+        try Task.checkCancellation()
+        let screenshot = try await runner.screenshotObservation()
+        var parts: [UIMessagePart] = [UIMessagePart.Text(text: Self.json([
+            "screenshot_observation_id": screenshot.observationID,
+            "screen_width_points": screenshot.width, "screen_height_points": screenshot.height,
+            "tap_point_coordinates": "x/y 是本次整张截图的 0 到 1 比例；OCR 位置也来自这张截图。无法确认控件区域时先请求图像，不重放旧坐标。",
+        ]), metadata: nil)]
+        if includeScreenText {
+            let text = try await IOSPhoneScreenText.recognize(screenshot)
+            try Task.checkCancellation()
+            guard controller.canDispatchAction(runID: runID) else { throw CancellationError() }
+            parts.append(UIMessagePart.Text(text: Self.json(["screen_text": Self.object(text)]), metadata: nil))
+        }
+        if includeImage { parts.append(Self.imagePart(screenshot.data)) }
+        return parts
     }
 
     private static func object<T: Encodable>(_ value: T) -> Any {
         try! JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
+    }
+
+    private static func flowReason(_ reason: String) -> String {
+        switch reason.components(separatedBy: ":").first {
+        case "completed": "全部步骤和最终完成条件均已核验。"
+        case "task_stopped": "当前自动操作已暂停或停止；已执行的步骤保留回执。"
+        case "time_budget_exhausted": "已达到流程时间预算；请根据最新界面继续。"
+        case "foreground_app_changed": "前台 App 或进程发生变化，原流程已结束。"
+        case "observation_backend_changed": "界面读取方式发生变化，需要重新观察。"
+        case "screen_bounds_changed": "屏幕尺寸发生变化，需要重新定位。"
+        case "fresh_observation_required": "没有获得新的界面证据，原流程已结束。"
+        case "step_not_executable": "当前步骤的目标未能唯一定位或不可执行，需要根据最新界面重新规划。"
+        case "action_not_sent": "当前步骤未发送，请依据返回的原因重新规划。"
+        case "step_verification_failed": "动作已有执行回执，但该步验收条件尚未确认。"
+        case "completion_not_satisfied": "步骤已结束，最终完成条件尚未确认。"
+        case "invalid_request": "流程参数不符合执行条件。"
+        case "observation_interrupted": "界面读取中断；已执行的步骤不能重放。"
+        default: reason
+        }
     }
 
     private static func phoneActionMode() -> IOSJevMode {
@@ -414,7 +550,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     static func actionActivity(_ action: PhoneAction) -> AgentPhoneControlActivityPhase {
         switch action {
         case .launch: .openingApp
-        case .tap, .tapPoint: .tapping
+        case .tap, .tapPoint, .longPress, .longPressPoint, .tapAlert: .tapping
         case .type, .clear: .typing
         case .swipe, .swipePoint: .swiping
         case .home: .failed // The phone tool schema does not expose Home.
@@ -434,11 +570,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         case status
         case apps(query: String, offset: Int, limit: Int)
         case addApp(bundleID: String)
-        case observe(maxNodes: Int, includeScreenshot: Bool)
+        case observe(maxNodes: Int, includeScreenshot: Bool, includeScreenText: Bool = false)
         case act(PhoneAction)
         case verifiedAct(PhoneAction, IOSPhoneGoalExpectation)
         case runGoal(IOSPhoneGoalRequest)
+        case runFlow(IOSPhoneFlowRequest)
         case scrollUntil(IOSPhoneScrollSearchRequest)
+        case collectList(IOSPhoneListCollectionRequest)
         case stop
     }
 
@@ -472,15 +610,24 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             }
             return .addApp(bundleID: input.bundleID)
         case "phone_observe":
-            guard Set(object.keys).isSubset(of: ["max_nodes", "include_screenshot"]) else {
-                throw InvalidArguments("phone_observe 只接受 max_nodes 和 include_screenshot。")
+            guard Set(object.keys).isSubset(of: ["max_nodes", "include_screenshot", "include_screen_text"]) else {
+                throw InvalidArguments("phone_observe 只接受 max_nodes、include_screenshot 和 include_screen_text。")
             }
             let input = try JSONDecoder().decode(ObserveArguments.self, from: data)
             let maximum = input.maxNodes ?? 500
             guard (1...2000).contains(maximum) else {
                 throw InvalidArguments("max_nodes 必须是 1 到 2000 的整数。")
             }
-            return .observe(maxNodes: maximum, includeScreenshot: input.includeScreenshot ?? false)
+            return .observe(maxNodes: maximum, includeScreenshot: input.includeScreenshot ?? false,
+                            includeScreenText: input.includeScreenText ?? false)
+        case "phone_collect_list":
+            guard Set(object.keys).isSubset(of: ["container", "direction", "max_swipes", "max_items"]) else {
+                throw InvalidArguments("phone_collect_list 包含未知参数。")
+            }
+            try validateTargetObject(object["container"])
+            let request = try JSONDecoder().decode(IOSPhoneListCollectionRequest.self, from: data)
+            try request.validate()
+            return .collectList(request)
         case "phone_scroll_until":
             guard Set(object.keys).isSubset(of: ["target", "container", "direction", "max_swipes"]) else {
                 throw InvalidArguments("phone_scroll_until 包含未知参数。")
@@ -490,6 +637,23 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             let request = try JSONDecoder().decode(IOSPhoneScrollSearchRequest.self, from: data)
             try request.validate()
             return .scrollUntil(request)
+        case "phone_run_flow":
+            guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "steps", "completion"]) else {
+                throw InvalidArguments("phone_run_flow 包含未知参数。")
+            }
+            try validateExpectationObject(object["completion"])
+            guard let steps = object["steps"] as? [[String: Any]] else { throw InvalidArguments("steps 必须是有序步骤数组。") }
+            for step in steps {
+                guard Set(step.keys).isSubset(of: ["operation", "expectation"]) else {
+                    throw InvalidArguments("流程步骤包含未知参数。")
+                }
+                try validateOperationObject(step["operation"])
+                try validateExpectationObject(step["expectation"])
+            }
+            let request = try JSONDecoder().decode(IOSPhoneFlowRequest.self, from: data)
+            try request.validate()
+            guard IOSPhoneControlController.validBundleID(request.bundleID) else { throw InvalidArguments("bundle_id 无效。") }
+            return .runFlow(request)
         case "phone_run_goal":
             guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "actions", "completion", "max_steps"]) else {
                 throw InvalidArguments("phone_run_goal 包含未知参数。")
@@ -497,10 +661,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             try validateExpectationObject(object["completion"])
             guard let actions = object["actions"] as? [[String: Any]] else { throw InvalidArguments("actions 必须是动作数组。") }
             for action in actions {
-                guard Set(action.keys).isSubset(of: ["action", "target", "text", "direction"]) else {
-                    throw InvalidArguments("候选动作包含未知参数。")
-                }
-                try validateTargetObject(action["target"])
+                try validateOperationObject(action)
             }
             let request = try JSONDecoder().decode(IOSPhoneGoalRequest.self, from: data)
             try request.validate()
@@ -518,6 +679,23 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             case "tap":
                 keys = ["action", "ref"]
                 action = .tap(ref: try required(input.ref, "ref"))
+            case "tap_alert":
+                keys = ["action", "ref"]
+                action = .tapAlert(ref: try required(input.ref, "ref"))
+            case "long_press":
+                keys = ["action", "ref", "duration_ms"]
+                let duration = input.durationMs ?? 750
+                guard (300...3000).contains(duration) else { throw InvalidArguments("duration_ms 必须是 300 到 3000 的整数。") }
+                action = .longPress(ref: try required(input.ref, "ref"), durationMs: duration)
+            case "long_press_point":
+                keys = ["action", "observation_id", "x", "y", "duration_ms"]
+                let duration = input.durationMs ?? 750
+                guard (300...3000).contains(duration), let x = input.x, let y = input.y,
+                      x.isFinite, y.isFinite, (0..<1).contains(x), (0..<1).contains(y) else {
+                    throw InvalidArguments("long_press_point 需要最新截图的比例位置，duration_ms 为 300 到 3000。")
+                }
+                action = .longPressPoint(observationID: try required(input.observationID, "observation_id"),
+                                        x: x, y: y, durationMs: duration)
             case "tap_point":
                 keys = ["action", "observation_id", "x", "y"]
                 guard let x = input.x, let y = input.y,
@@ -547,7 +725,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 }
                 action = .swipe(ref: try required(input.ref, "ref"), direction: direction)
             default:
-                throw InvalidArguments("action 必须是 launch、tap、tap_point、type、clear、swipe 或 swipe_point。")
+                throw InvalidArguments("action 必须是 launch、tap、tap_point、tap_alert、long_press、long_press_point、type、clear、swipe 或 swipe_point。")
             }
             guard Set(object.keys).isSubset(of: keys.union(["expectation"])) else {
                 throw InvalidArguments("\(input.action) 包含不适用的参数。")
@@ -561,6 +739,14 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         default:
             throw InvalidArguments("未知的手机控制工具：\(name)。")
         }
+    }
+
+    private static func validateOperationObject(_ value: Any?) throws {
+        guard let object = value as? [String: Any],
+              Set(object.keys).isSubset(of: ["action", "target", "text", "direction"]) else {
+            throw InvalidArguments("语义动作包含未知参数或不是对象。")
+        }
+        try validateTargetObject(object["target"])
     }
 
     private static func validateExpectationObject(_ value: Any?) throws {
@@ -687,8 +873,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     private struct ObserveArguments: Decodable {
         let maxNodes: Int?
         let includeScreenshot: Bool?
+        let includeScreenText: Bool?
         enum CodingKeys: String, CodingKey {
-            case maxNodes = "max_nodes", includeScreenshot = "include_screenshot"
+            case maxNodes = "max_nodes", includeScreenshot = "include_screenshot", includeScreenText = "include_screen_text"
         }
     }
 
@@ -703,11 +890,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         let y: Double?
         let endX: Double?
         let endY: Double?
+        let durationMs: Int?
         let expectation: IOSPhoneGoalExpectation?
         enum CodingKeys: String, CodingKey {
             case action, bundleID = "bundle_id", ref, text, direction
             case observationID = "observation_id", x, y
             case endX = "end_x", endY = "end_y", expectation
+            case durationMs = "duration_ms"
         }
     }
 

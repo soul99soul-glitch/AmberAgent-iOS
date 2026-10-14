@@ -4,7 +4,7 @@ import Foundation
 /// Native iPhone tools are exposed for user-started runs while the persistent switch is enabled.
 enum IOSPhoneControlToolCatalog {
     static let toolNames: Set<String> = [
-        "phone_status", "phone_apps", "phone_add_app", "phone_observe", "phone_act", "phone_run_goal", "phone_scroll_until", "phone_stop",
+        "phone_status", "phone_apps", "phone_add_app", "phone_observe", "phone_act", "phone_run_goal", "phone_run_flow", "phone_scroll_until", "phone_collect_list", "phone_stop",
     ]
 
     static func isPhoneTool(name: String) -> Bool {
@@ -33,20 +33,26 @@ enum IOSPhoneControlToolCatalog {
             ),
             declaration(
                 name: "phone_observe",
-                description: "读取同一部 iPhone 前台授权 App 的新鲜 UI tree，包含文字、元素 ref 和位置。首次使用会按本任务授权启动控制连接，启动失败必须停止本次手机操作，不重试或换用其他控制途径。默认不截图；UI 树缺少弹窗关闭按钮、只有空容器或无法定位目标时，设置 include_screenshot=true 获取图像。截图会附带 screenshot_observation_id，可用 phone_act tap_point 点击图中明确可见的目标，不要靠滑动空容器猜测关闭。ref 只属于最近一次观察，执行动作或切换 App 后必须重新观察。仅适用于用户已授权的手机自控任务。",
-                schema: #"{"type":"object","properties":{"max_nodes":{"type":"integer","minimum":1,"maximum":2000,"description":"最多返回的 UI 节点数，默认 500；若 truncated=true 且缺少目标控件，可提高到 2000 重新观察。"},"include_screenshot":{"type":"boolean","default":false,"description":"明确需要视觉判断时才请求 PNG 截图。"}},"required":[],"additionalProperties":false}"#,
+                description: "读取当前前台授权 App 的新鲜 UI tree，含文字、位置和最新 ref。默认不截图、不运行 OCR。树缺少可见文字时设置 include_screen_text=true：端侧 OCR 返回文字、置信度和本次截图的比例位置；无法确认按钮语义或只有图标时设置 include_screenshot=true。两者可同时请求。OCR 不提供原生 ref；坐标只绑定返回的 screenshot_observation_id，操作、切 App 或新观察后失效。当前观察可能带 alerts 和 alert_actions_supported，可用 tap_alert 精确选择弹窗按钮，不自动批准权限。首次会启动本机连接；启动失败停止并报告，不更换控制途径。",
+                schema: #"{"type":"object","properties":{"max_nodes":{"type":"integer","minimum":1,"maximum":2000,"description":"最多返回的 UI 节点数，默认 500；若 truncated=true 且缺少目标控件，可提高到 2000 重新观察。"},"include_screenshot":{"type":"boolean","default":false,"description":"明确需要视觉判断时才请求 PNG 截图。"},"include_screen_text":{"type":"boolean","default":false,"description":"需要读取树缺少的可见文字时，对本次截图做端侧OCR；无需同时发送图像，图标仍需截图。"}},"required":[],"additionalProperties":false}"#,
                 effect: "pure"
             ),
             declaration(
                 name: "phone_act",
-                description: "操作同一部 iPhone 的授权 App。目标尚未加入允许列表时，先 phone_apps 查询准确 ID，再 phone_add_app 添加。首次使用会按本任务授权启动控制连接，启动失败必须停止本次手机操作，不重试或换用其他控制途径。launch 需要 bundle_id；优先用 tap/type/swipe 操作最近一次 phone_observe 的 ref；若目标在截图中可见却没有可用 ref，使用 tap_point：observation_id 必须来自最近一次 include_screenshot=true 返回的 screenshot_observation_id，x/y 是整张截图上的位置比例（左上角 0,0，中心 0.5,0.5，均须小于 1），不能传图片像素。以整张截图为坐标系，先确认目标可点击区域的边界，再取中心。不要用 tap 点击空容器代替具体目标。type 还需 text，向输入框追加文字；需要替换原内容时，先用 clear 清空最近观察中明确选定的非密码输入框，并附 value_equals 空字符串验收；只有新观察确认空值后才能用新 ref 输入，不要覆盖用户未要求改写的内容。clear 不接受 text；swipe 还需 direction，表示手指移动方向。swipe_point 使用截图上的起点 x/y 和终点 end_x/end_y，均为 0 到 1 之间的位置比例，滑动持续 300ms。仅对截图中明确可见的区域使用；顶部展开的系统进度卡挡住控件时，可从卡片中间文字区域上滑收起，避开 App 图标和取消按钮，随后重新观察确认。ref 动作会重新定位唯一元素；tap_point/swipe_point 只接受本次截图和匹配的前台 App、屏幕尺寸，不自动重试。completed 只表示执行回执，须再次观察验证业务效果；界面未变化时，对照新截图检查点击位置是否落在目标内，不据此认定控制连接失效；如需修正点击，必须使用新截图重新定位，遵守本任务的动作限制，不重放旧 observation_id。可附 expectation 指定 visible、absent 或 value_equals 验收条件：动作后自动读取新界面，条件尚未满足时短暂等待并重读（最多 4 次观察，继续观察的时间预算 2 秒，不中断在途请求），分别返回执行回执与 verification；等待不会再次执行动作；absent 必须指定仍可见的 anchor，且之前观察确实出现过目标。验证不足时可能附截图交回主模型，不能把 completed 当作验收成功。unknown 表示可能已执行，必须停止任务并由用户核对，禁止重放。仅适用于用户已授权的手机自控任务。",
-                schema: addingExpectation(to: #"{"type":"object","properties":{"action":{"type":"string","enum":["launch","tap","tap_point","type","clear","swipe","swipe_point"]},"bundle_id":{"type":"string","minLength":1,"description":"launch 的授权 App bundle ID。"},"ref":{"type":"string","minLength":1,"description":"tap/type/clear/swipe 的最新 UI tree 元素引用。"},"observation_id":{"type":"string","minLength":1,"description":"tap_point/swipe_point 必需：最新截图返回的 screenshot_observation_id。"},"x":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"点击位置或滑动起点占整张截图宽度的比例。"},"y":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"点击位置或滑动起点占整张截图高度的比例。"},"text":{"type":"string","minLength":1,"description":"type 追加输入的文字，不自动清空现有内容。"},"direction":{"type":"string","enum":["up","down","left","right"],"description":"swipe 的手指移动方向。"},"end_x":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"swipe_point 终点占整张截图宽度的比例。"},"end_y":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"swipe_point 终点占整张截图高度的比例。"}},"required":["action"],"additionalProperties":false}"#),
+                description: "操作同一部 iPhone 的授权 App。目标尚未加入允许列表时，先 phone_apps 查询准确 ID，再 phone_add_app 添加。首次使用会按本任务授权启动控制连接，启动失败必须停止本次手机操作，不重试或换用其他控制途径。launch 需要 bundle_id；优先用 tap/type/swipe 操作最近一次 phone_observe 的 ref；若目标在截图中可见却没有可用 ref，使用 tap_point：observation_id 必须来自最近一次截图或 include_screen_text 结果的 screenshot_observation_id，x/y 是整张截图上的位置比例（左上角 0,0，中心 0.5,0.5，均须小于 1），不能传图片像素。以整张截图为坐标系，先确认目标可点击区域的边界，再取中心。不要用 tap 点击空容器代替具体目标。type 还需 text，向输入框追加文字；需要替换原内容时，先用 clear 清空最近观察中明确选定的非密码输入框，并附 value_equals 空字符串验收；只有新观察确认空值后才能用新 ref 输入，不要覆盖用户未要求改写的内容。clear 不接受 text；swipe 还需 direction，表示手指移动方向。swipe_point 使用截图上的起点 x/y 和终点 end_x/end_y，均为 0 到 1 之间的位置比例，滑动持续 300ms。long_press 使用最新 ref，long_press_point 使用最新截图比例位置；duration_ms 默认750、范围300到3000。tap_alert 使用本次 alerts 中的按钮 ref，绑定当时的弹窗身份；只支持当前授权 App 树内的弹窗，缺 runner 能力时不操作，不自动同意权限。仅对截图中明确可见的区域使用；顶部展开的系统进度卡挡住控件时，可从卡片中间文字区域上滑收起，避开 App 图标和取消按钮，随后重新观察确认。ref 动作会重新定位唯一元素；tap_point/swipe_point 只接受本次截图和匹配的前台 App、屏幕尺寸，不自动重试。completed 只表示执行回执；工具默认附动作后的新界面和耗时，可直接用其中的新 ref 继续定位，无需重复 phone_observe；业务效果仍须按新界面核验。fresh_observation_available=false 时先重新观察，不能重放已有回执的动作。界面未变化时，对照新截图检查点击位置是否落在目标内，不据此认定控制连接失效；如需修正点击，必须使用新截图重新定位，遵守本任务的动作限制，不重放旧 observation_id。可附 expectation 指定 visible、absent 或 value_equals 验收条件：动作后自动读取新界面，条件尚未满足时短暂等待并重读（最多 4 次观察，继续观察的时间预算 2 秒，不中断在途请求），分别返回执行回执与 verification；等待不会再次执行动作；absent 必须指定仍可见的 anchor，且之前观察确实出现过目标。验证不足时可能附截图交回主模型，不能把 completed 当作验收成功。unknown 表示可能已执行，必须停止任务并由用户核对，禁止重放。仅适用于用户已授权的手机自控任务。",
+                schema: addingExpectation(to: #"{"type":"object","properties":{"action":{"type":"string","enum":["launch","tap","tap_point","type","clear","swipe","swipe_point","long_press","long_press_point","tap_alert"]},"bundle_id":{"type":"string","minLength":1,"description":"launch 的授权 App bundle ID。"},"ref":{"type":"string","minLength":1,"description":"tap/type/clear/swipe/long_press/tap_alert 的最新 UI tree 元素引用。"},"observation_id":{"type":"string","minLength":1,"description":"tap_point/swipe_point/long_press_point 必需：最新截图或 OCR 结果返回的 screenshot_observation_id。"},"x":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"点击位置或滑动起点占整张截图宽度的比例。"},"y":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"点击位置或滑动起点占整张截图高度的比例。"},"text":{"type":"string","minLength":1,"description":"type 追加输入的文字，不自动清空现有内容。"},"direction":{"type":"string","enum":["up","down","left","right"],"description":"swipe 的手指移动方向。"},"end_x":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"swipe_point 终点占整张截图宽度的比例。"},"end_y":{"type":"number","minimum":0,"exclusiveMaximum":1,"description":"swipe_point 终点占整张截图高度的比例。"},"duration_ms":{"type":"integer","minimum":300,"maximum":3000,"default":750,"description":"long_press/long_press_point的按住时长。"}},"required":["action"],"additionalProperties":false}"#),
                 effect: "sideEffect"
             ),
             declaration(
                 name: "phone_run_goal",
                 description: "在当前前台授权 App 中执行一个小目标。先 phone_observe 获取实际控件，再提供精确 label/identifier 的有限 actions 和结构化 completion；Jev 只在最新界面能唯一定位的清单项中选动作，每项最多执行一次，每步重观察核验。适合导航、搜索和填写草稿，不用于发送消息、发布、支付、删除、登录等最终提交；这些交回主模型用原 phone_act。不会启动或添加 App。Jev 手机快速操作未启用、判断失败、需截图、无进展或超预算时返回 handback，由主模型读取最新树/截图继续，不需向用户重复索取已有授权。type 仅支持空的非敏感输入框，文字由你提供；不能猜控件或坐标。上限 12 步/60 秒，可用 max_steps 缩小。completed 仅在新界面满足 completion 时出现；steps 记录已经派发的项，handback 不表示它们未执行，禁止整体重放。unknown 必须停止核对。",
                 schema: goalSchema,
+                effect: "sideEffect"
+            ),
+            declaration(
+                name: "phone_run_flow",
+                description: "已确定连续几步的顺序、目标与核验条件时，优先合并为一个小流程，减少逐按钮请求主模型。遇到尚未显示的新题、未知页面或新的视觉判断时交回模型，不预猜后续答案。先打开目标 App 并观察实际控件，提供 1 到 12 个 steps，每步 operation 使用语义 label/identifier，expectation 指定动作后可核验的条件，completion 是最终条件。适合导航、搜索及空输入框草稿；最终发送、发布、支付、删除和登录交回主模型。每次从新界面开始，当前步骤只有唯一可执行目标才派发一次；核验成功后直接用新界面定位下一步，不逐步请求 Jev。不能保存 ref 或坐标，type 只接受空的非敏感输入框。条件尚未满足时只短暂重读，不重做动作；最多 4 次观察和 2 秒继续观察预算，整流程继续执行预算 60 秒。全部步骤和 completion 核验成功才 completed。handback 保留已执行 steps 和最新证据，并中止同轮排队的后续工具，主模型须重新规划，禁止整体重放；unknown 必须停止核对。不会添加或启动 App，不改变当前任务授权。",
+                schema: flowSchema,
                 effect: "sideEffect"
             ),
             declaration(
@@ -57,6 +63,17 @@ enum IOSPhoneControlToolCatalog {
                     "direction": ["type": "string", "enum": ["up", "down", "left", "right"]],
                     "max_swipes": ["type": "integer", "minimum": 1, "maximum": 8, "default": 3],
                 ], "required": ["target", "container", "direction"], "additionalProperties": false]),
+                effect: "sideEffect"
+            ),
+            declaration(
+                name: "phone_collect_list",
+                description: "读取当前 App 唯一已观察列表容器中的可见行，逐屏滑动采集文字；仅按稳定 identifier 去除相邻页可确认的重叠。无稳定身份时保留逐屏项目，同一项可能重复；保留自然阅读顺序。direction 是手指移动方向，仅 up/down；max_swipes 默认3、最多8，0表示只读当前屏；max_items 默认50、最多200。coverage 始终仅代表已观察屏幕，不表示完整列表或没有漏项。截断、歧义、无进展、App变化或预算耗尽交回最新证据；swipe_count记实际派发次数，unknown停止核对，不能整体重放。不会点击列表项目。",
+                schema: encodedSchema(["type": "object", "properties": [
+                    "container": targetSchema,
+                    "direction": ["type": "string", "enum": ["up", "down"]],
+                    "max_swipes": ["type": "integer", "minimum": 0, "maximum": 8, "default": 3],
+                    "max_items": ["type": "integer", "minimum": 1, "maximum": 200, "default": 50],
+                ], "required": ["container", "direction"], "additionalProperties": false]),
                 effect: "sideEffect"
             ),
             declaration(
@@ -90,17 +107,32 @@ enum IOSPhoneControlToolCatalog {
         encodedSchema(["type": "object", "properties": [
             "goal": ["type": "string", "minLength": 1, "maxLength": 1000],
             "bundle_id": ["type": "string", "description": "当前已打开的授权 App 的准确 ID。"],
-            "actions": ["type": "array", "minItems": 1, "maxItems": 12, "items": [
-                "type": "object", "properties": [
-                    "action": ["type": "string", "enum": ["tap", "type", "swipe"]],
-                    "target": targetSchema,
-                    "text": ["type": "string", "minLength": 1, "maxLength": 4000],
-                    "direction": ["type": "string", "enum": ["up", "down", "left", "right"]],
-                ], "required": ["action", "target"], "additionalProperties": false,
-            ]],
+            "actions": ["type": "array", "minItems": 1, "maxItems": 12, "items": operationSchema],
             "completion": expectationSchema,
             "max_steps": ["type": "integer", "minimum": 1, "maximum": 12, "default": 6],
         ], "required": ["goal", "bundle_id", "actions", "completion"], "additionalProperties": false])
+    }
+
+    private static var operationSchema: [String: Any] {
+        ["type": "object", "properties": [
+            "action": ["type": "string", "enum": ["tap", "type", "swipe"]],
+            "target": targetSchema,
+            "text": ["type": "string", "minLength": 1, "maxLength": 4000],
+            "direction": ["type": "string", "enum": ["up", "down", "left", "right"]],
+        ], "required": ["action", "target"], "additionalProperties": false]
+    }
+
+    private static var flowSchema: String {
+        encodedSchema(["type": "object", "properties": [
+            "goal": ["type": "string", "minLength": 1, "maxLength": 1000],
+            "bundle_id": ["type": "string", "minLength": 1],
+            "steps": ["type": "array", "minItems": 1, "maxItems": 12, "items": [
+                "type": "object", "properties": [
+                    "operation": operationSchema, "expectation": expectationSchema,
+                ], "required": ["operation", "expectation"], "additionalProperties": false,
+            ]],
+            "completion": expectationSchema,
+        ], "required": ["goal", "bundle_id", "steps", "completion"], "additionalProperties": false])
     }
 
     private static func addingExpectation(to schema: String) -> String {

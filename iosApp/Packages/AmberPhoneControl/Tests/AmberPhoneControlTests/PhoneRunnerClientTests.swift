@@ -63,6 +63,12 @@ final class PhoneRunnerClientTests: XCTestCase, @unchecked Sendable {
         let ref = try XCTUnwrap(observation.nodes[1].ref)
         let result = await client.act(.tap(ref: ref))
         XCTAssertEqual(result, .completed)
+        let latestDiagnostics = await client.latestOperationDiagnostics
+        let diagnostics = try XCTUnwrap(latestDiagnostics)
+        XCTAssertEqual(diagnostics.operation, .action)
+        XCTAssertEqual(diagnostics.httpRequestCount, 4)
+        XCTAssertEqual(diagnostics.requests.map(\.stage), [.activeApp, .elementLookup, .activeApp, .action])
+        XCTAssertTrue(diagnostics.durationMs >= diagnostics.requests.reduce(0) { $0 + $1.durationMs })
         let latest = await client.latestObservation
         XCTAssertNil(latest)
         let lookup = try XCTUnwrap(fixture.requests.first { $0.path == "/elements" })
@@ -112,6 +118,349 @@ final class PhoneRunnerClientTests: XCTestCase, @unchecked Sendable {
             }
             XCTAssertEqual(fixture.requests.filter { $0.path.hasSuffix("/click") }.count, 1)
         }
+    }
+
+    func testElementLongPressUsesFreshLookupAndBoundedSecondsThenConsumesReference() async throws {
+        for duration in [300, 750, 3_000] {
+            let fixture = Fixture(Fixture.observation + [
+                Fixture.active, .json("POST", "/elements", Fixture.oneElement), Fixture.active,
+                .json("POST", "/wda/element/FRESH/touchAndHold", #"{"value":null}"#),
+            ])
+            let client = try makeClient(fixture)
+            let observation = try await client.observe()
+            let ref = try XCTUnwrap(observation.nodes[1].ref)
+            let result = await client.act(.longPress(ref: ref, durationMs: duration))
+            XCTAssertEqual(result, .completed)
+            let request = try XCTUnwrap(fixture.requests.last)
+            let body = try JSONDecoder().decode(JSONValue.self, from: request.body)
+            XCTAssertEqual(body["duration"]?.number, Double(duration) / 1_000)
+            XCTAssertEqual(fixture.requests.dropFirst(3).map(\.path), ["/wda/activeAppInfo", "/elements", "/wda/activeAppInfo", "/wda/element/FRESH/touchAndHold"])
+            assertUnsent(await client.act(.longPress(ref: ref, durationMs: duration)), kind: .staleObservation)
+            XCTAssertEqual(fixture.requests.count, 7)
+        }
+    }
+
+    func testLongPressRejectsInvalidDurationStaleReferenceAndDisabledTargetsWithoutLookup() async throws {
+        for duration in [Int.min, 0, 299, 3_001, Int.max] {
+            let fixture = Fixture(Fixture.observation)
+            let client = try makeClient(fixture)
+            let observation = try await client.observe()
+            assertUnsent(await client.act(.longPress(ref: try XCTUnwrap(observation.nodes[1].ref), durationMs: duration)), kind: .invalidAction)
+            XCTAssertEqual(fixture.requests.count, 3)
+        }
+        let fixture = Fixture(Fixture.observation + Fixture.observation)
+        let client = try makeClient(fixture)
+        let stale = try await client.observe()
+        _ = try await client.observe()
+        assertUnsent(await client.act(.longPress(ref: try XCTUnwrap(stale.nodes[1].ref), durationMs: 750)), kind: .staleObservation)
+        XCTAssertEqual(fixture.requests.count, 6)
+        let disabled = Fixture(Fixture.inputObservation(type: "XCUIElementTypeButton", enabled: false))
+        let disabledClient = try makeClient(disabled)
+        let disabledObservation = try await disabledClient.observe()
+        assertUnsent(await disabledClient.act(.longPress(ref: try XCTUnwrap(disabledObservation.nodes[1].ref), durationMs: 750)), kind: .unsupportedNode)
+        XCTAssertEqual(disabled.requests.count, 3)
+    }
+
+    func testVisualLongPressUsesCurrentScreenshotGeometryAndW3CHold() async throws {
+        let fixture = Fixture(Fixture.popupObservation + Fixture.screenshot + Fixture.pointPreflight + [
+            .json("POST", "/actions", #"{"value":null}"#),
+        ])
+        let client = try makeClient(fixture)
+        _ = try await client.observe()
+        let screenshot = try await client.screenshotObservation()
+        let result = await client.act(.longPressPoint(observationID: screenshot.observationID, x: 0.5, y: 0.25, durationMs: 750))
+        XCTAssertEqual(result, .completed)
+        let body = try JSONDecoder().decode(JSONValue.self, from: XCTUnwrap(fixture.requests.last).body)
+        let source = try XCTUnwrap(body["actions"]?.array?.first)
+        XCTAssertEqual(source["type"]?.string, "pointer")
+        XCTAssertEqual(source["parameters"]?["pointerType"]?.string, "touch")
+        let actions = try XCTUnwrap(source["actions"]?.array)
+        XCTAssertEqual(actions.map { $0["type"]?.string }, ["pointerMove", "pointerDown", "pause", "pointerUp"])
+        XCTAssertEqual(actions[0]["x"]?.number, 201)
+        XCTAssertEqual(actions[0]["y"]?.number, 218.5)
+        XCTAssertEqual(actions[2]["duration"]?.number, 750)
+        let latest = await client.latestObservation
+        XCTAssertNil(latest)
+        assertUnsent(await client.act(.longPressPoint(observationID: screenshot.observationID, x: 0.5, y: 0.25, durationMs: 750)), kind: .staleObservation)
+        XCTAssertEqual(fixture.requests.filter { $0.path == "/actions" }.count, 1)
+    }
+
+    func testVisualLongPressRejectsMissingEvidenceInvalidPointsAndRotationWithoutSending() async throws {
+        let missing = Fixture(Fixture.observation)
+        let missingClient = try makeClient(missing)
+        let observed = try await missingClient.observe()
+        assertUnsent(await missingClient.act(.longPressPoint(observationID: observed.observationID, x: 0.5, y: 0.5, durationMs: 750)), kind: .staleObservation)
+        XCTAssertEqual(missing.requests.count, 3)
+        for (x, y, duration) in [(Double.nan, 0.5, 750), (0.5, 1.0, 750), (0.5, 0.5, 299)] {
+            let fixture = Fixture(Fixture.observation + Fixture.screenshot)
+            let client = try makeClient(fixture)
+            _ = try await client.observe()
+            let screen = try await client.screenshotObservation()
+            assertUnsent(await client.act(.longPressPoint(observationID: screen.observationID, x: x, y: y, durationMs: duration)), kind: .invalidAction)
+            XCTAssertEqual(fixture.requests.count, 8)
+        }
+        let rotated = Fixture(Fixture.observation + Fixture.screenshot + [Fixture.active, Fixture.landscapeScreen])
+        let rotatedClient = try makeClient(rotated)
+        _ = try await rotatedClient.observe()
+        let screenshot = try await rotatedClient.screenshotObservation()
+        assertUnsent(await rotatedClient.act(.longPressPoint(observationID: screenshot.observationID, x: 0.5, y: 0.5, durationMs: 750)), kind: .staleObservation)
+        XCTAssertFalse(rotated.requests.contains { $0.path == "/actions" })
+    }
+
+    func testVisualLongPressDowngradedToTapIsUnknownAndCannotReplay() async throws {
+        let fixture = Fixture(Fixture.observation + Fixture.screenshot + Fixture.pointPreflight + [
+            .json("POST", "/actions", #"{"value":null}"#, headers: ["X-IPU-Gesture": "xcui-coordinate"]),
+        ])
+        let client = try makeClient(fixture)
+        _ = try await client.observe()
+        let screenshot = try await client.screenshotObservation()
+        let result = await client.act(.longPressPoint(observationID: screenshot.observationID, x: 0.5, y: 0.5, durationMs: 750))
+        guard case .unknown(let problem) = result else { return XCTFail("Downgraded hold must not complete") }
+        XCTAssertEqual(problem.kind, .runner)
+        assertUnsent(await client.act(.launch(bundleID: "app.test")), kind: .previousOutcomeUnknown)
+        XCTAssertEqual(fixture.requests.filter { $0.path == "/actions" }.count, 1)
+    }
+
+    func testLongPressResponseLossBlocksAnotherGestureAfterFreshObservation() async throws {
+        let fixture = Fixture(Fixture.observation + [
+            Fixture.active, .json("POST", "/elements", Fixture.oneElement), Fixture.active,
+            .failure("POST", "/wda/element/FRESH/touchAndHold", .networkConnectionLost),
+        ] + Fixture.observation)
+        let client = try makeClient(fixture)
+        let initial = try await client.observe()
+        let result = await client.act(.longPress(ref: try XCTUnwrap(initial.nodes[1].ref), durationMs: 750))
+        guard case .unknown = result else { return XCTFail("Expected unknown") }
+        let latest = try await client.observe()
+        assertUnsent(await client.act(.longPress(ref: try XCTUnwrap(latest.nodes[1].ref), durationMs: 750)), kind: .previousOutcomeUnknown)
+        XCTAssertEqual(fixture.requests.count, 10)
+    }
+
+    func testCompactTextFoldsOnlyEmptyContainersAndKeepsLocalReferencesAndExceptionalState() {
+        let bounds = PhoneElementRect(x: 0, y: 0, width: 400, height: 800)
+        func node(_ index: Int, _ type: String, label: String? = nil, enabled: Bool = true, focused: Bool = false) -> PhoneObservationNode {
+            PhoneObservationNode(ref: "observed:\(index)", depth: index, type: "XCUIElementType" + type,
+                                 identifier: nil, label: label, value: nil, rect: bounds, enabled: enabled, focused: focused)
+        }
+        let nodes = [node(0, "Application"), node(1, "Window"), node(2, "Other"),
+                     node(3, "Button"), node(4, "ScrollView"), node(5, "Other", label: "card\nnew row"),
+                     node(6, "Other", enabled: false), node(7, "Other", focused: true)]
+        let observation = PhoneObservation(observationID: "observed", bundleID: "app.test", processID: 42,
+                                           backend: "private-ax", truncated: true, nodes: nodes)
+        let text = observation.compactText
+        XCTAssertTrue(text.contains("truncated=true nodes=8 displayed=5 omitted=3"))
+        XCTAssertFalse(text.contains("observed:1 Window"))
+        XCTAssertTrue(text.contains("observed:3 Button"))
+        XCTAssertTrue(text.contains("observed:4 ScrollView"))
+        XCTAssertTrue(text.contains(#"label="card\nnew row""#))
+        XCTAssertTrue(text.contains("observed:6 Other enabled=false"))
+        XCTAssertTrue(text.contains("observed:7 Other focused=true"))
+        XCTAssertFalse(text.contains("enabled=true"))
+        XCTAssertFalse(text.contains("focused=false"))
+        XCTAssertEqual(observation.nodes, nodes)
+    }
+
+    func testAlertTapUsesLatestObservedContextAndExactNameWithoutIndependentAlertRead() async throws {
+        let fixture = Fixture(try Fixture.alertObservation() + [
+            Fixture.active, .json("POST", "/alert/accept", #"{"value":null}"#),
+        ])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe()
+        XCTAssertTrue(observation.alertActionsSupported)
+        let alert = try XCTUnwrap(observation.alerts.first)
+        XCTAssertEqual(alert.text, "Allow access?\nOnly while using the app")
+        XCTAssertEqual(alert.processID, 42)
+        XCTAssertEqual(alert.buttons.map(\.name), ["Cancel", "Allow"])
+        let button = try XCTUnwrap(alert.buttons.last)
+        let ref = try XCTUnwrap(button.ref)
+        let result = await client.act(.tapAlert(ref: ref))
+        XCTAssertEqual(result, .completed)
+        let request = try XCTUnwrap(fixture.requests.last)
+        let body = try JSONDecoder().decode(JSONValue.self, from: request.body)
+        XCTAssertEqual(body["name"]?.string, "Allow")
+        XCTAssertEqual(body["exact_name"]?.bool, true)
+        XCTAssertEqual(body["expected_text"]?.string, alert.text)
+        XCTAssertEqual(body["expected_pid"]?.number, 42)
+        XCTAssertEqual(body["expected_buttons"]?.array, [.string("Cancel"), .string("Allow")])
+        XCTAssertEqual(fixture.requests.map(\.path), ["/wda/activeAppInfo", "/source", "/wda/activeAppInfo", "/wda/activeAppInfo", "/alert/accept"])
+        let latest = await client.latestObservation
+        XCTAssertNil(latest)
+        assertUnsent(await client.act(.tapAlert(ref: ref)), kind: .staleObservation)
+        XCTAssertEqual(fixture.requests.count, 5)
+    }
+
+    func testOrdinaryAndExplicitAlertTapSendIdenticalGuardedRequest() async throws {
+        var bodies: [Data] = []
+        for explicit in [false, true] {
+            let fixture = Fixture(try Fixture.alertObservation() + [Fixture.active, .json("POST", "/alert/accept", #"{"value":null}"#)])
+            let client = try makeClient(fixture)
+            let observation = try await client.observe()
+            let ref = try XCTUnwrap(observation.alerts.first?.buttons.last?.ref)
+            let result = await client.act(explicit ? .tapAlert(ref: ref) : .tap(ref: ref))
+            XCTAssertEqual(result, .completed)
+            bodies.append(try XCTUnwrap(fixture.requests.last).body)
+            XCTAssertEqual(fixture.requests.count, 5)
+            XCTAssertFalse(fixture.requests.contains { $0.path == "/elements" || $0.path.hasSuffix("/click") })
+        }
+        XCTAssertEqual(bodies[0], bodies[1])
+    }
+
+    func testOrdinaryAlertTapOldArtifactOrMissingContextIsUnsentAndLongPressIsUnsupported() async throws {
+        let old = Fixture(try Fixture.alertObservation(supported: false))
+        let oldClient = try makeClient(old)
+        let oldObservation = try await oldClient.observe()
+        assertUnsent(await oldClient.act(.tap(ref: try XCTUnwrap(oldObservation.alerts.first?.buttons.last?.ref))), kind: .unsupportedNode)
+        XCTAssertEqual(old.requests.count, 3)
+
+        let stale = Fixture(try Fixture.alertObservation() + Fixture.observation)
+        let staleClient = try makeClient(stale)
+        let prior = try await staleClient.observe()
+        _ = try await staleClient.observe()
+        assertUnsent(await staleClient.act(.tap(ref: try XCTUnwrap(prior.alerts.first?.buttons.last?.ref))), kind: .staleObservation)
+        XCTAssertEqual(stale.requests.count, 6)
+
+        let holding = Fixture(try Fixture.alertObservation())
+        let holdingClient = try makeClient(holding)
+        let alert = try await holdingClient.observe()
+        assertUnsent(await holdingClient.act(.longPress(ref: try XCTUnwrap(alert.alerts.first?.buttons.last?.ref), durationMs: 750)), kind: .unsupportedNode)
+        XCTAssertEqual(holding.requests.count, 3)
+    }
+
+    func testUnnamedAlertButtonCannotBypassContextWithOrdinaryTapOrLongPress() async throws {
+        for holding in [false, true] {
+            let fixture = Fixture(try Fixture.alertObservation(names: [""]))
+            let client = try makeClient(fixture)
+            let observation = try await client.observe()
+            XCTAssertEqual(observation.alerts.first?.buttons.count, 0)
+            let ref = try XCTUnwrap(observation.nodes.last?.ref)
+            let result = await client.act(holding ? .longPress(ref: ref, durationMs: 750) : .tap(ref: ref))
+            assertUnsent(result, kind: holding ? .unsupportedNode : .staleObservation)
+            XCTAssertEqual(fixture.requests.count, 3)
+        }
+    }
+
+    func testOrdinaryAlertTapChangedContextRefusalAndLostReplyCannotBypassGuard() async throws {
+        let changed = Fixture(try Fixture.alertObservation() + [
+            Fixture.active, .json("POST", "/alert/accept", #"{"value":{"error":"invalid argument","message":"alert context changed; nothing was sent"}}"#,
+                                  status: 409, headers: ["X-IPU-Dropped": "1"]),
+        ])
+        let changedClient = try makeClient(changed)
+        let observation = try await changedClient.observe()
+        assertUnsent(await changedClient.act(.tap(ref: try XCTUnwrap(observation.alerts.first?.buttons.last?.ref))), kind: .runner)
+        XCTAssertEqual(changed.requests.count, 5)
+        XCTAssertFalse(changed.requests.contains { $0.path.hasSuffix("/click") })
+
+        let lost = Fixture(try Fixture.alertObservation() + [Fixture.active, .failure("POST", "/alert/accept", .networkConnectionLost)])
+        let lostClient = try makeClient(lost)
+        let visible = try await lostClient.observe()
+        guard case .unknown = await lostClient.act(.tap(ref: try XCTUnwrap(visible.alerts.first?.buttons.last?.ref))) else {
+            return XCTFail("Expected unknown")
+        }
+        assertUnsent(await lostClient.act(.launch(bundleID: "app.test")), kind: .previousOutcomeUnknown)
+        XCTAssertEqual(lost.requests.count, 5)
+    }
+
+    func testEveryObservedAlertSubtreeRoutesOrdinaryTapThroughItsOwnContext() async throws {
+        let initial = try Fixture.alertObservation()
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: initial[1].data) as? [String: Any])
+        var app = try XCTUnwrap(envelope["value"] as? [String: Any])
+        let first = try XCTUnwrap((app["children"] as? [[String: Any]])?.first)
+        var second = first
+        var children = try XCTUnwrap(second["children"] as? [[String: Any]])
+        children[0]["label"] = "Second prompt"
+        second["children"] = children
+        app["children"] = [first, second]
+        let data = try JSONSerialization.data(withJSONObject: ["value": app])
+        let fixture = Fixture([
+            Fixture.active, .json("GET", "/source", String(decoding: data, as: UTF8.self), headers: initial[1].headers), Fixture.active,
+            Fixture.active, .json("POST", "/alert/accept", #"{"value":{"error":"invalid argument","message":"different presented alert"}}"#,
+                                  status: 409, headers: ["X-IPU-Dropped": "1"]),
+        ])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe()
+        XCTAssertEqual(observation.alerts.count, 2)
+        let secondRef = try XCTUnwrap(observation.alerts[1].buttons.last?.ref)
+        assertUnsent(await client.act(.tap(ref: secondRef)), kind: .runner)
+        let body = try JSONDecoder().decode(JSONValue.self, from: XCTUnwrap(fixture.requests.last).body)
+        XCTAssertEqual(body["expected_text"]?.string, "Second prompt\nOnly while using the app")
+        XCTAssertFalse(fixture.requests.contains { $0.path == "/elements" || $0.path.hasSuffix("/click") })
+    }
+
+    func testAlertDescriptionPreservesNameAndValueFallbacksWithoutChangingNativeLabels() async throws {
+        let source = #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":400,"height":800},"children":[{"type":"XCUIElementTypeAlert","name":"Fallback title","rect":{"x":0,"y":0,"width":0,"height":0},"children":[{"type":"XCUIElementTypeButton","name":"Confirm","rect":{"x":0,"y":0,"width":0,"height":0},"children":[{"type":"XCUIElementTypeStaticText","label":"button child is ignored","rect":{"x":0,"y":0,"width":10,"height":10}}]},{"type":"XCUIElementTypeStaticText","name":"Title","rect":{"x":0,"y":0,"width":10,"height":10}},{"type":"XCUIElementTypeTextView","value":"Body","rect":{"x":0,"y":0,"width":10,"height":10}},{"type":"XCUIElementTypeStaticText","label":"Title","rect":{"x":0,"y":0,"width":10,"height":10}},{"type":"XCUIElementTypeButton","label":"Later","rect":{"x":20,"y":300,"width":90,"height":44}}]}]}}"#
+        let fixture = Fixture([Fixture.active, .json("GET", "/source", source, headers: [
+            "X-IPU-Pid": "42", "X-IPU-Alert-Guard": "context-v1",
+        ]), Fixture.active])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe()
+        let alert = try XCTUnwrap(observation.alerts.first)
+        XCTAssertNil(alert.ref)
+        XCTAssertEqual(alert.text, "Title\nBody")
+        XCTAssertEqual(alert.buttons.map(\.name), ["Confirm", "Later"])
+        XCTAssertNil(alert.buttons[0].ref)
+        XCTAssertNotNil(alert.buttons[1].ref)
+        XCTAssertNil(observation.nodes[2].label)
+        XCTAssertNil(observation.nodes[4].label)
+    }
+
+    func testAlertTapRejectsOldRunnerDuplicateNamesAndNonAlertTargetsWithoutRequest() async throws {
+        for (supported, names, expected) in [(false, ["Allow"], PhoneControlProblem.Kind.unsupportedNode),
+                                             (true, ["OK", "OK"], .ambiguousElement)] {
+            let fixture = Fixture(try Fixture.alertObservation(names: names, supported: supported))
+            let client = try makeClient(fixture)
+            let observation = try await client.observe()
+            let button = try XCTUnwrap(observation.alerts.first?.buttons.first?.ref)
+            assertUnsent(await client.act(.tapAlert(ref: button)), kind: expected)
+            XCTAssertEqual(fixture.requests.count, 3)
+        }
+        let ordinary = Fixture(Fixture.observation)
+        let ordinaryClient = try makeClient(ordinary)
+        let ordinaryObservation = try await ordinaryClient.observe()
+        assertUnsent(await ordinaryClient.act(.tapAlert(ref: try XCTUnwrap(ordinaryObservation.nodes[1].ref))), kind: .staleObservation)
+        XCTAssertEqual(ordinary.requests.count, 3)
+    }
+
+    func testAlertTapRejectsOldObservationAndSpringBoardForegroundWithoutExpandingScope() async throws {
+        let stale = Fixture(try Fixture.alertObservation() + Fixture.alertObservation())
+        let staleClient = try makeClient(stale)
+        let old = try await staleClient.observe()
+        _ = try await staleClient.observe()
+        assertUnsent(await staleClient.act(.tapAlert(ref: try XCTUnwrap(old.alerts.first?.buttons.last?.ref))), kind: .staleObservation)
+        XCTAssertEqual(stale.requests.count, 6)
+
+        let system = Fixture(try Fixture.alertObservation() + [
+            .json("GET", "/wda/activeAppInfo", #"{"value":{"bundleId":"com.apple.springboard","pid":9}}"#),
+        ])
+        let systemClient = try makeClient(system)
+        let observed = try await systemClient.observe()
+        assertUnsent(await systemClient.act(.tapAlert(ref: try XCTUnwrap(observed.alerts.first?.buttons.last?.ref))), kind: .appChanged)
+        XCTAssertEqual(system.requests.count, 4)
+        XCTAssertFalse(system.requests.contains { $0.method == "POST" })
+    }
+
+    func testChangedAlertGuardRefusalIsUnsentButLostReplyLocksFurtherActions() async throws {
+        let refused = Fixture(try Fixture.alertObservation() + [
+            Fixture.active, .json("POST", "/alert/accept", #"{"value":{"error":"invalid argument","message":"alert context changed; nothing was sent"}}"#,
+                                  status: 409, headers: ["X-IPU-Dropped": "1"]),
+        ] + Fixture.alertObservation() + [Fixture.active, .json("POST", "/alert/accept", #"{"value":null}"#)])
+        let refusedClient = try makeClient(refused)
+        let first = try await refusedClient.observe()
+        assertUnsent(await refusedClient.act(.tapAlert(ref: try XCTUnwrap(first.alerts.first?.buttons.last?.ref))), kind: .runner)
+        let fresh = try await refusedClient.observe()
+        let freshResult = await refusedClient.act(.tapAlert(ref: try XCTUnwrap(fresh.alerts.first?.buttons.last?.ref)))
+        XCTAssertEqual(freshResult, .completed)
+        XCTAssertEqual(refused.requests.filter { $0.path == "/alert/accept" }.count, 2)
+
+        let lost = Fixture(try Fixture.alertObservation() + [
+            Fixture.active, .failure("POST", "/alert/accept", .networkConnectionLost),
+        ] + Fixture.alertObservation())
+        let lostClient = try makeClient(lost)
+        let previous = try await lostClient.observe()
+        guard case .unknown = await lostClient.act(.tapAlert(ref: try XCTUnwrap(previous.alerts.first?.buttons.last?.ref))) else {
+            return XCTFail("Expected unknown alert tap outcome")
+        }
+        let reconciled = try await lostClient.observe()
+        assertUnsent(await lostClient.act(.tapAlert(ref: try XCTUnwrap(reconciled.alerts.first?.buttons.last?.ref))), kind: .previousOutcomeUnknown)
+        XCTAssertEqual(lost.requests.filter { $0.path == "/alert/accept" }.count, 1)
     }
 
     func testWiderObservationReachesComposerAfterTruncatedHistoryAndTypesOnce() async throws {
@@ -385,6 +734,19 @@ final class PhoneRunnerClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(fixture.requests.isEmpty)
     }
 
+    func testRefusedStartDoesNotReusePreviousOperationDiagnostics() async throws {
+        let fixture = Fixture(Fixture.observation)
+        let client = try makeClient(fixture)
+        _ = try await client.observe()
+        let observedDiagnostics = await client.latestOperationDiagnostics
+        XCTAssertEqual(observedDiagnostics?.operation, .observe)
+        await client.stop()
+        assertUnsent(await client.act(.launch(bundleID: "app.test")), kind: .stopped)
+        let refusedDiagnostics = await client.latestOperationDiagnostics
+        XCTAssertNil(refusedDiagnostics)
+        XCTAssertEqual(fixture.requests.count, 3)
+    }
+
     func testShutdownSignsOneShortRequestAndStopsWorkBeforeReply() async throws {
         let gate = ReplyGate()
         let fixture = Fixture([.json("POST", "/shutdown", #"{"value":{"shutdown":true}}"#, gate: gate)])
@@ -603,6 +965,182 @@ final class PhoneRunnerClientTests: XCTestCase, @unchecked Sendable {
         let latest = await client.latestObservation
         XCTAssertEqual(latest, observation)
         XCTAssertEqual(fixture.requests.map(\.path), ["/wda/activeAppInfo", "/source", "/window/size", "/wda/activeAppInfo"])
+        XCTAssertNil(observation.screenStability)
+        XCTAssertEqual(observation.diagnostics?.httpRequestCount, 4)
+        XCTAssertEqual(observation.diagnostics?.requests.map(\.stage), [.activeApp, .source, .screenSize, .activeApp])
+    }
+
+    func testSettledObservationUsesOneExtraRequestAndKeepsStabilitySeparateFromContent() async throws {
+        let fixture = Fixture([
+            Fixture.active, Fixture.settle(stable: true, blank: true),
+            .json("GET", "/source", Fixture.tree, headers: [
+                "X-IPU-Pid": "42", "X-IPU-Ms": "12", "X-IPU-Queued-Ms": "3",
+            ]), Fixture.screen, Fixture.active,
+        ])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe(includeScreenSize: true, settleBudgetMs: 800)
+        XCTAssertEqual(observation.screenStability, PhoneScreenStability(
+            stable: true, blank: true, waitedMs: 180, frames: 6,
+            changedPixels: 0, captureMs: 4, budgetMs: 800
+        ))
+        XCTAssertEqual(observation.nodes[1].label, "Submit")
+        XCTAssertEqual(fixture.requests.map(\.path), ["/wda/activeAppInfo", "/wda/settle", "/source", "/window/size", "/wda/activeAppInfo"])
+        let settle = try XCTUnwrap(fixture.requests.first { $0.path == "/wda/settle" })
+        XCTAssertEqual(settle.url.query, "budget_ms=800")
+        XCTAssertEqual(settle.timeoutInterval, 2.8, accuracy: 0.001)
+        let diagnostics = try XCTUnwrap(observation.diagnostics)
+        XCTAssertEqual(diagnostics.httpRequestCount, 5)
+        XCTAssertEqual(diagnostics.requests.map(\.stage), [.activeApp, .settle, .source, .screenSize, .activeApp])
+        XCTAssertEqual(diagnostics.requests[1].runnerMs, 182.5)
+        XCTAssertEqual(diagnostics.requests[2].runnerMs, 12)
+        XCTAssertEqual(diagnostics.requests[2].queuedMs, 3)
+        let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(diagnostics))
+        XCTAssertEqual(encoded["httpRequestCount"]?.number, 5)
+        XCTAssertEqual(encoded["operation"]?.string, "observe")
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(diagnostics), as: UTF8.self).contains("Submit"))
+        let latestDiagnostics = await client.latestOperationDiagnostics
+        XCTAssertEqual(latestDiagnostics?.requests, diagnostics.requests)
+    }
+
+    func testUnstableObservationStillReadsFreshTreeWithoutRetryingOrChangingActionResult() async throws {
+        let fixture = Fixture([
+            Fixture.active, Fixture.settle(stable: false, blank: false),
+            .json("GET", "/source", Fixture.tree, headers: ["X-IPU-Pid": "42"]), Fixture.active,
+        ])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe(settleBudgetMs: 800)
+        XCTAssertEqual(observation.screenStability?.stable, false)
+        XCTAssertEqual(observation.screenStability?.blank, false)
+        XCTAssertEqual(observation.diagnostics?.httpRequestCount, 4)
+        XCTAssertEqual(fixture.requests.filter { $0.path == "/wda/settle" }.count, 1)
+        XCTAssertFalse(fixture.requests.contains { $0.method == "POST" })
+    }
+
+    func testInvalidSettleBudgetRejectsWithoutReadingAndInvalidatesOldReferences() async throws {
+        for budget in [-1, 0, 49, 15_001, Int.max] {
+            let fixture = Fixture(Fixture.observation)
+            let client = try makeClient(fixture)
+            _ = try await client.observe()
+            do {
+                _ = try await client.observe(settleBudgetMs: budget)
+                XCTFail("Invalid settle budget should fail")
+            } catch let problem as PhoneControlProblem {
+                XCTAssertEqual(problem.kind, .invalidConfiguration)
+            }
+            XCTAssertEqual(fixture.requests.count, 3)
+            let latest = await client.latestObservation
+            XCTAssertNil(latest)
+            let diagnostics = await client.latestOperationDiagnostics
+            XCTAssertEqual(diagnostics?.httpRequestCount, 0)
+        }
+    }
+
+    func testSettleStopAndConcurrentOperationDoNotReadSourceOrOvertakeWait() async throws {
+        let gate = ReplyGate()
+        let fixture = Fixture([
+            Fixture.active, Fixture.settle(gate: gate),
+        ])
+        let client = try makeClient(fixture)
+        let waiting = Task { try await client.observe(settleBudgetMs: 800) }
+        await fulfillment(of: [gate.started], timeout: 2)
+        assertUnsent(await client.act(.launch(bundleID: "app.test")), kind: .busy)
+        await client.stop()
+        gate.release()
+        do {
+            _ = try await waiting.value
+            XCTFail("Stopped settle should fail")
+        } catch let problem as PhoneControlProblem {
+            XCTAssertEqual(problem.kind, .stopped)
+        }
+        XCTAssertEqual(fixture.requests.map(\.path), ["/wda/activeAppInfo", "/wda/settle"])
+        let latest = await client.latestObservation
+        XCTAssertNil(latest)
+        let diagnostics = await client.latestOperationDiagnostics
+        XCTAssertEqual(diagnostics?.httpRequestCount, 2)
+    }
+
+    func testCancellationDuringSettlePreventsSourceAndKeepsClientReusable() async throws {
+        let gate = ReplyGate()
+        let fixture = Fixture([Fixture.active, Fixture.settle(gate: gate)] + Fixture.observation)
+        let client = try makeClient(fixture)
+        let waiting = Task { try await client.observe(settleBudgetMs: 800) }
+        await fulfillment(of: [gate.started], timeout: 2)
+        waiting.cancel()
+        gate.release()
+        do {
+            _ = try await waiting.value
+            XCTFail("Cancelled settle should fail")
+        } catch {
+            XCTAssertTrue(error is CancellationError || (error as? URLError)?.code == .cancelled)
+        }
+        XCTAssertEqual(fixture.requests.count, 2)
+        let latest = await client.latestObservation
+        XCTAssertNil(latest)
+        _ = try await client.observe()
+        XCTAssertEqual(fixture.requests.count, 5)
+    }
+
+    func testSettledObservationRejectsOutOfScopeAndChangedForeground() async throws {
+        let outside = Fixture([.json("GET", "/wda/activeAppInfo", #"{"value":{"bundleId":"other.app","pid":9}}"#)])
+        let outsideClient = try makeClient(outside)
+        do {
+            _ = try await outsideClient.observe(settleBudgetMs: 800)
+            XCTFail("Out-of-scope settle should fail")
+        } catch let problem as PhoneControlProblem {
+            XCTAssertEqual(problem.kind, .appOutOfScope)
+        }
+        XCTAssertEqual(outside.requests.count, 1)
+
+        let changed = Fixture([
+            Fixture.active, Fixture.settle(),
+            .json("GET", "/source", Fixture.tree, headers: ["X-IPU-Pid": "43"]),
+        ])
+        let changedClient = try makeClient(changed)
+        do {
+            _ = try await changedClient.observe(settleBudgetMs: 800)
+            XCTFail("Changed foreground should fail")
+        } catch let problem as PhoneControlProblem {
+            XCTAssertEqual(problem.kind, .appChanged)
+        }
+        let latest = await changedClient.latestObservation
+        XCTAssertNil(latest)
+        XCTAssertEqual(changed.requests.count, 3)
+    }
+
+    func testSettleReadCannotClearUnknownActionOutcome() async throws {
+        let fixture = Fixture([
+            .failure("POST", "/wda/apps/activate", .networkConnectionLost),
+            Fixture.active, Fixture.settle(),
+            .json("GET", "/source", Fixture.tree, headers: ["X-IPU-Pid": "42"]), Fixture.active,
+        ])
+        let client = try makeClient(fixture)
+        guard case .unknown = await client.act(.launch(bundleID: "app.test")) else { return XCTFail("Expected unknown") }
+        let observation = try await client.observe(settleBudgetMs: 800)
+        XCTAssertEqual(observation.screenStability?.stable, true)
+        assertUnsent(await client.act(.tap(ref: try XCTUnwrap(observation.nodes[1].ref))), kind: .previousOutcomeUnknown)
+        XCTAssertEqual(fixture.requests.count, 5)
+    }
+
+    func testMalformedOrFailedSettleDoesNotFallBackToTreeOrRetainReferences() async throws {
+        let replies: [Fixture.Reply] = [
+            .json("GET", "/wda/settle", #"{"value":{"stable":true}}"#),
+            .json("GET", "/wda/settle", #"{"value":{"error":"capture unavailable"}}"#),
+            .failure("GET", "/wda/settle", .timedOut),
+        ]
+        for reply in replies {
+            let fixture = Fixture(Fixture.observation + [Fixture.active, reply])
+            let client = try makeClient(fixture)
+            _ = try await client.observe()
+            do {
+                _ = try await client.observe(settleBudgetMs: 800)
+                XCTFail("Invalid settle should fail")
+            } catch {}
+            XCTAssertEqual(fixture.requests.count, 5)
+            let latest = await client.latestObservation
+            XCTAssertNil(latest)
+            let diagnostics = await client.latestOperationDiagnostics
+            XCTAssertEqual(diagnostics?.httpRequestCount, 2)
+        }
     }
 
     func testScreenSizeFailureCannotPublishFreshObservationOrKeepOldSnapshot() async throws {
@@ -1000,6 +1538,10 @@ private final class Fixture: @unchecked Sendable {
 
     static let active = Reply.json("GET", "/wda/activeAppInfo", #"{"value":{"bundleId":"app.test","pid":42}}"#)
     static let oneElement = #"{"value":[{"element-6066-11e4-a52e-4f735466cecf":"FRESH"}]}"#
+    static func settle(stable: Bool = true, blank: Bool = false, gate: ReplyGate? = nil) -> Reply {
+        .json("GET", "/wda/settle", #"{"value":{"stable":\#(stable),"blank":\#(blank),"waited_ms":180,"frames":6,"changed_px":0,"capture_ms":4,"budget_ms":800}}"#,
+              headers: ["Server-Timing": "other;dur=1, runner;dur=182.5"], gate: gate)
+    }
     static var observation: [Reply] { [active, .json("GET", "/source", tree, headers: [
         "X-IPU-Pid": "42", "X-IPU-Backend": "private-ax", "X-IPU-Truncated": "0",
     ]), active] }
@@ -1007,6 +1549,25 @@ private final class Fixture: @unchecked Sendable {
     static func inputObservation(type: String = "XCUIElementTypeTextField", enabled: Bool = true) -> [Reply] {
         let source = #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":400,"height":800},"children":[{"type":"\#(type)","rawIdentifier":"query","value":"existing","isEnabled":\#(enabled),"rect":{"x":20,"y":100,"width":300,"height":44},"children":[]}]}}"#
         return [active, .json("GET", "/source", source, headers: ["X-IPU-Pid": "42"]), active]
+    }
+    static func alertObservation(names: [String] = ["Cancel", "Allow"], supported: Bool = true) throws -> [Reply] {
+        let rect = ["x": 20, "y": 100, "width": 300, "height": 300]
+        var children: [[String: Any]] = [
+            ["type": "XCUIElementTypeStaticText", "label": "Allow access?", "rect": rect, "children": []],
+            ["type": "XCUIElementTypeStaticText", "label": "Only while using the app", "rect": rect, "children": []],
+        ]
+        children += names.enumerated().map { index, name in
+            ["type": "XCUIElementTypeButton", "label": name, "isEnabled": true,
+             "rect": ["x": 20 + index * 100, "y": 300, "width": 90, "height": 44], "children": []]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["value": [
+            "type": "XCUIElementTypeApplication", "rect": rect, "children": [
+                ["type": "XCUIElementTypeAlert", "label": "Alert", "rect": rect, "children": children],
+            ],
+        ]])
+        var headers = ["X-IPU-Pid": "42"]
+        if supported { headers["X-IPU-Alert-Guard"] = "context-v1" }
+        return [active, .json("GET", "/source", String(decoding: data, as: UTF8.self), headers: headers), active]
     }
     static let popupTree = #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":402,"height":139},"children":[{"type":"XCUIElementTypeWindow","rect":{"x":0,"y":0,"width":402,"height":139},"children":[{"type":"XCUIElementTypeOther","rect":{"x":0,"y":0,"width":402,"height":139},"children":[{"type":"XCUIElementTypeOther","rect":{"x":0,"y":0,"width":402,"height":139},"children":[]}]}]}]}}"#
     static var popupObservation: [Reply] { [active, .json("GET", "/source", popupTree, headers: [
