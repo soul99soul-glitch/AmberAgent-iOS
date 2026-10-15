@@ -137,11 +137,19 @@ final class IOSPhoneControlLocalTunnel: IOSPhoneControlLocalTunneling {
     }
 
     private func connect(owner requestedOwner: UUID) async throws {
-        isPrepared = try await driver.load()
+        do {
+            isPrepared = try await driver.load()
+        } catch {
+            throw connectionError(error, stage: "读取 VPN 配置")
+        }
         try checkOwner(requestedOwner)
         guard isPrepared else { throw IOSPhoneControlLocalTunnelError.notPrepared }
         if !driver.isEnabled {
-            try await driver.enableExisting()
+            do {
+                try await driver.enableExisting()
+            } catch {
+                throw connectionError(error, stage: "启用 VPN 配置")
+            }
             try checkOwner(requestedOwner)
         }
         switch driver.status {
@@ -156,7 +164,11 @@ final class IOSPhoneControlLocalTunnel: IOSPhoneControlLocalTunneling {
         }
         try checkOwner(requestedOwner)
         ownsConnection = true
-        try driver.start()
+        do {
+            try driver.start()
+        } catch {
+            throw connectionError(error, stage: "启动 VPN 扩展", status: driver.status)
+        }
         setState(.connecting)
         let deadline = ContinuousClock.now.advanced(by: connectionTimeout)
         var sawConnecting = false
@@ -168,14 +180,49 @@ final class IOSPhoneControlLocalTunnel: IOSPhoneControlLocalTunneling {
                 return
             case .connecting, .reasserting:
                 sawConnecting = true
-            case .disconnected where sawConnecting, .disconnecting, .invalid:
-                throw IOSPhoneControlLocalTunnelError.connectionFailed
+            case .disconnected where sawConnecting:
+                // Fetch before cleanup: our stop can replace the provider's cause.
+                let cause = await driver.lastDisconnectError()
+                try checkOwner(requestedOwner)
+                let failure: Error
+                if let cause { failure = cause }
+                else { failure = IOSPhoneControlLocalTunnelError.connectionFailed }
+                throw connectionError(failure,
+                    stage: "等待 VPN 连接", status: .disconnected)
+            case .disconnecting, .invalid:
+                throw connectionError(IOSPhoneControlLocalTunnelError.connectionFailed,
+                    stage: "等待 VPN 连接", status: driver.status)
             default:
                 break
             }
             try await Task.sleep(for: pollInterval)
         }
-        throw IOSPhoneControlLocalTunnelError.connectionTimedOut
+        throw connectionError(IOSPhoneControlLocalTunnelError.connectionTimedOut,
+            stage: "等待 VPN 连接", status: driver.status)
+    }
+
+    private func connectionError(_ error: Error, stage: String, status: NEVPNStatus? = nil) -> Error {
+        if error is CancellationError { return error }
+        let cause = error as NSError
+        var description = "\(stage)失败：\(cause.localizedDescription)"
+        if !(error is IOSPhoneControlLocalTunnelError) {
+            description += "（domain=\(cause.domain), code=\(cause.code)）"
+        }
+        if let status {
+            let name: String
+            switch status {
+            case .invalid: name = "invalid"
+            case .disconnected: name = "disconnected"
+            case .connecting: name = "connecting"
+            case .connected: name = "connected"
+            case .reasserting: name = "reasserting"
+            case .disconnecting: name = "disconnecting"
+            @unknown default: name = "unknown(\(status.rawValue))"
+            }
+            description += "；NEVPNStatus=\(name)"
+        }
+        return NSError(domain: cause.domain, code: cause.code,
+            userInfo: [NSLocalizedDescriptionKey: description, NSUnderlyingErrorKey: cause])
     }
 
     private func disconnect(owner requestedOwner: UUID) async -> Bool {
@@ -268,6 +315,7 @@ protocol IOSPhoneControlTunnelDriver: AnyObject {
     func enableExisting() async throws
     func start() throws
     func stop()
+    func lastDisconnectError() async -> NSError?
 }
 
 @MainActor
@@ -342,6 +390,15 @@ private final class IOSPhoneControlSystemTunnelDriver: IOSPhoneControlTunnelDriv
     }
 
     func stop() { manager?.connection.stopVPNTunnel() }
+
+    func lastDisconnectError() async -> NSError? {
+        guard let manager else { return nil }
+        return await withCheckedContinuation { continuation in
+            manager.connection.fetchLastDisconnectError { error in
+                continuation.resume(returning: error as NSError?)
+            }
+        }
+    }
 }
 
 // Apple documents NETunnelProviderManager instances as thread-safe. Keep the

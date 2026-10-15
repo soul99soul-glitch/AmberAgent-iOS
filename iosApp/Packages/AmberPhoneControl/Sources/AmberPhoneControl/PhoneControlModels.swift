@@ -37,12 +37,86 @@ public enum PhoneSwipeDirection: String, Sendable, CaseIterable {
     case up, down, left, right
 }
 
+/// Visual quiet is an observation aid, not evidence that an action achieved its goal.
+public struct PhoneScreenStability: Sendable, Encodable, Equatable {
+    public let stable: Bool
+    public let blank: Bool?
+    public let waitedMs: Double
+    public let frames: Int
+    public let changedPixels: Int
+    public let captureMs: Double
+    public let budgetMs: Int
+
+    public init(stable: Bool, blank: Bool?, waitedMs: Double, frames: Int,
+                changedPixels: Int, captureMs: Double, budgetMs: Int) {
+        self.stable = stable
+        self.blank = blank
+        self.waitedMs = waitedMs
+        self.frames = frames
+        self.changedPixels = changedPixels
+        self.captureMs = captureMs
+        self.budgetMs = budgetMs
+    }
+}
+
+/// Numeric, operation-local diagnostics. It deliberately excludes request bodies and UI content.
+public struct PhoneOperationDiagnostics: Sendable, Encodable, Equatable {
+    public enum Operation: String, Sendable, Encodable {
+        case observe, action, screenshot
+    }
+
+    public let operation: Operation
+    public let durationMs: Double
+    public let requests: [PhoneRunnerRequestTiming]
+    public var httpRequestCount: Int { requests.count }
+
+    public init(operation: Operation, durationMs: Double, requests: [PhoneRunnerRequestTiming]) {
+        self.operation = operation
+        self.durationMs = durationMs
+        self.requests = requests
+    }
+
+    private enum CodingKeys: CodingKey { case operation, durationMs, httpRequestCount, requests }
+
+    public func encode(to encoder: Encoder) throws {
+        var value = encoder.container(keyedBy: CodingKeys.self)
+        try value.encode(operation, forKey: .operation)
+        try value.encode(durationMs, forKey: .durationMs)
+        try value.encode(httpRequestCount, forKey: .httpRequestCount)
+        try value.encode(requests, forKey: .requests)
+    }
+}
+
+public struct PhoneRunnerRequestTiming: Sendable, Encodable, Equatable {
+    public enum Stage: String, Sendable, Encodable {
+        case activeApp, settle, source, screenSize, screenshot, elementLookup, action
+    }
+
+    public let stage: Stage
+    /// Client-side duration, including transport and response decoding.
+    public let durationMs: Double
+    /// Runner headers, when supplied. Server-Timing includes the runner's queue wait.
+    public let runnerMs: Double?
+    public let queuedMs: Double?
+
+    public init(stage: Stage, durationMs: Double, runnerMs: Double?, queuedMs: Double?) {
+        self.stage = stage
+        self.durationMs = durationMs
+        self.runnerMs = runnerMs
+        self.queuedMs = queuedMs
+    }
+}
+
 public enum PhoneAction: Sendable, Equatable {
     case launch(bundleID: String)
     case tap(ref: String)
+    case longPress(ref: String, durationMs: Int)
+    /// An exact button reference inside the latest observed alert, guarded by its full context.
+    case tapAlert(ref: String)
     /// A point in the full screenshot, normalized to [0, 1) on both axes.
     /// Requires screenshot evidence attached to this latest observation.
     case tapPoint(observationID: String, x: Double, y: Double)
+    case longPressPoint(observationID: String, x: Double, y: Double, durationMs: Int)
     /// Finger movement between distinct full-screenshot points, normalized to [0, 1).
     /// Requires screenshot evidence attached to this latest observation.
     case swipePoint(observationID: String, startX: Double, startY: Double, endX: Double, endY: Double)
@@ -62,21 +136,6 @@ public struct PhoneRunnerStatus: Sendable, Equatable {
     public let message: String
     public let requiresAuthentication: Bool
     public let authenticationScheme: String
-}
-
-/// The result of waiting for the runner to observe a settled screen.
-public struct PhoneScreenStability: Sendable, Equatable {
-    public let stable: Bool
-    public let waitedMs: Int
-    public let frames: Int
-    public let blank: Bool
-
-    public init(stable: Bool, waitedMs: Int, frames: Int, blank: Bool) {
-        self.stable = stable
-        self.waitedMs = waitedMs
-        self.frames = frames
-        self.blank = blank
-    }
 }
 
 public struct PhoneScreenshot: Sendable, Equatable {
@@ -134,6 +193,30 @@ public struct PhoneObservationNode: Sendable, Equatable {
     }
 }
 
+public struct PhoneObservedAlertButton: Sendable, Encodable, Equatable {
+    public let ref: String?
+    public let name: String
+
+    public init(ref: String?, name: String) {
+        self.ref = ref
+        self.name = name
+    }
+}
+
+public struct PhoneObservedAlert: Sendable, Encodable, Equatable {
+    public let ref: String?
+    public let text: String
+    public let processID: Int
+    public let buttons: [PhoneObservedAlertButton]
+
+    public init(ref: String?, text: String, processID: Int, buttons: [PhoneObservedAlertButton]) {
+        self.ref = ref
+        self.text = text
+        self.processID = processID
+        self.buttons = buttons
+    }
+}
+
 public struct PhoneObservation: Sendable, Equatable {
     public let observationID: String
     public let bundleID: String
@@ -143,9 +226,15 @@ public struct PhoneObservation: Sendable, Equatable {
     public let nodes: [PhoneObservationNode]
     /// Real screen geometry from /window/size, independent of the accessibility root frame.
     public let screenBounds: PhoneElementRect?
+    public let screenStability: PhoneScreenStability?
+    public let diagnostics: PhoneOperationDiagnostics?
+    public let alerts: [PhoneObservedAlert]
+    public let alertActionsSupported: Bool
 
     public init(observationID: String, bundleID: String, processID: Int, backend: String,
-                truncated: Bool, nodes: [PhoneObservationNode], screenBounds: PhoneElementRect? = nil) {
+                truncated: Bool, nodes: [PhoneObservationNode], screenBounds: PhoneElementRect? = nil,
+                screenStability: PhoneScreenStability? = nil, diagnostics: PhoneOperationDiagnostics? = nil,
+                alerts: [PhoneObservedAlert] = [], alertActionsSupported: Bool = false) {
         self.observationID = observationID
         self.bundleID = bundleID
         self.processID = processID
@@ -153,18 +242,29 @@ public struct PhoneObservation: Sendable, Equatable {
         self.truncated = truncated
         self.nodes = nodes
         self.screenBounds = screenBounds
+        self.screenStability = screenStability
+        self.diagnostics = diagnostics
+        self.alerts = alerts
+        self.alertActionsSupported = alertActionsSupported
     }
 
     /// A text UI tree for the model; screens with little useful text may need a separate screenshot.
     public var compactText: String {
-        var lines = ["app=\(bundleID) pid=\(processID) observation=\(observationID) backend=\(backend) truncated=\(truncated)"]
-        for node in nodes {
+        let containers: Set<String> = ["XCUIElementTypeApplication", "XCUIElementTypeWindow",
+                                       "XCUIElementTypeOther", "XCUIElementTypeGroup"]
+        let visibleNodes = nodes.filter { node in
+            let hasText = [node.identifier, node.label, node.value].contains { !($0 ?? "").isEmpty }
+            return hasText || !containers.contains(node.type) || !node.enabled || node.focused
+        }
+        var lines = ["app=\(bundleID) pid=\(processID) observation=\(observationID) backend=\(backend) truncated=\(truncated) nodes=\(nodes.count) displayed=\(visibleNodes.count) omitted=\(nodes.count - visibleNodes.count)"]
+        for node in visibleNodes {
             let identity = node.identifier.map { " id=\(Self.quoted($0))" } ?? ""
             let label = node.label.map { " label=\(Self.quoted($0))" } ?? ""
             let value = node.value.map { " value=\(Self.quoted($0))" } ?? ""
             let role = node.type.replacingOccurrences(of: "XCUIElementType", with: "")
             let frame = "[\(node.rect.x),\(node.rect.y),\(node.rect.width),\(node.rect.height)]"
-            lines.append("\(String(repeating: "  ", count: min(node.depth, 20)))\(node.ref ?? "-") \(role)\(identity)\(label)\(value) enabled=\(node.enabled) focused=\(node.focused) rect=\(frame)")
+            let flags = (node.enabled ? "" : " enabled=false") + (node.focused ? " focused=true" : "")
+            lines.append("\(String(repeating: "  ", count: min(node.depth, 20)))\(node.ref ?? "-") \(role)\(identity)\(label)\(value)\(flags) rect=\(frame)")
         }
         return lines.joined(separator: "\n")
     }

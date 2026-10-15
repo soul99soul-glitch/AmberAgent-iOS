@@ -624,8 +624,12 @@ struct IOSJevSettingsView: View {
                         .foregroundStyle(AmberTheme.foreground)
                         .fixedSize(horizontal: false, vertical: true)
                     // 脚本判断只有启用才注入 jev，没有"只观测"语义。
-                    let detail = useCase == .scriptJudgment && effectiveMode != .active
-                        ? "关闭：脚本中不提供 jev。" : effectiveMode.detail
+                    let phoneScopeMissing = (useCase == .phoneVerification || useCase == .phoneActions)
+                        && configuredMode != .off
+                        && !settings.canSend(useCase: useCase, required: requiredScopes(for: useCase))
+                    let detail = phoneScopeMissing ? "数据范围未齐，当前不会请求 Jev。"
+                        : (useCase == .scriptJudgment && effectiveMode != .active
+                            ? "关闭：脚本中不提供 jev。" : effectiveMode.detail)
                     Text(IOSAppLocalization.string(detail, defaultValue: detail))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
@@ -710,11 +714,24 @@ struct IOSJevSettingsView: View {
                 .foregroundStyle(AmberTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 40)
+                if configuredMode != .off,
+                   !settings.canSend(useCase: useCase, required: requiredScopes(for: useCase)) {
+                    Text(IOSAppLocalization.string(
+                        "运行此用途需要同时允许当前任务文本和手机界面文字。",
+                        defaultValue: "运行此用途需要同时允许当前任务文本和手机界面文字。"))
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.accentAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 40)
+                }
             }
             if configuredMode == .active && effectiveMode == .shadow {
-                let hint = useCase == .scriptJudgment
-                    ? "需固定模型版本才会真启用，当前脚本中不提供 jev。"
-                    : "需固定模型版本才会真启用，当前按 Shadow 运行。"
+                let phoneScopeMissing = (useCase == .phoneVerification || useCase == .phoneActions)
+                    && !settings.canSend(useCase: useCase, required: requiredScopes(for: useCase))
+                let hint = phoneScopeMissing ? "允许所需数据范围并固定模型版本后才会生效。"
+                    : (useCase == .scriptJudgment
+                        ? "需固定模型版本才会真启用，当前脚本中不提供 jev。"
+                        : "需固定模型版本才会真启用，当前按 Shadow 运行。")
                 Text(IOSAppLocalization.string(hint, defaultValue: hint))
                     .font(.caption)
                     .foregroundStyle(AmberTheme.accentAmber)

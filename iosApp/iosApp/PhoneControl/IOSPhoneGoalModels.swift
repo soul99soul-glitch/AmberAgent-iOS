@@ -56,7 +56,7 @@ struct IOSPhoneGoalTarget: Codable, Equatable, Sendable {
 
 struct IOSPhoneGoalExpectation: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
-        case visible, absent
+        case visible, enabled, absent
         case valueEquals = "value_equals"
     }
 
@@ -75,9 +75,9 @@ struct IOSPhoneGoalExpectation: Codable, Equatable, Sendable {
     func validate() throws {
         try target.validate()
         switch kind {
-        case .visible:
+        case .visible, .enabled:
             guard value == nil, anchor == nil else {
-                throw IOSPhoneGoalValidationError.invalid("visible accepts only a target.")
+                throw IOSPhoneGoalValidationError.invalid("\(kind.rawValue) accepts only a target.")
             }
         case .absent:
             guard value == nil, let anchor, anchor != target else {

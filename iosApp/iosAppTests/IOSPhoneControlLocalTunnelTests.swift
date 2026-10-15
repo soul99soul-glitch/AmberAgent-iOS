@@ -61,6 +61,130 @@ final class IOSPhoneControlLocalTunnelTests: XCTestCase {
         XCTAssertTrue(stopped)
     }
 
+    func testDisconnectedStartReportsProviderErrorBeforeCleanup() async {
+        let driver = FakePhoneControlTunnelDriver()
+        let providerError = NSError(domain: "AmberPhoneControlTunnel", code: 91,
+            userInfo: [NSLocalizedDescriptionKey: "设置本机路由失败"])
+        driver.disconnectError = providerError
+        let tunnel = makeTunnel(driver)
+        let start = Task { try await tunnel.start(owner: UUID()) }
+        await waitUntil { driver.startCount == 1 }
+        driver.status = .disconnected
+        do {
+            try await start.value
+            XCTFail("A disconnected start must fail")
+        } catch {
+            let diagnostic = error as NSError
+            XCTAssertTrue(diagnostic.localizedDescription.contains("等待 VPN 连接"))
+            XCTAssertTrue(diagnostic.localizedDescription.contains("NEVPNStatus=disconnected"))
+            XCTAssertTrue(diagnostic.localizedDescription.contains("AmberPhoneControlTunnel"))
+            XCTAssertTrue(diagnostic.localizedDescription.contains("91"))
+            XCTAssertTrue(diagnostic.localizedDescription.contains("设置本机路由失败"))
+            XCTAssertEqual(diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError, providerError)
+            XCTAssertEqual(tunnel.state, .failed(diagnostic.localizedDescription))
+        }
+        XCTAssertEqual(driver.disconnectErrorFetchCount, 1)
+        XCTAssertEqual(driver.stopCount, 1)
+        XCTAssertNil(driver.disconnectError)
+    }
+
+    func testSystemStartErrorIncludesItsStageAndOriginalCause() async {
+        let driver = FakePhoneControlTunnelDriver()
+        let systemError = NSError(domain: NEVPNErrorDomain, code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "配置不可用"])
+        driver.startError = systemError
+        let tunnel = makeTunnel(driver)
+        do {
+            try await tunnel.start(owner: UUID())
+            XCTFail("A rejected VPN start must fail")
+        } catch {
+            let diagnostic = error as NSError
+            XCTAssertTrue(diagnostic.localizedDescription.contains("启动 VPN 扩展"))
+            XCTAssertTrue(diagnostic.localizedDescription.contains(NEVPNErrorDomain))
+            XCTAssertEqual(diagnostic.domain, systemError.domain)
+            XCTAssertEqual(diagnostic.code, systemError.code)
+            XCTAssertEqual(diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError, systemError)
+        }
+        XCTAssertEqual(driver.disconnectErrorFetchCount, 0)
+        XCTAssertEqual(driver.stopCount, 1)
+    }
+
+    func testDisconnectedStartWithoutSystemReasonStillReportsItsStatus() async {
+        let driver = FakePhoneControlTunnelDriver()
+        let tunnel = makeTunnel(driver)
+        let start = Task { try await tunnel.start(owner: UUID()) }
+        await waitUntil { driver.startCount == 1 }
+        driver.status = .disconnected
+        do {
+            try await start.value
+            XCTFail("A disconnected start must fail even without a provider reason")
+        } catch {
+            let diagnostic = error as NSError
+            XCTAssertTrue(diagnostic.localizedDescription.contains("等待 VPN 连接"))
+            XCTAssertTrue(diagnostic.localizedDescription.contains("NEVPNStatus=disconnected"))
+            XCTAssertEqual(diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError,
+                IOSPhoneControlLocalTunnelError.connectionFailed as NSError)
+        }
+        XCTAssertEqual(driver.stopCount, 1)
+    }
+
+    func testCancellationDuringDisconnectDiagnosisRemainsCancellation() async {
+        let driver = FakePhoneControlTunnelDriver()
+        driver.pauseDisconnectError = true
+        let tunnel = makeTunnel(driver)
+        let start = Task { try await tunnel.start(owner: UUID()) }
+        await waitUntil { driver.startCount == 1 }
+        driver.status = .disconnected
+        await waitUntil { driver.disconnectErrorContinuation != nil }
+        start.cancel()
+        driver.resumeDisconnectError()
+        do {
+            try await start.value
+            XCTFail("Cancellation must not become a VPN error")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(driver.stopCount, 1)
+        XCTAssertEqual(tunnel.state, .ready)
+    }
+
+    func testLoadFailureReportsConfigurationReadStageWithoutStarting() async {
+        let driver = FakePhoneControlTunnelDriver()
+        let systemError = NSError(domain: NEVPNErrorDomain, code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "无法读取配置"])
+        driver.loadError = systemError
+        let tunnel = makeTunnel(driver)
+        do {
+            try await tunnel.start(owner: UUID())
+            XCTFail("Loading a rejected configuration must fail")
+        } catch {
+            let diagnostic = error as NSError
+            XCTAssertTrue(diagnostic.localizedDescription.contains("读取 VPN 配置"))
+            XCTAssertEqual(diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError, systemError)
+        }
+        XCTAssertEqual(driver.startCount, 0)
+        XCTAssertEqual(driver.stopCount, 0)
+    }
+
+    func testEnableFailureReportsConfigurationEnableStageWithoutStarting() async {
+        let driver = FakePhoneControlTunnelDriver()
+        driver.isEnabled = false
+        let systemError = NSError(domain: NEVPNErrorDomain, code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "无法保存配置"])
+        driver.enableError = systemError
+        let tunnel = makeTunnel(driver)
+        do {
+            try await tunnel.start(owner: UUID())
+            XCTFail("Enabling a rejected configuration must fail")
+        } catch {
+            let diagnostic = error as NSError
+            XCTAssertTrue(diagnostic.localizedDescription.contains("启用 VPN 配置"))
+            XCTAssertEqual(diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError, systemError)
+        }
+        XCTAssertEqual(driver.startCount, 0)
+        XCTAssertEqual(driver.stopCount, 0)
+    }
+
     func testStartWaitsForInFlightSettingsRefresh() async throws {
         let driver = FakePhoneControlTunnelDriver()
         driver.pauseLoad = true
@@ -186,9 +310,14 @@ final class IOSPhoneControlLocalTunnelTests: XCTestCase {
             try await tunnel.start(owner: UUID())
             XCTFail("An indefinitely connecting tunnel must time out")
         } catch {
-            XCTAssertEqual(error as? IOSPhoneControlLocalTunnelError, .connectionTimedOut)
+            let diagnostic = error as NSError
+            XCTAssertEqual(diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError,
+                IOSPhoneControlLocalTunnelError.connectionTimedOut as NSError)
+            XCTAssertTrue(diagnostic.localizedDescription.contains("等待 VPN 连接"))
+            XCTAssertTrue(diagnostic.localizedDescription.contains("NEVPNStatus=connecting"))
         }
         XCTAssertEqual(driver.stopCount, 1)
+        XCTAssertEqual(driver.disconnectErrorFetchCount, 0)
         if case .failed = tunnel.state {} else { XCTFail("Timeout must remain visible") }
     }
 
@@ -218,12 +347,15 @@ final class IOSPhoneControlLocalTunnelTests: XCTestCase {
             try await tunnel.start(owner: owner)
             XCTFail("Connection must time out")
         } catch {
-            XCTAssertEqual(error as? IOSPhoneControlLocalTunnelError, .connectionTimedOut)
+            let diagnostic = error as NSError
+            XCTAssertEqual(diagnostic.userInfo[NSUnderlyingErrorKey] as? NSError,
+                IOSPhoneControlLocalTunnelError.connectionTimedOut as NSError)
+            XCTAssertEqual(tunnel.state, .failed(diagnostic.localizedDescription))
         }
         let stoppedAgain = await tunnel.stop(owner: owner)
         XCTAssertFalse(stoppedAgain)
         XCTAssertEqual(driver.stopCount, 1)
-        XCTAssertEqual(tunnel.state, .failed(IOSPhoneControlLocalTunnelError.connectionTimedOut.localizedDescription))
+        if case .failed = tunnel.state {} else { XCTFail("Startup failure must remain visible") }
     }
 
     func testUnclaimedTransitionCannotBeReportedAsDisconnected() async {
@@ -270,13 +402,21 @@ private final class FakePhoneControlTunnelDriver: IOSPhoneControlTunnelDriver {
     var enableCount = 0
     var startCount = 0
     var stopCount = 0
+    var loadError: NSError?
+    var enableError: NSError?
+    var startError: NSError?
+    var disconnectError: NSError?
+    var disconnectErrorFetchCount = 0
     var pauseLoad = false
     var pauseEnable = false
+    var pauseDisconnectError = false
     var loadContinuation: CheckedContinuation<Void, Never>?
     var enableContinuation: CheckedContinuation<Void, Never>?
+    var disconnectErrorContinuation: CheckedContinuation<Void, Never>?
 
     func load() async throws -> Bool {
         if pauseLoad { await withCheckedContinuation { loadContinuation = $0 } }
+        if let loadError { throw loadError }
         return hasConfiguration
     }
     func prepare() async throws {
@@ -287,15 +427,28 @@ private final class FakePhoneControlTunnelDriver: IOSPhoneControlTunnelDriver {
     func enableExisting() async throws {
         enableCount += 1
         if pauseEnable { await withCheckedContinuation { enableContinuation = $0 } }
+        if let enableError { throw enableError }
         isEnabled = true
     }
     func start() throws {
         startCount += 1
+        if let startError { throw startError }
         status = startStatus
     }
     func stop() {
         stopCount += 1
+        disconnectError = nil
         status = stopStatus
+    }
+    func lastDisconnectError() async -> NSError? {
+        disconnectErrorFetchCount += 1
+        if pauseDisconnectError { await withCheckedContinuation { disconnectErrorContinuation = $0 } }
+        return disconnectError
+    }
+    func resumeDisconnectError() {
+        pauseDisconnectError = false
+        disconnectErrorContinuation?.resume()
+        disconnectErrorContinuation = nil
     }
     func resumeLoad() {
         pauseLoad = false

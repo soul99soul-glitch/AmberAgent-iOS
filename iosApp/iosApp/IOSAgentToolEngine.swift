@@ -719,6 +719,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     // would buy nothing. See docs/IOS_AGENT_HARDENING_PLAN_2026-07-29.md §W1.
     private let ledger: IOSAgentRunLedgering?
     private let ledgerRunId: String?
+    private let phoneAutomaticReasoning: Bool
+    private let phoneSessionIsActive: (@MainActor @Sendable (String) -> Bool)?
 
     public init(
         provider: any IOSAgentTextProvider,
@@ -726,6 +728,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         configuration: Configuration = .init(),
         ledger: IOSAgentRunLedgering? = nil,
         ledgerRunId: String? = nil,
+        phoneAutomaticReasoning: Bool = false,
+        phoneSessionIsActive: (@MainActor @Sendable (String) -> Bool)? = nil,
         executorRebuilder: ((TextGenerationParams) -> [String: any IOSToolExecutor])? = nil
     ) {
         self.provider = provider
@@ -733,7 +737,25 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         self.configuration = configuration
         self.ledger = ledger
         self.ledgerRunId = ledgerRunId
+        self.phoneAutomaticReasoning = phoneAutomaticReasoning
+        self.phoneSessionIsActive = phoneSessionIsActive
         self.executorRebuilder = executorRebuilder
+    }
+
+    private func phoneRequestParams(
+        _ params: TextGenerationParams, providerSetting: ProviderSetting
+    ) async -> TextGenerationParams {
+        guard phoneAutomaticReasoning, let runId = ledgerRunId else { return params }
+        let active = await MainActor.run {
+            if let isActive = self.phoneSessionIsActive { return isActive(runId) }
+            let controller = IOSPhoneControlController.shared
+            return controller.handoffState(runID: runId) != nil
+                && controller.hasRequestedSession(runID: runId)
+        }
+        return IOSPhoneAutomationRequestPolicy.requestParams(
+            params, provider: providerSetting,
+            automaticReasoning: phoneAutomaticReasoning, activePhoneSession: active
+        )
     }
 
     /// B2 前台内核投影:按节拍推送在途 assistant 的累加器快照。快照只在
@@ -1397,10 +1419,16 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 // B1: 钩子可抛(如上下文压缩失败)——落入下方通用 catch,与本轮
                 // provider 失败同路径收口(CG-C prepareAndStartStreaming 压缩失败
                 // → presentStreamError 的引擎侧等价)。
-                var requestMessages = try await prepareRequestMessages?(working) ?? working
+                // Add guidance before the existing upload budget/compaction hook, so
+                // its fixed overhead is included without changing canonical messages.
+                let plannedMessages = IOSPhoneAutomationRequestPolicy.requestMessages(
+                    working, tools: effectiveParams.tools
+                )
+                var requestMessages = try await prepareRequestMessages?(plannedMessages) ?? plannedMessages
+                let requestParams = await phoneRequestParams(effectiveParams, providerSetting: providerSetting)
                 let preparedRequest = try await prepareStepRequest(
                     providerSetting: providerSetting,
-                    params: effectiveParams
+                    params: requestParams
                 )
                 let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
                     setting: preparedRequest.providerSetting,
@@ -1794,7 +1822,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             await onAssistantTurnStarted?()
             try Task.checkCancellation()
 
-            let preparedMessages = try await prepareRequestMessages?(messages) ?? messages
+            let summaryMessages = IOSPhoneAutomationRequestPolicy.requestMessages(messages, tools: [])
+            let preparedMessages = try await prepareRequestMessages?(summaryMessages) ?? summaryMessages
             var requestMessages = [Self.toolLoopGuardFinalizationInstruction()] + preparedMessages
             let preparedRequest = try await prepareStepRequest(
                 providerSetting: providerSetting,
@@ -2532,7 +2561,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     }
 
     private func toolReplanRequiredJSON(toolName: String) -> String {
-        "{\"ok\":false,\"outcome\":\"not_sent\",\"reason_code\":\"replan_required\",\"tool\":\"\(sanitized(toolName))\",\"message\":\"Human control changed the state; replan from the fresh tool result before sending another action.\"}"
+        "{\"ok\":false,\"outcome\":\"not_sent\",\"reason_code\":\"replan_required\",\"tool\":\"\(sanitized(toolName))\",\"message\":\"The previous tool requires replanning; use its latest result before sending another action.\"}"
     }
 
     /// Structured error for a tool call whose `input` failed `parseInputStrict()`

@@ -1,6 +1,6 @@
 # Runner 来源
 
-来源：leeguooooo/iphone-use，固定 commit `955316e3fe12572f142fd7e75fb5d95c21fd9e03`。仅保留 XCTest runner；源码文件未修改。构建设置使用 Amber 独立 bundle identifier，不使用 upstream 团队身份。
+来源：leeguooooo/iphone-use，固定 commit `955316e3fe12572f142fd7e75fb5d95c21fd9e03`。仅保留 XCTest runner；本仓在固定 MIT 版本上增加了弹窗 context 校验、观察 capability 标记与长按失败不得降级为点击的保护。source-manifest.json 中的哈希记录引入时的上游来源，不代表本地修改后的源码哈希。构建设置使用 Amber 独立 bundle identifier，不使用 upstream 团队身份。
 
 MIT License
 

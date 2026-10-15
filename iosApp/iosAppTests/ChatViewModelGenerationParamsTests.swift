@@ -86,6 +86,127 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertEqual(savedProvider.models.count, modelIds.count)
     }
 
+    func testDeepSeekFlashAliasLowReasoningPersistsAndReachesGenerationParams() throws {
+        let defaults = isolatedDefaults()
+        let sharedSettings = makeDeepSeekFlashSettings(defaults: defaults)
+        XCTAssertEqual(sharedSettings.currentAssistantReasoningLevels(), [.off, .low, .high, .max])
+
+        sharedSettings.updateCurrentAssistantReasoningLevel(.low)
+        XCTAssertEqual(sharedSettings.currentAssistantReasoningLevel(), .low)
+        XCTAssertEqual(sharedSettings.snapshot.getCurrentAssistant().reasoningLevel, .low)
+
+        let reloaded = IOSSharedSettingsStore(userDefaults: defaults)
+        XCTAssertEqual(reloaded.snapshot.getCurrentChatModel()?.modelId, "deepseek-flash")
+        XCTAssertEqual(reloaded.currentAssistantReasoningLevels(), [.off, .low, .high, .max])
+        XCTAssertEqual(reloaded.currentAssistantReasoningLevel(), .low)
+        XCTAssertEqual(reloaded.snapshot.getCurrentAssistant().reasoningLevel, .low)
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+            sharedSettings: reloaded,
+            autoGenerateResponses: false
+        )
+        let params = viewModel.textGenerationParamsForTesting()
+        XCTAssertEqual(params.model.modelId, "deepseek-flash")
+        XCTAssertTrue(params.model.abilities.contains(.reasoning))
+        XCTAssertEqual(params.reasoningLevel, .low)
+    }
+
+    func testDeepSeekFlashAliasAutoAndHighKeepFamilyDefaultAtGenerationBoundary() {
+        let defaults = isolatedDefaults()
+        let sharedSettings = makeDeepSeekFlashSettings(defaults: defaults)
+        for selected in [ReasoningLevel.auto_, .high] {
+            sharedSettings.updateCurrentAssistantReasoningLevel(selected)
+            // DeepSeek's effort list resolves AUTO to its established HIGH default.
+            XCTAssertEqual(sharedSettings.currentAssistantReasoningLevel(), .high, selected.name)
+            let reloaded = IOSSharedSettingsStore(userDefaults: defaults)
+            XCTAssertEqual(reloaded.currentAssistantReasoningLevel(), .high, selected.name)
+            let viewModel = ChatViewModel(
+                settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+                sharedSettings: reloaded,
+                autoGenerateResponses: false
+            )
+            let params = viewModel.textGenerationParamsForTesting()
+            XCTAssertEqual(params.model.modelId, "deepseek-flash")
+            XCTAssertEqual(params.reasoningLevel, .high, selected.name)
+        }
+    }
+
+    func testDeepSeekFlashAliasStoredEmptyAbilitiesResolveReasoningWithoutRewritingModel() throws {
+        let defaults = isolatedDefaults()
+        let sharedSettings = makeDeepSeekFlashSettings(defaults: defaults, abilities: [])
+        let model = try XCTUnwrap(sharedSettings.snapshot.getCurrentChatModel())
+        XCTAssertTrue(model.abilities.isEmpty)
+        let inferred = ModelRegistry.shared.MODEL_ABILITIES.getData(modelId: model.modelId) as? [ModelAbility] ?? []
+        XCTAssertTrue(inferred.contains(.reasoning), "The saved phone model's empty abilities must resolve through the real registry")
+
+        // Restore the device's existing AUTO configuration without routing it
+        // through the selection setter, which deliberately coerces AUTO to HIGH.
+        let encoded = IosSettingsJsonBridge.shared.encode(settings: sharedSettings.snapshot)
+        var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])
+        var assistants = try XCTUnwrap(fields["assistants"] as? [[String: Any]])
+        let activeId = sharedSettings.snapshot.getCurrentAssistant().id.description()
+        let index = try XCTUnwrap(assistants.firstIndex { $0["id"] as? String == activeId })
+        assistants[index]["reasoningLevel"] = "auto"
+        assistants[index]["rememberedReasoningLevelsByModelId"] = [model.id.description(): "auto"]
+        fields["assistants"] = assistants
+        let storedAuto = String(decoding: try JSONSerialization.data(withJSONObject: fields), as: UTF8.self)
+        XCTAssertTrue(sharedSettings.restoreSnapshot(try IosSettingsJsonBridge.shared.decode(json: storedAuto)))
+
+        let restored = IOSSharedSettingsStore(userDefaults: defaults)
+        XCTAssertTrue(try XCTUnwrap(restored.snapshot.getCurrentChatModel()).abilities.isEmpty)
+        XCTAssertEqual(restored.snapshot.getCurrentAssistant().reasoningLevel, .auto_)
+        XCTAssertEqual(restored.currentAssistantReasoningLevels(), [.off, .low, .high, .max])
+        XCTAssertEqual(restored.currentAssistantReasoningLevel(), .high)
+        let restoredViewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+            sharedSettings: restored,
+            autoGenerateResponses: false
+        )
+        let restoredParams = restoredViewModel.textGenerationParamsForTesting()
+        XCTAssertEqual(restoredParams.reasoningLevel, .high)
+        XCTAssertTrue(restoredParams.model.abilities.contains(.reasoning), "The provider reads generation-model abilities before writing thinking fields")
+        XCTAssertTrue(try XCTUnwrap(restored.snapshot.getCurrentChatModel()).abilities.isEmpty)
+        XCTAssertEqual(restored.snapshot.getCurrentAssistant().reasoningLevel, .auto_, "Resolving runtime defaults must preserve the saved AUTO choice")
+
+        restored.updateCurrentAssistantReasoningLevel(.low)
+        let lowReloaded = IOSSharedSettingsStore(userDefaults: defaults)
+        XCTAssertEqual(lowReloaded.currentAssistantReasoningLevel(), .low)
+        XCTAssertTrue(try XCTUnwrap(lowReloaded.snapshot.getCurrentChatModel()).abilities.isEmpty)
+        let lowViewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+            sharedSettings: lowReloaded,
+            autoGenerateResponses: false
+        )
+        let lowParams = lowViewModel.textGenerationParamsForTesting()
+        XCTAssertEqual(lowParams.reasoningLevel, .low)
+        XCTAssertTrue(lowParams.model.abilities.contains(.reasoning))
+    }
+
+    private func makeDeepSeekFlashSettings(
+        defaults: UserDefaults, abilities: [ModelAbility] = [.reasoning]
+    ) -> IOSSharedSettingsStore {
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let model = Model(
+            modelId: "deepseek-flash", displayName: "DeepSeek Flash",
+            id: KotlinUuid.companion.random(), type: .chat,
+            customHeaders: [], customBodies: [],
+            inputModalities: [.text], outputModalities: [.text],
+            abilities: abilities, tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil, providerOverwrite: nil
+        )
+        let provider = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "DeepSeek",
+            models: [model], balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false, descriptionText: nil, shortDescriptionText: nil,
+            apiKey: "", baseUrl: "https://api.deepseek.com/v1", chatCompletionsPath: "/chat/completions",
+            useResponseApi: false, authMode: .apiKey, brand: .deepseek
+        )
+        _ = sharedSettings.addProvider(provider)
+        sharedSettings.setCurrentChatModelId(model.id.description())
+        sharedSettings.setCurrentAssistantChatModelId(model.id.description())
+        return sharedSettings
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suite = "ChatViewModelGenerationParamsTests-\(UUID().uuidString)"
         return UserDefaults(suiteName: suite)!

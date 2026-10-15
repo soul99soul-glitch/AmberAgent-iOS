@@ -1,0 +1,393 @@
+{
+  "recordedAtUTC": "2026-10-14T17:24:42.164617+00:00",
+  "baseCommit": "8a0e6df8f0c6ad779691917dd7832abc60a0cb6c",
+  "branch": "feature/adaptive-task-ui",
+  "protectedPreexistingWIP": [
+    "iosApp/iosApp/IOSIntelligentUIComponents.swift",
+    "iosApp/iosApp/IOSIntelligentUIProtocol.swift",
+    "iosApp/iosAppTests/IOSIntelligentUIProtocolTests.swift"
+  ],
+  "phase1": {
+    "review": "logic_and_actual_UI_completed",
+    "localJevPayloadMedianMs": {
+      "before": 100.077,
+      "after": 1.084,
+      "nodes": 500,
+      "samples": 30,
+      "device": "Mac M4",
+      "boundary": "local CPU only; no provider/network/phone time"
+    },
+    "twoStepControlledCalls": {
+      "before": {
+        "choose": 2,
+        "review": 1
+      },
+      "after": {
+        "choose": 2,
+        "review": 0
+      },
+      "observationsUnchanged": 3,
+      "actionsUnchanged": 2
+    }
+  },
+  "phase2": {
+    "review": "logic_and_actual_UI_completed",
+    "confirmedRepairs": [
+      "anonymous list identity merge",
+      "unknown displayed as success",
+      "AX3 phone status truncation"
+    ],
+    "ocr": "explicit request only, same captured PNG; no invented native ref",
+    "alerts": "authorized App tree only; guarded exact context; no SpringBoard scope expansion"
+  },
+  "phase3": {
+    "review": "logic_and_actual_UI_completed",
+    "confirmedUIRepair": "validation errors moved next to Save/Run; full frame asserted inside actual bottom-scroll viewport",
+    "unrelatedExpandedRegression": {
+      "test": "IOSAgentToolEngineTests/testForegroundProviderCreateRedactsCanonicalInputAndNextRequest",
+      "failure": "ProviderSetting.OpenAI nil",
+      "comparison": "same failure with isolated test and base-commit Engine substituted into current test project; not a full base-commit checkout",
+      "countedAsPass": false
+    }
+  },
+  "firstDeviceDelivery": {
+    "AppReleaseBuild": true,
+    "RunnerBuildForTesting": true,
+    "signaturesChecked": true,
+    "overwriteInstalledWithoutUninstall": true,
+    "normalLaunchAndSubsequentProcessSurvival": true,
+    "readiness": {
+      "signedRunnerReady": true,
+      "freshTreeObserved": true,
+      "observedTreeMetadata": [
+        {
+          "app_matches": "true",
+          "budget": "200",
+          "nodes": "187",
+          "truncated": "false",
+          "backend": "private-ax",
+          "inputs": "0"
+        }
+      ],
+      "runnerShutdownAccepted": true,
+      "tunnelDisconnected": true
+    },
+    "retainedData": {
+      "criticalSettingsHashesUnchanged": 6,
+      "preferenceKeysRetained": 212,
+      "conversationPathsSizesModificationDatesUnchanged": 390,
+      "conversationBodiesCompared": false,
+      "entireKeychainCompared": false,
+      "appGroupIdentifiersAndContainerPathsUnchanged": true
+    }
+  },
+  "duolingoFollowup": {
+    "completedReasoningSeconds": 72.538,
+    "recordedActionSeconds": 3.402,
+    "recordedObservationSeconds": 4.756,
+    "recordedSettleSeconds": 2.844,
+    "toolCalls": {
+      "phone_act": 7,
+      "phone_observe": 3,
+      "phone_run_goal": 0,
+      "phone_run_flow": 0
+    },
+    "provider": "DeepSeek",
+    "model": "deepseek-flash",
+    "storedReasoning": "AUTO",
+    "storedAbilitiesEmpty": true,
+    "terminalNetworkDomain": "NSURLErrorDomain",
+    "terminalNetworkCode": -1005,
+    "systemTaskExpiredSecondsAfterBackground": 35.736,
+    "specificOSExpirationReasonKnown": false,
+    "processSuspensionTraceCaptured": false,
+    "readinessAndUserTaskOverlapped": false,
+    "oldScreenshotGuardRejectedWithoutDispatch": true,
+    "additionalGate": {
+      "result": "passed",
+      "passed": 175,
+      "failed": 0,
+      "skippedOptInPerformance": 1,
+      "path": "build/phone-automation-20261014/duolingo-followup-final.xcresult"
+    },
+    "firstAppGate": {
+      "passed": 164,
+      "failed": 2,
+      "skippedOptInPerformance": 1,
+      "failures": "stored AUTO fixture serial name and asynchronous owner cleanup expectation; followup repairs retained assertions"
+    },
+    "storedEmptySwiftBoundary": "passed after fixture serial name correction; runtime Model includes REASONING and LOW reaches generation params without rewriting stored abilities",
+    "approvalProgressRegression": "red: approved tool result returned but restored lease stayed at 0 before next model chunk",
+    "review": "independent logic and normal/320pt AX3 UI completed",
+    "progressScope": "claimed phone tasks in Host, approval resume and local Coordinator continueModel; remote durable resumeDetachedResponse transport not covered",
+    "implementationAndDelivery": "completed; physical Duolingo behavior not replayed",
+    "kmpRegression": {
+      "reasoningFamilyAndRegistryPassed": 42,
+      "realProviderRequestBodyPassed": 28
+    },
+    "storedReasoningPreserved": "AUTO; this delivery does not automatically lower the saved thinking level"
+  },
+  "physicalBehaviorNotValidated": [
+    "before-after click speed",
+    "complete new semantic flow",
+    "long press menu",
+    "alert context change",
+    "OCR cold start",
+    "cellular cold start",
+    "Duolingo after followup repairs"
+  ],
+  "localEvidenceDirectory": "build/phone-automation-20261014/",
+  "privacy": "No credentials, pairing bytes, raw settings, UI text or conversation bodies in this record. Only nonsecret reasoning-mode metadata is retained.",
+  "updatedAtUTC": "2026-10-15T03:12:15.720867+00:00",
+  "latestDeviceDelivery": {
+    "revision": "r3 after Duolingo followup",
+    "AppReleaseBuild": true,
+    "GradleSharedFrameworkIncluded": true,
+    "signedBundleCountVerified": 5,
+    "workingTreeSourceHashesMatched": true,
+    "includesProtectedPreexistingWIP": true,
+    "overwriteInstalledWithoutUninstall": true,
+    "normalLaunchWithoutArguments": true,
+    "subsequentProcessSurvival": true,
+    "RunnerSourceUnchangedSinceSignedInstalledBuild": true,
+    "readinessRepeatedForThisRevision": false,
+    "retainedData": {
+      "beforePreferenceKeyCount": 213,
+      "afterPreferenceKeyCount": 214,
+      "missingPreferenceKeys": 0,
+      "criticalSettingSemanticsUnchanged": 6,
+      "criticalSettingRawHashesUnchanged": 4,
+      "equivalentJsonRepresentationWithKeyOrderDifferences": 2,
+      "storedReasoningAbilitiesAndModelIdentifierUnchanged": true,
+      "conversationEntries": 390,
+      "conversationPathsSizesResourcesUnchanged": true,
+      "userConversationUUIDModificationDatesUnchanged": true,
+      "onlyModificationDateChange": "summary-cache-v1.cache; size unchanged at 201554 bytes",
+      "systemDataProtectionAttributeChanges": 2,
+      "conversationBodiesCompared": false,
+      "entireKeychainCompared": false,
+      "appGroupIdentifiersAndContainerPathsUnchanged": true,
+      "appGroupFileMetadataUnchanged": 3,
+      "appDataAndBundleContainerPathsReallocated": true,
+      "addedNoncriticalPreference": "memory Markdown signature cache keyed by App data-container path",
+      "afterSnapshotCompletedBeforeNormalLaunch": true,
+      "earlierCacheAndPreferenceWriteTriggerKnown": false
+    }
+  },
+  "decisionLoopFollowup": {
+    "baseCommit": "6effcb248d84ee50db5ef709b08e1334cd2ee659",
+    "requestPolicy": "Current question planned once; known ordered operations prefer phone_run_flow; unknown question, unexpected or wrong feedback and visual ambiguity return to main model.",
+    "planningRequestBoundary": "Injected before existing request budget hook; deduplicated across coalesced system handoffs; absent without exposed Flow or in final tools-empty summary. Canonical has no added policy system message; native prompt-transcript endpoints persist request transition metadata on assistant messages under the existing replay contract.",
+    "automaticReasoningBoundary": {
+      "eligibility": "Frozen original assistant AUTO plus successfully claimed user run; memory handoff preserves it.",
+      "activation": "Matching active owner has actually requested a phone session; model supports LOW and reasoning capability.",
+      "unchanged": [
+        "first intent-identification request",
+        "ordinary chat with phone master switch enabled",
+        "historical phone messages",
+        "revoked owner",
+        "explicit HIGH/LOW/OFF/MAX",
+        "saved settings",
+        "custom request body priority"
+      ],
+      "coldRestoreEligibility": false
+    },
+    "verification": "enabled requires a unique visible enabled target; visible alone does not prove answer selection.",
+    "controlledExercise": "Three fresh-reference actions: select answer, Check, then Continue only after known correct feedback. Wrong feedback or disabled Check stops without dispatching Continue.",
+    "affectedAppGate": {
+      "passed": 174,
+      "failed": 0,
+      "skipped": 0,
+      "path": "build/phone-automation-20261014/decision-policy-app-gate-r3.xcresult"
+    },
+    "additionalCallCountGate": {
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "overlapsAffectedAppGate": true,
+      "path": "build/phone-automation-20261014/decision-policy-call-count.xcresult"
+    },
+    "controlledTwoStepComparison": {
+      "boundary": "Scripted provider with production Engine, real phone tool executor and HTTP fixture; not external-model adoption or physical-phone timing.",
+      "decisionRoundsBefore": 2,
+      "decisionRoundsAfter": 1,
+      "providerRequestsIncludingFinalReplyBefore": 3,
+      "providerRequestsIncludingFinalReplyAfter": 2,
+      "observationsBefore": 4,
+      "observationsAfter": 3,
+      "dispatchedActionsBeforeAndAfter": 2,
+      "mutationRequestSequenceIdentical": true
+    },
+    "flowSourceHarness": {
+      "passed": 92,
+      "failed": 0,
+      "flowTests": 28,
+      "verificationTests": 13
+    },
+    "independentLogicReview": "passed after exact policy text deduplication repair and coalesced handoff regression",
+    "independentUIReview": {
+      "result": "passed",
+      "actualScreensReviewed": 5,
+      "viewports": [
+        "393pt large dark",
+        "320pt accessibility3 light"
+      ],
+      "source": "Simulator fixture renders; original screenshots copied without editing."
+    },
+    "realProviderReplay": {
+      "result": "not_validated",
+      "reason": "Saved snapshot contains mask sentinel; actual key is in physical-device Keychain. Existing opaque handoff URL cannot create arbitrary task externally.",
+      "initialMaskSentinelRequestStatus": 401,
+      "isEvidenceOfDeviceCredentialFailure": false,
+      "realCredentialExported": false
+    },
+    "deviceDelivery": {
+      "releaseBuild": "passed_generic_iOS",
+      "latestReadOnlyPrecheck": "CoreDeviceError4016 at initial and final live checks",
+      "installWindowConfirmed": false,
+      "installed": false,
+      "normalLaunchValidated": false,
+      "retainedDataComparedForThisRevision": false,
+      "signedBundlesVerified": 5,
+      "sourceInputHashesMatched": 1165,
+      "includesProtectedPreexistingWIP": true,
+      "deviceProfilesGroupsAndURLsVerified": true,
+      "newExecutableComparedWithR3": true,
+      "mainExecutableSHA256": "a1bf461402fb4f85bb0a373b384caa6941f6ee17d492fc06477b9f3b92c9bfd5",
+      "SharedExecutableSHA256": "1e19b235e15b46946b7076bb2a586d7ea22d9ea20a81d6639d1d339a697e4d56",
+      "artifactRelativePath": "iosApp/build/PhoneAutomationDevice20261014/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+      "finalConnectivityResult": "device_unavailable",
+      "priorR3DeviceEvidenceAppliesToThisRevision": false
+    },
+    "notValidated": [
+      "external-model Flow adoption frequency",
+      "complex-question answer accuracy under LOW",
+      "complete Duolingo task after this patch",
+      "before-after physical device speed",
+      "cellular connection stability"
+    ],
+    "postCommitReview": {
+      "commitRange": "6effcb248d84ee50db5ef709b08e1334cd2ee659..19cfafd108ec907345590ee8b3efb69a4e8479d2",
+      "independentSubagents": [
+        "standards",
+        "spec and production call chain",
+        "UI"
+      ],
+      "standards": {
+        "hardViolations": 0,
+        "blockingMaintainabilityFindings": 0
+      },
+      "spec": {
+        "implementationBlockers": 0,
+        "documentationFindings": 1,
+        "documentationFindingSeverity": "P3",
+        "documentationFix": "Clarify that canonical has no added policy system message, while native provider request transitions still follow the existing assistant metadata replay contract."
+      },
+      "ui": {
+        "result": "No confirmed layout blocker in reviewed states.",
+        "initialOriginalScreensViewedBySubagent": 15,
+        "additionalFrameDiagnosticOriginalScreensRecheckedByRoot": 4,
+        "pairedHierarchyAndCompositorOriginalsViewedByRoot": 2,
+        "imageCountsCanOverlap": true,
+        "viewports": [
+          "393pt large dark",
+          "320pt accessibility3 light"
+        ],
+        "states": [
+          "long application name",
+          "connection failure",
+          "advanced preparation",
+          "automated",
+          "pausing",
+          "paused",
+          "resuming"
+        ],
+        "retractedFinding": "The UI subagent misread several images as lacking the fixed header. Root directly viewed the four originals and the same-state hierarchy/compositor pair: title, back button and scroll clipping boundary are present. Subagent withdrew the finding and derived snapshot-inconsistency claims.",
+        "pairedCompositorOriginal": "build/phone-automation-20261014/review-19cf-header-compositor-original.png",
+        "pairedHierarchyOriginal": "build/phone-automation-20261014/review-19cf-compositor-hierarchy.png",
+        "evidenceBoundary": "Simulator fixture, not physical-device acceptance.",
+        "additionalBaseSettingsOriginalScreensViewedByRoot": 4
+      },
+      "visualTest": {
+        "test": "IOSPhoneControlSettingsVisualTests/testSettingsAtNormalAndAccessibilityWidths",
+        "uniqueCaptureNamesWithDrawHierarchyTrue": 84,
+        "resultBundles": [
+          {
+            "path": "build/phone-automation-20261014/review-19cf-header-render.xcresult",
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          {
+            "path": "build/phone-automation-20261014/review-19cf-header-frame.xcresult",
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          {
+            "path": "build/phone-automation-20261014/review-19cf-header-compositor.xcresult",
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          }
+        ],
+        "sameTestRepeatedForDiagnosticEvidence": true,
+        "finalChange": "Assert drawHierarchy return value after retaining screenshot attachment; API success does not replace visual review.",
+        "temporaryAXAndPauseCodeRetained": false,
+        "finalTestSourceSHA256": "c38a0921b767d03f2b460f5cfa33631b134909253ebb99d3c24c845d2c64d699"
+      },
+      "productRuntimeCodeChanged": false,
+      "protectedPreexistingWIPChanged": false,
+      "earlierProductValidationReused": true,
+      "physicalDeviceAcceptanceClosed": false
+    }
+  },
+  "mainIntegration": {
+    "baseMain": "3b0470380f5ffd894f206d4e769edab44d435dd7",
+    "feature": "bb87f45f35739e36a916d16770c7a71e287e1371",
+    "cleanIntegrationWorktree": true,
+    "preexistingWIPIncluded": false,
+    "preservedMainCommits": [
+      "6ee394d267eccd506c065075df0dbcff57f7301e",
+      "3b0470380f5ffd894f206d4e769edab44d435dd7"
+    ],
+    "runtimeBoundary": "Keep live/anchored-step Goal continuation with sole-candidate local dispatch, Flow/enabled, fresh observations, OCR, long press, guarded alerts and unknown stops. Publish only live/steps Goal schema; retain legacy actions parsing for frozen runs.",
+    "promptConflictFixed": true,
+    "mainRevealFilesRetainedByteForByte": 20,
+    "mainRevealFilesTotal": 21,
+    "sharedTimelinePreservesBothChanges": true,
+    "independentCrossReviewCompleted": true,
+    "packageGate": {
+      "passed": 101,
+      "failed": 0,
+      "path": "build/main-integration-20261015/build/review-main-phone-package-20261015.log"
+    },
+    "appBaseline": {
+      "passedTests": 369,
+      "failedTests": 2,
+      "skippedTests": 2,
+      "totalTestCount": 373
+    },
+    "targetedAfterCatalogFix": {
+      "passedTests": 52,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 52
+    },
+    "latestResultPerTestAcrossBothRuns": {
+      "Skipped": 2,
+      "Passed": 371
+    },
+    "uniqueTestCount": 373,
+    "aggregationBoundary": "Full baseline plus affected Catalog/GoalIntegration/RequestPolicy/Handoff rerun after deleting the extra public Goal actions property. Unchanged tests reuse their baseline results; this is not a second full run.",
+    "skippedConditions": [
+      "manual reasoning-stream performance sample",
+      "system Reduce Motion setting enabled"
+    ],
+    "sourceInputHashesMatched": 1226,
+    "validationEvidence": "build/main-integration-20261015/build/main-integration-validation.json",
+    "releaseBuildForMergedTree": false,
+    "physicalDeviceInstalled": false,
+    "newVisualAcceptanceClaimed": false
+  }
+}

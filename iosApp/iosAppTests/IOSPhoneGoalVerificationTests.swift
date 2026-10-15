@@ -217,6 +217,53 @@ final class IOSPhoneGoalVerificationTests: XCTestCase {
                        .satisfied)
     }
 
+    func testEnabledRequiresOneVisibleEnabledTargetWhileVisibleKeepsItsMeaning() {
+        let target = IOSPhoneGoalTarget(identifier: "check")
+        let expected = IOSPhoneGoalExpectation(kind: .enabled, target: target)
+        let disabled = node(identifier: "check", enabled: false)
+        let before = observation([disabled], id: "before")
+        let disabledAfter = observation([disabled])
+        XCTAssertEqual(evaluate(.init(kind: .visible, target: target), before: before, after: disabledAfter).status,
+                       .satisfied)
+        let unmet = evaluate(expected, before: before, after: disabledAfter)
+        XCTAssertEqual(unmet.status, .unmet)
+        XCTAssertEqual(unmet.reason, "target_disabled")
+        XCTAssertEqual(evaluate(expected, before: before, after: observation([node(identifier: "check")])).status,
+                       .satisfied)
+        XCTAssertEqual(evaluate(expected, before: before, after: before).reason, "fresh_observation_required")
+        let ambiguous = observation([node(identifier: "check"), disabled])
+        XCTAssertEqual(evaluate(expected, after: ambiguous).reason, "ambiguous_target")
+        XCTAssertEqual(evaluate(expected, after: observation([node(identifier: "check", y: 1_000),
+                                                              node(label: "题目")])).status, .unmet)
+        XCTAssertEqual(evaluate(expected, after: observation([node(label: "题目")], truncated: true)).reason,
+                       "truncated_tree")
+    }
+
+    func testEnabledExpectationDecodesAndRejectsValueOrAnchor() throws {
+        let json = #"{"kind":"enabled","target":{"identifier":"check"}}"#
+        let expectation = try JSONDecoder().decode(IOSPhoneGoalExpectation.self, from: Data(json.utf8))
+        XCTAssertEqual(expectation.kind, .enabled)
+        XCTAssertNoThrow(try expectation.validate())
+        XCTAssertThrowsError(try IOSPhoneGoalExpectation(kind: .enabled, target: home, value: "").validate())
+        XCTAssertThrowsError(try IOSPhoneGoalExpectation(kind: .enabled, target: home, anchor: popup).validate())
+    }
+
+    func testEnabledRegionUsesTheControlStateInsteadOfItsEnabledLabelChild() {
+        let target = IOSPhoneGoalTarget(label: "Check", region: .init(x: 0, y: 0, width: 0.5, height: 0.2))
+        let expectation = IOSPhoneGoalExpectation(kind: .enabled, target: target)
+        let child = node(identifier: "check-label", label: "Check", depth: 2,
+                         type: "XCUIElementTypeStaticText", x: 40, width: 80, y: 40, height: 32)
+        let outside = node(identifier: "other-check", label: "Check", x: 240, width: 120, y: 20, height: 44)
+        for enabled in [false, true] {
+            let control = node(identifier: "check", label: "Check", enabled: enabled,
+                               x: 20, width: 120, y: 20, height: 80)
+            let screen = observation([control, child, outside])
+
+            XCTAssertEqual(evaluate(.init(kind: .visible, target: target), after: screen).status, .satisfied)
+            XCTAssertEqual(evaluate(expectation, after: screen).status, enabled ? .satisfied : .unmet)
+        }
+    }
+
     func testRequestDefaultsAndRejectsInvalidActionCombinationsAndBounds() throws {
         let json = #"{"goal":"打开搜索","bundle_id":"app.test","actions":[{"action":"tap","target":{"label":"搜索"}}],"completion":{"kind":"visible","target":{"label":"搜索结果"}}}"#
         let request = try JSONDecoder().decode(IOSPhoneGoalRequest.self, from: Data(json.utf8))

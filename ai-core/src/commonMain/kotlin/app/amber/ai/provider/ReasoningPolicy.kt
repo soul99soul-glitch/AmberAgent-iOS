@@ -407,7 +407,8 @@ internal fun String.isGlm5Effort(): Boolean {
 
 internal fun String.isDeepSeekV4(): Boolean {
     val id = normalizedModelId()
-    return id.contains("deepseek") && (id.contains("v4") || id.contains("-4-"))
+    return id == "deepseek-flash" ||
+        (id.contains("deepseek") && (id.contains("v4") || id.contains("-4-")))
 }
 
 internal fun String.isQwen38Max(): Boolean {

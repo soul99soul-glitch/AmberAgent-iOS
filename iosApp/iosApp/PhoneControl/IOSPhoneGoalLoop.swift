@@ -19,6 +19,7 @@ final class IOSPhoneGoalLoop {
         var waitForStability: () async throws -> PhoneScreenStability = {
             throw IOSPhoneGoalValidationError.invalid("Screen stability is unavailable.")
         }
+        var observeAfterAction: (() async throws -> PhoneObservation)? = nil
     }
 
     enum ReasonCode: String, Codable, Sendable {
@@ -80,6 +81,8 @@ final class IOSPhoneGoalLoop {
         var chooseMs: Double = 0
         var actMs: Double = 0
         var adviseMs: Double = 0
+        var waitMs: Double = 0
+        var totalMs: Double = 0
         // Service invocations, including local/shadow decisions; not outbound HTTP counts.
         var selectionCalls = 0
         var reviewCalls = 0
@@ -90,6 +93,7 @@ final class IOSPhoneGoalLoop {
         enum CodingKeys: String, CodingKey {
             case observeMs = "observe_ms", chooseMs = "choose_ms"
             case actMs = "act_ms", adviseMs = "advise_ms"
+            case waitMs = "wait_ms", totalMs = "total_ms"
             case selectionCalls = "selection_calls", reviewCalls = "review_calls"
             case settleMs = "settle_ms", settleCalls = "settle_calls", localActions = "local_actions"
         }
@@ -154,6 +158,7 @@ final class IOSPhoneGoalLoop {
 
         func result(_ status: Result.Status, _ reason: String, code: ReasonCode, screenshot: Bool = false,
                     unknown: PhoneControlProblem? = nil) -> Result {
+            metrics.totalMs = max(0, deps.now().timeIntervalSince(started) * 1_000)
             let diagnostics = current.map { observation -> [CandidateDiagnostic] in
                 guard !liveCandidates,
                       !observation.nodes.contains(where: { $0.type == "XCUIElementTypeAlert" }) else { return [] }
@@ -169,9 +174,10 @@ final class IOSPhoneGoalLoop {
             return deps.now().timeIntervalSince(started) >= 60 ? .timeBudgetExhausted : nil
         }
         func canContinue() -> Bool { stopCode() == nil }
-        func observe() async throws -> PhoneObservation {
+        func observe(afterAction: Bool = false) async throws -> PhoneObservation {
             let began = deps.now()
             defer { metrics.observeMs += max(0, deps.now().timeIntervalSince(began) * 1_000) }
+            if afterAction, let settled = deps.observeAfterAction { return try await settled() }
             return try await deps.observe()
         }
         func verify(_ observation: PhoneObservation, before: PhoneObservation?) -> IOSPhoneGoalVerificationResult {
@@ -179,6 +185,11 @@ final class IOSPhoneGoalLoop {
                 return .init(status: .insufficient, reason: "unexpected_alert", needsScreenshot: true)
             }
             return IOSPhoneGoalVerification.evaluate(expectation: request.completion, before: before, after: observation)
+        }
+        func waitForUI() async throws {
+            let began = deps.now()
+            defer { metrics.waitMs += max(0, deps.now().timeIntervalSince(began) * 1_000) }
+            try await deps.waitForUI()
         }
         func choose(_ observation: PhoneObservation, _ candidates: [Candidate]) async -> IOSJevPhoneControlService.Selection {
             metrics.selectionCalls += 1
@@ -276,7 +287,7 @@ final class IOSPhoneGoalLoop {
                     guard !hasWaited else { return result(.handback, "等待后仍不能确定下一步，交回主模型。", code: .waitBudgetExhausted) }
                     hasWaited = true
                     await deps.reportActivity(.waitingForUI)
-                    try await deps.waitForUI()
+                    try await waitForUI()
                     guard canContinue() else { return result(.handback, "等待界面期间控制任务已停止。", code: stopCode() ?? .taskStopped) }
                     current = try await observe()
                     continue
@@ -314,7 +325,7 @@ final class IOSPhoneGoalLoop {
                     current = nil
                     guard canContinue() else { return result(.handback, "动作已有回执，任务停止前未能核验效果。", code: stopCode() ?? .taskStopped) }
                     await deps.reportActivity(.verifying)
-                    let after = try await observe()
+                    let after = try await observe(afterAction: true)
                     current = after
                     guard canContinue(), after.bundleID == request.bundleID,
                           after.processID == observation.processID,
@@ -364,6 +375,7 @@ final class IOSPhoneGoalLoop {
         }
         func result(_ code: ReasonCode, _ message: String, screenshot: Bool = false,
                     unknown: PhoneControlProblem? = nil) -> Result {
+            metrics.totalMs = max(0, deps.now().timeIntervalSince(started) * 1_000)
             return Result(status: unknown != nil ? .unknown : (code == .completed ? .completed : .handback),
                 reason: message, reasonCode: code, candidateDiagnostics: current == nil ? [] : diagnostics,
                 metrics: metrics, steps: receipts, observation: current, verification: goalVerification,
@@ -375,6 +387,11 @@ final class IOSPhoneGoalLoop {
             let began = deps.now()
             defer { metrics.observeMs += max(0, deps.now().timeIntervalSince(began) * 1_000) }
             return try await deps.observe()
+        }
+        func waitForUI() async throws {
+            let began = deps.now()
+            defer { metrics.waitMs += max(0, deps.now().timeIntervalSince(began) * 1_000) }
+            try await deps.waitForUI()
         }
         func contextChanged(_ observation: PhoneObservation) -> Bool {
             observation.bundleID != request.bundleID || observation.processID != initial?.processID
@@ -446,7 +463,7 @@ final class IOSPhoneGoalLoop {
                         }
                         waited = true
                         await deps.reportActivity(.waitingForUI)
-                        try await deps.waitForUI()
+                        try await waitForUI()
                         if let stopped = stopCode() { return result(stopped, "等待期间任务已停止。") }
                         current = nil
                         current = try await observe()
@@ -473,7 +490,7 @@ final class IOSPhoneGoalLoop {
                             guard !waited else { return result(.waitBudgetExhausted, "本步骤等待后仍无法决定，交回主模型。") }
                             waited = true
                             await deps.reportActivity(.waitingForUI)
-                            try await deps.waitForUI()
+                            try await waitForUI()
                             if let code = stopCode() { return result(code, "等待期间任务已停止。") }
                             current = nil
                             current = try await observe()
@@ -523,7 +540,7 @@ final class IOSPhoneGoalLoop {
                     return result(.foregroundAppChanged, "动作后 App 或屏幕上下文变化，停止序列。")
                 }
                 if let code = stopCode() { return result(code, "读取动作结果期间任务已停止。") }
-                if let stability, !stability.stable || stability.blank {
+                if let stability, !stability.stable || stability.blank == true {
                     return result(.screenNotStable, "画面稳定性未确认，保留新观察并停止后续步骤。", screenshot: true)
                 }
                 var checked = IOSPhoneGoalVerification.evaluate(action: candidate.action,
@@ -535,7 +552,7 @@ final class IOSPhoneGoalLoop {
                     if let code = stopCode() { return result(code, "效果判断期间任务已停止。") }
                     if advice == .wait, !waited {
                         await deps.reportActivity(.waitingForUI)
-                        try await deps.waitForUI()
+                        try await waitForUI()
                         if let code = stopCode() { return result(code, "等待期间任务已停止。") }
                         current = nil
                         let refreshed = try await observe()

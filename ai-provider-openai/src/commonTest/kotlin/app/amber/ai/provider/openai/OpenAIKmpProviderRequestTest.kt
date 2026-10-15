@@ -251,21 +251,35 @@ class OpenAIKmpProviderRequestTest {
     }
 
     @Test
-    fun deepSeekV4SendsLowEffort() {
-        val body = provider.buildChatCompletionRequest(
-            providerSetting = setting.copy(
-                brand = OpenAIBrand.DEEPSEEK,
-                baseUrl = "https://api.deepseek.com/v1",
-            ),
-            messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
-            params = TextGenerationParams(
-                model = reasoningModel("deepseek-v4-pro"),
-                reasoningLevel = ReasoningLevel.LOW,
-            ),
-            stream = false,
-        )
-        assertEquals("enabled", body.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content)
-        assertEquals("low", body.getValue("reasoning_effort").jsonPrimitive.content)
+    fun deepSeekV4AndFlashAliasSendSelectedEffort() {
+        for (modelId in listOf("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-flash")) {
+            val model = Model(
+                modelId = modelId,
+                displayName = modelId,
+                abilities = ModelRegistry.MODEL_ABILITIES.getData(modelId),
+            )
+            assertTrue(ModelAbility.REASONING in model.abilities, modelId)
+            for (level in listOf(ReasoningLevel.LOW, ReasoningLevel.OFF)) {
+                val body = provider.buildChatCompletionRequest(
+                    providerSetting = setting.copy(
+                        brand = OpenAIBrand.DEEPSEEK,
+                        baseUrl = "https://api.deepseek.com/v1",
+                    ),
+                    messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+                    params = TextGenerationParams(model = model, reasoningLevel = level),
+                    stream = false,
+                )
+                assertEquals(modelId, body.getValue("model").jsonPrimitive.content)
+                val thinking = body.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content
+                if (level == ReasoningLevel.LOW) {
+                    assertEquals("enabled", thinking, modelId)
+                    assertEquals("low", body.getValue("reasoning_effort").jsonPrimitive.content, modelId)
+                } else {
+                    assertEquals("disabled", thinking, modelId)
+                    assertFalse("reasoning_effort" in body, modelId)
+                }
+            }
+        }
     }
 
     @Test

@@ -141,7 +141,8 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
         )
 
         // 每种状态独立存储，前一窗口延后的 onDisappear 提交不能覆盖下一组 fixture。
-        func capturePhoneSettings(_ fixture: IOSJevSettings, name: String) async throws {
+        func capturePhoneSettings(_ fixture: IOSJevSettings, name: String,
+                                  type: DynamicTypeSize = .large, width: CGFloat = 393) async throws {
             let fixtureSuite = "\(suite).\(name)"
             let fixtureDefaults = try XCTUnwrap(UserDefaults(suiteName: fixtureSuite))
             defer { fixtureDefaults.removePersistentDomain(forName: fixtureSuite) }
@@ -150,6 +151,8 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
             try await capture(
                 IOSJevSettingsView(sharedSettings: fixtureSettings),
                 name: name,
+                type: type,
+                size: CGSize(width: width, height: 852),
                 captureAllPages: true,
                 storage: fixtureDefaults
             )
@@ -190,6 +193,11 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
                            "缺范围 fixture 必须确实阻止该用途出站")
         }
         try await capturePhoneSettings(phoneMissingScope, name: "jev-settings-phone-missing-scope")
+        var phoneUnpinnedMissingScope = phoneMissingScope
+        phoneUnpinnedMissingScope.setPinnedModelVersion(nil)
+        try await capturePhoneSettings(phoneUnpinnedMissingScope, name: "jev-settings-phone-unpinned-missing-scope")
+        try await capturePhoneSettings(phoneUnpinnedMissingScope, name: "jev-settings-phone-unpinned-missing-scope-accessibility",
+                                       type: .accessibility3, width: 320)
 
         let context = ChatContextSnapshot(
             messageCount: 8, modelId: "demo", supportsReasoning: true,

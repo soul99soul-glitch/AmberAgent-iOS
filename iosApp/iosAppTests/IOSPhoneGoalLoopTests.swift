@@ -67,7 +67,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.chooseCount, 0)
         XCTAssertEqual(fixture.requireUnchangedObservations, [true, true])
         XCTAssertEqual(fixture.observeCount, 3)
-        XCTAssertEqual(fixture.adviceCount, 0)
+        XCTAssertEqual(fixture.adviceCount, 0, "A fresh next candidate needs no separate remote review")
         XCTAssertEqual(result.steps, ["a0: completed", "a1: completed"])
         XCTAssertEqual(result.reasonCode, .completed)
         XCTAssertEqual(result.candidateDiagnostics.map(\.reasonCode), [.alreadyExecuted, .alreadyExecuted])
@@ -78,6 +78,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(result.metrics.selectionCalls, 0)
         XCTAssertEqual(result.metrics.reviewCalls, 0)
         XCTAssertEqual(result.metrics.localActions, 2)
+        XCTAssertEqual(result.metrics.totalMs, 90, accuracy: 0.001)
     }
 
     func testLegacyUsesFreshReferencesAfterRotationWhileLiveKeepsItsGeometryBoundary() async {
@@ -129,6 +130,46 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.chooseCount, 0)
         XCTAssertEqual(fixture.observeCount, 2)
         XCTAssertTrue(result.needsScreenshot)
+        XCTAssertEqual(result.steps, ["a0: completed"])
+    }
+
+    func testAcknowledgedActionUsesSettledReadWithoutRepeatingObservationOrMutation() async {
+        let fixture = Fixture([
+            observation("initial", [node("open", id: "search")]),
+            observation("settled", [node("done", id: "results")]),
+        ])
+
+        let result = await fixture.loop().run(request())
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.observation?.observationID, "settled")
+        XCTAssertEqual(fixture.actions, [.tap(ref: "open")])
+        XCTAssertEqual(fixture.observeCount, 2)
+        XCTAssertEqual(fixture.observeAfterActionCount, 1)
+        XCTAssertEqual(fixture.chooseCount, 0)
+        XCTAssertEqual(fixture.adviceCount, 0)
+    }
+
+    func testFreshIntermediateAlternativesStillRequireTheNextDecision() async {
+        let fixture = Fixture([
+            observation("home", [node("home:search", id: "search"), node("home:alternative", id: "alternate-search")]),
+            observation("search", [node("search:input", id: "query", type: "XCUIElementTypeSearchField", value: ""),
+                                   node("search:alternative", id: "alternate-query")]),
+        ])
+        fixture.selections = [.action("a0"), .handback("needs a revised plan")]
+        let request = IOSPhoneGoalRequest(
+            goal: "打开搜索并填写草稿", bundleID: "app.test",
+            actions: [.init(action: .tap, target: .init(identifier: "search")),
+                      .init(action: .tap, target: .init(identifier: "alternate-search")),
+                      .init(action: .type, target: .init(identifier: "query"), text: "draft"),
+                      .init(action: .tap, target: .init(identifier: "alternate-query"))],
+            completion: .init(kind: .valueEquals, target: .init(identifier: "query"), value: "draft"))
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.status, .handback)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "home:search")])
+        XCTAssertEqual(fixture.chooseCount, 2)
+        XCTAssertEqual(fixture.adviceCount, 0)
         XCTAssertEqual(result.steps, ["a0: completed"])
     }
 
@@ -298,6 +339,25 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.observeCount, 2)
         XCTAssertEqual(fixture.chooseCount, 2)
         XCTAssertEqual(result.reasonCode, .waitBudgetExhausted)
+    }
+
+    func testReadonlyWaitContributesToWaitAndTotalMetrics() async {
+        let fixture = Fixture([
+            observation("loading", [node("first", id: "search"), node("alternative", id: "alternate-search")]),
+            observation("still-loading", [node("second", id: "search"), node("second-alternative", id: "alternate-search")]),
+        ])
+        fixture.observeDuration = 0.01
+        fixture.chooseDuration = 0.02
+        fixture.waitDuration = 0.05
+        fixture.selections = [.wait, .wait]
+
+        let result = await fixture.loop().run(branchingRequest())
+
+        XCTAssertEqual(result.reasonCode, .waitBudgetExhausted)
+        XCTAssertTrue(fixture.actions.isEmpty)
+        XCTAssertEqual(fixture.waitCount, 1)
+        XCTAssertEqual(result.metrics.waitMs, 50, accuracy: 0.001)
+        XCTAssertEqual(result.metrics.totalMs, 110, accuracy: 0.001)
     }
 
     func testProcessRestartDuringReadonlyWaitDoesNotDispatchIntoNewProcess() async {
@@ -705,7 +765,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
                                                selectionCalls: 2, reviewCalls: 1)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(metrics)) as? [String: NSNumber])
         XCTAssertEqual(Set(json.keys), ["observe_ms", "choose_ms", "act_ms", "advise_ms", "selection_calls", "review_calls",
-                                        "settle_ms", "settle_calls", "local_actions"])
+                                        "settle_ms", "settle_calls", "local_actions", "wait_ms", "total_ms"])
         XCTAssertEqual(json["selection_calls"], 2)
         XCTAssertEqual(json["review_calls"], 1)
     }
@@ -927,8 +987,10 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
     }
 
     func testSequenceUnstableOrBlankScreenDoesNotBecomeBusinessSuccess() async {
-        for stability in [PhoneScreenStability(stable: false, waitedMs: 2000, frames: 5, blank: false),
-                          PhoneScreenStability(stable: true, waitedMs: 200, frames: 3, blank: true)] {
+        for stability in [PhoneScreenStability(stable: false, blank: false, waitedMs: 2000, frames: 5,
+                                               changedPixels: 40, captureMs: 4, budgetMs: 2000),
+                          PhoneScreenStability(stable: true, blank: true, waitedMs: 200, frames: 3,
+                                               changedPixels: 0, captureMs: 4, budgetMs: 2000)] {
             let fixture = Fixture(sequenceScreens())
             fixture.stability = stability
             let result = await fixture.loop().run(sequenceRequest())
@@ -1012,11 +1074,13 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         var candidateBatches: [[String]] = []
         var candidateDescriptions: [[String]] = []
         var observeCount = 0
+        var observeAfterActionCount = 0
         var chooseCount = 0
         var adviceCount = 0
         var advices: [IOSJevPhoneControlService.Advice] = []
         var settleCount = 0
-        var stability = PhoneScreenStability(stable: true, waitedMs: 200, frames: 3, blank: false)
+        var stability = PhoneScreenStability(stable: true, blank: false, waitedMs: 200, frames: 3,
+                                              changedPixels: 0, captureMs: 4, budgetMs: 2000)
         var settleError: Error?
         var waitCount = 0
         var mode: IOSJevMode = .active
@@ -1027,20 +1091,23 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         var chooseDuration: TimeInterval = 0
         var actDuration: TimeInterval = 0
         var adviseDuration: TimeInterval = 0
+        var waitDuration: TimeInterval = 0
         var onChoose: (() -> Void)?
         var onAct: (() -> Void)?
         var onActivity: ((AgentPhoneControlActivityPhase) -> Void)?
 
         init(_ observations: [PhoneObservation]) { self.observations = observations }
 
+        private func nextObservation() throws -> PhoneObservation {
+            observeCount += 1
+            time += observeDuration
+            guard !observations.isEmpty else { throw NSError(domain: "Unexpected observation", code: 1) }
+            return observations.removeFirst()
+        }
+
         func loop() -> IOSPhoneGoalLoop {
             IOSPhoneGoalLoop(deps: .init(
-                observe: {
-                    self.observeCount += 1
-                    self.time += self.observeDuration
-                    guard !self.observations.isEmpty else { throw NSError(domain: "Unexpected observation", code: 1) }
-                    return self.observations.removeFirst()
-                },
+                observe: { try self.nextObservation() },
                 act: { action, pageAnchorRef, pageAnchorRegion, requireUnchangedObservation in
                     self.actions.append(action)
                     self.pageAnchorRefs.append(pageAnchorRef)
@@ -1068,11 +1135,15 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
                 mode: { self.mode }, isCurrent: { self.current }, reportActivity: { self.onActivity?($0) },
                 configurationRevision: { self.configurationRevision },
                 now: { Date(timeIntervalSince1970: self.time) },
-                waitForUI: { self.waitCount += 1 },
+                waitForUI: { self.waitCount += 1; self.time += self.waitDuration },
                 waitForStability: {
                     self.settleCount += 1
                     if let error = self.settleError { throw error }
                     return self.stability
+                },
+                observeAfterAction: {
+                    self.observeAfterActionCount += 1
+                    return try self.nextObservation()
                 }
             ))
         }

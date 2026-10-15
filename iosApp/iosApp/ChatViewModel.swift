@@ -5177,25 +5177,27 @@ final class ChatViewModel {
     static func userFacingGenerationError(_ rawMessage: String, modelId: String? = nil) -> String {
         let raw = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercased = raw.lowercased()
+        // NSError diagnostics contain addresses and task IDs whose digits are not HTTP status codes.
+        let isURLSessionFailure = lowercased.contains("nsurlerrordomain")
         let prefix: String
         if lowercased.contains("request snapshot ledger write failed") {
             prefix = IOSAppLocalization.string(
                 "请求尚未发送，因为本地运行记录写入失败。请重试；若问题持续，请检查设备可用存储空间。",
                 defaultValue: "请求尚未发送，因为本地运行记录写入失败。请重试；若问题持续，请检查设备可用存储空间。"
             )
-        } else if lowercased.contains("invalid api key") ||
+        } else if !isURLSessionFailure && (lowercased.contains("invalid api key") ||
             lowercased.contains("incorrect api key") ||
             lowercased.contains("unauthorized") ||
-            lowercased.contains("401") {
+            lowercased.contains("401")) {
             prefix = IOSAppLocalization.string(
                 "API Key 无效或没有权限。请回到「服务商」确认 Key 是否填写正确，并确认它有访问当前服务商的权限。",
                 defaultValue: "API Key 无效或没有权限。请回到「服务商」确认 Key 是否填写正确，并确认它有访问当前服务商的权限。"
             )
-        } else if lowercased.contains("model_not_found") ||
+        } else if !isURLSessionFailure && (lowercased.contains("model_not_found") ||
                     lowercased.contains("model not found") ||
                     lowercased.contains("does not exist") ||
                     lowercased.contains("not found") ||
-                    lowercased.contains("404") {
+                    lowercased.contains("404")) {
             let trimmedModelId = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let suffix = trimmedModelId.isEmpty
                 ? ""

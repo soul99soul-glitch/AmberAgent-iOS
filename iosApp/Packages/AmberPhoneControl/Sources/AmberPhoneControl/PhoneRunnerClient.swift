@@ -12,10 +12,12 @@ public actor PhoneRunnerClient {
     private var stopped = false
     private var outcomeUnknown = false
     private var operationInFlight = false
+    private var measurement: OperationMeasurement?
     private var snapshot: Snapshot?
 
     /// The same observation whose references are currently valid. Reading it performs no I/O.
     public var latestObservation: PhoneObservation? { snapshot?.observation }
+    public private(set) var latestOperationDiagnostics: PhoneOperationDiagnostics?
 
     public init(token: String, allowedBundleIDs: Set<String>, port: UInt16 = 8100,
                 allowHome: Bool = false, sessionConfiguration: URLSessionConfiguration? = nil) throws {
@@ -84,14 +86,14 @@ public actor PhoneRunnerClient {
     /// Waits for the current screen to settle on the device. The previous observation is consumed;
     /// call observe() afterwards before using any element reference or trusting the new screen.
     public func waitForStability() async throws -> PhoneScreenStability {
-        try beginOperation()
-        defer { operationInFlight = false }
+        try beginOperation(.observe)
+        defer { finishOperation() }
         snapshot = nil
 
         let before = try await activeApp()
         try checkScope(before)
         try checkCanContinue()
-        let response = try await http.request(path: "/wda/settle", query: [
+        let response = try await request(stage: .settle, path: "/wda/settle", query: [
             "budget_ms": "2000", "quiet_ms": "150",
         ])
         try checkCanContinue()
@@ -99,31 +101,40 @@ public actor PhoneRunnerClient {
         try checkSameApp(before, after)
         try checkCanContinue()
 
-        guard let stable = response.value["stable"]?.bool,
-              let waitedMs = response.value["waited_ms"]?.integer,
-              waitedMs >= 0,
-              let frames = response.value["frames"]?.integer,
-              frames >= 0,
-              let blank = response.value["blank"]?.bool else {
-            throw PhoneControlProblem(.malformedResponse, "Runner settle response lacks valid stability details.")
+        let stability = try parseScreenStability(response, budgetMs: 2_000)
+        guard stability.blank != nil else {
+            throw PhoneControlProblem(.malformedResponse, "Runner settle response lacks a captured screen's blank flag.")
         }
-        return PhoneScreenStability(stable: stable, waitedMs: waitedMs, frames: frames, blank: blank)
+        return stability
     }
 
-    public func observe(maxNodes: Int = 500, includeScreenSize: Bool = false) async throws -> PhoneObservation {
-        try beginOperation()
-        defer { operationInFlight = false }
+    public func observe(maxNodes: Int = 500, includeScreenSize: Bool = false,
+                        settleBudgetMs: Int? = nil) async throws -> PhoneObservation {
+        try beginOperation(.observe)
+        defer { finishOperation() }
         // A failed fresh observation must not leave old actionable references alive.
         snapshot = nil
+        if let settleBudgetMs, !(50...15_000).contains(settleBudgetMs) {
+            throw PhoneControlProblem(.invalidConfiguration, "Screen-stability budget must be between 50 and 15000 milliseconds.")
+        }
         let before = try await activeApp()
         try checkScope(before)
+        try checkCanContinue()
+        let stability: PhoneScreenStability?
+        if let settleBudgetMs {
+            stability = try await settleScreen(budgetMs: settleBudgetMs)
+            try checkCanContinue()
+        } else {
+            stability = nil
+        }
         let effectiveMaxNodes = min(2_000, max(1, maxNodes))
-        let response = try await http.request(path: "/source", query: [
+        let response = try await request(stage: .source, path: "/source", query: [
             "format": "json", "max_nodes": String(effectiveMaxNodes),
         ])
         guard let sourcePID = response.header("X-IPU-Pid").flatMap(Int.init), sourcePID == before.pid else {
             throw PhoneControlProblem(.appChanged, "The source tree does not belong to the checked foreground process.")
         }
+        try checkCanContinue()
         let bounds: PhoneElementRect?
         if includeScreenSize {
             let size = try await screenSize()
@@ -137,11 +148,13 @@ public actor PhoneRunnerClient {
         let tree = try SourceNode(response.value)
         let id = UUID().uuidString.lowercased()
         var nodes: [PhoneObservationNode] = []
+        var sourceNodes: [SourceNode] = []
         var references: [String: SourceNode] = [:]
         func flatten(_ node: SourceNode, depth: Int) {
             let ref = depth > 0 && node.rect.width > 0 && node.rect.height > 0
                 ? "\(id):\(nodes.count)" : nil
             if let ref { references[ref] = node }
+            sourceNodes.append(node)
             nodes.append(PhoneObservationNode(
                 ref: ref, depth: depth, type: node.type, identifier: node.identifier,
                 label: node.label, value: node.isSecure ? nil : node.value,
@@ -150,10 +163,13 @@ public actor PhoneRunnerClient {
             for child in node.children { flatten(child, depth: depth + 1) }
         }
         flatten(tree, depth: 0)
+        let alerts = observedAlerts(in: nodes, sources: sourceNodes, app: before)
         let observation = PhoneObservation(observationID: id, bundleID: before.bundleID, processID: before.pid,
                                            backend: response.header("X-IPU-Backend") ?? "unknown",
                                            truncated: response.header("X-IPU-Truncated") == "1", nodes: nodes,
-                                           screenBounds: bounds)
+                                           screenBounds: bounds, screenStability: stability,
+                                           diagnostics: currentDiagnostics(), alerts: alerts,
+                                           alertActionsSupported: response.header("X-IPU-Alert-Guard") == "context-v1")
         snapshot = Snapshot(id: id, app: before, references: references, tree: tree,
                             sourceMaxNodes: effectiveMaxNodes, observation: observation)
         return observation
@@ -162,8 +178,8 @@ public actor PhoneRunnerClient {
     /// Standalone, read-only compatibility API. Use screenshotObservation() for visual actions.
     /// Screenshots are never requested by observe() or act().
     public func screenshot() async throws -> Data {
-        try beginOperation()
-        defer { operationInFlight = false }
+        try beginOperation(.screenshot)
+        defer { finishOperation() }
         var observed = snapshot
         snapshot = nil
         let before = try await activeApp()
@@ -182,8 +198,8 @@ public actor PhoneRunnerClient {
     /// Attaches a screenshot and its full-screen geometry to the latest tree observation.
     /// Taking another screenshot invalidates the old evidence, including when capture fails.
     public func screenshotObservation() async throws -> PhoneScreenshot {
-        try beginOperation()
-        defer { operationInFlight = false }
+        try beginOperation(.screenshot)
+        defer { finishOperation() }
         let observed = snapshot
         snapshot = nil
         guard var observed else {
@@ -209,7 +225,8 @@ public actor PhoneRunnerClient {
         observed.observation = PhoneObservation(
             observationID: tree.observationID, bundleID: tree.bundleID, processID: tree.processID,
             backend: tree.backend, truncated: tree.truncated, nodes: tree.nodes,
-            screenBounds: bounds
+            screenBounds: bounds, screenStability: tree.screenStability, diagnostics: tree.diagnostics,
+            alerts: tree.alerts, alertActionsSupported: tree.alertActionsSupported
         )
         snapshot = observed
         return PhoneScreenshot(data: data, observationID: observed.id, width: sizeBefore.width, height: sizeBefore.height)
@@ -221,11 +238,11 @@ public actor PhoneRunnerClient {
                     pageAnchorRegion: PhoneElementRect? = nil,
                     requireUnchangedObservation: Bool = false) async -> PhoneActionResult {
         do {
-            try beginOperation()
+            try beginOperation(.action)
         } catch {
             return .unsent(Self.problem(error))
         }
-        defer { operationInFlight = false }
+        defer { finishOperation() }
         let observed = snapshot
         snapshot = nil
         var dispatched = false
@@ -235,8 +252,12 @@ public actor PhoneRunnerClient {
             }
             let path: String
             var body: [String: JSONValue] = [:]
+            var resolvedAction = action
+            if case .tap(let ref) = action, observed?.isAlertButton(ref) == true {
+                resolvedAction = .tapAlert(ref: ref)
+            }
             if pageAnchorRef != nil {
-                switch action {
+                switch resolvedAction {
                 case .tap, .type, .clear, .swipe: break
                 default:
                     throw PhoneControlProblem(.invalidAction, "A page anchor is supported only for element actions.")
@@ -252,13 +273,13 @@ public actor PhoneRunnerClient {
                 }
             }
             if requireUnchangedObservation {
-                switch action {
+                switch resolvedAction {
                 case .tap, .type, .clear, .swipe: break
                 default:
                     throw PhoneControlProblem(.invalidAction, "Unchanged-observation checking is supported only for element actions.")
                 }
             }
-            switch action {
+            switch resolvedAction {
             case .launch(let bundleID):
                 guard allowedBundleIDs.contains(bundleID) else {
                     throw PhoneControlProblem(.appOutOfScope, "The requested application is outside this run's scope.")
@@ -271,13 +292,49 @@ public actor PhoneRunnerClient {
                 }
                 try checkScope(try await activeApp())
                 path = "/wda/homescreen"
-            case .tapPoint(let observationID, let x, let y):
+            case .tapAlert(let ref):
+                guard let observed, let node = observed.references[ref],
+                      let alert = observed.observation.alerts.first(where: { $0.buttons.contains { $0.ref == ref } }),
+                      let button = alert.buttons.first(where: { $0.ref == ref }) else {
+                    throw PhoneControlProblem(.staleObservation, "Alert actions require a button reference inside the latest observed alert.")
+                }
+                guard observed.observation.alertActionsSupported else {
+                    throw PhoneControlProblem(.unsupportedNode, "This runner does not support alert-context guards. Update the runner before using alert actions.")
+                }
+                guard node.enabled else {
+                    throw PhoneControlProblem(.unsupportedNode, "The observed alert button is disabled.")
+                }
+                guard alert.buttons.filter({ $0.name == button.name }).count == 1 else {
+                    throw PhoneControlProblem(.ambiguousElement, "The observed alert has multiple buttons with the same name. No action was sent.")
+                }
+                try checkSameApp(observed.app, try await activeApp())
+                path = "/alert/accept"
+                body = ["name": .string(button.name), "exact_name": .bool(true),
+                        "expected_text": .string(alert.text), "expected_pid": .number(Double(alert.processID)),
+                        "expected_buttons": .array(alert.buttons.map { .string($0.name) })]
+            case .tapPoint(let observationID, let x, let y), .longPressPoint(let observationID, let x, let y, _):
+                if case .longPressPoint(_, _, _, let durationMs) = resolvedAction { try checkLongPressDuration(durationMs) }
                 guard x.isFinite, y.isFinite, (0..<1).contains(x), (0..<1).contains(y) else {
                     throw PhoneControlProblem(.invalidAction, "Visual tap coordinates must be finite and normalized to [0, 1).")
                 }
                 let size = try await verifiedScreenshotSize(observed: observed, observationID: observationID)
-                path = "/tap"
-                body = ["x": .number(x * size.width), "y": .number(y * size.height)]
+                if case .longPressPoint(_, _, _, let durationMs) = resolvedAction {
+                    path = "/actions"
+                    body = ["actions": .array([.object([
+                        "type": .string("pointer"), "id": .string("amber-long-press"),
+                        "parameters": .object(["pointerType": .string("touch")]),
+                        "actions": .array([
+                            .object(["type": .string("pointerMove"), "duration": .number(0),
+                                     "x": .number(x * size.width), "y": .number(y * size.height)]),
+                            .object(["type": .string("pointerDown"), "button": .number(0)]),
+                            .object(["type": .string("pause"), "duration": .number(Double(durationMs))]),
+                            .object(["type": .string("pointerUp"), "button": .number(0)]),
+                        ]),
+                    ])])]
+                } else {
+                    path = "/tap"
+                    body = ["x": .number(x * size.width), "y": .number(y * size.height)]
+                }
             case .swipePoint(let observationID, let startX, let startY, let endX, let endY):
                 guard [startX, startY, endX, endY].allSatisfy({ $0.isFinite && (0..<1).contains($0) }),
                       startX != endX || startY != endY else {
@@ -288,7 +345,8 @@ public actor PhoneRunnerClient {
                 body = ["x1": .number(startX * size.width), "y1": .number(startY * size.height),
                         "x2": .number(endX * size.width), "y2": .number(endY * size.height),
                         "duration_ms": .number(300)]
-            case .tap(let ref), .type(let ref, _), .clear(let ref), .swipe(let ref, _):
+            case .tap(let ref), .longPress(let ref, _), .type(let ref, _), .clear(let ref), .swipe(let ref, _):
+                if case .longPress(_, let durationMs) = resolvedAction { try checkLongPressDuration(durationMs) }
                 guard let observed, let node = observed.references[ref] else {
                     throw PhoneControlProblem(.staleObservation, "This reference is not part of the latest observation. Observe again.")
                 }
@@ -299,7 +357,11 @@ public actor PhoneRunnerClient {
                 guard node.enabled else {
                     throw PhoneControlProblem(.unsupportedNode, "The observed element is disabled.")
                 }
-                switch action {
+                switch resolvedAction {
+                case .longPress:
+                    guard !observed.isAlertButton(ref) else {
+                        throw PhoneControlProblem(.unsupportedNode, "Long press is not supported for alert buttons. Tap the observed alert button instead.")
+                    }
                 case .type:
                     let inputTypes: Set<String> = ["XCUIElementTypeTextField", "XCUIElementTypeSecureTextField",
                                                    "XCUIElementTypeTextView", "XCUIElementTypeSearchField"]
@@ -317,7 +379,7 @@ public actor PhoneRunnerClient {
                 let current = try await activeApp()
                 try checkSameApp(observed.app, current)
                 try checkCanContinue()
-                let found = try await http.request(method: "POST", path: "/elements", body: .object([
+                let found = try await request(stage: .elementLookup, method: "POST", path: "/elements", body: .object([
                     "using": .string("predicate string"), "value": .string(node.predicate),
                 ]))
                 try checkCanContinue()
@@ -339,7 +401,7 @@ public actor PhoneRunnerClient {
                 }
                 if let pageAnchor {
                     try checkCanContinue()
-                    let anchorFound = try await http.request(method: "POST", path: "/elements", body: .object([
+                    let anchorFound = try await request(stage: .elementLookup, method: "POST", path: "/elements", body: .object([
                         "using": .string("predicate string"),
                         "value": .string(pageAnchor.pageAnchorPredicate(region: pageAnchorRegion)),
                     ]))
@@ -355,8 +417,11 @@ public actor PhoneRunnerClient {
                     try await verifyUnchangedObservation(observed)
                 }
                 try checkSameApp(observed.app, try await activeApp())
-                switch action {
+                switch resolvedAction {
                 case .tap: path = "/element/\(elementID)/click"
+                case .longPress(_, let durationMs):
+                    path = "/wda/element/\(elementID)/touchAndHold"
+                    body["duration"] = .number(Double(durationMs) / 1_000)
                 case .type(_, let text):
                     path = "/element/\(elementID)/value"
                     body["text"] = .string(text)
@@ -369,7 +434,11 @@ public actor PhoneRunnerClient {
             }
             try checkCanContinue()
             dispatched = true
-            _ = try await http.request(method: "POST", path: path, body: .object(body))
+            let response = try await request(stage: .action, method: "POST", path: path, body: .object(body))
+            if case .longPressPoint = resolvedAction, response.header("X-IPU-Gesture") == "xcui-coordinate" {
+                // Older runners may downgrade a failed two-point hold path to a tap.
+                throw PhoneControlProblem(.runner, "The runner fell back to a tap instead of a long press. Observe and reconcile before starting another run.")
+            }
             return .completed
         } catch {
             let problem = Self.problem(error)
@@ -391,7 +460,7 @@ public actor PhoneRunnerClient {
             throw PhoneControlProblem(.staleObservation, "The decision observation was truncated. Observe the full tree again.")
         }
         try checkCanContinue()
-        let response = try await http.request(path: "/source", query: [
+        let response = try await request(stage: .source, path: "/source", query: [
             "format": "json", "max_nodes": String(observed.sourceMaxNodes),
         ])
         try checkCanContinue()
@@ -403,6 +472,37 @@ public actor PhoneRunnerClient {
         let tree = try SourceNode(response.value)
         guard observed.tree.semanticallyEquals(tree) else {
             throw PhoneControlProblem(.staleObservation, "The screen changed before the action. Observe again.")
+        }
+    }
+
+    /// Retain the runner's complete alert description for every observed button. Its execution
+    /// guard then refuses a truncated, changed, or different currently presented alert.
+    private func observedAlerts(in nodes: [PhoneObservationNode], sources: [SourceNode],
+                                app: ActiveApp) -> [PhoneObservedAlert] {
+        nodes.enumerated().compactMap { index, alertNode in
+            guard alertNode.type == "XCUIElementTypeAlert" else { return nil }
+            let source = sources[index]
+            var buttons: [PhoneObservedAlertButton] = []
+            var buttonDepth: Int?
+            for (sourceIndex, node) in nodes.enumerated().dropFirst(index + 1) {
+                if node.depth <= alertNode.depth { break }
+                if let buttonDepth, node.depth > buttonDepth { continue }
+                buttonDepth = nil
+                if node.type == "XCUIElementTypeButton" {
+                    buttonDepth = node.depth
+                    if let name = sources[sourceIndex].alertLabel {
+                        buttons.append(PhoneObservedAlertButton(ref: node.ref, name: name))
+                    }
+                }
+            }
+            return PhoneObservedAlert(ref: alertNode.ref, text: source.alertText,
+                                      processID: app.pid, buttons: buttons)
+        }
+    }
+
+    private func checkLongPressDuration(_ durationMs: Int) throws {
+        guard (300...3_000).contains(durationMs) else {
+            throw PhoneControlProblem(.invalidAction, "Long-press duration must be between 300 and 3000 milliseconds.")
         }
     }
 
@@ -420,12 +520,92 @@ public actor PhoneRunnerClient {
         return size
     }
 
-    private func beginOperation() throws {
+    private func beginOperation(_ operation: PhoneOperationDiagnostics.Operation) throws {
+        // A refused start must not expose the previous operation's timings as its own.
+        if !operationInFlight { latestOperationDiagnostics = nil }
         try checkCanContinue()
         guard !operationInFlight else {
             throw PhoneControlProblem(.busy, "Another observation or action is still running.")
         }
         operationInFlight = true
+        measurement = OperationMeasurement(operation: operation)
+    }
+
+    private func finishOperation() {
+        latestOperationDiagnostics = currentDiagnostics()
+        measurement = nil
+        operationInFlight = false
+    }
+
+    private func currentDiagnostics() -> PhoneOperationDiagnostics? {
+        guard let measurement else { return nil }
+        return PhoneOperationDiagnostics(operation: measurement.operation,
+                                         durationMs: Self.milliseconds(since: measurement.started),
+                                         requests: measurement.requests)
+    }
+
+    private static func milliseconds(since start: ContinuousClock.Instant) -> Double {
+        let elapsed = start.duration(to: .now).components
+        return Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1_000_000_000_000_000
+    }
+
+    private func request(stage: PhoneRunnerRequestTiming.Stage, method: String = "GET", path: String,
+                         query: [String: String] = [:], body: JSONValue? = nil,
+                         timeoutInterval: TimeInterval? = nil) async throws -> RunnerResponse {
+        let started = ContinuousClock.now
+        var response: RunnerResponse?
+        defer {
+            measurement?.requests.append(PhoneRunnerRequestTiming(
+                stage: stage, durationMs: Self.milliseconds(since: started),
+                runnerMs: response.flatMap(Self.runnerMilliseconds),
+                queuedMs: response?.header("X-IPU-Queued-Ms").flatMap(Self.validMilliseconds)
+            ))
+        }
+        let received = try await http.request(method: method, path: path, query: query, body: body,
+                                             timeoutInterval: timeoutInterval)
+        response = received
+        return received
+    }
+
+    private static func validMilliseconds(_ string: String) -> Double? {
+        guard let value = Double(string), value.isFinite, value >= 0 else { return nil }
+        return value
+    }
+
+    private static func runnerMilliseconds(_ response: RunnerResponse) -> Double? {
+        if let value = response.header("X-IPU-Ms").flatMap(validMilliseconds) { return value }
+        for metric in (response.header("Server-Timing") ?? "").split(separator: ",") {
+            let parameters = metric.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parameters.first == "runner" else { continue }
+            for parameter in parameters.dropFirst() where parameter.hasPrefix("dur=") {
+                if let value = validMilliseconds(String(parameter.dropFirst(4))) { return value }
+            }
+        }
+        return nil
+    }
+
+    private func settleScreen(budgetMs: Int) async throws -> PhoneScreenStability {
+        let response = try await request(stage: .settle, path: "/wda/settle",
+                                         query: ["budget_ms": String(budgetMs)],
+                                         timeoutInterval: Double(budgetMs) / 1_000 + 2)
+        return try parseScreenStability(response, budgetMs: budgetMs)
+    }
+
+    private func parseScreenStability(_ response: RunnerResponse, budgetMs: Int) throws -> PhoneScreenStability {
+        let value = response.value
+        guard let stable = value["stable"]?.bool,
+              let waitedMs = value["waited_ms"]?.number, waitedMs.isFinite, waitedMs >= 0,
+              let frames = value["frames"]?.number, frames.isFinite, frames >= 0, frames.rounded() == frames,
+              let changed = value["changed_px"]?.number, changed.isFinite, changed >= -1, changed.rounded() == changed,
+              let captureMs = value["capture_ms"]?.number, captureMs.isFinite, captureMs >= 0,
+              let actualBudget = value["budget_ms"]?.number, actualBudget == Double(budgetMs),
+              frames < Double(Int.max), changed < Double(Int.max),
+              frames == 0 || value["blank"]?.bool != nil else {
+            throw PhoneControlProblem(.malformedResponse, "Runner did not return valid screen-stability measurements.")
+        }
+        return PhoneScreenStability(stable: stable, blank: value["blank"]?.bool, waitedMs: waitedMs,
+                                    frames: Int(frames), changedPixels: Int(changed), captureMs: captureMs,
+                                    budgetMs: budgetMs)
     }
 
     private func checkCanContinue() throws {
@@ -434,7 +614,7 @@ public actor PhoneRunnerClient {
     }
 
     private func activeApp() async throws -> ActiveApp {
-        let response = try await http.request(path: "/wda/activeAppInfo")
+        let response = try await request(stage: .activeApp, path: "/wda/activeAppInfo")
         guard let bundleID = response.value["bundleId"]?.string, !bundleID.isEmpty,
               let pid = response.value["pid"]?.number, pid > 0, pid <= Double(Int32.max) else {
             throw PhoneControlProblem(.malformedResponse, "Runner did not identify the foreground application.")
@@ -445,7 +625,7 @@ public actor PhoneRunnerClient {
     }
 
     private func screenSize() async throws -> ScreenSize {
-        let response = try await http.request(path: "/window/size")
+        let response = try await request(stage: .screenSize, path: "/window/size")
         guard let width = response.value["width"]?.number, width.isFinite, width > 0,
               let height = response.value["height"]?.number, height.isFinite, height > 0 else {
             throw PhoneControlProblem(.malformedResponse, "Runner did not return valid full-screen dimensions.")
@@ -454,7 +634,7 @@ public actor PhoneRunnerClient {
     }
 
     private func screenshotPNG() async throws -> Data {
-        let response = try await http.request(path: "/screenshot")
+        let response = try await request(stage: .screenshot, path: "/screenshot")
         guard let encoded = response.value.string, let data = Data(base64Encoded: encoded),
               data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) else {
             throw PhoneControlProblem(.malformedResponse, "Runner screenshot is not a base64 PNG.")
@@ -485,6 +665,12 @@ public actor PhoneRunnerClient {
     }
 }
 
+private struct OperationMeasurement {
+    let operation: PhoneOperationDiagnostics.Operation
+    let started = ContinuousClock.now
+    var requests: [PhoneRunnerRequestTiming] = []
+}
+
 private struct ActiveApp: Sendable, Equatable {
     let bundleID: String
     let pid: Int
@@ -498,6 +684,16 @@ private struct Snapshot: Sendable {
     let sourceMaxNodes: Int
     var observation: PhoneObservation
     var screenshotSize: ScreenSize?
+
+    func isAlertButton(_ ref: String) -> Bool {
+        var alertDepth: Int?
+        for node in observation.nodes {
+            if let depth = alertDepth, node.depth <= depth { alertDepth = nil }
+            if node.type == "XCUIElementTypeAlert", alertDepth == nil { alertDepth = node.depth }
+            if node.ref == ref { return node.type == "XCUIElementTypeButton" && alertDepth != nil }
+        }
+        return false
+    }
 }
 
 private struct ScreenSize: Sendable, Equatable {
@@ -523,6 +719,7 @@ private struct SourceNode: Sendable {
     let type: String
     let identifier: String?
     let label: String?
+    let name: String?
     let value: String?
     let rect: PhoneElementRect
     let enabled: Bool
@@ -540,11 +737,28 @@ private struct SourceNode: Sendable {
         self.type = type
         identifier = json["rawIdentifier"]?.string.flatMap { $0.isEmpty ? nil : $0 }
         label = json["label"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+        name = json["name"]?.string.flatMap { $0.isEmpty ? nil : $0 }
         value = json["value"]?.string
         rect = PhoneElementRect(x: x, y: y, width: width, height: height)
         enabled = json["isEnabled"]?.bool ?? true
         focused = json["isFocused"]?.bool ?? false
         children = try (json["children"]?.array ?? []).map(SourceNode.init)
+    }
+
+    var alertLabel: String? { label ?? name ?? value.flatMap { $0.isEmpty ? nil : $0 } }
+
+    var alertText: String {
+        var text: [String] = []
+        func walk(_ node: SourceNode) {
+            if node.type == "XCUIElementTypeButton" { return }
+            if node.type == "XCUIElementTypeStaticText" || node.type == "XCUIElementTypeTextView",
+               let label = node.alertLabel, !text.contains(label) {
+                text.append(label)
+            }
+            for child in node.children { walk(child) }
+        }
+        for child in children { walk(child) }
+        return text.isEmpty ? alertLabel ?? "" : text.joined(separator: "\n")
     }
 
     var predicate: String {

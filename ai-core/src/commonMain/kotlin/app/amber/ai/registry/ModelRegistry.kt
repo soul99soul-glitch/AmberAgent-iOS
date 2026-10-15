@@ -324,6 +324,14 @@ object ModelRegistry {
         contextWindow(1_000_000)
     }
 
+    private val DEEPSEEK_FLASH_ALIAS = defineModel {
+        exact("deepseek-flash")
+        input(*DEEPSEEK_V4_FLASH.inputModalities.toTypedArray())
+        output(*DEEPSEEK_V4_FLASH.outputModalities.toTypedArray())
+        ability(*DEEPSEEK_V4_FLASH.abilities.toTypedArray())
+        DEEPSEEK_V4_FLASH.contextWindowTokens?.let(::contextWindow)
+    }
+
     private val DEEPSEEK_V4_PRO = defineModel {
         tokens("deepseek", "v", "4", "pro")
         toolReasoningAbility()
@@ -626,7 +634,7 @@ object ModelRegistry {
     }
 
     private val DEEPSEEK_REASONING_SERIES = defineGroup {
-        add(DEEPSEEK_R1, DEEPSEEK_V4_FLASH, DEEPSEEK_V4_PRO, DEEPSEEK_V3_1, DEEPSEEK_V3_2)
+        add(DEEPSEEK_R1, DEEPSEEK_V4_FLASH, DEEPSEEK_FLASH_ALIAS, DEEPSEEK_V4_PRO, DEEPSEEK_V3_1, DEEPSEEK_V3_2)
     }
 
     private val QWEN_REASONING_SERIES = defineGroup {
@@ -707,6 +715,7 @@ object ModelRegistry {
         DEEPSEEK_REASONER,
         DEEPSEEK_V4,
         DEEPSEEK_V4_FLASH,
+        DEEPSEEK_FLASH_ALIAS,
         DEEPSEEK_V4_PRO,
         DEEPSEEK_V3_1,
         DEEPSEEK_V3_2,

@@ -43,6 +43,30 @@ class ReasoningPolicyTest {
     }
 
     @Test
+    fun deepSeekFlashAliasSupportsOfficialEffortLevels() {
+        for (provider in listOf(deepseek(), ProviderSetting.OpenAI())) {
+            assertEquals(ReasoningFamily.DEEPSEEK, model("deepseek-flash").reasoningFamily(provider))
+            assertEquals(
+                listOf(ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX),
+                options("deepseek-flash", provider),
+            )
+            assertEquals(ReasoningLevel.HIGH, default("deepseek-flash", provider))
+        }
+    }
+
+    @Test
+    fun legacyDeepSeekModelsAndUnrecognizedFlashNamesStayBinary() {
+        for (id in listOf(
+            "deepseek-chat", "deepseek-reasoner", "deepseek-v3", "deepseek-v3.2",
+            "deepseek-v3-flash", "deepseek-flash-lite", "deepseek-pro", "other-flash",
+        )) {
+            assertEquals(ReasoningFamily.BINARY, model(id).reasoningFamily(deepseek()), id)
+            assertEquals(listOf(ReasoningLevel.OFF, ReasoningLevel.AUTO), options(id, deepseek()), id)
+            assertEquals(ReasoningLevel.AUTO, default(id, deepseek()), id)
+        }
+    }
+
+    @Test
     fun glm53IsAlwaysLowHighMax() {
         assertEquals(
             listOf(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX),

@@ -533,6 +533,7 @@ final class RunnerTests: XCTestCase {
       "X-IPU-Truncated": ((tree[IPURTreeTruncatedKey] as? Bool) == true) ? "1" : "0",
       "X-IPU-Extension-Calls": "\(tree[IPURTreeExtensionCallsKey] ?? 0)",
       "X-IPU-Pid": "\(pid)",
+      "X-IPU-Alert-Guard": "context-v1",
     ]
   }
 

@@ -36,11 +36,22 @@ final class IOSPhoneControlSettingsVisualTests: XCTestCase {
             ("phone-settings-advanced-normal", 393.0, .large, .dark, true, true, false),
             ("phone-settings-advanced-accessibility", 320.0, .accessibility3, .light, true, true, false),
             ("phone-settings-verified-normal", 393.0, .large, .dark, true, false, true),
-            ("phone-settings-verified-accessibility", 320.0, .accessibility3, .light, true, false, true)
+            ("phone-settings-verified-accessibility", 320.0, .accessibility3, .light, true, false, true),
+            ("phone-settings-failure-normal", 393.0, .large, .dark, true, false, false),
+            ("phone-settings-failure-accessibility", 320.0, .accessibility3, .light, true, false, false)
         ] {
             tunnel.isPrepared = prepared
             tunnel.state = prepared ? .ready : .unprepared
             if verified { try await controller.checkReadiness() }
+            if name.contains("failure") {
+                tunnel.startOperation = { _ in
+                    throw NSError(domain: "NEVPNErrorDomain", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                        "等待 VPN 连接失败（NEVPNStatus=disconnected）：扩展连接中断，系统原因 NEVPNErrorDomain code=5。请根据本次连接阶段检查原因。"])
+                }
+                try await controller.checkReadiness()
+                tunnel.startOperation = nil
+                XCTAssertNotNil(controller.readinessReport?.failureMessage)
+            }
             window.overrideUserInterfaceStyle = style
             window.frame = CGRect(x: 0, y: 0, width: width, height: 900)
             window.rootViewController = UIHostingController(rootView:
@@ -127,8 +138,9 @@ final class IOSPhoneControlSettingsVisualTests: XCTestCase {
     }
 
     private func capture(_ window: UIWindow, name: String) throws {
+        var hierarchyComplete = false
         let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            hierarchyComplete = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
@@ -137,6 +149,7 @@ final class IOSPhoneControlSettingsVisualTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         print("PHONE_SETTINGS_EVIDENCE \(url.path)")
+        XCTAssertTrue(hierarchyComplete, "Incomplete hierarchy snapshot: \(name)")
     }
 }
 

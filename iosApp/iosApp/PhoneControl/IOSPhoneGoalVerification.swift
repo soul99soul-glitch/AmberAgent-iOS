@@ -77,6 +77,12 @@ enum IOSPhoneGoalVerification {
                 ? result(after.truncated ? .insufficient : .unmet,
                          after.truncated ? "truncated_tree" : "target_not_visible", screenshot: true)
                 : result(.satisfied, "target_visible")
+        case .enabled:
+            guard let node = matches.first else {
+                return result(after.truncated ? .insufficient : .unmet,
+                              after.truncated ? "truncated_tree" : "target_not_visible", screenshot: true)
+            }
+            return node.enabled ? result(.satisfied, "target_enabled") : result(.unmet, "target_disabled")
         case .absent:
             guard matches.isEmpty else { return result(.unmet, "target_still_visible") }
             guard !after.truncated else { return result(.insufficient, "truncated_tree", screenshot: true) }

@@ -95,21 +95,27 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         let directory: URL
     }
 
-    private func makeRun(timeoutSeconds: TimeInterval = 60) async throws -> Run {
+    private func makeRun(
+        timeoutSeconds: TimeInterval = 60,
+        modelId: String? = nil,
+        reasoningLevel: ReasoningLevel = .off,
+        phoneAutomaticReasoning: Bool = false
+    ) async throws -> Run {
         let id = UUID().uuidString
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("background-run-\(id)")
         let store = IOSConversationStore(baseDirectory: directory)
         await store.bootstrap()
         let conversationId = try XCTUnwrap(store.currentConversation?.id)
-        let model = Model(modelId: id, displayName: id, id: KotlinUuid.companion.random(),
+        let model = Model(modelId: modelId ?? id, displayName: id, id: KotlinUuid.companion.random(),
             type: .chat, customHeaders: [], customBodies: [], inputModalities: [], outputModalities: [],
-            abilities: [], tools: Set<BuiltInTools>(), contextWindowTokens: nil, providerOverwrite: nil)
+            abilities: modelId == "deepseek-flash" ? [.tool, .reasoning] : [],
+            tools: Set<BuiltInTools>(), contextWindowTokens: nil, providerOverwrite: nil)
         let setting = ProviderSetting.OpenAI(id: KotlinUuid.companion.random(), enabled: true,
             name: "Background test", models: [model],
             balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
             builtIn: false, descriptionText: nil, shortDescriptionText: nil, apiKey: "test",
             baseUrl: "https://example.test", chatCompletionsPath: "/chat/completions",
-            useResponseApi: false, authMode: .apiKey, brand: .generic)
+            useResponseApi: false, authMode: .apiKey, brand: modelId == "deepseek-flash" ? .deepseek : .generic)
         let settings = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "background-test-\(id)")!)
         let runtime = ChatToolRuntime(settingsStore: SettingsStore(), sharedSettings: settings,
             localToolExecutor: nil, searchTransport: SearchTransport(),
@@ -123,10 +129,11 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
             startedAt: Int64(Date().timeIntervalSince1970 * 1000), inputDigest: id,
             conversationId: conversationId, providerId: setting.id.toHexDashString(), providerSetting: setting,
             params: TextGenerationParams(model: model, temperature: nil, topP: nil, maxTokens: nil,
-                tools: ToolKt.iosToolDeclarations(names: ["tools_list"]), reasoningLevel: .off, customHeaders: [], customBody: []),
+                tools: ToolKt.iosToolDeclarations(names: ["tools_list"]), reasoningLevel: reasoningLevel, customHeaders: [], customBody: []),
             uploadMessages: [systemMessage], displayMessages: [], mode: .continueModel,
             generativeUiRequirement: .none, generativeUiFallbackAttempted: false,
-            fullToolNames: ["tools_list", "workspace_file_read"], subAgentTimeoutSeconds: timeoutSeconds)
+            fullToolNames: ["tools_list", "workspace_file_read"], subAgentTimeoutSeconds: timeoutSeconds,
+            phoneAutomaticReasoning: phoneAutomaticReasoning)
         let recorded = try await IOSDurableRunStore().startChatRun(runId: id,
             startedAt: handoff.startedAt, inputDigest: id, conversationId: conversationId.toHexDashString())
         XCTAssertTrue(recorded)
@@ -149,6 +156,149 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         while try await !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         let satisfied = try await condition()
         XCTAssertTrue(satisfied)
+    }
+
+    func testEarlyPhoneHandoffEligibilityDoesNotLowerOrdinaryBackgroundRounds() async throws {
+        let assertions = Assertions()
+        let keepAlive = assertions.keepAlive(audioEnabled: false)
+        let provider = IOSChatProgressStreamingProvider()
+        let coordinator = IOSChatBackgroundGenerationCoordinator(keepAlive: keepAlive, provider: provider)
+        let run = try await makeRun(modelId: "deepseek-flash", reasoningLevel: .high, phoneAutomaticReasoning: true)
+        let phoneControl = IOSPhoneControlController.shared
+        XCTAssertNil(phoneControl.ownerRunID)
+        let wasEnabled = phoneControl.enabled
+        let oldScope = phoneControl.selectedBundleIDs
+        phoneControl.enabled = true
+        phoneControl.selectedBundleIDs = ["app.example.target"]
+        defer {
+            coordinator.cancelJobs(conversationId: run.handoff.conversationId)
+            phoneControl.revoke(runID: run.handoff.runId)
+            phoneControl.selectedBundleIDs = oldScope
+            phoneControl.enabled = wasEnabled
+            try? FileManager.default.removeItem(at: run.directory)
+        }
+        XCTAssertTrue(phoneControl.claim(runID: run.handoff.runId, onStop: {}))
+        XCTAssertTrue(run.handoff.phoneAutomaticReasoning)
+        start(run, on: coordinator)
+        try await waitUntil { provider.callCount == 1 }
+        XCTAssertFalse(phoneControl.hasRequestedSession(runID: run.handoff.runId))
+        XCTAssertEqual(provider.capturedParams.first?.reasoningLevel, .high,
+                       "A background handoff may retain AUTO eligibility before any actual phone activity")
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantMessage(parts: [
+            UIMessagePart.Tool(toolCallId: "ordinary-background-list", toolName: "tools_list", input: "{}", output: [],
+                              approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        ])))
+        provider.finishRound()
+        try await waitUntil { provider.callCount == 2 }
+        XCTAssertFalse(IOSChatForegroundFixtures.toolPart(
+            toolCallId: "ordinary-background-list", in: provider.latestMessages
+        )?.output.isEmpty ?? true)
+        XCTAssertEqual(provider.capturedParams.map(\.reasoningLevel), [.high, .high],
+                       "Completing an ordinary tool cannot activate phone-specific reasoning")
+        XCTAssertFalse(phoneControl.hasRequestedSession(runID: run.handoff.runId))
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantText("finished")))
+        provider.finishRound()
+        try await waitUntil { coordinator.activeJobCount == 0 }
+        await phoneControl.stop(runID: run.handoff.runId)
+        XCTAssertTrue(keepAlive.activeLeaseIds.isEmpty)
+    }
+
+    func testClaimedPhoneContinuationAdvancesExistingLeaseForRealContentAndToolResults() async throws {
+        let assertions = Assertions()
+        let keepAlive = assertions.keepAlive(audioEnabled: false)
+        let provider = IOSChatProgressStreamingProvider()
+        let coordinator = IOSChatBackgroundGenerationCoordinator(keepAlive: keepAlive, provider: provider)
+        let run = try await makeRun()
+        let phoneControl = IOSPhoneControlController.shared
+        XCTAssertNil(phoneControl.ownerRunID)
+        let wasEnabled = phoneControl.enabled
+        let oldScope = phoneControl.selectedBundleIDs
+        phoneControl.enabled = true
+        phoneControl.selectedBundleIDs = ["app.example.target"]
+        defer {
+            coordinator.cancelJobs(conversationId: run.handoff.conversationId)
+            phoneControl.revoke(runID: run.handoff.runId)
+            phoneControl.selectedBundleIDs = oldScope
+            phoneControl.enabled = wasEnabled
+            try? FileManager.default.removeItem(at: run.directory)
+        }
+        XCTAssertTrue(phoneControl.claim(runID: run.handoff.runId, onStop: {}))
+        let leaseID = "chat-bg-\(Bundle.main.bundleIdentifier ?? "app.amber.ios").chat.\(run.handoff.runId)"
+        keepAlive.begin(leaseID, title: "Amber", subtitle: "Phone continuation", submitSystemTask: false)
+        keepAlive.updateProgress(leaseID, completed: 7, total: -1)
+        start(run, on: coordinator)
+        try await waitUntil { provider.callCount == 1 }
+        XCTAssertEqual(keepAlive.activeLeaseIds, [leaseID], "Continuation must use the already held lease")
+        let initial = try XCTUnwrap(iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID))
+        XCTAssertEqual(initial.total, -1)
+        XCTAssertEqual(initial.completed, 7, "A new execution facade must not reset previously reported work")
+
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantText("计划")))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.completed, 8)
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantText("继续")))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.completed, 9)
+        provider.emit(IOSChatForegroundFixtures.chunk(with: IOSChatForegroundFixtures.assistantText("计划继续")))
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantText("")))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.completed, 9,
+                       "Repeated text and empty chunks must not manufacture work")
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantMessage(parts: [
+            UIMessagePart.Reasoning(reasoning: "确认目标", createdAt: instant, finishedAt: nil, metadata: nil)
+        ])))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.completed, 10)
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantMessage(parts: [
+            UIMessagePart.Tool(toolCallId: "phone-bg-progress", toolName: "tools_list", input: "{}", output: [],
+                              approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        ])))
+        provider.finishRound()
+        try await waitUntil { provider.callCount == 2 }
+        XCTAssertFalse(IOSChatForegroundFixtures.toolPart(toolCallId: "phone-bg-progress", in: provider.latestMessages)?.output.isEmpty ?? true)
+        try await Task.sleep(for: .milliseconds(120))
+        let afterTool = try XCTUnwrap(iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID))
+        XCTAssertEqual(afterTool.completed, 11, "The tool completed while the next model's first chunk is still blocked")
+        XCTAssertEqual(afterTool.total, -1)
+
+        phoneControl.revoke(runID: run.handoff.runId)
+        XCTAssertNil(phoneControl.handoffState(runID: run.handoff.runId))
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantText("撤销后到达")))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.completed, afterTool.completed)
+        XCTAssertTrue(coordinator.cancelJob(runId: run.handoff.runId))
+        try await waitUntil { coordinator.activeJobCount == 0 }
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantText("取消后到达")))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertNil(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID))
+        XCTAssertTrue(keepAlive.activeLeaseIds.isEmpty)
+    }
+
+    func testUnclaimedBackgroundChatKeepsFourStageProgress() async throws {
+        let assertions = Assertions()
+        let keepAlive = assertions.keepAlive(audioEnabled: false)
+        let provider = IOSChatProgressStreamingProvider()
+        let coordinator = IOSChatBackgroundGenerationCoordinator(keepAlive: keepAlive, provider: provider)
+        let run = try await makeRun()
+        defer {
+            coordinator.cancelJobs(conversationId: run.handoff.conversationId)
+            try? FileManager.default.removeItem(at: run.directory)
+        }
+        XCTAssertNil(IOSPhoneControlController.shared.handoffState(runID: run.handoff.runId))
+        start(run, on: coordinator)
+        try await waitUntil { provider.callCount == 1 }
+        let leaseID = try XCTUnwrap(keepAlive.activeLeaseIds.first)
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.total, 4)
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.completed, 1)
+        provider.emit(IOSChatForegroundFixtures.streamChunk(delta: IOSChatForegroundFixtures.assistantText("回复")))
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(keepAlive, runID: leaseID)?.completed, 1)
+        provider.finishRound()
+        try await waitUntil { coordinator.activeJobCount == 0 }
+        let snapshot = try await IOSDurableRunStore().snapshot(runId: run.handoff.runId)
+        XCTAssertEqual(snapshot?.status, .completed)
+        XCTAssertTrue(keepAlive.activeLeaseIds.isEmpty)
     }
 
     func testAudioOwnedChildrenSurviveShortWindowAndKeepIndependentCancellation() async throws {

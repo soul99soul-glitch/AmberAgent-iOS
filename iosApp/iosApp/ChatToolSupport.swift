@@ -11,6 +11,7 @@ import Foundation
 /// while allowing all consumers of one snapshot to share its JSON parse.
 final class ChatToolOutputAnalysis {
     let firstJSONObject: [String: Any]?
+    let jsonObjects: [[String: Any]]
     /// Non-blank text parts in their original form for result summaries.
     let textParts: [String]
     let failureReason: String?
@@ -42,6 +43,7 @@ final class ChatToolOutputAnalysis {
         }
 
         self.firstJSONObject = parsedObjects.first
+        self.jsonObjects = parsedObjects
         self.textParts = nonEmptyTexts
         self.failureReason = Self.failureReason(in: parsedObjects)
         self.imageFailureReason = Self.imageFailureReason(

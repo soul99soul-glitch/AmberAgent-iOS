@@ -468,7 +468,7 @@ extension AgentActivityPresentation {
         case "phone_observe": return .phoneControl(.observing)
         case "phone_act": return .phoneControl(.connecting)
         case "phone_run_goal": return .phoneControl(.deciding)
-        case "phone_scroll_until": return .phoneControl(.observing)
+        case "phone_scroll_until", "phone_collect_list", "phone_run_flow": return .phoneControl(.observing)
         case "phone_apps": return .phoneControl(.listingApps)
         case "phone_add_app": return .phoneControl(.addingApp)
         case "phone_stop": return .phoneControl(.stopping)
