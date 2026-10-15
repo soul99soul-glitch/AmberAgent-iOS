@@ -138,8 +138,9 @@ final class IOSPhoneControlSettingsVisualTests: XCTestCase {
     }
 
     private func capture(_ window: UIWindow, name: String) throws {
+        var hierarchyComplete = false
         let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            hierarchyComplete = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
@@ -148,6 +149,7 @@ final class IOSPhoneControlSettingsVisualTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         print("PHONE_SETTINGS_EVIDENCE \(url.path)")
+        XCTAssertTrue(hierarchyComplete, "Incomplete hierarchy snapshot: \(name)")
     }
 }
 

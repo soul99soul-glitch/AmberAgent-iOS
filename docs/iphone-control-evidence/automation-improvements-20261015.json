@@ -138,7 +138,7 @@
   ],
   "localEvidenceDirectory": "build/phone-automation-20261014/",
   "privacy": "No credentials, pairing bytes, raw settings, UI text or conversation bodies in this record. Only nonsecret reasoning-mode metadata is retained.",
-  "updatedAtUTC": "2026-10-15T01:58:27.595300+00:00",
+  "updatedAtUTC": "2026-10-15T02:36:22.747517+00:00",
   "latestDeviceDelivery": {
     "revision": "r3 after Duolingo followup",
     "AppReleaseBuild": true,
@@ -177,7 +177,7 @@
   "decisionLoopFollowup": {
     "baseCommit": "6effcb248d84ee50db5ef709b08e1334cd2ee659",
     "requestPolicy": "Current question planned once; known ordered operations prefer phone_run_flow; unknown question, unexpected or wrong feedback and visual ambiguity return to main model.",
-    "planningRequestBoundary": "Injected before existing request budget hook; deduplicated across real coalesced system handoffs; absent without exposed Flow or in final tools-empty summary; canonical unchanged.",
+    "planningRequestBoundary": "Injected before existing request budget hook; deduplicated across coalesced system handoffs; absent without exposed Flow or in final tools-empty summary. Canonical has no added policy system message; native prompt-transcript endpoints persist request transition metadata on assistant messages under the existing replay contract.",
     "automaticReasoningBoundary": {
       "eligibility": "Frozen original assistant AUTO plus successfully claimed user run; memory handoff preserves it.",
       "activation": "Matching active owner has actually requested a phone session; model supports LOW and reasoning capability.",
@@ -265,6 +265,81 @@
       "complete Duolingo task after this patch",
       "before-after physical device speed",
       "cellular connection stability"
-    ]
+    ],
+    "postCommitReview": {
+      "commitRange": "6effcb248d84ee50db5ef709b08e1334cd2ee659..19cfafd108ec907345590ee8b3efb69a4e8479d2",
+      "independentSubagents": [
+        "standards",
+        "spec and production call chain",
+        "UI"
+      ],
+      "standards": {
+        "hardViolations": 0,
+        "blockingMaintainabilityFindings": 0
+      },
+      "spec": {
+        "implementationBlockers": 0,
+        "documentationFindings": 1,
+        "documentationFindingSeverity": "P3",
+        "documentationFix": "Clarify that canonical has no added policy system message, while native provider request transitions still follow the existing assistant metadata replay contract."
+      },
+      "ui": {
+        "result": "No confirmed layout blocker in reviewed states.",
+        "initialOriginalScreensViewedBySubagent": 15,
+        "additionalFrameDiagnosticOriginalScreensRecheckedByRoot": 4,
+        "pairedHierarchyAndCompositorOriginalsViewedByRoot": 2,
+        "imageCountsCanOverlap": true,
+        "viewports": [
+          "393pt large dark",
+          "320pt accessibility3 light"
+        ],
+        "states": [
+          "long application name",
+          "connection failure",
+          "advanced preparation",
+          "automated",
+          "pausing",
+          "paused",
+          "resuming"
+        ],
+        "retractedFinding": "The UI subagent misread several images as lacking the fixed header. Root directly viewed the four originals and the same-state hierarchy/compositor pair: title, back button and scroll clipping boundary are present. Subagent withdrew the finding and derived snapshot-inconsistency claims.",
+        "pairedCompositorOriginal": "build/phone-automation-20261014/review-19cf-header-compositor-original.png",
+        "pairedHierarchyOriginal": "build/phone-automation-20261014/review-19cf-compositor-hierarchy.png",
+        "evidenceBoundary": "Simulator fixture, not physical-device acceptance.",
+        "additionalBaseSettingsOriginalScreensViewedByRoot": 4
+      },
+      "visualTest": {
+        "test": "IOSPhoneControlSettingsVisualTests/testSettingsAtNormalAndAccessibilityWidths",
+        "uniqueCaptureNamesWithDrawHierarchyTrue": 84,
+        "resultBundles": [
+          {
+            "path": "build/phone-automation-20261014/review-19cf-header-render.xcresult",
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          {
+            "path": "build/phone-automation-20261014/review-19cf-header-frame.xcresult",
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          {
+            "path": "build/phone-automation-20261014/review-19cf-header-compositor.xcresult",
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          }
+        ],
+        "sameTestRepeatedForDiagnosticEvidence": true,
+        "finalChange": "Assert drawHierarchy return value after retaining screenshot attachment; API success does not replace visual review.",
+        "temporaryAXAndPauseCodeRetained": false,
+        "finalTestSourceSHA256": "c38a0921b767d03f2b460f5cfa33631b134909253ebb99d3c24c845d2c64d699"
+      },
+      "productRuntimeCodeChanged": false,
+      "protectedPreexistingWIPChanged": false,
+      "earlierProductValidationReused": true,
+      "physicalDeviceAcceptanceClosed": false
+    }
   }
 }
