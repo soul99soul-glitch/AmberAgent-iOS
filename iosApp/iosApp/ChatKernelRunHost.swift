@@ -145,6 +145,7 @@ final class ChatKernelRunHost {
     private var keepaliveHeld = false
     private var didReportFirstDeltaThisRound = false
     private var reportsPhoneWorkProgress = false
+    private var phoneAutomaticReasoning = false
     private var lastPhoneProgressContent: [PhoneProgressContent] = []
     private var reportedPhoneToolResults: Set<String> = []
 
@@ -322,6 +323,10 @@ final class ChatKernelRunHost {
             _ = IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
         }
         reportsPhoneWorkProgress = phoneControlClaimed
+        // Preserve the user's raw choice before AUTO is resolved to a model default.
+        // Actual phone activity is checked by the engine at each request boundary.
+        phoneAutomaticReasoning = phoneControlClaimed
+            && runSettings?.getCurrentAssistant().reasoningLevel == .auto_
         if phoneControlClaimed {
             reportedPhoneToolResults = Set(uploadMessages.flatMap(\.parts).compactMap { part in
                 guard let tool = part as? UIMessagePart.Tool, !tool.output.isEmpty else { return nil }
@@ -1000,6 +1005,8 @@ final class ChatKernelRunHost {
                 await IOSDynamicToolRegistry.shared.refresh()
             },
             executionPolicy: runExecutionPolicy,
+            phoneAutomaticReasoning: phoneAutomaticReasoning,
+            phoneControl: phoneControl,
             maxToolResumeCount: dependencies.settingsStore.chatMaxToolResumeCount,
             drainSteer: {
                 let boxed = await MainActor.run {
@@ -1289,7 +1296,8 @@ final class ChatKernelRunHost {
             generativeUiFallbackAttempted: handoff.generativeUiFallbackAttempted,
             fullToolNames: handoff.fullToolNames,
             dynamicToolSnapshot: handoff.dynamicToolSnapshot,
-            executionPolicy: handoff.executionPolicy
+            executionPolicy: handoff.executionPolicy,
+            phoneAutomaticReasoning: handoff.phoneAutomaticReasoning
         )
     }
 
@@ -2150,7 +2158,8 @@ final class ChatKernelRunHost {
                         || backgroundDynamicNames.contains($0)
                 },
             dynamicToolSnapshot: dynamicSnapshot,
-            executionPolicy: runExecutionPolicy
+            executionPolicy: runExecutionPolicy,
+            phoneAutomaticReasoning: phoneAutomaticReasoning
         )
     }
 
@@ -2819,6 +2828,7 @@ final class ChatKernelRunHost {
         currentDynamicToolSnapshot = nil
         runSettings = nil
         runExecutionPolicy = nil
+        phoneAutomaticReasoning = false
         displayBaseline = []
         currentGenerativeUiRequirement = .none
         currentGenerativeUiFallbackAttempted = false

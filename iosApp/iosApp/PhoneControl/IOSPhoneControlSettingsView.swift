@@ -108,6 +108,7 @@ struct IOSPhoneControlSettingsView: View {
                 .accessibilityIdentifier("phoneControlEnabled")
             }
             footer("优先读取界面元素树；树无法说明界面时才使用截图。界面文字和截图可能发送到你配置的模型。")
+            footer("已确定的连续操作优先合并执行。使用默认思考设置时，手机任务执行阶段优先低档（模型支持时）；手动选择的档位保持不变。")
         }
     }
 

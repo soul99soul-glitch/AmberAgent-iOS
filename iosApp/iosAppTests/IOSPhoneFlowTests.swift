@@ -47,6 +47,77 @@ final class IOSPhoneFlowTests: XCTestCase {
         XCTAssertEqual(result.steps.first?.verification?.status, .satisfied)
     }
 
+    func testKnownPracticeAnswerChecksEnabledAndCorrectFeedbackBeforeContinuingToNewQuestion() async {
+        let initial = observation("question", [node("answer-old", id: "answer"),
+                                                node("check-disabled", id: "check", enabled: false)])
+        let checkVisible = IOSPhoneGoalExpectation(kind: .visible, target: .init(identifier: "check"))
+        let checkEnabled = IOSPhoneGoalExpectation(kind: .enabled, target: .init(identifier: "check"))
+        XCTAssertEqual(IOSPhoneGoalVerification.evaluate(expectation: checkVisible, before: nil,
+                                                         after: initial).status, .satisfied)
+        XCTAssertEqual(IOSPhoneGoalVerification.evaluate(expectation: checkEnabled, before: nil,
+                                                         after: initial).status, .unmet)
+        let fixture = Fixture([
+            initial,
+            observation("answered", [node("check-fresh", id: "check")]),
+            observation("correct", [node(nil, id: "known-correct-feedback", type: "XCUIElementTypeStaticText"),
+                                     node("continue-fresh", id: "continue")]),
+            observation("new-question", [node(nil, id: "new-question")]),
+        ])
+        fixture.useSettledObservation = true
+
+        let result = await fixture.flow().run(knownPracticeAnswer())
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "answer-old"), .tap(ref: "check-fresh"),
+                                         .tap(ref: "continue-fresh")])
+        XCTAssertEqual(result.steps.map(\.verification?.status), [.satisfied, .satisfied, .satisfied])
+        XCTAssertEqual(result.steps.first?.verification?.reason, "target_enabled")
+        XCTAssertEqual(result.verification?.status, .satisfied)
+        XCTAssertEqual(result.observation?.observationID, "new-question")
+        XCTAssertEqual(fixture.plainObserveCount, 1)
+        XCTAssertEqual(fixture.settledObserveCount, 3)
+        XCTAssertEqual(result.metrics.actionCount, 3)
+        // No Jev callback exists in Flow Dependencies; only the known current question is executed.
+    }
+
+    func testWrongPracticeFeedbackKeepsCheckReceiptAndNeverDispatchesContinue() async {
+        let fixture = Fixture([
+            observation("question", [node("answer", id: "answer"), node("check-old", id: "check", enabled: false)]),
+            observation("answered", [node("check-fresh", id: "check")]),
+        ] + (1...4).map { index in
+            observation("wrong-\(index)", [node(nil, id: "wrong-feedback", type: "XCUIElementTypeStaticText"),
+                                          node("continue-\(index)", id: "continue")])
+        })
+
+        let result = await fixture.flow().run(knownPracticeAnswer())
+
+        XCTAssertEqual(result.status, .handback)
+        XCTAssertEqual(result.reason, "step_verification_failed: target_not_visible")
+        XCTAssertEqual(result.steps.map(\.index), [0, 1])
+        XCTAssertEqual(result.steps.map(\.outcome), ["completed", "completed"])
+        XCTAssertEqual(result.steps.last?.verification?.status, .unmet)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "answer"), .tap(ref: "check-fresh")])
+        XCTAssertEqual(fixture.waitCount, 3)
+        XCTAssertEqual(result.observation?.observationID, "wrong-4")
+    }
+
+    func testStillDisabledCheckCannotAdvanceEvenWhenVisibleInEveryFreshTree() async {
+        let fixture = Fixture([
+            observation("question", [node("answer", id: "answer"), node("check-old", id: "check", enabled: false)]),
+        ] + (1...4).map { index in
+            observation("unchanged-\(index)", [node("check-\(index)", id: "check", enabled: false)])
+        })
+
+        let result = await fixture.flow().run(knownPracticeAnswer())
+
+        XCTAssertEqual(result.status, .handback)
+        XCTAssertEqual(result.reason, "step_verification_failed: target_disabled")
+        XCTAssertEqual(result.steps.map(\.outcome), ["completed"])
+        XCTAssertEqual(result.steps.first?.verification?.status, .unmet)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "answer")])
+        XCTAssertEqual(fixture.observeCount, 5)
+    }
+
     func testUnmetPostconditionStopsAfterBoundedReadsWithoutReplayingOrAdvancing() async {
         let fixture = Fixture([
             observation("initial", [node("open", id: "open")]),
@@ -439,6 +510,18 @@ final class IOSPhoneFlowTests: XCTestCase {
         .init(goal: "打开结果", bundleID: "app.test", steps: [
             .init(operation: .init(action: .tap, target: .init(identifier: "open")), expectation: visible("done")),
         ], completion: visible("done"))
+    }
+
+    private func knownPracticeAnswer() -> IOSPhoneFlowRequest {
+        // This fixture assumes the exact correct-feedback identifier was already observed.
+        .init(goal: "完成当前已确定答案并到下一题边界", bundleID: "app.test", steps: [
+            .init(operation: .init(action: .tap, target: .init(identifier: "answer")),
+                  expectation: .init(kind: .enabled, target: .init(identifier: "check"))),
+            .init(operation: .init(action: .tap, target: .init(identifier: "check")),
+                  expectation: visible("known-correct-feedback")),
+            .init(operation: .init(action: .tap, target: .init(identifier: "continue")),
+                  expectation: visible("new-question")),
+        ], completion: visible("new-question"))
     }
 
     private func twoSteps() -> IOSPhoneFlowRequest {

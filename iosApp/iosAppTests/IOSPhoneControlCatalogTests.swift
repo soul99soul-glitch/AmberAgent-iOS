@@ -136,6 +136,10 @@ final class IOSPhoneControlCatalogTests: XCTestCase {
         XCTAssertEqual(duration["minimum"] as? Int, 300)
         XCTAssertEqual(duration["maximum"] as? Int, 3000)
         XCTAssertEqual(duration["default"] as? Int, 750)
+        let expectation = try XCTUnwrap(actionProperties["expectation"] as? [String: Any])
+        let expectationProperties = try XCTUnwrap(expectation["properties"] as? [String: Any])
+        let expectationKind = try XCTUnwrap(expectationProperties["kind"] as? [String: Any])
+        XCTAssertEqual(Set(expectationKind["enum"] as? [String] ?? []), ["visible", "enabled", "absent", "value_equals"])
     }
 
     func testListCollectionFrozenCatalogPreservesBoundsWithoutGrantingItToOldRuns() throws {
@@ -191,7 +195,12 @@ final class IOSPhoneControlCatalogTests: XCTestCase {
         XCTAssertNil(operationProperties["ref"])
         XCTAssertNil(operationProperties["observation_id"])
         XCTAssertNil(operationProperties["x"])
-        XCTAssertNotNil(stepProperties["expectation"])
+        let expectation = try XCTUnwrap(stepProperties["expectation"] as? [String: Any])
+        let expectationProperties = try XCTUnwrap(expectation["properties"] as? [String: Any])
+        let expectationKind = try XCTUnwrap(expectationProperties["kind"] as? [String: Any])
+        XCTAssertEqual(Set(expectationKind["enum"] as? [String] ?? []), ["visible", "enabled", "absent", "value_equals"])
+        let completion = try XCTUnwrap(properties["completion"] as? [String: Any])
+        XCTAssertTrue(NSDictionary(dictionary: expectation).isEqual(to: completion))
 
         let frozenGoal = try XCTUnwrap(IOSPhoneControlToolCatalog.declarations.first { $0.name == "phone_run_goal" })
         let oldRun = IOSChatBackgroundGenerationCoordinator.makeBackgroundToolExposureBridge(
@@ -208,7 +217,7 @@ final class IOSPhoneControlCatalogTests: XCTestCase {
         let completion = try XCTUnwrap(properties["completion"] as? [String: Any], file: file, line: line)
         let completionProperties = try XCTUnwrap(completion["properties"] as? [String: Any], file: file, line: line)
         let kind = try XCTUnwrap(completionProperties["kind"] as? [String: Any], file: file, line: line)
-        XCTAssertEqual(Set(kind["enum"] as? [String] ?? []), ["visible", "absent", "value_equals"], file: file, line: line)
+        XCTAssertEqual(Set(kind["enum"] as? [String] ?? []), ["visible", "enabled", "absent", "value_equals"], file: file, line: line)
         XCTAssertNotNil(completionProperties["anchor"], file: file, line: line)
         let actions = try XCTUnwrap(properties["actions"] as? [String: Any], file: file, line: line)
         XCTAssertEqual(actions["maxItems"] as? Int, 12, file: file, line: line)

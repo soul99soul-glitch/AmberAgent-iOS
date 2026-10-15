@@ -66,6 +66,7 @@ private struct IOSChatBackgroundRuntimeJob {
     let generativeUiFallbackAttempted: Bool
     let executionPolicy: IOSExecutionPolicySnapshot?
     let subAgentTimeoutSeconds: TimeInterval?
+    let phoneAutomaticReasoning: Bool
     let conversationStore: IOSConversationStore
     let toolRuntime: ChatToolRuntime
     let liveActivityController: AgentLiveActivityController
@@ -153,6 +154,8 @@ struct IOSChatBackgroundHandoff {
     var dynamicToolSnapshot: IOSDynamicToolCatalogSnapshot? = nil
     var executionPolicy: IOSExecutionPolicySnapshot? = nil
     var subAgentTimeoutSeconds: TimeInterval? = nil
+    /// Process-local eligibility only. Cold restoration cannot restore phone ownership.
+    var phoneAutomaticReasoning: Bool = false
 }
 
 enum IOSChatBackgroundHandoffMode: String {
@@ -1560,6 +1563,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             generativeUiFallbackAttempted: handoff.generativeUiFallbackAttempted,
             executionPolicy: handoff.executionPolicy,
             subAgentTimeoutSeconds: handoff.subAgentTimeoutSeconds,
+            phoneAutomaticReasoning: handoff.phoneAutomaticReasoning,
             conversationStore: conversationStore,
             toolRuntime: toolRuntime,
             liveActivityController: liveActivityController,
@@ -1792,7 +1796,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
                     dynamicToolSnapshot: job.dynamicToolSnapshot,
                     executionPolicy: job.executionPolicy,
-                    subAgentTimeoutSeconds: job.subAgentTimeoutSeconds
+                    subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
+                    phoneAutomaticReasoning: job.phoneAutomaticReasoning
                 )
                 nextHandoff.responseId = nil
                 nextHandoff.responseSequenceNumber = nil
@@ -2071,7 +2076,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                 fullToolNames: job.fullToolNames,
                 dynamicToolSnapshot: job.dynamicToolSnapshot,
                 executionPolicy: job.executionPolicy,
-                    subAgentTimeoutSeconds: job.subAgentTimeoutSeconds
+                subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
+                phoneAutomaticReasoning: job.phoneAutomaticReasoning
             )
             do {
                 try persist(handoff: handoff, requestId: requestId)
@@ -2181,7 +2187,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
             dynamicToolSnapshot: job.dynamicToolSnapshot,
             executionPolicy: job.executionPolicy,
-                    subAgentTimeoutSeconds: job.subAgentTimeoutSeconds
+            subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
+            phoneAutomaticReasoning: job.phoneAutomaticReasoning
         )
     }
 
@@ -2483,6 +2490,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             configuration: Self.backgroundToolLoopConfiguration,
             ledger: toolLedger,
             ledgerRunId: job.runId,
+            phoneAutomaticReasoning: job.phoneAutomaticReasoning,
             // tool_search changes visibility each round. Rebuilt phone executors must use
             // the same presentation queue as the initially registered executors.
             executorRebuilder: makeExecutors
@@ -4033,7 +4041,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
             dynamicToolSnapshot: job.dynamicToolSnapshot,
             executionPolicy: job.executionPolicy,
-                    subAgentTimeoutSeconds: job.subAgentTimeoutSeconds
+            subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
+            phoneAutomaticReasoning: job.phoneAutomaticReasoning
         )
         do {
             try persist(handoff: handoff, requestId: requestId)

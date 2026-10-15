@@ -138,7 +138,7 @@
   ],
   "localEvidenceDirectory": "build/phone-automation-20261014/",
   "privacy": "No credentials, pairing bytes, raw settings, UI text or conversation bodies in this record. Only nonsecret reasoning-mode metadata is retained.",
-  "updatedAtUTC": "2026-10-14T18:09:36.173962+00:00",
+  "updatedAtUTC": "2026-10-15T01:58:27.595300+00:00",
   "latestDeviceDelivery": {
     "revision": "r3 after Duolingo followup",
     "AppReleaseBuild": true,
@@ -173,5 +173,98 @@
       "afterSnapshotCompletedBeforeNormalLaunch": true,
       "earlierCacheAndPreferenceWriteTriggerKnown": false
     }
+  },
+  "decisionLoopFollowup": {
+    "baseCommit": "6effcb248d84ee50db5ef709b08e1334cd2ee659",
+    "requestPolicy": "Current question planned once; known ordered operations prefer phone_run_flow; unknown question, unexpected or wrong feedback and visual ambiguity return to main model.",
+    "planningRequestBoundary": "Injected before existing request budget hook; deduplicated across real coalesced system handoffs; absent without exposed Flow or in final tools-empty summary; canonical unchanged.",
+    "automaticReasoningBoundary": {
+      "eligibility": "Frozen original assistant AUTO plus successfully claimed user run; memory handoff preserves it.",
+      "activation": "Matching active owner has actually requested a phone session; model supports LOW and reasoning capability.",
+      "unchanged": [
+        "first intent-identification request",
+        "ordinary chat with phone master switch enabled",
+        "historical phone messages",
+        "revoked owner",
+        "explicit HIGH/LOW/OFF/MAX",
+        "saved settings",
+        "custom request body priority"
+      ],
+      "coldRestoreEligibility": false
+    },
+    "verification": "enabled requires a unique visible enabled target; visible alone does not prove answer selection.",
+    "controlledExercise": "Three fresh-reference actions: select answer, Check, then Continue only after known correct feedback. Wrong feedback or disabled Check stops without dispatching Continue.",
+    "affectedAppGate": {
+      "passed": 174,
+      "failed": 0,
+      "skipped": 0,
+      "path": "build/phone-automation-20261014/decision-policy-app-gate-r3.xcresult"
+    },
+    "additionalCallCountGate": {
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "overlapsAffectedAppGate": true,
+      "path": "build/phone-automation-20261014/decision-policy-call-count.xcresult"
+    },
+    "controlledTwoStepComparison": {
+      "boundary": "Scripted provider with production Engine, real phone tool executor and HTTP fixture; not external-model adoption or physical-phone timing.",
+      "decisionRoundsBefore": 2,
+      "decisionRoundsAfter": 1,
+      "providerRequestsIncludingFinalReplyBefore": 3,
+      "providerRequestsIncludingFinalReplyAfter": 2,
+      "observationsBefore": 4,
+      "observationsAfter": 3,
+      "dispatchedActionsBeforeAndAfter": 2,
+      "mutationRequestSequenceIdentical": true
+    },
+    "flowSourceHarness": {
+      "passed": 92,
+      "failed": 0,
+      "flowTests": 28,
+      "verificationTests": 13
+    },
+    "independentLogicReview": "passed after exact policy text deduplication repair and coalesced handoff regression",
+    "independentUIReview": {
+      "result": "passed",
+      "actualScreensReviewed": 5,
+      "viewports": [
+        "393pt large dark",
+        "320pt accessibility3 light"
+      ],
+      "source": "Simulator fixture renders; original screenshots copied without editing."
+    },
+    "realProviderReplay": {
+      "result": "not_validated",
+      "reason": "Saved snapshot contains mask sentinel; actual key is in physical-device Keychain. Existing opaque handoff URL cannot create arbitrary task externally.",
+      "initialMaskSentinelRequestStatus": 401,
+      "isEvidenceOfDeviceCredentialFailure": false,
+      "realCredentialExported": false
+    },
+    "deviceDelivery": {
+      "releaseBuild": "passed_generic_iOS",
+      "latestReadOnlyPrecheck": "CoreDeviceError4016 at initial and final live checks",
+      "installWindowConfirmed": false,
+      "installed": false,
+      "normalLaunchValidated": false,
+      "retainedDataComparedForThisRevision": false,
+      "signedBundlesVerified": 5,
+      "sourceInputHashesMatched": 1165,
+      "includesProtectedPreexistingWIP": true,
+      "deviceProfilesGroupsAndURLsVerified": true,
+      "newExecutableComparedWithR3": true,
+      "mainExecutableSHA256": "a1bf461402fb4f85bb0a373b384caa6941f6ee17d492fc06477b9f3b92c9bfd5",
+      "SharedExecutableSHA256": "1e19b235e15b46946b7076bb2a586d7ea22d9ea20a81d6639d1d339a697e4d56",
+      "artifactRelativePath": "iosApp/build/PhoneAutomationDevice20261014/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app",
+      "finalConnectivityResult": "device_unavailable",
+      "priorR3DeviceEvidenceAppliesToThisRevision": false
+    },
+    "notValidated": [
+      "external-model Flow adoption frequency",
+      "complex-question answer accuracy under LOW",
+      "complete Duolingo task after this patch",
+      "before-after physical device speed",
+      "cellular connection stability"
+    ]
   }
 }

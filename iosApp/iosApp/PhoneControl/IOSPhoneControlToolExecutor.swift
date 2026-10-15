@@ -754,6 +754,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
               Set(object.keys).isSubset(of: ["kind", "target", "value", "anchor"]) else {
             throw InvalidArguments("验收条件需包含 kind 和 target；仅支持 value、anchor 可选参数。")
         }
+        if object["kind"] as? String == "enabled", object.keys.contains("value") || object.keys.contains("anchor") {
+            throw InvalidArguments("enabled 仅接受 kind 和 target。")
+        }
         try validateTargetObject(object["target"])
         if let anchor = object["anchor"] { try validateTargetObject(anchor) }
     }

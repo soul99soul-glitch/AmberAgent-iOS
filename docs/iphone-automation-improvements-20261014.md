@@ -104,7 +104,7 @@
 
 验证结果：错误归因先红后绿，网络与普通provider分类及动作新树回执3项通过；DeepSeek family/registry 42项、真实provider request body 28项通过。真实Host调用链已取得进度饱和红测试。独立review追加两条必要闭环：审批恢复后的新工具结果不能依赖已清空的瞬时activeToolName；成功交接到后台Coordinator后必须继续推进同一个lease的真实进度，不能回到4阶段或从新facade的0计数夹住原进度。这两条追加链路均先取得真实App红测试，再修复。最终受影响App gate 175项通过，0失败；1项既有opt-in性能采样默认跳过。包括全部Host/BackgroundExecution/GenerationParams与项目要求的3组聊天回归，7项进度回归覆盖真实多轮、审批、原lease继承、重复/空内容、取消与交接。独立逻辑review Ready；普通/320pt AX3思考档位渲染review通过。真正远程durable transport的resumeDetachedResponse不经过本次本地continueModel回调，未把该旧路径称为补修已验收。
 
-### 最终补修版交付（r3）
+### 多邻国断流补修版交付（r3）
 
 - GPL Release 完整构建通过，包含 Gradle 生成的 Shared.framework；五个 bundle 的签名、目标设备授权及 App Group 核对通过，构建输入 hash 与最终源码一致。设备包仍包含三个原有 Intelligent UI WIP，提交不包含这些文件。
 - App 已在18 Pro原位覆盖安装成功，无参数正常启动成功，随后进程检查确认存活。Runner 源码未再修改，沿用已签名并安装的本轮 Runner。首次 r2 的只读 readiness 结果不作为 r3 的重新配对或完整操作验收。
@@ -113,3 +113,23 @@
 - 数据比对的 after-copy 完成后才执行正常启动；缓存及偏好变化已在复制前落盘，具体写入触发者未确认。补修后的完整多邻国任务、真机点击耗时及蜂窝稳定性尚未重跑，不能据构建和安装成功声称这些体验已通过。
 
 提交的模拟器合成场景截图：[手机回执AX3](iphone-control-evidence/automation-receipts-ax3-20261015.png)、[保存错误AX3](iphone-control-evidence/automation-save-validation-ax3-20261015.png)、[运行输入错误AX3](iphone-control-evidence/automation-run-validation-ax3-20261015.png)、[DeepSeek思考档位AX3](iphone-control-evidence/deepseek-flash-reasoning-ax3-20261015.png)。这些是产品组件的测试渲染，包含fixture数据，不是用户真机屏幕。
+
+### 决策轮数补修（起点 6effcb24）
+
+用户批准进一步减少逐按钮主模型决策。范围是现有 Engine、Flow 与手机任务默认思考策略，不新增手机后端或通用编排器。验收分开记录请求策略实际到达、连续动作与停止条件、请求档位、模型实际采用和真机耗时。
+
+- 在前后台共用的 Engine 每轮请求副本中加入短的手机规划指令：当前题答案及操作顺序已确定时优先短 Flow，未知新题、答错、未知页面和视觉歧义交回主模型。先注入再进入现有窗口预算处理；canonical 不保存这段新增指令，未暴露 Flow 的冻结目录不添加。工具循环最终总结时清理该指令。
+- Host 冻结原始 AUTO 资格，经 Adapter 与内存后台 handoff 传递。普通用户轮也可能预先 claim 手机工具，不能据此降档；只有同一个有效 owner 已实际请求手机会话后，且模型支持 LOW，才让 AUTO 的后续请求使用 LOW。首个需求判断请求、普通聊天、旧历史、撤权 owner、显式 HIGH/LOW/OFF/MAX 保持原档位。不改保存设置和自定义 body，冷恢复不从历史重新获得资格。
+- Flow 增加 `enabled` 核验，区别“检查按钮可见”和“检查按钮可以使用”。受控练习使用新树完成选择答案、检查、核对已知正确反馈、继续到新题边界；错误反馈或按钮仍 disabled 时停止并保留回执。没有稳定反馈证据的题型缩短流程，不虚构 marker。
+- 独立逻辑 review 发现旧 provider 合并 system 后丢失 section metadata，可能在后台重复追加策略。精准清理本版本自身提示原文，保留其他系统内容、metadata 和消息身份，并覆盖连续三次合并交接与最终无工具总结。
+- 设置页沿现有 footer 说明默认档位的手机执行策略，不新增开关。独立 UI review 实际检查普通393pt首页/page2、320pt AX3首页/page2/page3：说明全文可通过滚动阅读，与状态和常用任务卡无重叠，未发现错位、对齐、边距、间距或大小阻塞。合成场景的两张原图保留为 [AX3首页](iphone-control-evidence/phone-decision-policy-ax3-page1-20261015.png)、[AX3第二页](iphone-control-evidence/phone-decision-policy-ax3-page2-20261015.png)，没有拼接或修改图像。
+
+当前验证：生产源码 Flow harness 92项通过，包含 Flow 28项、Verifier 13项。受影响 App gate 174项通过，0失败、0跳过，包括前后台、原始AUTO资格冻结、旧历史/撤权不降档、真实观察后LOW、请求Ledger一致性、预算入口可见策略及合并去重。独立逻辑 review 唯一去重 blocker 已修复并放行；本次改动完成一次有限维护性检查。
+
+追加调用次数对照及同类回归20项通过（与174项有重叠）：受控 provider 经生产 Engine 和真实执行器，把相同两步拆成两个工具轮与合并成一个 Flow 比较，操作决策2→1轮，含最终回复的provider请求3→2次，观察4→3次，两个动作的mutation请求序列相同。这不是外部模型实际采用率或真机速度测量。
+
+GPL Release 通过 generic iOS 目标完整构建成功，包含 Gradle 生成的 Shared.framework。五个 bundle 的严格签名、profile目标设备授权、App Group和URL scheme核对通过，1165个源码输入hash与构建记录一致；主可执行文件hash不同于已安装r3。设备包使用含原有三个Intelligent UI WIP的当前工作树，提交不包含这些WIP。签名包位于 `iosApp/build/PhoneAutomationDevice20261014/Build/Products/Release-iphoneos/iosAppExperimentalGPL.app`。
+
+首次设备预检和构建后的最终单次live复查均返回CoreDeviceError4016，Mac当前不能建立真机开发连接，不能确认用户任务及安装窗口；历史配对缓存不作为当前状态依据。本轮r4未安装、未启动、未做新的保留数据比对。上一节r3的安装/启动/数据证据属于旧版本，不能替代r4验收。没有重连、重新配对、改变trust或干预用户任务。
+
+主机上的真实 provider 对照未完成：配置快照的密钥是 mask sentinel，实际密钥保存在真机 Keychain；首次拿占位值发出的请求返回401，这不代表真机凭证失败。已停止这条路径，没有导出真实密钥。已有产品的 App Intent/Saved Task 通过设备进程内 opaque handoff 传任务；外部 `devicectl --payload-url` 不能构造任意 prompt，未新增诊断入口或回写偏好文件以绕过。模型实际采用率、复杂题正确率和完整多邻国真机速度不计为通过。

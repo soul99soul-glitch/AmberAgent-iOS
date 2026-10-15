@@ -96,6 +96,8 @@ final class ChatRunKernelAdapter {
         /// so lifecycle operations are visible on the immediately next round.
         var recipeCatalogRefresh: (@MainActor () async -> IOSDynamicToolCatalogSnapshot?)? = nil
         var executionPolicy: IOSExecutionPolicySnapshot? = nil
+        var phoneAutomaticReasoning: Bool = false
+        var phoneControl: IOSPhoneControlController? = nil
         /// CGC `maxToolResumeCount` 语义:每个工具轮消耗 1,耗尽拒执。
         let maxToolResumeCount: Int
         /// 首轮头 steer 消费(CG-C startStreaming :2141 同款位置)之后的轮边界
@@ -268,6 +270,13 @@ final class ChatRunKernelAdapter {
                 ),
                 ledger: ledger,
                 ledgerRunId: request.runId,
+                phoneAutomaticReasoning: request.phoneAutomaticReasoning,
+                phoneSessionIsActive: request.phoneControl.map { controller in
+                    { @MainActor @Sendable runID in
+                        controller.handoffState(runID: runID) != nil
+                            && controller.hasRequestedSession(runID: runID)
+                    }
+                },
                 // 重组闭包经 SE-0420 继承 MainActor 隔离(参数类型非 @Sendable),
                 // 运行时由引擎线程同步执行——与后台协调器 :1260 的 executorRebuilder
                 // 同一模式(纯装配读取,不触碰可变 UI 状态)。切勿在此

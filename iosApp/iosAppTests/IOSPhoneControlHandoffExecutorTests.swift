@@ -10,6 +10,152 @@ import XCTest
 
 @MainActor
 final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
+    func testBatchingTwoKnownStepsRemovesOneProviderRoundWithTheSameActions() async throws {
+        let full = try object(flowArguments)
+        let steps = try XCTUnwrap(full["steps"] as? [[String: Any]])
+        var first = full
+        first["steps"] = [steps[0]]
+        first["completion"] = steps[0]["expectation"]
+        var second = full
+        second["steps"] = [steps[1]]
+        func call(_ input: [String: Any]) throws -> UIMessage {
+            IOSChatForegroundFixtures.assistantMessage(parts: [UIMessagePart.Tool(
+                toolCallId: UUID().uuidString, toolName: "phone_run_flow",
+                input: String(decoding: try JSONSerialization.data(withJSONObject: input), as: UTF8.self), output: [],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)])
+        }
+        let split = try await Harness(flowMode: .completes)
+        let batched = try await Harness(flowMode: .completes)
+        defer { split.dispose(); batched.dispose() }
+        let done = IOSChatForegroundFixtures.assistantText("done")
+        let baseline = PhonePlanningProvider(script: [try call(first), try call(second), done])
+        let combined = PhonePlanningProvider(script: [try call(full), done])
+        for (harness, provider) in [(split, baseline), (batched, combined)] {
+            let result = await phonePlanningEngine(harness: harness, provider: provider).run(
+                providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+                messages: [IOSChatForegroundFixtures.userMessage("Advance the two known steps")],
+                params: IOSPhoneAutomationRequestPolicyTests.params())
+            XCTAssertFalse(result.hitStepLimit)
+            XCTAssertNil(result.toolOutcomeUnknown)
+            XCTAssertEqual(result.messages.last?.toText(), "done")
+            let toolResults = result.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }
+            XCTAssertTrue(try toolResults.allSatisfy { tool in
+                let text = try XCTUnwrap(tool.output.first as? UIMessagePart.Text)
+                return try object(text.text)["status"] as? String == "completed"
+            })
+            await harness.controller.stop(runID: harness.runID)
+        }
+        XCTAssertEqual(baseline.uploads.count, 3, "Two decisions plus the final reply")
+        XCTAssertEqual(combined.uploads.count, 2, "One Flow decision plus the final reply")
+        XCTAssertEqual(split.http.mutationPaths, batched.http.mutationPaths)
+        XCTAssertEqual(batched.http.mutationPaths, ["/elements", "/element/FRESH/click", "/elements", "/element/FRESH/click"])
+        XCTAssertEqual(split.http.sourceCount, 4)
+        XCTAssertEqual(batched.http.sourceCount, 3)
+    }
+
+    func testPhoneAutomaticReasoningStartsAfterRealObservationAndSurvivesEngineHandoff() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        let params = IOSPhoneAutomationRequestPolicyTests.params()
+        let providerSetting = IOSChatForegroundFixtures.makeProviderSetting()
+        let provider = PhonePlanningProvider(script: [phoneObservationCall(), IOSChatForegroundFixtures.assistantText("ready")])
+        let ledger = IOSAgentToolEngineTests.RecordingLedger()
+        let engine = phonePlanningEngine(harness: harness, provider: provider, ledger: ledger)
+        let budgetInputs = PhoneBudgetRecorder()
+        let result = await engine.run(
+            providerSetting: providerSetting, messages: [IOSChatForegroundFixtures.userMessage("Read this exercise")], params: params,
+            prepareRequestMessages: { messages in
+                let policyCount = messages.filter(IOSPhoneAutomationRequestPolicy.isPlanningMessage).count
+                await MainActor.run { budgetInputs.counts.append(policyCount) }
+                return messages
+            })
+        XCTAssertEqual(provider.params.map(\.reasoningLevel), [.high, .low])
+        XCTAssertTrue(harness.controller.hasRequestedSession(runID: harness.runID))
+        XCTAssertEqual(budgetInputs.counts, [1, 1])
+        XCTAssertTrue(provider.uploads.allSatisfy { $0.filter(IOSPhoneAutomationRequestPolicy.isPlanningMessage).count == 1 })
+        XCTAssertFalse(result.messages.contains(where: IOSPhoneAutomationRequestPolicy.isPlanningMessage))
+        let snapshots = await ledger.snapshots()
+        XCTAssertEqual(snapshots.count, provider.params.count)
+        for index in snapshots.indices {
+            let expected = IOSRunRequestSnapshot.make(roundIndex: index + 1, providerSetting: providerSetting,
+                messages: provider.uploads[index], params: provider.params[index])
+            XCTAssertEqual(snapshots[index].generationParamsDigest, expected.generationParamsDigest)
+            XCTAssertEqual(snapshots[index].requestDigest, expected.requestDigest)
+        }
+
+        // A fresh engine receives completed phone calls as history on handoff.
+        // The same active owner, rather than historical text, retains the policy.
+        let continued = PhonePlanningProvider(script: [IOSChatForegroundFixtures.assistantText("continued")])
+        _ = await phonePlanningEngine(harness: harness, provider: continued).run(
+            providerSetting: providerSetting, messages: result.messages, params: params)
+        XCTAssertEqual(continued.params.map(\.reasoningLevel), [.low])
+        XCTAssertEqual(params.reasoningLevel, .high)
+        await harness.controller.stop(runID: harness.runID)
+
+        let next = try await Harness()
+        defer { next.dispose() }
+        let ordinary = PhonePlanningProvider(script: [IOSChatForegroundFixtures.assistantText("ordinary")])
+        _ = await phonePlanningEngine(harness: next, provider: ordinary).run(
+            providerSetting: providerSetting, messages: result.messages + [IOSChatForegroundFixtures.userMessage("Explain a word")], params: params)
+        XCTAssertEqual(ordinary.params.map(\.reasoningLevel), [.high], "Past phone results and a new claim do not lower ordinary chat")
+        await next.controller.stop(runID: next.runID)
+    }
+
+    func testRevokedPhoneOwnerAndExplicitReasoningKeepOriginalEffort() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        _ = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        XCTAssertTrue(harness.controller.hasRequestedSession(runID: harness.runID))
+        let providerSetting = IOSChatForegroundFixtures.makeProviderSetting()
+        let params = IOSPhoneAutomationRequestPolicyTests.params()
+        let explicit = PhonePlanningProvider(script: [IOSChatForegroundFixtures.assistantText("explicit")])
+        _ = await phonePlanningEngine(harness: harness, provider: explicit, automatic: false).run(
+            providerSetting: providerSetting, messages: [IOSChatForegroundFixtures.userMessage("continue")], params: params)
+        XCTAssertEqual(explicit.params.map(\.reasoningLevel), [.high])
+        harness.controller.revoke(runID: harness.runID)
+        let revoked = PhonePlanningProvider(script: [IOSChatForegroundFixtures.assistantText("stopped")])
+        _ = await phonePlanningEngine(harness: harness, provider: revoked).run(
+            providerSetting: providerSetting, messages: [IOSChatForegroundFixtures.userMessage("continue")], params: params)
+        XCTAssertEqual(revoked.params.map(\.reasoningLevel), [.high])
+        await harness.controller.stop(runID: harness.runID)
+    }
+
+    private func phonePlanningEngine(
+        harness: Harness, provider: PhonePlanningProvider,
+        ledger: IOSAgentRunLedgering? = nil, automatic: Bool = true
+    ) -> IOSAgentToolEngine {
+        let controller = harness.controller
+        return IOSAgentToolEngine(
+            provider: provider, executors: ["phone_observe": harness.executor, "phone_run_flow": harness.executor], configuration: .init(maxSteps: 4),
+            ledger: ledger, ledgerRunId: harness.runID, phoneAutomaticReasoning: automatic,
+            phoneSessionIsActive: { runID in
+                controller.handoffState(runID: runID) != nil && controller.hasRequestedSession(runID: runID)
+            })
+    }
+
+    private func phoneObservationCall() -> UIMessage {
+        IOSChatForegroundFixtures.assistantMessage(parts: [UIMessagePart.Tool(
+            toolCallId: UUID().uuidString, toolName: "phone_observe", input: "{}", output: [],
+            approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)])
+    }
+
+    private final class PhonePlanningProvider: IOSAgentTextProvider, @unchecked Sendable {
+        var script: [UIMessage]
+        private(set) var params: [TextGenerationParams] = []
+        private(set) var uploads: [[UIMessage]] = []
+        init(script: [UIMessage]) { self.script = script }
+        func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
+            self.params.append(params)
+            uploads.append(messages)
+            return IOSChatForegroundFixtures.chunk(with: script.removeFirst())
+        }
+    }
+
+    @MainActor
+    private final class PhoneBudgetRecorder {
+        var counts: [Int] = []
+    }
+
     func testTreeObservationDoesNotCaptureOrRecognizeScreenTextByDefault() async throws {
         let harness = try await Harness()
         defer { harness.dispose() }

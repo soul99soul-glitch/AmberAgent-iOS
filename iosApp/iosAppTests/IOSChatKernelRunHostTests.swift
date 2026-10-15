@@ -426,6 +426,131 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         return (host, harness, provider, phoneControl, defaults, suite)
     }
 
+    private func phoneReasoningParams(
+        harness: IOSChatForegroundHarness,
+        storedLevel: String,
+        resolvedLevel: ReasoningLevel,
+        tools: [Tool]
+    ) throws -> (ProviderSetting.OpenAI, TextGenerationParams) {
+        let model = Model(
+            modelId: "deepseek-flash", displayName: "DeepSeek Flash",
+            id: KotlinUuid.companion.random(), type: .chat,
+            customHeaders: [], customBodies: [], inputModalities: [.text], outputModalities: [.text],
+            abilities: [.tool, .reasoning], tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil, providerOverwrite: nil
+        )
+        let provider = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Phone reasoning fixture",
+            models: [model], balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false, descriptionText: nil, shortDescriptionText: nil,
+            apiKey: "", baseUrl: "https://api.deepseek.com/v1", chatCompletionsPath: "/chat/completions",
+            useResponseApi: false, authMode: .apiKey, brand: .deepseek
+        )
+        let settings = harness.dependencies.sharedSettings
+        _ = settings.addProvider(provider)
+        settings.setCurrentChatModelId(model.id.description())
+        settings.setCurrentAssistantChatModelId(model.id.description())
+        // Restore the raw stored choice: the public picker intentionally coerces AUTO to HIGH.
+        let encoded = IosSettingsJsonBridge.shared.encode(settings: settings.snapshot)
+        var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])
+        var assistants = try XCTUnwrap(fields["assistants"] as? [[String: Any]])
+        let activeID = settings.snapshot.getCurrentAssistant().id.description()
+        let index = try XCTUnwrap(assistants.firstIndex { $0["id"] as? String == activeID })
+        assistants[index]["reasoningLevel"] = storedLevel
+        assistants[index]["rememberedReasoningLevelsByModelId"] = [model.id.description(): storedLevel]
+        fields["assistants"] = assistants
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: fields), as: UTF8.self)
+        XCTAssertTrue(settings.restoreSnapshot(try IosSettingsJsonBridge.shared.decode(json: json)))
+        return (provider, TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: tools,
+            reasoningLevel: resolvedLevel, customHeaders: [], customBody: []
+        ))
+    }
+
+    func testPhoneAutomaticReasoningEligibilityRequiresClaimAndPreservesExplicitLevels() async throws {
+        let choices: [(String, ReasoningLevel, Bool)] = [
+            ("auto", .high, true), ("high", .high, true), ("low", .low, true),
+            ("off", .off, true), ("max", .max, true), ("auto", .high, false)
+        ]
+        for (storedLevel, resolvedLevel, userInitiated) in choices {
+            let suite = "KernelHostPhoneReasoning-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let controller = IOSPhoneControlController(defaults: defaults, credentials: HostPhonePairingStore())
+            controller.enabled = true
+            controller.selectedBundleIDs = ["app.example.target"]
+            let harness = makeHarness()
+            let provider = IOSChatProgressStreamingProvider()
+            let host = makeHost(harness: harness, provider: provider, phoneControl: controller)
+            let bridge = IosToolExposureBridge(tools: IOSPhoneControlToolCatalog.declarations)
+            let (setting, params) = try phoneReasoningParams(
+                harness: harness, storedLevel: storedLevel, resolvedLevel: resolvedLevel,
+                tools: bridge.visibleTools()
+            )
+            var transferred: IOSChatBackgroundHandoff?
+            host.backgroundStartOverrideForTesting = { handoff, _ in
+                transferred = handoff
+                return true
+            }
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let store = IOSConversationStore(baseDirectory: directory)
+            host.start(providerSetting: setting, params: params,
+                       inputDigest: suite, conversationId: harness.conversationId,
+                       uploadMessages: harness.messages, toolExposureBridge: bridge,
+                       phoneControlUserInitiated: userInitiated)
+            let started = await waitForCondition { provider.callCount == 1 }
+            XCTAssertTrue(started)
+            let runID = try XCTUnwrap(host.currentRunId)
+            XCTAssertEqual(controller.ownerRunID == runID, userInitiated)
+            XCTAssertFalse(controller.hasRequestedSession(runID: runID))
+            XCTAssertEqual(provider.capturedParams.first?.reasoningLevel, resolvedLevel,
+                           "A reserved phone scope must not change an ordinary first request")
+            XCTAssertTrue(host.handoffCurrentGenerationToBackground(conversationStore: store))
+            XCTAssertEqual(transferred?.phoneAutomaticReasoning, storedLevel == "auto" && userInitiated)
+            XCTAssertEqual(transferred?.params.reasoningLevel, resolvedLevel)
+            XCTAssertEqual(harness.dependencies.sharedSettings.snapshot.getCurrentAssistant().reasoningLevel.name.lowercased(), storedLevel)
+            await controller.stop(runID: runID)
+        }
+    }
+
+    func testPhoneAutomaticReasoningEarlyHandoffKeepsFrozenAutoAfterSettingsChange() async throws {
+        let suite = "KernelHostFrozenPhoneReasoning-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = IOSPhoneControlController(defaults: defaults, credentials: HostPhonePairingStore())
+        controller.enabled = true
+        controller.selectedBundleIDs = ["app.example.target"]
+        let harness = makeHarness()
+        let provider = IOSChatProgressStreamingProvider()
+        let host = makeHost(harness: harness, provider: provider, phoneControl: controller)
+        let bridge = IosToolExposureBridge(tools: IOSPhoneControlToolCatalog.declarations)
+        let (setting, params) = try phoneReasoningParams(
+            harness: harness, storedLevel: "auto", resolvedLevel: .high, tools: bridge.visibleTools()
+        )
+        var transferred: IOSChatBackgroundHandoff?
+        host.backgroundStartOverrideForTesting = { handoff, _ in transferred = handoff; return true }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = IOSConversationStore(baseDirectory: directory)
+        host.start(providerSetting: setting, params: params,
+                   inputDigest: suite, conversationId: harness.conversationId,
+                   uploadMessages: harness.messages, toolExposureBridge: bridge,
+                   phoneControlUserInitiated: true)
+        harness.dependencies.sharedSettings.updateCurrentAssistantReasoningLevel(.max)
+        let started = await waitForCondition { provider.callCount == 1 }
+        XCTAssertTrue(started)
+        let runID = try XCTUnwrap(host.currentRunId)
+        XCTAssertFalse(controller.hasRequestedSession(runID: runID))
+        XCTAssertEqual(provider.capturedParams.first?.reasoningLevel, .high)
+        XCTAssertTrue(host.handoffCurrentGenerationToBackground(conversationStore: store))
+        XCTAssertEqual(transferred?.phoneAutomaticReasoning, true,
+                       "Handoff before the first phone call must retain the run's frozen AUTO eligibility")
+        XCTAssertEqual(transferred?.params.reasoningLevel, .high)
+        XCTAssertEqual(harness.dependencies.sharedSettings.snapshot.getCurrentAssistant().reasoningLevel, .max)
+        await controller.stop(runID: runID)
+    }
+
     func testPhoneApprovedToolResultAdvancesProgressBeforeNextModelChunk() async throws {
         let (host, harness, provider, phoneControl, defaults, suite) = try await startPhoneProgressRun(exposedToolNames: ["search_web"])
         defer { host.cancel(); defaults.removePersistentDomain(forName: suite) }
@@ -1779,9 +1904,11 @@ final class IOSChatProgressStreamingProvider: IOSAgentTextProvider, IOSAgentStre
     private var chunk: (@Sendable (MessageChunk) -> Void)?
     private var completion: (@Sendable () -> Void)?
     private var uploads: [[UIMessage]] = []
+    private var requestParams: [TextGenerationParams] = []
 
     var callCount: Int { lock.withLock { calls } }
     var latestMessages: [UIMessage] { lock.withLock { uploads.last ?? [] } }
+    var capturedParams: [TextGenerationParams] { lock.withLock { requestParams } }
 
     func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
         IOSChatForegroundFixtures.chunk(with: IOSChatForegroundFixtures.assistantText("unused blocking path"))
@@ -1794,6 +1921,7 @@ final class IOSChatProgressStreamingProvider: IOSAgentTextProvider, IOSAgentStre
         lock.withLock {
             calls += 1
             uploads.append(messages)
+            requestParams.append(params)
             chunk = onChunk
             completion = onComplete
         }

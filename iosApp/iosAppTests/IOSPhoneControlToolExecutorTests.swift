@@ -202,6 +202,34 @@ final class IOSPhoneControlToolExecutorTests: XCTestCase {
         }
     }
 
+    func testEnabledExpectationParsesForActionGoalAndFlowAndRejectsValueOrAnchor() throws {
+        let enabled = IOSPhoneGoalExpectation(kind: .enabled, target: .init(identifier: "check"))
+        let inputs = [
+            ("phone_act", #"{"action":"tap","ref":"fresh:1","expectation":{"kind":"enabled","target":{"identifier":"check"}}}"#),
+            ("phone_run_goal", #"{"goal":"选择当前答案","bundle_id":"app.test","actions":[{"action":"tap","target":{"identifier":"answer"}}],"completion":{"kind":"enabled","target":{"identifier":"check"}}}"#),
+            ("phone_run_flow", #"{"goal":"选择当前答案","bundle_id":"app.test","steps":[{"operation":{"action":"tap","target":{"identifier":"answer"}},"expectation":{"kind":"enabled","target":{"identifier":"check"}}}],"completion":{"kind":"enabled","target":{"identifier":"check"}}}"#),
+        ]
+        for (name, arguments) in inputs {
+            switch (name, try IOSPhoneControlToolExecutor.request(name: name, arguments: arguments)) {
+            case ("phone_act", .verifiedAct(_, let expectation)):
+                XCTAssertEqual(expectation, enabled)
+            case ("phone_run_goal", .runGoal(let request)):
+                XCTAssertEqual(request.completion, enabled)
+            case ("phone_run_flow", .runFlow(let request)):
+                XCTAssertEqual(request.steps.first?.expectation, enabled)
+                XCTAssertEqual(request.completion, enabled)
+            default:
+                XCTFail("The enabled condition must reach the typed request: \(name)")
+            }
+            for extra in [#","value":"""#, #","anchor":{"identifier":"question"}"#,
+                          #","value":null"#, #","anchor":null"#] {
+                let invalid = arguments.replacingOccurrences(of: #""kind":"enabled""#,
+                                                              with: #""kind":"enabled""# + extra)
+                XCTAssertThrowsError(try IOSPhoneControlToolExecutor.request(name: name, arguments: invalid), invalid)
+            }
+        }
+    }
+
     func testOrderedFlowRejectsUnknownNestedArgumentsAndUnsupportedOperations() throws {
         let operation: [String: Any] = ["action": "tap", "target": ["identifier": "item"]]
         let expectation: [String: Any] = ["kind": "visible", "target": ["identifier": "item"]]
