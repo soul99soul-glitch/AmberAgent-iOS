@@ -87,7 +87,7 @@ final class SettingsStore {
 
     /// G7: 前台单轮工具循环上限。UserDefaults 独立 key 直读直写（与
     /// ExecutionSettingsView 的 @AppStorage 共用），不进 SettingsData blob，
-    /// 避免两处写同一 blob 互相覆盖。默认 24，clamp 24-384。
+    /// 避免两处写同一 blob 互相覆盖。默认 128，可选 128-8192。
     var chatMaxToolResumeCount: Int {
         get {
             guard defaults.object(forKey: Self.chatMaxToolResumeCountKey) != nil else {
@@ -100,12 +100,13 @@ final class SettingsStore {
         }
     }
 
-    static let defaultChatMaxToolResumeCount = 24
-    static let chatMaxToolResumeCountOptions = [24, 48, 64, 96, 128, 256, 384]
-    static let chatMaxToolResumeCountRange = 24...384
+    static let defaultChatMaxToolResumeCount = 128
+    static let chatMaxToolResumeCountOptions = [128, 256, 512, 1024, 2048, 4096, 8192]
+    static let chatMaxToolResumeCountRange = 128...8192
 
     static func clampChatMaxToolResumeCount(_ value: Int) -> Int {
-        min(max(value, chatMaxToolResumeCountRange.lowerBound), chatMaxToolResumeCountRange.upperBound)
+        // 旧档位向上归入可选档位，避免升级后缩减已有预算或让面板没有选中项。
+        chatMaxToolResumeCountOptions.first { $0 >= value } ?? chatMaxToolResumeCountRange.upperBound
     }
 
     /// P3-a: exec 纯求值工具总开关（默认关）。UserDefaults 独立 key 直读直写

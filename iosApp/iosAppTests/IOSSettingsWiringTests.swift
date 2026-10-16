@@ -96,8 +96,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(view.contains("Text(\"\\(clampedCount)\")"))
         XCTAssertFalse(view.contains("Text(\"\\(clampedCount) 次\")"))
         XCTAssertTrue(store.contains("chatMaxToolResumeCount"))
-        XCTAssertEqual(SettingsStore.chatMaxToolResumeCountOptions, [24, 48, 64, 96, 128, 256, 384])
-        XCTAssertEqual(SettingsStore.chatMaxToolResumeCountRange, 24...384)
+        XCTAssertEqual(SettingsStore.chatMaxToolResumeCountOptions, [128, 256, 512, 1024, 2048, 4096, 8192])
+        XCTAssertEqual(SettingsStore.chatMaxToolResumeCountRange, 128...8192)
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 

@@ -183,7 +183,7 @@ struct ExecutionSettingsView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                        // 数字列与箭头宽度固定；24 切到 384 时整行尺寸不变。
+                        // 数字列与箭头宽度固定，切换上限时整行尺寸不变。
                         HStack(spacing: 8) {
                             Text("\(clampedCount)")
                                 .font(.body.monospacedDigit())

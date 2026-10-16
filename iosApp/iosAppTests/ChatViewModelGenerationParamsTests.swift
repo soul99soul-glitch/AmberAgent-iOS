@@ -692,27 +692,38 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertFalse(names.contains("ios_ish_execute"))
     }
 
-    /// G7: 前台工具循环上限参数化——默认 24，clamp 24-384，UserDefaults 持久化。
-    func testChatMaxToolResumeCountDefaultsToTwentyFourAndClamps() {
+    func testChatMaxToolResumeCountDefaultsTo128AndPersistsSupportedOptions() {
         let defaults = isolatedDefaults()
         let store = SettingsStore(userDefaults: defaults)
 
-        XCTAssertEqual(store.chatMaxToolResumeCount, 24)
+        XCTAssertEqual(store.chatMaxToolResumeCount, 128)
 
-        store.chatMaxToolResumeCount = 23
-        XCTAssertEqual(store.chatMaxToolResumeCount, 24)
+        for option in [128, 256, 512, 1024, 2048, 4096, 8192] {
+            store.chatMaxToolResumeCount = option
+            XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, option)
+            XCTAssertEqual(defaults.integer(forKey: IOSExecutionPreferenceKeys.chatMaxToolResumeCount), option)
+        }
 
-        store.chatMaxToolResumeCount = 256
-        XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 256)
+        for value in [Int.min, 9, 127] {
+            store.chatMaxToolResumeCount = value
+            XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 128)
+        }
 
-        store.chatMaxToolResumeCount = 384
-        XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 384)
+        for value in [8193, Int.max] {
+            store.chatMaxToolResumeCount = value
+            XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 8192)
+        }
+    }
 
-        store.chatMaxToolResumeCount = 385
-        XCTAssertEqual(store.chatMaxToolResumeCount, 384)
+    func testChatMaxToolResumeCountMapsStoredLegacyValuesToSupportedOptions() {
+        let defaults = isolatedDefaults()
+        let store = SettingsStore(userDefaults: defaults)
 
-        store.chatMaxToolResumeCount = 9
-        XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 24)
+        for (stored, expected) in [(24, 128), (48, 128), (64, 128), (96, 128), (128, 128), (256, 256), (384, 512)] {
+            defaults.set(stored, forKey: IOSExecutionPreferenceKeys.chatMaxToolResumeCount)
+            XCTAssertEqual(store.chatMaxToolResumeCount, expected, "Stored value: \(stored)")
+            XCTAssertEqual(SettingsStore.clampChatMaxToolResumeCount(stored), expected)
+        }
     }
 
     // MARK: - P3-a: exec 工具开关（默认关，开时进 deferred 池）
