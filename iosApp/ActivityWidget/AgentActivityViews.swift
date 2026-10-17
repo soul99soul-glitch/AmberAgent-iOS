@@ -156,7 +156,6 @@ struct AgentActivityMinimalMark: View {
             // 2pt 黑色外环画在填充之外，保持 11pt 实心徽标（描边居中会吃掉填充）。
             .padding(2)
             .background(.black, in: Circle())
-            .offset(x: 2, y: 2)
     }
 }
 
@@ -400,8 +399,9 @@ struct AgentActivitySteps: View {
             // 兜底：连当前一步都放不下时允许中间截断，不溢出胶囊。
             row(finished: [], detailed: false).truncationMode(.middle)
         }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
+        // 40pt 胶囊端部半径 20，内边距随之放到 16，首尾步骤不贴弧边。
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, minHeight: 40, maxHeight: 40, alignment: .leading)
         .background(AgentIslandPalette.well, in: Capsule())
     }
 
@@ -689,8 +689,8 @@ struct AgentActivityCompactStatus: View {
         .foregroundStyle(color)
         .lineLimit(1)
         .minimumScaleFactor(0.7)
-        // 按内容宽度排版：maxWidth 会被系统提议撑满，导致左宽右窄、岛不对称。
-        .fixedSize()
+        // 固定与右侧计时同宽（52pt）：系统提议更宽时取上限，长文案缩字而不撑宽，左右对称。
+        .frame(maxWidth: 52, alignment: .leading)
         .padding(.leading, 4)
     }
 

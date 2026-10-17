@@ -67,6 +67,12 @@ final class BackgroundGenerationKeepAlive {
         var onSystemTaskExpiration: (() -> Void)?
         /// UIKit 短窗已到期，租约只剩音频腿。
         var heldByAudio: Bool
+        /// 最近一次调用方报告真实工作（`updateProgress`/`advanceProgress`）的时间。
+        var lastWorkAt: Date
+        /// 是否打开了存活心跳；`transfer` 失败恢复租约时一并恢复。
+        var livenessHeartbeat = false
+        /// 心跳因空闲超限暂停中（只用于日志去重）。
+        var livenessHeartbeatIdle = false
     }
 
     /// `expirationHandler` 与业务终态可能紧邻到达；系统 task 只允许报一次完成。
@@ -97,6 +103,7 @@ final class BackgroundGenerationKeepAlive {
     private var systemSubmitRetryTasks: [String: Task<Void, Never>] = [:]
     private var didInstallForegroundObserver = false
     private var idleReleaseTask: Task<Void, Never>?
+    private var livenessHeartbeatTasks: [String: Task<Void, Never>] = [:]
 
     private let beginBackgroundTask: BeginBackgroundTask
     private let endBackgroundTask: EndBackgroundTask
@@ -110,6 +117,11 @@ final class BackgroundGenerationKeepAlive {
     private let audioKeepAlive: BackgroundAudioKeepAliveControlling
     private let locationKeepAlive: BackgroundLocationKeepAliveControlling
     private let isAudioKeepAliveEnabled: () -> Bool
+    private let now: () -> Date
+    private let livenessHeartbeatIntervalNanoseconds: UInt64
+    /// 心跳只替仍在报告真实工作的租约撑过两次报告之间的空档；超过这段时间
+    /// 没有真实进展就停跳，让系统按 stalled 收走，不替卡死的任务续命。
+    private let livenessHeartbeatMaxIdle: TimeInterval
 
     init(
         beginBackgroundTask: @escaping BeginBackgroundTask = { name, expiration in
@@ -135,7 +147,10 @@ final class BackgroundGenerationKeepAlive {
         locationKeepAlive: BackgroundLocationKeepAliveControlling = BackgroundLocationKeepAlive.shared,
         isAudioKeepAliveEnabled: @escaping () -> Bool = {
             BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled()
-        }
+        },
+        now: @escaping () -> Date = Date.init,
+        livenessHeartbeatIntervalNanoseconds: UInt64 = 10_000_000_000,
+        livenessHeartbeatMaxIdle: TimeInterval = 180
     ) {
         self.beginBackgroundTask = beginBackgroundTask
         self.endBackgroundTask = endBackgroundTask
@@ -147,6 +162,9 @@ final class BackgroundGenerationKeepAlive {
         self.audioKeepAlive = audioKeepAlive
         self.locationKeepAlive = locationKeepAlive
         self.isAudioKeepAliveEnabled = isAudioKeepAliveEnabled
+        self.now = now
+        self.livenessHeartbeatIntervalNanoseconds = livenessHeartbeatIntervalNanoseconds
+        self.livenessHeartbeatMaxIdle = livenessHeartbeatMaxIdle
     }
 
     /// 近静音音频不是稳定版后台执行策略：缺省关闭，且只有声明了 audio
@@ -254,7 +272,8 @@ final class BackgroundGenerationKeepAlive {
             waiter: nil,
             onExpire: onExpire,
             onSystemTaskExpiration: onSystemTaskExpiration,
-            heldByAudio: false
+            heldByAudio: false,
+            lastWorkAt: now()
         )
 
         syncAudioKeepAlive()
@@ -353,6 +372,16 @@ final class BackgroundGenerationKeepAlive {
         total: Int64? = nil,
         subtitle: String? = nil
     ) {
+        leases[leaseId]?.lastWorkAt = now()
+        applyProgress(leaseId, completed: completed, total: total, subtitle: subtitle)
+    }
+
+    private func applyProgress(
+        _ leaseId: String,
+        completed: Int64,
+        total: Int64?,
+        subtitle: String?
+    ) {
         guard var lease = leases[leaseId] else { return }
         if let total {
             // Foundation Progress 用负数 total 表示无法预知总量。长流和多阶段
@@ -385,7 +414,7 @@ final class BackgroundGenerationKeepAlive {
             )
         }
         if let systemTask = lease.systemTask {
-            if let total = lease.progressTotalUnitCount {
+            if let total = Self.systemTotal(for: lease) {
                 systemTask.progress.totalUnitCount = total
             }
             systemTask.progress.completedUnitCount = lease.progressCompletedUnitCount
@@ -407,6 +436,73 @@ final class BackgroundGenerationKeepAlive {
             completed: lease.progressCompletedUnitCount + units,
             subtitle: subtitle
         )
+    }
+
+    /// 为总量不可预知、两次真实报告之间可能隔很久的租约（手机自动化：截图、
+    /// 动作、模型思考都可能单步超过 30 秒）打开存活心跳。
+    ///
+    /// 系统约 30 秒收不到 progress 更新就把 continued-processing task 判为
+    /// stalled 并收走（Apple DTS，developer forums 805554）；进度在前台就已停滞
+    /// 时，一进后台会被立刻收走。心跳每个间隔推进一个单位，但只在
+    /// `livenessHeartbeatMaxIdle` 内仍有真实报告时才推进；空闲超限只暂停推进，
+    /// 有新的真实报告就恢复。租约结束时自动停。幂等。
+    func enableLivenessHeartbeat(_ leaseId: String) {
+        guard leases[leaseId] != nil, livenessHeartbeatTasks[leaseId] == nil else { return }
+        leases[leaseId]?.livenessHeartbeat = true
+        let interval = livenessHeartbeatIntervalNanoseconds
+        livenessHeartbeatTasks[leaseId] = Task { @MainActor [weak self] in
+            while true {
+                do { try await Task.sleep(nanoseconds: interval) } catch { return }
+                // 同 id 结束后又重新 begin 时，旧任务已被取消，不能去推进新租约。
+                guard !Task.isCancelled, let self, self.livenessHeartbeatTick(leaseId) else { return }
+            }
+        }
+    }
+
+    /// 写给系统任务的总量。心跳租约的总量不可预知时改报「已完成 + 100」：真机上（2026-10-16，
+    /// Experimental 版）indeterminate 进度每 10 秒推进一格，系统仍在进后台 16 秒时把任务判为
+    /// stalled 收走，说明 totalUnitCount = -1 时 completedUnitCount 的变化不被当作进度。
+    /// 确定总量下 fractionCompleted 随每拍真实变化。其他租约保持原样。
+    static func systemTotal(total: Int64?, completed: Int64, heartbeat: Bool) -> Int64? {
+        guard let total else { return nil }
+        guard total < 0, heartbeat else { return total }
+        return completed + 100
+    }
+
+    private static func systemTotal(for lease: Lease) -> Int64? {
+        systemTotal(total: lease.progressTotalUnitCount, completed: lease.progressCompletedUnitCount,
+                    heartbeat: lease.livenessHeartbeat)
+    }
+
+    /// 这一轮是否有在跑的存活心跳任务。
+    func hasLivenessHeartbeat(_ leaseId: String) -> Bool {
+        livenessHeartbeatTasks[leaseId] != nil
+    }
+
+    /// 这一轮已报告给系统（或等接管时写入）的完成单位数；无租约时为 nil。
+    func reportedProgress(for leaseId: String) -> Int64? {
+        leases[leaseId]?.progressCompletedUnitCount
+    }
+
+    /// 心跳的一拍。返回 false 表示租约已结束、心跳应停止。
+    @discardableResult
+    func livenessHeartbeatTick(_ leaseId: String) -> Bool {
+        guard let lease = leases[leaseId] else { return false }
+        guard now().timeIntervalSince(lease.lastWorkAt) <= livenessHeartbeatMaxIdle else {
+            if !lease.livenessHeartbeatIdle {
+                leases[leaseId]?.livenessHeartbeatIdle = true
+                IOSBackgroundLifecycleLog.record("keepAliveHeartbeatIdle(\(leaseId))", detail: snapshotDetail)
+            }
+            return true
+        }
+        leases[leaseId]?.livenessHeartbeatIdle = false
+        applyProgress(
+            leaseId,
+            completed: lease.progressCompletedUnitCount + 1,
+            total: nil,
+            subtitle: nil
+        )
+        return true
     }
 
     /// 将前台流的通用租约显式交给专用后台协调器。
@@ -452,6 +548,7 @@ final class BackgroundGenerationKeepAlive {
                 subtitle: previousLease.subtitle
             )
         }
+        if previousLease.livenessHeartbeat { enableLivenessHeartbeat(leaseId) }
         end(bridgeLeaseId)
         return false
     }
@@ -609,7 +706,7 @@ final class BackgroundGenerationKeepAlive {
         }
         leases[leaseId]?.systemTask = task
         if let lease = leases[leaseId] {
-            if let total = lease.progressTotalUnitCount {
+            if let total = Self.systemTotal(for: lease) {
                 task.progress.totalUnitCount = total
             }
             task.progress.completedUnitCount = lease.progressCompletedUnitCount
@@ -720,6 +817,7 @@ final class BackgroundGenerationKeepAlive {
     @discardableResult
     private func removeLease(_ leaseId: String) -> Lease? {
         cancelSystemSubmitRetry(for: leaseId)
+        livenessHeartbeatTasks.removeValue(forKey: leaseId)?.cancel()
         let taskIdentifier = identifier(for: leaseId)
         leaseIdsByIdentifier.removeValue(forKey: taskIdentifier)
         cancelTaskRequest(taskIdentifier)

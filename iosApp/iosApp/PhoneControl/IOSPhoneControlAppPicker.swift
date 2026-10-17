@@ -34,7 +34,7 @@ struct IOSPhoneControlAppPicker: View {
                     Text(query.isEmpty ? "未读取到可添加的应用" : "没有匹配的 App，试试英文名称或 Bundle ID")
                         .foregroundStyle(.secondary)
                 }
-                if !controller.isLoadingApplications && errorMessage == nil {
+                if !controller.isLoadingApplications && errorMessage == nil && !matches.isEmpty {
                     Section {
                         ForEach(matches) { app in
                             applicationRow(app)

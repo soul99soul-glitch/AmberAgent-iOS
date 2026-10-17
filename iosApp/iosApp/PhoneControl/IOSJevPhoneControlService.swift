@@ -8,6 +8,11 @@ final class IOSJevPhoneControlService {
     struct Candidate: Codable, Equatable {
         let id: String
         let description: String
+        /// Index of the acted-on node in the observation the candidate was generated from.
+        /// Local only: it prioritizes that node (and its container) in the bounded state.
+        var nodeIndex: Int? = nil
+
+        enum CodingKeys: String, CodingKey { case id, description }
     }
 
     enum Selection: Equatable {
@@ -58,22 +63,36 @@ final class IOSJevPhoneControlService {
         guard candidates.count + Self.reservedOptions.count <= min(64, settings.policy.maxCandidates) else {
             return .handback("candidate_budget_exceeded")
         }
-        guard let state = Self.state(goal: goal, candidates: candidates, recentSteps: recentSteps,
-                                    before: nil, after: observation, expectation: expectation, verification: nil,
-                                    maximumBytes: settings.policy.maxStateBytes) else {
-            return .handback("state_too_large")
+        // Large pages (long lists, ~1000 AX nodes) must still reach Jev: the request is fitted
+        // to both the state and the whole-request byte limits instead of failing.
+        let fitted = Self.fitRequest(
+            useCase: .phoneActions, settings: settings, instructions: Self.actionInstructions,
+            descriptionCaps: Self.descriptionCaps(candidateCount: candidates.count, settings: settings),
+            options: { cap in
+                var options = Dictionary(uniqueKeysWithValues: candidates.map {
+                    ($0.id, Optional(Self.capped($0.description, maxBytes: cap)))
+                })
+                options["handback"] = "Return to the main model when no offered action is clearly appropriate."
+                options["needs_screenshot"] = "The UI tree lacks enough information; ask the main model for visual inspection."
+                options["wait"] = "The UI explicitly indicates loading or an animation; wait for a fresh observation."
+                return options
+            },
+            state: { budget in
+                Self.state(goal: goal, candidates: candidates, recentSteps: recentSteps, before: nil,
+                           after: observation, expectation: expectation, verification: nil, budget: budget)
+            })
+        let state: String, question: IOSJevQuestion
+        switch fitted {
+        case .fitted(let fittedState, let fittedQuestion): (state, question) = (fittedState, fittedQuestion)
+        case .failed(let reason): return .handback(reason)
         }
-        var options = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, Optional($0.description)) })
-        options["handback"] = "Return to the main model when no offered action is clearly appropriate."
-        options["needs_screenshot"] = "The UI tree lacks enough information; ask the main model for visual inspection."
-        options["wait"] = "The UI explicitly indicates loading or an animation; wait for a fresh observation."
-        let outcome = await decide(useCase: .phoneActions, state: state, options: options,
-                                   instructions: "Choose one next step for the goal from the current snapshot and recent steps. Follow the goal's specified order and stop when new reasoning or missing input is required. Do not repeat an ineffective action or act outside the goal. Hand back final actions that send messages, publish, pay, delete, or sign in. Select wait only for visible evidence of a pending UI transition.",
+        let options = Set(candidates.map(\.id)).union(Self.reservedOptions)
+        let outcome = await decide(useCase: .phoneActions, state: state, question: question,
                                    runID: runID, settings: settings)
         guard !Task.isCancelled else { return .handback("cancelled") }
         guard settingsAreCurrent(settings, useCase: .phoneActions) else { return .handback("config_changed") }
         guard settings.effectiveMode(for: .phoneActions) == .active else { return .handback("shadow") }
-        guard let choice = Self.choice(from: outcome, options: Set(options.keys), settings: settings) else {
+        guard let choice = Self.choice(from: outcome, options: options, settings: settings) else {
             return .handback(Self.failureReason(outcome))
         }
         switch choice {
@@ -97,27 +116,58 @@ final class IOSJevPhoneControlService {
         guard settings.canSend(useCase: .phoneVerification, required: Self.scopes) else {
             return mode == .shadow ? localAdvice : .handback
         }
-        guard let state = Self.state(goal: goal, candidates: [], recentSteps: [],
-                                    before: before, after: after, expectation: expectation,
-                                    verification: verification, maximumBytes: settings.policy.maxStateBytes) else {
+        let fitted = Self.fitRequest(
+            useCase: .phoneVerification, settings: settings, instructions: Self.verificationInstructions,
+            descriptionCaps: [Self.maxDescriptionBytes],
+            options: { _ in Self.verificationOptions },
+            state: { budget in
+                Self.state(goal: goal, candidates: [], recentSteps: [], before: before, after: after,
+                           expectation: expectation, verification: verification, budget: budget)
+            })
+        guard case .fitted(let state, let question) = fitted else {
             return mode == .shadow ? localAdvice : .handback
         }
-        let options: [String: String?] = [
-            "continue": "There is useful progress toward the goal; continue with a new action decision. This does not mean the goal is satisfied.",
-            "wait": "Visible loading or transition evidence justifies waiting for a new observation.",
-            "needs_screenshot": "UI text cannot resolve the current state; request visual inspection from the main model.",
-            "handback": "The evidence is ambiguous, there is no useful progress, or the main model needs to revise the plan."
-        ]
-        let outcome = await decide(useCase: .phoneVerification, state: state, options: options,
-                                   instructions: "The local verification result is authoritative and is not satisfied. Choose how to proceed, never whether to declare success. A completed execution receipt alone is not proof of effect. If observations are unchanged, do not infer progress.",
+        let outcome = await decide(useCase: .phoneVerification, state: state, question: question,
                                    runID: runID, settings: settings)
         guard !Task.isCancelled, settingsAreCurrent(settings, useCase: .phoneVerification) else { return .handback }
         guard settings.effectiveMode(for: .phoneVerification) == .active else { return localAdvice }
-        guard let choice = Self.choice(from: outcome, options: Set(options.keys), settings: settings),
+        guard let choice = Self.choice(from: outcome, options: Set(Self.verificationOptions.keys), settings: settings),
               let advice = Advice(rawValue: choice) else { return .handback }
         // Jev cannot override absent local progress and keep an unchanged UI looping.
         if advice == .continueTask, localAdvice != .continueTask { return localAdvice }
         return advice
+    }
+
+    /// Handback reasons caused by a transient or low-confidence decision rather than by
+    /// Jev declining. The goal loop re-reads the screen and asks again before handing back.
+    static func isRetryableHandback(_ reason: String) -> Bool {
+        ["invalid_or_low_confidence_decision", "timeout", "transport", "concurrency_limit",
+         "invalid_response", "incomplete_response", "http_429", "shadow_dropped"].contains(reason)
+            || reason.hasPrefix("http_5")
+    }
+
+    enum HandbackKind: Equatable {
+        /// Jev answered and declined, or could not decide confidently between the offered options.
+        case declined
+        /// Jev was not consulted: switched off, out of scope, unconfigured, paused or out of budget.
+        case unavailable
+        /// The request to Jev failed (size, timeout, transport, HTTP, invalid response).
+        case failed
+    }
+
+    /// Separates "Jev looked and declined" from "Jev could not be asked or did not answer",
+    /// so a handback never blames the page (e.g. final commits) for a Jev failure.
+    static func handbackKind(_ reason: String) -> HandbackKind {
+        let unavailable: Set<String> = ["mode_off", "scope_not_allowed", "missing_key", "model_unspecified",
+                                        "auth_paused", "cooling_down", "budget_exhausted", "concurrency_limit",
+                                        "shadow", "shadow_dropped", "config_changed", "cancelled"]
+        let failed: Set<String> = ["state_too_large", "request_too_large", "timeout", "transport",
+                                   "invalid_response", "incomplete_response", "invalid_request",
+                                   "invalid_candidates", "candidate_budget_exceeded", "duplicate_part_id",
+                                   "duplicate_question_id", "empty_batch", "unknown_error"]
+        if unavailable.contains(reason) { return .unavailable }
+        if failed.contains(reason) || reason.hasPrefix("http_") { return .failed }
+        return .declined
     }
 
     private static func localAdvice(before: PhoneObservation?, after: PhoneObservation,
@@ -131,17 +181,95 @@ final class IOSJevPhoneControlService {
         return .handback
     }
 
-    private func decide(useCase: IOSJevUseCase, state: String, options: [String: String?],
-                        instructions: String, runID: String, settings: IOSJevSettings) async -> IOSJevDecisionOutcome {
+    private func decide(useCase: IOSJevUseCase, state: String, question: IOSJevQuestion,
+                        runID: String, settings: IOSJevSettings) async -> IOSJevDecisionOutcome {
         await deps.coordinator.decide(
             useCase: useCase, requiredScopes: Self.scopes, state: state,
-            questions: [.choice(id: "next_step", options: options,
-                                instructions: Self.untrustedDataRule + " " + instructions)],
+            questions: [question],
             context: .init(runId: runID, turnBudgetKey: runID,
                            inputHash: IOSJevToolDiscoveryService.stableHash(state)),
             cacheKey: nil,
             expectedSettingsRevision: settings.revision
         )
+    }
+
+    private static let actionInstructions = "Choose the one offered option that best advances the goal from the current snapshot and recent steps. Candidates may include taps, scroll swipes and in-App alert buttons; read the screen (question, prompts, selected state) to decide. When several candidates share a name, tell them apart by their position, containers and neighbouring text and the expected result; pick the one that makes progress (for example the source item, not a copy already placed in the answer area). Do not repeat a step marked screen unchanged or act outside the goal. Never choose an option that sends a message, publishes, pays, deletes, signs in or grants a permission; hand back instead. Prefer wait while loading or animating and needs_screenshot when the text cannot tell the options apart; choose handback only when no offered option can advance the goal or the goal needs input or reasoning beyond selecting an option. The state may list only part of the UI tree (trimmedNodes, omittedNodes); nodes of the offered candidates are listed first."
+
+    private static let verificationInstructions = "The local verification result is authoritative and is not satisfied. Choose how to proceed, never whether to declare success. A completed execution receipt alone is not proof of effect. If observations are unchanged, do not infer progress. The state may list only part of the UI tree (trimmedNodes, omittedNodes)."
+
+    private static let verificationOptions: [String: String?] = [
+        "continue": "There is useful progress toward the goal; continue with a new action decision. This does not mean the goal is satisfied.",
+        "wait": "Visible loading or transition evidence justifies waiting for a new observation.",
+        "needs_screenshot": "UI text cannot resolve the current state; request visual inspection from the main model.",
+        "handback": "The evidence is ambiguous, there is no useful progress, or the main model needs to revise the plan."
+    ]
+
+    // MARK: Request fitting
+
+    /// Upper bound for one candidate description on the wire (UTF-8 bytes).
+    static let maxDescriptionBytes = 600
+
+    private enum Fit {
+        case fitted(state: String, question: IOSJevQuestion)
+        case failed(String)
+    }
+
+    /// Candidate descriptions share at most ~40% of the request; a tighter fallback cap is
+    /// tried before the request is declared too large.
+    private static func descriptionCaps(candidateCount: Int, settings: IOSJevSettings) -> [Int] {
+        let share = settings.policy.maxRequestBytes * 2 / 5 / max(1, candidateCount)
+        let first = min(maxDescriptionBytes, max(120, share))
+        let second = max(80, first / 2)
+        return second < first ? [first, second] : [first]
+    }
+
+    /// Truncates on a character boundary to at most `maxBytes` UTF-8 bytes, marking the cut.
+    static func capped(_ text: String, maxBytes: Int) -> String {
+        guard text.utf8.count > maxBytes else { return text }
+        let marker = "…"
+        let limit = max(0, maxBytes - marker.utf8.count)
+        var result = ""
+        var bytes = 0
+        for character in text {
+            let size = String(character).utf8.count
+            guard bytes + size <= limit else { break }
+            result.append(character)
+            bytes += size
+        }
+        return result + marker
+    }
+
+    /// Builds the question, then the largest state that keeps both the coordinator's state
+    /// section within `maxStateBytes` and the encoded body within `maxRequestBytes`. The wire
+    /// layout mirrors the coordinator's single-part request ("## <useCase>.single\n" + state,
+    /// question id prefixed with "single."). The state shrinks until the body fits; only
+    /// mandatory evidence that cannot fit at all fails the request.
+    private static func fitRequest(useCase: IOSJevUseCase, settings: IOSJevSettings, instructions: String,
+                                   descriptionCaps: [Int], options: (Int) -> [String: String?],
+                                   state: (Int) -> String?) -> Fit {
+        let header = "## \(useCase.rawValue).single\n"
+        let requestLimit = settings.policy.maxRequestBytes
+        // The coordinator wraps each part with a short section header.
+        let stateCeiling = max(0, min(48 * 1_024, settings.policy.maxStateBytes) - 128)
+        for cap in descriptionCaps {
+            let question = IOSJevQuestion.choice(id: "next_step", options: options(cap),
+                                                 instructions: untrustedDataRule + " " + instructions)
+            var wire = question
+            wire.id = "single." + question.id
+            func bodyBytes(_ text: String) -> Int? {
+                (try? IOSJevClient.encodedRequestBody(model: settings.activeModelVersion, state: header + text,
+                                                     questions: [wire], style: settings.apiStyle))?.count
+            }
+            guard let fixed = bodyBytes("") else { return .failed("invalid_request") }
+            var budget = min(stateCeiling, requestLimit - fixed)
+            for _ in 0..<6 {
+                guard budget > 0, let text = state(budget), let bytes = bodyBytes(text) else { break }
+                if bytes <= requestLimit { return .fitted(state: text, question: question) }
+                // Every state byte costs at least one body byte (escaping only adds).
+                budget = min(budget, text.utf8.count) - (bytes - requestLimit)
+            }
+        }
+        return .failed(state(stateCeiling) == nil ? "state_too_large" : "request_too_large")
     }
 
     private func settingsAreCurrent(_ settings: IOSJevSettings, useCase: IOSJevUseCase) -> Bool {
@@ -171,10 +299,13 @@ final class IOSJevPhoneControlService {
 
     private struct State: Encodable {
         let goal: String
-        let candidates: [Candidate]
+        /// Offered option ids; their descriptions travel once, in the question options.
+        let candidates: [String]
         let expectation: IOSPhoneGoalExpectation?
         let verification: IOSPhoneGoalVerificationResult?
         var recentSteps: [String]
+        /// On-screen nodes left out of every observation to fit the byte budget.
+        var trimmedNodes: Int
         var observations: [ObservationState]
     }
 
@@ -189,7 +320,7 @@ final class IOSJevPhoneControlService {
         var omittedNodes: Int
         var nodes: [NodeState]
 
-        init(_ observation: PhoneObservation, phase: String, required: [PhoneObservationNode]) {
+        init(_ observation: PhoneObservation, phase: String, onScreen: Int, required: [NodeState]) {
             self.phase = phase
             observationID = observation.observationID
             bundleID = observation.bundleID
@@ -197,8 +328,8 @@ final class IOSJevPhoneControlService {
             treeTruncated = observation.truncated
             screenBounds = observation.screenBounds.map { [$0.x, $0.y, $0.width, $0.height] }
             screenStability = observation.screenStability
-            omittedNodes = observation.nodes.count - required.count
-            nodes = required.map { NodeState($0) }
+            omittedNodes = onScreen - required.count
+            nodes = required
         }
     }
 
@@ -226,38 +357,127 @@ final class IOSJevPhoneControlService {
         }
     }
 
-    /// Keep the goal, available choices and postcondition evidence whole. Only auxiliary
-    /// UI text is shortened; truncation is explicit so absence is never invented remotely.
+    private static let interactiveTypes: Set<String> = [
+        "XCUIElementTypeButton", "XCUIElementTypeLink", "XCUIElementTypeCell", "XCUIElementTypeTabBarItem",
+        "XCUIElementTypeTab", "XCUIElementTypeSwitch", "XCUIElementTypeToggle", "XCUIElementTypeMenuItem",
+        "XCUIElementTypeTextField", "XCUIElementTypeSecureTextField", "XCUIElementTypeSearchField",
+        "XCUIElementTypeTextView", "XCUIElementTypeSegmentedControl", "XCUIElementTypeSlider",
+        "XCUIElementTypeStepper", "XCUIElementTypePickerWheel", "XCUIElementTypeKey",
+    ]
+
+    private static func parentIndices(_ nodes: [PhoneObservationNode]) -> [Int?] {
+        var stack: [Int] = []
+        var parents: [Int?] = []
+        parents.reserveCapacity(nodes.count)
+        for (index, node) in nodes.enumerated() {
+            while let last = stack.last, nodes[last].depth >= node.depth { stack.removeLast() }
+            parents.append(stack.last)
+            stack.append(index)
+        }
+        return parents
+    }
+
+    /// Keep the goal, available choices and postcondition evidence whole, then fill the
+    /// byte budget by priority: nodes of offered candidates and their containers, recent
+    /// steps, then visible named controls, visible named text, other visible nodes and
+    /// off-screen nodes (reading order within each tier; the latest observation first).
+    /// Left-out nodes are counted (omittedNodes, trimmedNodes) so absence is never invented
+    /// remotely. Returns nil only when the mandatory part alone exceeds `budget`.
     private static func state(goal: String, candidates: [Candidate], recentSteps: [String],
                               before: PhoneObservation?, after: PhoneObservation,
                               expectation: IOSPhoneGoalExpectation?, verification: IOSPhoneGoalVerificationResult?,
-                              maximumBytes: Int) -> String? {
-        // The coordinator wraps each part with a short section header.
-        let budget = max(0, min(48 * 1_024, maximumBytes) - 128)
+                              budget: Int) -> String? {
         let source = before.map { [$0, after] } ?? [after]
-        let required: [[PhoneObservationNode]] = source.map { observation in
+        let afterIndex = source.count - 1
+        // Nodes covered by a pushed page are not on screen; they never reach Jev.
+        let onScreen: [[Int]] = source.map { observation in
+            observation.nodes.indices.filter { !observation.nodes[$0].covered }
+        }
+        let required: [[Int]] = source.indices.map { position in
             guard let expectation else { return [] }
             let targets = [expectation.target] + (expectation.anchor.map { [$0] } ?? [])
-            return observation.nodes.filter { node in
-                targets.contains { target in
+            return onScreen[position].filter { index in
+                let node = source[position].nodes[index]
+                return targets.contains { target in
                     (target.label == nil || node.label == target.label)
                         && (target.identifier == nil || node.identifier == target.identifier)
                         && (target.type == nil || node.type == target.type)
                 }
             }
         }
-        var state = State(goal: goal, candidates: candidates, expectation: expectation,
+        let candidateNodes = Set(candidates.compactMap(\.nodeIndex).filter { after.nodes.indices.contains($0) })
+        let parents = parentIndices(after.nodes)
+        let candidateContainers = Set(candidateNodes.compactMap { parents[$0] }).subtracting(candidateNodes)
+        let bounds = source.map { IOSPhoneGoalVerification.validScreenBounds($0) }
+
+        func tier(_ position: Int, _ index: Int) -> Int {
+            if position == afterIndex {
+                if candidateNodes.contains(index) { return 0 }
+                if candidateContainers.contains(index) { return 1 }
+            }
+            let node = source[position].nodes[index]
+            let visible = bounds[position].map { IOSPhoneGoalVerification.hasVisibleFrame(node, within: $0) } ?? true
+            guard visible else { return 5 }
+            let named = [node.label, node.identifier, node.value].contains {
+                !($0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
+            guard named else { return 4 }
+            return interactiveTypes.contains(node.type) ? 2 : 3
+        }
+        struct Entry { let position: Int; let index: Int; let tier: Int; let y: Double }
+        var entries: [Entry] = []
+        for position in source.indices {
+            let mandatory = Set(required[position])
+            for index in onScreen[position] where !mandatory.contains(index) {
+                let y = source[position].nodes[index].rect.y
+                entries.append(.init(position: position, index: index, tier: tier(position, index),
+                                     y: y.isFinite ? y : .greatestFiniteMagnitude))
+            }
+        }
+        func group(_ entry: Entry) -> Int { entry.tier <= 1 ? 0 : (entry.tier <= 3 ? 1 : 2) }
+        entries.sort { lhs, rhs in
+            if group(lhs) != group(rhs) { return group(lhs) < group(rhs) }
+            if lhs.position != rhs.position { return lhs.position == afterIndex }
+            if lhs.tier != rhs.tier { return lhs.tier < rhs.tier }
+            if lhs.y != rhs.y { return lhs.y < rhs.y }
+            return lhs.index < rhs.index
+        }
+
+        let observations = source.indices.map { position in
+            ObservationState(source[position], phase: position == afterIndex ? "after" : "before",
+                             onScreen: onScreen[position].count,
+                             required: required[position].map { NodeState(source[position].nodes[$0]) })
+        }
+        var state = State(goal: goal, candidates: candidates.map(\.id), expectation: expectation,
                           verification: verification, recentSteps: [],
-                          observations: source.indices.map { index in
-                              ObservationState(source[index], phase: index == source.count - 1 ? "after" : "before",
-                                               required: required[index])
-                          })
+                          trimmedNodes: observations.reduce(0) { $0 + $1.omittedNodes },
+                          observations: observations)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let initial = try? encoder.encode(state), initial.count <= budget else { return nil }
         var byteCount = initial.count
+        var selected: [[(index: Int, node: NodeState)]] = source.map { _ in [] }
+
         // Array entries are encoded independently with the same escaping rules. Track
         // their exact contribution instead of re-encoding the growing state per node.
+        func digits(_ value: Int) -> Int { String(value).utf8.count }
+        func include(_ entry: Entry) {
+            let limit = entry.tier <= 1 ? 512 : 200
+            let node = NodeState(source[entry.position].nodes[entry.index], textLimit: limit)
+            guard let encoded = try? encoder.encode(node) else { return }
+            let observation = state.observations[entry.position]
+            let addedBytes = encoded.count
+                + (observation.nodes.isEmpty && selected[entry.position].isEmpty ? 0 : 1)
+                + digits(observation.omittedNodes - 1) - digits(observation.omittedNodes)
+                + digits(state.trimmedNodes - 1) - digits(state.trimmedNodes)
+            guard byteCount + addedBytes <= budget else { return }
+            selected[entry.position].append((entry.index, node))
+            state.observations[entry.position].omittedNodes -= 1
+            state.trimmedNodes -= 1
+            byteCount += addedBytes
+        }
+        let anchorCount = entries.prefix { $0.tier <= 1 }.count
+        entries.prefix(anchorCount).forEach(include)
         for step in recentSteps.suffix(5).reversed() {
             let text = String(step.prefix(1_000))
             guard let encoded = try? encoder.encode(text) else { return nil }
@@ -266,20 +486,10 @@ final class IOSJevPhoneControlService {
             state.recentSteps.insert(text, at: 0)
             byteCount += addedBytes
         }
-        // Current UI has priority after the mandatory before/after target evidence.
-        for index in source.indices.reversed() {
-            for node in source[index].nodes where !required[index].contains(node) {
-                let entry = NodeState(node, textLimit: 512)
-                guard let encoded = try? encoder.encode(entry) else { return nil }
-                let previousOmitted = state.observations[index].omittedNodes
-                let omitted = previousOmitted - 1
-                let addedBytes = encoded.count + (state.observations[index].nodes.isEmpty ? 0 : 1)
-                    + String(omitted).utf8.count - String(previousOmitted).utf8.count
-                guard byteCount + addedBytes <= budget else { break }
-                state.observations[index].nodes.append(entry)
-                state.observations[index].omittedNodes = omitted
-                byteCount += addedBytes
-            }
+        entries.dropFirst(anchorCount).forEach(include)
+        // Mandatory evidence first, the rest in tree order so containers read naturally.
+        for position in source.indices {
+            state.observations[position].nodes += selected[position].sorted { $0.index < $1.index }.map(\.node)
         }
         guard let data = try? encoder.encode(state), data.count <= budget else { return nil }
         return String(data: data, encoding: .utf8)

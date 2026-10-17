@@ -61,6 +61,10 @@ FOUNDATION_EXPORT NSString *const IPURNodeAXElementKey;
 /// Writes its pid into `pid`.
 + (nullable id)foregroundApplicationElementWithProbePoint:(CGPoint)probePoint pid:(int *)pid;
 
+/// The topmost accessibility element at `point` (screen points), any process; nil when the AX
+/// server cannot answer.
++ (nullable id)accessibilityElementAtPoint:(CGPoint)point NS_SWIFT_NAME(accessibilityElement(at:));
+
 /// Same, with the probe point computed only when the hit-test needs it.
 + (nullable id)foregroundApplicationElementWithProbe:(CGPoint (NS_NOESCAPE ^)(void))probe pid:(int *)pid
   NS_SWIFT_NAME(foregroundApplicationElement(probePoint:pid:));

@@ -708,6 +708,89 @@ final class IOSConversationStoreTests: XCTestCase {
         )
     }
 
+    func testScreenshotDataURLsLiveInBlobsAndBackupsStaySelfContained() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreBlobs-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("source")
+        let target = root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var bytes = [UInt8](repeating: 0, count: 40_000)
+        for index in bytes.indices { bytes[index] = UInt8(truncatingIfNeeded: index &* 31 &+ 7) }
+        let payload = Data(bytes).base64EncodedString()
+        let dataURL = "data:image/png;base64," + payload
+        let screenshot = UIMessage(
+            id: KotlinUuid.companion.random(), role: .assistant,
+            parts: [UIMessagePart.Image(url: dataURL, metadata: nil)],
+            annotations: [],
+            createdAt: Kotlinx_datetimeLocalDateTime(
+                year: 2026, month: 10, day: 16, hour: 0, minute: 0, second: 0, nanosecond: 0),
+            finishedAt: nil, modelId: nil, usage: nil, translation: nil
+        )
+        func imageURLs(_ store: IOSConversationStore) -> [String] {
+            store.currentMessages.flatMap { $0.parts }.compactMap { ($0 as? UIMessagePart.Image)?.url }
+        }
+
+        let store = IOSConversationStore(baseDirectory: source)
+        await store.bootstrap()
+        await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "shot"), screenshot])
+        let id = try XCTUnwrap(store.currentConversation?.id)
+
+        // On disk: small JSON with a reference, decoded bytes in the blob directory.
+        let raw = try String(contentsOf: source.appendingPathComponent("\(id).json"), encoding: .utf8)
+        XCTAssertTrue(raw.contains("amber-blob://"))
+        XCTAssertFalse(raw.contains(String(payload.prefix(512))))
+        let blobDirectory = source.appendingPathComponent("\(id).blobs")
+        let blobs = try FileManager.default.contentsOfDirectory(atPath: blobDirectory.path)
+        XCTAssertEqual(blobs.count, 1)
+        XCTAssertEqual(try Data(contentsOf: blobDirectory.appendingPathComponent(blobs[0])), Data(bytes))
+
+        // Upper layers still see the exact inline data URL after a restart.
+        let restarted = IOSConversationStore(baseDirectory: source)
+        await restarted.bootstrap()
+        await restarted.selectConversation(id: id)
+        XCTAssertEqual(imageURLs(restarted), [dataURL])
+
+        // Backups inline the blob so they restore anywhere (including older versions).
+        let zip = try XCTUnwrap(IOSSyncBackup.conversationsZip(fromDirectory: source))
+        let documents = try IOSSyncBackup.conversationDocuments(zipData: zip)
+        XCTAssertEqual(documents.count, 1)
+        XCTAssertTrue(documents[0].contains(dataURL))
+        XCTAssertFalse(documents[0].contains("amber-blob://"))
+
+        let destination = IOSConversationStore(baseDirectory: target)
+        await destination.bootstrap()
+        _ = try await destination.importConversationDocuments(documents)
+        await destination.selectConversation(id: id)
+        XCTAssertEqual(imageURLs(destination), [dataURL])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.appendingPathComponent("\(id).blobs").path))
+
+        // A blob that exists but cannot be read fails the backup instead of dropping it,
+        // and the store shows a detectable placeholder that keeps its reference.
+        let blobURL = blobDirectory.appendingPathComponent(blobs[0])
+        let blobBytes = try Data(contentsOf: blobURL)
+        try FileManager.default.removeItem(at: blobURL)
+        try FileManager.default.createDirectory(at: blobURL, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try IOSSyncBackup.conversationsZip(fromDirectory: source))
+        let unreadable = IOSConversationStore(baseDirectory: source)
+        await unreadable.bootstrap()
+        await unreadable.selectConversation(id: id)
+        let placeholder = try XCTUnwrap(
+            unreadable.currentMessages.flatMap { $0.parts }.compactMap { $0 as? UIMessagePart.Image }.first
+        )
+        XCTAssertTrue(placeholder.isMissingBlobPlaceholder())
+        XCTAssertNotNil(placeholder.metadata?[ConversationBlobsKt.MISSING_BLOB_METADATA_KEY])
+        try FileManager.default.removeItem(at: blobURL)
+        try blobBytes.write(to: blobURL)
+
+        // Deleting the conversation removes its blobs.
+        let deleted = await restarted.deleteConversation(id: id)
+        XCTAssertTrue(deleted)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: blobDirectory.path))
+    }
+
     func testSendMessagePersistsAcrossStoreRestart() async throws {
         let baseDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("IOSConversationStorePhase2Acceptance-")

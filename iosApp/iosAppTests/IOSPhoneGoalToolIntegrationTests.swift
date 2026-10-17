@@ -63,7 +63,7 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
             name: "phone_run_goal", arguments: json(validGoal())) else { return XCTFail("Expected goal request") }
         XCTAssertEqual(request.goal, "Open search")
         XCTAssertEqual(request.bundleID, "app.test")
-        XCTAssertEqual(request.maxSteps, 6)
+        XCTAssertEqual(request.maxSteps, 15)
         XCTAssertEqual(request.actions, [.init(action: .tap, target: .init(identifier: "search"))])
         XCTAssertEqual(request.completion, .init(kind: .visible, target: .init(identifier: "results")))
     }
@@ -78,7 +78,7 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
         XCTAssertTrue(request.usesLiveCandidates)
         XCTAssertTrue(request.actions.isEmpty)
         XCTAssertNil(request.steps)
-        XCTAssertEqual(request.maxSteps, 6)
+        XCTAssertEqual(request.maxSteps, 15)
         let encoded = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
         XCTAssertEqual(try IOSPhoneControlToolExecutor.request(name: "phone_run_goal", arguments: encoded), .runGoal(request))
     }
@@ -149,7 +149,7 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
             ])) else { return XCTFail("Expected ordered goal request") }
         XCTAssertTrue(request.actions.isEmpty)
         XCTAssertEqual(request.steps?.count, 1)
-        XCTAssertEqual(request.maxSteps, 1)
+        XCTAssertEqual(request.maxSteps, 15, "Ordered steps keep room for in-call recovery")
         XCTAssertEqual(request.steps?.first?.pageAnchor, .init(label: "Question 1"))
         XCTAssertEqual(request.steps?.first?.actions.count, 2)
         XCTAssertEqual(request.steps?.first?.waitForStability, true)
@@ -192,7 +192,7 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
             ("unknown", true as Any), ("goal", "   " as Any),
             ("goal", String(repeating: "g", count: 1001) as Any),
             ("bundle_id", "not an app" as Any), ("max_steps", 0 as Any),
-            ("max_steps", 13 as Any), ("max_steps", true as Any),
+            ("max_steps", 31 as Any), ("max_steps", true as Any),
             ("actions", [] as Any),
         ] {
             var object = validGoal(); object[key] = value; invalid.append(object)
@@ -284,7 +284,7 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
             .init(path: "/elements", body: #"{"value":[{"element-6066-11e4-a52e-4f735466cecf":"FRESH"}]}"#),
             // The button still matches, but the page anchor changed while Jev decided.
             .init(path: "/elements", body: #"{"value":[]}"#),
-        ])
+        ] + GoalHTTPFixture.observation)
         defer { fixture.unregister() }
         let runner = try fixture.makeRunner()
         var selected = false
@@ -297,7 +297,11 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
                 return await runner.act(action, pageAnchorRef: anchor, pageAnchorRegion: region,
                                         requireUnchangedObservation: requireUnchanged)
             },
-            choose: { _, _, _, _, _ in selected = true; return .action("a0") },
+            choose: { _, _, _, _, _ in
+                // Nothing was sent, so the step is re-read once; Jev then declines.
+                defer { selected = true }
+                return selected ? .handback("jev_handback") : .action("a0")
+            },
             advise: { _, _, _, _, _ in XCTFail("An unsent action must not be verified"); return .handback },
             mode: { .active }, isCurrent: { true }, reportActivity: { _ in }
         ))
@@ -306,13 +310,15 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
                 .init(action: .tap, target: .init(identifier: "popup")),
                 .init(action: .tap, target: .init(identifier: "home")),
             ], expectation: .init(kind: .absent, target: .init(identifier: "popup"), anchor: .init(identifier: "home")))
-        ], completion: .init(kind: .visible, target: .init(identifier: "home"))))
-        XCTAssertEqual(result.reasonCode, .actionNotSent)
+        ], completion: .init(kind: .visible, target: .init(identifier: "done"))))
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
         XCTAssertTrue(result.steps.isEmpty)
-        XCTAssertTrue(result.candidateDiagnostics.isEmpty)
-        XCTAssertNil(result.verification)
+        XCTAssertNotEqual(result.verification?.status, .satisfied)
+        XCTAssertGreaterThanOrEqual(result.metrics.recoveries, 1)
+        XCTAssertFalse(fixture.paths.contains { $0.hasSuffix("/click") })
         XCTAssertEqual(fixture.paths.filter { $0 == "/elements" }.count, 2)
-        XCTAssertEqual(fixture.paths.filter { $0 == "/source" }.count, 1, "Checking an anchor must not fetch another full tree")
+        XCTAssertEqual(fixture.paths.filter { $0 == "/source" }.count, 2,
+                       "Checking an anchor fetches no full tree; the only extra read is the re-observation after the refusal")
         XCTAssertFalse(fixture.paths.contains { $0.hasSuffix("/click") })
     }
 
@@ -638,6 +644,9 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
                 .init(path: "/elements", body: #"{"value":[{"element-6066-11e4-a52e-4f735466cecf":"FRESH"}]}"#),
                 .init(path: "/source", body: changedTree),
                 GoalHTTPFixture.active,
+                .init(path: "/source", body: changedTree),
+                .init(path: "/window/size", body: #"{"value":{"width":400,"height":800}}"#),
+                GoalHTTPFixture.active,
             ])
             defer { fixture.unregister() }
             let runner = try fixture.makeRunner()
@@ -655,6 +664,8 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
                 },
                 choose: { _, _, candidates, _, receivedExpectation in
                     XCTAssertEqual(receivedExpectation, Optional(expectation))
+                    // After the refused dispatch the fresh tree is offered again; Jev declines.
+                    if selected { return .handback("jev_handback") }
                     selected = true
                     let choice = live ? "n1" : "a0"
                     XCTAssertTrue(candidates.contains { $0.id == choice })
@@ -679,10 +690,11 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
 
             let result = await loop.run(request)
             XCTAssertTrue(selected)
-            XCTAssertEqual(result.reasonCode, .actionNotSent)
+            XCTAssertEqual(result.reasonCode, .decisionHandback)
             XCTAssertTrue(result.steps.isEmpty)
-            XCTAssertEqual(fixture.paths.filter { $0 == "/source" }.count, 2,
-                           "The second source is the pre-mutation context check")
+            XCTAssertEqual(result.metrics.recoveries, 1)
+            XCTAssertEqual(fixture.paths.filter { $0 == "/source" }.count, 3,
+                           "Initial read, pre-mutation context check, then one fresh re-read")
             XCTAssertFalse(fixture.paths.contains { $0.hasSuffix("/click") },
                            "A changed page must stop before the real click")
         }

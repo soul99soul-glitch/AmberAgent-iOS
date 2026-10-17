@@ -151,14 +151,14 @@ public actor PhoneRunnerClient {
         var sourceNodes: [SourceNode] = []
         var references: [String: SourceNode] = [:]
         func flatten(_ node: SourceNode, depth: Int) {
-            let ref = depth > 0 && node.rect.width > 0 && node.rect.height > 0
+            let ref = depth > 0 && node.rect.width > 0 && node.rect.height > 0 && !node.covered
                 ? "\(id):\(nodes.count)" : nil
             if let ref { references[ref] = node }
             sourceNodes.append(node)
             nodes.append(PhoneObservationNode(
                 ref: ref, depth: depth, type: node.type, identifier: node.identifier,
                 label: node.label, value: node.isSecure ? nil : node.value,
-                rect: node.rect, enabled: node.enabled, focused: node.focused
+                rect: node.rect, enabled: node.enabled, focused: node.focused, covered: node.covered
             ))
             for child in node.children { flatten(child, depth: depth + 1) }
         }
@@ -558,7 +558,8 @@ public actor PhoneRunnerClient {
             measurement?.requests.append(PhoneRunnerRequestTiming(
                 stage: stage, durationMs: Self.milliseconds(since: started),
                 runnerMs: response.flatMap(Self.runnerMilliseconds),
-                queuedMs: response?.header("X-IPU-Queued-Ms").flatMap(Self.validMilliseconds)
+                queuedMs: response?.header("X-IPU-Queued-Ms").flatMap(Self.validMilliseconds),
+                runnerPhasesMs: response.flatMap(Self.runnerPhases)
             ))
         }
         let received = try await http.request(method: method, path: path, query: query, body: body,
@@ -570,6 +571,25 @@ public actor PhoneRunnerClient {
     private static func validMilliseconds(_ string: String) -> Double? {
         guard let value = Double(string), value.isFinite, value >= 0 else { return nil }
         return value
+    }
+
+    /// Runner phase headers worth reporting; the totals and queue wait are reported separately.
+    static func runnerPhases(_ response: RunnerResponse) -> [String: Double]? {
+        runnerPhases(headers: response.response.allHeaderFields)
+    }
+
+    static func runnerPhases(headers: [AnyHashable: Any]) -> [String: Double]? {
+        var phases: [String: Double] = [:]
+        for (key, value) in headers {
+            guard let name = key as? String, let text = value as? String else { continue }
+            let lower = name.lowercased()
+            guard lower.hasPrefix("x-ipu-"), lower.hasSuffix("-ms"),
+                  !["x-ipu-ms", "x-ipu-queued-ms", "x-ipu-alert-ms"].contains(lower),
+                  !lower.hasPrefix("x-ipu-synth-"),
+                  let ms = validMilliseconds(text), ms >= 20 else { continue }
+            phases[String(name.dropFirst(6).dropLast(3))] = (ms * 10).rounded() / 10
+        }
+        return phases.isEmpty ? nil : phases
     }
 
     private static func runnerMilliseconds(_ response: RunnerResponse) -> Double? {
@@ -724,6 +744,7 @@ private struct SourceNode: Sendable {
     let rect: PhoneElementRect
     let enabled: Bool
     let focused: Bool
+    let covered: Bool
     let children: [SourceNode]
     var isSecure: Bool { type == "XCUIElementTypeSecureTextField" }
 
@@ -742,6 +763,7 @@ private struct SourceNode: Sendable {
         rect = PhoneElementRect(x: x, y: y, width: width, height: height)
         enabled = json["isEnabled"]?.bool ?? true
         focused = json["isFocused"]?.bool ?? false
+        covered = json["isCovered"]?.bool ?? false
         children = try (json["children"]?.array ?? []).map(SourceNode.init)
     }
 

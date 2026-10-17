@@ -315,7 +315,8 @@ struct ClassChain {
 /// whole tree (parents, AX elements), so entries are bounded by count and dropped by age when the
 /// screen may have changed.
 final class ElementRegistry {
-  private var entries: [String: (node: UINode, at: Date)] = [:]
+  /// `root` holds the node's tree: `UINode.parent` is weak, and occlusion checks walk ancestors.
+  private var entries: [String: (node: UINode, root: UINode, at: Date)] = [:]
   private var order: [String] = []
   let capacity: Int
   /// Ids older than this are dropped at the next screen-changing request. Callers use an id
@@ -328,11 +329,16 @@ final class ElementRegistry {
 
   func register(_ node: UINode, now: Date = Date()) -> String {
     let id = UUID().uuidString
-    entries[id] = (node, now)
+    var root = node
+    while let parent = root.parent { root = parent }
+    entries[id] = (node, root, now)
     order.append(id)
     if order.count > capacity {
       let drop = max(1, capacity / 4)
-      for stale in order.prefix(drop) { entries.removeValue(forKey: stale) }
+      for stale in order.prefix(drop) {
+        entries.removeValue(forKey: stale)
+        locators.removeValue(forKey: stale)
+      }
       order.removeFirst(drop)
     }
     return id
@@ -340,12 +346,23 @@ final class ElementRegistry {
 
   func node(_ id: String) -> UINode? { entries[id]?.node }
 
+  /// The WDA locator a top-level find used, kept so a click on an element a re-rendering list
+  /// replaced can find the same element again (same predicate, same position) once.
+  private var locators: [String: (using: String, value: String)] = [:]
+
+  func setLocator(_ id: String, using: String, value: String) { locators[id] = (using, value) }
+
+  func locator(_ id: String) -> (using: String, value: String)? {
+    entries[id] == nil ? nil : locators[id]
+  }
+
   /// Drops ids registered more than `maxAgeSeconds` before `now` (order is registration order).
   func prune(now: Date = Date()) {
     var cut = 0
     while cut < order.count, let entry = entries[order[cut]],
           now.timeIntervalSince(entry.at) > Self.maxAgeSeconds {
       entries.removeValue(forKey: order[cut])
+      locators.removeValue(forKey: order[cut])
       cut += 1
     }
     if cut > 0 { order.removeFirst(cut) }
@@ -410,5 +427,186 @@ enum ViewService {
   /// the first listed service running in the foreground, unless it already is the foreground app.
   static func overlay(foregroundBundle: String?, isPresenting: (String) -> Bool) -> String? {
     bundleIDs.first { $0 != foregroundBundle && isPresenting($0) }
+  }
+}
+
+// MARK: - Expanded Dynamic Island
+
+/// Amber's continued-processing task is shown by iOS as an expanded Dynamic Island the moment
+/// Amber goes to the background (hardware, iOS 26: a full-width "Amber / 正在生成回复" pill over
+/// the top of the screen). It covers the target app's top bar, so the runner collapses it with an
+/// upward swipe; the task keeps running in the compact island.
+enum ExpandedIsland {
+  static let defaultTitle = "Amber"
+
+  /// The collapsing swipe, or nil when SpringBoard shows no expanded island titled `title`.
+  /// The title node must sit inside a full-width pill hugging the top of the screen: the compact
+  /// island, a notification banner and home-screen icons (or their labels) never qualify.
+  static func collapseSwipe(springBoard: UINode, title: String, screen: CGSize) -> (from: CGPoint, to: CGPoint)? {
+    guard screen.width > 0, !title.isEmpty else { return nil }
+    let band = min(160, screen.height * 0.2)
+    for node in springBoard.descendants()
+    where (node.label?.hasPrefix(title) ?? false) || node.identifier == title {
+      var pill: UINode?
+      var current: UINode? = node
+      while let candidate = current, candidate.type != "XCUIElementTypeIcon" {
+        if isExpandedPill(candidate.rect, screen: screen, band: band) { pill = candidate }
+        current = candidate.parent
+      }
+      // Reached an icon (or its label inside one): not an island.
+      guard current == nil, let pill else { continue }
+      let x = screen.width / 2
+      return (CGPoint(x: x, y: max(pill.rect.midY, 30)), CGPoint(x: x, y: 4))
+    }
+    return nil
+  }
+
+  private static func isExpandedPill(_ rect: CGRect, screen: CGSize, band: CGFloat) -> Bool {
+    rect.width >= screen.width * 0.8 && rect.width < screen.width && rect.minY < 30
+      && rect.height >= 60 && rect.maxY <= band
+  }
+}
+
+// MARK: - Occlusion
+
+/// Whether the topmost element at a target's centre is the target. The private AX tree also
+/// holds views covered by a pushed page (hardware, 小米办公: a group's settings page over its
+/// chat kept the chat's input and "发送" in the tree), and a tap at a covered element's
+/// centre lands on whatever is on top. Only positive evidence refuses: an unreadable hit, or
+/// an unlabeled container that wraps the target (custom-drawn UIs), lets the tap through.
+enum Occlusion {
+  /// A description of the covering element, or nil when the tap would reach the target.
+  /// `target` carries its fresh subtree; `ancestors` are the target's ancestors in the tree it
+  /// was found in (the hit test usually answers the accessible cell, not the label inside it).
+  /// `hitIsOtherApp` is true only for SpringBoard or another active app: web content and
+  /// keyboards answer from helper processes and are judged like the app's own views.
+  static func blocker(target: UINode, ancestors: [UINode] = [], hit: UINode, hitIsOtherApp: Bool,
+                      screen: CGSize = .zero) -> String? {
+    let hitRect = hit.rect
+    guard hitRect.width > 0, hitRect.height > 0 else { return nil }
+    if ([target] + target.descendants() + ancestors).contains(where: { sameElement($0, hit) }) { return nil }
+    if hitIsOtherApp { return describe(hit) + " in another app" }
+    // A labeled full-screen layer (a watermark) is everywhere; it is no evidence.
+    if screen.width > 0, hitRect.width * hitRect.height >= screen.width * screen.height * 0.9 { return nil }
+    let targetRect = target.rect
+    if hitRect.insetBy(dx: -1, dy: -1).contains(targetRect) {
+      // Wraps the target: its own container (a cell around a label), unless it is a large
+      // labeled element of another page that happens to span it.
+      if hit.label == nil && hit.identifier == nil { return nil }
+      let targetArea = max(1, targetRect.width * targetRect.height)
+      if hitRect.width * hitRect.height <= targetArea * 4 { return nil }
+    }
+    return describe(hit)
+  }
+
+  static func sameElement(_ a: UINode, _ b: UINode) -> Bool {
+    a.type == b.type && a.label == b.label && a.identifier == b.identifier
+      && abs(a.rect.minX - b.rect.minX) <= 1 && abs(a.rect.minY - b.rect.minY) <= 1
+      && abs(a.rect.width - b.rect.width) <= 1 && abs(a.rect.height - b.rect.height) <= 1
+  }
+
+  static func describe(_ node: UINode) -> String {
+    let type = node.type.replacingOccurrences(of: "XCUIElementType", with: "")
+    let r = node.rect
+    let frame = "[\(Int(r.minX)),\(Int(r.minY)),\(Int(r.width)),\(Int(r.height))]"
+    if let name = node.label ?? node.identifier { return "\(type) \"\(name)\" \(frame)" }
+    return "\(type) \(frame)"
+  }
+}
+
+/// Pages stacked in one tree (a pushed page over the one below, both still in the AX tree).
+/// A page is a near-full-screen node with no near-full-screen descendant; when two or more
+/// overlap, a few hit tests vote for the page on top and the others are marked covered.
+enum CoveredPages {
+  /// Child-index paths of the pages, in document order.
+  static func pages(_ root: UINode, screen: CGSize) -> [[Int]] {
+    guard screen.width > 0, screen.height > 0 else { return [] }
+    func isPage(_ node: UINode) -> Bool {
+      node.rect.width >= screen.width * 0.9 && node.rect.height >= screen.height * 0.5
+    }
+    var found: [[Int]] = []
+    func walk(_ node: UINode, _ path: [Int]) -> Bool {
+      var below = false
+      for (index, child) in node.children.enumerated() where walk(child, path + [index]) { below = true }
+      guard isPage(node) else { return below }
+      if !below, !path.isEmpty { found.append(path) }
+      return true
+    }
+    _ = walk(root, [])
+    return found
+  }
+
+  static func node(_ root: UINode, at path: [Int]) -> UINode? {
+    var node = root
+    for index in path {
+      guard index < node.children.count else { return nil }
+      node = node.children[index]
+    }
+    return node
+  }
+
+  /// The branches to mark covered: for every page overlapping the voted top page by more than
+  /// half, the subtree that splits off from the top page at their lowest common ancestor, so
+  /// the hidden page's own nav bar and input bar (siblings of its scroll view) are included.
+  /// `hits` are the elements found on top at the probe points; nil when no page wins.
+  static func covered(_ root: UINode, pages: [[Int]], hits: [UINode]) -> (branches: [[Int]], top: CGRect)? {
+    guard pages.count >= 2 else { return nil }
+    var votes = [Int](repeating: 0, count: pages.count)
+    for hit in hits {
+      for (index, path) in pages.enumerated() {
+        guard let page = node(root, at: path) else { continue }
+        if ([page] + page.descendants()).contains(where: { Occlusion.sameElement($0, hit) }) {
+          votes[index] += 1
+          break
+        }
+      }
+    }
+    guard let best = votes.max(), best > 0, votes.filter({ $0 == best }).count == 1,
+          let top = votes.firstIndex(of: best), let topRect = node(root, at: pages[top])?.rect
+    else { return nil }
+    let topPath = pages[top]
+    var branches: [[Int]] = []
+    for (index, path) in pages.enumerated() where index != top {
+      guard let rect = node(root, at: path)?.rect else { continue }
+      let overlap = rect.intersection(topRect)
+      guard overlap.width * overlap.height > rect.width * rect.height / 2 else { continue }
+      let shared = zip(path, topPath).prefix { $0 == $1 }.count
+      guard shared < path.count else { continue }  // the top page lies inside it
+      let branch = Array(path.prefix(shared + 1))
+      if !branches.contains(branch) { branches.append(branch) }
+    }
+    return (branches, topRect)
+  }
+
+  /// Up to `limit` labeled, on-screen descendants of a candidate page whose centres are probed:
+  /// a transparent full-screen overlay (a floating toolbar's container) answers its own
+  /// controls and is not covered.
+  /// Samples lie under the top page (`within`): a medium-detent sheet covers only part of the page.
+  static func samples(_ page: UINode, within: CGRect, screen: CGSize, limit: Int = 2) -> [UINode] {
+    Array(page.descendants().filter { node in
+      (node.label != nil || node.identifier != nil) && node.rect.width > 0 && node.rect.height > 0
+        && TapBounds.onScreen(node.center, screen) && within.contains(node.center)
+    }.prefix(limit))
+  }
+
+  /// `raw` with `isCovered: "1"` on every node under each covered path.
+  static func marking(_ raw: [String: Any], covered: [[Int]]) -> [String: Any] {
+    func markAll(_ node: [String: Any]) -> [String: Any] {
+      var node = node
+      node["isCovered"] = "1"
+      if let children = node["children"] as? [[String: Any]] { node["children"] = children.map(markAll) }
+      return node
+    }
+    func apply(_ node: [String: Any], _ paths: [[Int]]) -> [String: Any] {
+      if paths.contains(where: \.isEmpty) { return markAll(node) }
+      guard var children = node["children"] as? [[String: Any]] else { return node }
+      var node = node
+      for index in Set(paths.map(\.first!)) where index < children.count {
+        children[index] = apply(children[index], paths.filter { $0.first == index }.map { Array($0.dropFirst()) })
+      }
+      node["children"] = children
+      return node
+    }
+    return covered.isEmpty ? raw : apply(raw, covered)
   }
 }

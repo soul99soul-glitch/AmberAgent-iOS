@@ -145,7 +145,7 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
     }
 
     func testUnknownCandidateMissingConfidenceAndLowConfidenceCannotDriveAction() async {
-        for (choice, confidence): (String, Double?) in [("invented", 0.99), ("a1", nil), ("a1", 0.79)] {
+        for (choice, confidence): (String, Double?) in [("invented", 0.99), ("a1", nil), ("a1", 0.59)] {
             let transport = transport(choice, confidence: confidence)
             let result = await choose(service(SettingsBox(settings()), transport: transport))
             guard case .handback = result else { return XCTFail("Invalid decision drove \(result)") }
@@ -317,9 +317,14 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         let state = try XCTUnwrap(request["state"] as? String)
         XCTAssertLessThanOrEqual(state.utf8.count, 48 * 1_024)
         XCTAssertTrue(state.contains("保留此目标"))
-        XCTAssertTrue(state.contains(candidate.description))
         XCTAssertTrue(state.contains("omittedNodes"))
+        XCTAssertTrue(state.contains("trimmedNodes"))
         XCTAssertTrue(state.contains("text truncated"))
+        // Descriptions travel once, as question options; the state lists the offered ids.
+        let questions = try XCTUnwrap(request["questions"] as? [String: [String: Any]])
+        let options = try XCTUnwrap(questions["single.next_step"]?["criteria"] as? [String: Any])
+        XCTAssertEqual(options["a1"] as? String, candidate.description)
+        XCTAssertTrue(state.contains(#""candidates":["a1"]"#))
     }
 
     func testOversizedEssentialEvidenceHandsBackWithoutSendingTruncatedGoal() async {
@@ -428,8 +433,8 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
             let state = try outboundState(limitedTransport)
             XCTAssertLessThanOrEqual(state.text.utf8.count, limited.policy.maxStateBytes - 128)
             XCTAssertEqual(state.json["recentSteps"] as? [String], Array(steps.suffix(5)))
-            let sentCandidates = try XCTUnwrap(state.json["candidates"] as? [[String: String]])
-            XCTAssertEqual(sentCandidates.compactMap { $0["id"] }, ["a2", "a1"])
+            XCTAssertEqual(state.json["candidates"] as? [String], ["a2", "a1"])
+            XCTAssertEqual(state.json["trimmedNodes"] as? Int, -delta)
             let observations = try XCTUnwrap(state.json["observations"] as? [[String: Any]])
             let sentNodes = try XCTUnwrap(observations.first?["nodes"] as? [[String: Any]])
             XCTAssertEqual(sentNodes.compactMap { $0["label"] as? String }, Array(labels.prefix(10 + delta)))
@@ -512,5 +517,123 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         )
         XCTAssertEqual(result, .handback)
         XCTAssertEqual(transport.calls, 0)
+    }
+
+    // MARK: Large pages stay within the request budget
+
+    /// A 小米办公-like conversation list: ~1000 AX nodes, long preview texts, mostly off-screen.
+    private func largeListObservation(id: String = "list") -> PhoneObservation {
+        var nodes: [PhoneObservationNode] = [
+            .init(ref: "table", depth: 1, type: "XCUIElementTypeTable", identifier: nil, label: nil, value: nil,
+                  rect: .init(x: 0, y: 88, width: 402, height: 700), enabled: true, focused: false),
+        ]
+        for row in 0..<333 {
+            let y = 88 + Double(row) * 36
+            let title = row == 3 ? "李晨, 邓璐良, 刘剑崑" : "会话\(row) \(String(repeating: "同事", count: 6))"
+            let preview = "你发起的 “企业自建应用发布申请” 被孙笑月拒绝 / \"引号\" \(String(repeating: "消息预览文本", count: 14)) \(row)"
+            nodes.append(.init(ref: "cell-\(row)", depth: 2, type: "XCUIElementTypeCell", identifier: nil,
+                               label: "\(title)，\(preview)", value: nil,
+                               rect: .init(x: 0, y: y, width: 402, height: 36), enabled: true, focused: false))
+            nodes.append(.init(ref: "title-\(row)", depth: 3, type: "XCUIElementTypeStaticText", identifier: nil,
+                               label: title, value: nil, rect: .init(x: 72, y: y + 2, width: 260, height: 16),
+                               enabled: true, focused: false))
+            nodes.append(.init(ref: "preview-\(row)", depth: 3, type: "XCUIElementTypeStaticText", identifier: nil,
+                               label: preview, value: nil, rect: .init(x: 72, y: y + 18, width: 300, height: 16),
+                               enabled: true, focused: false))
+        }
+        return .init(observationID: id, bundleID: "app.fixture", processID: 10, backend: "fixture",
+                     truncated: true, nodes: nodes, screenBounds: .init(x: 0, y: 0, width: 402, height: 874))
+    }
+
+    func testLargeListPageFitsRequestBudgetAndKeepsCandidateNodesFirst() async throws {
+        let screen = largeListObservation()
+        XCTAssertGreaterThanOrEqual(screen.nodes.count, 1_000)
+        let live = IOSPhoneGoalLoop.liveCandidateSet(in: screen, limit: 61)
+        XCTAssertTrue(live.withheld.isEmpty, "List rows are never final commits")
+        XCTAssertEqual(live.candidates.count, 61)
+        let candidates = live.candidates.map(\.decisionCandidate)
+        let target = try XCTUnwrap(candidates.first { $0.description.contains("李晨, 邓璐良, 刘剑崑") })
+        let transport = transport(target.id)
+        let result = await service(SettingsBox(settings()), transport: transport).chooseAction(
+            goal: "打开群聊「李晨, 邓璐良, 刘剑崑」", observation: screen, candidates: candidates,
+            recentSteps: ["tapped 消息"], runID: "large-list")
+        XCTAssertEqual(result, .action(target.id), "A large page must still be decided by Jev")
+        XCTAssertEqual(transport.calls, 1)
+
+        let body = try XCTUnwrap(transport.lastBody)
+        XCTAssertLessThanOrEqual(body.count, 64 * 1_024)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let wireState = try XCTUnwrap(request["state"] as? String)
+        XCTAssertLessThanOrEqual(wireState.utf8.count, 48 * 1_024)
+        let questions = try XCTUnwrap(request["questions"] as? [String: [String: Any]])
+        let options = try XCTUnwrap(questions["single.next_step"]?["criteria"] as? [String: String])
+        XCTAssertEqual(options.count, 64)
+        XCTAssertTrue(options.values.allSatisfy { $0.utf8.count <= Service.maxDescriptionBytes })
+
+        let state = try outboundState(transport)
+        XCTAssertGreaterThan(state.json["trimmedNodes"] as? Int ?? 0, 0, "Trimming is explicit")
+        XCTAssertEqual(state.json["recentSteps"] as? [String], ["tapped 消息"])
+        let observation = try XCTUnwrap((state.json["observations"] as? [[String: Any]])?.first)
+        XCTAssertEqual(observation["treeTruncated"] as? Bool, true)
+        let labels = try XCTUnwrap(observation["nodes"] as? [[String: Any]]).compactMap { $0["label"] as? String }
+        let sentPrefixes = Set(labels.map { String($0.prefix(40)) })
+        // Every offered candidate's own node reaches Jev.
+        for candidate in candidates {
+            guard let index = candidate.nodeIndex, let label = screen.nodes[index].label else { continue }
+            XCTAssertTrue(sentPrefixes.contains(String(label.prefix(40))), label)
+        }
+        XCTAssertEqual(observation["omittedNodes"] as? Int, state.json["trimmedNodes"] as? Int)
+    }
+
+    func testTightRequestLimitShrinksStateInsteadOfFailing() async throws {
+        var limited = settings()
+        limited.policy.maxRequestBytes = 24 * 1_024
+        let screen = largeListObservation()
+        let candidates = IOSPhoneGoalLoop.liveCandidates(in: screen, limit: 61).map(\.decisionCandidate)
+        let transport = transport(candidates[0].id)
+        let result = await service(SettingsBox(limited), transport: transport).chooseAction(
+            goal: "打开群聊", observation: screen, candidates: candidates, recentSteps: [], runID: "tight")
+        XCTAssertEqual(result, .action(candidates[0].id))
+        XCTAssertLessThanOrEqual(try XCTUnwrap(transport.lastBody).count, 24 * 1_024)
+    }
+
+    func testAdviceOnLargePageAlsoFitsRequestBudget() async throws {
+        let transport = transport("wait")
+        let result = await service(SettingsBox(settings()), transport: transport).adviseAfterAction(
+            goal: "打开群聊", expectation: .init(kind: .visible, target: .init(label: "李晨, 邓璐良, 刘剑崑")),
+            before: largeListObservation(id: "before"), after: largeListObservation(id: "after"),
+            verification: unmet, runID: "large-advice")
+        XCTAssertEqual(result, .wait)
+        XCTAssertEqual(transport.calls, 1)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(transport.lastBody).count, 64 * 1_024)
+        let state = try outboundState(transport)
+        let observations = try XCTUnwrap(state.json["observations"] as? [[String: Any]])
+        XCTAssertEqual(observations.compactMap { $0["phase"] as? String }, ["before", "after"])
+        for observation in observations {
+            let labels = try XCTUnwrap(observation["nodes"] as? [[String: Any]]).compactMap { $0["label"] as? String }
+            XCTAssertEqual(labels.first, "李晨, 邓璐良, 刘剑崑", "Required evidence stays first and whole")
+        }
+    }
+
+    func testCappedDescriptionKeepsCharacterBoundaries() {
+        let text = String(repeating: "群聊👨‍👩‍👧‍👦", count: 100)
+        let capped = Service.capped(text, maxBytes: 120)
+        XCTAssertLessThanOrEqual(capped.utf8.count, 120)
+        XCTAssertTrue(capped.hasSuffix("…"))
+        XCTAssertEqual(Service.capped("短", maxBytes: 120), "短")
+    }
+
+    func testHandbackKindsSeparateJevFailureFromDecline() {
+        for reason in ["request_too_large", "state_too_large", "timeout", "transport", "http_500", "http_401",
+                       "invalid_response", "incomplete_response", "candidate_budget_exceeded"] {
+            XCTAssertEqual(Service.handbackKind(reason), .failed, reason)
+        }
+        for reason in ["mode_off", "scope_not_allowed", "missing_key", "budget_exhausted", "cooling_down",
+                       "auth_paused", "shadow", "concurrency_limit"] {
+            XCTAssertEqual(Service.handbackKind(reason), .unavailable, reason)
+        }
+        for reason in ["jev_handback", "invalid_or_low_confidence_decision", "provider_unavailable"] {
+            XCTAssertEqual(Service.handbackKind(reason), .declined, reason)
+        }
     }
 }

@@ -294,6 +294,21 @@ static BOOL IPURUseRequestCache(void)
   return chosen;
 }
 
++ (nullable id)accessibilityElementAtPoint:(CGPoint)point
+{
+  id axClient = [self axClient];
+  SEL hitTest = NSSelectorFromString(@"accessibilityElementForElementAtPoint:error:");
+  if (axClient == nil || ![axClient respondsToSelector:hitTest]) return nil;
+  NSError *error = nil;
+  id hit = nil;
+  @try {
+    hit = ((IPURMsgSendElementAtPoint)objc_msgSend)(axClient, hitTest, point, &error);
+  } @catch (__unused NSException *exception) {
+    hit = nil;
+  }
+  return hit;
+}
+
 + (nullable XCUIApplication *)applicationForPID:(int)pid
 {
   if (pid <= 0) return nil;

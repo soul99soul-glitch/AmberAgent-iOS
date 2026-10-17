@@ -17,6 +17,12 @@ final class ChatToolOutputAnalysis {
     let failureReason: String?
     let imageFailureReason: String?
     let indicatesFailure: Bool
+    /// `firstJSONObject["prior_tool_receipt"]` and its nested `result` JSON string,
+    /// parsed once per output snapshot instead of on every step-model init.
+    let priorToolReceipt: [String: Any]?
+    let priorToolReceiptResult: [String: Any]?
+    /// Per-snapshot memo for presentations derived from this analysis.
+    let derivedValues = ChatToolAnalysisMemo()
 
     var joinedText: String { textParts.joined(separator: "\n") }
 
@@ -52,6 +58,11 @@ final class ChatToolOutputAnalysis {
             hasImage: imageCount > 0
         )
         self.indicatesFailure = Self.indicatesFailure(in: parsedObjects.first)
+        let prior = parsedObjects.first?["prior_tool_receipt"] as? [String: Any]
+        self.priorToolReceipt = prior
+        self.priorToolReceiptResult = (prior?["result"] as? String).flatMap {
+            $0.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
     }
 
     private static func stringValue(in object: [String: Any], keys: [String]) -> String? {
@@ -137,6 +148,27 @@ final class ChatToolOutputAnalysis {
 
         if hasImage || sawStructuredSuccess { return nil }
         return textParts.first
+    }
+}
+
+/// Thread-safe memo attached to one immutable `ChatToolOutputAnalysis` snapshot.
+final class ChatToolAnalysisMemo: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Any] = [:]
+
+    func value<T>(forKey key: String, compute: () -> T) -> T {
+        lock.lock()
+        if let cached = values[key] as? T {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        let computed = compute()
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = values[key] as? T { return cached }
+        values[key] = computed
+        return computed
     }
 }
 

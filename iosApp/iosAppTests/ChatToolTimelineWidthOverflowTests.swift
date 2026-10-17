@@ -1210,3 +1210,132 @@ final class ChatToolGlyphMappingTests: XCTestCase {
     }
 
 }
+
+/// Phone-step group header: same capsule metrics as tool rows, one fixed height
+/// across live/finished/attention/step-count changes, never wider than the column.
+@MainActor
+final class ChatPhoneToolGroupHeaderLayoutTests: XCTestCase {
+    private let columnWidth: CGFloat = 393 - ChatLayout.contentHorizontalInset * 2
+
+    private func summary(
+        steps: Int,
+        lastResult: String? = #"{"outcome":"completed","verification":{"status":"satisfied"}}"#,
+        approval: ToolApprovalState = ToolApprovalState.Auto.shared,
+        generating: Bool = false,
+        expanded: Bool = false
+    ) throws -> ChatPhoneToolGroupSummary {
+        var messages: [UIMessage] = [UIMessage.companion.user(prompt: "go")]
+        for index in 0..<steps {
+            let isLast = index == steps - 1
+            let output = isLast ? lastResult : #"{"outcome":"completed"}"#
+            let tool = UIMessagePart.Tool(toolCallId: "h\(index)", toolName: isLast ? "phone_observe" : "phone_act",
+                input: "{}", output: output.map { [UIMessagePart.Text(text: $0, metadata: nil)] } ?? [],
+                approvalState: isLast ? approval : ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+            messages.append(UIMessage(id: KotlinUuid.companion.random(), role: MessageRole.assistant, parts: [tool],
+                annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: chatNowLocalDateTime(),
+                modelId: nil, usage: nil, translation: nil))
+        }
+        let projection = NativeTimelineProjector.build(messages: messages, event: .toolResultAppended,
+            isGenerationActive: generating,
+            expandedPhoneToolGroupIDs: expanded ? [ChatMessageProjector.messageId(for: messages[1])] : [])
+        return try XCTUnwrap(projection.entries.compactMap { $0.phoneToolGroup?.headSummary }.first)
+    }
+
+    private func fittedSize(_ summary: ChatPhoneToolGroupSummary, width: CGFloat? = nil,
+                            type: DynamicTypeSize = .large) -> CGSize {
+        let host = UIHostingController(rootView: ChatPhoneToolGroupHeader(summary: summary)
+            .environment(\.dynamicTypeSize, type))
+        return host.sizeThatFits(in: CGSize(width: width ?? columnWidth, height: UIView.layoutFittingExpandedSize.height))
+    }
+
+    func testHeaderKeepsToolRowHeightAcrossStates() throws {
+        let variants = [
+            try summary(steps: 1),
+            try summary(steps: 140),
+            try summary(steps: 3, lastResult: nil, generating: true),
+            try summary(steps: 3, lastResult: nil, approval: ToolApprovalState.Pending.shared, generating: true),
+            try summary(steps: 3, lastResult: #"{"status":"unknown","outcome":"unknown"}"#),
+            try summary(steps: 3, lastResult: #"{"ok":false,"error":"no element"}"#),
+            try summary(steps: 3, expanded: true)
+        ]
+        for variant in variants {
+            let size = fittedSize(variant)
+            XCTAssertEqual(size.height, 44, accuracy: 0.5, "header must match the 44pt tool row (\(variant.stepCount) steps)")
+            XCTAssertLessThanOrEqual(size.width, columnWidth + 0.5)
+        }
+    }
+
+    func testHeaderFitsNarrowAccessibilityWidth() throws {
+        let width = 320 - ChatLayout.contentHorizontalInset * 2
+        for variant in [try summary(steps: 12), try summary(steps: 12, lastResult: nil, generating: true),
+                        try summary(steps: 12, lastResult: #"{"status":"unknown","outcome":"unknown"}"#)] {
+            let size = fittedSize(variant, width: width, type: .accessibility3)
+            XCTAssertLessThanOrEqual(size.width, width + 0.5)
+            XCTAssertGreaterThanOrEqual(size.height, 44)
+            // Stacked lines, not one glyph per line: a handful of AX3 lines at most.
+            XCTAssertLessThanOrEqual(size.height, 260, "AX3 header must stack lines instead of squeezing the detail")
+        }
+        // Step count growth during a live run must not relayout the header.
+        XCTAssertEqual(
+            fittedSize(try summary(steps: 12, lastResult: nil, generating: true), width: width, type: .accessibility3).height,
+            fittedSize(try summary(steps: 13, lastResult: nil, generating: true), width: width, type: .accessibility3).height,
+            accuracy: 0.5
+        )
+    }
+
+    func testCaptureHeaderVariants() async throws {
+        let languageKey = IOSAppLanguagePreference.defaultsKey
+        let previousLanguage = UserDefaults.standard.object(forKey: languageKey)
+        UserDefaults.standard.set("zh-Hans", forKey: languageKey)
+        defer {
+            if let previousLanguage { UserDefaults.standard.set(previousLanguage, forKey: languageKey) }
+            else { UserDefaults.standard.removeObject(forKey: languageKey) }
+        }
+        let tool = UIMessagePart.Tool(toolCallId: "cap", toolName: "phone_act", input: "{}",
+            output: [UIMessagePart.Text(text: #"{"outcome":"completed"}"#, metadata: nil)],
+            approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        let summaries = [
+            try summary(steps: 87),
+            try summary(steps: 5, lastResult: nil, generating: true),
+            try summary(steps: 5, lastResult: nil, approval: ToolApprovalState.Pending.shared, generating: true),
+            try summary(steps: 5, lastResult: #"{"status":"unknown","outcome":"unknown"}"#),
+            try summary(steps: 5, expanded: true)
+        ]
+        let view = VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
+            ForEach(Array(summaries.enumerated()), id: \.offset) { _, item in
+                ChatPhoneToolGroupHeader(summary: item)
+            }
+            ChatToolTimeline(steps: [ChatToolStepModel(tool: tool)], onTapStep: { _ in })
+        }
+        .padding(ChatLayout.contentHorizontalInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(AmberTheme.background)
+        for (name, type, size) in [("phone-group-headers", DynamicTypeSize.large, CGSize(width: 393, height: 360)),
+                                   ("phone-group-headers-narrow-AX3", .accessibility3, CGSize(width: 320, height: 1500))] {
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let previous = scene.windows.first(where: \.isKeyWindow)
+            let window = UIWindow(windowScene: scene)
+            let host = UIHostingController(rootView: view.environment(\.dynamicTypeSize, type))
+            window.rootViewController = host
+            window.frame = CGRect(origin: .zero, size: size)
+            window.overrideUserInterfaceStyle = .light
+            window.makeKeyAndVisible()
+            host.view.frame = window.bounds
+            try await Task.sleep(for: .milliseconds(350))
+            host.view.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            if let data = image.pngData() {
+                try? data.write(to: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(name).png"))
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKey()
+        }
+    }
+}

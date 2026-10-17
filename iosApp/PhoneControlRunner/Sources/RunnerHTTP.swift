@@ -123,7 +123,9 @@ struct HTTPResponse {
 
   static func from(_ error: Error) -> HTTPResponse {
     if let runnerError = error as? RunnerError {
-      return .error(runnerError.status, runnerError.code, runnerError.message)
+      var response = HTTPResponse.error(runnerError.status, runnerError.code, runnerError.message)
+      if runnerError.dropped { response.headers["X-IPU-Dropped"] = "1" }
+      return response
     }
     return .error(500, "unknown error", String(describing: error))
   }
@@ -172,6 +174,8 @@ struct RunnerError: Error {
   let status: Int
   let code: String
   let message: String
+  /// Refused before any gesture was sent; the response says so with `X-IPU-Dropped`.
+  var dropped = false
 
   static func invalidArgument(_ message: String) -> RunnerError {
     RunnerError(status: 400, code: "invalid argument", message: message)
@@ -197,6 +201,11 @@ struct RunnerError: Error {
     RunnerError(
       status: 404, code: "stale element reference",
       message: "The previously found element \(id) is not present in the current view anymore")
+  }
+
+  /// W3C "element click intercepted": another view covers the target. Nothing was sent.
+  static func intercepted(_ message: String) -> RunnerError {
+    RunnerError(status: 400, code: "element click intercepted", message: message, dropped: true)
   }
 
   static func noSuchAlert() -> RunnerError {

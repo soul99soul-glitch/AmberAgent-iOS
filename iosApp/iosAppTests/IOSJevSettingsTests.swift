@@ -94,7 +94,7 @@ final class IOSJevSettingsTests: XCTestCase {
         let decoded = try JSONDecoder().decode(IOSJevSettings.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(decoded.effectiveMode(for: .webActions), .active)
         XCTAssertEqual(decoded.policy.webActionsMinConfidence, 0.73)
-        XCTAssertEqual(decoded.policy.phoneActionsMinConfidence, 0.8)
+        XCTAssertEqual(decoded.policy.phoneActionsMinConfidence, 0.6)
         XCTAssertEqual(decoded.mode(for: .phoneVerification), .off)
         XCTAssertEqual(decoded.mode(for: .phoneActions), .off)
         XCTAssertEqual(decoded.policy.activeWaitBudgetMs(for: .phoneVerification), decoded.policy.deadlineMs)

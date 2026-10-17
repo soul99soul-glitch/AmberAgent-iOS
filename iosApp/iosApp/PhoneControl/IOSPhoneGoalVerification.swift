@@ -114,10 +114,17 @@ enum IOSPhoneGoalVerification {
         }
     }
 
-    /// Geometry excludes offscreen nodes; it cannot establish occlusion or hittability.
+    /// Geometry excludes offscreen nodes and nodes covered by a pushed page; it cannot
+    /// establish other occlusion or hittability.
     /// The runner still resolves an actionable ref immediately before acting.
     static func matchingNodes(target: IOSPhoneGoalTarget, in observation: PhoneObservation,
                               executable: Bool = false) -> [PhoneObservationNode] {
+        matchingNodeIndices(target: target, in: observation, executable: executable).map(\.node)
+    }
+
+    /// Same matching as `matchingNodes`, keeping each match's tree index for context descriptions.
+    static func matchingNodeIndices(target: IOSPhoneGoalTarget, in observation: PhoneObservation,
+                                    executable: Bool = false) -> [(node: PhoneObservationNode, index: Int)] {
         guard (try? target.validate()) != nil, let bounds = validScreenBounds(observation) else { return [] }
         let matches = observation.nodes.enumerated().filter { _, node in
             hasVisibleFrame(node, within: bounds)
@@ -130,8 +137,8 @@ enum IOSPhoneGoalVerification {
         // A control often exposes its label both on the control and on a nested
         // StaticText. Keep the control match, while preserving same-label
         // controls in other branches or positions as real ambiguity.
-        guard target.type == nil else { return matches.map { $0.element } }
-        return collapseLabelChildMatches(matches, in: observation).map { $0.node }
+        guard target.type == nil else { return matches.map { (node: $0.element, index: $0.offset) } }
+        return collapseLabelChildMatches(matches, in: observation)
     }
 
     /// Removes only a named StaticText that is a DFS descendant of a matching
@@ -179,7 +186,7 @@ enum IOSPhoneGoalVerification {
 
     static func hasVisibleFrame(_ node: PhoneObservationNode, within bounds: PhoneElementRect) -> Bool {
         let frame = node.rect
-        return node.depth > 0 && [frame.x, frame.y, frame.width, frame.height].allSatisfy(\.isFinite)
+        return node.depth > 0 && !node.covered && [frame.x, frame.y, frame.width, frame.height].allSatisfy(\.isFinite)
             && frame.width > 0 && frame.height > 0
             && frame.x < bounds.x + bounds.width && frame.y < bounds.y + bounds.height
             && frame.x + frame.width > bounds.x && frame.y + frame.height > bounds.y

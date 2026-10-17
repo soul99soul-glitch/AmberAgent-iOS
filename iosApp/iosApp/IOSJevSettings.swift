@@ -169,6 +169,8 @@ enum IOSJevAPIStyle: String, Codable, CaseIterable, Identifiable, Sendable {
 struct IOSJevPolicy: Codable, Equatable, Sendable {
     /// 当前策略版本；存量低于该值的策略整体回默认（阈值无 UI 可编辑，重设无损）。
     static let currentPolicyVersion = 3
+    /// 手机目标循环阈值的独立迁移版本（见 init(from:)）。
+    static let currentPhoneLoopRevision = 1
 
     init() {}
 
@@ -181,7 +183,7 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
         t2WaitBudgetMs = try container.decodeIfPresent(Int.self, forKey: .t2WaitBudgetMs) ?? 400
         t3WaitBudgetMs = try container.decodeIfPresent(Int.self, forKey: .t3WaitBudgetMs) ?? 400
         onDemandWaitBudgetMs = try container.decodeIfPresent(Int.self, forKey: .onDemandWaitBudgetMs) ?? 400
-        activePerRunLimit = try container.decodeIfPresent(Int.self, forKey: .activePerRunLimit) ?? 3
+        activePerRunLimit = try container.decodeIfPresent(Int.self, forKey: .activePerRunLimit) ?? 6
         activeAppLimit = try container.decodeIfPresent(Int.self, forKey: .activeAppLimit) ?? 6
         shadowAppLimit = try container.decodeIfPresent(Int.self, forKey: .shadowAppLimit) ?? 2
         maxQuestions = try container.decodeIfPresent(Int.self, forKey: .maxQuestions) ?? 32
@@ -202,13 +204,21 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
         contextSelectionMinConfidence = try container.decodeIfPresent(Double.self, forKey: .contextSelectionMinConfidence)
         modelRoutingMinConfidence = try container.decodeIfPresent(Double.self, forKey: .modelRoutingMinConfidence)
         webActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .webActionsMinConfidence) ?? 0.5
-        phoneActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .phoneActionsMinConfidence) ?? 0.8
+        phoneActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .phoneActionsMinConfidence) ?? 0.6
         subagentIntentMinConfidence = try container.decodeIfPresent(Double.self, forKey: .subagentIntentMinConfidence)
         memoryInjectionMinProbability = try container.decodeIfPresent(Double.self, forKey: .memoryInjectionMinProbability) ?? 0.8
         cacheMaxEntries = try container.decodeIfPresent(Int.self, forKey: .cacheMaxEntries) ?? 128
         cacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .cacheTTLSeconds) ?? 300
         cooldownFailureThreshold = try container.decodeIfPresent(Int.self, forKey: .cooldownFailureThreshold) ?? 3
         cooldownSeconds = try container.decodeIfPresent(Int.self, forKey: .cooldownSeconds) ?? 60
+        phoneLoopRevision = try container.decodeIfPresent(Int.self, forKey: .phoneLoopRevision) ?? 0
+        // 手机目标循环的定向放宽：不升 policyVersion（那会把全部 active 用途打回 shadow），
+        // 只把仍等于旧默认值的字段迁到新默认；手工改过的值原样保留。
+        if phoneLoopRevision < Self.currentPhoneLoopRevision {
+            if phoneActionsMinConfidence == 0.8 { phoneActionsMinConfidence = 0.6 }
+            if activePerRunLimit == 3 { activePerRunLimit = 6 }
+            phoneLoopRevision = Self.currentPhoneLoopRevision
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -222,9 +232,11 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
         case modelRoutingMinConfidence, webActionsMinConfidence, phoneActionsMinConfidence, subagentIntentMinConfidence
         case memoryInjectionMinProbability
         case cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
+        case phoneLoopRevision
     }
 
     var policyVersion: Int = IOSJevPolicy.currentPolicyVersion
+    var phoneLoopRevision: Int = IOSJevPolicy.currentPhoneLoopRevision
     /// 前台单次判断总 deadline（排队 + 网络 + 重试 + 解析），毫秒。
     var deadlineMs: Int = 1_200
     /// 网页和手机短目标循环的决策 deadline：一次超时烧掉整轮（观察+决策），
@@ -236,7 +248,9 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
     var t2WaitBudgetMs: Int = 400
     var t3WaitBudgetMs: Int = 400
     var onDemandWaitBudgetMs: Int = 400
-    var activePerRunLimit: Int = 3
+    /// 单个 run 同时在途的 active 判断数（并发上限，不是总次数）。手机目标循环串行
+    /// 调用，但同一 run 的其它用途可能并发；放宽到与 App 级上限一致，避免排队超时。
+    var activePerRunLimit: Int = 6
     var activeAppLimit: Int = 6
     var shadowAppLimit: Int = 2
     /// 单请求最多问题数。
@@ -275,8 +289,8 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
     var modelRoutingMinConfidence: Double? = nil
     /// webActions 置信下限（原循环内硬编码 0.5 收编进版本化 policy）。
     var webActionsMinConfidence: Double = 0.5
-    /// 手机短目标只执行清单中可唯一定位的动作；低置信选择交回主模型。
-    var phoneActionsMinConfidence: Double = 0.8
+    /// 手机目标循环中 Jev 选择的置信下限；低于该值时循环重读界面再问，多次仍低才交回主模型。
+    var phoneActionsMinConfidence: Double = 0.6
     /// 意图路由：角色 Choice 的置信弃权线（nil = 不门控）；对齐回执是 Noul，
     /// 无 confidence 字段，以 0.5 概率为分界线，不走该字段。
     var subagentIntentMinConfidence: Double? = nil

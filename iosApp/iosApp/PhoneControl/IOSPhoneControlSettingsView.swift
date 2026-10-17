@@ -296,6 +296,13 @@ struct IOSPhoneControlSettingsView: View {
                 ForEach(controller.selectedBundleIDs.sorted(), id: \.self) { bundleID in
                     rowDivider
                     HStack(spacing: 8) {
+                        // 与上方"从本机选择 App"的 24pt 图标槽 + 12pt 间距对齐（8 + 4 = 12）。
+                        Image(systemName: "app")
+                            .font(.system(size: 20))
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(width: 24, height: 24)
+                            .padding(.trailing, 4)
+                            .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(verbatim: controller.applicationName(for: bundleID))
                                 .font(.body)

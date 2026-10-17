@@ -84,3 +84,45 @@ internal actual fun ConversationFile.moveTo(destination: ConversationFile) {
 }
 
 actual fun separatorChar(): Char = File.separatorChar
+
+internal actual fun ConversationFile.writeBytesDurably(bytes: ByteArray) {
+    val target = File(path)
+    val parent = target.parentFile
+    if (parent != null && !parent.isDirectory) parent.mkdirs()
+    val tmp = File.createTempFile(target.name, ".tmp", parent)
+    try {
+        java.io.FileOutputStream(tmp).use { out ->
+            out.write(bytes)
+            out.fd.sync()
+        }
+        Files.move(
+            tmp.toPath(),
+            target.toPath(),
+            StandardCopyOption.REPLACE_EXISTING,
+            StandardCopyOption.ATOMIC_MOVE,
+        )
+    } finally {
+        if (tmp.exists()) tmp.delete()
+    }
+}
+
+internal actual fun ConversationFile.readBytesOrNull(): ByteArray? {
+    val file = File(path)
+    return if (file.isFile) runCatching { file.readBytes() }.getOrNull() else null
+}
+
+internal actual fun ConversationFile.deleteRecursively(): Boolean {
+    val file = File(path)
+    if (!file.exists()) return false
+    if (!file.deleteRecursively()) {
+        throw IllegalStateException("Failed to delete $path")
+    }
+    return true
+}
+
+internal actual fun ConversationFile.listChildNames(): List<String> =
+    File(path).list()?.toList().orEmpty()
+
+internal actual fun sha256Hex(bytes: ByteArray): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }

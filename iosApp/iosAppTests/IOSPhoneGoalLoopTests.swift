@@ -122,13 +122,15 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
 
     func testCompletedReceiptWithUnchangedScreenCannotBecomeSuccessOrRepeatTap() async {
         let fixture = Fixture([observation("before", [node("old", id: "search")]),
-                               observation("after", [node("new", id: "search")])])
+                               observation("after", [node("new", id: "search")]),
+                               observation("still", [node("newer", id: "search")])])
         let result = await fixture.loop().run(request())
         XCTAssertEqual(result.status, .handback)
+        XCTAssertEqual(result.reasonCode, .screenUnchanged)
         XCTAssertNotEqual(result.verification?.status, .satisfied)
-        XCTAssertEqual(fixture.actions, [.tap(ref: "old")])
+        XCTAssertEqual(fixture.actions, [.tap(ref: "old")], "The ineffective control is never offered again")
         XCTAssertEqual(fixture.chooseCount, 0)
-        XCTAssertEqual(fixture.observeCount, 2)
+        XCTAssertEqual(fixture.observeCount, 3, "One read-only re-read before handing back")
         XCTAssertTrue(result.needsScreenshot)
         XCTAssertEqual(result.steps, ["a0: completed"])
     }
@@ -173,7 +175,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(result.steps, ["a0: completed"])
     }
 
-    func testIncompleteAmbiguousDisabledOrUnboundedTargetsNeverReachDecisionOrAction() async {
+    func testIncompleteAmbiguousDisabledOrUnboundedTargetsNeverActWithoutDecision() async {
         let scenarios = [
             observation("truncated", [node("ref", id: "search")], truncated: true),
             observation("ambiguous", [node("one", id: "search"), node("two", id: "search")]),
@@ -184,11 +186,16 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
             observation("unknown-geometry", [node("ref", id: "search")], bounds: nil),
         ]
         for screen in scenarios {
-            let fixture = Fixture([screen])
+            // Three identical reads: the loop may re-read, but never acts on its own.
+            let fixture = Fixture([screen, screen, screen])
+            fixture.selections = [.handback("jev_handback")]
             let result = await fixture.loop().run(request())
             XCTAssertEqual(result.status, .handback, screen.observationID)
             XCTAssertTrue(fixture.actions.isEmpty, screen.observationID)
-            XCTAssertEqual(fixture.chooseCount, 0, screen.observationID)
+            XCTAssertEqual(result.metrics.localActions, 0, screen.observationID)
+            // Ambiguous and truncated targets are offered to Jev instead of handing back blindly.
+            let offered = ["truncated", "ambiguous"].contains(screen.observationID)
+            XCTAssertEqual(fixture.chooseCount, offered ? 1 : 0, screen.observationID)
         }
     }
 
@@ -202,11 +209,14 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
                       node("ref", id: "query", type: "XCUIElementTypeTextField", value: nil),
                       node("ref", id: "query", type: "XCUIElementTypeSecureTextField", value: ""),
                       node("ref", id: "query", type: "XCUIElementTypeStaticText", value: "")] {
-            let fixture = Fixture([observation("input", [input])])
+            let screen = observation("input", [input])
+            let fixture = Fixture([screen, screen, screen])
+            fixture.selections = [.handback("jev_handback")]
             let result = await fixture.loop().run(draft)
             XCTAssertEqual(result.status, .handback)
+            XCTAssertFalse(fixture.actions.contains { if case .type = $0 { true } else { false } },
+                           "Text is only typed into a verified empty, nonsecure input")
             XCTAssertTrue(fixture.actions.isEmpty)
-            XCTAssertEqual(fixture.chooseCount, 0)
         }
     }
 
@@ -328,16 +338,17 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertTrue(result.steps.isEmpty)
     }
 
-    func testRepeatedWaitUsesOnlyOneReadonlyRefresh() async {
+    func testRepeatedWaitOnAnUnchangedScreenHandsBackAfterBoundedRefreshes() async {
         let fixture = Fixture([observation("loading", [node("first", id: "search"), node("first-alternative", id: "alternate-search")]),
-                               observation("still-loading", [node("second", id: "search"), node("second-alternative", id: "alternate-search")])])
-        fixture.selections = [.wait, .wait]
+                               observation("still-loading", [node("second", id: "search"), node("second-alternative", id: "alternate-search")]),
+                               observation("still-loading-2", [node("third", id: "search"), node("third-alternative", id: "alternate-search")])])
+        fixture.selections = [.wait, .wait, .wait]
         let result = await fixture.loop().run(branchingRequest())
         XCTAssertEqual(result.status, .handback)
         XCTAssertTrue(fixture.actions.isEmpty)
-        XCTAssertEqual(fixture.waitCount, 1)
-        XCTAssertEqual(fixture.observeCount, 2)
-        XCTAssertEqual(fixture.chooseCount, 2)
+        XCTAssertEqual(fixture.waitCount, 2)
+        XCTAssertEqual(fixture.observeCount, 3)
+        XCTAssertEqual(fixture.chooseCount, 3)
         XCTAssertEqual(result.reasonCode, .waitBudgetExhausted)
     }
 
@@ -345,19 +356,21 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         let fixture = Fixture([
             observation("loading", [node("first", id: "search"), node("alternative", id: "alternate-search")]),
             observation("still-loading", [node("second", id: "search"), node("second-alternative", id: "alternate-search")]),
+            observation("still-loading-2", [node("third", id: "search"), node("third-alternative", id: "alternate-search")]),
         ])
         fixture.observeDuration = 0.01
         fixture.chooseDuration = 0.02
         fixture.waitDuration = 0.05
-        fixture.selections = [.wait, .wait]
+        fixture.selections = [.wait, .wait, .wait]
 
         let result = await fixture.loop().run(branchingRequest())
 
         XCTAssertEqual(result.reasonCode, .waitBudgetExhausted)
         XCTAssertTrue(fixture.actions.isEmpty)
-        XCTAssertEqual(fixture.waitCount, 1)
-        XCTAssertEqual(result.metrics.waitMs, 50, accuracy: 0.001)
-        XCTAssertEqual(result.metrics.totalMs, 110, accuracy: 0.001)
+        XCTAssertEqual(fixture.waitCount, 2)
+        XCTAssertEqual(result.metrics.waitMs, 100, accuracy: 0.001)
+        XCTAssertEqual(result.metrics.totalMs, 190, accuracy: 0.001)
+        XCTAssertEqual(result.metrics.recoveries, 2)
     }
 
     func testProcessRestartDuringReadonlyWaitDoesNotDispatchIntoNewProcess() async {
@@ -391,7 +404,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.chooseCount, 1)
     }
 
-    func testCandidateDiagnosticsDistinguishExcludedTargetsWithoutCallingJev() async {
+    func testCandidateDiagnosticsDistinguishExcludedTargetsAndNeverActLocallyOffPlan() async {
         let screens: [(PhoneObservation, IOSPhoneGoalLoop.CandidateDiagnostic.ReasonCode)] = [
             (observation("partial", [node("ref", id: "search")], truncated: true), .treeTruncated),
             (observation("duplicate", [node("one", id: "search"), node("two", id: "search")]), .targetAmbiguous),
@@ -402,14 +415,15 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
             (observation("no-geometry", [node("ref", id: "search")], bounds: nil), .screenBoundsUnavailable),
         ]
         for (screen, code) in screens {
-            let fixture = Fixture([screen])
+            let fixture = Fixture([screen, screen, screen])
+            fixture.selections = [.handback("jev_handback")]
             let result = await fixture.loop().run(request())
-            XCTAssertEqual(result.status, .handback)
-            XCTAssertEqual(result.reasonCode, screen.truncated ? .treeTruncated : .noExecutableCandidates)
-            XCTAssertEqual(result.candidateDiagnostics, [.init(id: "a0", reasonCode: code)])
-            XCTAssertEqual(result.metrics.selectionCalls, 0)
+            XCTAssertEqual(result.status, .handback, screen.observationID)
+            XCTAssertTrue([.noExecutableCandidates, .decisionHandback].contains(result.reasonCode), screen.observationID)
+            XCTAssertEqual(result.candidateDiagnostics, [.init(id: "a0", reasonCode: code)], screen.observationID)
             XCTAssertEqual(result.metrics.reviewCalls, 0)
-            XCTAssertTrue(fixture.actions.isEmpty)
+            XCTAssertEqual(result.metrics.localActions, 0)
+            XCTAssertTrue(fixture.actions.isEmpty, screen.observationID)
         }
     }
 
@@ -434,22 +448,25 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.chooseCount, 0)
     }
 
-    func testTapStillRejectsTwoMatchingButtonsWithTheSameLabel() async {
+    func testTwoMatchingButtonsWithTheSameLabelGoToJevNeverToTheFirstMatch() async {
         let request = IOSPhoneGoalRequest(
             goal: "选择单词", bundleID: "app.test",
             actions: [.init(action: .tap, target: .init(label: "ワンピース"))],
             completion: .init(kind: .visible, target: .init(identifier: "selected")))
-        let fixture = Fixture([observation("question", [
+        let screen = observation("question", [
             node("first-button", id: "word-1", label: "ワンピース"),
-            node("second-button", id: "word-2", label: "ワンピース")
-        ])])
+            node("second-button", id: "word-2", label: "ワンピース", x: 220)
+        ])
+        let fixture = Fixture([screen])
+        fixture.selections = [.handback("jev_handback")]
 
         let result = await fixture.loop().run(request)
 
-        XCTAssertEqual(result.reasonCode, .noExecutableCandidates)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
         XCTAssertEqual(result.candidateDiagnostics, [.init(id: "a0", reasonCode: .targetAmbiguous)])
+        XCTAssertEqual(fixture.candidateBatches, [["a0.1", "a0.2"]])
         XCTAssertTrue(fixture.actions.isEmpty)
-        XCTAssertEqual(fixture.chooseCount, 0)
+        XCTAssertEqual(fixture.chooseCount, 1)
     }
 
     func testTapAcceptsExplicitStaticTextAndOtherTypes() async {
@@ -553,27 +570,28 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
             goal: "选择单词", bundleID: "app.test",
             completion: .init(kind: .visible, target: .init(identifier: "done")), maxSteps: 3)
         let screen = observation("before", [node("word", id: "word", label: "ワンピース")])
-        let fixture = Fixture([screen, observation("after", screen.nodes)])
+        let fixture = Fixture([screen, observation("after", screen.nodes), observation("again", screen.nodes)])
 
         let result = await fixture.loop().run(request)
 
         XCTAssertEqual(result.reasonCode, .screenUnchanged)
-        XCTAssertEqual(fixture.actions, [.tap(ref: "word")])
+        XCTAssertEqual(fixture.actions, [.tap(ref: "word")], "Never tapped twice on the unchanged screen")
         XCTAssertEqual(fixture.chooseCount, 0)
         XCTAssertEqual(fixture.adviceCount, 0)
     }
 
-    func testLiveStopsBeforeChoosingOnTruncatedTree() async {
+    func testLiveTruncatedTreeNeverActsWithoutJevDecision() async {
         let request = IOSPhoneGoalRequest(
             goal: "选择单词", bundleID: "app.test",
             completion: .init(kind: .visible, target: .init(identifier: "done")))
         let fixture = Fixture([observation("partial", [node("word", id: "word", label: "ワンピース")], truncated: true)])
+        fixture.selections = [.handback("jev_handback")]
 
         let result = await fixture.loop().run(request)
 
-        XCTAssertEqual(result.reasonCode, .treeTruncated)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
         XCTAssertTrue(fixture.actions.isEmpty)
-        XCTAssertEqual(fixture.chooseCount, 0)
+        XCTAssertEqual(fixture.chooseCount, 1, "A partial tree's lone candidate still needs a decision")
     }
 
     func testLegacyAlertHandbackAndWaitBudgetDoNotAdvertiseUnderlyingCandidates() async {
@@ -584,17 +602,17 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(IOSPhoneGoalLoop.candidates(request.actions, in: covered).count, 1,
                        "The underlying action would otherwise be marked eligible")
         for waits in [false, true] {
-            let fixture = Fixture([covered, observation("still-covered", nodes)])
-            fixture.selections = waits ? [.wait, .wait] : [.handback("alert")]
+            let fixture = Fixture([covered, observation("still-covered", nodes), observation("still-covered-2", nodes)])
+            fixture.selections = waits ? [.wait, .wait, .wait] : [.handback("alert")]
             let result = await fixture.loop().run(request)
             XCTAssertEqual(result.status, .handback)
             XCTAssertEqual(result.reasonCode, waits ? .waitBudgetExhausted : .unexpectedAlert)
             XCTAssertTrue(result.candidateDiagnostics.isEmpty)
             XCTAssertTrue(fixture.actions.isEmpty)
             XCTAssertTrue(fixture.candidateBatches.allSatisfy { $0.isEmpty })
-            XCTAssertEqual(fixture.chooseCount, waits ? 2 : 1)
-            XCTAssertEqual(fixture.observeCount, waits ? 2 : 1)
-            XCTAssertEqual(fixture.waitCount, waits ? 1 : 0)
+            XCTAssertEqual(fixture.chooseCount, waits ? 3 : 1)
+            XCTAssertEqual(fixture.observeCount, waits ? 3 : 1)
+            XCTAssertEqual(fixture.waitCount, waits ? 2 : 0)
         }
     }
 
@@ -701,11 +719,13 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
             (node("ref", id: "query", type: "XCUIElementTypeSecureTextField", value: ""), .unsupported),
         ]
         for (input, code) in inputs {
-            let fixture = Fixture([observation("input", [input])])
+            let screen = observation("input", [input])
+            let fixture = Fixture([screen, screen, screen])
             let result = await fixture.loop().run(request)
             XCTAssertEqual(result.candidateDiagnostics, [.init(id: "a0", reasonCode: code)])
             XCTAssertEqual(result.reasonCode, .noExecutableCandidates)
             XCTAssertEqual(fixture.chooseCount, 0)
+            XCTAssertEqual(fixture.waitCount, 2, "Bounded read-only re-reads before handing back")
             XCTAssertTrue(fixture.actions.isEmpty)
         }
     }
@@ -713,11 +733,13 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
     func testExhaustedActionsReportAlreadyExecutedWithoutRepeating() async {
         let fixture = Fixture([observation("before", [node("old", id: "search")]),
                                observation("after", [node("new", id: "search", value: "changed")])])
+        fixture.selections = [.handback("jev_handback")]
         let result = await fixture.loop().run(request())
-        XCTAssertEqual(result.reasonCode, .actionsExhausted)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
         XCTAssertEqual(result.candidateDiagnostics, [.init(id: "a0", reasonCode: .alreadyExecuted)])
         XCTAssertEqual(result.steps, ["a0: completed"])
-        XCTAssertEqual(fixture.actions.count, 1)
+        XCTAssertEqual(fixture.actions.count, 1, "The executed listed action is not replayed")
+        XCTAssertEqual(fixture.candidateBatches, [["n0"]], "Off-plan candidates come from the fresh tree and need Jev")
     }
 
     func testModeOffAndTimeBudgetReturnStableReasonsAndAccurateServiceCounts() async {
@@ -729,10 +751,10 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(off.observeCount, 0)
 
         let expired = Fixture([observation("initial", [node("ref", id: "search"), node("ref-alternative", id: "alternate-search")])])
-        expired.onChoose = { expired.time += 60 }
+        expired.onChoose = { expired.time += 180 }
         let expiredResult = await expired.loop().run(branchingRequest())
         XCTAssertEqual(expiredResult.reasonCode, .timeBudgetExhausted)
-        XCTAssertEqual(expiredResult.metrics.chooseMs, 60_000, accuracy: 0.001)
+        XCTAssertEqual(expiredResult.metrics.chooseMs, 180_000, accuracy: 0.001)
         XCTAssertEqual(expiredResult.metrics.selectionCalls, 1)
         XCTAssertTrue(expired.actions.isEmpty)
     }
@@ -765,7 +787,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
                                                selectionCalls: 2, reviewCalls: 1)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(metrics)) as? [String: NSNumber])
         XCTAssertEqual(Set(json.keys), ["observe_ms", "choose_ms", "act_ms", "advise_ms", "selection_calls", "review_calls",
-                                        "settle_ms", "settle_calls", "local_actions", "wait_ms", "total_ms"])
+                                        "settle_ms", "settle_calls", "local_actions", "wait_ms", "total_ms", "recoveries"])
         XCTAssertEqual(json["selection_calls"], 2)
         XCTAssertEqual(json["review_calls"], 1)
     }
@@ -822,17 +844,20 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
             XCTAssertEqual(IOSPhoneGoalVerification.matchingNodes(target: .init(label: "Current item"), in: before).count,
                            index == 0 ? 1 : 2)
             let result = await fixture.loop().run(request)
-            XCTAssertEqual(fixture.chooseCount, 0)
+            XCTAssertEqual(fixture.chooseCount, index == 0 ? 0 : 1)
             if index == 0 {
                 XCTAssertEqual(result.status, .completed)
                 XCTAssertEqual(fixture.pageAnchorRefs, ["parent"])
                 XCTAssertEqual(fixture.actions, [.tap(ref: "open")])
                 XCTAssertEqual(fixture.requireUnchangedObservations, [false])
             } else {
-                XCTAssertEqual(result.status, .handback)
-                XCTAssertEqual(result.reasonCode, .pageChanged)
-                XCTAssertTrue(fixture.actions.isEmpty)
-                XCTAssertEqual(fixture.observeCount, 1)
+                // An ambiguous anchor no longer proves the plan's page: continue toward the
+                // completion with fresh candidates, every action chosen by Jev.
+                XCTAssertEqual(result.continuedFrom, .pageChanged)
+                XCTAssertEqual(result.status, .completed)
+                XCTAssertEqual(fixture.requireUnchangedObservations, [true])
+                XCTAssertEqual(fixture.pageAnchorRefs, [nil])
+                XCTAssertEqual(fixture.observeCount, 2)
             }
         }
     }
@@ -856,27 +881,31 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.candidateBatches, [["a0", "a1"]])
     }
 
-    func testSequenceStopsWhenQuestionChangesEvenIfNextButtonStillExists() async {
+    func testSequenceLeavesThePlanWhenQuestionChangesEvenIfNextButtonStillExists() async {
         let screens = sequenceScreens()
         let changed = observation("different-question", [node("new", id: "other-question"),
             node("selected", id: "selected-one"), node("same-button", id: "two")])
         let fixture = Fixture([screens[0], changed])
+        fixture.selections = [.handback("jev_handback")]
         let result = await fixture.loop().run(sequenceRequest())
-        XCTAssertEqual(result.reasonCode, .pageChanged)
+        XCTAssertEqual(result.continuedFrom, .pageChanged)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
         XCTAssertEqual(result.verifiedStepCount, 1)
-        XCTAssertEqual(fixture.actions.count, 1)
+        XCTAssertEqual(fixture.actions.count, 1, "The planned step two is never executed on the new question")
         XCTAssertEqual(fixture.observeCount, 2)
-        XCTAssertEqual(fixture.chooseCount, 0)
+        XCTAssertEqual(fixture.chooseCount, 1)
     }
 
-    func testSequenceIncompleteResultDoesNotExposeSuccessOrOldCandidates() async {
+    func testSequenceOffPlanScreenCompletesOnlyOnFreshCompletionEvidence() async {
         let changed = observation("new-question", [node("q2", id: "other-question"),
             node("selected", id: "selected-one"), node("done", id: "done")])
         let fixture = Fixture([sequenceScreens()[0], changed])
         let result = await fixture.loop().run(sequenceRequest())
-        XCTAssertEqual(result.reasonCode, .pageChanged)
+        XCTAssertEqual(result.continuedFrom, .pageChanged)
+        XCTAssertEqual(result.status, .completed, "The completion is verified locally on the fresh tree")
+        XCTAssertEqual(result.verification?.status, .satisfied)
         XCTAssertEqual(result.verifiedStepCount, 1)
-        XCTAssertNil(result.verification, "The overall goal is not verified before all steps finish")
+        XCTAssertEqual(fixture.actions.count, 1)
         XCTAssertTrue(result.candidateDiagnostics.isEmpty, "The new page cannot inherit the previous step's eligible choices")
     }
 
@@ -897,14 +926,17 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         }
     }
 
-    func testSequenceRejectsAmbiguousTargetsAndInactiveModesBeforeClicking() async {
+    func testSequenceOffersAmbiguousTargetsToJevAndInactiveModesNeverClick() async {
         let initial = observation("ambiguous", [node("q", id: "question"),
-            node("one", id: "one"), node("duplicate", id: "one")])
+            node("one", id: "one"), node("duplicate", id: "one", x: 200)])
         let ambiguous = Fixture([initial])
+        ambiguous.selections = [.handback("jev_handback"), .handback("jev_handback")]
         let result = await ambiguous.loop().run(sequenceRequest())
-        XCTAssertEqual(result.reasonCode, .ambiguousTarget)
+        XCTAssertEqual(result.continuedFrom, .ambiguousTarget)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
         XCTAssertTrue(ambiguous.actions.isEmpty)
-        XCTAssertEqual(ambiguous.chooseCount, 0)
+        XCTAssertEqual(ambiguous.candidateBatches.first, ["a0.1", "a0.2"])
+        XCTAssertEqual(ambiguous.chooseCount, 2)
         let fixture = Fixture(sequenceScreens())
         fixture.mode = .off
         let off = await fixture.loop().run(sequenceRequest())
@@ -913,27 +945,33 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.observeCount, 0)
     }
 
-    func testSequenceStopsWhenQuestionTextChangesUnderTheSameIdentifier() async {
+    func testSequenceLeavesThePlanWhenQuestionTextChangesUnderTheSameIdentifier() async {
         let before = observation("q1", [node("q", id: "question", value: "Translate cat"), node("one", id: "one")])
         let after = observation("q2", [node("q", id: "question", value: "Translate dog"),
             node("selected", id: "selected-one"), node("two", id: "two")])
         let fixture = Fixture([before, after])
+        fixture.selections = [.handback("jev_handback")]
         let result = await fixture.loop().run(sequenceRequest())
-        XCTAssertEqual(result.reasonCode, .pageChanged)
+        XCTAssertEqual(result.continuedFrom, .pageChanged)
         XCTAssertEqual(fixture.actions.count, 1)
         XCTAssertEqual(result.verifiedStepCount, 1)
+        XCTAssertEqual(fixture.chooseCount, 1, "Step two's planned answer is not applied to a new question")
     }
 
     func testSequenceCannotUseJevContinueToOverrideUnmetStepExpectation() async {
         let fixture = Fixture([sequenceScreens()[0], observation("unchanged", sequenceScreens()[0].nodes)])
         fixture.advices = [.continueTask]
+        fixture.selections = [.handback("jev_handback")]
         let result = await fixture.loop().run(sequenceRequest())
-        XCTAssertEqual(result.reasonCode, .stepExpectationUnmet)
+        XCTAssertEqual(result.continuedFrom, .stepExpectationUnmet)
+        XCTAssertNotEqual(result.status, .completed)
         XCTAssertEqual(result.verifiedStepCount, 0)
         XCTAssertEqual(result.stepVerification?.status, .unmet)
         XCTAssertEqual(fixture.actions.count, 1)
         XCTAssertEqual(fixture.adviceCount, 1)
         XCTAssertEqual(fixture.observeCount, 2)
+        XCTAssertFalse(fixture.candidateBatches.last?.contains("n1") == true,
+                       "The ineffective control is not offered again in goal mode")
     }
 
     func testSequenceJevWaitRefreshesEvidenceWithoutReplayingAction() async {
@@ -954,8 +992,9 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         fixture.advices = [.handback]
         let result = await fixture.loop().run(sequenceRequest())
         XCTAssertEqual(result.reasonCode, .unexpectedAlert)
+        XCTAssertEqual(result.continuedFrom, .unexpectedAlert)
         XCTAssertEqual(fixture.adviceCount, 1)
-        XCTAssertEqual(fixture.chooseCount, 0)
+        XCTAssertEqual(fixture.candidateBatches, [[]], "Only alert buttons could be offered; the page underneath never is")
         XCTAssertTrue(fixture.actions.isEmpty)
     }
 
@@ -997,7 +1036,7 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
             XCTAssertEqual(result.reasonCode, .screenNotStable)
             XCTAssertEqual(result.verifiedStepCount, 2)
             XCTAssertEqual(fixture.actions.count, 3)
-            XCTAssertEqual(fixture.settleCount, 1)
+            XCTAssertEqual(fixture.settleCount, 2, "One extra settle before treating it as no progress")
             XCTAssertNotNil(result.observation)
             XCTAssertNil(result.verification, "An unsettled last step cannot produce overall success")
             XCTAssertTrue(result.candidateDiagnostics.isEmpty)
@@ -1161,4 +1200,375 @@ private final class GoalLoopFailureProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+// MARK: - Jev disambiguation, local candidates and in-call recovery
+
+@MainActor
+extension IOSPhoneGoalLoopTests {
+    /// Duolingo shape: a word already placed in the answer area and the same word in the bank.
+    private func duplicateWordScreen(_ id: String, prefix: String = "") -> PhoneObservation {
+        observation(id, [
+            node("\(prefix)question", id: "question", type: "XCUIElementTypeStaticText", label: "Translate: I go"),
+            node("\(prefix)answer-area", id: "answer-area", type: "XCUIElementTypeOther", y: 200, x: 0, width: 402, height: 120),
+            node("\(prefix)placed", id: "tile", type: "XCUIElementTypeButton", label: "go", y: 240, depth: 2, x: 20),
+            node("\(prefix)bank", id: "word-bank", type: "XCUIElementTypeOther", y: 600, x: 0, width: 402, height: 160),
+            node("\(prefix)source", id: "tile", type: "XCUIElementTypeButton", label: "go", y: 640, depth: 2, x: 120),
+        ])
+    }
+
+    func testListedDuplicateLabelIsOfferedPerMatchWithContextAndJevPicks() async {
+        let fixture = Fixture([duplicateWordScreen("question"),
+                               observation("answered", [node("done", id: "done")])])
+        fixture.selections = [.action("a0.2")]
+        let request = IOSPhoneGoalRequest(goal: "把 go 放进答案", bundleID: "app.test",
+            actions: [.init(action: .tap, target: .init(label: "go"))],
+            completion: .init(kind: .visible, target: .init(identifier: "done")))
+
+        let result = await fixture.loop().run(request)
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(fixture.candidateBatches, [["a0.1", "a0.2"]])
+        XCTAssertEqual(fixture.actions, [.tap(ref: "source")])
+        let descriptions = fixture.candidateDescriptions.first ?? []
+        XCTAssertTrue(descriptions[0].contains("match 1 of 2"))
+        XCTAssertTrue(descriptions[0].contains("answer-area"), descriptions[0])
+        XCTAssertTrue(descriptions[1].contains("word-bank"), descriptions[1])
+        XCTAssertTrue(descriptions[1].contains("position=bottom"), descriptions[1])
+        XCTAssertEqual(result.steps, ["a0.2: completed"])
+        XCTAssertEqual(result.metrics.localActions, 0, "A duplicate is never executed without a decision")
+    }
+
+    func testSequenceDuplicateLabelUsesJevInsteadOfAmbiguityHandback() async {
+        let fixture = Fixture([duplicateWordScreen("question"),
+                               observation("answered", [node("q", id: "question", type: "XCUIElementTypeStaticText",
+                                                             label: "Translate: I go"), node("done", id: "done")])])
+        fixture.selections = [.action("a0.2")]
+        let request = IOSPhoneGoalRequest(goal: "选择词块", bundleID: "app.test", steps: [
+            .init(pageAnchor: .init(identifier: "question"),
+                  actions: [.init(action: .tap, target: .init(label: "go"))],
+                  expectation: .init(kind: .visible, target: .init(identifier: "done"))),
+        ], completion: .init(kind: .visible, target: .init(identifier: "done")))
+
+        let result = await fixture.loop().run(request)
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "source")])
+        XCTAssertEqual(fixture.chooseCount, 1)
+        XCTAssertEqual(result.verifiedStepCount, 1)
+    }
+
+    func testLowConfidenceSelectionIsRereadAndRetriedBeforeHandingBack() async {
+        let request = IOSPhoneGoalRequest(goal: "把 go 放进答案", bundleID: "app.test",
+            actions: [.init(action: .tap, target: .init(label: "go"))],
+            completion: .init(kind: .visible, target: .init(identifier: "done")))
+        let lowConfidence = IOSJevPhoneControlService.Selection.handback("invalid_or_low_confidence_decision")
+
+        let persistent = Fixture((0..<3).map { duplicateWordScreen("q\($0)", prefix: "q\($0):") })
+        persistent.selections = [lowConfidence, lowConfidence, lowConfidence]
+        let handedBack = await persistent.loop().run(request)
+        XCTAssertEqual(handedBack.status, .handback)
+        XCTAssertEqual(handedBack.reasonCode, .decisionHandback)
+        XCTAssertTrue(persistent.actions.isEmpty)
+        XCTAssertEqual(persistent.chooseCount, 3)
+        XCTAssertEqual(persistent.waitCount, 2, "Two re-reads, then the third low-confidence answer hands back")
+        XCTAssertTrue(handedBack.needsScreenshot)
+
+        let recovered = Fixture([duplicateWordScreen("q0"), duplicateWordScreen("q1", prefix: "q1:"),
+                                 observation("answered", [node("done", id: "done")])])
+        recovered.selections = [lowConfidence, .action("a0.2")]
+        let completed = await recovered.loop().run(request)
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(recovered.actions, [.tap(ref: "q1:source")], "The retry acts on the fresh observation's ref")
+        XCTAssertEqual(completed.metrics.recoveries, 1)
+    }
+
+    func testExplicitJevHandbackIsNotRetried() async {
+        let fixture = Fixture([duplicateWordScreen("question")])
+        fixture.selections = [.handback("jev_handback")]
+        let request = IOSPhoneGoalRequest(goal: "把 go 放进答案", bundleID: "app.test",
+            actions: [.init(action: .tap, target: .init(label: "go"))],
+            completion: .init(kind: .visible, target: .init(identifier: "done")))
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.reasonCode, .decisionHandback)
+        XCTAssertEqual(fixture.chooseCount, 1)
+        XCTAssertEqual(fixture.waitCount, 0)
+    }
+
+    func testLiveCandidatesFilterDedupeDescribeAndCap() {
+        let screen = observation("browse", [
+            node("list", id: "list", type: "XCUIElementTypeTable", label: nil, y: 100, x: 0, width: 402, height: 700),
+            node("row-1", id: "row-1", type: "XCUIElementTypeCell", label: "Wi-Fi", y: 120, depth: 2, x: 0, width: 402),
+            node("row-1-dup", id: "row-1", type: "XCUIElementTypeCell", label: "Wi-Fi", y: 120, depth: 2, x: 0, width: 402),
+            node("disabled", id: "disabled", label: "Disabled", enabled: false, y: 200),
+            node("unnamed", id: "", type: "XCUIElementTypeButton", label: nil, y: 260),
+            node(nil, id: "no-ref", label: "No ref", y: 300),
+            node("offscreen", id: "offscreen", label: "Offscreen", y: 2_000),
+            node("toggle", id: "airplane", type: "XCUIElementTypeSwitch", label: "Airplane Mode", y: 340),
+            node("caption", id: "caption", type: "XCUIElementTypeStaticText", label: "Footer", y: 400),
+            node("keyboard", id: "a", type: "XCUIElementTypeKey", label: "a", y: 800),
+        ] + [PhoneObservationNode(ref: "covered", depth: 1, type: "XCUIElementTypeButton", identifier: "old",
+                                  label: "Covered", value: nil, rect: .init(x: 20, y: 500, width: 80, height: 44),
+                                  enabled: true, focused: false, covered: true)])
+
+        let all = IOSPhoneGoalLoop.liveCandidateSet(in: screen)
+        XCTAssertEqual(all.candidates.map(\.action), [
+            .tap(ref: "row-1"), .tap(ref: "toggle"), .tap(ref: "caption"),
+            .swipe(ref: "list", direction: .up), .swipe(ref: "list", direction: .down),
+        ])
+        XCTAssertTrue(all.withheld.isEmpty)
+        XCTAssertTrue(all.candidates[0].decisionDescription?.contains("label=Wi-Fi") == true)
+        XCTAssertTrue(all.candidates[0].decisionDescription?.contains("in=[Table") == true)
+        XCTAssertTrue(all.candidates.allSatisfy { $0.decisionDescription?.contains("position=") == true })
+        XCTAssertTrue(all.candidates.filter { if case .swipe = $0.action { true } else { false } }
+            .allSatisfy(\.requiresDecision))
+
+        // Capping keeps control-like entries before scroll and plain text.
+        let capped = IOSPhoneGoalLoop.liveCandidateSet(in: screen, limit: 3)
+        XCTAssertEqual(capped.candidates.map(\.action),
+                       [.tap(ref: "row-1"), .tap(ref: "toggle"), .swipe(ref: "list", direction: .up)])
+    }
+
+    func testFinalCommitsAreWithheldFromLiveCandidates() {
+        XCTAssertTrue(IOSPhoneGoalLoop.isFinalCommit("Send"))
+        XCTAssertTrue(IOSPhoneGoalLoop.isFinalCommit("发送"))
+        XCTAssertTrue(IOSPhoneGoalLoop.isFinalCommit("立即支付"))
+        XCTAssertTrue(IOSPhoneGoalLoop.isFinalCommit("Sign in"))
+        XCTAssertTrue(IOSPhoneGoalLoop.isFinalCommit("deleteButton"))
+        XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit("Display"))
+        XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit("Posts"))
+        XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit("Check"))
+        XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit("Continue"))
+        XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit("一篇关于支付行业发展的长篇新闻标题，用于测试内容文本"))
+
+        let screen = observation("compose", [node("back", id: "back", label: "Back"),
+                                             node("send", id: "send", label: "Send", x: 300)])
+        let set = IOSPhoneGoalLoop.liveCandidateSet(in: screen)
+        XCTAssertEqual(set.candidates.map(\.action), [.tap(ref: "back")])
+        XCTAssertEqual(set.withheld, ["Send"])
+    }
+
+    func testLiveHandsBackFinalCommitWithoutTappingAndNeverTapsAloneNextToOne() async {
+        let request = IOSPhoneGoalRequest(goal: "发出这条消息", bundleID: "app.test",
+                                          completion: .init(kind: .visible, target: .init(identifier: "sent")))
+        let onlySend = Fixture([observation("compose", [node("send", id: "send-button", label: "发送")])])
+        let result = await onlySend.loop().run(request)
+        XCTAssertEqual(result.reasonCode, .finalCommitRequired)
+        XCTAssertEqual(result.withheldFinalActions, ["发送"])
+        XCTAssertTrue(onlySend.actions.isEmpty)
+        XCTAssertEqual(onlySend.chooseCount, 0)
+
+        let withBack = Fixture([observation("compose", [node("back", id: "back", label: "Back"),
+                                                        node("send", id: "send", label: "Send", x: 300)])])
+        withBack.selections = [.handback("jev_handback")]
+        let handedBack = await withBack.loop().run(request)
+        XCTAssertEqual(withBack.chooseCount, 1, "A lone candidate next to a withheld commit still needs Jev")
+        XCTAssertEqual(withBack.candidateBatches, [["n0"]])
+        XCTAssertEqual(handedBack.reasonCode, .finalCommitRequired)
+        XCTAssertTrue(withBack.actions.isEmpty)
+    }
+
+    func testAlertButtonsBecomeCandidatesButPermissionPromptsAreNeverAnswered() async {
+        let request = IOSPhoneGoalRequest(goal: "关闭弹窗并继续", bundleID: "app.test",
+                                          completion: .init(kind: .visible, target: .init(identifier: "home")))
+        let dialog = PhoneObservedAlert(ref: "alert", text: "Leave this lesson?", processID: 42, buttons: [
+            .init(ref: "alert:stay", name: "Keep learning"), .init(ref: "alert:quit", name: "End session"),
+        ])
+        let covered = PhoneObservation(observationID: "alert", bundleID: "app.test", processID: 42, backend: "test",
+            truncated: false, nodes: [node("under", id: "under", label: "Underlying")],
+            screenBounds: .init(x: 0, y: 0, width: 402, height: 874), alerts: [dialog], alertActionsSupported: true)
+        let fixture = Fixture([covered, observation("home", [node("home", id: "home")])])
+        fixture.selections = [.action("alert0.0")]
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(fixture.candidateBatches, [["alert0.0", "alert0.1"]], "The covered page is not offered")
+        XCTAssertEqual(fixture.actions, [.tapAlert(ref: "alert:stay")])
+
+        let permission = PhoneObservedAlert(ref: "perm", text: "“App” Would Like to Access Your Photos", processID: 42,
+            buttons: [.init(ref: "perm:deny", name: "Don’t Allow"), .init(ref: "perm:allow", name: "Allow")])
+        let prompt = PhoneObservation(observationID: "perm", bundleID: "app.test", processID: 42, backend: "test",
+            truncated: false, nodes: [node("under", id: "under", label: "Underlying")],
+            screenBounds: .init(x: 0, y: 0, width: 402, height: 874), alerts: [permission], alertActionsSupported: true)
+        let set = IOSPhoneGoalLoop.liveCandidateSet(in: prompt)
+        XCTAssertTrue(set.candidates.isEmpty)
+        XCTAssertEqual(set.withheld, ["Don’t Allow", "Allow"])
+
+        let confirm = PhoneObservedAlert(ref: "confirm", text: "Delete this draft?", processID: 42,
+            buttons: [.init(ref: "confirm:cancel", name: "Cancel"), .init(ref: "confirm:ok", name: "OK")])
+        let confirmScreen = PhoneObservation(observationID: "confirm", bundleID: "app.test", processID: 42, backend: "test",
+            truncated: false, nodes: [node("under", id: "under", label: "Underlying")],
+            screenBounds: .init(x: 0, y: 0, width: 402, height: 874), alerts: [confirm], alertActionsSupported: true)
+        let confirmSet = IOSPhoneGoalLoop.liveCandidateSet(in: confirmScreen)
+        XCTAssertEqual(confirmSet.candidates.map(\.action), [.tapAlert(ref: "confirm:cancel")])
+        XCTAssertEqual(confirmSet.withheld, ["OK"], "A generic confirm on a delete prompt is a final commit")
+    }
+
+    func testLiveRecoversFromIneffectiveTapByChoosingAnotherControl() async {
+        let request = IOSPhoneGoalRequest(goal: "打开详情", bundleID: "app.test",
+                                          completion: .init(kind: .visible, target: .init(identifier: "detail")))
+        let screen = observation("list", [node("a", id: "a", label: "First"), node("b", id: "b", label: "Second", x: 200)])
+        let fixture = Fixture([screen, observation("same", screen.nodes),
+                               observation("detail", [node("detail", id: "detail")])])
+        fixture.selections = [.action("n0")]
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "a"), .tap(ref: "b")],
+                       "The ineffective tap is excluded and never repeated on the unchanged screen")
+        XCTAssertEqual(fixture.chooseCount, 1, "Only one candidate remains, executed locally")
+        XCTAssertTrue(result.steps.first?.contains("screen unchanged") == true)
+    }
+
+    func testSequencePageChangeContinuesTowardGoalWithFreshCandidates() async {
+        let request = IOSPhoneGoalRequest(goal: "完成本课", bundleID: "app.test", steps: [
+            .init(pageAnchor: .init(label: "Question 1"),
+                  actions: [.init(action: .tap, target: .init(identifier: "answer"))],
+                  expectation: .init(kind: .visible, target: .init(identifier: "next"))),
+        ], completion: .init(kind: .visible, target: .init(identifier: "complete")))
+        let fixture = Fixture([
+            observation("interstitial", [node("continue", id: "continue", label: "Continue")]),
+            observation("complete", [node("complete", id: "complete")]),
+        ])
+        fixture.selections = [.action("n0")]
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.continuedFrom, .pageChanged)
+        XCTAssertEqual(fixture.actions, [.tap(ref: "continue")])
+        XCTAssertEqual(fixture.chooseCount, 1, "Off-plan candidates always go through Jev")
+        XCTAssertEqual(fixture.requireUnchangedObservations, [true])
+    }
+
+    func testBudgetsAllowLongerGoalRuns() throws {
+        let completion = IOSPhoneGoalExpectation(kind: .visible, target: .init(identifier: "done"))
+        XCTAssertEqual(IOSPhoneGoalRequest(goal: "g", bundleID: "app.test", completion: completion).maxSteps, 15)
+        XCTAssertNoThrow(try IOSPhoneGoalRequest(goal: "g", bundleID: "app.test", completion: completion,
+                                                 maxSteps: 30).validate())
+        XCTAssertThrowsError(try IOSPhoneGoalRequest(goal: "g", bundleID: "app.test", completion: completion,
+                                                     maxSteps: 31).validate())
+        XCTAssertEqual(IOSPhoneGoalLoop.timeBudgetSeconds, 180)
+    }
+
+    func testTimeBudgetIsOneHundredEightySeconds() async {
+        for elapsed: TimeInterval in [179, 180] {
+            let fixture = Fixture([observation("initial", [node("ref", id: "search"), node("ref-alternative", id: "alternate-search")]),
+                                   observation("results", [node("results", id: "results")])])
+            fixture.onChoose = { fixture.time += elapsed }
+            let result = await fixture.loop().run(branchingRequest())
+            XCTAssertEqual(result.reasonCode, elapsed < 180 ? .completed : .timeBudgetExhausted)
+        }
+    }
+
+    // MARK: Final-commit scope and Jev failure reporting
+
+    func testMessageListRowsAndNotificationTextAreNeverWithheld() {
+        // Real labels from a 小米办公 conversation list that were wrongly withheld.
+        let notice = "授权操作通知"
+        let rejected = "你发起的 “企业自建应用发布申请” 被孙笑月拒绝"
+        XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit(notice))
+        XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit(rejected))
+        let screen = observation("conversations", [
+            node("row-notice", id: "", type: "XCUIElementTypeCell", label: notice, y: 120, x: 0, width: 402, height: 72),
+            node("row-rejected", id: "", type: "XCUIElementTypeCell", label: rejected, y: 200, x: 0, width: 402, height: 72),
+            node("text-notice", id: "", type: "XCUIElementTypeStaticText", label: notice, y: 290, x: 72, width: 220, height: 22),
+            node("text-rejected", id: "", type: "XCUIElementTypeStaticText", label: rejected, y: 330, x: 72, width: 300, height: 22),
+            node("button-notice", id: "", type: "XCUIElementTypeButton", label: notice, y: 380, x: 0, width: 402, height: 72),
+            node("group", id: "", type: "XCUIElementTypeCell", label: "李晨, 邓璐良, 刘剑崑", y: 460, x: 0, width: 402, height: 72),
+            node("delete-row", id: "", type: "XCUIElementTypeCell", label: "删除", y: 540, x: 0, width: 402, height: 60),
+            node("allow-switch", id: "", type: "XCUIElementTypeSwitch", label: "允许通知", y: 610, x: 300, width: 60, height: 32),
+        ])
+        let set = IOSPhoneGoalLoop.liveCandidateSet(in: screen)
+        XCTAssertEqual(set.withheld, [], "Rows, text, switches and long labels are navigation, not commits")
+        XCTAssertEqual(set.candidates.map(\.action), [
+            "row-notice", "row-rejected", "text-notice", "text-rejected", "button-notice", "group", "delete-row",
+            "allow-switch",
+        ].map { PhoneAction.tap(ref: $0) })
+    }
+
+    func testGenuineCommitButtonsAreWithheld() {
+        let labels = ["发送", "Send", "发布", "确认支付", "删除", "登录", "允许", "立即支付", "确认删除", "Post", "Sign in"]
+        for label in labels + ["Confirm & Pay", "deleteButton", "Log in with Apple"] {
+            XCTAssertTrue(IOSPhoneGoalLoop.isFinalCommit(label), label)
+        }
+        for label in ["Posts", "Send feedback to the team about this article", "发送验证码", "授权管理设置页面说明",
+                      "Don’t Allow", "Display"] {
+            XCTAssertFalse(IOSPhoneGoalLoop.isFinalCommit(label), label)
+        }
+        var nodes = labels.enumerated().map { offset, label in
+            node("b\(offset)", id: "", label: label, y: Double(60 + offset * 50), x: 300, width: 80, height: 40)
+        }
+        // Icon buttons exposed as small Other/Image/StaticText nodes still count.
+        nodes.append(node("icon-send", id: "", type: "XCUIElementTypeOther", label: "发送", y: 700, x: 340, width: 44, height: 44))
+        nodes.append(node("text-send", id: "", type: "XCUIElementTypeStaticText", label: "Send", y: 760, x: 340, width: 44, height: 24))
+        nodes.append(node("id-send", id: "sendButton", label: nil, y: 800, x: 20, width: 44, height: 44))
+        // A large container that happens to carry the label is not a button.
+        nodes.append(node("panel", id: "", type: "XCUIElementTypeOther", label: "发布", y: 20, x: 0, width: 402, height: 30))
+        nodes.append(node("back", id: "", label: "返回", y: 20, x: 0, width: 60, height: 30))
+        let set = IOSPhoneGoalLoop.liveCandidateSet(in: observation("compose", nodes))
+        XCTAssertEqual(set.withheld, labels + ["发送", "Send", "sendButton"])
+        XCTAssertEqual(set.candidates.map(\.action), [.tap(ref: "panel"), .tap(ref: "back")])
+    }
+
+    func testJevFailureIsReportedAsJevFailureNotFinalCommit() async {
+        let request = IOSPhoneGoalRequest(goal: "打开群聊「李晨, 邓璐良, 刘剑崑」", bundleID: "app.test",
+                                          completion: .init(kind: .visible, target: .init(identifier: "chat")))
+        let screen = { (id: String) in
+            self.observation(id, [self.node("\(id):back", id: "back", label: "Back"),
+                                  self.node("\(id):send", id: "send", label: "Send", x: 300)])
+        }
+        for (reason, code) in [("request_too_large", IOSPhoneGoalLoop.ReasonCode.jevFailed),
+                               ("state_too_large", .jevFailed), ("http_401", .jevFailed),
+                               ("mode_off", .jevUnavailable), ("budget_exhausted", .jevUnavailable),
+                               ("scope_not_allowed", .jevUnavailable)] {
+            let fixture = Fixture([screen("list")])
+            fixture.selections = [.handback(reason)]
+            let result = await fixture.loop().run(request)
+            XCTAssertEqual(result.reasonCode, code, reason)
+            XCTAssertEqual(result.jevReason, reason)
+            XCTAssertTrue(result.reason.contains(reason), result.reason)
+            XCTAssertEqual(result.withheldFinalActions, ["Send"], "Withheld controls are still reported")
+            XCTAssertTrue(fixture.actions.isEmpty)
+            XCTAssertEqual(fixture.chooseCount, 1, "\(reason) is not transient and is not retried")
+        }
+
+        // A transient failure is re-read and retried, then reported as a Jev failure.
+        let transient = Fixture([screen("t0"), screen("t1"), screen("t2")])
+        transient.selections = [.handback("timeout"), .handback("timeout"), .handback("timeout")]
+        let timedOut = await transient.loop().run(request)
+        XCTAssertEqual(timedOut.reasonCode, .jevFailed)
+        XCTAssertEqual(timedOut.jevReason, "timeout")
+        XCTAssertEqual(transient.chooseCount, 3)
+        XCTAssertEqual(transient.waitCount, 2)
+        XCTAssertTrue(transient.actions.isEmpty)
+
+        let recovered = Fixture([screen("r0"), screen("r1"), observation("chat", [node("chat", id: "chat")])])
+        recovered.selections = [.handback("timeout"), .action("n0")]
+        let completed = await recovered.loop().run(request)
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(recovered.actions, [.tap(ref: "r1:back")])
+    }
+
+    func testSequenceJevFailureHandsBackWithoutContinuingLive() async {
+        let fixture = Fixture([duplicateWordScreen("question")])
+        fixture.selections = [.handback("budget_exhausted")]
+        let request = IOSPhoneGoalRequest(goal: "选择词块", bundleID: "app.test", steps: [
+            .init(pageAnchor: .init(identifier: "question"),
+                  actions: [.init(action: .tap, target: .init(label: "go"))],
+                  expectation: .init(kind: .visible, target: .init(identifier: "done"))),
+        ], completion: .init(kind: .visible, target: .init(identifier: "done")))
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.reasonCode, .jevUnavailable)
+        XCTAssertEqual(result.jevReason, "budget_exhausted")
+        XCTAssertNil(result.continuedFrom)
+        XCTAssertEqual(fixture.chooseCount, 1)
+        XCTAssertTrue(fixture.actions.isEmpty)
+    }
+
+    func testCandidatesCarryTheirNodeIndexToJev() {
+        let screen = observation("browse", [
+            node("list", id: "list", type: "XCUIElementTypeTable", label: nil, y: 100, x: 0, width: 402, height: 700),
+            node("row", id: "row", type: "XCUIElementTypeCell", label: "Wi-Fi", y: 120, depth: 2, x: 0, width: 402),
+        ])
+        let candidates = IOSPhoneGoalLoop.liveCandidates(in: screen).map(\.decisionCandidate)
+        XCTAssertEqual(candidates.first { $0.id == "n1" }?.nodeIndex, 1)
+        XCTAssertEqual(candidates.first { $0.id == "s0u" }?.nodeIndex, 0)
+    }
 }

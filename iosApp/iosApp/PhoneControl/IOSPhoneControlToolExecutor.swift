@@ -18,6 +18,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         self.controller = controller
         self.jev = jev
         self.reportActivity = reportActivity ?? { phase in
+            // Each phone phase is real work: it keeps the run's liveness heartbeat beating
+            // through long goal/flow tool calls that report no model or tool-result progress.
+            BackgroundGenerationKeepAlive.shared.updateProgress(runID, completed: 0)
             await AgentLiveActivityController.shared.updatePhoneControl(runID: runID, phase: phase)
         }
     }
@@ -369,6 +372,10 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     waitForStability: { try await runner.waitForStability() },
                     observeAfterAction: {
                         try await runner.observe(maxNodes: 1_000, includeScreenSize: true, settleBudgetMs: 700)
+                    },
+                    candidateLimit: {
+                        // Jev reserves three options (handback/needs_screenshot/wait) within its 64 cap.
+                        max(1, min(64, IOSSharedSettingsStore.loadPersistedJevSettings().policy.maxCandidates) - 3)
                     }
                 ))
                 let result = await loop.run(request)
@@ -383,6 +390,12 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     "retry_safe": result.steps.isEmpty && result.status != .unknown,
                 ]
                 if let verification = result.verification { fields["verification"] = Self.object(verification) }
+                if !result.withheldFinalActions.isEmpty {
+                    fields["withheld_final_actions"] = Array(result.withheldFinalActions.prefix(10))
+                    fields["withheld_final_actions_hint"] = "这些最终提交/授权控件不会被自动点击；确认符合用户意图后用 phone_act 执行。"
+                }
+                if let continuedFrom = result.continuedFrom { fields["continued_from"] = continuedFrom.rawValue }
+                if let jevReason = result.jevReason { fields["jev_reason"] = jevReason }
                 if request.steps != nil {
                     fields["verified_step_count"] = result.verifiedStepCount
                     if let checked = result.stepVerification { fields["step_verification"] = Self.object(checked) }
@@ -491,7 +504,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             fields["observation_id"] = observation.observationID
             fields["fresh_observation_available"] = reusable
             fields["next_step_hint"] = reusable
-                ? "已返回最新界面及可用 ref；若无需新的截图，不必重复 phone_observe。已确定的有序操作优先 phone_run_flow；需要根据后续界面继续选点时用 phone_run_goal。只规划未完成内容，禁止整体重放。"
+                ? "已返回最新界面及可用 ref；若无需新的截图，不必重复 phone_observe。多步导航、浏览或作答优先 phone_run_goal（只给 goal、bundle_id、completion）；固定小流程用 phone_run_flow。只规划未完成内容，禁止整体重放。"
                 : "该观察已不可用于后续动作；任务仍获授权时重新 phone_observe，禁止重放已派发步骤。"
             parts[0] = UIMessagePart.Text(text: Self.json(fields), metadata: nil)
         }
@@ -513,7 +526,10 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             guard controller.canDispatchAction(runID: runID) else { throw CancellationError() }
             parts.append(UIMessagePart.Text(text: Self.json(["screen_text": Self.object(text)]), metadata: nil))
         }
-        if includeImage { parts.append(Self.imagePart(screenshot.data)) }
+        if includeImage {
+            parts.append(await Self.imagePartOffMain(screenshot.data))
+            try Task.checkCancellation()
+        }
         return parts
     }
 
@@ -738,8 +754,11 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 action = .swipePoint(observationID: try required(input.observationID, "observation_id"),
                                      startX: x, startY: y, endX: endX, endY: endY)
             case "type":
-                keys = ["action", "ref", "text"]
-                action = .type(ref: try required(input.ref, "ref"), text: try required(input.text, "text"))
+                keys = ["action", "ref", "text", "submit"]
+                let text = try required(input.text, "text")
+                // submit presses the keyboard's return key after the text (a chat's 发送 key):
+                // send buttons living on the keyboard are not in the App's accessibility tree.
+                action = .type(ref: try required(input.ref, "ref"), text: input.submit == true ? text + "\u{E007}" : text)
             case "clear":
                 keys = ["action", "ref"]
                 action = .clear(ref: try required(input.ref, "ref"))
@@ -835,8 +854,19 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         }
     }
 
-    static func imagePart(_ png: Data) -> UIMessagePart.Image {
-        UIMessagePart.Image(url: "data:image/png;base64,\(png.base64EncodedString())", metadata: nil)
+    /// Screenshot sent to the model: downscaled JPEG (see IOSPhoneScreenshotEncoder);
+    /// the original PNG is kept only when re-encoding fails or would not shrink it.
+    /// Off the main actor: decoding and re-encoding a full-resolution screenshot takes tens of ms.
+    static func imagePartOffMain(_ png: Data) async -> UIMessagePart.Image {
+        let url = await Task.detached(priority: .userInitiated) { modelImageURL(png) }.value
+        return UIMessagePart.Image(url: url, metadata: nil)
+    }
+
+    nonisolated static func modelImageURL(_ png: Data) -> String {
+        if let encoded = IOSPhoneScreenshotEncoder.encodeForModel(png), encoded.data.count < png.count {
+            return encoded.dataURL
+        }
+        return "data:image/png;base64,\(png.base64EncodedString())"
     }
 
     static func actionOutcome(_ result: PhoneActionResult) -> IOSAgentToolOutcome {
@@ -962,9 +992,10 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         let endX: Double?
         let endY: Double?
         let durationMs: Int?
+        let submit: Bool?
         let expectation: IOSPhoneGoalExpectation?
         enum CodingKeys: String, CodingKey {
-            case action, bundleID = "bundle_id", ref, text, direction
+            case action, bundleID = "bundle_id", ref, text, direction, submit
             case observationID = "observation_id", x, y
             case endX = "end_x", endY = "end_y", expectation
             case durationMs = "duration_ms"

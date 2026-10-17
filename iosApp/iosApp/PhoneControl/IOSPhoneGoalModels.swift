@@ -164,6 +164,11 @@ struct IOSPhoneSequenceStep: Codable, Equatable, Sendable {
 }
 
 struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
+    /// Action budget per invocation. A liveness heartbeat keeps long goal runs alive,
+    /// so the loop's own 180-second budget is the effective bound.
+    static let defaultMaxSteps = 15
+    static let maximumSteps = 30
+
     let goal: String
     let bundleID: String
     let actions: [IOSPhoneGoalActionSpec]
@@ -179,7 +184,7 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
     }
 
     init(goal: String, bundleID: String, actions: [IOSPhoneGoalActionSpec],
-         completion: IOSPhoneGoalExpectation, maxSteps: Int = 6) {
+         completion: IOSPhoneGoalExpectation, maxSteps: Int = IOSPhoneGoalRequest.defaultMaxSteps) {
         self.goal = goal
         self.bundleID = bundleID
         self.actions = actions
@@ -196,11 +201,12 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         self.actions = []
         self.steps = steps
         self.completion = completion
-        self.maxSteps = maxSteps ?? steps.count
+        self.maxSteps = maxSteps ?? Self.defaultMaxSteps(for: steps)
         self.usesLiveCandidates = false
     }
 
-    init(goal: String, bundleID: String, completion: IOSPhoneGoalExpectation, maxSteps: Int = 6) {
+    init(goal: String, bundleID: String, completion: IOSPhoneGoalExpectation,
+         maxSteps: Int = IOSPhoneGoalRequest.defaultMaxSteps) {
         self.goal = goal
         self.bundleID = bundleID
         self.actions = []
@@ -217,7 +223,8 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         steps = try container.decodeIfPresent([IOSPhoneSequenceStep].self, forKey: .steps)
         actions = try container.decodeIfPresent([IOSPhoneGoalActionSpec].self, forKey: .actions) ?? []
         completion = try container.decode(IOSPhoneGoalExpectation.self, forKey: .completion)
-        maxSteps = try container.decodeIfPresent(Int.self, forKey: .maxSteps) ?? steps?.count ?? 6
+        maxSteps = try container.decodeIfPresent(Int.self, forKey: .maxSteps)
+            ?? steps.map(Self.defaultMaxSteps(for:)) ?? Self.defaultMaxSteps
         usesLiveCandidates = !container.contains(.actions) && !container.contains(.steps)
     }
 
@@ -237,8 +244,8 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         guard bundleID.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
             throw IOSPhoneGoalValidationError.invalid("bundle_id cannot contain whitespace.")
         }
-        guard (1...12).contains(maxSteps) else {
-            throw IOSPhoneGoalValidationError.invalid("max_steps must be 1–12.")
+        guard (1...Self.maximumSteps).contains(maxSteps) else {
+            throw IOSPhoneGoalValidationError.invalid("max_steps must be 1–\(Self.maximumSteps).")
         }
         if let steps {
             guard actions.isEmpty, (1...12).contains(steps.count) else {
@@ -249,6 +256,11 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
             try Self.validateActions(actions)
         }
         try completion.validate()
+    }
+
+    /// Ordered steps keep room for in-call recovery when the screen deviates from the plan.
+    static func defaultMaxSteps(for steps: [IOSPhoneSequenceStep]) -> Int {
+        min(maximumSteps, max(steps.count, defaultMaxSteps))
     }
 
     static func validateActions(_ actions: [IOSPhoneGoalActionSpec]) throws {

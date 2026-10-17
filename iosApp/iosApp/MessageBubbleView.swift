@@ -59,6 +59,10 @@ struct MessageBubbleView: View {
     var reasoningLevelLabel: String? = nil
     /// One-shot VoiceOver focus target issued after an external image anchor scroll succeeds.
     var imageAccessibilityFocusToolCallID: String? = nil
+    /// Set when this message heads a phone-automation step group (L1 projection):
+    /// the group header renders first; the message's own parts render only when
+    /// the group is expanded.
+    var phoneToolGroup: ChatPhoneToolGroupSummary? = nil
 
     @Environment(IOSWorkspaceStore.self) private var workspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -351,6 +355,36 @@ struct MessageBubbleView: View {
 
     @ViewBuilder
     private var messageParts: some View {
+        Group {
+            if let group = phoneToolGroup {
+                // Phone-step group head: the header always comes first; the head's own
+                // steps (and reasoning) render only when expanded, nested under it.
+                VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
+                    ChatPhoneToolGroupHeader(summary: group)
+                        .id(group.anchorID)
+                    if group.isExpanded {
+                        messagePartRows
+                            .padding(.leading, ChatPhoneToolGroupHeader.expandedStepIndent)
+                    }
+                }
+            } else {
+                messagePartRows
+            }
+        }
+        .sheet(item: $toolDetailTarget) { target in
+            let currentTool = toolPart(toolCallId: target.toolCallId) ?? target.initialTool
+            ChatToolDetailSheet(
+                tool: currentTool,
+                live: currentTool.toolName.contains("subagent_dispatch")
+                    ? SubAgentLiveRegistry.shared.model(forToolCallId: currentTool.toolCallId)
+                    : nil,
+                onOpenSubagentConversation: onOpenSubagentConversation
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var messagePartRows: some View {
         ForEach(Array(message.parts.enumerated()), id: \.offset) { partIndex, part in
             if let textPart = part as? UIMessagePart.Text, !textPart.text.isEmpty {
                 if isUser {
@@ -504,16 +538,6 @@ struct MessageBubbleView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.parts.map(Self.partAnimationKey).joined(separator: "|"))
-        .sheet(item: $toolDetailTarget) { target in
-            let currentTool = toolPart(toolCallId: target.toolCallId) ?? target.initialTool
-            ChatToolDetailSheet(
-                tool: currentTool,
-                live: currentTool.toolName.contains("subagent_dispatch")
-                    ? SubAgentLiveRegistry.shared.model(forToolCallId: currentTool.toolCallId)
-                    : nil,
-                onOpenSubagentConversation: onOpenSubagentConversation
-            )
-        }
     }
 
     private var messagePartsWithAnchorHighlight: some View {

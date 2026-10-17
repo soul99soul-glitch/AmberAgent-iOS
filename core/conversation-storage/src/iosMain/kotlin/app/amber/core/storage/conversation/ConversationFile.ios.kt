@@ -3,11 +3,30 @@ package app.amber.core.storage.conversation
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCObjectVar
+import kotlinx.cinterop.UByteVar
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.convert
+import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import platform.CoreCrypto.CC_SHA256
+import platform.CoreCrypto.CC_SHA256_DIGEST_LENGTH
+import platform.Foundation.NSData
 import platform.Foundation.NSError
+import platform.Foundation.dataWithContentsOfFile
+import platform.posix.EINTR
+import platform.posix.O_CREAT
+import platform.posix.O_TRUNC
+import platform.posix.O_WRONLY
+import platform.posix.close
+import platform.posix.errno
+import platform.posix.fsync
+import platform.posix.memcpy
+import platform.posix.unlink
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSString
 import platform.Foundation.NSUTF8StringEncoding
@@ -113,3 +132,85 @@ internal actual fun ConversationFile.moveTo(destination: ConversationFile) {
 
 private fun NSError?.message(): String =
     this?.localizedDescription ?: "unknown Foundation error"
+
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
+internal actual fun ConversationFile.writeBytesDurably(bytes: ByteArray) {
+    val parentPath = NSString.create(string = path).stringByDeletingLastPathComponent()
+    if (parentPath.isNotEmpty()) ConversationFile(parentPath).mkdirs()
+    val tmpPath = "$path.${kotlin.uuid.Uuid.random()}.tmp"
+    // 0644; the file inherits the container's default data-protection class.
+    val fd = platform.posix.open(tmpPath, O_WRONLY or O_CREAT or O_TRUNC, 0x1A4)
+    if (fd < 0) throw IllegalStateException("Failed to create blob temp file $tmpPath errno=$errno")
+    var committed = false
+    try {
+        var failure: String? = null
+        if (bytes.isNotEmpty()) {
+            bytes.usePinned { pinned ->
+                var offset = 0
+                while (offset < bytes.size) {
+                    val written = platform.posix.write(
+                        fd,
+                        pinned.addressOf(offset),
+                        (bytes.size - offset).convert(),
+                    )
+                    if (written < 0) {
+                        if (errno == EINTR) continue
+                        failure = "write errno=$errno"
+                        break
+                    }
+                    offset += written.toInt()
+                }
+            }
+        }
+        if (failure == null && fsync(fd) != 0) failure = "fsync errno=$errno"
+        if (close(fd) != 0 && failure == null) failure = "close errno=$errno"
+        failure?.let { throw IllegalStateException("Failed to write blob $path: $it") }
+        if (rename(tmpPath, path) != 0) {
+            throw IllegalStateException("Failed to move blob into place $path errno=$errno")
+        }
+        committed = true
+    } finally {
+        if (!committed) unlink(tmpPath)
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun ConversationFile.readBytesOrNull(): ByteArray? {
+    val data = NSData.dataWithContentsOfFile(path) ?: return null
+    val length = data.length.toInt()
+    if (length == 0) return ByteArray(0)
+    val source = data.bytes ?: return null
+    val result = ByteArray(length)
+    result.usePinned { pinned -> memcpy(pinned.addressOf(0), source, data.length) }
+    return result
+}
+
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
+internal actual fun ConversationFile.deleteRecursively(): Boolean {
+    // NSFileManager.removeItemAtPath removes directory trees as well as files.
+    return delete()
+}
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun ConversationFile.listChildNames(): List<String> {
+    if (!exists()) return emptyList()
+    return runCatching {
+        @Suppress("UNCHECKED_CAST")
+        (NSFileManager.defaultManager.contentsOfDirectoryAtPath(path, error = null) as? List<String>).orEmpty()
+    }.getOrDefault(emptyList())
+}
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun sha256Hex(bytes: ByteArray): String = memScoped {
+    val digest = allocArray<UByteVar>(CC_SHA256_DIGEST_LENGTH)
+    if (bytes.isEmpty()) {
+        CC_SHA256(null, 0u, digest)
+    } else {
+        bytes.usePinned { pinned -> CC_SHA256(pinned.addressOf(0), bytes.size.convert(), digest) }
+    }
+    buildString(CC_SHA256_DIGEST_LENGTH * 2) {
+        for (i in 0 until CC_SHA256_DIGEST_LENGTH) {
+            append(digest[i].toInt().toString(16).padStart(2, '0'))
+        }
+    }
+}

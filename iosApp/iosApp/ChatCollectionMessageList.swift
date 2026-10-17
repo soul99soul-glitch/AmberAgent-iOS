@@ -118,10 +118,12 @@ final class NativeTimelineProjectionCache {
         streamedMessageIDs: Set<String>,
         renderStateStore: ChatRenderStateStore,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo?,
+        expandedPhoneToolGroupIDs: Set<String> = [],
         contentHashProvider: (ChatMessageRowModel, Bool) -> Int
     ) -> NativeTimelineProjection {
         let lastID = messages.last.map(ChatMessageProjector.messageId(for:))
         let key = Self.structuralKey(
+            expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs,
             configurationIssue: configurationIssue,
             isGenerationActive: isGenerationActive,
             isLoading: isLoading,
@@ -167,7 +169,8 @@ final class NativeTimelineProjectionCache {
             streamedMessageIDs: streamedMessageIDs,
             renderStateStore: renderStateStore,
             variantInfoProvider: variantInfoProvider,
-            contentHashProvider: contentHashProvider
+            contentHashProvider: contentHashProvider,
+            expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs
            ) {
             self.cachedProjection = increment
             if let last = increment.entries.last(where: { $0.kind == .message }),
@@ -198,7 +201,8 @@ final class NativeTimelineProjectionCache {
                generativeUiSettingSignature: generativeUiSettingSignature,
                renderStateRevision: renderStateRevision, reasoningLevelLabel: reasoningLevelLabel,
                streamedMessageIDs: streamedMessageIDs, renderStateStore: renderStateStore,
-               variantInfoProvider: variantInfoProvider, contentHashProvider: contentHashProvider
+               variantInfoProvider: variantInfoProvider, contentHashProvider: contentHashProvider,
+               expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs
            ) {
             self.cachedProjection = increment
             rememberContentIdentities(in: increment)
@@ -223,7 +227,8 @@ final class NativeTimelineProjectionCache {
             renderStateStore: renderStateStore,
             variantInfoProvider: variantInfoProvider,
             contentHashProvider: contentHashProvider,
-            startIndex: startIndex
+            startIndex: startIndex,
+            expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs
         )
         cachedProjection = projection
         structuralKey = key
@@ -258,6 +263,30 @@ final class NativeTimelineProjectionCache {
         }
     }
 
+    /// Tool-call anchors hidden inside collapsed phone-step groups, mapped to the
+    /// group id that must expand before the anchor exists. On demand (anchor
+    /// requests only).
+    func collapsedPhoneToolGroupIDsByAnchor() -> [String: String] {
+        guard let entries = cachedProjection?.entries else { return [:] }
+        var groupIDs: [String: String] = [:]
+        for entry in entries {
+            guard let role = entry.phoneToolGroup, let message = entry.message,
+                  let messageID = entry.messageId else { continue }
+            let isExpanded: Bool
+            switch role {
+            case let .head(summary): isExpanded = summary.isExpanded
+            case let .member(_, expanded): isExpanded = expanded
+            }
+            guard !isExpanded else { continue }
+            for part in message.parts {
+                guard let tool = part as? UIMessagePart.Tool,
+                      ChatPhoneToolGrouping.isPhoneTool(tool.toolName) else { continue }
+                groupIDs[ChatToolCallAnchorTarget.id(messageID: messageID, toolCallID: tool.toolCallId)] = role.groupID
+            }
+        }
+        return groupIDs
+    }
+
     func reset() {
         cachedProjection = nil
         structuralKey = ""
@@ -270,6 +299,7 @@ final class NativeTimelineProjectionCache {
     }
 
     private static func structuralKey(
+        expandedPhoneToolGroupIDs: Set<String>,
         configurationIssue: ChatConfigurationIssue?,
         isGenerationActive: Bool,
         isLoading: Bool,
@@ -289,7 +319,9 @@ final class NativeTimelineProjectionCache {
             "boundaries=\(contextCompactBoundaries.map { $0.id + "@" + $0.afterMessageId }.joined(separator: ","))",
             "display=\(displaySettingSignature)",
             "generative=\(generativeUiSettingSignature)",
-            "reasoning=\(reasoningLevelLabel ?? "")"
+            "reasoning=\(reasoningLevelLabel ?? "")",
+            // Expanding/collapsing a phone-step group legitimately changes row content once.
+            "phoneGroups=\(expandedPhoneToolGroupIDs.sorted().joined(separator: ","))"
         ].joined(separator: "||")
     }
 }
@@ -350,6 +382,7 @@ struct NativeChatTimelineView: View {
     @State private var historyRevealAnchor: HistoryRevealAnchor?
     @State private var historyBoundaryIDs: Set<String> = []
     @State private var laidOutHistoryFirstMessageID: String?
+    @State private var expandedPhoneToolGroupIDs = ChatPhoneToolGroupExpansionStore.shared.expandedIDs
 
     var body: some View {
         let messages = messagesProvider()
@@ -386,7 +419,8 @@ struct NativeChatTimelineView: View {
             reasoningLevelLabel: reasoningLevelLabel,
             streamedMessageIDs: effectiveStreamedMessageIDs,
             renderStateStore: renderStateStore,
-            variantInfoProvider: variantInfoProvider
+            variantInfoProvider: variantInfoProvider,
+            expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs
         ) { [contentHashCache] row, isStreamingLayout in
             isStreamingLayout
                 ? contentHashCache.streamingTailLayoutToken(for: row)
@@ -409,7 +443,9 @@ struct NativeChatTimelineView: View {
                     // keeps the existing live-tail and bottom-follow geometry stable.
                     ForEach(projection.entries) { entry in
                         let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
-                        let topSpacing: CGFloat = entry.id == projection.entries.first?.id ? 0 : (
+                        // Collapsed phone-step members occupy no space; the group head is the row.
+                        let topSpacing: CGFloat = entry.id == projection.entries.first?.id ||
+                            entry.phoneToolGroup?.isCollapsedMember == true ? 0 : (
                             entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
                         )
                         if isHistoryBoundary {
@@ -446,6 +482,7 @@ struct NativeChatTimelineView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
                 .padding(.bottom, 28)
+                .environment(\.chatPhoneToolGroupToggle, togglePhoneToolGroup)
                 .scrollTargetLayout()
                 .onGeometryChange(for: String?.self) { _ in
                     projection.entries.first(where: { $0.kind == .message })?.messageId
@@ -631,6 +668,10 @@ struct NativeChatTimelineView: View {
             .onChange(of: messageAnchor) { _, _ in
                 scrollToMessageAnchorIfAvailable()
             }
+            .onChange(of: expandedPhoneToolGroupIDs) { _, _ in
+                // A pending anchor into a just-expanded phone-step group can now land.
+                scrollToMessageAnchorIfAvailable()
+            }
             .onChange(of: scrollToBottomTrigger) { _, trigger in
                 consumeExternalScrollToBottomTriggerIfNeeded(trigger)
             }
@@ -792,6 +833,9 @@ struct NativeChatTimelineView: View {
                 fallbackActive: nativeScrollFallbackReason != nil
               ) else {
             return false
+        }
+        if expandPhoneToolGroupForAnchorIfNeeded(targetID) {
+            return true
         }
 
         historyRevealAnchor = nil
@@ -995,7 +1039,30 @@ struct NativeChatTimelineView: View {
                 )
             }
         case .message:
-            if let message = entry.message,
+            if entry.phoneToolGroup?.isCollapsedMember == true, let messageId = entry.messageId {
+                // Collapsed phone-step member: its head row renders the group. Keep the
+                // entry identity and tail-visibility bookkeeping, build no bubble.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: 0)
+                    .frame(height: 0)
+                    .id(entry.id)
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+                    .modifier(
+                        ChatSwiftUIStreamingTailVisibilityModifier(
+                            active: entry.isLastMessage &&
+                                entry.role == MessageRole.assistant &&
+                                entry.hasEverStreamed,
+                            assumeVisible: !viewportState.liveRenderingFarFromBottom,
+                            onVisibilityChanged: { isVisible in
+                                updateNativeStreamingTailVisibility(
+                                    messageID: messageId,
+                                    isVisible: isVisible
+                                )
+                            }
+                        )
+                    )
+            } else if let message = entry.message,
                let index = entry.index,
                let messageId = entry.messageId {
                 let model = nativeMessageRenderModel(
@@ -1027,6 +1094,8 @@ struct NativeChatTimelineView: View {
                     highlightedMessageAnchor?.conversationID == currentConversationID &&
                         highlightedMessageAnchor?.messageID == messageId
                 )
+                .padding(.leading, entry.phoneToolGroup?.isExpandedMember == true
+                    ? ChatPhoneToolGroupHeader.expandedStepIndent : 0)
                 .saturation(entry.isCompactedHistory ? 0 : 1)
                 .opacity(entry.isCompactedHistory && entry.role != MessageRole.user ? 0.7 : 1)
                 .environment(workspaceStore)
@@ -1110,8 +1179,38 @@ struct NativeChatTimelineView: View {
             renderState: renderState,
             isGenerationActive: isGenerationActive,
             renderIdentity: ChatListSnapshotBuilder.renderIdentityForRow(row, renderState: renderState),
-            liveTailModel: liveTailModel
+            liveTailModel: liveTailModel,
+            phoneToolGroup: entry.phoneToolGroup?.headSummary
         )
+    }
+
+    /// Presentation state: expanding a phone-step group changes its rows' content
+    /// signature exactly once. No animation: the scroll arbiter owns geometry.
+    private func togglePhoneToolGroup(_ groupID: String) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            let expanded = !expandedPhoneToolGroupIDs.contains(groupID)
+            ChatPhoneToolGroupExpansionStore.shared.setExpanded(expanded, groupID: groupID)
+            expandedPhoneToolGroupIDs = ChatPhoneToolGroupExpansionStore.shared.expandedIDs
+        }
+    }
+
+    /// An anchor into a collapsed phone-step group first expands that group
+    /// (presentation toggle, one content-signature change); the anchor request is
+    /// retried once the expanded rows exist (`onChange(of: expandedPhoneToolGroupIDs)`).
+    /// Returns true while the expansion is pending.
+    private func expandPhoneToolGroupForAnchorIfNeeded(_ targetID: String) -> Bool {
+        guard targetID.hasPrefix("tool-call-"),
+              let groupID = projectionCache.collapsedPhoneToolGroupIDsByAnchor()[targetID],
+              !expandedPhoneToolGroupIDs.contains(groupID) else { return false }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            ChatPhoneToolGroupExpansionStore.shared.setExpanded(true, groupID: groupID)
+            expandedPhoneToolGroupIDs = ChatPhoneToolGroupExpansionStore.shared.expandedIDs
+        }
+        return true
     }
 
     private func nativeLiveTailModelIfNeeded(
@@ -3027,6 +3126,8 @@ private struct ChatListMessageRenderModel {
     let isGenerationActive: Bool
     let renderIdentity: String
     let liveTailModel: ChatLiveTailModel?
+    /// Set only on a phone-step group's head row.
+    var phoneToolGroup: ChatPhoneToolGroupSummary? = nil
 }
 
 private struct NativeTimelineMessageBubble: View, @MainActor Equatable {
@@ -3065,6 +3166,7 @@ private struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.model.variantInfo == rhs.model.variantInfo,
               lhs.model.renderState == rhs.model.renderState,
               lhs.model.renderIdentity == rhs.model.renderIdentity,
+              lhs.model.phoneToolGroup?.signature == rhs.model.phoneToolGroup?.signature,
               lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID
         else { return false }
 
@@ -3148,7 +3250,8 @@ private struct ChatMessageHostedBubble: View {
             liveMarkdownRenderingEnabled: renderState.liveRenderingEnabled,
             frozenMarkdownSnapshot: renderState.frozenMarkdownSnapshot,
             reasoningLevelLabel: reasoningLevelLabel,
-            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID
+            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+            phoneToolGroup: model.phoneToolGroup
         )
     }
 }
@@ -3348,6 +3451,31 @@ final class ChatRenderStateStore {
     }
 }
 
+/// Expanded phone-step groups for this app session, keyed by group id (first
+/// phone toolCallId, globally unique). Presentation state only: the projection
+/// reads it as an input; the timeline view is its single writer.
+@MainActor
+final class ChatPhoneToolGroupExpansionStore {
+    static let shared = ChatPhoneToolGroupExpansionStore()
+    private static let capacity = 256
+
+    private(set) var expandedIDs: Set<String> = []
+    private var order: [String] = []
+
+    func setExpanded(_ expanded: Bool, groupID: String) {
+        if expanded {
+            guard expandedIDs.insert(groupID).inserted else { return }
+            order.append(groupID)
+            if order.count > Self.capacity {
+                expandedIDs.remove(order.removeFirst())
+            }
+        } else {
+            guard expandedIDs.remove(groupID) != nil else { return }
+            order.removeAll { $0 == groupID }
+        }
+    }
+}
+
 /// UIMessage payloads are replaced by the Swift/KMP update paths, but part metadata
 /// is mutable. Capture its dictionary values separately from the message so an
 /// in-place metadata update cannot make an old snapshot appear unchanged.
@@ -3401,10 +3529,11 @@ final class ChatRowContentHashCache {
            ChatMessageContentIdentity.sameMetadata(cached.metadata, metadata) {
             return cached
         }
-        var hasher = Hasher()
-        hasher.combine(String(describing: part))
+        // Never `String(describing: part)`: Kotlin toString() of a phone tool part
+        // serializes its base64 screenshots (100–200 KB each, MBs per row).
+        // ChatPartSignature keeps tool payloads bounded and text parts exact.
         partHashComputationCount &+= 1
-        return PartEntry(part: part, metadata: metadata, hash: hasher.finalize())
+        return PartEntry(part: part, metadata: metadata, hash: ChatPartSignature.hash(part, exactText: true))
     }
 
     func contentHash(for row: ChatMessageRowModel) -> Int {
@@ -3457,11 +3586,11 @@ final class ChatRowContentHashCache {
                 hasher.combine(entry.hash)
             case let image as UIMessagePart.Image:
                 hasher.combine("image")
-                hasher.combine(image.url)
+                ChatPartSignature.combinePayload(image.url, into: &hasher)
             case let document as UIMessagePart.Document:
                 hasher.combine("document")
                 hasher.combine(document.fileName)
-                hasher.combine(document.url)
+                ChatPartSignature.combinePayload(document.url, into: &hasher)
             case let miniApp as UIMessagePart.MiniApp:
                 hasher.combine("mini_app")
                 hasher.combine(miniApp.appId)

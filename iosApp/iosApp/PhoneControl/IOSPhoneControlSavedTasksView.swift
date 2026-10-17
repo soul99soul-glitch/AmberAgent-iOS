@@ -118,6 +118,7 @@ struct IOSPhoneControlSavedTasksView: View {
                 Text(verbatim: action.title).font(.headline)
                     .accessibilityIdentifier("phoneSavedTaskTitle-\(action.id)")
                 Text(verbatim: action.prompt).font(.body).foregroundStyle(AmberTheme.muted)
+                    .lineLimit(3)
                 if action.isTemplate {
                     Text("运行前填写输入").font(.caption).foregroundStyle(AmberTheme.accent)
                 }
@@ -191,7 +192,7 @@ struct IOSPhoneControlSavedTaskEditor: View {
 
     var body: some View {
         savedTaskPage {
-            savedTaskHeader(draft.actionID == nil ? "创建任务" : "编辑任务", backLabel: "取消编辑") { dismiss() }
+            savedTaskHeader(draft.actionID == nil ? "创建任务" : "编辑任务", backLabel: "取消编辑", systemImage: "xmark") { dismiss() }
             ScrollView {
                 VStack(spacing: 16) {
                     AmberFormGroup {
@@ -264,7 +265,7 @@ struct IOSPhoneControlSavedTaskRunInput: View {
 
     var body: some View {
         savedTaskPage {
-            savedTaskHeader("填写任务输入", backLabel: "取消运行") { dismiss() }
+            savedTaskHeader("填写任务输入", backLabel: "取消运行", systemImage: "xmark") { dismiss() }
             ScrollView {
                 VStack(spacing: 16) {
                     AmberFormGroup {
@@ -334,11 +335,13 @@ private func savedTaskPage<Content: View>(@ViewBuilder content: () -> Content) -
     .tint(AmberTheme.accent)
 }
 
+/// 推入页用 chevron.left 返回；sheet 弹层传 "xmark" 关闭（xmark 视觉更重，按 15pt 画）。
 @MainActor
-private func savedTaskHeader(_ title: String, backLabel: String, action: @escaping () -> Void) -> some View {
+private func savedTaskHeader(_ title: String, backLabel: String, systemImage: String = "chevron.left",
+                             action: @escaping () -> Void) -> some View {
     HStack(spacing: 8) {
-        AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: backLabel,
-                               size: 44, symbolSize: 20, action: action)
+        AmberGlassCircleButton(systemImage: systemImage, accessibilityLabel: backLabel,
+                               size: 44, symbolSize: systemImage == "xmark" ? 15 : 20, action: action)
         Spacer(minLength: 0)
         Text(verbatim: title).font(.title2.weight(.bold))
             .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)

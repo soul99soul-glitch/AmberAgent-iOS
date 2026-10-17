@@ -323,6 +323,12 @@ final class ChatKernelRunHost {
             _ = IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
         }
         reportsPhoneWorkProgress = phoneControlClaimed
+        if phoneControlClaimed {
+            // Screenshots, actions and model thinking can each exceed the system's ~30s
+            // progress cadence; without a heartbeat the continued-processing task is
+            // marked stalled and reclaimed as soon as the app is backgrounded.
+            backgroundExecution.enableLivenessHeartbeat(runId)
+        }
         // Preserve the user's raw choice before AUTO is resolved to a model default.
         // Actual phone activity is checked by the engine at each request boundary.
         phoneAutomaticReasoning = phoneControlClaimed
@@ -2918,6 +2924,7 @@ final class ChatKernelRunHost {
         keepaliveHeld = true
         if reportsPhoneWorkProgress {
             backgroundExecution.updateProgress(runId, completed: 0, total: -1)
+            backgroundExecution.enableLivenessHeartbeat(runId)
         }
     }
 

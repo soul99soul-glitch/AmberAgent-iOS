@@ -155,6 +155,9 @@ final class IOSContextCompactionCoordinator {
         additionalHistoryOverhead: (([UIMessage]) -> Int)? = nil,
         onEvent: ((IOSContextCompactionEvent) -> Void)? = nil
     ) async throws -> [UIMessage] {
+        // Request-only: older tool-result images become placeholders before any budgeting,
+        // so compaction plans against what is actually uploaded. Storage is unchanged.
+        let uploadMessages = IOSToolImageRequestBudget.apply(uploadMessages)
         let policy = IOSCompactPolicy(settings.agentRuntime.contextCompaction)
         let contextMessageSize = Int(settings.resolveSessionDefaults(
             assistant: settings.getCurrentAssistant(),
@@ -711,6 +714,9 @@ private extension IOSContextCompactionCoordinator {
         extraWeightedChars: Int,
         systemOverheadText: String
     ) -> Int {
+        // Same image budget as the request; memoized because the gauge re-renders on every
+        // stream delta and keystroke, and reused objects keep the estimate memo hitting.
+        let messages = IOSToolImageRequestBudget.memoizedApply(messages)
         let existingIds = Set(messages.map(messageId))
         let completed = validCompletedCompacts(activeCompacts, existingMessageIds: existingIds)
         let lastAssistant = messages.last { message in
@@ -2033,7 +2039,14 @@ final class ContextTokenEstimateMemo: @unchecked Sendable {
             return document.fileName.count + 80
         case let miniApp as UIMessagePart.MiniApp:
             return miniApp.title.weightedTokenChars + miniApp.description_.weightedTokenChars + 120
-        case is UIMessagePart.Image, is UIMessagePart.Video, is UIMessagePart.Audio:
+        case let image as UIMessagePart.Image:
+            // A missing-blob 1x1 stand-in is not a screenshot; it is sent as short text.
+            if IOSToolImageRequestBudget.isMissingBlobPlaceholder(image) {
+                return IOSToolImageRequestBudget.missingBlobText.weightedTokenChars
+            }
+            // Chars are tokens x 4 throughout this estimator.
+            return IOSImageTokenEstimate.estimatedTokens(url: image.url) * 4
+        case is UIMessagePart.Video, is UIMessagePart.Audio:
             return 4_500
         default:
             return String(describing: part).count

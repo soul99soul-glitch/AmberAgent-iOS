@@ -381,3 +381,174 @@ final class ChatRowContentHashCacheTests: XCTestCase {
         )
     }
 }
+
+/// Task C contract: row/part signatures are bounded (never stringify base64 tool
+/// payloads) yet still change whenever height-affecting tool content changes.
+final class ChatPartSignatureTests: XCTestCase {
+    private func row(_ parts: [UIMessagePart], id: KotlinUuid = KotlinUuid.companion.random()) -> ChatMessageRowModel {
+        let message = UIMessage(id: id, role: MessageRole.assistant, parts: parts, annotations: [],
+            createdAt: chatNowLocalDateTime(), finishedAt: nil, modelId: nil, usage: nil, translation: nil)
+        let messageId = ChatMessageProjector.messageId(for: message)
+        return ChatMessageRowModel(rowId: messageId, messageId: messageId, message: message, role: message.role,
+            parts: message.parts, index: 0, isLast: true, isStreaming: false, hasEverStreamed: false,
+            canAnimateInsertion: false)
+    }
+
+    private func base64Payload(seed: Int, length: Int) -> String {
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+        var generator = seed &* 2_654_435_761 | 1
+        var characters = [Character]()
+        characters.reserveCapacity(length)
+        for _ in 0..<length {
+            generator = generator &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            characters.append(alphabet[Int((UInt64(bitPattern: Int64(generator)) >> 33) % 64)])
+        }
+        return "data:image/png;base64," + String(characters)
+    }
+
+    private func phoneTool(
+        _ id: String,
+        output: [UIMessagePart],
+        approval: ToolApprovalState = ToolApprovalState.Auto.shared,
+        input: String = #"{"action":"tap","ref":"r1"}"#
+    ) -> UIMessagePart.Tool {
+        UIMessagePart.Tool(toolCallId: id, toolName: "phone_act", input: input, output: output,
+            approvalState: approval, streamIndex: nil, metadata: nil)
+    }
+
+    private func cpuMilliseconds(_ body: () -> Void) -> Double {
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        body()
+        return Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
+    }
+
+    /// ~20 MB of screenshots (the verified automation-conversation size) must not be
+    /// stringified, bridged in full or hashed in full on conversation open.
+    func testHugeScreenshotOutputsAreNotStringifiedWhenSigning() {
+        let payload = base64Payload(seed: 1, length: 200_000)
+        let tools: [UIMessagePart] = (0..<100).map { index in
+            phoneTool("phone-\(index)", output: [
+                UIMessagePart.Text(text: #"{"outcome":"completed","fresh_observation_available":true}"#, metadata: nil),
+                UIMessagePart.Image(url: payload, metadata: nil)
+            ])
+        }
+        let fullRow = row(tools)
+
+        let legacySample = Array(tools.prefix(5))
+        let legacyMs = cpuMilliseconds {
+            var hasher = Hasher()
+            for part in legacySample { hasher.combine(String(describing: part)) }
+            _ = hasher.finalize()
+        }
+
+        let cache = ChatRowContentHashCache()
+        var hash = 0
+        let contentMs = cpuMilliseconds { hash = cache.contentHash(for: fullRow) }
+        let tailMs = cpuMilliseconds { _ = ChatRowContentHashCache().streamingTailLayoutToken(for: fullRow) }
+        let planMs = cpuMilliseconds {
+            _ = ChatTimelinePlanner.build(messages: [fullRow.message], event: .conversationLoaded)
+        }
+        print("[PERF-SIGNATURE] 100 tools x 200KB: content=\(contentMs)ms tail=\(tailMs)ms plan=\(planMs)ms; legacy toString for 5 tools=\(legacyMs)ms")
+
+        XCTAssertNotEqual(hash, 0)
+        XCTAssertEqual(cache.partHashComputationCount, 100)
+        // Signing all 100 tools must be cheaper than stringifying just 5 of them.
+        XCTAssertLessThan(contentMs, legacyMs, "content hash must not scale with base64 payload size")
+        XCTAssertLessThan(tailMs, legacyMs, "streaming tail token must not scale with base64 payload size")
+        XCTAssertLessThan(planMs, legacyMs, "render tokens must not walk base64 graphemes")
+        XCTAssertLessThan(contentMs, 250, "bounded signing of 20 MB of screenshots")
+    }
+
+    func testToolSignatureChangesWithHeightAffectingContentAndIsStableForIdenticalContent() {
+        func hash(_ part: UIMessagePart) -> Int {
+            ChatRowContentHashCache().contentHash(for: row([part], id: KotlinUuid.companion.random()))
+        }
+        func partHash(_ part: UIMessagePart) -> Int { ChatPartSignature.hash(part, exactText: true) }
+
+        let pending = phoneTool("p1", output: [])
+        let completed = phoneTool("p1", output: [UIMessagePart.Text(text: #"{"status":"success"}"#, metadata: nil)])
+        let failedSameLength = phoneTool("p1", output: [UIMessagePart.Text(text: #"{"status":"failed_"}"#, metadata: nil)])
+        XCTAssertNotEqual(partHash(pending), partHash(completed), "output arriving changes the signature")
+        XCTAssertNotEqual(partHash(completed), partHash(failedSameLength), "same-length status change must invalidate")
+
+        let awaiting = phoneTool("p1", output: [], approval: ToolApprovalState.Pending.shared)
+        XCTAssertNotEqual(partHash(pending), partHash(awaiting), "approval state changes the signature")
+
+        let longError = String(repeating: "e", count: 9_000)
+        let errorA = phoneTool("p1", output: [UIMessagePart.Text(text: longError + "A", metadata: nil)])
+        let errorB = phoneTool("p1", output: [UIMessagePart.Text(text: longError + "B", metadata: nil)])
+        XCTAssertNotEqual(partHash(errorA), partHash(errorB), "large error text change at the tail is detected")
+
+        let shotA = phoneTool("p1", output: [UIMessagePart.Image(url: base64Payload(seed: 7, length: 150_000), metadata: nil)])
+        let shotB = phoneTool("p1", output: [UIMessagePart.Image(url: base64Payload(seed: 8, length: 150_000), metadata: nil)])
+        XCTAssertNotEqual(partHash(shotA), partHash(shotB), "same-size screenshots with different bytes differ")
+
+        // Two separately constructed snapshots of the same content sign equally.
+        let shotACopy = phoneTool("p1", output: [UIMessagePart.Image(url: base64Payload(seed: 7, length: 150_000), metadata: nil)])
+        XCTAssertEqual(partHash(shotA), partHash(shotACopy))
+        XCTAssertEqual(partHash(completed), partHash(
+            phoneTool("p1", output: [UIMessagePart.Text(text: #"{"status":"success"}"#, metadata: nil)])))
+
+        // Same message id, replacement snapshots through the row cache.
+        let cache = ChatRowContentHashCache()
+        let id = KotlinUuid.companion.random()
+        let first = cache.contentHash(for: row([pending], id: id))
+        let second = cache.contentHash(for: row([completed], id: id))
+        let third = cache.contentHash(for: row([phoneTool("p1", output: [
+            UIMessagePart.Text(text: #"{"status":"success"}"#, metadata: nil)])], id: id))
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(second, third, "identical content must keep the row hash (no spurious relayout)")
+        XCTAssertNotEqual(hash(pending), hash(completed))
+    }
+
+    /// Tool output text is exact up to 64 KB (same-length mid-text change detected);
+    /// beyond that, and for media/base64, it is sampled with bounded work.
+    func testToolOutputTextIsExactUpToLimitAndSampledBeyond() {
+        func tool(_ text: String) -> UIMessagePart.Tool {
+            phoneTool("t", output: [UIMessagePart.Text(text: text, metadata: nil)])
+        }
+        let half = String(repeating: "o", count: 15_000)
+        XCTAssertNotEqual(ChatPartSignature.hash(tool(half + "1" + half), exactText: false),
+                          ChatPartSignature.hash(tool(half + "2" + half), exactText: false),
+                          "30 KB tool text: same-length change in the middle must invalidate")
+        let huge = String(repeating: "x", count: 400_000)
+        var tailHasher = Hasher()
+        let sampledMs = cpuMilliseconds {
+            ChatPartSignature.combineText(huge, into: &tailHasher)
+        }
+        XCTAssertLessThan(sampledMs, 5, "texts above 64 KB are sampled")
+        XCTAssertNotEqual(ChatPartSignature.hash(tool(huge + "a"), exactText: false),
+                          ChatPartSignature.hash(tool(huge + "b"), exactText: false))
+        // `data:` payloads embedded as text are treated as media (sampled), not hashed in full.
+        let payload = base64Payload(seed: 3, length: 50_000)
+        XCTAssertNotEqual(ChatPartSignature.hash(tool(payload), exactText: false),
+                          ChatPartSignature.hash(tool(base64Payload(seed: 4, length: 50_000)), exactText: false))
+    }
+
+    /// Top-level message text keeps exact hashing: a same-length edit in the middle of
+    /// a long message must still invalidate.
+    func testTopLevelTextKeepsExactSignatureForSameLengthEdits() {
+        let prefix = String(repeating: "a", count: 5_000)
+        let suffix = String(repeating: "b", count: 5_000)
+        let lhs = UIMessagePart.Text(text: prefix + "X" + suffix, metadata: nil)
+        let rhs = UIMessagePart.Text(text: prefix + "Y" + suffix, metadata: nil)
+        XCTAssertNotEqual(ChatPartSignature.hash(lhs, exactText: true), ChatPartSignature.hash(rhs, exactText: true))
+    }
+
+    /// prior_tool_receipt.result is parsed once per output snapshot, not per step model.
+    func testPriorToolReceiptParseIsMemoizedInAnalysis() throws {
+        let output = UIMessagePart.Text(text:
+            #"{"status":"handback","prior_tool_receipt":{"kind":"filled","result":"{\"steps\":[\"open: completed\"]}"}}"#,
+            metadata: nil)
+        let tool = UIMessagePart.Tool(toolCallId: "prior-1", toolName: "phone_run_goal", input: "{}",
+            output: [output], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        let analysis = ChatToolOutputFormatter.analysis(for: tool)
+        XCTAssertEqual(analysis.priorToolReceipt?["kind"] as? String, "filled")
+        XCTAssertEqual((analysis.priorToolReceiptResult?["steps"] as? [String])?.first, "open: completed")
+        XCTAssertTrue(ChatToolOutputFormatter.analysis(for: tool) === analysis)
+        let first = ChatPhoneToolPresentation.cached(toolName: tool.toolName, executed: true, analysis: analysis)
+        let second = ChatPhoneToolPresentation.cached(toolName: tool.toolName, executed: true, analysis: analysis)
+        XCTAssertEqual(first.summary, second.summary)
+        XCTAssertEqual(ChatToolStepModel(tool: tool).detail, first.summary)
+    }
+}

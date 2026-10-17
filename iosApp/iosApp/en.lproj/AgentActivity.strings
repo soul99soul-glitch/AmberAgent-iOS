@@ -144,7 +144,7 @@
 "agent.activity.phone.failed" = "Phone step failed";
 "agent.activity.phone.compact.failed" = "Failed";
 "agent.activity.phone.outcomeUnknown" = "Action outcome unknown";
-"agent.activity.phone.compact.outcomeUnknown" = "Unknown";
+"agent.activity.phone.compact.outcomeUnknown" = "Unsure";
 "agent.activity.phone.verifying" = "Checking action result";
 "agent.activity.phone.compact.verifying" = "Check";
 "agent.activity.phone.deciding" = "Choosing next step";
@@ -154,7 +154,7 @@
 
 // Human takeover states contain no task or app content.
 "agent.activity.phone.pausing" = "Handing control to you";
-"agent.activity.phone.compact.pausing" = "Taking over";
+"agent.activity.phone.compact.pausing" = "Handoff";
 "agent.activity.phone.paused" = "You are in control";
 "agent.activity.phone.compact.paused" = "Your turn";
 "agent.activity.phone.resuming" = "Reading the screen to continue";

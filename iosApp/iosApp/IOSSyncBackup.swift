@@ -148,22 +148,29 @@ struct IOSSyncBackup {
             isConversationDocumentName($0.lastPathComponent)
         }
         guard !jsonFiles.isEmpty else { return nil }
-        var zipEntries = try jsonFiles.compactMap { file -> IOSStoredZipArchive.Entry? in
-            let data = try Data(contentsOf: file)
-            // HealthKit data must never enter Amber's local export or remote
-            // CloudKit/WebDAV snapshot. A health tool call makes the whole
-            // conversation private because later assistant text may summarize it.
-            guard !containsHealthToolCall(data) else { return nil }
-            return IOSStoredZipArchive.Entry(name: file.lastPathComponent, data: data)
+        // One conversation at a time: inlined screenshots can make a single document tens
+        // of MB, so each is appended to the archive and released before reading the next.
+        var archive = IOSStoredZipArchive.Writer()
+        var exportedConversationIDs = Set<String>()
+        for file in jsonFiles {
+            try autoreleasepool {
+                let data = try Data(contentsOf: file)
+                // HealthKit data must never enter Amber's local export or remote
+                // CloudKit/WebDAV snapshot. A health tool call makes the whole
+                // conversation private because later assistant text may summarize it.
+                guard !containsHealthToolCall(data) else { return }
+                if let id = conversationID(from: data) { exportedConversationIDs.insert(id) }
+                archive.append(
+                    name: file.lastPathComponent,
+                    data: try selfContainedConversationData(data, fileURL: file)
+                )
+            }
         }
-        guard !zipEntries.isEmpty else { return nil }
+        guard archive.entryCount > 0 else { return nil }
 
         if let threadEdges {
             let storedConversationIDs = Set(jsonFiles.map {
                 $0.deletingPathExtension().lastPathComponent.lowercased()
-            })
-            let exportedConversationIDs = Set(zipEntries.compactMap { entry in
-                conversationID(from: entry.data)
             })
             let eligibleEdges = threadEdges.filter { edge in
                 guard let child = canonicalConversationID(edge.childThreadId),
@@ -173,12 +180,9 @@ struct IOSSyncBackup {
                 return exportedConversationIDs.contains(child)
                     && (exportedConversationIDs.contains(parent) || !storedConversationIDs.contains(parent))
             }
-            zipEntries.append(.init(
-                name: threadEdgesEntry,
-                data: try JSONEncoder().encode(eligibleEdges)
-            ))
+            archive.append(name: threadEdgesEntry, data: try JSONEncoder().encode(eligibleEdges))
         }
-        return try IOSStoredZipArchive.write(entries: zipEntries)
+        return archive.finish()
     }
 
     /// Extracts a conversations bundle (from a restored backup) into the given
@@ -228,6 +232,24 @@ struct IOSSyncBackup {
         } catch {
             throw IOSSyncBackupError.invalidArchive("线程关系 sidecar 无效：\(error.localizedDescription)")
         }
+    }
+
+    /// Conversation files keep large screenshots as `amber-blob://` references into
+    /// the sibling `<id>.blobs/` directory. Backups must stay self-contained and
+    /// restorable by app versions without blob storage, so inline the references
+    /// back to `data:` URLs before zipping. Files without references pass through.
+    /// Throws (failing the whole backup visibly) rather than exporting a document whose
+    /// readable screenshots could not be inlined.
+    private static func selfContainedConversationData(_ data: Data, fileURL: URL) throws -> Data {
+        guard data.range(of: Data("amber-blob://".utf8)) != nil else { return data }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw IOSSyncBackupError.invalidArchive("会话文件不是 UTF-8：\(fileURL.lastPathComponent)")
+        }
+        let inlined = try ConversationBlobsKt.inlineConversationBlobsForExport(
+            conversationFilePath: fileURL.path,
+            documentText: text
+        )
+        return Data(inlined.utf8)
     }
 
     private static func isConversationDocumentName(_ name: String) -> Bool {
@@ -1096,14 +1118,23 @@ private struct IOSStoredZipArchive {
     }
 
     static func write(entries: [Entry]) throws -> Data {
-        var output = Data()
-        var central = Data()
-        var records: [(entry: Entry, crc: UInt32, offset: UInt32)] = []
+        var writer = Writer()
+        for entry in entries { writer.append(name: entry.name, data: entry.data) }
+        return writer.finish()
+    }
 
-        for entry in entries {
-            guard let nameData = entry.name.data(using: .utf8) else { continue }
+    /// Incremental stored-zip writer: each entry's bytes are copied into the output as
+    /// it is appended, so callers can release the source data right away.
+    struct Writer {
+        private var output = Data()
+        private var records: [(name: String, size: UInt32, crc: UInt32, offset: UInt32)] = []
+
+        var entryCount: Int { records.count }
+
+        mutating func append(name: String, data: Data) {
+            guard let nameData = name.data(using: .utf8) else { return }
             let offset = UInt32(output.count)
-            let crc = entry.data.crc32()
+            let crc = data.crc32()
             output.appendUInt32LE(0x04034b50)
             output.appendUInt16LE(20)
             output.appendUInt16LE(0x0800)
@@ -1111,47 +1142,53 @@ private struct IOSStoredZipArchive {
             output.appendUInt16LE(0)
             output.appendUInt16LE(0)
             output.appendUInt32LE(crc)
-            output.appendUInt32LE(UInt32(entry.data.count))
-            output.appendUInt32LE(UInt32(entry.data.count))
+            output.appendUInt32LE(UInt32(data.count))
+            output.appendUInt32LE(UInt32(data.count))
             output.appendUInt16LE(UInt16(nameData.count))
             output.appendUInt16LE(0)
             output.append(nameData)
-            output.append(entry.data)
-            records.append((entry, crc, offset))
+            output.append(data)
+            records.append((name, UInt32(data.count), crc, offset))
         }
 
-        let centralOffset = UInt32(output.count)
-        for record in records {
-            let nameData = Data(record.entry.name.utf8)
-            central.appendUInt32LE(0x02014b50)
-            central.appendUInt16LE(20)
-            central.appendUInt16LE(20)
-            central.appendUInt16LE(0x0800)
-            central.appendUInt16LE(0)
-            central.appendUInt16LE(0)
-            central.appendUInt16LE(0)
-            central.appendUInt32LE(record.crc)
-            central.appendUInt32LE(UInt32(record.entry.data.count))
-            central.appendUInt32LE(UInt32(record.entry.data.count))
-            central.appendUInt16LE(UInt16(nameData.count))
-            central.appendUInt16LE(0)
-            central.appendUInt16LE(0)
-            central.appendUInt16LE(0)
-            central.appendUInt16LE(0)
-            central.appendUInt32LE(0)
-            central.appendUInt32LE(record.offset)
-            central.append(nameData)
+        mutating func finish() -> Data {
+            var central = Data()
+            let centralOffset = UInt32(output.count)
+            for record in records {
+                let nameData = Data(record.name.utf8)
+                central.appendUInt32LE(0x02014b50)
+                central.appendUInt16LE(20)
+                central.appendUInt16LE(20)
+                central.appendUInt16LE(0x0800)
+                central.appendUInt16LE(0)
+                central.appendUInt16LE(0)
+                central.appendUInt16LE(0)
+                central.appendUInt32LE(record.crc)
+                central.appendUInt32LE(record.size)
+                central.appendUInt32LE(record.size)
+                central.appendUInt16LE(UInt16(nameData.count))
+                central.appendUInt16LE(0)
+                central.appendUInt16LE(0)
+                central.appendUInt16LE(0)
+                central.appendUInt16LE(0)
+                central.appendUInt32LE(0)
+                central.appendUInt32LE(record.offset)
+                central.append(nameData)
+            }
+            output.append(central)
+            output.appendUInt32LE(0x06054b50)
+            output.appendUInt16LE(0)
+            output.appendUInt16LE(0)
+            output.appendUInt16LE(UInt16(records.count))
+            output.appendUInt16LE(UInt16(records.count))
+            output.appendUInt32LE(UInt32(central.count))
+            output.appendUInt32LE(centralOffset)
+            output.appendUInt16LE(0)
+            let result = output
+            output = Data()
+            records = []
+            return result
         }
-        output.append(central)
-        output.appendUInt32LE(0x06054b50)
-        output.appendUInt16LE(0)
-        output.appendUInt16LE(0)
-        output.appendUInt16LE(UInt16(records.count))
-        output.appendUInt16LE(UInt16(records.count))
-        output.appendUInt32LE(UInt32(central.count))
-        output.appendUInt32LE(centralOffset)
-        output.appendUInt16LE(0)
-        return output
     }
 
     static func read(data: Data) throws -> [String: Data] {

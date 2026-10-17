@@ -98,12 +98,17 @@ public struct PhoneRunnerRequestTiming: Sendable, Encodable, Equatable {
     /// Runner headers, when supplied. Server-Timing includes the runner's queue wait.
     public let runnerMs: Double?
     public let queuedMs: Double?
+    /// The runner's own phases of at least 20 ms (`X-IPU-<phase>-Ms`, e.g. Island, Covered,
+    /// HitTest), so a slow observation shows where its time went.
+    public let runnerPhasesMs: [String: Double]?
 
-    public init(stage: Stage, durationMs: Double, runnerMs: Double?, queuedMs: Double?) {
+    public init(stage: Stage, durationMs: Double, runnerMs: Double?, queuedMs: Double?,
+                runnerPhasesMs: [String: Double]? = nil) {
         self.stage = stage
         self.durationMs = durationMs
         self.runnerMs = runnerMs
         self.queuedMs = queuedMs
+        self.runnerPhasesMs = runnerPhasesMs
     }
 }
 
@@ -178,9 +183,12 @@ public struct PhoneObservationNode: Sendable, Equatable {
     public let rect: PhoneElementRect
     public let enabled: Bool
     public let focused: Bool
+    /// On a page hidden under a pushed page: still in the accessibility tree, not on screen.
+    /// Covered nodes carry no ref, so no action can target them.
+    public let covered: Bool
 
     public init(ref: String?, depth: Int, type: String, identifier: String?, label: String?,
-                value: String?, rect: PhoneElementRect, enabled: Bool, focused: Bool) {
+                value: String?, rect: PhoneElementRect, enabled: Bool, focused: Bool, covered: Bool = false) {
         self.ref = ref
         self.depth = depth
         self.type = type
@@ -190,6 +198,7 @@ public struct PhoneObservationNode: Sendable, Equatable {
         self.rect = rect
         self.enabled = enabled
         self.focused = focused
+        self.covered = covered
     }
 }
 
@@ -253,10 +262,13 @@ public struct PhoneObservation: Sendable, Equatable {
         let containers: Set<String> = ["XCUIElementTypeApplication", "XCUIElementTypeWindow",
                                        "XCUIElementTypeOther", "XCUIElementTypeGroup"]
         let visibleNodes = nodes.filter { node in
+            guard !node.covered else { return false }
             let hasText = [node.identifier, node.label, node.value].contains { !($0 ?? "").isEmpty }
             return hasText || !containers.contains(node.type) || !node.enabled || node.focused
         }
-        var lines = ["app=\(bundleID) pid=\(processID) observation=\(observationID) backend=\(backend) truncated=\(truncated) nodes=\(nodes.count) displayed=\(visibleNodes.count) omitted=\(nodes.count - visibleNodes.count)"]
+        let covered = nodes.filter(\.covered).count
+        var lines = ["app=\(bundleID) pid=\(processID) observation=\(observationID) backend=\(backend) truncated=\(truncated) nodes=\(nodes.count) displayed=\(visibleNodes.count) omitted=\(nodes.count - visibleNodes.count)"
+            + (covered > 0 ? " covered=\(covered) (a page hidden under the visible one; its elements are not on screen)" : "")]
         for node in visibleNodes {
             let identity = node.identifier.map { " id=\(Self.quoted($0))" } ?? ""
             let label = node.label.map { " label=\(Self.quoted($0))" } ?? ""

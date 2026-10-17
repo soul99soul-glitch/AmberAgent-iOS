@@ -318,12 +318,18 @@ struct ConversationStorageView: View {
         let conversationsDir = documents.appendingPathComponent("conversations")
         var totalBytes: Int64 = 0
         var count = 0
+        // Bytes include everything on disk (screenshot blobs in `<id>.blobs/`, sidecars);
+        // the file count is conversations only: top-level `<uuid>.json` documents.
         if let enumerator = fm.enumerator(at: conversationsDir, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
             for case let url as URL in enumerator {
                 let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
                 if values?.isRegularFile == true, let size = values?.fileSize {
                     totalBytes += Int64(size)
-                    count += 1
+                    if enumerator.level == 1,
+                       url.pathExtension == "json",
+                       UUID(uuidString: url.deletingPathExtension().lastPathComponent) != nil {
+                        count += 1
+                    }
                 }
             }
         }

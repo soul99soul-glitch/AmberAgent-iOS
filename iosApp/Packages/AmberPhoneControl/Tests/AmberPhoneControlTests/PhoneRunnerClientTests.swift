@@ -53,6 +53,39 @@ final class PhoneRunnerClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(fixture.requests.map(\.path), ["/wda/activeAppInfo", "/source", "/wda/activeAppInfo"])
     }
 
+    func testCoveredPageNodesGetNoRefAndStayOutOfTheModelTree() async throws {
+        let source = #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":402,"height":874},"children":[{"type":"XCUIElementTypeOther","isCovered":"1","rect":{"x":0,"y":0,"width":402,"height":874},"children":[{"type":"XCUIElementTypeOther","label":"发送","isCovered":"1","rect":{"x":317,"y":229,"width":80,"height":46}}]},{"type":"XCUIElementTypeCell","label":"群成员","rect":{"x":16,"y":200,"width":370,"height":98}}]}}"#
+        let fixture = Fixture([Fixture.active, .json("GET", "/source", source, headers: [
+            "X-IPU-Pid": "42", "X-IPU-Backend": "private-ax", "X-IPU-Truncated": "0", "X-IPU-Covered": "2",
+        ]), Fixture.active])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe()
+        let send = try XCTUnwrap(observation.nodes.first { $0.label == "发送" })
+        XCTAssertTrue(send.covered)
+        XCTAssertNil(send.ref, "a covered node can never be targeted")
+        let row = try XCTUnwrap(observation.nodes.first { $0.label == "群成员" })
+        XCTAssertFalse(row.covered)
+        XCTAssertNotNil(row.ref)
+        XCTAssertFalse(observation.compactText.contains("发送"))
+        XCTAssertTrue(observation.compactText.contains("群成员"))
+        XCTAssertTrue(observation.compactText.contains("covered=2"))
+    }
+
+    func testInterceptedClickIsUnsentWithItsRunnerCode() async throws {
+        let fixture = Fixture(Fixture.observation + [
+            Fixture.active, .json("POST", "/elements", Fixture.oneElement), Fixture.active,
+            .json("POST", "/element/FRESH/click",
+                  #"{"value":{"error":"element click intercepted","message":"element FRESH is covered by Cell \"群成员\" [16,200,370,98] at its centre; nothing was sent."}}"#,
+                  status: 400, headers: ["X-IPU-Dropped": "1"]),
+        ])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe()
+        let result = await client.act(.tap(ref: try XCTUnwrap(observation.nodes[1].ref)))
+        guard case .unsent(let problem) = result else { return XCTFail("expected unsent, got \(result)") }
+        XCTAssertEqual(problem.runnerCode, "element click intercepted")
+        XCTAssertTrue(problem.wasDroppedBeforeExecution)
+    }
+
     func testFreshUniqueLookupPrecedesOneMutationAndConsumesRef() async throws {
         let fixture = Fixture(Fixture.observation + [
             Fixture.active, .json("POST", "/elements", Fixture.oneElement), Fixture.active,
@@ -942,6 +975,32 @@ final class PhoneRunnerClientTests: XCTestCase, @unchecked Sendable {
             guard case .unsent(let problem) = result else { return XCTFail("Expected unsent") }
             XCTAssertEqual(problem.statusCode, status)
         }
+    }
+
+    func testDroppedStaleClickAllowsReplanningOnlyAfterFreshObservation() async throws {
+        let fixture = Fixture(Fixture.observation + [Fixture.active,
+            .json("POST", "/elements", Fixture.oneElement), Fixture.active,
+            .json("POST", "/element/FRESH/click",
+                  #"{"value":{"error":"stale element reference","message":"gone before any gesture"}}"#,
+                  status: 404, headers: ["X-IPU-Dropped": "1"]),
+        ] + Fixture.observation + [Fixture.active,
+            .json("POST", "/elements", Fixture.oneElement), Fixture.active,
+            .json("POST", "/element/FRESH/click", #"{"value":null}"#),
+        ])
+        let client = try makeClient(fixture)
+        let observation = try await client.observe()
+        let oldRef = try XCTUnwrap(observation.nodes[1].ref)
+        let result = await client.act(.tap(ref: oldRef))
+        guard case .unsent(let problem) = result else { return XCTFail("Expected a pre-gesture refusal") }
+        XCTAssertEqual(problem.runnerCode, "stale element reference")
+        XCTAssertTrue(problem.wasDroppedBeforeExecution)
+        assertUnsent(await client.act(.tap(ref: oldRef)), kind: .staleObservation)
+        XCTAssertEqual(fixture.requests.filter { $0.path == "/element/FRESH/click" }.count, 1)
+
+        let fresh = try await client.observe()
+        let replanned = await client.act(.tap(ref: try XCTUnwrap(fresh.nodes[1].ref)))
+        XCTAssertEqual(replanned, .completed)
+        XCTAssertEqual(fixture.requests.filter { $0.path == "/element/FRESH/click" }.count, 2)
     }
 
     func testStaleElementAfterMutationDispatchDoesNotPromiseNoSideEffect() async throws {
@@ -2024,5 +2083,16 @@ private final class ReplyGate: @unchecked Sendable {
     func release() {
         let pending = lock.withLock { let pending = send; send = nil; return pending }
         pending?()
+    }
+}
+
+final class RunnerPhaseTimingTests: XCTestCase {
+    func testOnlySlowRunnerPhasesAreReported() {
+        let phases = PhoneRunnerClient.runnerPhases(headers: [
+            "X-IPU-Island-Ms": "812.4", "X-IPU-Covered-Ms": "35.06", "X-IPU-HitTest-Ms": "4.0",
+            "X-IPU-Ms": "1200", "X-IPU-Queued-Ms": "300", "X-IPU-Synth-Wait-Ms": "90", "X-IPU-Pid": "42",
+        ])
+        XCTAssertEqual(phases, ["Island": 812.4, "Covered": 35.1])
+        XCTAssertNil(PhoneRunnerClient.runnerPhases(headers: ["X-IPU-HitTest-Ms": "3"]))
     }
 }

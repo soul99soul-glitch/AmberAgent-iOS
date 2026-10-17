@@ -31,7 +31,9 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         func makeKeepAlive(
             systemSubmitRetryDelayNanoseconds: UInt64 = 1_500_000_000,
             isApplicationForeground: @escaping () -> Bool = { true },
-            isAudioKeepAliveEnabled: @escaping () -> Bool = { false }
+            isAudioKeepAliveEnabled: @escaping () -> Bool = { false },
+            now: @escaping () -> Date = Date.init,
+            livenessHeartbeatMaxIdle: TimeInterval = 180
         ) -> BackgroundGenerationKeepAlive {
             BackgroundGenerationKeepAlive(
                 beginBackgroundTask: { [self] name, expiration in
@@ -70,7 +72,9 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
                 isApplicationForeground: isApplicationForeground,
                 audioKeepAlive: audio,
                 locationKeepAlive: location,
-                isAudioKeepAliveEnabled: isAudioKeepAliveEnabled
+                isAudioKeepAliveEnabled: isAudioKeepAliveEnabled,
+                now: now,
+                livenessHeartbeatMaxIdle: livenessHeartbeatMaxIdle
             )
         }
     }
@@ -120,6 +124,89 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
     }
 
     private struct SubmitFailure: Error {}
+
+    // MARK: - liveness heartbeat
+
+    func testLivenessHeartbeatAdvancesIndeterminateProgressBetweenWorkReports() {
+        let spy = SystemSpy()
+        var clock = Date(timeIntervalSince1970: 0)
+        let keepAlive = spy.makeKeepAlive(now: { clock }, livenessHeartbeatMaxIdle: 60)
+        keepAlive.begin("phone", title: "Amber", subtitle: "")
+        keepAlive.updateProgress("phone", completed: 0, total: -1)
+
+        clock += 30
+        XCTAssertTrue(keepAlive.livenessHeartbeatTick("phone"))
+        clock += 25
+        XCTAssertTrue(keepAlive.livenessHeartbeatTick("phone"))
+        XCTAssertEqual(keepAlive.reportedProgress(for: "phone"), 2)
+
+        // A phase report without a new count is still evidence of work.
+        keepAlive.updateProgress("phone", completed: 0, total: -1)
+        XCTAssertEqual(keepAlive.reportedProgress(for: "phone"), 2)
+        clock += 50
+        XCTAssertTrue(keepAlive.livenessHeartbeatTick("phone"))
+        XCTAssertEqual(keepAlive.reportedProgress(for: "phone"), 3)
+    }
+
+    func testHeartbeatLeasesReportADeterminateGrowingTotalToTheSystem() {
+        XCTAssertEqual(BackgroundGenerationKeepAlive.systemTotal(total: -1, completed: 7, heartbeat: true), 107)
+        XCTAssertEqual(BackgroundGenerationKeepAlive.systemTotal(total: -1, completed: 7, heartbeat: false), -1,
+                       "other indeterminate leases keep their semantics")
+        XCTAssertEqual(BackgroundGenerationKeepAlive.systemTotal(total: 4, completed: 2, heartbeat: true), 4)
+        XCTAssertNil(BackgroundGenerationKeepAlive.systemTotal(total: nil, completed: 0, heartbeat: true))
+    }
+
+    func testLivenessHeartbeatPausesWhileIdleAndResumesOnRealWork() {
+        let spy = SystemSpy()
+        var clock = Date(timeIntervalSince1970: 0)
+        let keepAlive = spy.makeKeepAlive(now: { clock }, livenessHeartbeatMaxIdle: 60)
+        keepAlive.begin("phone", title: "Amber", subtitle: "")
+        keepAlive.updateProgress("phone", completed: 0, total: -1)
+
+        clock += 61
+        XCTAssertTrue(keepAlive.livenessHeartbeatTick("phone"), "idle pauses beats but keeps the loop")
+        XCTAssertEqual(keepAlive.reportedProgress(for: "phone"), 0)
+        XCTAssertTrue(keepAlive.holdsLease("phone"), "idle leaves expiry to the system, not to us")
+
+        // E.g. the user hands control back after a long takeover.
+        keepAlive.updateProgress("phone", completed: 0)
+        clock += 10
+        XCTAssertTrue(keepAlive.livenessHeartbeatTick("phone"))
+        XCTAssertEqual(keepAlive.reportedProgress(for: "phone"), 1)
+    }
+
+    func testFailedTransferRestoresLivenessHeartbeat() {
+        let spy = SystemSpy()
+        var clock = Date(timeIntervalSince1970: 0)
+        let keepAlive = spy.makeKeepAlive(now: { clock })
+        keepAlive.begin("phone", title: "Amber", subtitle: "")
+        keepAlive.updateProgress("phone", completed: 2, total: -1)
+        keepAlive.enableLivenessHeartbeat("phone")
+
+        XCTAssertFalse(keepAlive.transfer("phone") { false })
+        XCTAssertTrue(keepAlive.hasLivenessHeartbeat("phone"))
+        clock += 10
+        XCTAssertTrue(keepAlive.livenessHeartbeatTick("phone"))
+        XCTAssertEqual(keepAlive.reportedProgress(for: "phone"), 3)
+        // The restored lease keeps the flag, so a second failed transfer restores it again.
+        XCTAssertFalse(keepAlive.transfer("phone") { false })
+        XCTAssertTrue(keepAlive.hasLivenessHeartbeat("phone"))
+
+        keepAlive.end("phone")
+        XCTAssertFalse(keepAlive.hasLivenessHeartbeat("phone"))
+    }
+
+    func testLivenessHeartbeatStopsAfterLeaseEnds() {
+        let spy = SystemSpy()
+        let keepAlive = spy.makeKeepAlive()
+        keepAlive.begin("phone", title: "Amber", subtitle: "")
+        keepAlive.enableLivenessHeartbeat("phone")
+        XCTAssertTrue(keepAlive.hasLivenessHeartbeat("phone"))
+        keepAlive.end("phone")
+        XCTAssertFalse(keepAlive.hasLivenessHeartbeat("phone"))
+        XCTAssertFalse(keepAlive.livenessHeartbeatTick("phone"))
+        XCTAssertNil(keepAlive.reportedProgress(for: "phone"))
+    }
 
     // MARK: - begin
 

@@ -50,6 +50,17 @@ extension RunnerTests {
       }
     }
 
+    // Collapse only before observations: actions must run against the screen they were planned
+    // from. An app switch is what expands the island, so it re-arms the throttle.
+    if method == "GET",
+       match(parts, "screenshot") != nil || match(parts, "source") != nil || match(parts, "wda/settle") != nil {
+      collapseExpandedIslandIfNeeded()
+    } else if method == "POST",
+              match(parts, "wda/apps/launch") != nil || match(parts, "wda/apps/activate") != nil
+                || match(parts, "wda/homescreen") != nil || match(parts, "url") != nil {
+      lastIslandCheck = .distantPast
+    }
+
     switch method {
     case "GET":
       if match(parts, "status") != nil { return .value(statusValue(), sessionId: Self.sessionID) }
@@ -194,6 +205,52 @@ extension RunnerTests {
     return UINode(raw: root, parent: nil, pid: target.pid)
   }
 
+  /// Collapses Amber's expanded Dynamic Island before a request that reads the screen.
+  /// One SpringBoard read per `islandCheckInterval`; a failed read or swipe never fails the request.
+  func collapseExpandedIslandIfNeeded(now: Date = Date()) {
+    guard now.timeIntervalSince(lastIslandCheck) >= Self.islandCheckInterval else { return }
+    lastIslandCheck = now
+    timed("Island") { collapseExpandedIsland() }
+  }
+
+  private func collapseExpandedIsland() {
+    guard let springBoard = IPURBridge.systemApplicationElement() else { return }
+    let pid = IPURBridge.pid(forAXElement: springBoard)
+    guard pid > 0 else { return }
+    // One hit test under the expanded pill (y 12...103 on hardware) gates the SpringBoard tree
+    // read, which cost ~0.85 s per observation when it ran unconditionally.
+    let screen = windowSizePoints()
+    guard screen.width > 0,
+          let probe = IPURBridge.accessibilityElement(at: CGPoint(x: screen.width / 2, y: 57)),
+          IPURBridge.pid(forAXElement: probe) == pid else { return }
+    let tree = IPURBridge.wdaTree(
+      forAXElement: springBoard, maxDepth: Self.defaultMaxDepth, maxNodes: Self.defaultMaxNodes,
+      extensionCallLimit: 0, rememberKey: nil, includeElements: false)
+    guard let root = tree[IPURTreeRootKey] as? [String: Any] else { return }
+    let title = wdaSettings["amberIslandTitle"] as? String ?? ExpandedIsland.defaultTitle
+    guard let swipe = ExpandedIsland.collapseSwipe(
+      springBoard: UINode(raw: root, parent: nil, pid: pid), title: title, screen: windowSizePoints())
+    else { return }
+    if let error = IPURBridge.synthesizeDrag(from: swipe.from, to: swipe.to, duration: 0.15, pid: 0) {
+      NSLog("ipu-runner: island collapse swipe failed: %@", error)
+      return
+    }
+    NSLog("ipu-runner: collapsed expanded island")
+    Thread.sleep(forTimeInterval: 0.35)  // let the collapse animation clear the top of the screen
+  }
+
+  static let islandCheckInterval: TimeInterval = 2
+
+  /// Before a touch in the top band: an expanded island that re-expanded after the last
+  /// observation swallows it (hardware, 小米办公: the settings page's back button at y≈84 sat
+  /// under the pill, so every back tap and edge swipe there did nothing). One hit test decides.
+  func clearIsland(over point: CGPoint) {
+    guard point.y < 120, let springBoard = IPURBridge.systemApplicationElement(),
+          let hit = IPURBridge.accessibilityElement(at: point),
+          IPURBridge.pid(forAXElement: hit) == IPURBridge.pid(forAXElement: springBoard) else { return }
+    timed("Island") { collapseExpandedIsland() }
+  }
+
   /// SpringBoard's tree when SpringBoard is active but not the chosen foreground app (a banner,
   /// a system sheet over an app), else nil.
   private func springBoardTreeIfRelevant(foregroundPID: Int32) -> UINode? {
@@ -249,6 +306,12 @@ extension RunnerTests {
     let target = foreground()
     let root = try foregroundTree(target)
     let found = try Locator.find(using: using, value: value, root: root, screen: screen)
+    // Same-named controls on a page hidden under the visible one (a pushed page's back button
+    // over the page below) made unique lookups ambiguous; keep the ones reachable on screen.
+    if (2...6).contains(found.count) {
+      let reachable = found.filter { isReachable($0) }
+      if !reachable.isEmpty { return reachable }
+    }
     if !found.isEmpty { return found }
     if let springBoard = springBoardTreeIfRelevant(foregroundPID: target.pid) {
       return try Locator.find(using: using, value: value, root: springBoard, screen: screen)
@@ -258,7 +321,29 @@ extension RunnerTests {
 
   private func findElements(_ request: HTTPRequest, from id: String?) throws -> HTTPResponse {
     let nodes = try findNodes(request, from: id)
-    return .value(nodes.map { ElementReference.make(elements.register($0)) })
+    let found = (try? locator(request)).flatMap { id == nil ? $0 : nil }
+    return .value(nodes.map { node in
+      let registered = elements.register(node)
+      if let found { elements.setLocator(registered, using: found.using, value: found.value) }
+      return ElementReference.make(registered)
+    })
+  }
+
+  /// `freshNode`, or once the element went stale, the single reachable element the same
+  /// locator finds in a fresh tree: a re-rendering list (小米办公's conversation list) replaces
+  /// its row objects between the client's find and its click.
+  private func freshOrRelocated(_ id: String) throws -> UINode {
+    do {
+      return try freshNode(id)
+    } catch let error as RunnerError where error.code == "stale element reference" {
+      guard let found = elements.locator(id) else { throw error }
+      let screen = windowSizePoints()
+      let matches = (try? Locator.find(using: found.using, value: found.value, root: try foregroundTree(), screen: screen)) ?? []
+      let reachable = matches.count > 1 ? matches.filter { isReachable($0) } : matches
+      guard reachable.count == 1 else { throw error }
+      NSLog("ipu-runner: element %@ was stale; relocated by its locator", id)
+      return reachable[0]
+    }
   }
 
   private func findElement(_ request: HTTPRequest, from id: String?) throws -> HTTPResponse {
@@ -316,8 +401,57 @@ extension RunnerTests {
 
   // MARK: - Element actions
 
+  /// What covers `node`'s centre (see `Occlusion`), or nil when a tap there reaches it or the
+  /// hit test cannot tell. `subtree` supplies the target's descendants; the re-read is skipped
+  /// when the hit is the target itself.
+  private func coveringElement(_ node: UINode, ancestors: [UINode], subtree: () -> UINode) -> String? {
+    let screen = windowSizePoints()
+    guard TapBounds.onScreen(node.center, screen),
+          let hit = timed("HitTest", { IPURBridge.accessibilityElement(at: node.center) }) else { return nil }
+    if let target = node.axElement, (hit as AnyObject).isEqual(target) { return nil }
+    let hitPID = IPURBridge.pid(forAXElement: hit)
+    let hitTree = IPURBridge.wdaTree(
+      forAXElement: hit, maxDepth: 1, maxNodes: 1, extensionCallLimit: 0, rememberKey: nil,
+      includeElements: false)
+    guard let raw = hitTree[IPURTreeRootKey] as? [String: Any] else { return nil }
+    return Occlusion.blocker(
+      target: subtree(), ancestors: ancestors, hit: UINode(raw: raw, parent: nil, pid: hitPID),
+      hitIsOtherApp: isOtherApp(hitPID, than: node.pid), screen: screen)
+  }
+
+  /// SpringBoard or another active app. Helper processes (WebContent, keyboards) are not.
+  private func isOtherApp(_ pid: Int32, than target: Int32) -> Bool {
+    guard pid > 0, target > 0, pid != target else { return false }
+    if let springBoard = IPURBridge.systemApplicationElement(),
+       IPURBridge.pid(forAXElement: springBoard) == pid { return true }
+    return IPURBridge.activeApplicationPIDs().contains(NSNumber(value: pid))
+  }
+
+  static func ancestors(of node: UINode) -> [UINode] {
+    var out: [UINode] = []
+    var current = node.parent
+    while let ancestor = current { out.append(ancestor); current = ancestor.parent }
+    return out
+  }
+
+  private func isReachable(_ node: UINode) -> Bool {
+    coveringElement(node, ancestors: Self.ancestors(of: node), subtree: { node }) == nil
+  }
+
+  /// Refuses, before any gesture, when another view covers `node`'s centre.
+  private func ensureReachable(_ node: UINode, id: String) throws {
+    let stored = elements.node(id).map(Self.ancestors(of:)) ?? []
+    guard let blocker = coveringElement(
+      node, ancestors: stored, subtree: { (try? self.freshNode(id, depth: 8)) ?? node })
+    else { return }
+    throw RunnerError.intercepted(
+      "element \(id) is covered by \(blocker) at its centre; nothing was sent. "
+        + "The tree can hold views hidden under the visible page: observe again with a screenshot.")
+  }
+
   /// Taps a point through synthesis, falling back to XCUICoordinate.
   func tapPoint(_ point: CGPoint) throws {
+    clearIsland(over: point)
     let screen = windowSizePoints()
     guard screen.width <= 0 || TapBounds.onScreen(point, screen) else {
       throw RunnerError.invalidArgument(
@@ -329,9 +463,17 @@ extension RunnerTests {
   }
 
   private func clickElement(_ id: String) throws -> HTTPResponse {
-    var node = try freshNode(id)
-    guard node.rect.width > 0, node.rect.height > 0 else {
-      throw RunnerError.failed("element \(id) has an empty frame and cannot be clicked")
+    var node: UINode
+    do {
+      node = try freshOrRelocated(id)
+      guard node.rect.width > 0, node.rect.height > 0 else {
+        throw RunnerError.failed("element \(id) has an empty frame and cannot be clicked")
+      }
+    } catch {
+      // Only this initial read is side-effect free; scrolling and taps below may already act.
+      var response = HTTPResponse.from(error)
+      response.headers["X-IPU-Dropped"] = "1"
+      return response
     }
     // An element below the visible page (a web sheet's link) is scrolled into view first, like
     // XCUIElement's own tap does; still off the screen afterwards is a refusal, never a tap.
@@ -343,6 +485,7 @@ extension RunnerTests {
         throw RunnerError.invalidArgument("element \(id) is off the screen and could not be scrolled into view; nothing was tapped")
       }
     }
+    try ensureReachable(node, id: id)
     try tapPoint(node.center)
     return .value(NSNull())
   }
@@ -351,8 +494,9 @@ extension RunnerTests {
   /// focus to land. `focused` is false when the element never reported focus (web views often
   /// don't): callers then need a keyboard on screen and a value readback before claiming success.
   private func focus(_ id: String) throws -> (node: UINode, focused: Bool) {
-    var node = try freshNode(id)
+    var node = try freshOrRelocated(id)
     if node.isFocused { return (node, true) }
+    try ensureReachable(node, id: id)
     try tapPoint(node.center)
     let deadline = Date().addingTimeInterval(1.0)
     while Date() < deadline {
@@ -457,7 +601,7 @@ extension RunnerTests {
 
   private func setElementValue(_ id: String, _ request: HTTPRequest) throws -> HTTPResponse {
     let body = try request.jsonObject()
-    let node = try freshNode(id)
+    let node = try freshOrRelocated(id)
     // Like WDA: a bare `value` on a picker wheel or slider adjusts it; `text` always types.
     if body["text"] == nil, let value = textArgument(body, preferText: false) {
       if node.type == "XCUIElementTypePickerWheel" {
@@ -571,6 +715,9 @@ extension RunnerTests {
     let node = try freshNode(id)
     let frame = node.rect
     let center = node.center
+    if ["touchAndHold", "tap", "doubleTap", "twoFingerTap"].contains(action) {
+      try ensureReachable(node, id: id)
+    }
     switch action {
     case "touchAndHold":
       let duration = max(0.05, number(body, "duration") ?? 1.0)
@@ -744,7 +891,14 @@ extension RunnerTests {
       let actions = source["actions"] as? [[String: Any]] ?? []
       switch source["type"] as? String {
       case "pointer":
-        paths += try W3CActions.pointerPaths(actions) { try self.freshNode($0).center }
+        let sourcePaths = try W3CActions.pointerPaths(actions) { try self.freshNode($0).center }
+        for path in sourcePaths {
+          if let first = path.first, let x = first["x"] as? Double,
+             let y = first["y"] as? Double {
+            clearIsland(over: CGPoint(x: x, y: y))
+          }
+        }
+        paths += sourcePaths
       case "key":
         for action in actions where action["type"] as? String == "keyDown" {
           keys += action["value"] as? String ?? ""

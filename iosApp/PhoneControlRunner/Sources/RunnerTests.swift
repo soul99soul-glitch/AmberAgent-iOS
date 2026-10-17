@@ -43,6 +43,8 @@ final class RunnerTests: XCTestCase {
   /// Where a request's time went, by part (ms and call count), sent back as X-IPU-<Part>-Ms and
   /// X-IPU-<Part>-Calls. Reset per request.
   var requestTiming: [String: (ms: Double, calls: Int)] = [:]
+  /// Last SpringBoard read for an expanded Dynamic Island (see `collapseExpandedIslandIfNeeded`).
+  var lastIslandCheck = Date.distantPast
 
   /// Times `body` as part `name` of the current request.
   func timed<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
@@ -388,6 +390,39 @@ final class RunnerTests: XCTestCase {
 
   // MARK: - /source
 
+  /// Marks pages hidden under a pushed page (see `CoveredPages`); nil when nothing is stacked or
+  /// the probes cannot tell which page is on top. Costs hit tests only when pages are stacked.
+  func markCoveredPages(_ raw: [String: Any], pid: Int32) -> (tree: [String: Any], count: Int)? {
+    let screen = windowSizePoints()
+    let root = UINode(raw: raw, parent: nil, pid: pid)
+    let pages = CoveredPages.pages(root, screen: screen)
+    guard pages.count >= 2 else { return nil }
+    let probes = [0.3, 0.5, 0.75].map { CGPoint(x: screen.width / 2, y: screen.height * $0) }
+    func hitNode(at point: CGPoint) -> UINode? {
+      guard let hit = IPURBridge.accessibilityElement(at: point), IPURBridge.pid(forAXElement: hit) == pid
+      else { return nil }
+      let tree = IPURBridge.wdaTree(
+        forAXElement: hit, maxDepth: 1, maxNodes: 1, extensionCallLimit: 0, rememberKey: nil,
+        includeElements: false)
+      return (tree[IPURTreeRootKey] as? [String: Any]).map { UINode(raw: $0, parent: nil, pid: pid) }
+    }
+    let hits = probes.compactMap(hitNode(at:))
+    guard let candidates = CoveredPages.covered(root, pages: pages, hits: hits) else { return nil }
+    let covered = candidates.branches.filter { path in
+      guard let page = CoveredPages.node(root, at: path) else { return false }
+      let samples = CoveredPages.samples(page, within: candidates.top, screen: screen)
+      // No sample, no evidence: leave the page visible.
+      return !samples.isEmpty && samples.allSatisfy { sample in
+        guard let hit = hitNode(at: sample.center) else { return false }
+        return Occlusion.blocker(target: sample, ancestors: Self.ancestors(of: sample), hit: hit,
+                                hitIsOtherApp: false, screen: screen) != nil
+      }
+    }
+    guard !covered.isEmpty else { return nil }
+    let count = covered.compactMap { CoveredPages.node(root, at: $0) }.reduce(0) { $0 + 1 + $1.descendants().count }
+    return (CoveredPages.marking(raw, covered: covered), count)
+  }
+
   func source(_ request: HTTPRequest) throws -> HTTPResponse {
     let explicitDepth = request.query["max_depth"].flatMap { Int($0) }
     let maxDepth = max(1, explicitDepth ?? Self.defaultMaxDepth)
@@ -407,8 +442,12 @@ final class RunnerTests: XCTestCase {
         extensionCallLimit: extensionCalls,
         rememberKey: target.pid > 0 ? String(target.pid) : nil
       )
-      if (tree[IPURTreeOkKey] as? Bool) == true, let root = tree[IPURTreeRootKey] {
+      if (tree[IPURTreeOkKey] as? Bool) == true, var root = tree[IPURTreeRootKey] {
         var headers = treeHeaders(tree, backend: "private-ax", pid: target.pid)
+        if let raw = root as? [String: Any], let marked = timed("Covered", { markCoveredPages(raw, pid: target.pid) }) {
+          root = marked.tree
+          headers["X-IPU-Covered"] = String(marked.count)
+        }
         let scanStarted = Date()
         if let alert = alertBesideTree(
           root as? [String: Any], pid: target.pid, scanSpringBoard: request.query["alert_scan"] == "1") {
@@ -574,6 +613,7 @@ final class RunnerTests: XCTestCase {
   func tap(_ request: HTTPRequest) throws -> HTTPResponse {
     let body = try request.jsonObject()
     let point = CGPoint(x: try requiredNumber(body, "x"), y: try requiredNumber(body, "y"))
+    clearIsland(over: point)
     return try gesture("tap", synthesized: { IPURBridge.synthesizeTap(at: point, pid: 0) }) { app in
       coordinate(app, point).tap()
     }
@@ -584,6 +624,7 @@ final class RunnerTests: XCTestCase {
     let start = CGPoint(x: try requiredNumber(body, "x1"), y: try requiredNumber(body, "y1"))
     let end = CGPoint(x: try requiredNumber(body, "x2"), y: try requiredNumber(body, "y2"))
     let duration = max(0.05, (number(body, "duration_ms") ?? 300) / 1000)
+    clearIsland(over: start)
     return try gesture("swipe", synthesized: {
       IPURBridge.synthesizeDrag(from: start, to: end, duration: duration, pid: 0)
     }) { app in
@@ -595,6 +636,7 @@ final class RunnerTests: XCTestCase {
     let body = try request.jsonObject()
     let point = CGPoint(x: try requiredNumber(body, "x"), y: try requiredNumber(body, "y"))
     let duration = max(0.05, (number(body, "duration_ms") ?? 1000) / 1000)
+    clearIsland(over: point)
     return try gesture("longpress", synthesized: {
       IPURBridge.synthesizeLongPress(at: point, duration: duration, pid: 0)
     }) { app in

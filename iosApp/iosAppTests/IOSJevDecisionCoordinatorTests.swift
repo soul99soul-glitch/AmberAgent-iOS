@@ -345,7 +345,10 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
     // MARK: Concurrency
 
     func testPerRunAllowsThreeActiveAndQueuesFourthUntilWaitBudget() async {
-        let box = SettingsBox(makeSettings())
+        var settings = makeSettings()
+        // The mechanism under test; the shipped default is higher (see IOSJevPolicy).
+        settings.policy.activePerRunLimit = 3
+        let box = SettingsBox(settings)
         let gate = continuationGate()
         let transport = JevStubTransport { _ in
             await gate.wait()

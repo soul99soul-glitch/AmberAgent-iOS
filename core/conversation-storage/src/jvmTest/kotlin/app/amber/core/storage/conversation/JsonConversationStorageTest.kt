@@ -79,6 +79,8 @@ class JsonConversationStorageTest {
         val id = Uuid.parse("00000000-0000-0000-0000-000000000008")
         val conversation = sampleConversation(id = id, title = "cached")
         storage.saveConversation(conversation)
+        // The writing instance keeps what it wrote cached; a fresh instance must decode.
+        storage = JsonConversationStorage(tempDir)
 
         var decodeCount = 0
         var decodeThread: Thread? = null

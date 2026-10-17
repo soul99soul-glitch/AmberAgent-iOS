@@ -98,7 +98,7 @@ private struct IOSChatBackgroundUploadPreparer: @unchecked Sendable {
         return try await MainActor.run {
             IOSChatBackgroundRetryMessages(
                 values: try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(
-                    inbox.values,
+                    IOSToolImageRequestBudget.apply(inbox.values),
                     settings: settings,
                     params: params
                 )

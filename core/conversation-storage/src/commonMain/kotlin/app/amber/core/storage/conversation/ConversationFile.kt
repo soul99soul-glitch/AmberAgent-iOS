@@ -64,3 +64,22 @@ fun ConversationFile.child(name: String): ConversationFile =
 
 /** 平台路径分隔符。 */
 expect fun separatorChar(): Char
+
+/**
+ * Durably write [bytes]: temp file in the same directory, fsync, then atomic rename.
+ * Readers observe either the previous file or the complete new one; after return the
+ * data has been handed to stable storage before the name became visible. Throws on failure.
+ */
+internal expect fun ConversationFile.writeBytesDurably(bytes: ByteArray)
+
+/** Read the whole file; missing or unreadable returns null. */
+internal expect fun ConversationFile.readBytesOrNull(): ByteArray?
+
+/** Delete a file or a directory tree. Missing returns false; failure throws. */
+internal expect fun ConversationFile.deleteRecursively(): Boolean
+
+/** Names (not paths) of direct children; non-directory or missing returns empty. */
+internal expect fun ConversationFile.listChildNames(): List<String>
+
+/** Lowercase hex SHA-256 of [bytes]. */
+internal expect fun sha256Hex(bytes: ByteArray): String

@@ -267,10 +267,10 @@ final class IOSPhoneGoalVerificationTests: XCTestCase {
     func testRequestDefaultsAndRejectsInvalidActionCombinationsAndBounds() throws {
         let json = #"{"goal":"打开搜索","bundle_id":"app.test","actions":[{"action":"tap","target":{"label":"搜索"}}],"completion":{"kind":"visible","target":{"label":"搜索结果"}}}"#
         let request = try JSONDecoder().decode(IOSPhoneGoalRequest.self, from: Data(json.utf8))
-        XCTAssertEqual(request.maxSteps, 6)
+        XCTAssertEqual(request.maxSteps, 15)
         XCTAssertNoThrow(try request.validate())
         XCTAssertThrowsError(try IOSPhoneGoalRequest(goal: request.goal, bundleID: request.bundleID,
-                                                    actions: request.actions, completion: request.completion, maxSteps: 13).validate())
+                                                    actions: request.actions, completion: request.completion, maxSteps: 31).validate())
         XCTAssertThrowsError(try IOSPhoneGoalRequest(goal: request.goal, bundleID: request.bundleID,
                                                     actions: Array(repeating: request.actions[0], count: 13),
                                                     completion: request.completion).validate())

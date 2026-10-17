@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
 private val SUMMARY_STORAGE_JSON: Json = JsonInstant
@@ -23,7 +24,8 @@ class ConversationStorageException(
  *
  *   {baseDir}/index.json          # List<ConversationSummary>，派生缓存
  *   {baseDir}/summary-cache-v1.cache # 摘要及正文文件指纹，跨进程复用
- *   {baseDir}/{conversationId}.json   # 完整 Conversation
+ *   {baseDir}/{conversationId}.json   # 完整 Conversation（大图 data URL 换成 amber-blob:// 引用）
+ *   {baseDir}/{conversationId}.blobs/  # 内容寻址的图片字节，见 ConversationBlobs.kt
  *
  * 写策略：每个 save/delete 同时落 {id}.json 与 index.json；index 损坏可从
  * 所有 {id}.json 扫描重建（[rebuildIndex]）。
@@ -50,6 +52,8 @@ class JsonConversationStorage(
      * already owned by IOSConversationStore, so this is only a short recency window.
      */
     private val conversationCache = LinkedHashMap<String, ConversationCacheEntry>()
+    private val blobCodec = ConversationBlobCodec(baseDir)
+    private var didSweepOrphanBlobs = false
 
     internal var beforeUpdateMetadataSaveForTesting: (suspend () -> Unit)? = null
     internal var beforeSummaryDecodeForTesting: (() -> Unit)? = null
@@ -68,6 +72,15 @@ class JsonConversationStorage(
         // writes or observe a partially replaced conversation file.
         withContext(Dispatchers.Default) {
             ensureBaseDir()
+            if (!didSweepOrphanBlobs) {
+                didSweepOrphanBlobs = true
+                runCatching {
+                    blobCodec.sweepOrphanDirectories(
+                        nowEpochSeconds = Clock.System.now().epochSeconds,
+                        minAgeSeconds = ORPHAN_BLOB_DIRECTORY_MIN_AGE_SECONDS,
+                    )
+                }
+            }
             val cached = readIndex()
             if (cached != null) {
                 // index.json is a derived cache. A delete can remove the conversation
@@ -116,26 +129,41 @@ class JsonConversationStorage(
             conversationCache.remove(file.path)
             return null
         }
-        val conversation = runCatching {
+        val decoded = runCatching {
             beforeConversationDecodeForTesting?.invoke()
             JsonInstant.decodeFromString<Conversation>(text)
         }.getOrElse {
             // 单条会话损坏不应让整个列表崩；返回 null 让上层视为「不存在」。
             // 损坏文件可由用户在 Phase 3 UI 上删除恢复。
             null
-        }
-        if (conversation != null && before != null && before == file.fileVersion()) {
+        } ?: run {
             conversationCache.remove(file.path)
-            conversationCache[file.path] = ConversationCacheEntry(before, conversation)
-            while (conversationCache.size > MAX_CONVERSATION_CACHE_ENTRIES) {
-                conversationCache.entries.iterator().next().let { eldest ->
-                    conversationCache.remove(eldest.key)
-                }
-            }
+            return null
+        }
+        // Upper layers always see inline data URLs; blob references never leave storage.
+        val resolved = blobCodec.resolve(decoded)
+        // A conversation with an unresolved blob is never cached, so the next load retries
+        // the read (a transient failure heals) and saves never prune it (no known disk refs).
+        if (!resolved.hadFailures && before != null && before == file.fileVersion()) {
+            putCacheEntry(
+                file.path,
+                ConversationCacheEntry(before, resolved.conversation, resolved.memo, resolved.diskRefs),
+            )
         } else {
             conversationCache.remove(file.path)
         }
-        return conversation
+        return resolved.conversation
+    }
+
+    private fun putCacheEntry(path: String, entry: ConversationCacheEntry) {
+        // LinkedHashMap insertion order is the recency order for this tiny LRU.
+        conversationCache.remove(path)
+        conversationCache[path] = entry
+        while (conversationCache.size > MAX_CONVERSATION_CACHE_ENTRIES) {
+            conversationCache.entries.iterator().next().let { eldest ->
+                conversationCache.remove(eldest.key)
+            }
+        }
     }
 
     @Throws(Throwable::class)
@@ -155,13 +183,71 @@ class JsonConversationStorage(
     }
 
     private fun saveConversationReplacingAllFieldsLocked(conversationToSave: Conversation) {
-        val text = encodeConversation(conversationToSave)
-        conversationFile(conversationToSave.id).writeText(text)
-        // The file is now the source of truth; do not let a pre-write snapshot survive it.
-        conversationCache.remove(conversationFile(conversationToSave.id).path)
+        val file = conversationFile(conversationToSave.id)
+        // Blobs are durably on disk before the JSON that references them is written.
+        // Every caller loads under this mutex first, so a cache entry here mirrors the file
+        // currently on disk (its version was just validated).
+        val previous = conversationCache[file.path]
+        val prepared = blobCodec.externalize(conversationToSave, previousMemo = previous?.blobRefs)
+        val text = encodeConversation(prepared.forDisk)
+        // Drop the pre-write snapshot first so a failed write can never leave it trusted.
+        conversationCache.remove(file.path)
+        file.writeText(text)
+        // Keep what was just written cached under the new fingerprint so the next save's
+        // metadata merge does not re-read and re-decode the file. The size check guards the
+        // stat-after-write window: any other writer that changed the file in between makes
+        // the fingerprint disagree with our bytes, and we fall back to a disk read next time.
+        val version = file.fileVersion()
+        if (!prepared.containsPlaceholder && version != null && version.size == text.utf8ByteCount()) {
+            putCacheEntry(
+                file.path,
+                ConversationCacheEntry(
+                    version,
+                    conversationToSave.asDecodedFromDisk(),
+                    prepared.memo,
+                    prepared.referenced,
+                ),
+            )
+        }
+        // Only after the JSON is committed, and only for blobs the previous JSON referenced:
+        // drop the ones this save deliberately stopped referencing. Placeholders present
+        // means some blob state is unknown, so nothing is deleted.
+        val previousDiskRefs = previous?.diskRefs
+        if (previousDiskRefs != null && !prepared.containsPlaceholder) {
+            runCatching { blobCodec.prune(conversationToSave.id, previousDiskRefs, prepared.referenced) }
+        }
         // The conversation file is canonical; index.json is a derived cache and
         // must not turn an already-committed message write into a false failure.
         runCatching { upsertIndex(conversationToSave.toSummary()) }
+    }
+
+    /** What a disk read would produce for transient (non-serialized) fields. */
+    private fun Conversation.asDecodedFromDisk(): Conversation {
+        val nodes = if (messageNodes.any { it.isFavorite }) {
+            messageNodes.map { if (it.isFavorite) it.copy(isFavorite = false) else it }
+        } else messageNodes
+        return if (newConversation || nodes !== messageNodes) {
+            copy(messageNodes = nodes, newConversation = false)
+        } else this
+    }
+
+    private fun String.utf8ByteCount(): Long {
+        var count = 0L
+        var index = 0
+        while (index < length) {
+            val c = this[index]
+            when {
+                c.code < 0x80 -> count += 1
+                c.code < 0x800 -> count += 2
+                c.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate() -> {
+                    count += 4
+                    index += 1
+                }
+                else -> count += 3
+            }
+            index += 1
+        }
+        return count
     }
 
     @Throws(Throwable::class)
@@ -173,12 +259,17 @@ class JsonConversationStorage(
             }.getOrElse {
                 throw ConversationStorageException("Failed to decode conversation import at index $index", it)
             }
-            conversation to encodeConversation(conversation)
+            conversation
         }
 
         // Preserve last-entry-wins semantics for duplicate IDs, with one backup per file.
-        val replacements = validated.associate { (conversation, text) -> conversation.id to text }
-        if (replacements.isEmpty()) return@withLock
+        val lastById = validated.associateBy { it.id }
+        if (lastById.isEmpty()) return@withLock
+        // Externalizing writes blobs (durably, before any staged JSON references them).
+        // Imports never prune, so a rolled-back import leaves the previous JSON's blobs intact.
+        val replacements = lastById.mapValues { (_, conversation) ->
+            encodeConversation(blobCodec.externalize(conversation, previousMemo = null).forDisk)
+        }
         val batchId = Uuid.random()
         val prepared = mutableListOf<ImportDocument>()
         val committed = mutableListOf<ImportDocument>()
@@ -285,6 +376,9 @@ class JsonConversationStorage(
         ensureBaseDir()
         conversationFile(id).delete()
         conversationCache.remove(conversationFile(id).path)
+        // JSON first, so no surviving document can reference a deleted blob. A leftover
+        // directory is only wasted space and is pruned by any later save of this id.
+        runCatching { blobCodec.deleteAll(id) }
         removeFromIndex(id)
     }
 
@@ -439,9 +533,14 @@ class JsonConversationStorage(
         val summary: ConversationSummary,
     )
 
-    private data class ConversationCacheEntry(
+    private class ConversationCacheEntry(
         val version: ConversationFileVersion,
+        /** Resolved form (inline data URLs), exactly what loadConversation returns. */
         val conversation: Conversation,
+        /** data URL -> blob reference for [conversation]; same String instances, no copy. */
+        val blobRefs: BlobRefMemo,
+        /** Blob names the JSON at [version] references; the only candidates for pruning. */
+        val diskRefs: Set<String>,
     )
 
     // ---- 排序：置顶优先，再按 updateAt 倒序 ----
@@ -467,5 +566,7 @@ class JsonConversationStorage(
         const val INDEX_FILENAME = "index.json"
         const val SUMMARY_CACHE_FILENAME = "summary-cache-v1.cache"
         const val MAX_CONVERSATION_CACHE_ENTRIES = 2
+        /** Blob directories without a conversation are only reclaimed once this old. */
+        const val ORPHAN_BLOB_DIRECTORY_MIN_AGE_SECONDS = 30L * 60L
     }
 }
