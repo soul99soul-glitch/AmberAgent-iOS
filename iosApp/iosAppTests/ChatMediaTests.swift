@@ -80,15 +80,21 @@ final class ChatMediaTests: XCTestCase {
         let tool = UIMessagePart.Tool(toolCallId: "history-search", toolName: "search_web", input: "{}", output: [output],
                                       approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
         let host = UIHostingController(rootView: ChatToolMediaGallery(tool: tool).padding(16))
+        // Compare the media's content proposal before and after attachment; the
+        // simulator's status-bar inset is a separate window-layout input.
+        host.safeAreaRegions = []
         let proposal = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
         let first = host.sizeThatFits(in: proposal)
+        let firstInsets = host.view.safeAreaInsets
         XCTAssertGreaterThan(first.height, 200, "历史搜索图集必须在首帧预留高度")
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 740))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
         try await Task.sleep(for: .milliseconds(250))
-        XCTAssertEqual(host.sizeThatFits(in: proposal).height, first.height, accuracy: 1)
+        let after = host.sizeThatFits(in: proposal)
+        print("MEDIA_HISTORY first=\(first) after=\(after) firstInsets=\(firstInsets) afterInsets=\(host.view.safeAreaInsets)")
+        XCTAssertEqual(after.height, first.height, accuracy: 1)
     }
 
     func testGalleryAndUserImageLayoutMatrix() async throws {
@@ -164,8 +170,13 @@ final class ChatMediaTests: XCTestCase {
         let scroll = try XCTUnwrap(scrollView(in: host.view))
         let before = scroll.contentSize
         XCTAssertGreaterThan(before.height, 400)
-        try await Task.sleep(for: .milliseconds(500))
-        window.layoutIfNeeded()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while Self.tealSampleCount(in: window) < 5 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            window.layoutIfNeeded()
+        }
+        XCTAssertGreaterThanOrEqual(Self.tealSampleCount(in: window), 5,
+                                    "可见的本地图片必须实际显示，不能只验证占位框高度稳定")
         XCTAssertEqual(scroll.contentSize.height, before.height, accuracy: 1)
         XCTAssertLessThanOrEqual(scroll.contentSize.width, 393)
         let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { window.layer.render(in: $0.cgContext) }
@@ -176,6 +187,22 @@ final class ChatMediaTests: XCTestCase {
         attachment.name = "native-timeline-media"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private static func tealSampleCount(in window: UIWindow) -> Int {
+        let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { window.layer.render(in: $0.cgContext) }
+        guard let image = screenshot.cgImage else { return 0 }
+        var pixels = [UInt8](repeating: 0, count: 32 * 32 * 4)
+        pixels.withUnsafeMutableBytes { bytes in
+            guard let context = CGContext(data: bytes.baseAddress, width: 32, height: 32,
+                                          bitsPerComponent: 8, bytesPerRow: 32 * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        return stride(from: 0, to: pixels.count, by: 4).filter {
+            pixels[$0] < 100 && pixels[$0 + 1] > 130 && pixels[$0 + 2] > 130
+        }.count
     }
 
     private static func imageData(size: CGSize) -> Data {

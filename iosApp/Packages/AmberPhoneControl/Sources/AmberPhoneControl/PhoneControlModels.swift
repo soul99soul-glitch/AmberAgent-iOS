@@ -132,6 +132,8 @@ public enum PhoneAction: Sendable, Equatable {
     /// Direction describes the finger movement, not the content movement.
     case swipe(ref: String, direction: PhoneSwipeDirection)
     case home
+    /// 收起屏幕键盘：输入完成后键盘与候选栏会遮住底部控件，且遮挡后坐标失效。
+    case dismissKeyboard
 }
 
 public struct PhoneRunnerStatus: Sendable, Equatable {

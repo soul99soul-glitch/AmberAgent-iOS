@@ -38,3 +38,11 @@
 - Phase 4 唯一一次有限可维护性审查完成，无需新增框架。额外闭环视频音频：接既有 keep-alive suspend/resume owner，同串行后台队列配置播放 session；复用既有 session epoch 防旧 keep-alive 清理停掉新视频，覆盖取消/重试/失败和迟到清理回归。
 - 全部本任务代码冻结，正在执行最终原项目统一验证（17 个受影响测试类，包含项目强制三组 streaming replay/native scroll/viewport）。待保存测试结果、模拟器截图与各 reviewer 的视觉复核；尚未声称真机或真实 provider 验收通过。
 - 并行工作说明：初始 HEAD 为 657976c3，原有通知 WIP 三文件 SHA256 已在本轮工具输出保存，并在外部写入前复核一致。外部任务随后将包含本轮富媒体文件的内容混合提交于 0c746ced，又提交 99233fb0 并继续 PhoneControl 工作。本任务没有执行 commit/push/reset/stash/clean；不回滚外部提交，不覆盖通知、Live Activity 或 PhoneControl 改动。
+
+## 验收记录
+
+- 第一轮模拟器构建完成，17 个测试类实际执行 404 项：398 通过、2 跳过、4 失败。搜索、MCP、runtime、视频生命周期、音频 owner、消息投影、宽度和 scroll core/viewport 测试通过。
+- 两个新增高度测试在 detached host 与挂载 window 后比较，受到 54pt 安全区差异影响。已统一同一已挂载 window 和组件布局域，保留 1pt 高度稳定断言；未放宽容差。
+- 另两项流式性能测试略超原阈值（24KB 发布次数 44/45、长表格 p95 41.02/40ms），继续使用原断言复跑必测三组。
+- Phase 1/2/3/4 reviewer 已实际查看窄屏、大字号、图片成功/失败、用户图、视频横竖卡和 Markdown 混排截图，未发现确定的错位、重叠或宽度溢出。默认 timeline 截图仍有 loading 状态，补充真实图片像素终态断言和可见性诊断后再确认加载闭环。
+- Markdown 复杂容器中已提升的图片改为转义 alt 文本，避免原 renderer 显示原始图片语法；代码片段 alt 仅显示内容，保留代码示例和相对路径图片。正在验证新增回归。

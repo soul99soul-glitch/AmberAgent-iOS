@@ -43,6 +43,21 @@ final class ChatMarkdownMediaTests: XCTestCase {
         }
     }
 
+    func testCodeSpanInImageAltUsesCodeContentWithoutFenceSyntax() {
+        for (alt, expected) in [("`value`", "value"), ("` one\ntwo `", "one two"), ("`` `value` ``", "`value`")] {
+            let source = "**前 ![\(alt)](https://example.com/a.png) 后**"
+            let plan = parse(source)
+            guard case .text(let content) = plan.segments.first?.kind,
+                  case .images(let images) = plan.segments.last?.kind else { return XCTFail("Missing code-alt image") }
+            XCTAssertEqual(images[0].title, expected)
+            XCTAssertFalse(content.contains("!["))
+            XCTAssertFalse(content.contains("https://example.com/a.png"))
+            let html = MarkdownBridge.toHtml(content) ?? ""
+            XCTAssertTrue(html.contains(expected), html)
+            XCTAssertFalse(html.contains("<code>"), html)
+        }
+    }
+
     func testEmptyVideoLabelUsesVideoTitleFallback() {
         let plan = parse("[](https://example.com/demo.mp4)")
         guard case .video(let video) = plan.segments.first?.kind else { return XCTFail("Missing video") }
@@ -128,7 +143,9 @@ final class ChatMarkdownMediaTests: XCTestCase {
             let plan = parse(source)
             guard case .text(let paragraph) = plan.segments.first?.kind,
                   case .images(let images) = plan.segments.last?.kind else { return XCTFail("Missing formatted content") }
-            XCTAssertEqual(paragraph, source)
+            XCTAssertEqual(paragraph, source.replacingOccurrences(of: "![图](https://example.com/a.png)", with: "图"))
+            XCTAssertFalse(paragraph.contains("!["))
+            XCTAssertFalse(paragraph.contains("https://example.com/a.png"))
             XCTAssertEqual(images.count, 1)
             let html = MarkdownBridge.toHtml(paragraph) ?? ""
             for tag in expectedTags { XCTAssertTrue(html.contains("<\(tag)>"), html) }
@@ -142,7 +159,8 @@ final class ChatMarkdownMediaTests: XCTestCase {
         let plan = parse(text)
         guard case .text(let paragraph) = plan.segments.first?.kind,
               case .images(let images) = plan.segments.last?.kind else { return XCTFail("Missing linked content") }
-        XCTAssertEqual(paragraph, text)
+        XCTAssertEqual(paragraph, "[前 图 后](https://example.com/article)")
+        XCTAssertFalse(paragraph.contains("https://example.com/a.png"))
         XCTAssertEqual(images[0].sourceURL, "https://example.com/article")
         let html = MarkdownBridge.toHtml(paragraph) ?? ""
         XCTAssertTrue(html.contains("href=\"https://example.com/article\""), html)
@@ -172,12 +190,73 @@ final class ChatMarkdownMediaTests: XCTestCase {
             let plan = parse(text)
             guard case .text(let container) = plan.segments.first?.kind,
                   case .images(let images) = plan.segments.last?.kind else { return XCTFail("Missing container media: \(text)") }
-            XCTAssertEqual(container, text)
+            XCTAssertEqual(container, text.replacingOccurrences(of: "![图](https://example.com/a.png)", with: "图"))
+            XCTAssertFalse(container.contains("!["))
+            XCTAssertFalse(container.contains("https://example.com/a.png"))
             XCTAssertEqual(images.count, 1)
             XCTAssertEqual(images[0].title, "图")
         }
         let code = "> ```markdown\n> ![图](https://example.com/a.png)\n> ```"
         XCTAssertTrue(parse(code).segments.isEmpty)
+    }
+
+    func testContainerAltLabelsEscapeMarkdownAndLeaveCodeAndRelativeImagesIntact() {
+        let source = "**前 ![A|B [C] *D*](https://example.com/a.png) 后**\n\n- `![例](https://example.com/code.png)`\n- ![相对图](./diagram.png)\n- ![表内图](https://example.com/b.png)\n"
+        let plan = parse(source)
+        let text = plan.segments.compactMap { segment -> String? in
+            if case .text(let content) = segment.kind { return content }
+            return nil
+        }.joined()
+        XCTAssertTrue(text.contains("A\\|B \\[C\\] D"), text)
+        XCTAssertFalse(text.contains("https://example.com/a.png"))
+        XCTAssertFalse(text.contains("https://example.com/b.png"))
+        XCTAssertTrue(text.contains("`![例](https://example.com/code.png)`"))
+        XCTAssertTrue(text.contains("![相对图](./diagram.png)"))
+        let html = MarkdownBridge.toHtml(text) ?? ""
+        XCTAssertTrue(html.contains("A|B [C] D"), html)
+        XCTAssertFalse(html.contains("<em>D</em>"), html)
+        let emptyAlt = parse("**前 ![](https://example.com/a.png) 后**")
+        guard case .text(let emptyAltText) = emptyAlt.segments.first?.kind else { return XCTFail("Missing alt placeholder") }
+        XCTAssertEqual(emptyAltText, "**前 图片 后**")
+    }
+
+    @MainActor
+    func testComplexParagraphAndListRenderNativeMediaWithoutMarkdownImageSyntax() async throws {
+        let bitmap = UIGraphicsImageRenderer(size: CGSize(width: 40, height: 30)).image { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 40, height: 30))
+        }
+        let url = "data:image/png;base64," + (try XCTUnwrap(bitmap.pngData())).base64EncodedString()
+        let source = "**粗体前 *![图示](\(url))* 粗体后**\n\n- 第一项\n  - ![列表配图](\(url))\n- 后一项\n\n结束。"
+        let plan = parse(source)
+        for segment in plan.segments {
+            if case .text(let content) = segment.kind {
+                XCTAssertFalse(content.contains("!["), content)
+                XCTAssertFalse(content.contains("data:image"), content)
+            }
+        }
+        for blockRenderer in [false, true] {
+            let host = UIHostingController(rootView: ChatAssistantMarkdownView(markdown: source, hasEverStreamed: blockRenderer).padding(16))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 1200))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 200_000_000)
+            let size = host.sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude))
+            XCTAssertLessThanOrEqual(size.width, 320)
+            XCTAssertGreaterThan(size.height, 400)
+            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { window.layer.render(in: $0.cgContext) }
+            let name = blockRenderer ? "block" : "stable"
+            let attachment = XCTAttachment(image: screenshot)
+            attachment.name = "markdown-container-media-\(name)-320pt"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let path = FileManager.default.temporaryDirectory.appendingPathComponent("amber-markdown-container-\(name)-320pt.png")
+            try screenshot.pngData()?.write(to: path)
+            print("MEDIA_SCREENSHOT=\(path.path)")
+            window.isHidden = true
+            window.rootViewController = nil
+        }
     }
 
     @MainActor
@@ -218,17 +297,25 @@ final class ChatMarkdownMediaTests: XCTestCase {
         let dataURL = "data:image/png;base64," + (try XCTUnwrap(bitmap.pngData())).base64EncodedString()
         let source = "文字与图片之间保持自然间距。\n\n![图片标题](\(dataURL))\n\n视频前的说明文字。\n\n[演示视频](https://example.com/demo.mp4)\n\n末尾的文字应保持左对齐。"
         let host = UIHostingController(rootView: ChatAssistantMarkdownView(markdown: source).dynamicTypeSize(.accessibility2).padding(16))
-        let proposal = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
-        let before = host.sizeThatFits(in: proposal)
-        XCTAssertLessThanOrEqual(before.width, 320)
-        XCTAssertGreaterThan(before.height, 400)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: ceil(before.height) + 40))
+        host.safeAreaRegions = []
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 1200))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
         window.layoutIfNeeded()
+        // Both measurements use the mounted hosting environment. Before the
+        // first await, image-loading tasks have not had a chance to finish.
+        let proposal = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        let before = host.sizeThatFits(in: proposal)
+        let beforeInsets = host.view.safeAreaInsets
+        let beforeBounds = host.view.bounds
+        XCTAssertLessThanOrEqual(before.width, 320)
+        XCTAssertGreaterThan(before.height, 400)
         try await Task.sleep(nanoseconds: 150_000_000)
+        window.layoutIfNeeded()
         let after = host.sizeThatFits(in: proposal)
+        XCTAssertEqual(host.view.safeAreaInsets, beforeInsets)
+        XCTAssertEqual(host.view.bounds, beforeBounds)
         XCTAssertEqual(before.height, after.height, accuracy: 1, "Image load must keep the Markdown media frame height")
         let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { window.layer.render(in: $0.cgContext) }
         let attachment = XCTAttachment(image: screenshot)

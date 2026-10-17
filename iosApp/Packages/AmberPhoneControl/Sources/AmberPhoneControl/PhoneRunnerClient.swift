@@ -292,6 +292,8 @@ public actor PhoneRunnerClient {
                 }
                 try checkScope(try await activeApp())
                 path = "/wda/homescreen"
+            case .dismissKeyboard:
+                path = "/wda/keyboard/dismiss"
             case .tapAlert(let ref):
                 guard let observed, let node = observed.references[ref],
                       let alert = observed.observation.alerts.first(where: { $0.buttons.contains { $0.ref == ref } }),

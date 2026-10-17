@@ -38,17 +38,44 @@ enum ChatMarkdownMediaParser {
         var galleryBlockStart = 0
 
         func title(_ node: PackedAstNode) -> String {
+            if node.type == .inlineCode {
+                let raw = slice(node.startOffset..<node.endOffset)
+                let fenceLength = raw.prefix { $0 == "`" }.count
+                let code = String(raw.dropFirst(fenceLength).dropLast(fenceLength))
+                    .replacingOccurrences(of: "\r\n", with: " ")
+                    .replacingOccurrences(of: "\r", with: " ")
+                    .replacingOccurrences(of: "\n", with: " ")
+                if code.hasPrefix(" "), code.hasSuffix(" "), code.contains(where: { $0 != " " }) {
+                    return String(code.dropFirst().dropLast())
+                }
+                return code
+            }
             if node.children.isEmpty {
-                return node.type == .text || node.type == .inlineCode
-                    ? slice(node.startOffset..<node.endOffset) : ""
+                return node.type == .text ? slice(node.startOffset..<node.endOffset) : ""
             }
             return node.children.map { child in
                 child.type == .softBreak || child.type == .hardBreak ? " " : title(child)
             }.joined()
         }
-        func appendText(until end: Int) {
+        func appendText(until end: Int, replacingImagesIn container: PackedAstNode? = nil) {
             guard cursor < end else { return }
-            let content = slice(cursor..<end)
+            var content = ""
+            var sourceCursor = cursor
+            func appendDisplayText(_ node: PackedAstNode) {
+                if node.type == .codeBlock || node.type == .inlineCode { return }
+                if node.type == .image, let item = imageItem(node) {
+                    content += slice(sourceCursor..<node.startOffset)
+                    // The native card owns this image. Keep a literal alt label in
+                    // its formatted container, without exposing image URL syntax.
+                    let label = item.title.isEmpty ? "图片" : item.title
+                    content += label.map { "\\`*_{}[]<>#+-.!|~".contains($0) ? "\\" + String($0) : String($0) }.joined()
+                    sourceCursor = node.endOffset
+                    return
+                }
+                node.children.forEach(appendDisplayText)
+            }
+            if let container { appendDisplayText(container) }
+            content += slice(sourceCursor..<end)
             if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.segments.append(.init(id: "text:\(cursor)", kind: .text(content)))
             }
@@ -133,7 +160,7 @@ enum ChatMarkdownMediaParser {
                 if !intactParagraph && isStreaming && blockIndex == root.children.count - 1 { continue }
                 let media = containerMedia(block)
                 if !media.isEmpty {
-                    appendText(until: block.endOffset)
+                    appendText(until: block.endOffset, replacingImagesIn: block)
                     result.segments.append(contentsOf: media)
                 }
             }

@@ -158,8 +158,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         guard !Task.isCancelled, controller.canDispatchAction(runID: runID) else {
             return .unsent(.init(.stopped, "自动操作已暂停或停止；本次动作未发送。"))
         }
-        return await runner.act(action, pageAnchorRef: pageAnchorRef, pageAnchorRegion: pageAnchorRegion,
+        let result = await runner.act(action, pageAnchorRef: pageAnchorRef, pageAnchorRegion: pageAnchorRegion,
                                 requireUnchangedObservation: requireUnchangedObservation)
+        // 文字已落盘：立刻收键盘，后续定位发送控件时不会被键盘/候选栏遮住。
+        if case .type = action, result == .completed {
+            _ = await runner.act(.dismissKeyboard)
+        }
+        return result
     }
 
     private func perform(_ request: Request) async -> IOSAgentToolOutcome {
@@ -401,7 +406,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 if IOSPhoneControlReturnPreference.enabled(), result.status == .completed {
                     let host = Bundle.main.bundleIdentifier ?? "app.amber.ios"
                     try? await runner.allowApplication(host)
-                    _ = await runner.act(.launch(host))
+                    _ = await runner.act(.launch(bundleID: host))
                 }
                 var fields: [String: Any] = [
                     "status": result.status.rawValue,
@@ -614,6 +619,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         case .tap, .tapPoint, .longPress, .longPressPoint, .tapAlert: .tapping
         case .type, .clear: .typing
         case .swipe, .swipePoint: .swiping
+        case .dismissKeyboard: .typing
         case .home: .failed // The phone tool schema does not expose Home.
         }
     }

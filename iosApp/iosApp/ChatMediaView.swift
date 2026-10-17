@@ -142,6 +142,9 @@ struct ChatMediaImage: View {
         .clipped()
         .onGeometryChange(for: Bool.self) { proxy in
             guard let viewport = proxy.bounds(of: .scrollView(axis: .vertical)) ?? proxy.bounds(of: .scrollView) else { return true }
+            #if DEBUG
+            print("MEDIA_VISIBILITY viewport=\(viewport) imageSize=\(proxy.size) intersects=\(viewport.intersects(CGRect(origin: .zero, size: proxy.size)))")
+            #endif
             return viewport.intersects(CGRect(origin: .zero, size: proxy.size))
         } action: { visible = $0 }
         .task(id: LoadRequest(url: url, visible: visible, retry: retry, pixelLimit: pixelLimit)) {
