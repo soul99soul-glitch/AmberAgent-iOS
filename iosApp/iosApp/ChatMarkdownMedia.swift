@@ -38,7 +38,10 @@ enum ChatMarkdownMediaParser {
         var galleryBlockStart = 0
 
         func title(_ node: PackedAstNode) -> String {
-            if node.children.isEmpty { return slice(node.startOffset..<node.endOffset) }
+            if node.children.isEmpty {
+                return node.type == .text || node.type == .inlineCode
+                    ? slice(node.startOffset..<node.endOffset) : ""
+            }
             return node.children.map { child in
                 child.type == .softBreak || child.type == .hardBreak ? " " : title(child)
             }.joined()

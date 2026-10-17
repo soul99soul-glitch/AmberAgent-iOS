@@ -97,14 +97,69 @@ final class ChatVideoPlayback {
     private(set) var failure: String?
     private var statusObservation: NSKeyValueObservation?
     private var failureObservation: NSObjectProtocol?
+    private var preparationID: UUID?
+    private var audioOwner: String?
+    private let audio: AudioDependencies
+
+    @MainActor struct AudioDependencies {
+        let suspend: (String) -> Void
+        let resume: (String) -> Void
+        let activate: () throws -> Void
+        let deactivate: () -> Void
+        let run: BackgroundAudioKeepAlive.BlockingAudioWorkRunner
+
+        static let live = Self(
+            suspend: { BackgroundAudioKeepAlive.shared.suspend(for: $0) },
+            resume: { BackgroundAudioKeepAlive.shared.resume(for: $0) },
+            activate: ChatVideoPlayback.activateMovieAudio,
+            deactivate: ChatVideoPlayback.deactivateMovieAudio,
+            run: BackgroundAudioKeepAlive.defaultBlockingAudioWorkRunner
+        )
+    }
+
+    private nonisolated static func activateMovieAudio() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .moviePlayback)
+        try session.setActive(true)
+        BackgroundAudioKeepAlive.recordMediaSessionActivation()
+    }
+
+    private nonisolated static func deactivateMovieAudio() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    init(audio: AudioDependencies = .live) {
+        self.audio = audio
+    }
 
     func prepare(url: URL) async {
         stop()
         failure = nil
+        let attempt = UUID()
+        preparationID = attempt
         do {
             let asset = AVURLAsset(url: url)
             guard try await asset.load(.isPlayable) else { throw URLError(.cannotDecodeContentData) }
             try Task.checkCancellation()
+            guard preparationID == attempt else { return }
+            let owner = "video-\(attempt.uuidString)"
+            audioOwner = owner
+            audio.suspend(owner)
+            // Use keep-alive's serial queue so its pending teardown finishes
+            // before movie playback takes over the shared audio session.
+            let activateAudio = audio.activate
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                audio.run({
+                    do {
+                        try activateAudio()
+                        continuation.resume()
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }, {})
+            }
+            try Task.checkCancellation()
+            guard preparationID == attempt else { return }
             let item = AVPlayerItem(asset: asset)
             let player = AVPlayer(playerItem: item)
             self.player = player
@@ -113,6 +168,7 @@ final class ChatVideoPlayback {
                 let reason = item.error?.localizedDescription ?? "视频暂时无法播放"
                 Task { @MainActor [weak self, weak item] in
                     guard let self, let item, self.player?.currentItem === item else { return }
+                    self.stop()
                     self.failure = reason
                 }
             }
@@ -123,23 +179,31 @@ final class ChatVideoPlayback {
                     ?? "视频播放中断，请重试"
                 Task { @MainActor [weak self, weak item] in
                     guard let self, let item, self.player?.currentItem === item else { return }
+                    self.stop()
                     self.failure = reason
                 }
             }
             player.play()
         } catch {
+            guard preparationID == attempt else { return }
+            stop()
             guard !Task.isCancelled else { return }
             failure = error.localizedDescription
         }
     }
 
     func stop() {
+        preparationID = nil
         statusObservation = nil
         if let failureObservation { NotificationCenter.default.removeObserver(failureObservation) }
         failureObservation = nil
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         player = nil
+        guard let owner = audioOwner else { return }
+        audioOwner = nil
+        let resumeAudio = audio.resume
+        audio.run(audio.deactivate) { resumeAudio(owner) }
     }
 }
 

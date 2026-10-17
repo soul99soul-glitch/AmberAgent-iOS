@@ -161,6 +161,34 @@ final class BackgroundAudioKeepAliveTests: XCTestCase {
         XCTAssertFalse(player.isPlaying)
     }
 
+    func testLateStartCleanupDoesNotDeactivateForegroundMediaSession() {
+        let player = PlayerSpy()
+        var completions: [@MainActor () -> Void] = []
+        var deactivationCount = 0
+        let keepAlive = BackgroundAudioKeepAlive(
+            playerFactory: { player },
+            activateSessionOverride: { _ in },
+            deactivateSessionOverride: { deactivationCount += 1 },
+            blockingAudioWorkRunner: { work, completion in
+                work()
+                completions.append(completion)
+            }
+        )
+        defer { keepAlive.stop() }
+
+        keepAlive.start()
+        XCTAssertTrue(player.isPlaying, "The old start's blocking activation has finished")
+        keepAlive.suspend(for: "video-test")
+        // The fake runner executes work inline. Simulate the video's newer
+        // activation before delivering the old start's main-actor completion.
+        BackgroundAudioKeepAlive.recordMediaSessionActivation()
+        completions.removeFirst()()
+
+        XCTAssertFalse(player.isPlaying, "The discarded keep-alive engine must stop")
+        XCTAssertFalse(keepAlive.isStartingOrActive)
+        XCTAssertEqual(deactivationCount, 0, "Stale cleanup must leave the newer media session active")
+    }
+
     private func settleMainActorCallback() async {
         try? await Task.sleep(for: .milliseconds(650))
     }

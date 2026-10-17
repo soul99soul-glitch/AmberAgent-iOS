@@ -34,5 +34,7 @@
 
 - Phase 1 实现与独立静态 review 完成，模拟器验证进行中。图片来自 Brave、Tavily、Exa、Serper news、SerpAPI organic/news 的明确响应字段。前台、审批、后台均保存 metadata。review 修复了共享布局 modifier 访问级别和 body JSON 解码问题。首轮编译发现链接 helper 作用域错误，已改为媒体模块的 HTTP(S) helper；尚未把测试标为通过。
 - Phase 2 实现与独立静态 review 完成，模拟器验证进行中。MCP 标准图片内容及明确 MIME 的视频 resource_link 接入 typed output。review 发现并修复：Video 未进入模型正文、长 JSON 截断丢媒体、封面重试嵌套播放按钮。内嵌 video blob 显示资源说明，不转换成巨大 data URL。
-- Phase 3 新 parser/controller 与测试已准备，接线等待当前编译完成。额外检查历史首帧尺寸、引用定义与格式容器边界。
-- Phase 4 待完成。预存通知 WIP 三文件 SHA256 已记录于本轮工具输出；最终复核。
+- Phase 3 实现与独立静态 review 完成。复用真实 AST，历史 StateObject 初始计划预留媒体高度；完整段落后提升流式图片。普通文字/图/文字按顺序拆分，复杂 inline 格式、列表、引用和表格保留原容器后附媒体。review 修复了格式标记残片、未提升 autolink/相对图丢失及空 alt 暴露源码的问题。
+- Phase 4 唯一一次有限可维护性审查完成，无需新增框架。额外闭环视频音频：接既有 keep-alive suspend/resume owner，同串行后台队列配置播放 session；复用既有 session epoch 防旧 keep-alive 清理停掉新视频，覆盖取消/重试/失败和迟到清理回归。
+- 全部本任务代码冻结，正在执行最终原项目统一验证（17 个受影响测试类，包含项目强制三组 streaming replay/native scroll/viewport）。待保存测试结果、模拟器截图与各 reviewer 的视觉复核；尚未声称真机或真实 provider 验收通过。
+- 并行工作说明：初始 HEAD 为 657976c3，原有通知 WIP 三文件 SHA256 已在本轮工具输出保存，并在外部写入前复核一致。外部任务随后将包含本轮富媒体文件的内容混合提交于 0c746ced，又提交 99233fb0 并继续 PhoneControl 工作。本任务没有执行 commit/push/reset/stash/clean；不回滚外部提交，不覆盖通知、Live Activity 或 PhoneControl 改动。

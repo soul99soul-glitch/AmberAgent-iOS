@@ -126,6 +126,12 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
         }
     }
 
+    /// Call on the shared audio work queue after foreground media activates
+    /// the session, so a late keep-alive completion cannot deactivate it.
+    nonisolated static func recordMediaSessionActivation() {
+        sessionActivationEpoch.value += 1
+    }
+
     /// Holds one attempt's outcome across the queue hop. `@unchecked Sendable`
     /// for the same single-owner-handoff reason as `UncheckedSendableWork`.
     private final class RecoveryResult: @unchecked Sendable {

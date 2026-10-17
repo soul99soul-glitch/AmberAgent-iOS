@@ -34,6 +34,22 @@ final class ChatMarkdownMediaTests: XCTestCase {
         XCTAssertEqual(prefix, "前 ")
     }
 
+    func testEmptyImageAltDoesNotExposeMarkdownAsCaption() {
+        for source in ["![](https://example.com/a.png)", "[![](https://example.com/a.png)](https://example.com/article)"] {
+            let plan = parse(source)
+            guard case .images(let images) = plan.segments.first?.kind else { return XCTFail("Missing image") }
+            XCTAssertEqual(images.count, 1)
+            XCTAssertEqual(images[0].title, "")
+        }
+    }
+
+    func testEmptyVideoLabelUsesVideoTitleFallback() {
+        let plan = parse("[](https://example.com/demo.mp4)")
+        guard case .video(let video) = plan.segments.first?.kind else { return XCTFail("Missing video") }
+        XCTAssertEqual(video.title, "视频")
+        XCTAssertEqual(video.url, "https://example.com/demo.mp4")
+    }
+
     func testReferenceImagesAndOrdinaryReferenceLinksRemainResolvedAcrossFragments() {
         let text = "[前链接][page] ![图][pic] [后链接][page]\n\n[pic]: https://example.com/a.png\n[page]: https://example.com/article\n"
         let plan = parse(text)

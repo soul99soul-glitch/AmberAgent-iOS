@@ -5,20 +5,65 @@ import XCTest
 
 @MainActor
 final class ChatVideoTests: XCTestCase {
+    @MainActor private final class AudioHarness {
+        var owners: Set<String> = []
+        var events: [String] = []
+        var queuesWork = false
+        var failsActivation = false
+        var onQueued: (() -> Void)?
+        var onResumed: (() -> Void)?
+        var pending: [(() -> Void, @MainActor () -> Void)] = []
+
+        var dependencies: ChatVideoPlayback.AudioDependencies {
+            .init(
+                suspend: { self.owners.insert($0); self.events.append("suspend") },
+                resume: {
+                    self.owners.remove($0)
+                    self.events.append("resume")
+                    self.onResumed?()
+                },
+                activate: {
+                    self.events.append("activate")
+                    if self.failsActivation { throw URLError(.cannotConnectToHost) }
+                },
+                deactivate: { self.events.append("deactivate") },
+                run: { work, completion in
+                    if self.queuesWork {
+                        self.pending.append((work, completion))
+                        self.onQueued?()
+                    } else {
+                        work()
+                        completion()
+                    }
+                }
+            )
+        }
+
+        func runNext() {
+            let (work, completion) = pending.removeFirst()
+            work()
+            completion()
+        }
+    }
+
     func testPlaybackIsCreatedOnlyWhenPreparedAndReleasedOnStop() async throws {
         let url = try await makeVideo()
         defer { try? FileManager.default.removeItem(at: url) }
-        let playback = ChatVideoPlayback()
+        let audio = AudioHarness()
+        let playback = ChatVideoPlayback(audio: audio.dependencies)
         XCTAssertNil(playback.player)
         await playback.prepare(url: url)
         XCTAssertNil(playback.failure)
         XCTAssertNotNil(playback.player?.currentItem)
+        XCTAssertEqual(audio.owners.count, 1)
         playback.stop()
         XCTAssertNil(playback.player)
+        XCTAssertTrue(audio.owners.isEmpty)
+        XCTAssertEqual(audio.events, ["suspend", "activate", "deactivate", "resume"])
     }
 
     func testFailedVideoCanBeRetriedWithPlayableResource() async throws {
-        let playback = ChatVideoPlayback()
+        let playback = ChatVideoPlayback(audio: AudioHarness().dependencies)
         await playback.prepare(url: FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID()).mp4"))
         XCTAssertNotNil(playback.failure)
         XCTAssertNil(playback.player)
@@ -32,11 +77,110 @@ final class ChatVideoTests: XCTestCase {
     func testCancelledPreparationCannotStartPlaybackAfterDismiss() async throws {
         let url = try await makeVideo()
         defer { try? FileManager.default.removeItem(at: url) }
-        let playback = ChatVideoPlayback()
+        let playback = ChatVideoPlayback(audio: AudioHarness().dependencies)
         let task = Task { await playback.prepare(url: url) }
         task.cancel()
         await task.value
         XCTAssertNil(playback.player)
+    }
+
+    func testCancellationDuringAudioActivationReleasesOwner() async throws {
+        let url = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let audio = AudioHarness()
+        audio.queuesWork = true
+        let queued = expectation(description: "Audio activation queued")
+        audio.onQueued = { queued.fulfill() }
+        let playback = ChatVideoPlayback(audio: audio.dependencies)
+        let task = Task { await playback.prepare(url: url) }
+        await fulfillment(of: [queued], timeout: 5)
+        audio.onQueued = nil
+        XCTAssertEqual(audio.owners.count, 1)
+        task.cancel()
+        audio.runNext()
+        await task.value
+        XCTAssertNil(playback.player)
+        XCTAssertNil(playback.failure)
+        XCTAssertEqual(audio.pending.count, 1)
+        audio.runNext()
+        XCTAssertTrue(audio.owners.isEmpty)
+        XCTAssertEqual(audio.events, ["suspend", "activate", "deactivate", "resume"])
+    }
+
+    func testOldPreparationAndCleanupCannotReleaseRetryOwner() async throws {
+        let url = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let audio = AudioHarness()
+        audio.queuesWork = true
+        let firstQueued = expectation(description: "First activation queued")
+        audio.onQueued = { firstQueued.fulfill() }
+        let playback = ChatVideoPlayback(audio: audio.dependencies)
+        let first = Task { await playback.prepare(url: url) }
+        await fulfillment(of: [firstQueued], timeout: 5)
+        audio.onQueued = nil
+        let firstOwner = try XCTUnwrap(audio.owners.first)
+        playback.stop()
+        let retryQueued = expectation(description: "Retry activation queued after old teardown")
+        audio.onQueued = { retryQueued.fulfill() }
+        let retry = Task { await playback.prepare(url: url) }
+        await fulfillment(of: [retryQueued], timeout: 5)
+        audio.onQueued = nil
+        XCTAssertEqual(audio.owners.count, 2)
+        XCTAssertEqual(audio.pending.count, 3)
+        audio.runNext()
+        await first.value
+        XCTAssertNil(playback.player, "Superseded preparation must not create a player")
+        audio.runNext()
+        XCTAssertEqual(audio.owners.count, 1)
+        XCTAssertFalse(audio.owners.contains(firstOwner))
+        audio.runNext()
+        await retry.value
+        XCTAssertNotNil(playback.player)
+        XCTAssertNil(playback.failure)
+        XCTAssertEqual(audio.owners.count, 1)
+        playback.stop()
+        audio.runNext()
+        XCTAssertTrue(audio.owners.isEmpty)
+        XCTAssertEqual(audio.events, ["suspend", "suspend", "activate", "deactivate", "resume", "activate", "deactivate", "resume"])
+    }
+
+    func testAudioActivationFailureReleasesOwnerAndCanRetry() async throws {
+        let url = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let audio = AudioHarness()
+        audio.failsActivation = true
+        let playback = ChatVideoPlayback(audio: audio.dependencies)
+        await playback.prepare(url: url)
+        XCTAssertNotNil(playback.failure)
+        XCTAssertNil(playback.player)
+        XCTAssertTrue(audio.owners.isEmpty)
+        audio.failsActivation = false
+        await playback.prepare(url: url)
+        XCTAssertNil(playback.failure)
+        XCTAssertNotNil(playback.player)
+        XCTAssertEqual(audio.owners.count, 1)
+        playback.stop()
+        XCTAssertTrue(audio.owners.isEmpty)
+    }
+
+    func testPlaybackFailureStopsPlayerAndReleasesAudioOwner() async throws {
+        let url = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let audio = AudioHarness()
+        let playback = ChatVideoPlayback(audio: audio.dependencies)
+        await playback.prepare(url: url)
+        let item = try XCTUnwrap(playback.player?.currentItem)
+        let released = expectation(description: "Playback failure releases audio")
+        audio.onResumed = { released.fulfill() }
+        NotificationCenter.default.post(
+            name: .AVPlayerItemFailedToPlayToEndTime,
+            object: item,
+            userInfo: [AVPlayerItemFailedToPlayToEndTimeErrorKey: URLError(.networkConnectionLost)]
+        )
+        await fulfillment(of: [released], timeout: 5)
+        XCTAssertNotNil(playback.failure)
+        XCTAssertNil(playback.player)
+        XCTAssertTrue(audio.owners.isEmpty)
     }
 
     func testVideoDescriptorRejectsNonMediaSchemesAndFormatsDuration() {

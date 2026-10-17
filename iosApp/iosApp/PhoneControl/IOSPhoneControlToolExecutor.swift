@@ -2,6 +2,21 @@ import AmberPhoneControl
 import Foundation
 @preconcurrency import Shared
 
+/// 任务结束后是否把宿主 App 切回前台。runner 的 /launch 可激活任意 bundle，
+/// 包括 Amber 自己。默认关闭：一次对话里可能连续跑多个手机任务，每次切走会打断后续步骤。
+enum IOSPhoneControlReturnPreference {
+    static let key = "app.amber.ios.phoneControl.returnAfterRun"
+
+    /// 默认关闭：phone_run_goal 可能在一次对话里被连续调用，默认就切走会打断后续步骤。
+    static func enabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? false
+    }
+
+    static func set(_ value: Bool, _ defaults: UserDefaults = .standard) {
+        defaults.set(value, forKey: key)
+    }
+}
+
 /// Foreground and background engines use the same run-scoped controller.
 /// Authorization and launcher ownership stay outside the model's arguments.
 @MainActor
@@ -381,6 +396,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     }
                 ))
                 let result = await loop.run(request)
+                // 跑完切回 Amber：只在任务真的完成时做。runner 只允许 scope 内的 bundle，
+                // 宿主自身不在用户的受控应用列表里，先临时扩 scope 再激活；unknown 不抢前台。
+                if IOSPhoneControlReturnPreference.enabled(), result.status == .completed {
+                    let host = Bundle.main.bundleIdentifier ?? "app.amber.ios"
+                    try? await runner.allowApplication(host)
+                    _ = await runner.act(.launch(host))
+                }
                 var fields: [String: Any] = [
                     "status": result.status.rawValue,
                     "outcome": result.status == .unknown ? "unknown" : (result.steps.isEmpty ? "not_sent" : "completed"),
