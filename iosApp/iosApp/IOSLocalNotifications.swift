@@ -31,6 +31,10 @@ protocol IOSLocalNotificationCenter: AnyObject {
     func add(_ request: IOSLocalNotificationRequest) async throws
     func pendingRequestIdentifiers() async -> [String]
     func removePendingRequests(identifiers: [String])
+    /// 已投递（停留在通知中心/收件箱）的标识。发新的同类横幅前要先收掉旧的，
+    /// 否则每轮新 runId 都会叠一条。
+    func deliveredRequestIdentifiers() async -> [String]
+    func removeDeliveredRequests(identifiers: [String])
 }
 
 @MainActor
@@ -77,6 +81,14 @@ final class IOSUserNotificationCenterAdapter: IOSLocalNotificationCenter {
 
     func pendingRequestIdentifiers() async -> [String] {
         await center.pendingNotificationRequests().map(\.identifier)
+    }
+
+    func deliveredRequestIdentifiers() async -> [String] {
+        await center.deliveredNotifications().map(\.request.identifier)
+    }
+
+    func removeDeliveredRequests(identifiers: [String]) {
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 
     func removePendingRequests(identifiers: [String]) {
@@ -170,8 +182,8 @@ final class IOSLocalNotificationService {
     ) async throws {
         let cancellationRevision = completionCancellationRevision
         guard isStillCurrent() else { return }
-        let nextIdentifier = snapshot.phase == "waitingForUser" ? snapshot.decision.map {
-            "amber.watch-attention.\(snapshot.runId).\($0.id)"
+        let nextIdentifier = snapshot.phase == "waitingForUser" ? snapshot.decision.flatMap { decision in
+            snapshot.conversationId.map { "amber.watch-attention.\($0).\(decision.id)" }
         } : nil
         if let pending = pendingWatchAttentionIdentifier, pending != nextIdentifier {
             center.removePendingRequests(identifiers: [pending])
@@ -182,7 +194,7 @@ final class IOSLocalNotificationService {
               let decision = snapshot.decision,
               let conversationID = snapshot.conversationId,
               completionNotificationsEnabled(), isStillCurrent() else { return }
-        let identifier = "amber.watch-attention.\(snapshot.runId).\(decision.id)"
+        let identifier = "amber.watch-attention.\(conversationID).\(decision.id)"
         guard schedulingWatchAttention.insert(identifier).inserted else { return }
         defer { schedulingWatchAttention.remove(identifier) }
         let key = "amber.watch.notifiedDecisions.v1"
@@ -194,6 +206,14 @@ final class IOSLocalNotificationService {
                 runId: snapshot.runId, conversationId: conversationID, focus: .confirmation
               ))) else { return }
         let category = IOSWatchDecisionNotification.category(for: decision)
+        // 同一对话反复确认时 identifier 会变（decision 不同），旧横幅不清理就会一条条
+        // 叠上去；按会话前缀收掉，不会动到其它对话正在等待的横幅。
+        let staleDelivered = await center.deliveredRequestIdentifiers().filter {
+            $0.hasPrefix("amber.watch-attention.\(conversationID).")
+        }
+        if !staleDelivered.isEmpty {
+            center.removeDeliveredRequests(identifiers: staleDelivered)
+        }
         try await center.add(IOSLocalNotificationRequest(
             identifier: identifier,
             title: category == nil
@@ -309,8 +329,16 @@ final class IOSLocalNotificationService {
         let identifiers = await center.pendingRequestIdentifiers().filter {
             $0.hasPrefix("amber.task-complete.") || $0.hasPrefix("amber.watch-attention.")
         }
-        guard !identifiers.isEmpty else { return }
-        center.removePendingRequests(identifiers: identifiers)
+        if !identifiers.isEmpty {
+            center.removePendingRequests(identifiers: identifiers)
+        }
+        // 取消时连已经弹过的也一起收：否则关掉通知后旧横幅还留在通知中心。
+        let delivered = await center.deliveredRequestIdentifiers().filter {
+            $0.hasPrefix("amber.task-complete.") || $0.hasPrefix("amber.watch-attention.")
+        }
+        if !delivered.isEmpty {
+            center.removeDeliveredRequests(identifiers: delivered)
+        }
     }
 }
 

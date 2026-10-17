@@ -9,6 +9,8 @@ private final class FakeLocalNotificationCenter: IOSLocalNotificationCenter {
     var requests: [IOSLocalNotificationRequest] = []
     var removed: [[String]] = []
     var pendingIdentifiers: [String] = []
+    var deliveredIdentifiers: [String] = []
+    var removedDelivered: [[String]] = []
     var blocksAdd = false
     private(set) var addContinuation: CheckedContinuation<Void, Never>?
 
@@ -29,6 +31,8 @@ private final class FakeLocalNotificationCenter: IOSLocalNotificationCenter {
     }
     func pendingRequestIdentifiers() async -> [String] { pendingIdentifiers }
     func removePendingRequests(identifiers: [String]) { removed.append(identifiers) }
+    func deliveredRequestIdentifiers() async -> [String] { deliveredIdentifiers }
+    func removeDeliveredRequests(identifiers: [String]) { removedDelivered.append(identifiers) }
 
     func resumeAdd() {
         addContinuation?.resume()
@@ -82,11 +86,16 @@ struct IOSLocalNotificationTests {
             IOSLocalNotificationService.manualReminderIdentifier,
             "amber.task-complete.second"
         ]
+        center.deliveredIdentifiers = [
+            "amber.task-complete.first",
+            IOSLocalNotificationService.manualReminderIdentifier
+        ]
         let service = IOSLocalNotificationService(center: center, now: { now })
 
         await service.cancelTaskCompletionNotifications()
 
         #expect(center.removed == [["amber.task-complete.first", "amber.task-complete.second"]])
+        #expect(center.removedDelivered == [["amber.task-complete.first"]])
     }
 
     @Test func agentNotificationToolSchedulesAndCancelsItsOwnStableRequest() async throws {

@@ -6,6 +6,8 @@ import XCTest
 private final class WatchNotificationCenter: IOSLocalNotificationCenter {
     var requests: [IOSLocalNotificationRequest] = []
     var removed: [String] = []
+    var delivered: [String] = []
+    var removedDelivered: [String] = []
     var beforeAuthorization: (() async -> Void)?
     func authorization() async -> IOSLocalNotificationAuthorization {
         await beforeAuthorization?()
@@ -15,6 +17,8 @@ private final class WatchNotificationCenter: IOSLocalNotificationCenter {
     func add(_ request: IOSLocalNotificationRequest) async throws { requests.append(request) }
     func pendingRequestIdentifiers() async -> [String] { requests.map(\.identifier) }
     func removePendingRequests(identifiers: [String]) { removed += identifiers }
+    func deliveredRequestIdentifiers() async -> [String] { delivered }
+    func removeDeliveredRequests(identifiers: [String]) { removedDelivered += identifiers }
 }
 
 @MainActor
@@ -155,6 +159,30 @@ final class WatchNotificationTests: XCTestCase {
         )
         XCTAssertEqual(IOSWatchDecisionNotification.category(for: phoneOnly), IOSWatchDecisionNotification.denyOnlyCategory)
         XCTAssertNil(IOSWatchDecisionNotification.category(for: waitingSnapshot().decision!))
+    }
+
+    /// 同一对话的新确认要顶掉旧横幅，其它对话的等待中横幅必须保留。
+    func testAttentionNotificationReplacesPriorBannerForSameConversation() async throws {
+        let suite = "WatchNotificationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let center = WatchNotificationCenter()
+        center.delivered = [
+            "amber.watch-attention.d48cbcac-b0c3-4b93-9e68-4235ecdd52a9.decision-0",
+            "amber.watch-attention.other-conversation.decision-9"
+        ]
+        let service = IOSLocalNotificationService(
+            center: center, completionNotificationsEnabled: { true }, watchNotificationDefaults: defaults
+        )
+
+        try await service.scheduleWatchAttention(snapshot: waitingSnapshot(), isStillCurrent: { true })
+
+        XCTAssertEqual(center.removedDelivered, [
+            "amber.watch-attention.d48cbcac-b0c3-4b93-9e68-4235ecdd52a9.decision-0"
+        ])
+        XCTAssertEqual(center.requests.map(\.identifier), [
+            "amber.watch-attention.d48cbcac-b0c3-4b93-9e68-4235ecdd52a9.decision-1"
+        ])
     }
 
     private func waitingSnapshot() -> WatchTaskSnapshot {

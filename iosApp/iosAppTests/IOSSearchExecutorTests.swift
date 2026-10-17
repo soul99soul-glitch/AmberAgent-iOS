@@ -286,6 +286,107 @@ final class IOSSearchExecutorTests: XCTestCase {
         ])
     }
 
+    func testSearchDispatchTavilyMediaSurvivesSerializationWithoutVisionParts() async throws {
+        let store = makeIsolatedStore()
+        store.addSearchProvider(name: "Tavily", apiKey: "tvly-test", serviceType: "tavily")
+        let transport = MockSearchTransport(responses: [.json(#"{"results":[{"title":"Source title","url":"https://example.com/source","content":"Source snippet","images":[{"url":"https://cdn.example.com/image.jpg","description":"A figure"}]}]}"#)])
+        let output = await IOSSearchToolDispatch.dispatchOutput(
+            searchTool(), settings: store.snapshot, webSearchEnabled: true, transport: transport
+        )
+        let body = try jsonObject(try XCTUnwrap(transport.requests.first?.httpBody))
+        XCTAssertEqual(body["include_images"] as? Bool, true)
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertTrue(output.text.contains("Source snippet"))
+        XCTAssertFalse(output.text.contains("image.jpg"))
+        XCTAssertFalse(output.parts.contains { $0 is UIMessagePart.Image })
+        let restored = try IosToolOutputJsonBridge.shared.decode(json: IosToolOutputJsonBridge.shared.encode(parts: output.parts))
+        let text = try XCTUnwrap(restored.first as? UIMessagePart.Text)
+        XCTAssertEqual(text.text, output.text)
+        let raw = try XCTUnwrap(IosToolOutputJsonBridge.shared.metadataString(part: text, key: "app.amber.media.images"))
+        let records = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: String]])
+        XCTAssertEqual(records, [[
+            "id": "https://cdn.example.com/image.jpg",
+            "url": "https://cdn.example.com/image.jpg",
+            "title": "Source title",
+            "sourceURL": "https://example.com/source"
+        ]])
+    }
+
+    func testExistingProviderImageFieldsReachDurableSearchMedia() async throws {
+        let fixtures: [(type: String, query: String, json: String, host: String, path: String)] = [
+            ("exa", "reference", #"{"results":[{"title":"Source","url":"https://example.com/source","highlights":["Excerpt"],"image":"https://cdn.example.com/image.jpg"}]}"#, "api.exa.ai", "/search"),
+            ("serper", "latest news", #"{"news":[{"title":"Source","link":"https://example.com/source","snippet":"Excerpt","imageUrl":"https://cdn.example.com/image.jpg"}]}"#, "google.serper.dev", "/news"),
+            ("serpapi", "reference", #"{"organic_results":[{"title":"Source","link":"https://example.com/source","snippet":"Excerpt","thumbnail":"https://cdn.example.com/image.jpg"}]}"#, "serpapi.com", "/search.json"),
+            ("serpapi", "latest news", #"{"news_results":[{"title":"Source","link":"https://example.com/source","snippet":"Excerpt","thumbnail":"https://cdn.example.com/image.jpg"}]}"#, "serpapi.com", "/search.json")
+        ]
+        for fixture in fixtures {
+            let store = makeIsolatedStore()
+            store.addSearchProvider(name: fixture.type, apiKey: "fixture-key", serviceType: fixture.type)
+            let transport = MockSearchTransport(responses: [.json(fixture.json)])
+            let input = String(decoding: try JSONSerialization.data(withJSONObject: ["query": fixture.query]), as: UTF8.self)
+            let output = await IOSSearchToolDispatch.dispatchOutput(
+                searchTool(input: input), settings: store.snapshot, webSearchEnabled: true, transport: transport
+            )
+            XCTAssertEqual(transport.requests.count, 1, fixture.type)
+            XCTAssertEqual(transport.requests.first?.url?.host, fixture.host)
+            XCTAssertEqual(transport.requests.first?.url?.path, fixture.path)
+            XCTAssertTrue(output.text.contains("Excerpt"), fixture.type)
+            let raw = try XCTUnwrap(IosToolOutputJsonBridge.shared.metadataString(part: output.parts[0], key: "app.amber.media.images"), fixture.type)
+            let records = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: String]])
+            XCTAssertEqual(records.first?["url"], "https://cdn.example.com/image.jpg", fixture.type)
+            XCTAssertEqual(records.first?["sourceURL"], "https://example.com/source", fixture.type)
+            XCTAssertEqual(records.first?["title"], "Source", fixture.type)
+        }
+    }
+
+    func testSearchMediaSkipsInvalidSchemesAndDeduplicatesLeadImages() throws {
+        let output = IOSSearchToolOutput(text: "summary", results: [
+            IOSSearchResult(title: "First", url: "https://example.com/first", snippet: "", images: ["javascript:bad", "https://cdn.example.com/lead.jpg", "https://cdn.example.com/alternate.jpg"]),
+            IOSSearchResult(title: "Second", url: "https://example.com/second", snippet: "", images: ["https://cdn.example.com/lead.jpg"]),
+            IOSSearchResult(title: "Invalid", url: "https://example.com/invalid", snippet: "", images: ["data:image/png;base64,bad"])
+        ])
+        let raw = try XCTUnwrap(IosToolOutputJsonBridge.shared.metadataString(part: output.parts[0], key: "app.amber.media.images"))
+        let records = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: String]])
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?["url"], "https://cdn.example.com/lead.jpg")
+        XCTAssertEqual(records.first?["sourceURL"], "https://example.com/first")
+    }
+
+    func testSearchDispatchDisabledAndInvalidRequestNeverAttachMedia() async throws {
+        let store = makeIsolatedStore()
+        let transport = MockSearchTransport(responses: [])
+        let disabled = await IOSSearchToolDispatch.dispatchOutput(
+            searchTool(), settings: store.snapshot, webSearchEnabled: false, transport: transport
+        )
+        XCTAssertNotNil(ChatToolOutputFormatter.failureReason(from: disabled.parts))
+        XCTAssertNil(IosToolOutputJsonBridge.shared.metadataString(part: disabled.parts[0], key: "app.amber.media.images"))
+        let invalid = await IOSSearchToolDispatch.dispatchOutput(
+            searchTool(input: #"{"query":""}"#), settings: store.snapshot, webSearchEnabled: true, transport: transport
+        )
+        XCTAssertNotNil(ChatToolOutputFormatter.failureReason(from: invalid.parts))
+        XCTAssertEqual(transport.requests.count, 0)
+    }
+
+    func testSearchDispatchCancellationDoesNotFallbackOrAttachMedia() async throws {
+        let store = makeIsolatedStore()
+        store.addSearchProvider(name: "Brave", apiKey: "brave-test", serviceType: "brave")
+        let transport = CancelledSearchTransport()
+        let output = await IOSSearchToolDispatch.dispatchOutput(
+            searchTool(), settings: store.snapshot, webSearchEnabled: true, transport: transport
+        )
+        XCTAssertEqual(transport.requests.count, 1)
+        let payload = try jsonObject(Data(output.text.utf8))
+        XCTAssertEqual(payload["cancelled"] as? Bool, true)
+        XCTAssertNil(IosToolOutputJsonBridge.shared.metadataString(part: output.parts[0], key: "app.amber.media.images"))
+    }
+
+    private func searchTool(input: String = #"{"query":"amber"}"#) -> UIMessagePart.Tool {
+        UIMessagePart.Tool(
+            toolCallId: "search-media", toolName: "search_web", input: input,
+            output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+        )
+    }
+
     func testScrapeExtractsOgImageHeroBothAttributeOrders() {
         // The Deep Read editorial hero for hot-topic articles is sourced from the
         // scraped page's og:image / twitter:image (parity with Android).
@@ -1174,4 +1275,14 @@ private final class CountingSearchURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+@MainActor
+private final class CancelledSearchTransport: IOSSearchHTTPTransport {
+    private(set) var requests: [URLRequest] = []
+
+    func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        requests.append(request)
+        throw CancellationError()
+    }
 }

@@ -575,9 +575,10 @@ final class IOSMcpExpandedToolTests: XCTestCase {
                 arguments: #"{"query":"bg"}"#,
                 isUserInitiated: false
             )
-            guard case .filled = outcome else {
+            guard case .filledParts(let parts) = outcome else {
                 return XCTFail("background expanded MCP call must fill, got \(outcome)")
             }
+            XCTAssertEqual((parts.first as? UIMessagePart.Text)?.text, #"{"ok":true,"text":"recorded"}"#)
             XCTAssertEqual(alphaClient.calls.first?.name, "search")
             XCTAssertEqual(alphaClient.calls.first?.arguments["query"] as? String, "bg")
         }
@@ -664,6 +665,69 @@ final class IOSMcpExpandedToolTests: XCTestCase {
         XCTAssertTrue(visibleNames.contains("tool_search"))
     }
 
+    func testMixedMcpMediaSurvivesForegroundApprovalAndBackgroundForBothToolNames() async throws {
+        let tools = [IOSMcpTool(name: "media", description: "Media fixture")]
+        let media = try IOSMcpClient.toolOutput(result: ["content": [
+            ["type": "text", "text": "Media result"],
+            ["type": "image", "mimeType": "image/png", "data": "aW1hZ2U="],
+            ["type": "resource_link", "uri": "https://cdn.example.com/clip.mp4", "mimeType": "video/mp4", "name": "Clip"]
+        ]])
+        let client = RecordingMcpClient(tools: tools, output: media)
+        let manager = IOSMcpManager(
+            serverProvider: { [.streamableHTTP(name: "alpha", url: "https://example.com/mcp", tools: tools)] },
+            clientFactory: { _ in client }
+        )
+        manager.refreshFromCurrentSettings()
+        let runtime = ChatToolRuntime(
+            settingsStore: SettingsStore(),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
+            localToolExecutor: nil,
+            searchTransport: CountingSearchTransport(),
+            mcpManager: manager
+        )
+        func assertMedia(_ parts: [UIMessagePart], file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertEqual(parts.count, 4, file: file, line: line)
+            XCTAssertEqual((parts.first as? UIMessagePart.Text)?.text, "Media result", file: file, line: line)
+            XCTAssertEqual(parts.compactMap { $0 as? UIMessagePart.Image }.count, 1, file: file, line: line)
+            XCTAssertEqual(parts.compactMap { $0 as? UIMessagePart.Video }.first?.url, "https://cdn.example.com/clip.mp4", file: file, line: line)
+        }
+        try await withHighRiskAutoApprove(true) {
+            for name in ["mcp_call", "mcp__alpha__media"] {
+                let input = name == "mcp_call" ? #"{"server":"alpha","tool":"media","arguments":{}}"# : "{}"
+                let toolCall = expandedToolCall(name: name, input: input)
+                let pending = makeContext(toolCall: toolCall)
+                let foreground = await runtime.execute(ChatPendingToolCall(kind: .advanced, toolCall: toolCall), context: pending)
+                guard case .completed(let messages) = foreground,
+                      let completed = messages.last?.parts.first as? UIMessagePart.Tool else {
+                    return XCTFail("Expected completed MCP media output")
+                }
+                assertMedia(completed.output)
+
+                let beforeDenial = client.calls.count
+                let denied = await runtime.finishMcpApproval(pending: pending, allow: false)
+                XCTAssertEqual(client.calls.count, beforeDenial)
+                XCTAssertFalse((denied.last?.parts.first as? UIMessagePart.Tool)?.output.contains { $0 is UIMessagePart.Video } ?? true)
+                let approved = await runtime.finishMcpApproval(pending: pending, allow: true)
+                let approvedTool = try XCTUnwrap(approved.last?.parts.first as? UIMessagePart.Tool)
+                assertMedia(approvedTool.output)
+
+                let declarations = ToolKt.iosToolDeclarations(names: ["mcp_call"]) + expandedMcpToolDeclarations(mcpManager: manager)
+                let params = IOSChatForegroundFixtures.makeParams(toolNames: [], tools: declarations)
+                let executor = try XCTUnwrap(runtime.backgroundToolExecutors(
+                    providerSetting: pending.providerSetting,
+                    params: params,
+                    runId: "media-background"
+                )[name])
+                let outcome = await UncheckedToolExecutorBox(executor).execute(name: name, arguments: input, isUserInitiated: false)
+                guard case .filledParts(let parts) = outcome else {
+                    return XCTFail("Expected background media parts, got \(outcome)")
+                }
+                assertMedia(parts)
+            }
+        }
+        XCTAssertEqual(client.calls.count, 6, "Each foreground, approved, and background path calls exactly once")
+    }
+
     // MARK: - Full catalog fixture (mirrors IOSToolSearchExposureTests)
 
     private func fullIosDeclarations() -> [Tool] {
@@ -692,9 +756,11 @@ private final class RecordingMcpClient: IOSMcpClienting {
 
     private(set) var calls: [Call] = []
     private let tools: [IOSMcpTool]
+    private let output: IOSMcpToolOutput?
 
-    init(tools: [IOSMcpTool]) {
+    init(tools: [IOSMcpTool], output: IOSMcpToolOutput? = nil) {
         self.tools = tools
+        self.output = output
     }
 
     func connect(config: IOSMcpServerConfig) async throws -> Bool { true }
@@ -702,6 +768,10 @@ private final class RecordingMcpClient: IOSMcpClienting {
     func callTool(name: String, arguments: [String: Any]) async throws -> String {
         calls.append(Call(name: name, arguments: arguments))
         return #"{"ok":true,"text":"recorded"}"#
+    }
+    func callToolOutput(name: String, arguments: [String: Any]) async throws -> IOSMcpToolOutput {
+        let text = try await callTool(name: name, arguments: arguments)
+        return output ?? IOSMcpToolOutput(text: text)
     }
     func disconnect() {}
 }

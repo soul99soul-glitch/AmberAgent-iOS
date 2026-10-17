@@ -442,17 +442,17 @@ struct MessageBubbleView: View {
                     )
                     .chatLiveEntrance(key: reasoningEntranceKey(partIndex: partIndex), isLive: isLiveTail)
                 }
-            } else if let image = part as? UIMessagePart.Image {
-                if isUser {
-                    ChatUserImageTile(urlString: image.url)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                } else {
-                    ChatGeneratedImageGrid(
-                        images: [image],
-                        onModify: onModifyGeneratedImage,
-                        allowsModify: !isChatGenerationActive
-                    )
+            } else if part is UIMessagePart.Image {
+                if partIndex == 0 || !(message.parts[partIndex - 1] is UIMessagePart.Image) {
+                    let images = message.parts[partIndex...].prefix { $0 is UIMessagePart.Image }
+                    ChatMediaGallery(items: images.enumerated().compactMap { offset, part in
+                        guard let image = part as? UIMessagePart.Image else { return nil }
+                        return .image(image, id: "\(message.id):image:\(partIndex + offset)")
+                    }, compact: isUser)
+                    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                 }
+            } else if let video = part as? UIMessagePart.Video {
+                ChatVideoCard(video: ChatVideoDescriptor(part: video, id: "\(message.id):video:\(partIndex)"))
             } else if let miniApp = part as? UIMessagePart.MiniApp {
                 IOSMiniAppChatCard(
                     part: miniApp,
@@ -473,7 +473,14 @@ struct MessageBubbleView: View {
                         toolCallID: tool.toolCallId
                     ))
                     .chatLiveEntrance(key: "tool:\(tool.toolCallId)", isLive: isLiveTail)
-                if tool.toolName == "generate_image" {
+                if tool.toolName != "generate_image" {
+                    ChatToolMediaGallery(tool: tool).equatable()
+                    ForEach(Array(tool.output.enumerated()), id: \.offset) { index, output in
+                        if let video = output as? UIMessagePart.Video {
+                            ChatVideoCard(video: ChatVideoDescriptor(part: video, id: "\(tool.toolCallId):video:\(index)"))
+                        }
+                    }
+                } else {
                     let images = tool.output.compactMap { $0 as? UIMessagePart.Image }
                     if !images.isEmpty {
                         ChatGeneratedImageGrid(
@@ -1001,7 +1008,7 @@ struct ChatGeneratedImageDotPlaceholder: View {
 /// onGeometryChange 回填宽度再修正」的一帧高度跳变(cell 新建/复用重进视口都会重演)。
 /// UIHostingConfiguration self-sizing 的垂直 proposal 是 estimated cell 高度,不可信;
 /// 宽度 proposal 始终正确,所以只信宽度。
-private struct ChatWidthDrivenAspectRatio: ViewModifier {
+struct ChatWidthDrivenAspectRatio: ViewModifier {
     let aspectRatio: CGFloat
 
     func body(content: Content) -> some View {
@@ -1527,6 +1534,8 @@ private struct ChatGeneratedImageEditSheet: View {
     }
 }
 
+/// Legacy tile retained for reference; the default timeline uses ChatMediaGallery
+/// to keep loading, success and failure at the same size.
 /// A user-sent image attachment, right-aligned and width-constrained like a chat bubble
 /// (no share/save chrome). Sized to the image's real aspect ratio so the rounded clip
 /// hugs the picture (no transparent letterbox). Decodes `data:` base64 URLs.

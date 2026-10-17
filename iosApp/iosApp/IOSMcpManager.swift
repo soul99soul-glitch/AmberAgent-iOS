@@ -217,6 +217,18 @@ final class IOSMcpManager {
         arguments: [String: Any],
         enabledOverride: Bool? = nil
     ) async throws -> String {
+        try await callToolOutput(
+            serverName: serverName, toolName: toolName,
+            arguments: arguments, enabledOverride: enabledOverride
+        ).text
+    }
+
+    func callToolOutput(
+        serverName: String,
+        toolName: String,
+        arguments: [String: Any],
+        enabledOverride: Bool? = nil
+    ) async throws -> IOSMcpToolOutput {
         guard enabledOverride ?? isEnabled() else {
             throw IOSMcpClientError.invalidResponse
         }
@@ -248,7 +260,7 @@ final class IOSMcpManager {
             throw IOSMcpClientError.notConnected(serverName)
         }
         do {
-            return try await client.callTool(name: toolName, arguments: arguments)
+            return try await client.callToolOutput(name: toolName, arguments: arguments)
         } catch let error as IOSMcpClientError where error == .mcpSessionExpired {
             try await recoverExpiredSession(server: server, client: client)
             guard let refreshedServer = servers.first(where: { $0.name == serverName }) else {
@@ -264,7 +276,7 @@ final class IOSMcpManager {
                 throw error
             }
             do {
-                return try await client.callTool(name: toolName, arguments: arguments)
+                return try await client.callToolOutput(name: toolName, arguments: arguments)
             } catch let retryError as IOSMcpClientError where retryError == .mcpSessionExpired {
                 client.disconnect()
                 statusByServer[serverName] = .error(retryError.localizedDescription)

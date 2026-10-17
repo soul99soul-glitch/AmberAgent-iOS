@@ -543,7 +543,8 @@ struct IOSSearchExecutor {
                 "max_results": request.maxResults,
                 "search_depth": service.depth.isEmpty ? "advanced" : service.depth,
                 "topic": topic,
-                "include_answer": "advanced"
+                "include_answer": "advanced",
+                "include_images": true
             ],
             headers: ["Authorization": "Bearer \(apiKey)"]
         )
@@ -552,7 +553,8 @@ struct IOSSearchExecutor {
             IOSSearchResult(
                 title: string($0["title"]),
                 url: string($0["url"]),
-                snippet: string($0["content"])
+                snippet: string($0["content"]),
+                images: array($0["images"]).map { string($0["url"]) }
             )
         }
         guard !results.isEmpty else { throw IOSSearchExecutorError.emptyResponse("Tavily") }
@@ -589,7 +591,8 @@ struct IOSSearchExecutor {
             return IOSSearchResult(
                 title: string(item["title"]),
                 url: string(item["url"]),
-                snippet: snippet
+                snippet: snippet,
+                images: [string(item["image"])].filter { !$0.isEmpty }
             )
         }
         guard !results.isEmpty else { throw IOSSearchExecutorError.emptyResponse("Exa") }
@@ -691,7 +694,8 @@ struct IOSSearchExecutor {
             IOSSearchResult(
                 title: string($0["title"]),
                 url: string($0["link"]),
-                snippet: string($0["snippet"])
+                snippet: string($0["snippet"]),
+                images: [string($0["imageUrl"])].filter { !$0.isEmpty }
             )
         }
         guard !results.isEmpty else { throw IOSSearchExecutorError.emptyResponse("Serper") }
@@ -728,7 +732,8 @@ struct IOSSearchExecutor {
             IOSSearchResult(
                 title: string($0["title"]),
                 url: string($0["link"]),
-                snippet: string($0["snippet"])
+                snippet: string($0["snippet"]),
+                images: [string($0["thumbnail"])].filter { !$0.isEmpty }
             )
         }
         guard !results.isEmpty else { throw IOSSearchExecutorError.emptyResponse("SerpAPI") }

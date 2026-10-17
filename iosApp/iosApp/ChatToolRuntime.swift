@@ -856,15 +856,15 @@ final class ChatToolRuntime {
                 guard self.shouldExecuteSearchInBackground(toolName: toolName, arguments: arguments) else {
                     return .denied("后台生成期间需要回到 App 确认网络搜索或网页读取。")
                 }
-                let result = await self.dispatchSearchToolCall(self.toolCall(name: toolName, input: arguments))
+                let result = await self.dispatchSearchToolOutput(self.toolCall(name: toolName, input: arguments))
                 // P2-a: 后台 run 标记到 run 锚定会话（conversationId 由 job 传入），
                 // 不得标到前台当前会话。
                 self.markMemoryPollutionIfNeeded(
                     toolName: toolName,
-                    outputText: result,
+                    outputText: result.text,
                     conversationId: conversationId
                 )
-                return .filled(result)
+                return .filledParts(result.parts)
             }
         }
 
@@ -1035,20 +1035,14 @@ final class ChatToolRuntime {
                 guard self.isAdvancedToolEnabled(toolName) else {
                     return .failed("\(toolName) 未开启。请先在设置中启用对应能力。")
                 }
-                let result = await self.dispatchAdvancedToolCall(
-                    self.toolCall(name: toolName, input: arguments),
-                    providerSetting: providerSetting,
-                    params: params,
-                    runId: runId,
-                    conversationId: conversationId
-                )
+                let result = await self.dispatchMcpToolOutput(self.toolCall(name: toolName, input: arguments))
                 // P2-a: 后台 run 标记到 run 锚定会话。
                 self.markMemoryPollutionIfNeeded(
                     toolName: toolName,
-                    outputText: result,
+                    outputText: result.text,
                     conversationId: conversationId
                 )
-                return .filled(result)
+                return .filledParts(result.parts)
             }
         }
 
@@ -1065,20 +1059,14 @@ final class ChatToolRuntime {
                 guard self.isAdvancedToolEnabled(toolName) else {
                     return .failed("\(toolName) 未开启。请先在设置中启用对应能力。")
                 }
-                let result = await self.dispatchAdvancedToolCall(
-                    self.toolCall(name: toolName, input: arguments),
-                    providerSetting: providerSetting,
-                    params: params,
-                    runId: runId,
-                    conversationId: conversationId
-                )
+                let result = await self.dispatchMcpToolOutput(self.toolCall(name: toolName, input: arguments))
                 // P2-a: 后台 run 标记到 run 锚定会话。
                 self.markMemoryPollutionIfNeeded(
                     toolName: toolName,
-                    outputText: result,
+                    outputText: result.text,
                     conversationId: conversationId
                 )
-                return .filled(result)
+                return .filledParts(result.parts)
             }
         }
 
@@ -1800,17 +1788,16 @@ final class ChatToolRuntime {
             runId: pending.runId,
             executionPolicy: pending.executionPolicy
         )
-        let resultText = allow
-            ? await dispatchSearchToolCall(pending.toolCall)
-            : ChatToolOutputFormatter.toolFailureJSON(
+        let result = allow
+            ? await dispatchSearchToolOutput(pending.toolCall)
+            : IOSSearchToolOutput(text: ChatToolOutputFormatter.toolFailureJSON(
                 toolName: pending.toolCall.toolName,
                 reason: "User denied network search.",
                 denied: true
-            )
-        return messagesByFinishingToolCall(
-            pending.toolCall,
-            outputText: resultText,
-            in: pending.baseMessages,
+            ))
+        return messagesByFinishingSearchToolCall(
+            pending,
+            output: result,
             conversationId: allow ? pending.conversationId : nil
         )
     }
@@ -2058,6 +2045,11 @@ final class ChatToolRuntime {
             runId: pending.runId,
             executionPolicy: pending.executionPolicy
         )
+
+        if allow, isMcpCallTool(pending.toolCall.toolName), isMcpNetworkAllowed() {
+            let output = await dispatchMcpToolOutput(pending.toolCall)
+            return messagesByFinishingMcpToolCall(pending, output: output)
+        }
 
         let resultText: String
         if allow {
@@ -3226,11 +3218,10 @@ final class ChatToolRuntime {
             return .waitingForApproval(.search(request))
         }
 
-        let resultText = await dispatchSearchToolCall(pending.toolCall)
-        return .completed(messagesByFinishingToolCall(
-            pending.toolCall,
-            outputText: resultText,
-            in: pending.baseMessages,
+        let output = await dispatchSearchToolOutput(pending.toolCall)
+        return .completed(messagesByFinishingSearchToolCall(
+            pending,
+            output: output,
             conversationId: pending.conversationId
         ))
     }
@@ -3779,6 +3770,11 @@ final class ChatToolRuntime {
                reason: "模型议会会发起多次模型请求，需要你确认。"
            ) {
             return .waitingForApproval(.council(request))
+        }
+
+        if isMcpCallTool(toolName) {
+            let output = await dispatchMcpToolOutput(pending.toolCall)
+            return .completed(messagesByFinishingMcpToolCall(pending, output: output))
         }
 
         let resultText = await dispatchAdvancedToolCall(
@@ -5804,6 +5800,28 @@ final class ChatToolRuntime {
         )
     }
 
+    private func messagesByFinishingSearchToolCall(
+        _ pending: ChatPendingToolApproval,
+        output: IOSSearchToolOutput,
+        conversationId: KotlinUuid?
+    ) -> [UIMessage] {
+        markMemoryPollutionIfNeeded(
+            toolName: pending.toolCall.toolName,
+            outputText: output.text,
+            conversationId: conversationId
+        )
+        return messagesByFinishingToolCall(pending.toolCall, outputParts: output.parts, in: pending.baseMessages)
+    }
+
+    private func dispatchSearchToolOutput(_ toolCall: UIMessagePart.Tool) async -> IOSSearchToolOutput {
+        await IOSSearchToolDispatch.dispatchOutput(
+            toolCall,
+            settings: sharedSettings.snapshot,
+            webSearchEnabled: effectiveWebSearchEnabled,
+            transport: searchTransport
+        )
+    }
+
     private func dispatchSearchToolCall(_ toolCall: UIMessagePart.Tool) async -> String {
         await IOSSearchToolDispatch.dispatch(
             toolCall,
@@ -6582,64 +6600,8 @@ final class ChatToolRuntime {
                 baseParams: params,
                 toolCallId: toolCall.toolCallId
             )
-        case "mcp_call":
-            guard let args = ChatToolCallParsing.jsonObject(toolCall.input),
-                  let server = args["server"] as? String,
-                  let tool = args["tool"] as? String else {
-                return "mcp_call 参数无效：需要 server 与 tool。"
-            }
-            let arguments = (args["arguments"] as? [String: Any]) ?? [:]
-            do {
-                return try await mcpManager.callTool(
-                    serverName: server,
-                    toolName: tool,
-                    arguments: arguments,
-                    enabledOverride: isMcpNetworkAllowed()
-                )
-            } catch {
-                // P2-a：失败输出必须是结构化 JSON（与 search 路径同契约），否则
-                // failureReason 识别不到 → 误把失败调用标成 POLLUTED。
-                return ChatToolOutputFormatter.toolFailureJSON(
-                    toolName: toolCall.toolName,
-                    reason: "MCP 调用失败（server: \(server)，tool: \(tool)）：\(error.localizedDescription)",
-                    status: "failed"
-                )
-            }
-        case let name where ToolKt.isExpandedMcpToolName(name: name):
-            // P0-b: prefix routing — the flattened name is resolved against the
-            // CURRENT discovery directory (sanitization is not reversible).
-            // A name whose server/tool vanished mid-run gets an honest
-            // status=failed payload, never a crash.
-            guard let target = resolvedMcpTarget(forExpandedName: name) else {
-                return ChatToolOutputFormatter.toolFailureJSON(
-                    toolName: name,
-                    reason: "MCP 工具已不可用：当前已启用的 server 中不存在该工具。请调用 mcp_list 检查可用的 MCP 工具。",
-                    status: "failed"
-                )
-            }
-            guard let arguments = ChatToolCallParsing.jsonObject(toolCall.input) else {
-                return ChatToolOutputFormatter.toolFailureJSON(
-                    toolName: name,
-                    reason: "MCP 工具参数无效：需要 JSON 对象。",
-                    status: "failed"
-                )
-            }
-            do {
-                return try await mcpManager.callTool(
-                    serverName: target.server,
-                    toolName: target.tool,
-                    arguments: arguments,
-                    enabledOverride: isMcpNetworkAllowed()
-                )
-            } catch {
-                // P2-a：与 mcp_call 同一契约——结构化失败输出，failureReason 可识别，
-                // 不把失败调用误标成 POLLUTED。
-                return ChatToolOutputFormatter.toolFailureJSON(
-                    toolName: name,
-                    reason: "MCP 调用失败（server: \(target.server)，tool: \(target.tool)）：\(error.localizedDescription)",
-                    status: "failed"
-                )
-            }
+        case let name where isMcpCallTool(name):
+            return await dispatchMcpToolOutput(toolCall).text
         case let name where IOSSkillToolCatalog.toolNames.contains(name)
             || IOSMcpManagementToolCatalog.toolNames.contains(name):
             return await skillMcpToolService.execute(
@@ -7182,6 +7144,70 @@ final class ChatToolRuntime {
 
     private var isWebMountRuntimeEnabled: Bool {
         true
+    }
+
+    private func isMcpCallTool(_ name: String) -> Bool {
+        name == "mcp_call" || ToolKt.isExpandedMcpToolName(name: name)
+    }
+
+    private func messagesByFinishingMcpToolCall(
+        _ pending: ChatPendingToolApproval,
+        output: IOSMcpToolOutput
+    ) -> [UIMessage] {
+        markMemoryPollutionIfNeeded(
+            toolName: pending.toolCall.toolName,
+            outputText: output.text,
+            conversationId: pending.conversationId
+        )
+        return messagesByFinishingToolCall(pending.toolCall, outputParts: output.parts, in: pending.baseMessages)
+    }
+
+    private func dispatchMcpToolOutput(_ toolCall: UIMessagePart.Tool) async -> IOSMcpToolOutput {
+        let server: String
+        let tool: String
+        let arguments: [String: Any]
+        if toolCall.toolName == "mcp_call" {
+            guard let args = ChatToolCallParsing.jsonObject(toolCall.input),
+                  let serverName = args["server"] as? String,
+                  let toolName = args["tool"] as? String else {
+                return IOSMcpToolOutput(text: "mcp_call 参数无效：需要 server 与 tool。")
+            }
+            server = serverName
+            tool = toolName
+            arguments = args["arguments"] as? [String: Any] ?? [:]
+        } else {
+            guard let target = resolvedMcpTarget(forExpandedName: toolCall.toolName) else {
+                return IOSMcpToolOutput(text: ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: toolCall.toolName,
+                    reason: "MCP 工具已不可用：当前已启用的 server 中不存在该工具。请调用 mcp_list 检查可用的 MCP 工具。",
+                    status: "failed"
+                ))
+            }
+            guard let args = ChatToolCallParsing.jsonObject(toolCall.input) else {
+                return IOSMcpToolOutput(text: ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: toolCall.toolName,
+                    reason: "MCP 工具参数无效：需要 JSON 对象。",
+                    status: "failed"
+                ))
+            }
+            server = target.server
+            tool = target.tool
+            arguments = args
+        }
+        do {
+            return try await mcpManager.callToolOutput(
+                serverName: server,
+                toolName: tool,
+                arguments: arguments,
+                enabledOverride: isMcpNetworkAllowed()
+            )
+        } catch {
+            return IOSMcpToolOutput(text: ChatToolOutputFormatter.toolFailureJSON(
+                toolName: toolCall.toolName,
+                reason: "MCP 调用失败（server: \(server)，tool: \(tool)）：\(error.localizedDescription)",
+                status: "failed"
+            ))
+        }
     }
 
     /// P0-b: resolve a flattened `mcp__{server}__{tool}` name back to the

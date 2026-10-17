@@ -440,6 +440,30 @@ final class IOSToolRuntimeTests: XCTestCase {
         )
     }
 
+    func testStructuredOutputCapKeepsSurroundingMediaAndTextMetadata() throws {
+        let raw = String(decoding: try JSONSerialization.data(withJSONObject: [
+            "ok": true, "text": String(repeating: "result", count: 2_000)
+        ]), as: UTF8.self)
+        let text = IosToolOutputJsonBridge.shared.mergeTextMetadata(
+            part: UIMessagePart.Text(text: raw, metadata: nil),
+            updates: ["app.amber.media.origin": "fixture"]
+        )
+        let image = UIMessagePart.Image(url: "https://example.com/image.png", metadata: nil)
+        let video = UIMessagePart.Video(url: "https://example.com/clip.mp4", metadata: nil)
+        let capped = ChatToolOutputFormatter.cappedToolOutputParts([image, text, video], maxChars: 512)
+
+        XCTAssertEqual(capped.count, 3, "Truncating one JSON text must preserve surrounding media")
+        guard capped.count == 3 else { return }
+        XCTAssertTrue(capped[0] === image)
+        XCTAssertTrue(capped[2] === video)
+        let cappedText = try XCTUnwrap(capped[1] as? UIMessagePart.Text)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(cappedText.text.utf8)) as? [String: Any])
+        XCTAssertEqual(payload["ok"] as? Bool, true)
+        XCTAssertEqual(payload["truncated"] as? Bool, true)
+        XCTAssertLessThan(cappedText.text.count, raw.count)
+        XCTAssertEqual(IosToolOutputJsonBridge.shared.metadataString(part: cappedText, key: "app.amber.media.origin"), "fixture")
+    }
+
     func testFunnelCapsGiantJSONSuccessOutputKeepingStructure() throws {
         let runtime = makeRuntime()
         let toolCall = makePendingToolCall(toolName: "mcp_call")

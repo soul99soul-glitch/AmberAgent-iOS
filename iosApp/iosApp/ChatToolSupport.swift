@@ -1401,7 +1401,10 @@ enum ChatToolOutputFormatter {
         if texts.count == 1,
            let only = texts.first,
            let capped = cappedStructuredJSON(only.text, maxChars: maxChars) {
-            return [PromptTranscript.shared.doCopyText(part: only, text: capped)]
+            return parts.map { part in
+                guard let text = part as? UIMessagePart.Text else { return part }
+                return PromptTranscript.shared.doCopyText(part: text, text: capped)
+            }
         }
         return cappedPlainTextParts(parts, maxChars: maxChars)
     }

@@ -20,7 +20,7 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
 
         func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
             requestCount += 1
-            let body = #"{"web":{"results":[{"title":"Amber Result","url":"https://example.test/amber","description":"Fixture search result"}]}}"#
+            let body = #"{"web":{"results":[{"title":"Amber Result","url":"https://example.test/amber","description":"Fixture search result","thumbnail":{"original":"https://cdn.example.test/amber.jpg","src":"https://imgs.search.brave.com/proxy.jpg"}}]}}"#
             return (IOSForegroundNoopSearchTransport.okResponse(for: request), Data(body.utf8))
         }
     }
@@ -134,6 +134,72 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
         XCTAssertTrue(text.contains("Amber Result"), "noop 传输的最小结果页应进入 output,实际:\(text)")
         XCTAssertEqual(transport.requestCount, 1, "搜索结果必须来自注入的 fixture 传输")
         XCTAssertNil(box.take("tc-9"), "已执行的调用不得残留审批卡")
+        assertSearchMediaMetadata(parts)
+    }
+
+    func testSearchApprovalCompletionPreservesMediaAndDenialDoesNotRequest() async throws {
+        let transport = AutoApproveSearchTransport()
+        let (runtime, _, sharedSettings) = makeRuntime(searchTransport: transport)
+        sharedSettings.addSearchProvider(name: "Fixture Brave", apiKey: "brave-fixture-key", serviceType: "brave")
+        let toolCall = makeToolCall(id: "approved-media", name: "search_web", input: #"{"query":"amber"}"#)
+        let pending = ChatPendingToolApproval(
+            toolCall: toolCall,
+            providerSetting: F.makeProviderSetting(),
+            params: F.makeParams(toolNames: ["search_web"]),
+            runId: "run-approved-media",
+            startedAt: 1,
+            inputDigest: "media",
+            conversationId: nil,
+            baseMessages: [F.userMessage("搜索"), F.assistantMessage(parts: [toolCall])]
+        )
+        let denied = await runtime.finishSearchApproval(pending: pending, allow: false)
+        let deniedTool = try XCTUnwrap(denied.last?.parts.first as? UIMessagePart.Tool)
+        XCTAssertNotNil(ChatToolOutputFormatter.failureReason(from: deniedTool.output))
+        XCTAssertNil(deniedTool.output.first.flatMap {
+            IosToolOutputJsonBridge.shared.metadataString(part: $0, key: "app.amber.media.images")
+        })
+        XCTAssertEqual(transport.requestCount, 0)
+
+        let approved = await runtime.finishSearchApproval(pending: pending, allow: true)
+        let approvedTool = try XCTUnwrap(approved.last?.parts.first as? UIMessagePart.Tool)
+        assertSearchMediaMetadata(approvedTool.output)
+        XCTAssertEqual(transport.requestCount, 1)
+    }
+
+    func testBackgroundSearchExecutorPreservesMediaParts() async throws {
+        UserDefaults.standard.set(true, forKey: "app.amber.ios.globalAutoApprove")
+        defer { UserDefaults.standard.set(false, forKey: "app.amber.ios.globalAutoApprove") }
+        let transport = AutoApproveSearchTransport()
+        let (runtime, _, sharedSettings) = makeRuntime(searchTransport: transport)
+        sharedSettings.addSearchProvider(name: "Fixture Brave", apiKey: "brave-fixture-key", serviceType: "brave")
+        let executor = try XCTUnwrap(runtime.backgroundToolExecutors(
+            providerSetting: F.makeProviderSetting(),
+            params: F.makeParams(toolNames: ["search_web"]),
+            runId: "background-media"
+        )["search_web"])
+        let outcome = await Self.executeOffMainActor(UncheckedExecuteInput(
+            executor: executor,
+            tool: makeToolCall(id: "background-media", name: "search_web", input: #"{"query":"amber"}"#)
+        ))
+        guard case .filledParts(let parts) = outcome else {
+            return XCTFail("Expected structured background search output, got \(outcome)")
+        }
+        assertSearchMediaMetadata(parts)
+        XCTAssertEqual(transport.requestCount, 1)
+    }
+
+    private func assertSearchMediaMetadata(_ parts: [UIMessagePart], file: StaticString = #filePath, line: UInt = #line) {
+        guard let part = parts.first,
+              let json = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "app.amber.media.images"),
+              let data = json.data(using: .utf8),
+              let records = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] else {
+            return XCTFail("Search media must survive runtime completion", file: file, line: line)
+        }
+        XCTAssertEqual(records.count, 1, file: file, line: line)
+        XCTAssertEqual(records.first?["url"], "https://cdn.example.test/amber.jpg", file: file, line: line)
+        XCTAssertEqual(records.first?["title"], "Amber Result", file: file, line: line)
+        XCTAssertEqual(records.first?["sourceURL"], "https://example.test/amber", file: file, line: line)
+        XCTAssertFalse(parts.contains { $0 is UIMessagePart.Image }, "Search candidates must not become provider vision input", file: file, line: line)
     }
 
     func testToolSearchExecutorRunsLocallyThroughBridge() async {

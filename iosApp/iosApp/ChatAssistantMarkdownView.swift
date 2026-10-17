@@ -528,6 +528,19 @@ struct ChatAssistantMarkdownView: View {
             ),
             build: { streamingMarkdownConfig(liveStreaming: liveStreaming) }
         )
+        ChatMarkdownMediaContent(text: content, isStreaming: liveStreaming) { fragment, identity in
+            markdownFragment(fragment, liveStreaming: liveStreaming, config: config,
+                             cacheIdentitySuffix: "\(cacheIdentitySuffix):\(identity)")
+        }
+    }
+
+    @ViewBuilder
+    private func markdownFragment(
+        _ content: String,
+        liveStreaming: Bool,
+        config: SwiftStreamingMarkdown.MarkdownRenderConfig,
+        cacheIdentitySuffix: String
+    ) -> some View {
         switch ChatMarkdownRendererPolicy.selection(
             blockRendererEnabled: shouldUseBlockStreamingRenderer(liveStreaming: liveStreaming)
         ) {

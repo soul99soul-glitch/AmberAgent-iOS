@@ -1,6 +1,36 @@
 import Foundation
 @preconcurrency import Shared
 
+/// Keeps display-only search thumbnails in durable metadata so providers continue
+/// receiving the text summary rather than treating candidate thumbnails as vision input.
+struct IOSSearchToolOutput {
+    let text: String
+    let parts: [UIMessagePart]
+
+    init(text: String, results: [IOSSearchResult] = []) {
+        self.text = text
+        var seen = Set<String>()
+        let images: [[String: String]] = results.compactMap { result in
+            guard let url = result.images.first(where: { raw in
+                guard let url = URL(string: raw), let scheme = url.scheme?.lowercased() else { return false }
+                return ["https", "http"].contains(scheme) && url.host != nil
+            }), seen.insert(url).inserted else { return nil }
+            return ["id": url, "url": url, "title": result.title, "sourceURL": result.url]
+        }
+        let part = UIMessagePart.Text(text: text, metadata: nil)
+        if !images.isEmpty,
+           let data = try? JSONSerialization.data(withJSONObject: images),
+           let json = String(data: data, encoding: .utf8) {
+            parts = [IosToolOutputJsonBridge.shared.mergeTextMetadata(part: part, updates: [
+                "app.amber.media.origin": "search",
+                "app.amber.media.images": json
+            ])]
+        } else {
+            parts = [part]
+        }
+    }
+}
+
 /// Executes `search_web` / `scrape_web` tool calls against the configured search
 /// services, falling back to the free aggregate when the selected service fails.
 /// Shared by Amber's chat tool runtime and the standalone Novel discussion agent.
@@ -13,11 +43,20 @@ enum IOSSearchToolDispatch {
         webSearchEnabled: Bool,
         transport: any IOSSearchHTTPTransport
     ) async -> String {
+        await dispatchOutput(toolCall, settings: settings, webSearchEnabled: webSearchEnabled, transport: transport).text
+    }
+
+    static func dispatchOutput(
+        _ toolCall: UIMessagePart.Tool,
+        settings: Settings,
+        webSearchEnabled: Bool,
+        transport: any IOSSearchHTTPTransport
+    ) async -> IOSSearchToolOutput {
         guard webSearchEnabled else {
-            return IOSToolFailurePayload.json(
+            return IOSSearchToolOutput(text: IOSToolFailurePayload.json(
                 toolName: toolCall.toolName,
                 reason: "Web search is disabled in settings."
-            )
+            ))
         }
         do {
             if toolCall.toolName == "search_web" {
@@ -27,23 +66,23 @@ enum IOSSearchToolDispatch {
                     transport: transport
                 )
             }
-            return try await IOSSearchExecutor.execute(
+            return IOSSearchToolOutput(text: try await IOSSearchExecutor.execute(
                 toolName: toolCall.toolName,
                 toolInput: toolCall.input,
                 settings: settings,
                 transport: transport
-            )
+            ))
         } catch is CancellationError {
-            return IOSToolFailurePayload.json(
+            return IOSSearchToolOutput(text: IOSToolFailurePayload.json(
                 toolName: toolCall.toolName,
                 reason: "User cancelled.",
                 cancelled: true
-            )
+            ))
         } catch {
-            return IOSToolFailurePayload.json(
+            return IOSSearchToolOutput(text: IOSToolFailurePayload.json(
                 toolName: toolCall.toolName,
                 reason: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            )
+            ))
         }
     }
 
@@ -51,7 +90,7 @@ enum IOSSearchToolDispatch {
         _ toolCall: UIMessagePart.Tool,
         settings: Settings,
         transport: any IOSSearchHTTPTransport
-    ) async throws -> String {
+    ) async throws -> IOSSearchToolOutput {
         let maxResults = Int(settings.searchCommonOptions.resultSize)
         let request = try IOSSearchExecutor.searchRequest(
             from: toolCall.input,
@@ -65,11 +104,11 @@ enum IOSSearchToolDispatch {
                 settings: settings,
                 transport: transport
             )
-            return IOSSearchExecutor.format(
+            return IOSSearchToolOutput(text: IOSSearchExecutor.format(
                 query: execution.request.query,
                 results: execution.results,
                 selection: execution.selection
-            )
+            ), results: execution.results)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -87,11 +126,11 @@ enum IOSSearchToolDispatch {
                 settings: settings,
                 transport: transport
             )
-            return IOSSearchExecutor.format(
+            return IOSSearchToolOutput(text: IOSSearchExecutor.format(
                 query: request.query,
                 results: results,
                 selection: fallbackSelection
-            )
+            ), results: results)
         }
     }
 

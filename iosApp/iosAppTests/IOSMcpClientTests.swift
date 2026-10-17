@@ -1,4 +1,5 @@
 import XCTest
+@preconcurrency import Shared
 @testable import iosApp
 
 @MainActor
@@ -747,6 +748,88 @@ final class IOSMcpClientTests: XCTestCase {
         let output = try await client.callTool(name: "image", arguments: [:])
 
         XCTAssertTrue(output.contains(#""type":"image""#))
+    }
+
+    func testTypedCallPreservesMixedMediaOrderAndLegacyTextUsesSingleRPC() async throws {
+        let result: [String: Any] = ["content": [
+            ["type": "text", "text": "Before media"],
+            ["type": "image", "mimeType": "image/png", "data": "aW1hZ2U="],
+            ["type": "resource_link", "uri": "https://cdn.example.com/clip.mp4", "mimeType": "video/mp4", "name": "clip.mp4", "title": "Demo clip"],
+            ["type": "text", "text": "After media"]
+        ]]
+        let transport = FakeMcpHTTPTransport(responses: [
+            ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+            ["jsonrpc": "2.0", "id": 2, "result": result],
+            ["jsonrpc": "2.0", "id": 3, "result": result]
+        ])
+        let client = IOSMcpClient(transport: transport)
+        _ = try await client.connect(config: .streamableHTTP(name: "media", url: "https://example.com/mcp"))
+        let output = try await client.callToolOutput(name: "media", arguments: [:])
+        XCTAssertEqual(transport.sentMethods.filter { $0 == "tools/call" }.count, 1)
+        XCTAssertEqual(output.text, "Before media\nAfter media")
+        XCTAssertEqual(output.parts.count, 5)
+        XCTAssertEqual((output.parts[0] as? UIMessagePart.Text)?.text, "Before media")
+        XCTAssertEqual((output.parts[1] as? UIMessagePart.Image)?.url, "data:image/png;base64,aW1hZ2U=")
+        let video = try XCTUnwrap(output.parts[2] as? UIMessagePart.Video)
+        XCTAssertEqual(video.url, "https://cdn.example.com/clip.mp4")
+        XCTAssertEqual(IosToolOutputJsonBridge.shared.metadataString(part: video, key: "app.amber.media.title"), "Demo clip")
+        XCTAssertEqual(IosToolOutputJsonBridge.shared.metadataString(part: video, key: "app.amber.media.sourceURL"), video.url)
+        XCTAssertEqual((output.parts[3] as? UIMessagePart.Text)?.text, "Demo clip\nhttps://cdn.example.com/clip.mp4")
+        XCTAssertEqual((output.parts[4] as? UIMessagePart.Text)?.text, "After media")
+        let restored = try IosToolOutputJsonBridge.shared.decode(json: IosToolOutputJsonBridge.shared.encode(parts: output.parts))
+        XCTAssertEqual((restored[2] as? UIMessagePart.Video)?.url, video.url)
+        let legacy = try await client.callTool(name: "media", arguments: [:])
+        XCTAssertEqual(legacy, "Before media\nAfter media")
+        XCTAssertEqual(transport.sentMethods.filter { $0 == "tools/call" }.count, 2)
+    }
+
+    func testTypedResourcesRequireDeclaredMediaMIMEAndDoNotInlineVideoBlobs() throws {
+        let output = try IOSMcpClient.toolOutput(result: ["content": [
+            ["type": "resource_link", "uri": "https://example.com/watch.mp4", "mimeType": "text/html", "name": "Web page"],
+            ["type": "resource_link", "uri": "https://cdn.example.com/image.png", "mimeType": "image/png", "name": "Figure"],
+            ["type": "resource", "resource": ["uri": "memory://figure", "mimeType": "image/jpeg", "blob": "aW1hZ2U="]],
+            ["type": "resource", "resource": ["uri": "memory://clip", "mimeType": "video/mp4", "blob": "dmlkZW8="]],
+            ["type": "text", "text": #"{"url":"https://example.com/ordinary.mp4"}"#]
+        ]])
+        XCTAssertEqual(output.parts.compactMap { $0 as? UIMessagePart.Image }.count, 2)
+        XCTAssertFalse(output.parts.contains { $0 is UIMessagePart.Video })
+        let text = output.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+        XCTAssertTrue(text.contains("Web page\nhttps://example.com/watch.mp4"))
+        XCTAssertTrue(text.contains("内嵌视频"))
+        XCTAssertTrue(text.contains("memory://clip"))
+        XCTAssertFalse(IosToolOutputJsonBridge.shared.encode(parts: output.parts).contains("dmlkZW8="))
+    }
+
+    func testVideoOnlyResourceRetainsTextForProvidersThatDoNotConsumeVideo() throws {
+        let output = try IOSMcpClient.toolOutput(result: ["content": [
+            ["type": "resource_link", "uri": "https://cdn.example.com/clip.mp4", "mimeType": "video/mp4", "name": "Demo"]
+        ]])
+        XCTAssertEqual((output.parts.first as? UIMessagePart.Video)?.url, "https://cdn.example.com/clip.mp4")
+        XCTAssertEqual((output.parts.last as? UIMessagePart.Text)?.text, "Demo\nhttps://cdn.example.com/clip.mp4")
+    }
+
+    func testVideoResourceDoesNotDuplicateURIAlreadyInText() throws {
+        let output = try IOSMcpClient.toolOutput(result: ["content": [
+            ["type": "text", "text": "Video: https://cdn.example.com/clip.mp4"],
+            ["type": "resource_link", "uri": "https://cdn.example.com/clip.mp4", "mimeType": "video/mp4", "name": "Demo"]
+        ]])
+        XCTAssertEqual(output.parts.count, 2)
+        XCTAssertTrue(output.parts[1] is UIMessagePart.Video)
+    }
+
+    func testTypedErrorResultRejectsMediaAndKeepsServerError() throws {
+        XCTAssertThrowsError(try IOSMcpClient.toolOutput(result: [
+            "isError": true,
+            "content": [
+                ["type": "text", "text": "Permission denied"],
+                ["type": "resource_link", "uri": "https://example.com/a.mp4", "mimeType": "video/mp4", "name": "Video"]
+            ]
+        ])) { error in
+            XCTAssertEqual(error as? IOSMcpClientError, .rpcError("Permission denied"))
+        }
+        XCTAssertThrowsError(try IOSMcpClient.toolOutput(result: [:])) { error in
+            XCTAssertEqual(error as? IOSMcpClientError, .unsupportedContent)
+        }
     }
 
     func testCallToolTimesOutWhenTransportNeverProducesTerminalResponse() async throws {
