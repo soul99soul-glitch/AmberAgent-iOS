@@ -32,6 +32,7 @@ private final class LingerBackgroundTime {
 struct AgentActivityOwnershipCandidate: Equatable {
     let id: String
     let runId: String
+    let conversationId: String?
     let updatedAt: Date
 }
 
@@ -40,15 +41,18 @@ enum AgentActivityOwnershipPolicy {
         from candidates: [AgentActivityOwnershipCandidate],
         ownedRunIds: Set<String>
     ) -> Set<String> {
-        var newestByRunId: [String: AgentActivityOwnershipCandidate] = [:]
+        var newestByConversation: [String: AgentActivityOwnershipCandidate] = [:]
         for candidate in candidates where ownedRunIds.contains(candidate.runId) {
-            if let current = newestByRunId[candidate.runId],
+            // 同一次用户任务可能先后用不同 runId 开卡（聊天 run 与手机自动化 run），
+            // 只按 runId 去重会让它们同时活着；按对话收敛到最新一张。
+            let key = candidate.conversationId ?? candidate.runId
+            if let current = newestByConversation[key],
                current.updatedAt >= candidate.updatedAt {
                 continue
             }
-            newestByRunId[candidate.runId] = candidate
+            newestByConversation[key] = candidate
         }
-        return Set(newestByRunId.values.map(\.id))
+        return Set(newestByConversation.values.map(\.id))
     }
 }
 
@@ -220,6 +224,20 @@ final class AgentLiveActivityController {
             presentation: presentation,
             revocation: nil
         )
+        // 同一对话只留一张卡。只收已经落定的旧卡（失败/完成/取消）：正在流式输出的
+        // 聊天卡不能被并行的辅助卡（如读文件预览）顶掉。
+        if let conversationId {
+            let staleRunIds = activitiesByRunId
+                .filter {
+                    $0.key != runId
+                        && $0.value.conversationId == conversationId
+                        && $0.value.lastPresentation.phase != .running
+                }
+                .map(\.key)
+            for staleRunId in staleRunIds {
+                Task { await self.end(runId: staleRunId, presentation: .cancelled(), dismissalDelay: 0) }
+            }
+        }
         Task { [weak self] in
             await self?.resolvePendingStart(
                 runId: runId,
@@ -751,6 +769,7 @@ final class AgentLiveActivityController {
             ownedCandidate = AgentActivityOwnershipCandidate(
                 id: owned.card.id,
                 runId: runId,
+                conversationId: owned.conversationId,
                 updatedAt: owned.lastUpdateAt
             )
         }
@@ -865,6 +884,7 @@ final class AgentLiveActivityController {
         AgentActivityOwnershipCandidate(
             id: activity.id,
             runId: activity.attributes.runId,
+            conversationId: activity.attributes.conversationId,
             updatedAt: activity.content.state.updatedAt
         )
     }

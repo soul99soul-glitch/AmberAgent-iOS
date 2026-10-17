@@ -778,21 +778,25 @@ final class AgentActivityPresentationTests: XCTestCase {
             AgentActivityOwnershipCandidate(
                 id: "run-a-old",
                 runId: "run-a",
+                conversationId: nil,
                 updatedAt: Date(timeIntervalSince1970: 10)
             ),
             AgentActivityOwnershipCandidate(
                 id: "run-a-new",
                 runId: "run-a",
+                conversationId: nil,
                 updatedAt: Date(timeIntervalSince1970: 20)
             ),
             AgentActivityOwnershipCandidate(
                 id: "run-b",
                 runId: "run-b",
+                conversationId: nil,
                 updatedAt: Date(timeIntervalSince1970: 15)
             ),
             AgentActivityOwnershipCandidate(
                 id: "orphan",
                 runId: "orphan-run",
+                conversationId: nil,
                 updatedAt: Date(timeIntervalSince1970: 30)
             ),
         ]
@@ -803,6 +807,38 @@ final class AgentActivityPresentationTests: XCTestCase {
                 ownedRunIds: ["run-a", "run-b"]
             ),
             ["run-a-new", "run-b"]
+        )
+    }
+
+    /// 同一对话里聊天 run 与手机自动化 run 各自开卡时，只保留最新一张。
+    func testRestoreRetainsOneActivityPerConversation() {
+        let candidates = [
+            AgentActivityOwnershipCandidate(
+                id: "chat-card",
+                runId: "chat-run",
+                conversationId: "conversation-1",
+                updatedAt: Date(timeIntervalSince1970: 10)
+            ),
+            AgentActivityOwnershipCandidate(
+                id: "phone-card",
+                runId: "phone-run",
+                conversationId: "conversation-1",
+                updatedAt: Date(timeIntervalSince1970: 20)
+            ),
+            AgentActivityOwnershipCandidate(
+                id: "other-conversation",
+                runId: "other-run",
+                conversationId: "conversation-2",
+                updatedAt: Date(timeIntervalSince1970: 5)
+            ),
+        ]
+
+        XCTAssertEqual(
+            AgentActivityOwnershipPolicy.retainedActivityIDs(
+                from: candidates,
+                ownedRunIds: ["chat-run", "phone-run", "other-run"]
+            ),
+            ["phone-card", "other-conversation"]
         )
     }
 
