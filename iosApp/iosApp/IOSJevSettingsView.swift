@@ -1,7 +1,7 @@
 import SwiftUI
 @preconcurrency import Shared
 
-// MARK: - Jev 快速判断设置页（Phase 1）
+// MARK: - 快速判断模型设置页（Phase 1）
 //
 // 完成设置闭环的可见控件层：Key 管理（Keychain 写成功才更新 UI）、合成数据
 // 连接测试（返回实际模型版本/耗时/错误，不自动启用任何用途）、每用途模式、
@@ -54,7 +54,7 @@ struct IOSJevSettingsView: View {
                 }
                 .scrollIndicators(.hidden)
             }
-            .navigationTitle(IOSAppLocalization.string("Jev 快速判断", defaultValue: "Jev 快速判断"))
+            .navigationTitle(IOSAppLocalization.string("快速判断模型", defaultValue: "快速判断模型"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -603,8 +603,8 @@ struct IOSJevSettingsView: View {
             Button(IOSAppLocalization.string("取消", defaultValue: "取消"), role: .cancel) {}
         } message: {
             Text(IOSAppLocalization.string(
-                "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。",
-                defaultValue: "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。"
+                "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给当前快速判断模型；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。",
+                defaultValue: "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给当前快速判断模型；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。"
             ))
         }
     }
@@ -692,7 +692,7 @@ struct IOSJevSettingsView: View {
                     let phoneScopeMissing = (useCase == .phoneVerification || useCase == .phoneActions)
                         && configuredMode != .off
                         && !settings.canSend(useCase: useCase, required: requiredScopes(for: useCase))
-                    let detail = phoneScopeMissing ? "数据范围未齐，当前不会请求 Jev。"
+                    let detail = phoneScopeMissing ? "数据范围未齐，当前不会请求快速判断模型。"
                         : (useCase == .scriptJudgment && effectiveMode != .active
                             ? "关闭：脚本中不提供 jev。" : effectiveMode.detail)
                     Text(IOSAppLocalization.string(detail, defaultValue: detail))
@@ -797,7 +797,7 @@ struct IOSJevSettingsView: View {
                 }
                 // 非 ViewBuilder 语句块不能出现在这重：用单个表达式（三层三目）。
                 let imageDetail = settings.supportsPhoneScreenshots
-                    ? "默认只发送当前步骤的界面文字；允许截图后，在需要 Jev 判断时同次发送压缩截图。图片能力仍为实验功能。"
+                    ? "默认只发送当前步骤的界面文字；允许截图后，在需要快速判断时同次发送压缩截图。图片能力仍为实验功能。"
                     : settings.apiStyle == .vercelGateway
                         ? "当前模型使用界面文字判断；升级至 Gateway 的 Jev 1.14 后可允许截图。"
                         : "当前供应商只接收文字判定，截图不会被发送。"

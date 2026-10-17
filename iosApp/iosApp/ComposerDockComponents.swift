@@ -450,7 +450,7 @@ private struct ComposerJevRunSummaryDetails: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(IOSAppLocalization.string("本轮 Jev 判断", defaultValue: "本轮 Jev 判断"))
+            Text(IOSAppLocalization.string("本轮快速判断", defaultValue: "本轮快速判断"))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground)
 

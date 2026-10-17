@@ -248,7 +248,7 @@ struct ExecutionSettingsView: View {
                             .frame(width: 28, height: 28)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(IOSAppLocalization.string("Jev 快速判断", defaultValue: "Jev 快速判断"))
+                            Text(IOSAppLocalization.string("快速判断模型", defaultValue: "快速判断模型"))
                                 .font(.body)
                                 .foregroundStyle(AmberTheme.foreground)
                             Text(IOSAppLocalization.string(
@@ -271,7 +271,7 @@ struct ExecutionSettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
-                .accessibilityLabel("Jev 快速判断设置")
+                .accessibilityLabel("快速判断模型设置")
             }
         }
     }

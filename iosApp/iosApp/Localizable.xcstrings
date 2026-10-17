@@ -1,6 +1,144 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "快速判断模型": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast judgment model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速判断模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速判斷模型"
+          }
+        }
+      }
+    },
+    "快速判断模型设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast judgment model settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速判断模型设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速判斷模型設定"
+          }
+        }
+      }
+    },
+    "本轮快速判断": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast judgments this turn"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本轮快速判断"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本輪快速判斷"
+          }
+        }
+      }
+    },
+    "当前不会请求快速判断模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Data scopes are incomplete; the fast judgment model is not called."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前不会请求快速判断模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "當前不會請求快速判斷模型。"
+          }
+        }
+      }
+    },
+    "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给当前快速判断模型；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tool discovery, memory recall, context selection, output retention, model routing, intent routing, and completion checks will be set to Shadow with their default data scopes. Task text, assistant replies, tool catalog info, candidate models and providers, personal memory, or tool output will be sent to the current fast judgment model per use case; results are observed only and never applied. Web actions, approval triage, auto-approval review, and script judgment are unchanged."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给当前快速判断模型；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工具發現、記憶召回、上下文篩選、壓縮保留、模型調度、意圖路由和完成校驗將設為 Shadow，並使用各自預設資料範圍。當前任務文字、助手回覆、工具目錄資訊、候選模型與服務商資訊、個人記憶內容或工具輸出會按用途發送給當前快速判斷模型；結果只觀測、不應用。網頁操作、審批分診、自動批准複核和腳本判斷不變。"
+          }
+        }
+      }
+    },
+    "默认只发送当前步骤的界面文字；允许截图后，在需要快速判断时同次发送压缩截图。图片能力仍为实验功能。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "By default only screen text for the current step is sent. If screenshots are allowed, a compressed screenshot is included in the same request when fast judgment is needed. Image support is experimental."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "默认只发送当前步骤的界面文字；允许截图后，在需要快速判断时同次发送压缩截图。图片能力仍为实验功能。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預設只發送當前步驟的介面文字；允許截圖後，在需要快速判斷時同次發送壓縮截圖。圖片能力仍為實驗功能。"
+          }
+        }
+      }
+    },
     "固定版本": {
       "extractionState": "manual",
       "localizations": {
