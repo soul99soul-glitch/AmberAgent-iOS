@@ -261,7 +261,7 @@ final class IOSRuntimeStatusToolTests: XCTestCase {
         XCTAssertEqual(jev["role"] as? String, "internal_fast_judgment")
         XCTAssertEqual(jev["service"] as? String, "typesafe.systemone")
         XCTAssertEqual(jev["api_mode"] as? String, "systemone", "默认出站形态必须如实报 systemone")
-        XCTAssertEqual(jev["model"] as? String, "jev-latest", "systemone 无 pinned 时模型为 jev-latest")
+        XCTAssertEqual(jev["model"] as? String, "jev-1.14.0", "systemone 无 pinned 时上报推荐验收版本")
         XCTAssertEqual(jev["model_configured"] as? Bool, true)
         XCTAssertNotNil(jev["summary"], "jev 段必须自带可读说明，回答「jev 是什么」")
         XCTAssertNotNil(jev["coordinator"])
@@ -384,7 +384,7 @@ final class IOSRuntimeStatusToolTests: XCTestCase {
         let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
         var settings = sharedSettings.jevSettings
         settings.setAPIStyle(.vercelGateway)
-        settings.setVercelModel("openai/gpt-4o")
+        settings.setProviderModel("openai/gpt-4o")
         settings.setMode(.active, for: .toolDiscovery)
         sharedSettings.updateJevSettings(settings)
 
@@ -410,7 +410,7 @@ final class IOSRuntimeStatusToolTests: XCTestCase {
         let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
         var settings = sharedSettings.jevSettings
         settings.setAPIStyle(.vercelGateway)
-        settings.setVercelModel("")
+        settings.setProviderModel("")
         settings.setMode(.active, for: .toolDiscovery)
         sharedSettings.updateJevSettings(settings)
 

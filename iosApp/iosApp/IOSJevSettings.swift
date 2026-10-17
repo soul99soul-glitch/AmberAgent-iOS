@@ -103,6 +103,7 @@ enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable, Sendable {
     case toolOutput
     case webContent
     case phoneContent
+    case phoneScreenshots
 
     var id: String { rawValue }
 
@@ -115,51 +116,148 @@ enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable, Sendable {
         case .toolOutput: "文件 / 工具输出"
         case .webContent: "网页内容"
         case .phoneContent: "手机界面文字"
+        case .phoneScreenshots: "手机屏幕截图（实验）"
         }
     }
 }
 
-/// Jev 出站的 API 调用形态。默认 TypeSafe 原生 systemone 契约；
-/// vercelGateway 走 Vercel AI Gateway 的 evaluation-model 契约（模型为
-/// provider/model slug，默认 typesafe-ai/jev；同一个 Key 字段承载
-/// AI_GATEWAY_API_KEY）。注意 Gateway 的 evaluation 不经 OpenAI 兼容端点。
+/// Jev 同类决策模型的出站形态。
+///
+/// 同品类 = 送 state + 带类型问句（noul/choice/score），收回概率答案，不生成
+/// 文本。可接入的服务差异只有三处：请求体契约（systemone 原生 / Vercel
+/// Gateway 的 decision-model）、endpoint、模型 ID。三者都收在 `IOSJevProvider`
+/// 注册表里，新增供应商 = 这里加一个 case + 注册表加一条；只有在遇到全新
+/// 契约时才需要动客户端的编码分支。
 enum IOSJevAPIStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// TypeSafe 原生 `POST /v1/systemone`（Jev）。
     case systemone
+    /// Vercel AI Gateway 的 decision-model 契约，模型为 provider/model slug。
     case vercelGateway
+    /// Perplexity Decisions API（`POST /v1/decisions`，pplx-decider 系列）。
+    case perplexityDecisions
+    /// Liquid AI decision models（`POST /decisions/v1/systemone`，d1 / d1-ultra）。
+    case liquidSystemone
 
     var id: String { rawValue }
 
-    var displayName: String {
-        switch self {
-        case .systemone: "TypeSafe 原生"
-        case .vercelGateway: "Vercel AI Gateway"
-        }
-    }
-
+    var provider: IOSJevProvider { IOSJevProvider.for(self) }
+    var displayName: String { provider.displayName }
     /// runtime_status / 诊断用的稳定服务标识。
-    var serviceIdentifier: String {
-        switch self {
-        case .systemone: "typesafe.systemone"
-        case .vercelGateway: "vercel.ai_gateway"
-        }
-    }
-
+    var serviceIdentifier: String { provider.serviceIdentifier }
     /// runtime_status JSON 里的 api_mode 值（snake_case，与用途键风格一致；
     /// 持久化 rawValue 维持 camelCase，不影响存量设置文件）。
-    var statusValue: String {
-        switch self {
-        case .systemone: "systemone"
-        case .vercelGateway: "vercel_gateway"
-        }
+    var statusValue: String { provider.statusValue }
+    /// 模型输入框的占位提示。
+    var modelPlaceholder: String { provider.modelPlaceholder }
+    /// API Key 输入框的服务名提示。
+    var keyPlaceholder: String { provider.keyPlaceholder }
+    /// 请求体契约；决定客户端走哪条编码/解析分支。
+    var contract: IOSJevProvider.Contract { provider.contract }
+    /// box（图片定位）题型只有 TypeSafe 原生契约支持。
+    var supportsBoxQuestions: Bool { provider.supportsBoxQuestions }
+    /// 是否支持图片输入；新供应商未实现图片编码前不得下发 assets。
+    var supportsImages: Bool { provider.supportsImages }
+}
+
+/// 一个可选供应商的静态描述。设置页列表、默认模型、endpoint、Key 提示、
+/// 诊断标识都从这里取，避免散落在 UI 与客户端的 switch 里。
+struct IOSJevProvider: Equatable, Sendable {
+    /// 请求体契约。目前只有两种：TypeSafe 原生 schema，与 Vercel AI Gateway
+    /// 的 @ai-sdk/gateway decision-model schema。
+    enum Contract: String, Sendable {
+        case systemone
+        case vercelDecisionModel
     }
 
-    /// API Key 输入框的服务名提示。
-    var keyPlaceholder: String {
-        switch self {
-        case .systemone: "粘贴 TypeSafe API Key"
-        case .vercelGateway: "粘贴 Vercel AI Gateway API Key"
-        }
+    var style: IOSJevAPIStyle
+    var displayName: String
+    var contract: Contract
+    var endpoint: URL
+    /// 推荐模型 ID。systemone 走 pinnedModelVersion，其余形态在模型为空时用它兜底。
+    var defaultModel: String
+    var modelPlaceholder: String
+    var keyPlaceholder: String
+    /// runtime_status / 诊断用的稳定服务标识。
+    var serviceIdentifier: String
+    /// runtime_status JSON 里的 api_mode 值。
+    var statusValue: String
+    /// 是否支持 box 题型（图片定位）。
+    var supportsBoxQuestions: Bool
+    /// 是否支持图片输入（决定能否下发 assets；未实现图片编码的供应商必须为 false）。
+    var supportsImages: Bool
+
+    static let all: [IOSJevProvider] = [.typesafe, .vercelGateway, .perplexity, .liquid]
+
+    /// 历史默认模型。早期只有 Gateway 一种非原生形态，存量 `vercelModel` 可能
+    /// 仍是这些值；切供应商时按"未自定义"处理，避免把旧 slug 发到新厂商。
+    static let legacyDefaultModels: Set<String> = ["typesafe-ai/jev"]
+
+    static func `for`(_ style: IOSJevAPIStyle) -> IOSJevProvider {
+        all.first { $0.style == style } ?? .typesafe
     }
+
+    static let typesafe = IOSJevProvider(
+        style: .systemone,
+        displayName: "TypeSafe 原生",
+        contract: .systemone,
+        endpoint: URL(string: "https://api.typesafe.ai/v1/systemone")!,
+        defaultModel: "jev-1.14.0",
+        modelPlaceholder: "固定模型版本，如 jev-1.14.0",
+        keyPlaceholder: "粘贴 TypeSafe API Key",
+        serviceIdentifier: "typesafe.systemone",
+        statusValue: "systemone",
+        supportsBoxQuestions: true,
+        supportsImages: true
+    )
+
+    /// @ai-sdk/gateway decision-model 契约（2026-10-16）：模型走 ai-model-id，
+    /// body {stateParts, questions}；图片在 stateParts 中作为 file part。
+    /// 注意 Gateway 的 evaluation 不经 OpenAI 兼容端点。
+    static let vercelGateway = IOSJevProvider(
+        style: .vercelGateway,
+        displayName: "Vercel AI Gateway",
+        contract: .vercelDecisionModel,
+        endpoint: URL(string: "https://ai-gateway.vercel.sh/v4/ai/decision-model")!,
+        defaultModel: "typesafe-ai/jev-1.14.0",
+        modelPlaceholder: "如 typesafe-ai/jev-1.14.0 或 liquid/d1",
+        keyPlaceholder: "粘贴 Vercel AI Gateway API Key",
+        serviceIdentifier: "vercel.ai_gateway",
+        statusValue: "vercel_gateway",
+        supportsBoxQuestions: false,
+        supportsImages: true
+    )
+
+    /// Perplexity 的 /v1/decisions 与 systemone 同构（body {model, state,
+    /// questions}，返回 answers[qid].{noul,choice,score,confidence}），复用同一
+    /// 编码/解析分支，只有 endpoint 与模型 ID 不同。
+    static let perplexity = IOSJevProvider(
+        style: .perplexityDecisions,
+        displayName: "Perplexity",
+        contract: .systemone,
+        endpoint: URL(string: "https://api.perplexity.ai/v1/decisions")!,
+        defaultModel: "pplx-decider-v1.2",
+        modelPlaceholder: "如 pplx-decider-v1.2",
+        keyPlaceholder: "粘贴 Perplexity API Key",
+        serviceIdentifier: "perplexity.decisions",
+        statusValue: "perplexity_decisions",
+        supportsBoxQuestions: false,
+        supportsImages: false
+    )
+
+    /// Liquid 的 decision models 端点同样是 systemone 契约；模型 d1 / d1-ultra。
+    static let liquid = IOSJevProvider(
+        style: .liquidSystemone,
+        displayName: "Liquid AI",
+        contract: .systemone,
+        endpoint: URL(string: "https://api.liquid.ai/decisions/v1/systemone")!,
+        defaultModel: "d1",
+        modelPlaceholder: "如 d1 或 d1-ultra",
+        keyPlaceholder: "粘贴 Liquid AI API Key",
+        serviceIdentifier: "liquid.decisions",
+        statusValue: "liquid_systemone",
+        supportsBoxQuestions: false,
+        supportsImages: false
+    )
 }
 
 /// Phase 1 内部策略阈值（版本化；调整需升级 policyVersion 并回到 shadow）。
@@ -167,6 +265,8 @@ enum IOSJevAPIStyle: String, Codable, CaseIterable, Identifiable, Sendable {
 /// 上百步，v1 的 6 次/轮、1000 次/日预算在真实负载下必然撞墙；预算保留为
 /// 失控熔断，量级按「实践中不触发」放宽。
 struct IOSJevPolicy: Codable, Equatable, Sendable {
+    /// A resized phone JPEG fits here without raising the text-only request budget.
+    static let maxImageRequestBytes = 2 * 1_024 * 1_024
     /// 当前策略版本；存量低于该值的策略整体回默认（阈值无 UI 可编辑，重设无损）。
     static let currentPolicyVersion = 3
     /// 手机目标循环阈值的独立迁移版本（见 init(from:)）。
@@ -356,35 +456,42 @@ struct IOSJevMetricsRecord: Codable, Equatable, Sendable {
 struct IOSJevSettings: Codable, Equatable, Sendable {
     var schemaVersion: Int = 1
     var revision: Int = 0
-    /// 连接测试与实验用 "jev-latest"；active 必须使用经过验收的固定版本。
+    /// 未验收时使用推荐版本测试；active 仍需显式固定版本。
     var pinnedModelVersion: String?
-    /// 出站 API 调用形态（默认 TypeSafe 原生）。vercelGateway 时 endpoint 与
-    /// 模型解析切换为 Vercel AI Gateway 契约，同一 Key 字段承载对应服务 Key。
+    /// 出站供应商形态（默认 TypeSafe 原生）。endpoint、默认模型、Key 提示
+    /// 都由 IOSJevProvider 注册表给出，切换供应商不需要再改这里的 switch。
     var apiStyle: IOSJevAPIStyle = .systemone
-    /// vercelGateway 模式的评估模型 slug（provider/model，默认 typesafe-ai/jev——
-    /// Jev 本体在 Gateway 上的 Model ID）。选择 vercel 形态且为空时由
-    /// setAPIStyle 自动填入；显式清空 = 未配置：active 按 shadow 收口，
-    /// 出站按 model_unspecified 跳过。
-    var vercelModel: String = ""
+    /// 非 systemone 形态的模型 ID（Gateway 是 provider/model slug，Perplexity /
+    /// Liquid 是模型 ID）。选择形态且为空时由 setAPIStyle 自动填入默认值；
+    /// 显式清空 = 未配置：active 按 shadow 收口，出站按 model_unspecified 跳过。
+    var providerModel: String = ""
+    /// providerModel 归属于哪一家供应商。切换供应商时据此判定是否该换成新家默认
+    /// 值，避免把上一家的模型 ID 发到新家。nil = 未知（旧设置），按 apiStyle 推断。
+    var providerModelStyle: IOSJevAPIStyle?
     var modes: [IOSJevUseCase: IOSJevMode] = [:]
     var dataScopes: [IOSJevUseCase: Set<IOSJevDataScope>] = [:]
     var policy: IOSJevPolicy = IOSJevPolicy()
 
-    static let productionEndpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
-    /// Vercel AI Gateway evaluation 端点（@ai-sdk/gateway 契约，核对日期
-    /// 2026-09-19）：模型走 ai-model-id header，body {state, questions}；
-    /// evaluation 不经 /v1/chat/completions（jev 类模型不产文本输出）。
-    static let vercelGatewayEndpoint = URL(string: "https://ai-gateway.vercel.sh/v4/ai/evaluation-model")!
+    static var productionEndpoint: URL { IOSJevProvider.typesafe.endpoint }
+    static var recommendedModelVersion: String { IOSJevProvider.typesafe.defaultModel }
+    static var vercelGatewayEndpoint: URL { IOSJevProvider.vercelGateway.endpoint }
     /// vercelGateway 默认模型：Jev 本体在 Gateway 的 Model ID。
-    static let vercelDefaultModel = "typesafe-ai/jev"
+    static var vercelDefaultModel: String { IOSJevProvider.vercelGateway.defaultModel }
 
-    /// 当前 apiStyle 的出站 endpoint。
-    var resolvedEndpoint: URL {
+    var recommendedModelForAPI: String {
+        apiStyle == .systemone ? Self.recommendedModelVersion : apiStyle.provider.defaultModel
+    }
+
+    var supportsPhoneScreenshots: Bool {
         switch apiStyle {
-        case .systemone: Self.productionEndpoint
-        case .vercelGateway: Self.vercelGatewayEndpoint
+        case .systemone: true
+        case .vercelGateway: providerModel == Self.vercelDefaultModel
+        default: false
         }
     }
+
+    /// 当前 apiStyle 的出站 endpoint。
+    var resolvedEndpoint: URL { apiStyle.provider.endpoint }
 
     init() {}
 
@@ -396,8 +503,16 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
         // 未知 apiStyle（未来新增形态的旧版本读盘）宽容回退 systemone，
         // 与 modes/scopes 的未知值丢弃策略一致，不整份丢设置。
         apiStyle = (try? container.decodeIfPresent(IOSJevAPIStyle.self, forKey: .apiStyle)) ?? .systemone
-        vercelModel = (try container.decodeIfPresent(String.self, forKey: .vercelModel) ?? "")
+        providerModel = (try container.decodeIfPresent(String.self, forKey: .providerModel) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        // 旧设置没有归属字段：槽位语义上就是当前供应商的模型，按 apiStyle 记账。
+        // 有值但 rawValue 无法识别时（新版本写入的未知供应商）保持 nil，不猜。
+        let ownerRaw: String?? = try? container.decodeIfPresent(String.self, forKey: .providerModelStyle)
+        if let raw = ownerRaw ?? nil {
+            providerModelStyle = IOSJevAPIStyle(rawValue: raw)
+        } else if !providerModel.isEmpty {
+            providerModelStyle = apiStyle
+        }
         let rawModes = try container.decodeIfPresent([String: String].self, forKey: .modes) ?? [:]
         modes = Dictionary(uniqueKeysWithValues: rawModes.compactMap { key, value in
             guard let useCase = IOSJevUseCase(rawValue: key), let mode = IOSJevMode(rawValue: value) else { return nil }
@@ -426,7 +541,8 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
         try container.encode(revision, forKey: .revision)
         try container.encodeIfPresent(pinnedModelVersion, forKey: .pinnedModelVersion)
         try container.encode(apiStyle, forKey: .apiStyle)
-        try container.encode(vercelModel, forKey: .vercelModel)
+        try container.encode(providerModel, forKey: .providerModel)
+        try container.encodeIfPresent(providerModelStyle, forKey: .providerModelStyle)
         // enum key 的字典会被 JSONEncoder 编成 array，必须转 String 键。
         try container.encode(
             Dictionary(uniqueKeysWithValues: modes.map { ($0.key.rawValue, $0.value.rawValue) }),
@@ -440,7 +556,11 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, revision, pinnedModelVersion, apiStyle, vercelModel
+        case schemaVersion, revision, pinnedModelVersion, apiStyle
+        /// 存量设置文件里这个字段叫 vercelModel（当时只有 Gateway 一种非原生
+        /// 形态）；映射到 providerModel 后语义扩到所有供应商，磁盘格式不变。
+        case providerModel = "vercelModel"
+        case providerModelStyle
         case modes, dataScopes, policy
     }
 
@@ -459,31 +579,41 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
         allowedScopes(for: useCase).isSuperset(of: required)
     }
 
+    func canSendPhoneScreenshots(for useCase: IOSJevUseCase) -> Bool {
+        supportsPhoneScreenshots
+            && (useCase == .phoneActions || useCase == .phoneVerification)
+            && canSend(useCase: useCase, required: useCase.defaultDataScopes.union([.phoneScreenshots]))
+    }
+
+    static func isPinnedVersion(_ version: String) -> Bool {
+        !version.isEmpty && version != "jev-latest" && version != "jev-preview"
+    }
+
     /// active 需要固定模型版本；未验收（无 pinned 版本）时按 shadow 收口。
-    /// vercelGateway 下模型 slug 由用户显式填写即为固定版本，空值按 shadow 收口。
+    /// 非原生供应商下模型 ID 由用户显式填写即为固定版本，空值按 shadow 收口。
     func effectiveMode(for useCase: IOSJevUseCase) -> IOSJevMode {
         let configured = mode(for: useCase)
         guard configured == .active else { return configured }
         switch apiStyle {
         case .systemone:
-            guard let pinned = pinnedModelVersion, !pinned.isEmpty, pinned != "jev-latest" else {
+            guard let pinned = pinnedModelVersion, Self.isPinnedVersion(pinned) else {
                 return .shadow
             }
-        case .vercelGateway:
-            guard !vercelModel.isEmpty else { return .shadow }
+        default:
+            guard !providerModel.isEmpty else { return .shadow }
         }
         return .active
     }
 
-    /// 当前 apiStyle 下实际出站的模型标识（shadow/active 共用；vercel 空模型
-    /// 时返回空串，由协调器按 model_unspecified 跳过、不出网）。
+    /// 当前 apiStyle 下实际出站的模型标识（shadow/active 共用；非原生形态
+    /// 模型为空时返回空串，由协调器按 model_unspecified 跳过、不出网）。
     var activeModelVersion: String {
         switch apiStyle {
         case .systemone:
             if let pinned = pinnedModelVersion, !pinned.isEmpty { return pinned }
-            return "jev-latest"
-        case .vercelGateway:
-            return vercelModel
+            return Self.recommendedModelVersion
+        default:
+            return providerModel
         }
     }
 
@@ -491,11 +621,11 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
     var modelConfigured: Bool { !activeModelVersion.isEmpty }
 
     /// 手动固定/清除已验收模型版本（systemone 的 active 前提；vercel 的模型
-    /// slug 即固定版本，不走这个字段）。空串/空白/浮动别名 jev-latest →
+    /// slug 即固定版本，不走这个字段）。空串/空白/浮动别名 latest/preview →
     /// 清除回未验收态（与 acceptVerifiedModelVersion 同口径，避免"存了但无效"）。
     mutating func setPinnedModelVersion(_ version: String?) {
         let trimmed = version?.trimmingCharacters(in: .whitespacesAndNewlines)
-        pinnedModelVersion = (trimmed?.isEmpty == false && trimmed != "jev-latest") ? trimmed : nil
+        pinnedModelVersion = trimmed.flatMap { Self.isPinnedVersion($0) ? $0 : nil }
         revision += 1
     }
 
@@ -504,7 +634,7 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
     mutating func acceptVerifiedModelVersion(_ version: String?) {
         guard apiStyle == .systemone else { return }
         guard let trimmed = version?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty, trimmed != "jev-latest" else { return }
+              Self.isPinnedVersion(trimmed) else { return }
         pinnedModelVersion = trimmed
         revision += 1
     }
@@ -522,17 +652,25 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
 
     mutating func setAPIStyle(_ style: IOSJevAPIStyle) {
         apiStyle = style
-        // 选 vercel 且模型为空时填默认 slug——用户只需配 Key；显式清空过
-        // 的（vercelModel.isEmpty 且用户自己删的）也会被回填，因为空模型在
-        // 本形态下无法出站，保留空值没有可用语义。
-        if style == .vercelGateway, vercelModel.isEmpty {
-            vercelModel = Self.vercelDefaultModel
+        // 非原生形态必须有模型才能出站：空值、或模型不属于这家（上一家遗留）、
+        // 或仍是某家默认值（说明用户没自定义过），都换上新家的默认值。
+        if style != .systemone {
+            let trimmed = providerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isProviderDefault = IOSJevProvider.all.contains { $0.defaultModel == trimmed }
+                || IOSJevProvider.legacyDefaultModels.contains(trimmed)
+            let ownedByTarget = providerModelStyle == style
+            if trimmed.isEmpty || !ownedByTarget || isProviderDefault {
+                providerModel = style.provider.defaultModel
+                providerModelStyle = style
+            }
         }
         revision += 1
     }
 
-    mutating func setVercelModel(_ model: String) {
-        vercelModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    mutating func setProviderModel(_ model: String) {
+        providerModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 记下这家：切到别家时才能分辨"这是他的自定义值"与"上一家遗留"。
+        providerModelStyle = apiStyle
         revision += 1
     }
 
@@ -742,9 +880,9 @@ enum IOSJevMetricsStore {
             }
             let activeWaitFits = group.compactMap { $0.numbers?["within_active_wait_budget"] }
             let waits = group.compactMap(\.waitedMs).sorted()
-            func percentile(_ p: Double) -> Int? {
+            func percentile(_ fraction: Double) -> Int? {
                 guard !waits.isEmpty else { return nil }
-                return waits[Int((Double(waits.count - 1) * p).rounded(.up))]
+                return waits[Int((Double(waits.count - 1) * fraction).rounded(.up))]
             }
             var reasons: [String: Int] = [:]
             for record in group where record.outcome == "skipped" || record.outcome == "error" || record.outcome == "late" || record.outcome == "shadow_dropped" {

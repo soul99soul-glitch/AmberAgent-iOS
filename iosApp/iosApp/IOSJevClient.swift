@@ -2,22 +2,52 @@ import Foundation
 
 // MARK: - Jev /v1/systemone client
 //
-// 官方契约（核对日期 2026-09-17，docs.typesafe.ai/api）：
-// POST {endpoint}，Bearer 认证；body {model, state, questions}，questions 为
+// 官方契约（核对日期 2026-10-16，docs.typesafe.ai/api、images、primitives/box）：
+// POST {endpoint}，Bearer 认证；body {model, state, questions, assets?}，questions 为
 // map<id, Question>（key 不参与推理）。Choice/Score 的 confidence 来自分布；
 // Noul 返回 0~1 概率、不含 confidence。429/529 可退避，401/403/422 不重试。
 //
-// vercelGateway 形态（核对日期 2026-09-19，@ai-sdk/gateway 源码）：
-// POST ai-gateway.vercel.sh/v4/ai/evaluation-model；同一 {state, questions}
+// vercelGateway 形态（核对日期 2026-10-16，@ai-sdk/gateway 源码）：
+// POST ai-gateway.vercel.sh/v4/ai/decision-model；{stateParts, questions}
 // 负载，模型走 ai-model-id header，题型 noul 记作 boolean；答案从顶层
 // answers map 读（boolean→noul），Choice/Score confidence 经
 // providerMetadata.typesafe.confidence[qid] 下发。
 //
 // 约束（IOSJevPolicy）：deadline 内排队+网络+重试+解析；超时必须取消底层任务；
-// 单请求 ≤32 题 / ≤64 候选；state ≤48 KiB、请求体 ≤64 KiB、响应体 ≤256 KiB。
+// 单请求 ≤32 题 / ≤64 候选；state ≤48 KiB、文字请求体 ≤64 KiB、图片请求体
+// ≤2 MiB、响应体 ≤256 KiB。Box 仅走原生接口，原生图片/Box 按官方要求开启图片头。
 // 缺题、未知候选、非有限数值、失效快照均不得成为有效业务结果。
 
 // MARK: Question / answer types
+
+struct IOSJevImageAsset: Encodable, Equatable, Sendable {
+    var data: Data
+    var format: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type, format
+        case dataBase64 = "data_base64"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode("image", forKey: .type)
+        try container.encode(format, forKey: .format)
+        try container.encode(data.base64EncodedString(), forKey: .dataBase64)
+    }
+}
+
+struct IOSJevBox: Decodable, Equatable, Sendable {
+    var top: Double
+    var bottom: Double
+    var left: Double
+    var right: Double
+
+    var isValid: Bool {
+        [top, bottom, left, right].allSatisfy { $0.isFinite && (0.0...1.0).contains($0) }
+            && left < right && top < bottom
+    }
+}
 
 struct IOSJevQuestion: Encodable, Equatable, Sendable {
     var id: String
@@ -52,6 +82,10 @@ struct IOSJevQuestion: Encodable, Equatable, Sendable {
     static func noul(id: String, instructions: String) -> IOSJevQuestion {
         IOSJevQuestion(id: id, type: "noul", criteria: nil, instructions: instructions)
     }
+
+    static func box(id: String, instructions: String) -> IOSJevQuestion {
+        IOSJevQuestion(id: id, type: "box", criteria: nil, instructions: instructions)
+    }
 }
 
 struct IOSJevAnswer: Equatable, Sendable {
@@ -64,6 +98,8 @@ struct IOSJevAnswer: Equatable, Sendable {
     var confidence: Double?
     /// Score：概率加权分（可落在两级之间）。
     var score: Double?
+    /// Box：相对于图片宽高的四条边；解析结果不触发点击。
+    var box: IOSJevBox?
 }
 
 struct IOSJevUsage: Equatable, Sendable {
@@ -122,9 +158,10 @@ final class IOSJevClient {
         var state: String
         var questions: [IOSJevQuestion]
         /// 出站形态：systemone = TypeSafe 原生契约；vercelGateway = Vercel
-        /// AI Gateway 的 evaluation-model 契约（body 同形 {state, questions}，
+        /// AI Gateway 的 decision-model 契约（body {stateParts, questions}，
         /// 模型走 ai-model-id header，题型 noul 在线上记作 boolean）。
         var style: IOSJevAPIStyle = .systemone
+        var assets: [String: IOSJevImageAsset] = [:]
     }
 
     private let transport: IOSJevTransport
@@ -204,6 +241,9 @@ final class IOSJevClient {
                 guard let choice = raw.choice, !choice.isEmpty else { continue }
                 guard let options = question.criteria, case .options(let map) = options, map[choice] != nil || map.keys.contains(choice) else { continue }
                 results.append(IOSJevAnswer(id: question.id, type: "choice", choice: choice, confidence: sanitizedConfidence(raw.confidence)))
+            case ("box", "box"):
+                guard let box = raw.box, box.isValid else { continue }
+                results.append(IOSJevAnswer(id: question.id, type: "box", confidence: sanitizedConfidence(raw.confidence), box: box))
             default:
                 continue
             }
@@ -217,6 +257,7 @@ final class IOSJevClient {
         var choice: String?
         var score: Double?
         var confidence: Double?
+        var box: IOSJevBox?
     }
 
     private struct RawResponse: Decodable {
@@ -226,17 +267,25 @@ final class IOSJevClient {
     }
 
     private struct RawUsage: Decodable {
-        var input_tokens: Int?
-        var output_tokens: Int?
+        var inputTokens: Int?
+        var outputTokens: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case inputTokens = "input_tokens"
+            case outputTokens = "output_tokens"
+        }
     }
 
     private struct RequestBody: Encodable {
         var model: String
         var state: String
         var questions: [String: IOSJevQuestion]
+        var assets: [String: IOSJevImageAsset]?
     }
 
-    // MARK: vercelGateway（Vercel AI Gateway evaluation-model，@ai-sdk/gateway 契约）
+    // MARK: vercelGateway（Vercel AI Gateway decision-model，@ai-sdk/gateway 契约）
+
+    // https://github.com/vercel/ai/blob/8a5233b15b1e69573d63faee6cd0014559252ee4/packages/gateway/src/gateway-decision-model.ts
 
     /// Gateway 线上题型：SDK 对外统一 choice/score/boolean，boolean 由 Gateway
     /// 映射到 TypeSafe 原生 noul。criteria 形状与 IOSJevQuestion.JevCriteria
@@ -253,14 +302,37 @@ final class IOSJevClient {
         }
     }
 
-    /// evaluation-model body：模型不在 body（走 ai-model-id header），
-    /// state 与 systemone 同为字符串。
-    private struct GatewayEvaluationBody: Encodable {
-        var state: String
+    private struct GatewayStatePart: Encodable {
+        var type: String
+        var text: String?
+        var mediaType: String?
+        var data: FileData?
+
+        struct FileData: Encodable {
+            let type = "data"
+            var data: String
+        }
+
+        init(text: String) {
+            type = "text"
+            self.text = text
+        }
+
+        init(image: IOSJevImageAsset) {
+            type = "file"
+            mediaType = image.format == "png" ? "image/png" : "image/jpeg"
+            data = FileData(data: image.data.base64EncodedString())
+        }
+    }
+
+    /// 模型不在 body（走 ai-model-id header）；文件字节通过有序 stateParts 发送。
+    private struct GatewayDecisionBody: Encodable {
+        var stateParts: [GatewayStatePart]
         var questions: [String: GatewayQuestion]
     }
 
-    private struct GatewayEvaluationResponse: Decodable {
+    private struct GatewayDecisionResponse: Decodable {
+        var model: String?
         var answers: [String: GatewayAnswer]?
         var usage: GatewayUsage?
         var providerMetadata: [String: GatewayProviderMetadata]?
@@ -288,7 +360,8 @@ final class IOSJevClient {
     /// 与实际出站共用编码，供协调器在并发预算锁内预留精确请求体字节数。
     func requestBodyByteCount(_ input: RequestInput) throws -> Int {
         try Self.encodedRequestBody(
-            model: input.model, state: input.state, questions: input.questions, style: input.style
+            model: input.model, state: input.state, questions: input.questions, style: input.style,
+            assets: input.assets
         ).count
     }
 
@@ -297,23 +370,113 @@ final class IOSJevClient {
         model: String,
         state: String,
         questions: [IOSJevQuestion],
-        style: IOSJevAPIStyle
+        style: IOSJevAPIStyle,
+        assets: [String: IOSJevImageAsset] = [:]
     ) throws -> Data {
         guard Set(questions.map(\.id)).count == questions.count else {
             throw IOSJevRequestError.invalidRequest("duplicate question id")
         }
+        try validateImageInput(state: state, questions: questions, style: style, assets: assets)
         let questionMap = Dictionary(uniqueKeysWithValues: questions.map { ($0.id, $0) })
         let encoder = JSONEncoder()
         do {
-            switch style {
+            switch style.contract {
             case .systemone:
-                return try encoder.encode(RequestBody(model: model, state: state, questions: questionMap))
-            case .vercelGateway:
-                return try encoder.encode(GatewayEvaluationBody(state: state, questions: questionMap.mapValues(GatewayQuestion.init)))
+                return try encoder.encode(RequestBody(
+                    model: model, state: state, questions: questionMap,
+                    assets: assets.isEmpty ? nil : assets
+                ))
+            case .vercelDecisionModel:
+                let stateParts = try gatewayStateParts(state: state, assets: assets)
+                return try encoder.encode(GatewayDecisionBody(
+                    stateParts: stateParts, questions: questionMap.mapValues(GatewayQuestion.init)
+                ))
             }
+        } catch let error as IOSJevRequestError {
+            throw error
         } catch {
             throw IOSJevRequestError.invalidRequest("encode failed: \(error.localizedDescription)")
         }
+    }
+
+    private static func validateImageInput(
+        state: String,
+        questions: [IOSJevQuestion],
+        style: IOSJevAPIStyle,
+        assets: [String: IOSJevImageAsset]
+    ) throws {
+        guard style.supportsBoxQuestions || !questions.contains(where: { $0.type == "box" }) else {
+            throw IOSJevRequestError.invalidRequest("box questions require native API")
+        }
+        // 未实现图片编码的供应商（Perplexity / Liquid）必须拒收 assets，否则会以
+        // systemone 形状把图片发到不支持它的服务，换来一个 400。
+        guard assets.isEmpty || style.supportsImages else {
+            throw IOSJevRequestError.invalidRequest("images unsupported by provider")
+        }
+        guard !assets.isEmpty else { return }
+        var questionValues: [String] = []
+        for question in questions {
+            if let instructions = question.instructions { questionValues.append(instructions) }
+            switch question.criteria {
+            case .options(let options): questionValues.append(contentsOf: options.values.compactMap { $0 })
+            case .levels(let levels): questionValues.append(contentsOf: levels)
+            case nil: break
+            }
+        }
+        for (reference, asset) in assets {
+            guard !reference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw IOSJevRequestError.invalidRequest("empty image reference")
+            }
+            guard !asset.data.isEmpty else {
+                throw IOSJevRequestError.invalidRequest("empty image data")
+            }
+            guard ["jpg", "jpeg", "png"].contains(asset.format) else {
+                throw IOSJevRequestError.invalidRequest("unsupported image format")
+            }
+            let referencedInQuestion = questionValues.contains(where: { $0.contains(reference) })
+            guard state.contains(reference) || referencedInQuestion else {
+                throw IOSJevRequestError.invalidRequest("unreferenced image asset")
+            }
+            if style.contract == IOSJevProvider.Contract.vercelDecisionModel {
+                guard !referencedInQuestion else {
+                    throw IOSJevRequestError.invalidRequest("gateway image references are only supported in state")
+                }
+                guard let occurrence = state.range(of: reference),
+                      state.range(of: reference, range: occurrence.upperBound..<state.endIndex) == nil else {
+                    throw IOSJevRequestError.invalidRequest("gateway image reference must occur once in state")
+                }
+            }
+        }
+    }
+
+    /// Replace each state image reference in place, retaining the surrounding text as context.
+    private static func gatewayStateParts(
+        state: String,
+        assets: [String: IOSJevImageAsset]
+    ) throws -> [GatewayStatePart] {
+        guard !assets.isEmpty else { return [GatewayStatePart(text: state)] }
+        let images = try assets.map { reference, asset -> (range: Range<String.Index>, asset: IOSJevImageAsset) in
+            guard let range = state.range(of: reference) else {
+                throw IOSJevRequestError.invalidRequest("unreferenced image asset")
+            }
+            return (range, asset)
+        }.sorted { $0.range.lowerBound < $1.range.lowerBound }
+        var parts: [GatewayStatePart] = []
+        var cursor = state.startIndex
+        for image in images {
+            guard cursor <= image.range.lowerBound else {
+                throw IOSJevRequestError.invalidRequest("overlapping gateway image references")
+            }
+            if cursor < image.range.lowerBound {
+                parts.append(GatewayStatePart(text: String(state[cursor..<image.range.lowerBound])))
+            }
+            parts.append(GatewayStatePart(image: image.asset))
+            cursor = image.range.upperBound
+        }
+        if cursor < state.endIndex {
+            parts.append(GatewayStatePart(text: String(state[cursor...])))
+        }
+        return parts
     }
 
     // MARK: Execute
@@ -337,6 +500,9 @@ final class IOSJevClient {
         guard Set(input.questions.map(\.id)).count == input.questions.count else {
             throw IOSJevRequestError.invalidRequest("duplicate question id")
         }
+        try Self.validateImageInput(
+            state: input.state, questions: input.questions, style: input.style, assets: input.assets
+        )
         let deadline = TimeInterval(deadlineMs ?? policy.deadlineMs) / 1_000
 
         if let cacheKey, let cached = cachedDecision(cacheKey: cacheKey) {
@@ -344,9 +510,11 @@ final class IOSJevClient {
         }
 
         let bodyData = try Self.encodedRequestBody(
-            model: input.model, state: input.state, questions: input.questions, style: input.style
+            model: input.model, state: input.state, questions: input.questions, style: input.style,
+            assets: input.assets
         )
-        guard bodyData.count <= policy.maxRequestBytes else {
+        let maxRequestBytes = input.assets.isEmpty ? policy.maxRequestBytes : IOSJevPolicy.maxImageRequestBytes
+        guard bodyData.count <= maxRequestBytes else {
             throw IOSJevRequestError.requestTooLarge(bytes: bodyData.count)
         }
         guard input.state.utf8.count <= policy.maxStateBytes else {
@@ -358,12 +526,18 @@ final class IOSJevClient {
         request.httpBody = bodyData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(input.apiKey)", forHTTPHeaderField: "Authorization")
-        if input.style == .vercelGateway {
-            // @ai-sdk/gateway evaluation-model 协议头：模型 ID 与 spec 版本
+        if input.style == .systemone,
+           !input.assets.isEmpty || input.questions.contains(where: { $0.type == "box" }) {
+            request.setValue("true", forHTTPHeaderField: "TypeSafe-Danger-Zone-Images")
+        }
+        if input.style.contract == .vercelDecisionModel {
+            // 按契约而非供应商身份分支：将来若有第二家走 decision-model 契约，
+            // 协议头不会静默丢失。
+            // @ai-sdk/gateway decision-model 协议头：模型 ID 与 spec 版本
             // 走 header，protocol-version/auth-method 与 SDK 一致。
             request.setValue("0.0.1", forHTTPHeaderField: "ai-gateway-protocol-version")
             request.setValue("api-key", forHTTPHeaderField: "ai-gateway-auth-method")
-            request.setValue("4", forHTTPHeaderField: "ai-evaluation-model-specification-version")
+            request.setValue("4", forHTTPHeaderField: "ai-decision-model-specification-version")
             request.setValue(input.model, forHTTPHeaderField: "ai-model-id")
         }
         request.timeoutInterval = max(deadline + 0.5, 1.0)
@@ -406,12 +580,12 @@ final class IOSJevClient {
     /// systemone：顶层 answers map；vercelGateway：顶层 answers map（题型
     /// boolean 译回 noul、probability→noul 字段，Choice/Score confidence 从
     /// providerMetadata.typesafe.confidence[qid] 注入），usage 是 camelCase
-    /// inputTokens/outputTokens。Gateway 响应不回显 model，调用方用出站 slug。
+    /// inputTokens/outputTokens。Gateway 未回显 model 时用出站 slug。
     private func parseAnswers(
         data: Data,
         input: RequestInput
     ) throws -> (rawAnswers: [String: RawAnswer], usage: IOSJevUsage?, model: String?) {
-        switch input.style {
+        switch input.style.contract {
         case .systemone:
             let raw: RawResponse
             do {
@@ -423,17 +597,17 @@ final class IOSJevClient {
                 throw IOSJevRequestError.invalidResponse("missing answers map")
             }
             let usage = raw.usage.flatMap { rawUsage -> IOSJevUsage? in
-                guard let inputTokens = rawUsage.input_tokens,
-                      let outputTokens = rawUsage.output_tokens,
+                guard let inputTokens = rawUsage.inputTokens,
+                      let outputTokens = rawUsage.outputTokens,
                       inputTokens >= 0, outputTokens >= 0 else { return nil }
                 return IOSJevUsage(inputTokens: inputTokens, outputTokens: outputTokens)
             }
             return (answers, usage, raw.model)
 
-        case .vercelGateway:
-            let raw: GatewayEvaluationResponse
+        case .vercelDecisionModel:
+            let raw: GatewayDecisionResponse
             do {
-                raw = try JSONDecoder().decode(GatewayEvaluationResponse.self, from: data)
+                raw = try JSONDecoder().decode(GatewayDecisionResponse.self, from: data)
             } catch {
                 throw IOSJevRequestError.invalidResponse("decode failed: \(error.localizedDescription)")
             }
@@ -460,7 +634,7 @@ final class IOSJevClient {
                       inputTokens >= 0, outputTokens >= 0 else { return nil }
                 return IOSJevUsage(inputTokens: inputTokens, outputTokens: outputTokens)
             }
-            return (mapped, usage, nil)
+            return (mapped, usage, raw.model)
         }
     }
 

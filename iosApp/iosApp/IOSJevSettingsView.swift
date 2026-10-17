@@ -13,10 +13,13 @@ struct IOSJevSettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var apiKeyInput = ""
-    @State private var vercelModelInput = ""
+    @State private var providerModelInput = ""
     @State private var pinnedModelInput = ""
     @State private var keyMessage: String?
-    @State private var isTestingConnection = false
+    /// 两个连接按钮各持一个 spinner：共用一个布尔会让未点击的那一行也转圈。
+    private enum ConnectionTestKind { case current, recommended }
+    @State private var runningTest: ConnectionTestKind?
+    private var isTestingConnection: Bool { runningTest != nil }
     @State private var connectionResult: ConnectionTestPresentation?
     @State private var metricsSummary: IOSJevMetricsStore.Summary?
     @State private var useCaseMetricsSummaries: [IOSJevMetricsStore.UseCaseSummary] = []
@@ -62,7 +65,7 @@ struct IOSJevSettingsView: View {
         }
         .onAppear(perform: refreshDynamicState)
         .onDisappear {
-            commitVercelModel()
+            commitProviderModel()
             commitPinnedModel()
         }
     }
@@ -70,12 +73,14 @@ struct IOSJevSettingsView: View {
     private func refreshDynamicState() {
         metricsSummary = IOSJevMetricsStore.summary()
         useCaseMetricsSummaries = IOSJevMetricsStore.useCaseSummaries()
-        let stored = sharedSettings.jevSettings.vercelModel
-        // 存量配置（apiStyle=vercelGateway 且模型为空）打开页面时展示默认
-        // slug；onSubmit/onDisappear/连接测试的既有 commit 路径负责落盘。
-        vercelModelInput = stored.isEmpty && sharedSettings.jevSettings.apiStyle == .vercelGateway
-            ? IOSJevSettings.vercelDefaultModel
-            : stored
+        let stored = sharedSettings.jevSettings.providerModel
+        // 不做"默认值预填"：字段显示什么就必须等于已落盘的值，否则会出现
+        // 「输入框有 ID、runtime 却是未配置 / model_unspecified」的矛盾。
+        // 默认模型由 setAPIStyle 在切换供应商时真正写入，不靠展示层伪造。
+        providerModelInput = stored
+        // pinned 与 providerModel 不同：它的回填值恒等于落盘值，不存在"伪造已配置"
+        // 的问题；不回填会在 onDisappear 的 commit 里把磁盘上的固定版本清空，
+        // 连带把 active 用途静默降为 shadow。
         pinnedModelInput = sharedSettings.jevSettings.pinnedModelVersion ?? ""
     }
 
@@ -112,9 +117,9 @@ struct IOSJevSettingsView: View {
                             .foregroundStyle(AmberTheme.muted2)
                     }
                 }
-                .accessibilityLabel("Jev API 调用方式")
+                .accessibilityLabel(IOSAppLocalization.string("API 调用方式", defaultValue: "API 调用方式"))
 
-                if dynamicTypeSize.isAccessibilitySize {
+                if dynamicTypeSize >= .xxxLarge {
                     HStack(spacing: 12) {
                         Image(systemName: "network")
                             .font(.system(size: 16, weight: .medium))
@@ -148,20 +153,31 @@ struct IOSJevSettingsView: View {
                     .padding(.vertical, 4)
                 }
 
-                if sharedSettings.jevSettings.apiStyle == .vercelGateway {
+                if sharedSettings.jevSettings.apiStyle != .systemone {
                     Divider()
                         .overlay(AmberTheme.borderSoft)
                         .padding(.leading, 14)
-                    TextField(
-                        IOSAppLocalization.string("评估模型 slug，如 typesafe-ai/jev", defaultValue: "评估模型 slug，如 typesafe-ai/jev"),
-                        text: $vercelModelInput
-                    )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.body.monospaced())
+                    // 字段只放短标签，模型 ID 示例放 caption：占位符是单行不换行的，
+                    // 长文例在 SE/大字号下会被截断成半句。
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField(
+                            IOSAppLocalization.string("模型 ID", defaultValue: "模型 ID"),
+                            text: $providerModelInput
+                        )
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                        .onSubmit { commitProviderModel() }
+                        Text(IOSAppLocalization.string(
+                            sharedSettings.jevSettings.apiStyle.modelPlaceholder,
+                            defaultValue: sharedSettings.jevSettings.apiStyle.modelPlaceholder
+                        ))
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
-                    .onSubmit { commitVercelModel() }
                 }
 
                 if sharedSettings.jevSettings.apiStyle == .systemone {
@@ -170,7 +186,7 @@ struct IOSJevSettingsView: View {
                         .padding(.leading, 14)
                     VStack(alignment: .leading, spacing: 4) {
                         TextField(
-                            IOSAppLocalization.string("固定模型版本（连接测试后自动填入）", defaultValue: "固定模型版本（连接测试后自动填入）"),
+                            IOSAppLocalization.string("固定版本", defaultValue: "固定版本"),
                             text: $pinnedModelInput
                         )
                         .textInputAutocapitalization(.never)
@@ -178,8 +194,8 @@ struct IOSJevSettingsView: View {
                         .font(.body.monospaced())
                         .onSubmit { commitPinnedModel() }
                         Text(IOSAppLocalization.string(
-                            "active 需要已验收的固定版本；留空则一律按 shadow 观测。",
-                            defaultValue: "active 需要已验收的固定版本；留空则一律按 shadow 观测。"
+                            "连接测试后自动填入；未固定版本时测试使用 Jev 1.14，active 仍需验收固定版本。",
+                            defaultValue: "连接测试后自动填入；未固定版本时测试使用 Jev 1.14，active 仍需验收固定版本。"
                         ))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
@@ -196,22 +212,30 @@ struct IOSJevSettingsView: View {
         guard style != sharedSettings.jevSettings.apiStyle else { return }
         // 先提交两个输入框的未回车文本，再切形态刷新显示（防 typed 值被
         // 持久化值覆盖，也防隐藏字段的 stale 文本在 onDisappear 时串写）。
-        commitVercelModel()
+        commitProviderModel()
         commitPinnedModel()
         var settings = sharedSettings.jevSettings
+        let hadKey = hasKey
         settings.setAPIStyle(style)
         sharedSettings.updateJevSettings(settings)
-        vercelModelInput = settings.vercelModel
+        // 换供应商后旧 Key 属于另一家，继续留在槽位里会被发到新厂商的域名（
+        // 跨厂商泄露凭据 + 必然 401）。这里直接清掉，强制用户录入新厂商的 Key。
+        sharedSettings.clearJevApiKey()
+        // SecureField 里可能还留着刚粘贴的旧 Key 文本，与 hasKey == false 不一致。
+        apiKeyInput = ""
+        providerModelInput = settings.providerModel
         pinnedModelInput = settings.pinnedModelVersion ?? ""
         connectionResult = nil
-        keyMessage = nil
+        keyMessage = hadKey
+            ? IOSAppLocalization.string("已切换供应商，原 Key 已清除，请重新录入。", defaultValue: "已切换供应商，原 Key 已清除，请重新录入。")
+            : IOSAppLocalization.string("已切换供应商，请录入新的 API Key。", defaultValue: "已切换供应商，请录入新的 API Key。")
     }
 
-    private func commitVercelModel() {
+    private func commitProviderModel() {
         var settings = sharedSettings.jevSettings
-        let trimmed = vercelModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != settings.vercelModel else { return }
-        settings.setVercelModel(trimmed)
+        let trimmed = providerModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != settings.providerModel else { return }
+        settings.setProviderModel(trimmed)
         sharedSettings.updateJevSettings(settings)
     }
 
@@ -278,7 +302,7 @@ struct IOSJevSettingsView: View {
                 }
 
                 Group {
-                    if dynamicTypeSize.isAccessibilitySize {
+                    if dynamicTypeSize >= .xxxLarge {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 12) {
                                 keyIcon
@@ -368,7 +392,7 @@ struct IOSJevSettingsView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        if isTestingConnection {
+                        if runningTest == .current {
                             ProgressView()
                         }
                     }
@@ -379,6 +403,42 @@ struct IOSJevSettingsView: View {
                 }
                 .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
                 .disabled(isTestingConnection || !hasKey)
+                if sharedSettings.jevSettings.activeModelVersion != sharedSettings.jevSettings.recommendedModelForAPI {
+                    Divider().overlay(AmberTheme.borderSoft).padding(.leading, 14)
+                    Button {
+                        runConnectionTest(modelVersion: sharedSettings.jevSettings.recommendedModelForAPI)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "arrow.up.circle")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(AmberTheme.accent)
+                                .frame(width: 28, height: 28)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(IOSAppLocalization.string(
+                                    sharedSettings.jevSettings.apiStyle == .systemone ? "测试并升级至 Jev 1.14" : "测试并恢复推荐模型",
+                                    defaultValue: sharedSettings.jevSettings.apiStyle == .systemone ? "测试并升级至 Jev 1.14" : "测试并恢复推荐模型"
+                                ))
+                                    .font(.body)
+                                    .foregroundStyle(AmberTheme.accent)
+                                Text(IOSAppLocalization.formatted("使用合成文本测试，成功后固定为 %@。", defaultValue: "使用合成文本测试，成功后固定为 %@。", arguments: [sharedSettings.jevSettings.recommendedModelForAPI]))
+                                    .font(.caption)
+                                    .foregroundStyle(AmberTheme.muted)
+                            }
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            if runningTest == .recommended {
+                                ProgressView()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
+                    .disabled(isTestingConnection || !hasKey)
+                    .accessibilityIdentifier("jev-test-recommended-model")
+                }
             }
             if let connectionResult {
                 Text(connectionResult.text)
@@ -392,10 +452,10 @@ struct IOSJevSettingsView: View {
         }
     }
 
-    private func runConnectionTest() {
+    private func runConnectionTest(modelVersion: String? = nil) {
         // 先落盘未回车的模型/固定版本输入：测试必须打在用户刚填的值上，
         // 也避免结束时的 refreshDynamicState 覆盖未提交文本。
-        commitVercelModel()
+        commitProviderModel()
         commitPinnedModel()
         let startedRevision = sharedSettings.jevSettings.revision
         guard let apiKey = IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey), !apiKey.isEmpty else {
@@ -406,13 +466,13 @@ struct IOSJevSettingsView: View {
             return
         }
         guard sharedSettings.jevSettings.revision == startedRevision else { return }
-        isTestingConnection = true
+        runningTest = modelVersion == nil ? .current : .recommended
         connectionResult = nil
         Task {
-            let result = await IOSJevDecisionCoordinator.shared.runConnectionTest(apiKey: apiKey)
+            let result = await IOSJevDecisionCoordinator.shared.runConnectionTest(apiKey: apiKey, modelVersion: modelVersion)
             guard sharedSettings.jevSettings.revision == startedRevision else {
                 await MainActor.run {
-                    isTestingConnection = false
+                    runningTest = nil
                     connectionResult = ConnectionTestPresentation(
                         succeeded: false,
                         text: IOSAppLocalization.string("设置或 Key 已变化，请重新测试连接。", defaultValue: "设置或 Key 已变化，请重新测试连接。")
@@ -440,7 +500,12 @@ struct IOSJevSettingsView: View {
                 var settings = sharedSettings.jevSettings
                 let previousPin = settings.pinnedModelVersion
                 settings.acceptVerifiedModelVersion(result.modelVersion)
-                if settings.pinnedModelVersion != previousPin {
+                if settings.apiStyle != .systemone, let modelVersion {
+                    settings.setProviderModel(result.modelVersion ?? modelVersion)
+                    sharedSettings.updateJevSettings(settings)
+                    providerModelInput = settings.providerModel
+                    text += IOSAppLocalization.string("，已固定为验收版本", defaultValue: "，已固定为验收版本")
+                } else if settings.pinnedModelVersion != previousPin {
                     sharedSettings.updateJevSettings(settings)
                     pinnedModelInput = settings.pinnedModelVersion ?? ""
                     text += IOSAppLocalization.string("，已固定为验收版本", defaultValue: "，已固定为验收版本")
@@ -457,9 +522,9 @@ struct IOSJevSettingsView: View {
                 } else if reason == "http_401" || reason == "http_403" || reason == "missing_key" {
                     hint = IOSAppLocalization.string("请检查 Key。", defaultValue: "请检查 Key。")
                 } else if reason == "invalid_request" || reason == "http_400" {
-                    hint = sharedSettings.jevSettings.apiStyle == .vercelGateway
-                        ? IOSAppLocalization.string("请检查模型 slug。", defaultValue: "请检查模型 slug。")
-                        : IOSAppLocalization.string("请检查固定模型版本或服务端配置。", defaultValue: "请检查固定模型版本或服务端配置。")
+                    hint = sharedSettings.jevSettings.apiStyle == .systemone
+                        ? IOSAppLocalization.string("请检查固定模型版本或服务端配置。", defaultValue: "请检查固定模型版本或服务端配置。")
+                        : IOSAppLocalization.string("请检查模型 ID。", defaultValue: "请检查模型 ID。")
                 } else {
                     hint = ""
                 }
@@ -472,7 +537,7 @@ struct IOSJevSettingsView: View {
                 presentation = ConnectionTestPresentation(succeeded: false, text: failureText)
             }
             await MainActor.run {
-                isTestingConnection = false
+                runningTest = nil
                 connectionResult = presentation
                 refreshDynamicState()
             }
@@ -560,7 +625,7 @@ struct IOSJevSettingsView: View {
                             if index > 0 {
                                 Divider()
                                     .overlay(AmberTheme.borderSoft)
-                                    .padding(.leading, 58)
+                                    .padding(.leading, 54)
                             }
                             useCaseRow(useCase)
                         }
@@ -663,7 +728,7 @@ struct IOSJevSettingsView: View {
             }
             .accessibilityLabel("\(useCase.displayName)模式")
 
-            if dynamicTypeSize.isAccessibilitySize {
+            if dynamicTypeSize >= .xxxLarge {
                 summary
                 modeMenu.padding(.leading, 40)
             } else {
@@ -699,6 +764,7 @@ struct IOSJevSettingsView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                         }
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -706,9 +772,38 @@ struct IOSJevSettingsView: View {
                 }
             }
             if useCase == .phoneVerification || useCase == .phoneActions {
+                if settings.supportsPhoneScreenshots {
+                    Button {
+                        toggleScope(.phoneScreenshots, for: useCase)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: settings.allowedScopes(for: useCase).contains(.phoneScreenshots) ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 14))
+                                .foregroundStyle(settings.allowedScopes(for: useCase).contains(.phoneScreenshots) ? AmberTheme.accent : AmberTheme.muted2)
+                            Text(IOSAppLocalization.string(IOSJevDataScope.phoneScreenshots.displayName, defaultValue: IOSJevDataScope.phoneScreenshots.displayName))
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        .font(.caption)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 40)
+                    .accessibilityValue(IOSAppLocalization.string(
+                        settings.allowedScopes(for: useCase).contains(.phoneScreenshots) ? "已允许" : "未允许",
+                        defaultValue: settings.allowedScopes(for: useCase).contains(.phoneScreenshots) ? "已允许" : "未允许"))
+                }
+                // 非 ViewBuilder 语句块不能出现在这重：用单个表达式（三层三目）。
+                let imageDetail = settings.supportsPhoneScreenshots
+                    ? "默认只发送当前步骤的界面文字；允许截图后，在需要 Jev 判断时同次发送压缩截图。图片能力仍为实验功能。"
+                    : settings.apiStyle == .vercelGateway
+                        ? "当前模型使用界面文字判断；升级至 Gateway 的 Jev 1.14 后可允许截图。"
+                        : "当前供应商只接收文字判定，截图不会被发送。"
                 Text(IOSAppLocalization.string(
-                    "仅发送当前步骤需要的界面文字和元素信息，不发送截图。不会自动授权或恢复手机动作。",
-                    defaultValue: "仅发送当前步骤需要的界面文字和元素信息，不发送截图。不会自动授权或恢复手机动作。"
+                    imageDetail,
+                    defaultValue: imageDetail
                 ))
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)

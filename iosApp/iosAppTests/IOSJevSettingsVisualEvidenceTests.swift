@@ -27,11 +27,13 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
         let settings = IOSSharedSettingsStore(userDefaults: defaults)
         // 预置一个可见状态：shadow 模式 + 全范围，避免全 off 的空白态掩盖布局问题。
         var jev = settings.jevSettings
+        jev.setPinnedModelVersion("jev-1.13.0")
         jev.setMode(.shadow, for: .toolDiscovery)
         jev.setMode(.shadow, for: .memoryRecall)
         jev.setMode(.active, for: .modelRouting)
         jev.setMode(.shadow, for: .phoneVerification)
         jev.setMode(.active, for: .phoneActions)
+        jev.setScopes(jev.allowedScopes(for: .phoneActions).union([.phoneScreenshots]), for: .phoneActions)
         settings.updateJevSettings(jev)
 
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -115,7 +117,8 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
         try await capture(
             IOSJevSettingsView(sharedSettings: settings),
             name: "jev-settings-accessibility1",
-            type: .accessibility1
+            type: .accessibility1,
+            captureAllPages: true
         )
         try await capture(
             IOSJevSettingsView(sharedSettings: settings),
@@ -198,6 +201,33 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
         try await capturePhoneSettings(phoneUnpinnedMissingScope, name: "jev-settings-phone-unpinned-missing-scope")
         try await capturePhoneSettings(phoneUnpinnedMissingScope, name: "jev-settings-phone-unpinned-missing-scope-accessibility",
                                        type: .accessibility3, width: 320)
+
+        var gatewayOld = jev
+        gatewayOld.setAPIStyle(.vercelGateway)
+        gatewayOld.setProviderModel("typesafe-ai/jev")
+        try await capturePhoneSettings(gatewayOld, name: "jev-settings-gateway-upgrade-accessibility",
+                                       type: .accessibility1, width: 320)
+        var gatewayImages = gatewayOld
+        gatewayImages.setProviderModel(IOSJevSettings.vercelDefaultModel)
+        try await capturePhoneSettings(gatewayImages, name: "jev-settings-gateway-images-accessibility",
+                                       type: .accessibility1, width: 320)
+        // 新增供应商的视觉基线：覆盖 SE 宽度与大字号下的模型输入行（短标签 +
+        // 长文案 caption），以及不带截图开关的文案分支。
+        var perplexity = jev
+        perplexity.setAPIStyle(.perplexityDecisions)
+        try await capturePhoneSettings(perplexity, name: "jev-settings-perplexity", width: 320)
+        try await capturePhoneSettings(perplexity, name: "jev-settings-perplexity-accessibility",
+                                       type: .accessibility1, width: 320)
+        // 覆盖本轮改动的两个关键断点：caption 换行最严重的最大字号，以及 UI 堆叠起点。
+        try await capturePhoneSettings(perplexity, name: "jev-settings-perplexity-xxxl",
+                                       type: .xxxLarge, width: 320)
+        try await capturePhoneSettings(perplexity, name: "jev-settings-perplexity-ax5",
+                                       type: .accessibility5, width: 320)
+        var liquid = jev
+        liquid.setAPIStyle(.liquidSystemone)
+        try await capturePhoneSettings(liquid, name: "jev-settings-liquid", width: 320)
+        try await capturePhoneSettings(liquid, name: "jev-settings-liquid-accessibility",
+                                       type: .accessibility1, width: 320)
 
         let context = ChatContextSnapshot(
             messageCount: 8, modelId: "demo", supportsReasoning: true,

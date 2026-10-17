@@ -81,6 +81,37 @@ final class IOSJevSettingsTests: XCTestCase {
         XCTAssertEqual(reloaded.allowedScopes(for: .phoneActions), [.selectedTaskText, .phoneContent])
     }
 
+    func testScreenshotScopePersistsWithoutChangingExistingVersionOrOtherPhoneUseCase() {
+        let defaults = isolatedDefaults()
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        var settings = store.jevSettings
+        settings.setPinnedModelVersion("jev-1.13.0")
+        settings.setMode(.active, for: .phoneActions)
+        settings.setMode(.active, for: .phoneVerification)
+        XCTAssertFalse(settings.canSendPhoneScreenshots(for: .phoneActions))
+        settings.setScopes(settings.allowedScopes(for: .phoneActions).union([.phoneScreenshots]), for: .phoneActions)
+        store.updateJevSettings(settings)
+        let loaded = IOSSharedSettingsStore(userDefaults: defaults).jevSettings
+        XCTAssertEqual(loaded.pinnedModelVersion, "jev-1.13.0")
+        XCTAssertTrue(loaded.canSendPhoneScreenshots(for: .phoneActions))
+        XCTAssertFalse(loaded.canSendPhoneScreenshots(for: .phoneVerification))
+        var revoked = loaded
+        revoked.setScopes([.phoneContent, .phoneScreenshots], for: .phoneActions)
+        XCTAssertFalse(revoked.canSendPhoneScreenshots(for: .phoneActions), "image scope cannot replace task-text permission")
+        var gateway = loaded
+        gateway.setAPIStyle(.vercelGateway)
+        XCTAssertTrue(gateway.canSendPhoneScreenshots(for: .phoneActions))
+        gateway.setProviderModel("typesafe-ai/jev")
+        XCTAssertFalse(gateway.canSendPhoneScreenshots(for: .phoneActions))
+    }
+
+    func testLegacyPreviewPinDoesNotEnableActiveMode() throws {
+        let settings = try JSONDecoder().decode(IOSJevSettings.self, from: Data("""
+        {"pinnedModelVersion":"jev-preview","modes":{"phoneActions":"active"}}
+        """.utf8))
+        XCTAssertEqual(settings.effectiveMode(for: .phoneActions), .shadow)
+    }
+
     func testAddingPhonePolicyDoesNotMigrateExistingActiveUseCases() throws {
         var settings = IOSJevSettings()
         settings.setPinnedModelVersion("jev-fixed-v3")
@@ -139,18 +170,18 @@ final class IOSJevSettingsTests: XCTestCase {
     func testDefaultAPIStyleIsSystemone() {
         let settings = IOSJevSettings()
         XCTAssertEqual(settings.apiStyle, .systemone)
-        XCTAssertEqual(settings.vercelModel, "")
+        XCTAssertEqual(settings.providerModel, "")
         XCTAssertEqual(settings.resolvedEndpoint, IOSJevSettings.productionEndpoint)
-        XCTAssertEqual(settings.activeModelVersion, "jev-latest")
+        XCTAssertEqual(settings.activeModelVersion, "jev-1.14.0")
         XCTAssertTrue(settings.modelConfigured)
     }
 
     func testVercelStyleResolvesEndpointAndModel() {
         var settings = IOSJevSettings()
         settings.setAPIStyle(.vercelGateway)
-        settings.setVercelModel("  openai/gpt-4o  ")
+        settings.setProviderModel("  openai/gpt-4o  ")
         XCTAssertEqual(settings.resolvedEndpoint, IOSJevSettings.vercelGatewayEndpoint)
-        XCTAssertEqual(settings.vercelModel, "openai/gpt-4o", "slug 必须 trim")
+        XCTAssertEqual(settings.providerModel, "openai/gpt-4o", "slug 必须 trim")
         XCTAssertEqual(settings.activeModelVersion, "openai/gpt-4o")
         XCTAssertTrue(settings.modelConfigured)
     }
@@ -160,15 +191,106 @@ final class IOSJevSettingsTests: XCTestCase {
     func testVercelStyleSelectionPrefillsDefaultModel() {
         var settings = IOSJevSettings()
         settings.setAPIStyle(.vercelGateway)
-        XCTAssertEqual(settings.vercelModel, IOSJevSettings.vercelDefaultModel)
-        XCTAssertEqual(settings.activeModelVersion, "typesafe-ai/jev")
+        XCTAssertEqual(settings.providerModel, IOSJevSettings.vercelDefaultModel)
+        XCTAssertEqual(settings.activeModelVersion, "typesafe-ai/jev-1.14.0")
         // 显式改过的 slug 不因重选被覆盖。
-        settings.setVercelModel("openai/gpt-5.6-luna")
+        settings.setProviderModel("openai/gpt-5.6-luna")
         settings.setAPIStyle(.systemone)
         settings.setAPIStyle(.vercelGateway)
-        XCTAssertEqual(settings.vercelModel, "openai/gpt-5.6-luna")
+        XCTAssertEqual(settings.providerModel, "openai/gpt-5.6-luna")
         // systemone 默认不填 vercel slug（无意义字段不污染存量配置）。
-        XCTAssertEqual(IOSJevSettings().vercelModel, "")
+        XCTAssertEqual(IOSJevSettings().providerModel, "")
+    }
+
+    /// 四家供应商的端点 / 默认模型 / 截图能力一次锁定。
+    func testAllProvidersResolveEndpointModelAndCapabilities() {
+        struct Expectation {
+            let style: IOSJevAPIStyle
+            let endpoint: URL
+            let model: String
+            let screenshots: Bool
+        }
+        let expected = [
+            Expectation(style: .systemone, endpoint: IOSJevProvider.typesafe.endpoint, model: "jev-1.14.0", screenshots: true),
+            Expectation(style: .vercelGateway, endpoint: IOSJevProvider.vercelGateway.endpoint, model: "typesafe-ai/jev-1.14.0", screenshots: true),
+            Expectation(style: .perplexityDecisions, endpoint: IOSJevProvider.perplexity.endpoint, model: "pplx-decider-v1.2", screenshots: false),
+            Expectation(style: .liquidSystemone, endpoint: IOSJevProvider.liquid.endpoint, model: "d1", screenshots: false),
+        ]
+        for item in expected {
+            var settings = IOSJevSettings()
+            settings.setAPIStyle(item.style)
+            XCTAssertEqual(settings.resolvedEndpoint, item.endpoint, "\(item.style)")
+            XCTAssertEqual(settings.recommendedModelForAPI, item.model, "\(item.style)")
+            if item.style != .systemone {
+                XCTAssertEqual(settings.activeModelVersion, item.model, "\(item.style) 选型应自动填入默认模型")
+            }
+            XCTAssertEqual(settings.supportsPhoneScreenshots, item.screenshots, "\(item.style)")
+        }
+    }
+
+    /// 非原生供应商没有模型时不能报 active：否则 runtime_status 显示 active，
+    /// 实际每次都被 model_unspecified 静默跳过。
+    func testNewProvidersRequireConfiguredModelForActive() {
+        var settings = IOSJevSettings()
+        settings.setAPIStyle(.perplexityDecisions)
+        settings.setProviderModel("")
+        settings.setMode(.active, for: .toolDiscovery)
+        XCTAssertEqual(settings.effectiveMode(for: .toolDiscovery), .shadow)
+        settings.setProviderModel("pplx-decider-v1.2")
+        XCTAssertEqual(settings.effectiveMode(for: .toolDiscovery), .active)
+    }
+
+    /// 跨供应商切换不能把上一家的默认模型带进新家（含经 systemone 中转）。
+    func testSwitchingProvidersDoesNotCarryPreviousDefaultModel() {
+        var settings = IOSJevSettings()
+        settings.setAPIStyle(.vercelGateway)
+        XCTAssertEqual(settings.providerModel, "typesafe-ai/jev-1.14.0")
+        settings.setAPIStyle(.perplexityDecisions)
+        XCTAssertEqual(settings.providerModel, "pplx-decider-v1.2")
+        settings.setAPIStyle(.systemone)
+        settings.setAPIStyle(.liquidSystemone)
+        XCTAssertEqual(settings.providerModel, "d1")
+        // 自定义值归属于 Liquid：切到 Perplexity 必须换成 Perplexity 的默认模型，
+        // 否则会把 d1-ultra 发到 Perplexity 的端点。
+        settings.setProviderModel("d1-ultra")
+        settings.setAPIStyle(.perplexityDecisions)
+        XCTAssertEqual(settings.providerModel, "pplx-decider-v1.2")
+        // 归属仍是同一家时（经 systemone 中转）保留自定义值。
+        settings.setAPIStyle(.liquidSystemone)
+        settings.setProviderModel("d1-ultra")
+        settings.setAPIStyle(.systemone)
+        settings.setAPIStyle(.liquidSystemone)
+        XCTAssertEqual(settings.providerModel, "d1-ultra")
+    }
+
+    /// 归属字段必须真的落盘：若 encode 缺失，解码只能按 apiStyle 推断，
+    /// 这条断言就会把自定义值清成默认值。
+    func testProviderModelStyleSurvivesRoundTrip() throws {
+        var settings = IOSJevSettings()
+        settings.setAPIStyle(.liquidSystemone)
+        settings.setProviderModel("d1-ultra")
+        settings.setAPIStyle(.systemone)   // 不碰 providerModel / 归属
+        let decoded = try JSONDecoder().decode(IOSJevSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded.providerModelStyle, .liquidSystemone, "归属必须落盘，不能靠推断重建")
+        var restored = decoded
+        restored.setAPIStyle(.liquidSystemone)
+        XCTAssertEqual(restored.providerModel, "d1-ultra", "同家往返保留自定义模型")
+    }
+
+    /// 旧 JSON 没有归属字段：槽位语义就是当前供应商的模型，不能当成未知。
+    func testLegacyProviderModelWithoutOwnerInfersCurrentStyle() throws {
+        var legacy = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(IOSJevSettings())) as? [String: Any]
+        )
+        legacy["apiStyle"] = "perplexityDecisions"
+        legacy["vercelModel"] = "pplx-decider-v9"
+        let data = try JSONSerialization.data(withJSONObject: legacy)
+        let decoded = try JSONDecoder().decode(IOSJevSettings.self, from: data)
+        XCTAssertEqual(decoded.providerModelStyle, .perplexityDecisions)
+        var settings = decoded
+        settings.setAPIStyle(.systemone)
+        settings.setAPIStyle(.perplexityDecisions)
+        XCTAssertEqual(settings.providerModel, "pplx-decider-v9", "迁移后同家往返不该被换成默认值")
     }
 
     func testVercelActiveRequiresConfiguredModel() {
@@ -178,11 +300,11 @@ final class IOSJevSettingsTests: XCTestCase {
         settings.setMode(.active, for: .toolDiscovery)
         XCTAssertEqual(settings.effectiveMode(for: .toolDiscovery), .active)
         // 显式清空 slug：active 按 shadow 收口。
-        settings.setVercelModel("")
+        settings.setProviderModel("")
         XCTAssertEqual(settings.effectiveMode(for: .toolDiscovery), .shadow)
         XCTAssertFalse(settings.modelConfigured)
         // 填 slug 即固定版本，active 生效（pinnedModelVersion 不参与 vercel 判定）。
-        settings.setVercelModel("anthropic/claude-haiku-4.5")
+        settings.setProviderModel("anthropic/claude-haiku-4.5")
         XCTAssertEqual(settings.effectiveMode(for: .toolDiscovery), .active)
         // 反向：systemone 下 vercelModel 不影响 pinned 判定。
         settings.setAPIStyle(.systemone)
@@ -196,14 +318,14 @@ final class IOSJevSettingsTests: XCTestCase {
         settings.setAPIStyle(.vercelGateway)
         XCTAssertGreaterThan(settings.revision, r0)
         let r1 = settings.revision
-        settings.setVercelModel("openai/gpt-4o")
+        settings.setProviderModel("openai/gpt-4o")
         XCTAssertGreaterThan(settings.revision, r1)
     }
 
     func testAPIStyleRoundTripAndLegacyDecode() throws {
         var settings = IOSJevSettings()
         settings.setAPIStyle(.vercelGateway)
-        settings.setVercelModel("openai/gpt-4o")
+        settings.setProviderModel("openai/gpt-4o")
         let data = try JSONEncoder().encode(settings)
         XCTAssertEqual(try JSONDecoder().decode(IOSJevSettings.self, from: data), settings)
 
@@ -218,7 +340,7 @@ final class IOSJevSettingsTests: XCTestCase {
             from: JSONSerialization.data(withJSONObject: legacyObject)
         )
         XCTAssertEqual(decoded.apiStyle, .systemone)
-        XCTAssertEqual(decoded.vercelModel, "")
+        XCTAssertEqual(decoded.providerModel, "")
     }
 
     /// 手动 pin 直接控制 effectiveMode：systemone 空 pin→shadow，固定版本→active，
@@ -232,6 +354,9 @@ final class IOSJevSettingsTests: XCTestCase {
         settings.setPinnedModelVersion("jev-latest")
         XCTAssertNil(settings.pinnedModelVersion, "浮动别名同验收口径：不存不留")
         XCTAssertEqual(settings.effectiveMode(for: .webActions), .shadow)
+        settings.setPinnedModelVersion("jev-preview")
+        XCTAssertNil(settings.pinnedModelVersion, "preview alias moves with releases and cannot pin acceptance")
+        XCTAssertEqual(settings.effectiveMode(for: .webActions), .shadow)
         settings.setPinnedModelVersion("  ")
         XCTAssertNil(settings.pinnedModelVersion)
         XCTAssertEqual(settings.effectiveMode(for: .webActions), .shadow, "清空回到未验收")
@@ -244,6 +369,8 @@ final class IOSJevSettingsTests: XCTestCase {
         settings.setMode(.active, for: .toolDiscovery)
         settings.acceptVerifiedModelVersion("jev-latest")
         XCTAssertNil(settings.pinnedModelVersion, "浮动别名不验收")
+        settings.acceptVerifiedModelVersion("jev-preview")
+        XCTAssertNil(settings.pinnedModelVersion)
         settings.acceptVerifiedModelVersion(nil)
         XCTAssertNil(settings.pinnedModelVersion)
         settings.acceptVerifiedModelVersion("jev-2026-09-15")
@@ -329,11 +456,11 @@ final class IOSJevSettingsTests: XCTestCase {
 
         // API 形态/vercel 模型同样经 store 持久化闭环。
         settings.setAPIStyle(.vercelGateway)
-        settings.setVercelModel("openai/gpt-4o")
+        settings.setProviderModel("openai/gpt-4o")
         store.updateJevSettings(settings)
         let reloaded2 = IOSSharedSettingsStore(userDefaults: defaults)
         XCTAssertEqual(reloaded2.jevSettings.apiStyle, .vercelGateway)
-        XCTAssertEqual(reloaded2.jevSettings.vercelModel, "openai/gpt-4o")
+        XCTAssertEqual(reloaded2.jevSettings.providerModel, "openai/gpt-4o")
 
         // 固定模型版本经 store 持久化闭环（runtime effectiveMode 消费）。
         settings.setPinnedModelVersion("jev-2026-09-15")
