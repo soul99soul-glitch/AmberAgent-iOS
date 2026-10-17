@@ -164,10 +164,10 @@
     }
   ],
   "local_files_sha256": {
-    "src/lib.rs": "d6154466819821c361b5fe4e0e751c1c419a288642a5045fdbfdca205de760d9",
-    "include/AmberIPhoneControl.h": "487a5eec0b54947d851aa99a9a2d0a3e65a947ec9bfb93b83fc20023f52c244c",
-    "README.md": "9b42210cb828378d8821ddeefc61b1c296869de4c44e8e262f30344416b2fb93",
-    "src/loopback_route.rs": "df6ae640abca660e399c1c60f0297301c00efac05617c874a673dde016618bbc",
+    "src/lib.rs": "ed784f9956f0a13203ab8b118f44b2c2096ce2bf3688a58bcbef94c636ab4649",
+    "include/AmberIPhoneControl.h": "b88f6099494fcce8d13c3ae55a5865068cce24e8da1f97c2b655ec8f72238cd7",
+    "README.md": "09090ff091d4ea4f5f08de1ab3b08a89f2d7e5904fc4394cec698c480155ecd0",
+    "src/loopback_route.rs": "52f51ce2e4b005649de988e827e1066acc9f17ecd857260f5f8046a64c2cae6b",
     "src/applications.rs": "ff7287b7b973f7574b49160df6e5dbd7d29cc88667959be134a3d9e9edd21ec0"
   }
 }

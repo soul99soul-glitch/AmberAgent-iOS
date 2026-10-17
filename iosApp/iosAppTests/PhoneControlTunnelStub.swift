@@ -7,13 +7,18 @@ final class PhoneControlTunnelStub: IOSPhoneControlLocalTunneling {
     var state: IOSPhoneControlLocalTunnel.State = .ready
     var isPrepared = true
     var prepareOperation: (() async throws -> Void)?
+    var refreshOperation: (() async -> Void)?
     var startOperation: ((UUID) async throws -> Void)?
     var stopOperation: ((UUID) async -> Bool)?
     private(set) var prepareCount = 0
+    private(set) var refreshCount = 0
     private(set) var startOwners: [UUID] = []
     private(set) var stopOwners: [UUID] = []
 
-    func refresh() async { }
+    func refresh() async {
+        refreshCount += 1
+        await refreshOperation?()
+    }
 
     func prepare() async throws {
         prepareCount += 1

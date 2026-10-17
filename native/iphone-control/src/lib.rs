@@ -30,6 +30,7 @@ use idevice::{
 };
 use serde::Serialize;
 use tokio::sync::{Notify, watch};
+use loopback_route::RouteMode;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -141,17 +142,19 @@ struct Config {
     bundle_id: String,
     module: String,
     token: String,
+    route_mode: RouteMode,
 }
 
 struct ApplicationsConfig {
     pairing: Vec<u8>,
     endpoint: SocketAddr,
+    route_mode: RouteMode,
 }
 
 enum Operation {
     Control(Config),
     Applications(ApplicationsConfig),
-    FirstPairing(SocketAddr),
+    FirstPairing(SocketAddr, RouteMode),
     HandshakeInspection(SocketAddr),
     RoutedHandshakeInspection(SocketAddr),
     LockdownInspection(SocketAddr),
@@ -162,14 +165,14 @@ impl Operation {
         match self {
             Self::Control(config) => run_session(config, session).await,
             Self::Applications(config) => run_applications(config, session).await,
-            Self::FirstPairing(endpoint) => run_first_pairing(endpoint, session).await,
+            Self::FirstPairing(endpoint, route_mode) => run_first_pairing(endpoint, route_mode, session).await,
             Self::HandshakeInspection(endpoint) => {
-                let (_remote, _) = open_pairing_channel(endpoint).await?;
+                let (_remote, _) = open_pairing_channel(endpoint, RouteMode::Embedded).await?;
                 session.set(Status::new("stopped", "handshake_ok", "开发服务首握手已接受，未验证配对或启动控制。"));
                 Ok(())
             }
             Self::RoutedHandshakeInspection(endpoint) => {
-                let stream = loopback_route::connect_using_current_route(endpoint).await?;
+                let stream = loopback_route::connect_using_current_route(endpoint, "connection_failed", "当前 VPN 路由无法连接本机开发服务。").await?;
                 let (_remote, _) = greet_pairing_channel(stream).await?;
                 session.set(Status::new("stopped", "handshake_ok", "当前 VPN 路由已通过开发服务首握手，未验证配对或启动控制。"));
                 Ok(())
@@ -235,8 +238,11 @@ pub unsafe extern "C" fn amber_iphone_control_start(
     pairing: *const u8, pairing_length: usize,
     endpoint: *const c_char, runner_bundle_id: *const c_char,
     test_module_name: *const c_char, runner_token: *const c_char,
+    route_mode: u32,
 ) -> *mut AmberIPhoneControlHandle {
-    let config = unsafe { read_config(pairing, pairing_length, endpoint, runner_bundle_id, test_module_name, runner_token) };
+    let config = RouteMode::try_from(route_mode).and_then(|route_mode| unsafe {
+        read_config(pairing, pairing_length, endpoint, runner_bundle_id, test_module_name, runner_token, route_mode)
+    });
     start_operation(config.map(Operation::Control))
 }
 
@@ -247,11 +253,14 @@ pub unsafe extern "C" fn amber_iphone_control_start(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amber_iphone_control_apps_start(
     pairing: *const u8, pairing_length: usize, endpoint: *const c_char,
+    route_mode: u32,
 ) -> *mut AmberIPhoneControlHandle {
     let config = (|| unsafe {
+        let route_mode = RouteMode::try_from(route_mode)?;
         Ok(ApplicationsConfig {
             pairing: read_pairing(pairing, pairing_length)?,
-            endpoint: read_endpoint(endpoint, "10.7.0.1:49152")?,
+            endpoint: route_mode.validate_endpoint(read_endpoint(endpoint, "10.7.0.1:49152")?)?,
+            route_mode,
         })
     })();
     start_operation(config.map(Operation::Applications))
@@ -262,9 +271,16 @@ pub unsafe extern "C" fn amber_iphone_control_apps_start(
 /// # Safety
 /// Non-null endpoint must be a NUL-terminated UTF-8 IP:port string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amber_iphone_control_pairing_start(endpoint: *const c_char) -> *mut AmberIPhoneControlHandle {
-    let endpoint = unsafe { read_endpoint(endpoint, "127.0.0.1:49152") };
-    start_operation(endpoint.map(Operation::FirstPairing))
+pub unsafe extern "C" fn amber_iphone_control_pairing_start(endpoint: *const c_char, route_mode: u32) -> *mut AmberIPhoneControlHandle {
+    let operation = RouteMode::try_from(route_mode).and_then(|route_mode| {
+        let default = match route_mode {
+            RouteMode::Embedded => "127.0.0.1:49152",
+            RouteMode::ExistingVpn => "10.7.0.1:49152",
+        };
+        let endpoint = route_mode.validate_endpoint(unsafe { read_endpoint(endpoint, default)? })?;
+        Ok(Operation::FirstPairing(endpoint, route_mode))
+    });
+    start_operation(operation)
 }
 
 /// A single credential-free greeting, using the control-start transport.
@@ -310,7 +326,7 @@ fn start_operation(operation: Result<Operation, Failure>) -> *mut AmberIPhoneCon
             let (timeout, timeout_message) = match &operation {
                 Operation::Control(_) => (STARTUP_TIMEOUT, "90 秒内未收到 runner 测试启动事件，请检查本机路由、开发服务与签名。"),
                 Operation::Applications(_) => (applications::QUERY_TIMEOUT, "30 秒内未完成本机应用列表查询，本次查询已停止。"),
-                Operation::FirstPairing(_) => (STARTUP_TIMEOUT, "90 秒内未完成系统配对确认，本次准备已停止。"),
+                Operation::FirstPairing(_, _) => (STARTUP_TIMEOUT, "90 秒内未完成系统配对确认，本次准备已停止。"),
                 Operation::HandshakeInspection(_) | Operation::RoutedHandshakeInspection(_) => (Duration::from_secs(8), "8 秒内未完成开发服务首握手，诊断已停止。"),
                 Operation::LockdownInspection(_) => (Duration::from_secs(8), "8 秒内未完成传统开发服务类型查询，诊断已停止。"),
             };
@@ -386,12 +402,14 @@ unsafe fn read_endpoint(pointer: *const c_char, default: &str) -> Result<SocketA
 unsafe fn read_config(
     pairing: *const u8, length: usize, endpoint: *const c_char,
     bundle: *const c_char, module: *const c_char, token: *const c_char,
+    route_mode: RouteMode,
 ) -> Result<Config, Failure> {
     Config {
         pairing: unsafe { read_pairing(pairing, length)? },
-        endpoint: unsafe { read_endpoint(endpoint, "10.7.0.1:49152")? },
+        endpoint: route_mode.validate_endpoint(unsafe { read_endpoint(endpoint, "10.7.0.1:49152")? })?,
         bundle_id: unsafe { read_string(bundle)? }, module: unsafe { read_string(module)? },
         token: unsafe { read_string(token)? },
+        route_mode,
     }.validate()
 }
 
@@ -536,8 +554,8 @@ fn configure_runner(cfg: &mut TestConfig, module: &str, token: &str) -> Result<(
     Ok(())
 }
 
-async fn run_first_pairing(endpoint: SocketAddr, session: Arc<Session>) -> Result<(), Failure> {
-    let stream = loopback_route::connect(endpoint, "connection_failed", "无法连接本机配对服务。").await?;
+async fn run_first_pairing(endpoint: SocketAddr, route_mode: RouteMode, session: Arc<Session>) -> Result<(), Failure> {
+    let stream = route_mode.connect(endpoint, "connection_failed", "无法连接本机配对服务。").await?;
     // Per-attempt identity avoids replacing another installation's record when
     // RpPairingFile::generate derives its identifier from the advertised name.
     let name = format!("Amber-{}", uuid::Uuid::new_v4());
@@ -571,11 +589,11 @@ async fn run_first_pairing(endpoint: SocketAddr, session: Arc<Session>) -> Resul
     Ok(())
 }
 
-async fn open_pairing_channel(endpoint: SocketAddr) -> Result<(
+async fn open_pairing_channel(endpoint: SocketAddr, route_mode: RouteMode) -> Result<(
     RemotePairingClient<RpPairingSocket<tokio::net::TcpStream>>,
     Arc<Mutex<Option<&'static str>>>,
 ), Failure> {
-    let stream = loopback_route::connect(endpoint, "connection_failed", "无法连接本机开发服务，请检查 loopback 路由和服务端口。").await?;
+    let stream = route_mode.connect(endpoint, "connection_failed", "无法连接本机开发服务，请检查 loopback 路由和服务端口。").await?;
     greet_pairing_channel(stream).await
 }
 
@@ -597,19 +615,19 @@ struct DevelopmentConnection {
 }
 
 async fn connect_development_services(
-    pairing_bytes: &[u8], endpoint: SocketAddr, session: &Session,
+    pairing_bytes: &[u8], endpoint: SocketAddr, route_mode: RouteMode, session: &Session,
 ) -> Result<DevelopmentConnection, Failure> {
     let mut pairing = RpPairingFile::from_bytes(pairing_bytes)
         .map_err(|e| Failure::device("invalid_pairing", "无法读取 RemotePairing 文件；普通 lockdown 配对文件不适用于此入口。", e))?;
     session.stage("pairing", "正在验证已有配对。");
-    let (mut remote, stage) = open_pairing_channel(endpoint).await?;
+    let (mut remote, stage) = open_pairing_channel(endpoint, route_mode).await?;
     // Do not use connect(): it silently falls back to creating a new pairing.
     remote.validate_pairing(&mut pairing).await
         .map_err(|e| Failure::transport("pairing_rejected", "设备拒绝已有配对，请重新准备 RemotePairing 文件。", e, &stage))?;
     session.stage("tunnel", "正在建立本机开发隧道。");
     let port = remote.create_tcp_listener().await
         .map_err(|e| Failure::device("tunnel_rejected", "设备未允许建立开发隧道。", e))?;
-    let tunnel_stream = loopback_route::connect(SocketAddr::new(endpoint.ip(), port), "tunnel_connection_failed", "无法连接开发隧道。").await?;
+    let tunnel_stream = route_mode.connect(SocketAddr::new(endpoint.ip(), port), "tunnel_connection_failed", "无法连接开发隧道。").await?;
     let tunnel = connect_tls_psk_tunnel_native(tunnel_stream, remote.encryption_key()).await
         .map_err(|e| Failure::device("tunnel_handshake_failed", "开发隧道握手失败。", e))?;
     let client_ip = tunnel.info.client_address.parse()
@@ -637,7 +655,7 @@ async fn cache_applications(session: &Session, installation: &mut InstallationPr
 
 async fn run_applications(config: ApplicationsConfig, session: Arc<Session>) -> Result<(), Failure> {
     let DevelopmentConnection { remote, mut adapter, mut handshake } =
-        connect_development_services(&config.pairing, config.endpoint, &session).await?;
+        connect_development_services(&config.pairing, config.endpoint, config.route_mode, &session).await?;
     let mut installation = InstallationProxyClient::connect_rsd(&mut adapter, &mut handshake).await
         .map_err(|e| Failure::device("installation_service_failed", "无法连接本机应用查询服务。", e))?;
     cache_applications(&session, &mut installation).await?;
@@ -650,7 +668,7 @@ async fn run_applications(config: ApplicationsConfig, session: Arc<Session>) -> 
 
 async fn run_session(config: Config, session: Arc<Session>) -> Result<(), Failure> {
     let DevelopmentConnection { remote, mut adapter, mut handshake } =
-        connect_development_services(&config.pairing, config.endpoint, &session).await?;
+        connect_development_services(&config.pairing, config.endpoint, config.route_mode, &session).await?;
     let mut lockdown = LockdownClient::connect_rsd(&mut adapter, &mut handshake).await
         .map_err(|e| Failure::device("lockdown_rsd_failed", "无法通过已验证隧道读取设备信息。", e))?;
     let version = lockdown.get_value(Some("ProductVersion"), None).await
@@ -739,7 +757,7 @@ mod tests {
     fn config() -> Config {
         Config { pairing: vec![1], endpoint: "10.7.0.1:49152".parse().unwrap(),
             bundle_id: "app.amber.selfcontrol.runner.xctrunner".into(),
-            module: "iPhoneUse".into(), token: "ab".repeat(32) }
+            module: "iPhoneUse".into(), token: "ab".repeat(32), route_mode: RouteMode::Embedded }
     }
 
     #[test]
@@ -769,7 +787,7 @@ mod tests {
         let module = CString::new("iPhoneUse").unwrap();
         let pair = b"pairing-sensitive-marker";
         unsafe {
-            let handle = amber_iphone_control_start(pair.as_ptr(), pair.len(), std::ptr::null(), bundle.as_ptr(), module.as_ptr(), token.as_ptr());
+            let handle = amber_iphone_control_start(pair.as_ptr(), pair.len(), std::ptr::null(), bundle.as_ptr(), module.as_ptr(), token.as_ptr(), 0);
             assert!((*handle).thread.is_none());
             let json = amber_iphone_control_status_json(handle);
             let text = CStr::from_ptr(json).to_str().unwrap();
@@ -780,6 +798,56 @@ mod tests {
             amber_iphone_control_stop(handle);
             amber_iphone_control_stop(handle);
             amber_iphone_control_free(handle);
+        }
+    }
+
+    #[test]
+    fn all_start_entries_reject_unknown_route_modes_before_reading_inputs_or_starting_io() {
+        unsafe {
+            let handles = [
+                amber_iphone_control_start(std::ptr::null(), 0, std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null(), 2),
+                amber_iphone_control_apps_start(std::ptr::null(), 0, std::ptr::null(), u32::MAX),
+                amber_iphone_control_pairing_start(std::ptr::null(), 2),
+            ];
+            for handle in handles {
+                let owner = &*handle;
+                assert!(owner.thread.is_none());
+                let status = owner.session.status.lock().unwrap().clone();
+                assert_eq!(status.phase, "failed");
+                assert_eq!(status.code, "invalid_route_mode");
+                assert!(amber_iphone_control_pairing_copy_plist(handle).is_null());
+                amber_iphone_control_free(handle);
+            }
+        }
+    }
+
+    #[test]
+    fn all_existing_vpn_entries_reject_custom_endpoints_before_starting_io() {
+        let pair = [1u8];
+        let endpoint = CString::new("127.0.0.1:49152").unwrap();
+        let bundle = CString::new("app.amber.runner.xctrunner").unwrap();
+        let module = CString::new("iPhoneUse").unwrap();
+        let token = CString::new("ab".repeat(32)).unwrap();
+        unsafe {
+            let handles = [
+                amber_iphone_control_start(pair.as_ptr(), pair.len(), endpoint.as_ptr(), bundle.as_ptr(), module.as_ptr(), token.as_ptr(), 1),
+                amber_iphone_control_apps_start(pair.as_ptr(), pair.len(), endpoint.as_ptr(), 1),
+                amber_iphone_control_pairing_start(endpoint.as_ptr(), 1),
+            ];
+            for handle in handles {
+                let owner = &*handle;
+                assert!(owner.thread.is_none());
+                assert_eq!(owner.session.status.lock().unwrap().code, "invalid_endpoint");
+                amber_iphone_control_free(handle);
+            }
+
+            for (value, expected) in [(0, RouteMode::Embedded), (1, RouteMode::ExistingVpn)] {
+                let mode = RouteMode::try_from(value).unwrap_or_else(|_| panic!("valid route mode"));
+                let config = read_config(pair.as_ptr(), pair.len(), std::ptr::null(), bundle.as_ptr(), module.as_ptr(), token.as_ptr(), mode)
+                    .unwrap_or_else(|_| panic!("valid configuration"));
+                assert_eq!(config.endpoint, "10.7.0.1:49152".parse().unwrap());
+                assert_eq!(config.route_mode, expected);
+            }
         }
     }
 
@@ -877,7 +945,7 @@ mod tests {
         let bundle = CString::new("app.amber.runner.xctrunner").unwrap();
         let module = CString::new("iPhoneUse").unwrap();
         let token = CString::new("ab".repeat(32)).unwrap();
-        let handle = unsafe { amber_iphone_control_start(pair.as_ptr(), pair.len(), endpoint.as_ptr(), bundle.as_ptr(), module.as_ptr(), token.as_ptr()) };
+        let handle = unsafe { amber_iphone_control_start(pair.as_ptr(), pair.len(), endpoint.as_ptr(), bundle.as_ptr(), module.as_ptr(), token.as_ptr(), 0) };
         let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
         let mut bytes = [0u8; 4096];
         let n = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await.unwrap().unwrap();
@@ -900,7 +968,7 @@ mod tests {
             value
         }
         unsafe {
-            let invalid = amber_iphone_control_apps_start(std::ptr::null(), 0, std::ptr::null());
+            let invalid = amber_iphone_control_apps_start(std::ptr::null(), 0, std::ptr::null(), 0);
             assert!((*invalid).thread.is_none());
             assert_eq!(result(invalid)["state"], "failed");
             assert_eq!(result(invalid)["error"]["code"], "invalid_pairing");
@@ -936,7 +1004,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
         let pairing = RpPairingFile::generate("AmberCatalogUnitTest").to_bytes();
-        let handle = unsafe { amber_iphone_control_apps_start(pairing.as_ptr(), pairing.len(), endpoint.as_ptr()) };
+        let handle = unsafe { amber_iphone_control_apps_start(pairing.as_ptr(), pairing.len(), endpoint.as_ptr(), 0) };
         let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
         let mut bytes = [0u8; 4096];
         assert!(tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await.unwrap().unwrap() > 0);
@@ -957,7 +1025,7 @@ mod tests {
         use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
-        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr()) };
+        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr(), 0) };
         let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
         let mut bytes = [0u8; 4096];
         assert!(tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await.unwrap().unwrap() > 0);
@@ -988,7 +1056,7 @@ mod tests {
         for &(response, expected_stage) in cases {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
-            let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr()) };
+            let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr(), 0) };
             let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
             // Read one complete request so EOF cannot race the initial write.
             let mut header = [0u8; 11];
@@ -1029,7 +1097,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
-        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr()) };
+        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr(), 0) };
         let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
         for round in 0..2 {
             let mut header = [0u8; 11];
@@ -1069,7 +1137,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = CString::new(listener.local_addr().unwrap().to_string()).unwrap();
-        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr()) };
+        let handle = unsafe { amber_iphone_control_pairing_start(endpoint.as_ptr(), 0) };
         let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await.unwrap().unwrap();
         let replies: &[&[u8]] = &[
             br#"{"message":{"plain":{"_0":{"response":{"_1":{"handshake":{"_0":{}}}}}}}}"#,
@@ -1081,10 +1149,10 @@ mod tests {
                 stream.read_exact(&mut header).await.unwrap();
                 let mut body = vec![0; u16::from_be_bytes([header[9], header[10]]) as usize];
                 stream.read_exact(&mut body).await.unwrap();
-                if round < 2 {
+                if let Some(reply) = replies.get(round) {
                     stream.write_all(b"RPPairing").await.unwrap();
-                    stream.write_all(&(replies[round].len() as u16).to_be_bytes()).await.unwrap();
-                    stream.write_all(replies[round]).await.unwrap();
+                    stream.write_all(&(reply.len() as u16).to_be_bytes()).await.unwrap();
+                    stream.write_all(reply).await.unwrap();
                 } else if round == 3 {
                     let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
                     assert_eq!(request.pointer("/message/plain/_0/event/_0/pairingData/_0/kind").unwrap(), "setupManualPairing");

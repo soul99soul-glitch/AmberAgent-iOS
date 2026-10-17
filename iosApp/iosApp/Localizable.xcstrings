@@ -1,6 +1,397 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "固定版本": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pinned version"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定版本"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定版本"
+          }
+        }
+      }
+    },
+    "连接测试后自动填入；未固定版本时测试使用 Jev 1.14，active 仍需验收固定版本。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filled in automatically after a connection test. Without a pinned version, the test uses Jev 1.14; active still requires a verified pinned version."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接测试后自动填入；未固定版本时测试使用 Jev 1.14，active 仍需验收固定版本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連接測試後自動填入；未固定版本時測試使用 Jev 1.14，active 仍需驗收固定版本。"
+          }
+        }
+      }
+    },
+    "请检查模型 ID。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check the model ID."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请检查模型 ID。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請檢查模型 ID。"
+          }
+        }
+      }
+    },
+    "调用方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mode"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "调用方式"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "調用方式"
+          }
+        }
+      }
+    },
+    "如 typesafe-ai/jev-1.14.0 或 liquid/d1": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "e.g. typesafe-ai/jev-1.14.0 or liquid/d1"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如 typesafe-ai/jev-1.14.0 或 liquid/d1"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如 typesafe-ai/jev-1.14.0 或 liquid/d1"
+          }
+        }
+      }
+    },
+    "如 pplx-decider-v1.2": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "e.g. pplx-decider-v1.2"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如 pplx-decider-v1.2"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如 pplx-decider-v1.2"
+          }
+        }
+      }
+    },
+    "如 d1 或 d1-ultra": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "e.g. d1 or d1-ultra"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如 d1 或 d1-ultra"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如 d1 或 d1-ultra"
+          }
+        }
+      }
+    },
+    "粘贴 TypeSafe API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste your TypeSafe API key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴 TypeSafe API Key"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘貼 TypeSafe API Key"
+          }
+        }
+      }
+    },
+    "粘贴 Vercel AI Gateway API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste your Vercel AI Gateway API key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴 Vercel AI Gateway API Key"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘貼 Vercel AI Gateway API Key"
+          }
+        }
+      }
+    },
+    "粘贴 Perplexity API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste your Perplexity API key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴 Perplexity API Key"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘貼 Perplexity API Key"
+          }
+        }
+      }
+    },
+    "粘贴 Liquid AI API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste your Liquid AI API key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴 Liquid AI API Key"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘貼 Liquid AI API Key"
+          }
+        }
+      }
+    },
+    "模型 ID": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型 ID"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型 ID"
+          }
+        }
+      }
+    },
+    "API 调用方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API mode"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 调用方式"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 調用方式"
+          }
+        }
+      }
+    },
+    "测试并恢复推荐模型": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Test and restore the recommended model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "测试并恢复推荐模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "測試並恢復推薦模型"
+          }
+        }
+      }
+    },
+    "当前供应商只接收文字判定，截图不会被发送。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This provider accepts text only; screenshots are not sent."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前供应商只接收文字判定，截图不会被发送。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "當前供應商只接收文字判定，截圖不會被發送。"
+          }
+        }
+      }
+    },
+    "已切换供应商，原 Key 已清除，请重新录入。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider switched. The previous API key was cleared; enter the new one."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已切换供应商，原 Key 已清除，请重新录入。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已切換供應商，原 Key 已清除，請重新錄入。"
+          }
+        }
+      }
+    },
+    "已切换供应商，请录入新的 API Key。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider switched. Enter the new API key."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已切换供应商，请录入新的 API Key。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已切換供應商，請錄入新的 API Key。"
+          }
+        }
+      }
+    },
     "正在同步": {
       "localizations": {
         "en": {
@@ -110366,6 +110757,785 @@
           "stringUnit": {
             "state": "translated",
             "value": "仅发送当前步骤需要的界面文字和元素信息，不发送截图。不会自动授权或恢复手机动作。"
+          }
+        }
+      }
+    },
+    "手机屏幕截图（实验）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phone screenshots (experimental)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手机屏幕截图（实验）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手機螢幕截圖（實驗）"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スマートフォンのスクリーンショット（実験的）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰 스크린샷(실험적 기능)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Снимки экрана телефона (экспериментально)"
+          }
+        }
+      }
+    },
+    "未固定版本时，连接测试使用 Jev 1.14；active 仍需验收固定版本。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When no version is pinned, connection tests use Jev 1.14. Active mode still requires a validated, pinned version."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未固定版本时，连接测试使用 Jev 1.14；active 仍需验收固定版本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未固定版本時，連線測試使用 Jev 1.14；active 仍需驗收固定版本。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョンが固定されていない場合、接続テストでは Jev 1.14 を使用します。active モードには、検証済みの固定バージョンが必要です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "버전이 고정되지 않은 경우 연결 테스트에는 Jev 1.14를 사용합니다. active 모드에는 검증된 고정 버전이 필요합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если версия не закреплена, для проверки подключения используется Jev 1.14. Для режима active по-прежнему нужна проверенная закреплённая версия."
+          }
+        }
+      }
+    },
+    "测试并升级至 Jev 1.14": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Test and upgrade to Jev 1.14"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "测试并升级至 Jev 1.14"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "測試並升級至 Jev 1.14"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テストして Jev 1.14 に更新"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "테스트 후 Jev 1.14로 업그레이드"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверить и обновить до Jev 1.14"
+          }
+        }
+      }
+    },
+    "使用合成文本测试，成功后固定为 %@。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tests with synthetic text. On success, pins the model to %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用合成文本测试，成功后固定为 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用合成文字測試，成功後固定為 %@。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "合成テキストでテストし、成功後にモデルを %@ に固定します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "합성 텍스트로 테스트하며, 성공하면 모델을 %@으로 고정합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка на синтетическом тексте. При успехе модель закрепляется на %@."
+          }
+        }
+      }
+    },
+    "默认只发送当前步骤的界面文字；允许截图后，在需要 Jev 判断时同次发送压缩截图。图片能力仍为实验功能。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "By default, only screen text for the current step is sent. If screenshots are allowed, a compressed screenshot is included in the same request when Jev judgment is needed. Image support is experimental."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "默认只发送当前步骤的界面文字；允许截图后，在需要 Jev 判断时同次发送压缩截图。图片能力仍为实验功能。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預設只傳送目前步驟的介面文字；允許截圖後，需要 Jev 判斷時會在同一請求中傳送壓縮截圖。圖片能力仍為實驗功能。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既定では、現在の手順の画面テキストのみを送信します。スクリーンショットを許可すると、Jev の判断が必要なときに、圧縮した画像を同じリクエストで送信します。画像機能は実験的なものです。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기본적으로 현재 단계의 화면 텍스트만 전송합니다. 스크린샷을 허용하면 Jev 판단이 필요할 때 압축된 스크린샷을 같은 요청에 포함합니다. 이미지 기능은 아직 실험적입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По умолчанию передаётся только текст экрана для текущего шага. Если снимки экрана разрешены, при необходимости оценки Jev сжатый снимок передаётся в том же запросе. Поддержка изображений остаётся экспериментальной."
+          }
+        }
+      }
+    },
+    "当前模型使用界面文字判断；升级至 Gateway 的 Jev 1.14 后可允许截图。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current model uses screen text for judgments. Upgrade to Jev 1.14 on Gateway to allow screenshots."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前模型使用界面文字判断；升级至 Gateway 的 Jev 1.14 后可允许截图。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前的模型使用介面文字判斷；升級至 Gateway 的 Jev 1.14 後可允許截圖。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在のモデルは画面テキストで判断します。Gateway の Jev 1.14 に更新すると、スクリーンショットを許可できます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 모델은 화면 텍스트로 판단합니다. Gateway의 Jev 1.14로 업그레이드하면 스크린샷을 허용할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текущая модель использует для оценки текст экрана. Обновитесь до Jev 1.14 в Gateway, чтобы разрешить снимки экрана."
+          }
+        }
+      }
+    },
+    "未允许": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not allowed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未允许"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未允許"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未許可"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "허용되지 않음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не разрешено"
+          }
+        }
+      }
+    },
+    "连接方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection method"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接方式"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線方式"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続方法"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결 방식"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Способ подключения"
+          }
+        }
+      }
+    },
+    "内置本地连接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in local connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内置本地连接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內建本機連線"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内蔵のローカル接続"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내장 로컬 연결"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Встроенное локальное подключение"
+          }
+        }
+      }
+    },
+    "使用现有 VPN": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use existing VPN"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用现有 VPN"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用現有 VPN"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存の VPN を使用"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기존 VPN 사용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать существующий VPN"
+          }
+        }
+      }
+    },
+    "现有 VPN 的本地回环需将 10.7.0.1 指向本机。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The existing VPN must route 10.7.0.1 back to this device through local loopback."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "现有 VPN 的本地回环需将 10.7.0.1 指向本机。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現有 VPN 的本機回環需將 10.7.0.1 指向本機。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存の VPN で、ローカルループバックにより 10.7.0.1 をこの端末へ転送する必要があります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기존 VPN의 로컬 루프백에서 10.7.0.1을 이 기기로 연결해야 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В существующем VPN локальная петля должна направлять 10.7.0.1 на это устройство."
+          }
+        }
+      }
+    },
+    "请在现有代理中开启本地回环，并保持 VPN 运行。连接与断开由你管理，Amber 只使用其中的本机开发服务。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable local loopback in your existing proxy and keep the VPN running. You manage its connection; Amber only uses the local developer services it provides."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在现有代理中开启本地回环，并保持 VPN 运行。连接与断开由你管理，Amber 只使用其中的本机开发服务。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請在現有代理中開啟本機回環，並保持 VPN 運作。連線與中斷由你管理，Amber 只使用其中的本機開發服務。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存のプロキシでローカルループバックを有効にし、VPN を接続したままにしてください。接続と切断はご自身で管理します。Amber はそのローカル開発サービスのみを使用します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기존 프록시에서 로컬 루프백을 켜고 VPN을 연결된 상태로 유지하세요. 연결과 해제는 사용자가 관리하며, Amber는 제공되는 로컬 개발 서비스만 사용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включите локальную петлю в используемом прокси и оставьте VPN подключённым. Подключением и отключением управляете вы; Amber использует только доступные через него локальные службы разработки."
+          }
+        }
+      }
+    },
+    "读取 App 前，请开启支持本地回环的 VPN。添加结果会保存在这里。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Before loading apps, connect a VPN that supports local loopback. Apps you add will be saved here."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取 App 前，请开启支持本地回环的 VPN。添加结果会保存在这里。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讀取 App 前，請開啟支援本機回環的 VPN。新增結果會儲存在這裡。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを読み込む前に、ローカルループバック対応の VPN を接続してください。追加したアプリはここに保存されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "앱을 불러오기 전에 로컬 루프백을 지원하는 VPN을 연결하세요. 추가한 앱은 여기에 저장됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перед загрузкой списка приложений подключите VPN с поддержкой локальной петли. Добавленные приложения сохранятся здесь."
+          }
+        }
+      }
+    },
+    "检查会通过现有 VPN 启动已安装的 runner 并读取当前界面，结束后保持 VPN 运行。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The check uses the existing VPN to start the installed runner and read the current screen. The VPN is left running afterward."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查会通过现有 VPN 启动已安装的 runner 并读取当前界面，结束后保持 VPN 运行。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查會透過現有 VPN 啟動已安裝的 runner 並讀取目前畫面，結束後保持 VPN 運作。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チェックでは既存の VPN を通じてインストール済みの runner を起動し、現在の画面を読み取ります。終了後も VPN は切断しません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "검사는 기존 VPN을 통해 설치된 runner를 실행하고 현재 화면을 읽습니다. 검사가 끝나도 VPN 연결을 유지합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка через существующий VPN запустит установленный runner и прочитает текущий экран. После проверки VPN останется подключённым."
+          }
+        }
+      }
+    },
+    "本次检查已结束，现有 VPN 由你管理": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This check has ended. You manage the existing VPN."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次检查已结束，现有 VPN 由你管理"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次檢查已結束，現有 VPN 由你管理"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今回のチェックは終了しました。既存の VPN はご自身で管理してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "검사가 끝났습니다. 기존 VPN은 사용자가 관리합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка завершена. Существующим VPN управляете вы"
+          }
+        }
+      }
+    },
+    "本次检查尚未确认结束，现有 VPN 由你管理": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This check has not yet been confirmed to have ended. You manage the existing VPN."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次检查尚未确认结束，现有 VPN 由你管理"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次檢查尚未確認結束，現有 VPN 由你管理"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今回のチェックの終了はまだ確認できていません。既存の VPN はご自身で管理してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "검사 종료가 아직 확인되지 않았습니다. 기존 VPN은 사용자가 관리합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершение проверки ещё не подтверждено. Существующим VPN управляете вы"
+          }
+        }
+      }
+    },
+    "最近检查已读取界面，当前空闲；请保持现有 VPN 运行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The last check read the screen. Currently idle; keep the existing VPN running."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近检查已读取界面，当前空闲；请保持现有 VPN 运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近檢查已讀取畫面，目前閒置；請保持現有 VPN 運作"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回のチェックで画面を読み取りました。現在は待機中です。既存の VPN は接続したままにしてください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 검사에서 화면을 읽었습니다. 현재 대기 중입니다. 기존 VPN을 연결된 상태로 유지하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последняя проверка прочитала экран. Сейчас режим ожидания; оставьте существующий VPN подключённым"
+          }
+        }
+      }
+    },
+    "尚未验证连接；开启支持本地回环的 VPN 后检查自动化": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection not yet verified. Connect a VPN that supports local loopback, then check automation."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未验证连接；开启支持本地回环的 VPN 后检查自动化"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未驗證連線；開啟支援本機回環的 VPN 後檢查自動化"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続はまだ検証されていません。ローカルループバック対応の VPN を接続してから自動化をチェックしてください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결이 아직 확인되지 않았습니다. 로컬 루프백을 지원하는 VPN을 연결한 후 자동화를 검사하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подключение ещё не проверено. Подключите VPN с поддержкой локальной петли, затем проверьте автоматизацию"
+          }
+        }
+      }
+    },
+    "最近检查已验证连接；请保持现有 VPN 运行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The last check verified the connection. Keep the existing VPN running."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近检查已验证连接；请保持现有 VPN 运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近檢查已驗證連線；請保持現有 VPN 運作"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回のチェックで接続を検証しました。既存の VPN は接続したままにしてください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 검사에서 연결을 확인했습니다. 기존 VPN을 연결된 상태로 유지하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последняя проверка подтвердила подключение. Оставьте существующий VPN подключённым"
           }
         }
       }

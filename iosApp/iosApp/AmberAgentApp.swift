@@ -47,7 +47,9 @@ struct AmberAgentApp: App {
         } else if ProcessInfo.processInfo.arguments.contains(IOSPhoneControlHandshakeInspection.diagnosticLaunchArgument) {
             Task { @MainActor in await IOSPhoneControlHandshakeInspection.runOnce() }
         }
-        if ProcessInfo.processInfo.arguments.contains(IOSPhoneControlReadinessInspection.applicationsDiagnosticLaunchArgument) {
+        if ProcessInfo.processInfo.arguments.contains(IOSPhoneControlReadinessInspection.existingVPNDiagnosticLaunchArgument) {
+            Task { @MainActor in await IOSPhoneControlReadinessInspection.runExistingVPNOnce() }
+        } else if ProcessInfo.processInfo.arguments.contains(IOSPhoneControlReadinessInspection.applicationsDiagnosticLaunchArgument) {
             Task { @MainActor in await IOSPhoneControlReadinessInspection.runApplicationsOnce() }
         } else if ProcessInfo.processInfo.arguments.contains(IOSPhoneControlReadinessInspection.inputDiagnosticLaunchArgument) {
             Task { @MainActor in await IOSPhoneControlReadinessInspection.runOnce(inspectInput: true) }

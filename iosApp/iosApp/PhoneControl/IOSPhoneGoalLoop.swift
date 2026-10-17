@@ -91,6 +91,7 @@ final class IOSPhoneGoalLoop {
             case unsupported
             case inputValueUnavailable = "input_value_unavailable"
             case inputNotEmpty = "input_not_empty"
+            case finalCommitWithheld = "final_commit_withheld"
         }
         let id: String
         let reasonCode: ReasonCode
@@ -984,7 +985,7 @@ final class IOSPhoneGoalLoop {
             let actionableMatches = matches.filter { supports(spec.action, $0.node) }
             guard !actionableMatches.isEmpty else { reject(.unsupported); continue }
             if actionableMatches.count == 1, let match = actionableMatches.first {
-                switch resolveAction(for: spec, node: match.node) {
+                switch resolveAction(for: spec, node: match.node, screen: bounds) {
                 case .rejected(let code): reject(code)
                 case .action(let action):
                     diagnostics.append(.init(id: id, reasonCode: .eligible))
@@ -1000,7 +1001,7 @@ final class IOSPhoneGoalLoop {
             let specText = String(decoding: try! JSONEncoder().encode(spec), as: UTF8.self)
             let ordered = actionableMatches.sorted { readingOrder($0.node, $1.node) }
             for (rank, match) in ordered.enumerated() {
-                guard case .action(let action) = resolveAction(for: spec, node: match.node) else { continue }
+                guard case .action(let action) = resolveAction(for: spec, node: match.node, screen: bounds) else { continue }
                 candidates.append(Candidate(
                     id: "\(id).\(rank + 1)", spec: spec, action: action,
                     decisionDescription: "\(specText) | match \(rank + 1) of \(ordered.count) in reading order: \(nameDescription(match.node)) \(context.describe(match.index))",
@@ -1025,11 +1026,12 @@ final class IOSPhoneGoalLoop {
     }
 
     private static func resolveAction(for spec: IOSPhoneGoalActionSpec,
-                               node: PhoneObservationNode) -> ActionResolution {
+                                      node: PhoneObservationNode, screen: PhoneElementRect?) -> ActionResolution {
         guard node.enabled else { return .rejected(.disabled) }
         guard let ref = node.ref, !ref.isEmpty else { return .rejected(.referenceUnavailable) }
         switch spec.action {
         case .tap:
+            guard !isFinalCommit(node, screen: screen) else { return .rejected(.finalCommitWithheld) }
             return .action(.tap(ref: ref))
         case .type:
             guard IOSPhoneGoalVerification.isTextInput(node), let text = spec.text else { return .rejected(.unsupported) }

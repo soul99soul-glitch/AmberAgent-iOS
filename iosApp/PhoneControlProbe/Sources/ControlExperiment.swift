@@ -44,7 +44,7 @@ final class ControlExperiment {
 
     nonisolated private static func prepareOnDevice(endpoint: String, progress: @Sendable (String) async -> Void) async throws -> Data {
         // This is a diagnostic worker, never the UI actor. The native API copies input.
-        guard let handle = amber_iphone_control_pairing_start(endpoint) else {
+        guard let handle = amber_iphone_control_pairing_start(endpoint, 0) else {
             throw PhoneControlSessionError.launch("无法创建配对任务")
         }
         defer { amber_iphone_control_free(handle) }

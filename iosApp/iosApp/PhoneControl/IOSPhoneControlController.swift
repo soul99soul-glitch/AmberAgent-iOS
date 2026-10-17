@@ -9,6 +9,30 @@ enum IOSPhoneControlReadinessInspection {
     static let diagnosticLaunchArgument = "-amber-phone-readiness-inspection-once"
     static let inputDiagnosticLaunchArgument = "-amber-phone-input-inspection-once"
     static let applicationsDiagnosticLaunchArgument = "-amber-phone-apps-inspection-once"
+    static let existingVPNDiagnosticLaunchArgument = "-amber-phone-existing-vpn-inspection-once"
+
+    @MainActor
+    static func runExistingVPNOnce() async {
+        guard !IOSPhoneControlController.shared.isOccupied else { return }
+        let suite = "PhoneControlExistingVPNInspection.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { return }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: IOSPhoneControlController.enabledPreferenceKey)
+        defaults.set(IOSPhoneControlConnectionMode.existingVPN.rawValue,
+                     forKey: IOSPhoneControlController.connectionModePreferenceKey)
+        let controller = IOSPhoneControlController(defaults: defaults)
+        IOSBackgroundLifecycleLog.record("phoneControlExistingVPNInspection", detail: "stage=start")
+        do {
+            try await controller.checkReadiness()
+            let report = controller.readinessReport
+            IOSBackgroundLifecycleLog.record("phoneControlExistingVPNInspection",
+                detail: "stage=finished connection=\(report?.connectionVerifiedAt != nil) ui_read=\(report?.uiReadAt != nil) nodes=\(report?.nodeCount ?? 0) cleanup=\(report?.cleanupComplete == true) failure_stage=\(String(describing: report?.failureStage))")
+        } catch {
+            let error = error as NSError
+            IOSBackgroundLifecycleLog.record("phoneControlExistingVPNInspection",
+                detail: "stage=failed domain=\(error.domain) code=\(error.code)")
+        }
+    }
 
     @MainActor
     static func runApplicationsOnce() async {
@@ -178,7 +202,7 @@ struct IOSPhoneControlStopResult: Sendable, Equatable {
 }
 
 enum IOSPhoneControlError: LocalizedError {
-    case disabled, unprepared, occupied, invalidScope, unauthorized, applicationNotFound
+    case disabled, unprepared, occupied, invalidScope, unauthorized, applicationNotFound, externallyManagedConnection
 
     var errorDescription: String? {
         switch self {
@@ -188,6 +212,7 @@ enum IOSPhoneControlError: LocalizedError {
         case .invalidScope: "请先添加允许控制的 App。"
         case .applicationNotFound: "未在本机应用列表中找到该 Bundle ID，请先查询应用并使用返回的准确 ID。"
         case .unauthorized: "本任务没有有效的手机控制连接权限，请重新发起任务。"
+        case .externallyManagedConnection: "请在你使用的 VPN 中启用本地回环，并保持连接。"
         }
     }
 }
@@ -201,6 +226,10 @@ final class IOSPhoneControlController {
     static let enabledPreferenceKey = "app.amber.ios.phoneControl.enabled.v1"
     static let applicationNamesPreferenceKey = "app.amber.ios.phoneControl.applicationNames.v1"
     static let selectedBundleIDsPreferenceKey = "app.amber.ios.phoneControl.scope.v1"
+    static let connectionModePreferenceKey = "app.amber.ios.phoneControl.connectionMode.v1"
+
+    private(set) var connectionMode: IOSPhoneControlConnectionMode
+    var isConnectionPrepared: Bool { connectionMode == .existingVPN || localTunnel.isPrepared }
 
     var enabled: Bool {
         didSet {
@@ -250,7 +279,7 @@ final class IOSPhoneControlController {
     @ObservationIgnored private let credentials: any IOSPhoneControlCredentialStoring
     @ObservationIgnored private let applicationDiscoverer: any PhoneControlApplicationDiscovering
     @ObservationIgnored private let session: any IOSPhoneControlSessionServing
-    @ObservationIgnored private let pairingSession = PhoneControlPairingSession()
+    @ObservationIgnored private let pairingSession: any PhoneControlPairingServing
     @ObservationIgnored private var pairingTask: Task<Bool, Error>?
     @ObservationIgnored private var pairingOperationID: UUID?
     private var owner: Owner?
@@ -272,6 +301,7 @@ final class IOSPhoneControlController {
          session: any IOSPhoneControlSessionServing = PhoneControlSession(),
          applications: any PhoneControlApplicationDiscovering = PhoneControlApplications(),
          localTunnel: any IOSPhoneControlLocalTunneling = IOSPhoneControlLocalTunnel(),
+         pairingSession: any PhoneControlPairingServing = PhoneControlPairingSession(),
          onHandoffChange: @escaping @MainActor (String, IOSPhoneControlHandoffState) -> Void = { runID, _ in
              // The activity update entry point overlays the current owner's handoff state.
              Task { await AgentLiveActivityController.shared.updatePhoneControl(runID: runID, phase: .waitingForModel) }
@@ -281,7 +311,10 @@ final class IOSPhoneControlController {
         self.session = session
         self.applicationDiscoverer = applications
         self.localTunnel = localTunnel
+        self.pairingSession = pairingSession
         self.onHandoffChange = onHandoffChange
+        connectionMode = defaults.string(forKey: Self.connectionModePreferenceKey)
+            .flatMap(IOSPhoneControlConnectionMode.init(rawValue:)) ?? .embedded
         enabled = defaults.bool(forKey: Self.enabledPreferenceKey)
         let selected = Set(defaults.stringArray(forKey: Self.selectedBundleIDsPreferenceKey) ?? [])
         selectedBundleIDs = selected
@@ -293,7 +326,7 @@ final class IOSPhoneControlController {
     func refreshPreparation() async {
         guard !isUpdatingPairing, !isPreparingConnection else { return }
         let revision = preparationRevision
-        await localTunnel.refresh()
+        if connectionMode == .embedded { await localTunnel.refresh() }
         do {
             let prepared = try await credentials.loadPairing() != nil
             guard revision == preparationRevision else { return }
@@ -313,6 +346,7 @@ final class IOSPhoneControlController {
         guard !isOccupied, !isPreparingConnection, !isUpdatingPairing, !isLoadingApplications else {
             throw IOSPhoneControlError.occupied
         }
+        guard connectionMode == .embedded else { throw IOSPhoneControlError.externallyManagedConnection }
         isPreparingConnection = true
         defer { isPreparingConnection = false }
         do {
@@ -326,6 +360,23 @@ final class IOSPhoneControlController {
             statusMessage = error is CancellationError ? "本机连接准备已取消" : error.localizedDescription
             throw error
         }
+    }
+
+    func setConnectionMode(_ mode: IOSPhoneControlConnectionMode) throws {
+        guard !isOccupied, !isPreparingConnection, !isUpdatingPairing, !isLoadingApplications else {
+            throw IOSPhoneControlError.occupied
+        }
+        guard mode != connectionMode else { return }
+        connectionMode = mode
+        defaults.set(mode.rawValue, forKey: Self.connectionModePreferenceKey)
+        preparationRevision += 1
+        readinessReport = nil
+        hasApplicationCatalog = false
+        installedApplications = []
+        lastFailure = nil
+        phase = .idle
+        statusMessage = mode == .embedded ? "已选择内置本机连接" : "已选择现有 VPN；请确认已启用本地回环并连接"
+        Task { await refreshPreparation() }
     }
 
     func importPairing(_ data: Data) async throws {
@@ -375,6 +426,7 @@ final class IOSPhoneControlController {
     func preparePairing() async throws {
         guard !isOccupied, !isPreparingConnection, !isUpdatingPairing, !isLoadingApplications else { throw IOSPhoneControlError.occupied }
         let id = UUID()
+        let connectionMode = self.connectionMode
         isUpdatingPairing = true
         preparationRevision += 1
         pairingOperationID = id
@@ -387,9 +439,9 @@ final class IOSPhoneControlController {
             if existing != nil { return false }
             hasPreparedPairing = false
             do {
-                try await localTunnel.start(owner: id)
+                if connectionMode == .embedded { try await localTunnel.start(owner: id) }
                 try Task.checkCancellation()
-                let data = try await pairingSession.prepare(id: id) { [weak self] status in
+                let data = try await pairingSession.prepare(id: id, connectionMode: connectionMode) { [weak self] status in
                     await self?.recordPairingProgress(status, id: id)
                 }
                 try Task.checkCancellation()
@@ -397,13 +449,14 @@ final class IOSPhoneControlController {
                 try await credentials.savePairing(data)
             } catch {
                 // prepare() returns only after its native handle has stopped and joined.
-                let disconnected = await localTunnel.stop(owner: id)
+                let disconnected = connectionMode == .embedded ? await localTunnel.stop(owner: id) : true
                 if !disconnected, error is CancellationError {
                     throw IOSPhoneControlLocalTunnelError.disconnectionTimedOut
                 }
                 throw error
             }
-            guard await localTunnel.stop(owner: id) else {
+            let disconnected = connectionMode == .embedded ? await localTunnel.stop(owner: id) : true
+            guard disconnected else {
                 throw IOSPhoneControlLocalTunnelError.disconnectionTimedOut
             }
             try Task.checkCancellation()
@@ -706,6 +759,7 @@ final class IOSPhoneControlController {
         _ = try await applicationsTask?.value
         try Task.checkCancellation()
         let context = try activeOwner(runID: runID)
+        let connectionMode = self.connectionMode
         guard !context.scope.isEmpty, context.scope.allSatisfy(Self.validBundleID) else {
             throw IOSPhoneControlError.invalidScope
         }
@@ -725,14 +779,17 @@ final class IOSPhoneControlController {
                 let validatedPairing = try IOSPhoneControlCredentials.validatedPairing(pairing)
                 let endpoint = IOSPhoneControlLoopbackRoute.endpoint
                 if readinessRunID == runID { readinessReport?.stage = .connection }
-                owner?.requestedTunnel = true
-                try await localTunnel.start(owner: context.sessionID)
+                if connectionMode == .embedded {
+                    owner?.requestedTunnel = true
+                    try await localTunnel.start(owner: context.sessionID)
+                }
                 try Task.checkCancellation()
                 _ = try activeOwner(runID: runID, sessionID: context.sessionID)
                 IOSBackgroundLifecycleLog.record("phoneControlResolvedEndpoint",
-                    detail: "source=amber_embedded port=49152")
+                    detail: "source=\(connectionMode.rawValue) port=49152")
                 let configuration = PhoneControlLaunchConfiguration(pairing: validatedPairing,
                                                                     endpoint: endpoint,
+                                                                    connectionMode: connectionMode,
                                                                     allowedBundleIDs: context.scope)
                 if readinessRunID == runID { readinessReport?.stage = .runner }
                 let status = try await session.start(runID: context.sessionID, configuration: configuration)
@@ -791,6 +848,7 @@ final class IOSPhoneControlController {
         }
         guard !isLoadingApplications else { throw IOSPhoneControlError.occupied }
         let revision = preparationRevision
+        let connectionMode = self.connectionMode
         let existingStartup = startTask
         isLoadingApplications = true
         hasApplicationCatalog = false
@@ -809,13 +867,13 @@ final class IOSPhoneControlController {
             let queryID = UUID()
             let applications: [PhoneControlInstalledApp]
             do {
-                try await localTunnel.start(owner: queryID)
+                if connectionMode == .embedded { try await localTunnel.start(owner: queryID) }
                 try Task.checkCancellation()
                 if let context { _ = try activeOwner(runID: context.runID, sessionID: context.sessionID) }
-                applications = try await applicationDiscoverer.installedApplications(pairing: pairing)
+                applications = try await applicationDiscoverer.installedApplications(pairing: pairing, connectionMode: connectionMode)
             } catch {
                 // The discoverer has joined its native operation before its result is available.
-                let disconnected = await localTunnel.stop(owner: queryID)
+                let disconnected = connectionMode == .embedded ? await localTunnel.stop(owner: queryID) : true
                 if let context, owner?.sessionID == context.sessionID {
                     owner?.cleanupFailure = disconnected ? nil
                         : IOSPhoneControlLocalTunnelError.disconnectionTimedOut.localizedDescription
@@ -830,7 +888,8 @@ final class IOSPhoneControlController {
                 }
                 throw error
             }
-            guard await localTunnel.stop(owner: queryID) else {
+            let disconnected = connectionMode == .embedded ? await localTunnel.stop(owner: queryID) : true
+            guard disconnected else {
                 let error = IOSPhoneControlLocalTunnelError.disconnectionTimedOut
                 if let context, owner?.sessionID == context.sessionID { owner?.cleanupFailure = error.localizedDescription }
                 lastFailure = lastFailure ?? error.localizedDescription
@@ -924,7 +983,7 @@ final class IOSPhoneControlController {
         if !hasPreparedPairing {
             availability = "unprepared"
             preparation = "尚未保存配对文件，请先在手机控制设置中完成准备。"
-        } else if !localTunnel.isPrepared {
+        } else if !isConnectionPrepared {
             availability = "connection_unprepared"
             preparation = "请先在手机控制设置中准备本机连接；只需首次允许 iOS 添加 VPN 配置。"
         } else if owner.scope.isEmpty || !owner.scope.allSatisfy(Self.validBundleID) {

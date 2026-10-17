@@ -2021,13 +2021,23 @@ struct ChatToolTimeline: View {
 
 // MARK: - Phone automation step group header
 
+/// Keep environment identity stable while the timeline refreshes its callback.
+@MainActor
+final class ChatPhoneToolGroupToggleHandler {
+    var action: (@MainActor (String) -> Void)?
+
+    func callAsFunction(_ groupID: String) {
+        action?(groupID)
+    }
+}
+
 private struct ChatPhoneToolGroupToggleKey: EnvironmentKey {
-    static var defaultValue: ((String) -> Void)? { nil }
+    static let defaultValue: ChatPhoneToolGroupToggleHandler? = nil
 }
 
 extension EnvironmentValues {
     /// Toggles one phone-step group's expanded state (presentation state owned by the timeline).
-    var chatPhoneToolGroupToggle: ((String) -> Void)? {
+    var chatPhoneToolGroupToggle: ChatPhoneToolGroupToggleHandler? {
         get { self[ChatPhoneToolGroupToggleKey.self] }
         set { self[ChatPhoneToolGroupToggleKey.self] = newValue }
     }
@@ -2052,7 +2062,7 @@ struct ChatPhoneToolGroupHeader: View {
         let state = Self.displayState(summary: summary, latestStep: latestStep)
         let tint = Self.tint(summary: summary, state: state)
         Button {
-            toggle?(summary.id)
+            toggle?.callAsFunction(summary.id)
         } label: {
             if dynamicTypeSize.isAccessibilitySize {
                 // Large text: stack the lines (a single HStack would squeeze the

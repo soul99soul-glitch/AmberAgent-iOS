@@ -150,6 +150,7 @@ enum IOSPhoneControlDirectConnectionInspection {
 struct PhoneControlLaunchConfiguration: Sendable {
     let pairing: Data
     var endpoint = IOSPhoneControlLoopbackRoute.endpoint
+    var connectionMode: IOSPhoneControlConnectionMode = .embedded
     var runnerBundleID = "app.amber.selfcontrol.runner.xctrunner"
     var testModuleName = "iPhoneUse"
     var allowedBundleIDs: Set<String>
@@ -337,7 +338,8 @@ private final class NativePhoneControlHandle: @unchecked Sendable {
                     configuration.testModuleName.withCString { module in
                         token.withCString { token in
                             amber_iphone_control_start(bytes.bindMemory(to: UInt8.self).baseAddress,
-                                                       bytes.count, endpoint, bundle, module, token)
+                                                       bytes.count, endpoint, bundle, module, token,
+                                                       configuration.connectionMode.nativeRouteMode)
                         }
                     }
                 }

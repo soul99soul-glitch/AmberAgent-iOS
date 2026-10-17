@@ -412,7 +412,7 @@ extension RunnerTests {
     let hitPID = IPURBridge.pid(forAXElement: hit)
     let hitTree = IPURBridge.wdaTree(
       forAXElement: hit, maxDepth: 1, maxNodes: 1, extensionCallLimit: 0, rememberKey: nil,
-      includeElements: false)
+      includeElements: true)
     guard let raw = hitTree[IPURTreeRootKey] as? [String: Any] else { return nil }
     return Occlusion.blocker(
       target: subtree(), ancestors: ancestors, hit: UINode(raw: raw, parent: nil, pid: hitPID),
@@ -445,7 +445,7 @@ extension RunnerTests {
       node, ancestors: stored, subtree: { (try? self.freshNode(id, depth: 8)) ?? node })
     else { return }
     throw RunnerError.intercepted(
-      "element \(id) is covered by \(blocker) at its centre; nothing was sent. "
+      "element \(id) is covered by \(blocker) at its centre; nothing was tapped. "
         + "The tree can hold views hidden under the visible page: observe again with a screenshot.")
   }
 
@@ -478,14 +478,21 @@ extension RunnerTests {
     // An element below the visible page (a web sheet's link) is scrolled into view first, like
     // XCUIElement's own tap does; still off the screen afterwards is a refusal, never a tap.
     let screen = windowSizePoints()
-    if screen.width > 0, !TapBounds.onScreen(node.center, screen) {
+    let needsScrolling = screen.width > 0 && !TapBounds.onScreen(node.center, screen)
+    if needsScrolling {
       try? scrollIntoView(id)
       node = try freshNode(id)
       guard TapBounds.onScreen(node.center, screen) else {
         throw RunnerError.invalidArgument("element \(id) is off the screen and could not be scrolled into view; nothing was tapped")
       }
     }
-    try ensureReachable(node, id: id)
+    do {
+      try ensureReachable(node, id: id)
+    } catch var error as RunnerError where needsScrolling {
+      // The preparatory scroll may already have changed the screen; this is not a dropped command.
+      error.dropped = false
+      throw error
+    }
     try tapPoint(node.center)
     return .value(NSNull())
   }

@@ -10,6 +10,11 @@ extern "C" {
 
 typedef struct AmberIPhoneControlHandle AmberIPhoneControlHandle;
 
+enum {
+    AMBER_IPHONE_CONTROL_ROUTE_EMBEDDED = 0,
+    AMBER_IPHONE_CONTROL_ROUTE_EXISTING_VPN = 1,
+};
+
 /// Copies every input before returning. No network operation runs on this thread.
 /// Pairing must be an existing RemotePairing plist; no pair-setup is attempted.
 /// endpoint is an IP:port, e.g. "10.7.0.1:49152" (NULL selects that default).
@@ -17,17 +22,22 @@ typedef struct AmberIPhoneControlHandle AmberIPhoneControlHandle;
 /// token is 32..128 ASCII hex chars. Each launch must use a new random token.
 /// Always returns an owned handle, including invalid-input failures observable
 /// with status_json. Call stop before dropping the task owner and free once.
+/// route_mode selects Amber's embedded tunnel (0) or an existing VPN (1).
+/// Existing VPN mode accepts only 10.7.0.1:49152 and binds every real TCP socket,
+/// including dynamic TLS ports, to its kernel-selected, uniquely matching UP utun.
+/// No LAN/cellular/loopback fallback. Unknown modes fail before I/O.
 AmberIPhoneControlHandle *amber_iphone_control_start(
     const uint8_t *pairing, size_t pairing_length,
     const char *endpoint, const char *runner_bundle_id,
-    const char *test_module_name, const char *runner_token);
+    const char *test_module_name, const char *runner_token, uint32_t route_mode);
 
 /// One read-only installed-app query through the verified RemotePairing/RSD
 /// connection. Copies inputs, never starts XCTest or activates an application.
 /// NULL endpoint selects 10.7.0.1:49152. Existing pairing only; no pair-setup.
 /// Has a 30-second deadline and uses the same status/stop/free lifecycle.
+/// route_mode has the same semantics as control start, including TLS routing.
 AmberIPhoneControlHandle *amber_iphone_control_apps_start(
-    const uint8_t *pairing, size_t pairing_length, const char *endpoint);
+    const uint8_t *pairing, size_t pairing_length, const char *endpoint, uint32_t route_mode);
 
 /// Copies this handle's normalized catalog; never starts I/O. Available on
 /// standalone app-query and control handles (the latter caches it at startup).
@@ -40,11 +50,13 @@ char *amber_iphone_control_apps_copy_json(const AmberIPhoneControlHandle *handle
 
 /// Explicit first setup: ask iOS to create a NEW development pairing through
 /// its normal system consent flow. Does not launch or control any application.
-/// NULL endpoint selects 127.0.0.1:49152. Same handle/status/stop/free lifecycle.
+/// NULL endpoint selects 127.0.0.1:49152 in embedded mode, 10.7.0.1:49152 in
+/// existing VPN mode. route_mode has the same semantics as control start.
+/// Same handle/status/stop/free lifecycle.
 /// Pairing-only phases include pairing_handshake, verifying_pairing,
 /// waiting_for_consent and terminal paired.
 /// Times out after 90 seconds; a rejection is never automatically retried.
-AmberIPhoneControlHandle *amber_iphone_control_pairing_start(const char *endpoint);
+AmberIPhoneControlHandle *amber_iphone_control_pairing_start(const char *endpoint, uint32_t route_mode);
 
 /// One credential-free greeting through the same transport as control start.
 /// Explicit numeric endpoint required; NULL is rejected. Stops after the greeting
@@ -58,7 +70,7 @@ AmberIPhoneControlHandle *amber_iphone_control_inspect_handshake(const char *end
 /// that source must match one UP utun with a valid index. The actual TCP socket
 /// is bound to that interface; there is no Wi-Fi, cellular or loopback fallback.
 /// Never starts a VPN or verifies/creates pairing, tunnels, or XCTest. Does not
-/// change the production control transport. Same 8-second deadline and
+/// change the selected production route mode. Same 8-second deadline and
 /// status/stop/free lifecycle; success is phase=stopped, code=handshake_ok.
 AmberIPhoneControlHandle *amber_iphone_control_inspect_routed_handshake(const char *endpoint);
 

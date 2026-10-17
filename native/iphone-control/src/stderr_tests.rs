@@ -81,7 +81,7 @@ fn query_failure() {
     // real worker before any socket can be opened. No phone is involved.
     let material = [1u8];
     let endpoint = CString::new("127.0.0.1:9").unwrap();
-    let handle = unsafe { amber_iphone_control_apps_start(material.as_ptr(), material.len(), endpoint.as_ptr()) };
+    let handle = unsafe { amber_iphone_control_apps_start(material.as_ptr(), material.len(), endpoint.as_ptr(), 0) };
     let deadline = Instant::now() + Duration::from_secs(2);
     let status = loop {
         let status = take_json(unsafe { amber_iphone_control_status_json(handle) });

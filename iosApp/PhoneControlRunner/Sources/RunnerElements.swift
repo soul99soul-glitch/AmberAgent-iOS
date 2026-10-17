@@ -500,7 +500,9 @@ enum Occlusion {
   }
 
   static func sameElement(_ a: UINode, _ b: UINode) -> Bool {
-    a.type == b.type && a.label == b.label && a.identifier == b.identifier
+    // A registered ancestor's snapshot keeps its old frame after scrolling.
+    if let aElement = a.axElement, let bElement = b.axElement, aElement.isEqual(bElement) { return true }
+    return a.type == b.type && a.label == b.label && a.identifier == b.identifier
       && abs(a.rect.minX - b.rect.minX) <= 1 && abs(a.rect.minY - b.rect.minY) <= 1
       && abs(a.rect.width - b.rect.width) <= 1 && abs(a.rect.height - b.rect.height) <= 1
   }

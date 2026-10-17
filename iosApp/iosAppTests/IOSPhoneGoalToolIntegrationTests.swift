@@ -544,6 +544,89 @@ final class IOSPhoneGoalToolIntegrationTests: XCTestCase {
         XCTAssertEqual(fixture.paths.filter { $0.hasSuffix("/click") }.count, 3)
     }
 
+    func testNativeImageDecisionBindsRunnerScreenshotAndPreservesLocalSingleCandidatePath() async throws {
+        let png = try jevPhonePNG(width: 400, height: 800)
+        let beforeTree = GoalHTTPFixture.observation[1].body
+        let afterTree = beforeTree.replacingOccurrences(of: "\"label\":\"Close\"", with: "\"label\":\"Done\"")
+        for hasBranch in [false, true] {
+            let capture: [GoalHTTPFixture.Reply] = hasBranch ? [
+                GoalHTTPFixture.active,
+                .init(path: "/window/size", body: #"{"value":{"width":400,"height":800}}"#),
+                .init(path: "/screenshot", body: try json(["value": png.base64EncodedString()])),
+                .init(path: "/window/size", body: #"{"value":{"width":400,"height":800}}"#),
+                GoalHTTPFixture.active,
+            ] : []
+            let fixture = GoalHTTPFixture(GoalHTTPFixture.observation + capture
+                + GoalHTTPFixture.tapWithoutAnchor(tree: beforeTree)
+                + GoalHTTPFixture.observation(tree: afterTree))
+            defer { fixture.unregister() }
+            let runner = try fixture.makeRunner()
+            var configured = IOSJevSettings()
+            configured.setPinnedModelVersion("jev-phone-fixture-v1")
+            configured.setMode(.active, for: .phoneActions)
+            configured.setScopes([.selectedTaskText, .phoneContent, .phoneScreenshots], for: .phoneActions)
+            let settings = configured
+            let transport = JevStubTransport { _ in
+                let body: [String: Any] = ["model": "jev-phone-fixture-v1", "answers": [
+                    "single.next_step": ["type": "choice", "choice": "a0", "confidence": 0.95],
+                ]]
+                return (try! JSONSerialization.data(withJSONObject: body), jevResponse(200))
+            }
+            let coordinator = IOSJevDecisionCoordinator(deps: .init(
+                client: IOSJevClient(transport: transport), settingsProvider: { settings },
+                apiKeyProvider: { "fixture-key" }, now: { Date() }, metricsStore: { _, _ in }))
+            let jev = IOSJevPhoneControlService(deps: .init(coordinator: coordinator, settingsProvider: { settings }))
+            var selectedRef: String?
+            var decisionObservationID: String?
+            var selectedCandidateDescription: String?
+            let loop = IOSPhoneGoalLoop(deps: .init(
+                observe: { try await runner.observe(includeScreenSize: true) },
+                act: { action, anchor, region, unchanged in
+                    if case .tap(let ref) = action { selectedRef = ref }
+                    return await runner.act(action, pageAnchorRef: anchor, pageAnchorRegion: region,
+                                            requireUnchangedObservation: unchanged)
+                },
+                choose: { goal, observation, candidates, recent, expectation in
+                    decisionObservationID = observation.observationID
+                    selectedCandidateDescription = candidates.first { $0.id == "a0" }?.description
+                    return await jev.chooseAction(goal: goal, observation: observation, candidates: candidates,
+                        recentSteps: recent, expectation: expectation, runID: "native-image-integration",
+                        screenshotProvider: { try await runner.screenshotObservation() })
+                },
+                advise: { _, _, _, _, _ in XCTFail("Local completion must skip remote verification"); return .handback },
+                mode: { .active }, isCurrent: { true }, reportActivity: { _ in }))
+            var actions: [[String: Any]] = [["action": "tap", "target": ["label": "Close"]]]
+            if hasBranch { actions.append(["action": "tap", "target": ["label": "Home"]]) }
+            guard case .runGoal(let request) = try IOSPhoneControlToolExecutor.request(name: "phone_run_goal", arguments: json([
+                "goal": "关闭弹窗", "bundle_id": "app.test", "actions": actions,
+                "completion": ["kind": "visible", "target": ["label": "Done"]],
+            ])) else { return XCTFail("Expected goal request") }
+            let result = await loop.run(request)
+            XCTAssertEqual(result.status, .completed)
+            XCTAssertNotNil(selectedRef, "The selected action must retain a real observation ref")
+            XCTAssertEqual(fixture.paths.filter { $0.hasSuffix("/click") }.count, 1)
+            XCTAssertEqual(fixture.paths.filter { $0 == "/screenshot" }.count, hasBranch ? 1 : 0)
+            XCTAssertEqual(transport.calls, hasBranch ? 1 : 0)
+            if hasBranch {
+                let body = try XCTUnwrap(transport.lastBody)
+                let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let assets = try XCTUnwrap(request["assets"] as? [String: Any])
+                XCTAssertEqual(assets.count, 1)
+                let state = try XCTUnwrap(request["state"] as? String)
+                XCTAssertTrue(state.contains(try XCTUnwrap(decisionObservationID)))
+                XCTAssertFalse(state.contains(try XCTUnwrap(selectedRef)), "Opaque refs remain local to candidate dispatch")
+                let stateData = try XCTUnwrap(state.split(separator: "\n", maxSplits: 1).last?.data(using: .utf8))
+                let stateJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: stateData) as? [String: Any])
+                let candidates = try XCTUnwrap(stateJSON["candidates"] as? [String])
+                XCTAssertTrue(candidates.contains("a0"))
+                let questions = try XCTUnwrap(request["questions"] as? [String: [String: Any]])
+                let options = try XCTUnwrap(questions["single.next_step"]?["criteria"] as? [String: String])
+                XCTAssertEqual(options["a0"], try XCTUnwrap(selectedCandidateDescription))
+                XCTAssertTrue(state.contains("Current screenshot"))
+            }
+        }
+    }
+
     func testLiveGoalWithoutCandidatesUsesJevSelectionAndRealRunnerUntilCompletion() async throws {
         let fixture = GoalHTTPFixture(
             GoalHTTPFixture.observation(tree: #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":400,"height":800},"children":[{"type":"XCUIElementTypeStaticText","rawIdentifier":"question","label":"Question 1","value":"Question 1","isEnabled":"0","rect":{"x":20,"y":20,"width":200,"height":24},"children":[]},{"type":"XCUIElementTypeOther","rawIdentifier":"word","label":"go","isEnabled":"1","rect":{"x":20,"y":560,"width":80,"height":44},"children":[]},{"type":"XCUIElementTypeButton","rawIdentifier":"next","label":"Next","isEnabled":"1","rect":{"x":20,"y":700,"width":80,"height":44},"children":[]}]}}"#)

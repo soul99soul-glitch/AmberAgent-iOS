@@ -575,7 +575,7 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         for style in [IOSJevAPIStyle.systemone, .vercelGateway] {
             var settings = makeSettings(mode: .active)
             settings.apiStyle = style
-            settings.vercelModel = "typesafe/jev"
+            settings.providerModel = "typesafe/jev"
             settings.policy.maxRequestBytes = 20 * 1_024
             let maxBytes = settings.policy.maxRequestBytes
             var screenedIds = Set<String>()

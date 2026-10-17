@@ -144,6 +144,16 @@ struct IOSPhoneControlSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "准备")
             AmberFormGroup {
+                Text(IOSAppLocalization.string("连接方式", defaultValue: "连接方式"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                connectionModeRow(.embedded, title: IOSAppLocalization.string("内置本地连接", defaultValue: "内置本地连接"))
+                rowDivider
+                connectionModeRow(.existingVPN, title: IOSAppLocalization.string("使用现有 VPN", defaultValue: "使用现有 VPN"))
+                rowDivider
                 HStack(spacing: 12) {
                     Image(systemName: "network.badge.shield.half.filled")
                         .font(.system(size: 20))
@@ -156,7 +166,7 @@ struct IOSPhoneControlSettingsView: View {
                 .padding(.vertical, 12)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("phoneControlConnectionStatus")
-                if !controller.localTunnel.isPrepared || connectionFailed {
+                if controller.connectionMode == .embedded && (!controller.localTunnel.isPrepared || connectionFailed) {
                     rowDivider
                     actionRow(
                         controller.localTunnel.isPrepared ? "更新连接配置" : "准备本地连接",
@@ -176,7 +186,7 @@ struct IOSPhoneControlSettingsView: View {
                     .accessibilityIdentifier("phoneControlPrepareConnection")
                 }
             }
-            footer("仅建立手机内部连接，不转发上网流量。首次添加时需在系统弹窗中允许；之后由任务自动连接和断开。连接时可能中断其他 VPN。")
+            footer(connectionPreparationFooter)
                 .padding(.bottom, 12)
             AmberFormGroup {
                 HStack(spacing: 12) {
@@ -209,7 +219,7 @@ struct IOSPhoneControlSettingsView: View {
                             catch { errorMessage = error.localizedDescription }
                         }
                     }
-                    .disabled(!canEditPreparation || !controller.localTunnel.isPrepared || controller.hasPreparedPairing)
+                    .disabled(!canEditPreparation || !controller.isConnectionPrepared || controller.hasPreparedPairing)
                     .accessibilityIdentifier("phoneControlPreparePairing")
                 }
             }
@@ -275,6 +285,12 @@ struct IOSPhoneControlSettingsView: View {
             }
             .padding(.top, 12)
             if advancedPreparationExpanded {
+                if controller.connectionMode == .existingVPN {
+                    footer(IOSAppLocalization.string(
+                        "现有 VPN 的本地回环需将 10.7.0.1 指向本机。",
+                        defaultValue: "现有 VPN 的本地回环需将 10.7.0.1 指向本机。"
+                    ))
+                }
                 if let result = serviceInspection.summary {
                     if result.services.isEmpty {
                         footer("未取得可解析的开发服务记录，服务身份仍未知；这不代表服务不存在。")
@@ -286,6 +302,46 @@ struct IOSPhoneControlSettingsView: View {
                 }
             }
         }
+    }
+
+    private func connectionModeRow(_ mode: IOSPhoneControlConnectionMode, title: String) -> some View {
+        let selected = controller.connectionMode == mode
+        return Button {
+            errorMessage = nil
+            do { try controller.setConnectionMode(mode) }
+            catch { errorMessage = error.localizedDescription }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(selected ? AmberTheme.accent : AmberTheme.muted)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
+                Text(verbatim: title)
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 44)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canEditPreparation)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("phoneControlConnectionMode.\(mode.rawValue)")
+    }
+
+    private var connectionPreparationFooter: String {
+        if controller.connectionMode == .existingVPN {
+            return IOSAppLocalization.string(
+                "请在现有代理中开启本地回环，并保持 VPN 运行。连接与断开由你管理，Amber 只使用其中的本机开发服务。",
+                defaultValue: "请在现有代理中开启本地回环，并保持 VPN 运行。连接与断开由你管理，Amber 只使用其中的本机开发服务。"
+            )
+        }
+        return "仅建立手机内部连接，不转发上网流量。首次添加时需在系统弹窗中允许；之后由任务自动连接和断开。连接时可能中断其他 VPN。"
     }
 
     private var appsSection: some View {
@@ -347,16 +403,22 @@ struct IOSPhoneControlSettingsView: View {
         actionRow("从本机选择 App", systemImage: "apps.iphone") {
             presentsAppPicker = true
         }
-        .disabled(!canEditPreparation || !controller.localTunnel.isPrepared || !controller.hasPreparedPairing)
+        .disabled(!canEditPreparation || !controller.isConnectionPrepared || !controller.hasPreparedPairing)
         .accessibilityIdentifier("phoneControlChooseApp")
     }
 
     private var appSelectionDetail: String {
-        if !controller.localTunnel.isPrepared {
+        if !controller.isConnectionPrepared {
             return "先在下方准备本地连接，再读取手机中的 App；无需连接电脑查询 ID。"
         }
         if !controller.hasPreparedPairing {
             return "先完成下方的配对准备，再读取手机中的 App；无需连接电脑查询 ID。"
+        }
+        if controller.connectionMode == .existingVPN {
+            return IOSAppLocalization.string(
+                "读取 App 前，请开启支持本地回环的 VPN。添加结果会保存在这里。",
+                defaultValue: "读取 App 前，请开启支持本地回环的 VPN。添加结果会保存在这里。"
+            )
         }
         return "也可以直接让 Amber 查找并添加需要使用的 App。添加结果会保存在这里；无需连接电脑查询 ID。"
     }
@@ -444,7 +506,12 @@ struct IOSPhoneControlSettingsView: View {
                     .accessibilityIdentifier("phoneControlStop")
                 }
             }
-            footer("检查会启动一次临时本地连接和已安装的 runner，读取当前界面后自动关闭连接；不会启动其他 App。")
+            footer(controller.connectionMode == .existingVPN
+                ? IOSAppLocalization.string(
+                    "检查会通过现有 VPN 启动已安装的 runner 并读取当前界面，结束后保持 VPN 运行。",
+                    defaultValue: "检查会通过现有 VPN 启动已安装的 runner 并读取当前界面，结束后保持 VPN 运行。"
+                )
+                : "检查会启动一次临时本地连接和已安装的 runner，读取当前界面后自动关闭连接；不会启动其他 App。")
         }
     }
 
@@ -516,7 +583,7 @@ struct IOSPhoneControlSettingsView: View {
                 Text("正在检查：\(report.stage.title)")
             }
             if let completed = report.completedAt {
-                Text("\(report.cleanupComplete ? "临时连接已关闭" : "临时连接尚未确认关闭") · \(completed.formatted(date: .abbreviated, time: .standard))")
+                Text("\(readinessCleanupDescription(report)) · \(completed.formatted(date: .abbreviated, time: .standard))")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
             }
@@ -531,6 +598,16 @@ struct IOSPhoneControlSettingsView: View {
         .accessibilityIdentifier("phoneControlReadinessResult")
     }
 
+    private func readinessCleanupDescription(_ report: IOSPhoneControlReadinessReport) -> String {
+        if controller.connectionMode == .existingVPN {
+            let key = report.cleanupComplete
+                ? "本次检查已结束，现有 VPN 由你管理"
+                : "本次检查尚未确认结束，现有 VPN 由你管理"
+            return IOSAppLocalization.string(key, defaultValue: key)
+        }
+        return report.cleanupComplete ? "临时连接已关闭" : "临时连接尚未确认关闭"
+    }
+
     private var rowDivider: some View {
         Divider().overlay(AmberTheme.borderSoft).padding(.leading, 14)
     }
@@ -542,9 +619,15 @@ struct IOSPhoneControlSettingsView: View {
         }
         guard controller.phase == .idle else { return controller.statusMessage }
         if !controller.enabled { return "手机控制已关闭" }
-        if !controller.localTunnel.isPrepared { return "手机控制已开启，请先准备下方的本地连接" }
+        if !controller.isConnectionPrepared { return "手机控制已开启，请先准备下方的本地连接" }
         if !controller.hasPreparedPairing { return "手机控制已开启，请先完成下方的配对准备" }
         if let report = controller.readinessReport, report.uiReadAt != nil, report.cleanupComplete {
+            if controller.connectionMode == .existingVPN {
+                return IOSAppLocalization.string(
+                    "最近检查已读取界面，当前空闲；请保持现有 VPN 运行",
+                    defaultValue: "最近检查已读取界面，当前空闲；请保持现有 VPN 运行"
+                )
+            }
             return "最近检查已读取界面，临时连接已关闭；当前空闲"
         }
         return "配置已保存，当前空闲；请检查自动化确认连接和界面读取"
@@ -556,6 +639,15 @@ struct IOSPhoneControlSettingsView: View {
     }
 
     private var localConnectionStatus: (title: String, detail: String) {
+        if controller.connectionMode == .existingVPN {
+            let detail = controller.readinessReport?.connectionVerifiedAt == nil
+                ? "尚未验证连接；开启支持本地回环的 VPN 后检查自动化"
+                : "最近检查已验证连接；请保持现有 VPN 运行"
+            return (
+                IOSAppLocalization.string("使用现有 VPN", defaultValue: "使用现有 VPN"),
+                IOSAppLocalization.string(detail, defaultValue: detail)
+            )
+        }
         if controller.isPreparingConnection {
             return ("正在准备本地连接", "如系统弹出添加 VPN 配置，请点允许")
         }

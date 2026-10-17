@@ -8,6 +8,16 @@ final class IOSPhoneControlSettingsVisualTests: XCTestCase {
     func testSettingsAtNormalAndAccessibilityWidths() async throws {
         let suite = "PhoneSettingsVisual.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let languageKey = IOSAppLanguagePreference.defaultsKey
+        let previousLanguage = UserDefaults.standard.object(forKey: languageKey)
+        UserDefaults.standard.set("zh-Hans", forKey: languageKey)
+        defer {
+            if let previousLanguage {
+                UserDefaults.standard.set(previousLanguage, forKey: languageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: languageKey)
+            }
+        }
         defaults.set(true, forKey: IOSPhoneControlController.enabledPreferenceKey)
         defaults.set(["com.example.long.application.identifier", "com.apple.mobilenotes"],
                      forKey: IOSPhoneControlController.selectedBundleIDsPreferenceKey)
@@ -110,6 +120,85 @@ final class IOSPhoneControlSettingsVisualTests: XCTestCase {
         }
     }
 
+    func testConnectionModesAtNarrowAndAccessibilityWidths() async throws {
+        let languageKey = IOSAppLanguagePreference.defaultsKey
+        let previousLanguage = UserDefaults.standard.object(forKey: languageKey)
+        UserDefaults.standard.set("zh-Hans", forKey: languageKey)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKey()
+            if let previousLanguage {
+                UserDefaults.standard.set(previousLanguage, forKey: languageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: languageKey)
+            }
+        }
+        for (name, mode, width, type, expanded, verified) in [
+            ("phone-settings-embedded-normal", IOSPhoneControlConnectionMode.embedded, 393.0, DynamicTypeSize.large, false, false),
+            ("phone-settings-embedded-narrow", .embedded, 320.0, .large, false, false),
+            ("phone-settings-embedded-accessibility", .embedded, 320.0, .accessibility3, false, false),
+            ("phone-settings-existing-vpn-normal", .existingVPN, 393.0, .large, false, false),
+            ("phone-settings-existing-vpn-narrow", .existingVPN, 320.0, .large, false, false),
+            ("phone-settings-existing-vpn-accessibility", .existingVPN, 320.0, .accessibility3, false, false),
+            ("phone-settings-existing-vpn-advanced-accessibility", .existingVPN, 320.0, .accessibility3, true, false),
+            ("phone-settings-existing-vpn-verified-normal", .existingVPN, 393.0, .large, false, true),
+            ("phone-settings-existing-vpn-verified-accessibility", .existingVPN, 320.0, .accessibility3, false, true),
+            ("phone-settings-existing-vpn-failure-normal", .existingVPN, 393.0, .large, false, false),
+            ("phone-settings-existing-vpn-failure-accessibility", .existingVPN, 320.0, .accessibility3, false, false)
+        ] {
+            let suite = "PhoneSettingsConnectionVisual.\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.set(true, forKey: IOSPhoneControlController.enabledPreferenceKey)
+            if mode == .existingVPN {
+                defaults.set(mode.rawValue, forKey: IOSPhoneControlController.connectionModePreferenceKey)
+            }
+            defaults.set(["com.apple.mobilenotes"], forKey: IOSPhoneControlController.selectedBundleIDsPreferenceKey)
+            let tunnel = PhoneControlTunnelStub()
+            tunnel.isPrepared = false
+            // A stale built-in failure must not appear as the external VPN's state.
+            tunnel.state = mode == .existingVPN ? .failed("旧内置连接错误") : .unprepared
+            let fixture = ReadinessHTTPFixture(bundleID: try XCTUnwrap(Bundle.main.bundleIdentifier))
+            defer { fixture.unregister() }
+            let failed = name.contains("failure")
+            let controller = IOSPhoneControlController(
+                defaults: defaults, credentials: VisualPairing(),
+                session: ReadinessSessionStub(fixture: fixture, failStartup: failed),
+                applications: VisualApplications(), localTunnel: tunnel, onHandoffChange: { _, _ in }
+            )
+            await controller.refreshPreparation()
+            XCTAssertEqual(controller.connectionMode, mode)
+            if verified || failed { try await controller.checkReadiness() }
+            if verified {
+                XCTAssertNotNil(controller.readinessReport?.connectionVerifiedAt)
+                XCTAssertNotNil(controller.readinessReport?.uiReadAt)
+            } else {
+                XCTAssertNil(controller.readinessReport?.connectionVerifiedAt)
+            }
+            if failed { XCTAssertNotNil(controller.readinessReport?.failureMessage) }
+            if mode == .existingVPN {
+                XCTAssertEqual(tunnel.refreshCount, 0)
+                XCTAssertTrue(tunnel.startOwners.isEmpty)
+                XCTAssertTrue(tunnel.stopOwners.isEmpty)
+            }
+            window.overrideUserInterfaceStyle = type.isAccessibilitySize ? .light : .dark
+            window.frame = CGRect(x: 0, y: 0, width: width, height: 900)
+            window.rootViewController = UIHostingController(rootView:
+                IOSPhoneControlSettingsView(controller: controller, advancedPreparationExpanded: expanded)
+                    .environment(\.locale, Locale(identifier: "zh_Hans"))
+                    .environment(\.dynamicTypeSize, type))
+            window.makeKeyAndVisible()
+            try await Task.sleep(for: .milliseconds(400))
+            window.layoutIfNeeded()
+            try capture(window, name: name)
+            try await captureRemainingSettingsPages(window, name: name)
+        }
+    }
+
     private func captureRemainingSettingsPages(_ window: UIWindow, name: String) async throws {
         let scrollView = try XCTUnwrap(firstScrollView(in: window))
         let pageHeight = scrollView.bounds.height
@@ -167,7 +256,7 @@ private actor VisualPairing: IOSPhoneControlCredentialStoring {
 }
 
 private struct VisualApplications: PhoneControlApplicationDiscovering {
-    func installedApplications(pairing: Data) async throws -> [PhoneControlInstalledApp] {
+    func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) async throws -> [PhoneControlInstalledApp] {
         [
             .init(bundleID: "com.apple.mobilenotes", name: "备忘录", isSystem: true),
             .init(bundleID: "com.example.office", name: "小米办公 Pro", isSystem: false),

@@ -767,10 +767,24 @@ final class IOSConversationStoreTests: XCTestCase {
         XCTAssertEqual(imageURLs(destination), [dataURL])
         XCTAssertTrue(FileManager.default.fileExists(atPath: target.appendingPathComponent("\(id).blobs").path))
 
-        // A blob that exists but cannot be read fails the backup instead of dropping it,
-        // and the store shows a detectable placeholder that keeps its reference.
+        // Corrupt or unreadable blobs fail backup; the store keeps a detectable
+        // placeholder and the original reference.
         let blobURL = blobDirectory.appendingPathComponent(blobs[0])
         let blobBytes = try Data(contentsOf: blobURL)
+        var changedBytes = blobBytes
+        changedBytes[changedBytes.startIndex] ^= 1
+        for corruptBytes in [changedBytes, Data()] {
+            try corruptBytes.write(to: blobURL)
+            XCTAssertThrowsError(try IOSSyncBackup.conversationsZip(fromDirectory: source))
+            let corrupted = IOSConversationStore(baseDirectory: source)
+            await corrupted.bootstrap()
+            await corrupted.selectConversation(id: id)
+            let image = try XCTUnwrap(
+                corrupted.currentMessages.flatMap { $0.parts }.compactMap { $0 as? UIMessagePart.Image }.first
+            )
+            XCTAssertTrue(image.isMissingBlobPlaceholder())
+            XCTAssertNotNil(image.metadata?[ConversationBlobsKt.MISSING_BLOB_METADATA_KEY])
+        }
         try FileManager.default.removeItem(at: blobURL)
         try FileManager.default.createDirectory(at: blobURL, withIntermediateDirectories: false)
         XCTAssertThrowsError(try IOSSyncBackup.conversationsZip(fromDirectory: source))

@@ -239,8 +239,8 @@ internal class ConversationBlobCodec(private val baseDir: ConversationFile) {
 
     /**
      * Turns blob references back into the exact data URLs the conversation was saved with.
-     * With [failOnUnreadable], a blob that exists but cannot be read throws instead of becoming
-     * a placeholder (used by export, so a backup never silently drops a readable screenshot).
+     * With [failOnUnreadable], an unreadable or corrupt blob throws instead of becoming
+     * a placeholder, so export cannot silently include damaged screenshot data.
      */
     fun resolve(conversation: Conversation, failOnUnreadable: Boolean = false): Resolved {
         val memo = BlobRefMemo()
@@ -257,10 +257,15 @@ internal class ConversationBlobCodec(private val baseDir: ConversationFile) {
             val mime = if (valid) MIME_BY_EXTENSION[name.substringAfterLast('.')] else null
             val file = directory.child(name)
             val bytes = mime?.let { file.readBytesOrNull() }
-            if (mime != null && bytes != null && bytes.isNotEmpty()) {
-                val dataUrl = "data:$mime$BASE64_MARKER${Base64.encode(bytes)}"
-                memo.put(dataUrl, url)
-                return part.copy(url = dataUrl)
+            if (mime != null && bytes != null) {
+                if (sha256Hex(bytes) == name.substringBeforeLast('.')) {
+                    val dataUrl = "data:$mime$BASE64_MARKER${Base64.encode(bytes)}"
+                    memo.put(dataUrl, url)
+                    return part.copy(url = dataUrl)
+                }
+                if (failOnUnreadable) {
+                    throw ConversationStorageException("Blob content hash mismatch: ${file.path}")
+                }
             }
             if (failOnUnreadable && mime != null && bytes == null && file.exists()) {
                 throw ConversationStorageException("Blob exists but could not be read: ${file.path}")

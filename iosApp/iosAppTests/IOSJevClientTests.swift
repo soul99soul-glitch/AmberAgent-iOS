@@ -35,23 +35,26 @@ final class IOSJevClientTests: XCTestCase {
         transport: JevStubTransport,
         questions: [IOSJevQuestion],
         state: String = "state",
-        apiKey: String = "test-key"
+        apiKey: String = "test-key",
+        assets: [String: IOSJevImageAsset] = [:]
     ) -> IOSJevClient.RequestInput {
         IOSJevClient.RequestInput(
             endpoint: IOSJevSettings.productionEndpoint,
             apiKey: apiKey,
             model: "jev-latest",
             state: state,
-            questions: questions
+            questions: questions,
+            assets: assets
         )
     }
 
-    /// vercelGateway 输入：endpoint 为 Vercel AI Gateway evaluation-model，
+    /// vercelGateway 输入：endpoint 为 Vercel AI Gateway decision-model，
     /// 模型为 provider/model slug。
     private func vercelInput(
         questions: [IOSJevQuestion],
         model: String = "typesafe-ai/jev",
-        state: String = "state"
+        state: String = "state",
+        assets: [String: IOSJevImageAsset] = [:]
     ) -> IOSJevClient.RequestInput {
         IOSJevClient.RequestInput(
             endpoint: IOSJevSettings.vercelGatewayEndpoint,
@@ -59,7 +62,8 @@ final class IOSJevClientTests: XCTestCase {
             model: model,
             state: state,
             questions: questions,
-            style: .vercelGateway
+            style: .vercelGateway,
+            assets: assets
         )
     }
 
@@ -72,7 +76,7 @@ final class IOSJevClientTests: XCTestCase {
         )!
     }
 
-    /// Gateway evaluation-model 响应：顶层 answers map（题型 boolean/choice/
+    /// Gateway decision-model 响应：顶层 answers map（题型 boolean/choice/
     /// score），camelCase usage，confidence 经 providerMetadata.typesafe 下发。
     private func vercelResponse(
         answers: [String: [String: Any]],
@@ -364,10 +368,10 @@ final class IOSJevClientTests: XCTestCase {
         XCTAssertEqual(transport.calls, 0)
     }
 
-    // MARK: vercelGateway（Vercel AI Gateway evaluation-model）
+    // MARK: vercelGateway（Vercel AI Gateway decision-model）
 
-    /// 请求形态：body {state, questions}（与 systemone 同形负载，无 model/
-    /// messages），模型与协议版本走 header；noul 线上记作 boolean。
+    /// 请求形态：body {stateParts, questions}，模型与协议版本走 header；
+    /// 纯文字作为一个 text part，noul 线上记作 boolean。
     func testVercelRequestShapeAndAnswerMapping() async throws {
         let seenHeaders = NSMutableArray()
         let transport = JevStubTransport { request in
@@ -391,9 +395,11 @@ final class IOSJevClientTests: XCTestCase {
 
         let body = try XCTUnwrap(transport.lastBody)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertNil(object["model"], "evaluation body 不含 model（走 header）")
-        XCTAssertNil(object["messages"], "evaluation body 不是 chat completions 形态")
-        XCTAssertEqual(object["state"] as? String, "state")
+        XCTAssertNil(object["model"], "decision body 不含 model（走 header）")
+        XCTAssertNil(object["messages"], "decision body 不是 chat completions 形态")
+        XCTAssertNil(object["state"])
+        let stateParts = try XCTUnwrap(object["stateParts"] as? [[String: String]])
+        XCTAssertEqual(stateParts, [["type": "text", "text": "state"]])
         let questionsMap = try XCTUnwrap(object["questions"] as? [String: Any])
         XCTAssertEqual((questionsMap["t1"] as? [String: Any])?["type"] as? String, "score")
         // noul 在线上必须记作 boolean（Gateway 统一题型）。
@@ -401,7 +407,8 @@ final class IOSJevClientTests: XCTestCase {
 
         let headers = try XCTUnwrap(seenHeaders.firstObject as? [String: String])
         XCTAssertEqual(headers["ai-model-id"], "typesafe-ai/jev")
-        XCTAssertEqual(headers["ai-evaluation-model-specification-version"], "4")
+        XCTAssertEqual(headers["ai-decision-model-specification-version"], "4")
+        XCTAssertNil(headers["ai-evaluation-model-specification-version"])
         XCTAssertEqual(headers["ai-gateway-protocol-version"], "0.0.1")
         XCTAssertEqual(headers["ai-gateway-auth-method"], "api-key")
         XCTAssertEqual(headers["Authorization"], "Bearer vercel-key")
@@ -486,5 +493,293 @@ final class IOSJevClientTests: XCTestCase {
         )
         XCTAssertNil(result)
         XCTAssertEqual(transport.calls, 0)
+    }
+
+    // MARK: Native images and Box (Jev 1.14)
+
+    func testTextRequestOmitsAssetsAndImageHeader() async throws {
+        let transport = JevStubTransport { request in
+            XCTAssertNil(request.value(forHTTPHeaderField: "TypeSafe-Danger-Zone-Images"))
+            return (self.scoreResponse(answers: ["t1": 0.7]), self.httpResponse(status: 200))
+        }
+        let client = IOSJevClient(transport: transport)
+        _ = try await client.decide(makeInput(transport: transport, questions: makeQuestions(["t1"])), policy: policy)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(transport.lastBody)) as? [String: Any])
+        XCTAssertNil(object["assets"])
+        XCTAssertEqual(Set(object.keys), ["model", "state", "questions"])
+    }
+
+    func testNativeImageWireHeaderAndExactRequestBytes() async throws {
+        let image = Data([0xff, 0xd8, 0xff, 0x00, 0xfb])
+        let transport = JevStubTransport { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "TypeSafe-Danger-Zone-Images"), "true")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            return (self.scoreResponse(answers: ["t1": 0.7]), self.httpResponse(status: 200))
+        }
+        let client = IOSJevClient(transport: transport)
+        var input = makeInput(
+            transport: transport, questions: makeQuestions(["t1"]), state: "Current screen: image-unique-ref",
+            assets: ["image-unique-ref": IOSJevImageAsset(data: image, format: "jpg")]
+        )
+        input.model = "jev-1.14.0"
+        let reservedBytes = try client.requestBodyByteCount(input)
+        let decision = try await client.decide(input, policy: policy)
+        let body = try XCTUnwrap(transport.lastBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let assets = try XCTUnwrap(object["assets"] as? [String: [String: Any]])
+        let asset = try XCTUnwrap(assets["image-unique-ref"])
+        XCTAssertEqual(Set(asset.keys), ["type", "format", "data_base64"])
+        XCTAssertEqual(asset["type"] as? String, "image")
+        XCTAssertEqual(asset["format"] as? String, "jpg")
+        XCTAssertEqual(asset["data_base64"] as? String, image.base64EncodedString())
+        XCTAssertEqual(object["state"] as? String, input.state)
+        XCTAssertEqual(object["model"] as? String, "jev-1.14.0")
+        XCTAssertEqual(decision.requestBytes, body.count)
+        XCTAssertEqual(reservedBytes, body.count, "budget reservation includes the encoded assets")
+    }
+
+    func testAssetReferencesAcceptOnlyValueLocations() throws {
+        let assets = ["unique-image-ref": IOSJevImageAsset(data: Data([1]), format: "png")]
+        let questions: [IOSJevQuestion] = [
+            .noul(id: "instructions", instructions: "Compare unique-image-ref with the current screen"),
+            .choice(id: "criteria", options: ["match": "Looks like unique-image-ref"], instructions: "Choose"),
+            .score(id: "levels", levels: ["none", "unique-image-ref"], instructions: "Rate"),
+        ]
+        for question in questions {
+            XCTAssertNoThrow(try IOSJevClient.encodedRequestBody(
+                model: "jev-1.14.0", state: "screen", questions: [question], style: .systemone, assets: assets
+            ))
+        }
+        let keyOnly = IOSJevQuestion.choice(id: "unique-image-ref", options: ["unique-image-ref": "ordinary text"], instructions: "Choose")
+        XCTAssertThrowsError(try IOSJevClient.encodedRequestBody(
+            model: "jev-1.14.0", state: "screen", questions: [keyOnly], style: .systemone, assets: assets
+        )) { error in
+            XCTAssertEqual(error as? IOSJevRequestError, .invalidRequest("unreferenced image asset"))
+        }
+    }
+
+    func testInvalidAssetsAreRejectedBeforeNetwork() async {
+        let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) }
+        let client = IOSJevClient(transport: transport)
+        let invalidAssets: [[String: IOSJevImageAsset]] = [
+            [" \n": .init(data: Data([1]), format: "jpg")],
+            ["image-ref": .init(data: Data(), format: "png")],
+            ["image-ref": .init(data: Data([1]), format: "webp")],
+            ["missing-ref": .init(data: Data([1]), format: "jpeg")],
+        ]
+        for assets in invalidAssets {
+            do {
+                _ = try await client.decide(makeInput(
+                    transport: transport, questions: makeQuestions(["t1"]), state: "image-ref", assets: assets
+                ), policy: policy)
+                XCTFail("invalid assets must not be sent")
+            } catch let error as IOSJevRequestError {
+                guard case .invalidRequest = error else { return XCTFail("wrong error: \(error)") }
+            } catch {
+                XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testGatewayImageWirePreservesOrderContextAndExactBytes() async throws {
+        let firstReference = "amber-image-0587b52b-e6a3-4634-b002-8a843e376194"
+        let secondReference = "amber-image-c015231e-2314-4d10-a472-cf4608c53b4a"
+        let firstData = Data([1, 2, 3])
+        let secondData = Data([4, 5, 6])
+        let transport = JevStubTransport { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://ai-gateway.vercel.sh/v4/ai/decision-model")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "ai-decision-model-specification-version"), "4")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "ai-model-id"), "typesafe-ai/jev-1.14.0")
+            XCTAssertNil(request.value(forHTTPHeaderField: "ai-evaluation-model-specification-version"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "TypeSafe-Danger-Zone-Images"))
+            return (self.vercelResponse(answers: ["t1": ["type": "score", "score": 0.7]]), self.vercelHTTPResponse())
+        }
+        let client = IOSJevClient(transport: transport)
+        let input = vercelInput(
+            questions: makeQuestions(["t1"]), model: "typesafe-ai/jev-1.14.0",
+            state: "Before: \(firstReference)\nAfter: \(secondReference)\nCompare both screens.",
+            assets: [
+                secondReference: .init(data: secondData, format: "png"),
+                firstReference: .init(data: firstData, format: "jpeg"),
+            ]
+        )
+        let reservedBytes = try client.requestBodyByteCount(input)
+        let decision = try await client.decide(input, policy: policy)
+        let body = try XCTUnwrap(transport.lastBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["stateParts", "questions"])
+        let parts = try XCTUnwrap(object["stateParts"] as? [[String: Any]])
+        XCTAssertEqual(parts.compactMap { $0["type"] as? String }, ["text", "file", "text", "file", "text"])
+        XCTAssertEqual(parts[0]["text"] as? String, "Before: ")
+        XCTAssertEqual(parts[2]["text"] as? String, "\nAfter: ")
+        XCTAssertEqual(parts[4]["text"] as? String, "\nCompare both screens.")
+        XCTAssertEqual(parts[1]["mediaType"] as? String, "image/jpeg")
+        XCTAssertEqual(parts[3]["mediaType"] as? String, "image/png")
+        XCTAssertEqual(parts[1]["data"] as? [String: String], ["type": "data", "data": firstData.base64EncodedString()])
+        XCTAssertEqual(parts[3]["data"] as? [String: String], ["type": "data", "data": secondData.base64EncodedString()])
+        XCTAssertEqual(reservedBytes, body.count)
+        XCTAssertEqual(decision.requestBytes, body.count)
+        let text = parts.compactMap { $0["text"] as? String }.joined()
+        XCTAssertFalse(text.contains(firstReference))
+        XCTAssertFalse(text.contains(secondReference))
+    }
+
+    func testGatewayRejectsBoxBeforeNetwork() async {
+        let transport = JevStubTransport { _ in (Data(), self.vercelHTTPResponse()) }
+        let client = IOSJevClient(transport: transport)
+        do {
+            _ = try await client.decide(vercelInput(questions: [.box(id: "target", instructions: "Find the button")]), policy: policy)
+            XCTFail("unsupported gateway Box request must fail locally")
+        } catch let error as IOSJevRequestError {
+            XCTAssertEqual(error, .invalidRequest("box questions require native API"))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testGatewayRejectsUnsupportedImageReferencesWithoutDroppingImage() async {
+        let transport = JevStubTransport { _ in (Data(), self.vercelHTTPResponse()) }
+        let client = IOSJevClient(transport: transport)
+        let assets = ["image-ref": IOSJevImageAsset(data: Data([1]), format: "jpg")]
+        let inputs = [
+            vercelInput(questions: [.noul(id: "t1", instructions: "Inspect image-ref")], assets: assets),
+            vercelInput(questions: [.choice(id: "t1", options: ["a": "image-ref"], instructions: "Pick")], assets: assets),
+            vercelInput(questions: makeQuestions(["t1"]), state: "image-ref then image-ref", assets: assets),
+            vercelInput(questions: makeQuestions(["t1"]), state: "unreferenced", assets: assets),
+            vercelInput(questions: makeQuestions(["t1"]), state: "image-ref-extension", assets: [
+                "image-ref": .init(data: Data([1]), format: "jpg"),
+                "image-ref-extension": .init(data: Data([2]), format: "png"),
+            ]),
+        ]
+        for input in inputs {
+            do {
+                _ = try await client.decide(input, policy: policy)
+                XCTFail("an image must not be dropped from an unsupported reference location")
+            } catch let error as IOSJevRequestError {
+                guard case .invalidRequest = error else { return XCTFail("wrong error: \(error)") }
+            } catch {
+                XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testImageBodyUsesSeparateLimitWithoutExpandingStateLimit() async throws {
+        let transport = JevStubTransport { _ in (self.scoreResponse(answers: ["t1": 0.7]), self.httpResponse(status: 200)) }
+        let client = IOSJevClient(transport: transport)
+        let asset = IOSJevImageAsset(data: Data(repeating: 0, count: policy.maxRequestBytes), format: "png")
+        let input = makeInput(
+            transport: transport, questions: makeQuestions(["t1"]), state: "image-ref", assets: ["image-ref": asset]
+        )
+        let decision = try await client.decide(input, policy: policy)
+        XCTAssertGreaterThan(decision.requestBytes, policy.maxRequestBytes)
+        XCTAssertLessThan(decision.requestBytes, IOSJevPolicy.maxImageRequestBytes)
+        var hugeState = input
+        hugeState.state = "image-ref" + String(repeating: "a", count: policy.maxStateBytes)
+        do {
+            _ = try await client.decide(hugeState, policy: policy)
+            XCTFail("image support must not expand state limit")
+        } catch let error as IOSJevRequestError {
+            XCTAssertEqual(error, .stateTooLarge(bytes: hugeState.state.utf8.count))
+        }
+        var oversizedImage = input
+        oversizedImage.assets["image-ref"] = .init(data: Data(repeating: 0, count: IOSJevPolicy.maxImageRequestBytes), format: "png")
+        do {
+            _ = try await client.decide(oversizedImage, policy: policy)
+            XCTFail("encoded image request must respect its hard limit")
+        } catch let error as IOSJevRequestError {
+            guard case .requestTooLarge(let bytes) = error else { return XCTFail("wrong error: \(error)") }
+            XCTAssertGreaterThan(bytes, IOSJevPolicy.maxImageRequestBytes)
+        }
+        XCTAssertEqual(transport.calls, 1)
+    }
+
+    func testGatewayImageBodyUsesEncodedImageLimitAndRetainsStateLimit() async throws {
+        let transport = JevStubTransport { _ in
+            (self.vercelResponse(answers: ["t1": ["type": "score", "score": 0.7]]), self.vercelHTTPResponse())
+        }
+        let client = IOSJevClient(transport: transport)
+        var input = vercelInput(
+            questions: makeQuestions(["t1"]), model: "typesafe-ai/jev-1.14.0", state: "image-ref",
+            assets: ["image-ref": .init(data: Data(repeating: 0, count: policy.maxRequestBytes), format: "png")]
+        )
+        let decision = try await client.decide(input, policy: policy)
+        XCTAssertGreaterThan(decision.requestBytes, policy.maxRequestBytes)
+        XCTAssertLessThan(decision.requestBytes, IOSJevPolicy.maxImageRequestBytes)
+        input.state = "image-ref" + String(repeating: "a", count: policy.maxStateBytes)
+        do {
+            _ = try await client.decide(input, policy: policy)
+            XCTFail("Gateway images must not expand the state limit")
+        } catch let error as IOSJevRequestError {
+            XCTAssertEqual(error, .stateTooLarge(bytes: input.state.utf8.count))
+        }
+        input.state = "image-ref"
+        input.assets["image-ref"] = .init(data: Data(repeating: 0, count: IOSJevPolicy.maxImageRequestBytes), format: "png")
+        do {
+            _ = try await client.decide(input, policy: policy)
+            XCTFail("Gateway images must respect the encoded request limit")
+        } catch let error as IOSJevRequestError {
+            guard case .requestTooLarge(let bytes) = error else { return XCTFail("wrong error: \(error)") }
+            XCTAssertGreaterThan(bytes, IOSJevPolicy.maxImageRequestBytes)
+        }
+        XCTAssertEqual(transport.calls, 1)
+    }
+
+    func testBoxRequestHeaderWireAndAnswerMapping() async throws {
+        let payload: [String: Any] = [
+            "model": "jev-1.14.0",
+            "answers": ["target": ["type": "box", "box": ["top": 0.25, "bottom": 0.82, "left": 0.44, "right": 0.84], "confidence": 0.92]],
+        ]
+        let transport = JevStubTransport { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "TypeSafe-Danger-Zone-Images"), "true")
+            return (try JSONSerialization.data(withJSONObject: payload), self.httpResponse(status: 200))
+        }
+        let client = IOSJevClient(transport: transport)
+        let input = makeInput(transport: transport, questions: [.box(id: "target", instructions: "Find the mug")])
+        let decision = try await client.decide(input, policy: policy)
+        XCTAssertEqual(decision.answers.first?.box, IOSJevBox(top: 0.25, bottom: 0.82, left: 0.44, right: 0.84))
+        XCTAssertEqual(decision.answers.first?.confidence, 0.92)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(transport.lastBody)) as? [String: Any])
+        let questions = try XCTUnwrap(object["questions"] as? [String: [String: Any]])
+        XCTAssertEqual(questions["target"]?["type"] as? String, "box")
+        XCTAssertNil(questions["target"]?["criteria"])
+        XCTAssertNil(object["assets"], "Box alone does not encode an empty assets map")
+        var oversized = input
+        oversized.questions = [.box(id: "target", instructions: String(repeating: "a", count: policy.maxRequestBytes))]
+        do {
+            _ = try await client.decide(oversized, policy: policy)
+            XCTFail("Box without assets keeps the text body limit")
+        } catch let error as IOSJevRequestError {
+            guard case .requestTooLarge = error else { return XCTFail("wrong error: \(error)") }
+        }
+        XCTAssertEqual(transport.calls, 1)
+    }
+
+    func testBoxValidationDropsInvalidEdgesAndSanitizesConfidence() {
+        let question = IOSJevQuestion.box(id: "target", instructions: "Find the mug")
+        let invalidBoxes = [
+            IOSJevBox(top: .nan, bottom: 1, left: 0, right: 1),
+            IOSJevBox(top: 0, bottom: .infinity, left: 0, right: 1),
+            IOSJevBox(top: -0.1, bottom: 1, left: 0, right: 1),
+            IOSJevBox(top: 0, bottom: 1, left: 0, right: 1.01),
+            IOSJevBox(top: 0.4, bottom: 0.4, left: 0, right: 1),
+            IOSJevBox(top: 0, bottom: 1, left: 0.8, right: 0.2),
+        ]
+        for box in invalidBoxes {
+            let raw = IOSJevClient.RawAnswer(type: "box", confidence: 0.9, box: box)
+            XCTAssertTrue(IOSJevClient.validatedAnswers(for: [question], rawAnswers: ["target": raw]).isEmpty)
+        }
+        let fullImage = IOSJevBox(top: 0, bottom: 1, left: 0, right: 1)
+        for confidence in [Double.nan, .infinity, -0.1, 1.1] {
+            let raw = IOSJevClient.RawAnswer(type: "box", confidence: confidence, box: fullImage)
+            let answer = IOSJevClient.validatedAnswers(for: [question], rawAnswers: ["target": raw]).first
+            XCTAssertEqual(answer?.box, fullImage)
+            XCTAssertNil(answer?.confidence)
+        }
+        XCTAssertTrue(IOSJevClient.validatedAnswers(
+            for: [question], rawAnswers: ["target": .init(type: "box", confidence: 0.9)]
+        ).isEmpty)
     }
 }

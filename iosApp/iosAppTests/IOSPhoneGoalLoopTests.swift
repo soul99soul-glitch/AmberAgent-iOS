@@ -1239,6 +1239,34 @@ extension IOSPhoneGoalLoopTests {
         XCTAssertEqual(result.metrics.localActions, 0, "A duplicate is never executed without a decision")
     }
 
+    func testListedAndSequenceFinalCommitsAreWithheldBeforeSelection() async {
+        for sequence in [false, true] {
+            for count in [1, 2] {
+                let screen = observation("drafts", [
+                    node("heading", id: "heading", type: "XCUIElementTypeTextView", label: "Drafts"),
+                ] + (0..<count).map { index in
+                    node("delete\(index)", id: "delete\(index)", label: "删除", y: Double(100 + index * 80))
+                })
+                let fixture = Fixture([screen, observation("done", [node("done", id: "done")])])
+                fixture.selections = [.action(count == 1 ? "a0" : "a0.1")]
+                let actions = [IOSPhoneGoalActionSpec(action: .tap, target: .init(label: "删除"))]
+                let completion = IOSPhoneGoalExpectation(kind: .visible, target: .init(identifier: "done"))
+                let request = sequence
+                    ? IOSPhoneGoalRequest(goal: "整理草稿", bundleID: "app.test", steps: [
+                        .init(pageAnchor: .init(identifier: "heading"), actions: actions, expectation: completion),
+                    ], completion: completion)
+                    : IOSPhoneGoalRequest(goal: "整理草稿", bundleID: "app.test", actions: actions, completion: completion)
+
+                let result = await fixture.loop().run(request)
+
+                XCTAssertEqual(result.reasonCode, .finalCommitRequired, "sequence=\(sequence), count=\(count)")
+                XCTAssertEqual(result.withheldFinalActions, Array(repeating: "删除", count: count))
+                XCTAssertTrue(fixture.actions.isEmpty, "Neither a unique nor an ambiguous final action may be dispatched")
+                XCTAssertEqual(fixture.chooseCount, 0, "Final actions must not be offered to Jev")
+            }
+        }
+    }
+
     func testSequenceDuplicateLabelUsesJevInsteadOfAmbiguityHandback() async {
         let fixture = Fixture([duplicateWordScreen("question"),
                                observation("answered", [node("q", id: "question", type: "XCUIElementTypeStaticText",
@@ -1544,6 +1572,36 @@ extension IOSPhoneGoalLoopTests {
         let completed = await recovered.loop().run(request)
         XCTAssertEqual(completed.status, .completed)
         XCTAssertEqual(recovered.actions, [.tap(ref: "r1:back")])
+    }
+
+    func testLateDecisionUsesFreshCandidatesAndReportsFailureWhenRecoveryExhausts() async {
+        let request = IOSPhoneGoalRequest(goal: "打开详情", bundleID: "app.test",
+                                          completion: .init(kind: .visible, target: .init(identifier: "done")))
+        func screen(_ id: String) -> PhoneObservation {
+            observation(id, [node("\(id):first", id: "first", label: "First"),
+                             node("\(id):second", id: "second", label: "Second", x: 200)])
+        }
+        let recovered = Fixture([screen("initial"), screen("fresh"),
+                                 observation("done", [node("done", id: "done")])])
+        recovered.selections = [.handback("late"), .action("n0")]
+
+        let completed = await recovered.loop().run(request)
+
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(recovered.chooseCount, 2)
+        XCTAssertEqual(recovered.waitCount, 1)
+        XCTAssertEqual(recovered.actions, [.tap(ref: "fresh:first")], "A late decision cannot dispatch an old ref")
+
+        let exhausted = Fixture([screen("t0"), screen("t1"), screen("t2")])
+        exhausted.selections = Array(repeating: .handback("late"), count: 3)
+
+        let failed = await exhausted.loop().run(request)
+
+        XCTAssertEqual(failed.reasonCode, .jevFailed)
+        XCTAssertEqual(failed.jevReason, "late")
+        XCTAssertEqual(exhausted.chooseCount, 3)
+        XCTAssertEqual(exhausted.waitCount, 2)
+        XCTAssertTrue(exhausted.actions.isEmpty)
     }
 
     func testSequenceJevFailureHandsBackWithoutContinuingLive() async {

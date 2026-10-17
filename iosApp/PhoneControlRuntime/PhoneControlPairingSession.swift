@@ -15,15 +15,22 @@ enum PhoneControlPairingError: LocalizedError {
 }
 
 /// Owns exactly one explicit first-pair operation, independent from the XCTest runner session.
-actor PhoneControlPairingSession {
+protocol PhoneControlPairingServing: Sendable {
+    func prepare(id: UUID, connectionMode: IOSPhoneControlConnectionMode,
+                 progress: @Sendable (PhoneControlLaunchStatus) async -> Void) async throws -> Data
+    func cancel(id: UUID) async
+}
+
+actor PhoneControlPairingSession: PhoneControlPairingServing {
     private var operationID: UUID?
     private var native: NativePhonePairingHandle?
     private var closing: Task<Void, Never>?
 
-    func prepare(id: UUID, progress: @Sendable (PhoneControlLaunchStatus) async -> Void) async throws -> Data {
+    func prepare(id: UUID, connectionMode: IOSPhoneControlConnectionMode = .embedded,
+                 progress: @Sendable (PhoneControlLaunchStatus) async -> Void) async throws -> Data {
         try Task.checkCancellation()
         guard operationID == nil else { throw PhoneControlSessionError.occupied }
-        let handle = try NativePhonePairingHandle()
+        let handle = try NativePhonePairingHandle(connectionMode: connectionMode)
         operationID = id
         native = handle
         do {
@@ -81,8 +88,10 @@ actor PhoneControlPairingSession {
 private final class NativePhonePairingHandle: @unchecked Sendable {
     private var handle: OpaquePointer?
 
-    init() throws {
-        handle = IOSPhoneControlLoopbackRoute.endpoint.withCString { amber_iphone_control_pairing_start($0) }
+    init(connectionMode: IOSPhoneControlConnectionMode) throws {
+        handle = IOSPhoneControlLoopbackRoute.endpoint.withCString {
+            amber_iphone_control_pairing_start($0, connectionMode.nativeRouteMode)
+        }
         guard handle != nil else { throw PhoneControlPairingError.unavailable }
     }
 

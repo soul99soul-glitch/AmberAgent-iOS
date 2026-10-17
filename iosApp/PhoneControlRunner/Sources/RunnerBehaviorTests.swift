@@ -115,6 +115,32 @@ final class RunnerBehaviorTests: XCTestCase {
                  "an unreadable hit lets the tap through")
   }
 
+  func testOcclusionRecognizesTheRegisteredAncestorAfterScrolling() throws {
+    var registeredRow = axNode("Cell", "张三", [16, 1100, 370, 60], [
+      axNode("StaticText", "张三", [72, 1110, 80, 19]),
+    ])
+    registeredRow[IPURNodeAXElementKey] = NSString(string: "row-identity")
+    let root = UINode(raw: registeredRow, parent: nil, pid: 7)
+    let registry = ElementRegistry()
+    let id = registry.register(try XCTUnwrap(root.children.first))
+    let ancestors = RunnerTests.ancestors(of: try XCTUnwrap(registry.node(id)))
+    let target = UINode(raw: axNode("StaticText", "张三", [72, 310, 80, 19]), parent: nil, pid: 7)
+    var currentRow = axNode("Cell", "张三", [16, 300, 370, 60])
+    currentRow[IPURNodeAXElementKey] = NSString(string: "row-identity")
+    let hit = UINode(raw: currentRow, parent: nil, pid: 7)
+    let screen = CGSize(width: 402, height: 874)
+
+    XCTAssertNil(Occlusion.blocker(target: target, ancestors: ancestors, hit: hit,
+                                  hitIsOtherApp: false, screen: screen),
+                 "the same AX ancestor remains reachable after its frame changes")
+
+    currentRow[IPURNodeAXElementKey] = NSString(string: "covering-row-identity")
+    let coveringRow = UINode(raw: currentRow, parent: nil, pid: 7)
+    XCTAssertNotNil(Occlusion.blocker(target: target, ancestors: ancestors, hit: coveringRow,
+                                     hitIsOtherApp: false, screen: screen),
+                    "a different row still blocks the label despite matching text and frame")
+  }
+
   func testCoveredPagesMarksThePageUnderThePushedOne() throws {
     // The hidden chat page: its scroll view is the near-full-screen node; the input bar with
     // "发送" is a sibling, so the whole branch below the navigation container must be marked.

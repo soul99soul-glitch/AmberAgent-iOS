@@ -73,13 +73,151 @@ final class IOSIntelligentUIProtocolTests: XCTestCase {
         XCTAssertTrue(detector.mayContainPayload)
     }
 
+}
+
+extension IOSIntelligentUIProtocolTests {
     func testExampleDecodesAndRoundTrips() throws {
         let card = try IOSIntelligentUIProtocol.decode(IOSIntelligentUIProtocol.exampleJSON)
         XCTAssertEqual(card.id, "implementation-path")
         XCTAssertEqual(card.options.map(\.id), ["native", "web"])
         XCTAssertEqual(card.fields.first?.type, "text")
-        let data = try JSONEncoder().encode(card)
-        XCTAssertEqual(try IOSIntelligentUIProtocol.decode(String(decoding: data, as: UTF8.self)), card)
+        for (json, kind) in [
+            (IOSIntelligentUIProtocol.exampleJSON, "decision"),
+            (IOSIntelligentUIProtocol.formExampleJSON, "form"),
+            (IOSIntelligentUIProtocol.exploreExampleJSON, "explore"),
+            (IOSIntelligentUIProtocol.numericExploreExampleJSON, "explore"),
+            (IOSIntelligentUIProtocol.studyExampleJSON, "study")
+        ] {
+            XCTAssertTrue(IOSIntelligentUIProtocol.capabilityPrompt.contains(json))
+            let definition = try IOSIntelligentUIProtocol.decode(json)
+            XCTAssertEqual(definition.kind, kind)
+            let data = try JSONEncoder().encode(definition)
+            XCTAssertEqual(try IOSIntelligentUIProtocol.decode(String(decoding: data, as: UTF8.self)), definition)
+            let fenced = "```task-ui\n" + json + "\n```"
+            XCTAssertEqual(IOSIntelligentUIProtocol.parse(fenced, isStreaming: false), [.card(definition)])
+        }
+    }
+
+    func testFormPromptExampleBindsChoicesWithoutInventingSelections() throws {
+        let card = try IOSIntelligentUIProtocol.decode(IOSIntelligentUIProtocol.formExampleJSON)
+        XCTAssertEqual(card.kind, "form")
+        XCTAssertTrue(card.options.isEmpty, "表单选择项属于组件，不是根决策方案。")
+        let pace = try XCTUnwrap(card.boundComponent(for: "pace"))
+        XCTAssertEqual(pace.kind, .segmented)
+        XCTAssertEqual(pace.options?.map(\.id), ["relaxed", "compact"])
+        XCTAssertEqual(card.fields.first(where: { $0.id == "pace" })?.type, "choice")
+        let activities = try XCTUnwrap(card.boundComponent(for: "activities"))
+        XCTAssertEqual(activities.kind, .checklist)
+        XCTAssertEqual(activities.options?.map(\.id), ["walk", "food"])
+        XCTAssertEqual(card.fields.first(where: { $0.id == "activities" })?.type, "multiChoice")
+        XCTAssertNil(pace.value)
+        XCTAssertNil(activities.value)
+        let requiredChoice = try XCTUnwrap(card.fields.first(where: { $0.id == "pace" }))
+        XCTAssertFalse(card.requiredFieldHasValue(requiredChoice, values: [:]))
+    }
+
+    func testCapabilityPromptMakesFieldAndComponentContractsExplicit() {
+        let prompt = IOSIntelligentUIProtocol.capabilityPrompt
+        for rule in [
+            "fields[] 只允许 id/label/required/placeholder/type",
+            "fields[] 禁止 options/items/value/default/min/max/step",
+            "components[].options[]", "study.items[].options[]",
+            "组件节点只允许 id/kind", "min/max/step/value 使用 JSON 数字",
+            "tabs/accordion 的页面内容放在 children，不是 options",
+            "rows[].value 只能是 JSON 数字",
+            "stack 是重叠布局", "keyValue 使用 title/text",
+            "comparison 使用 options", "timeline/steps/list 使用 rows",
+            "cells 是要显示的完整一行", "不驱动布局、主题或图表",
+            "输出前静默自检"
+        ] {
+            XCTAssertTrue(prompt.contains(rule), "缺少防止模型混用字段层级的规则：\(rule)")
+        }
+    }
+
+    func testBrowsePromptExampleUsesRendererSupportedDataShapes() throws {
+        let card = try IOSIntelligentUIProtocol.decode(IOSIntelligentUIProtocol.exploreExampleJSON)
+        func flatten(_ nodes: [IOSIntelligentUIComponent]) -> [IOSIntelligentUIComponent] {
+            nodes.flatMap { [$0] + flatten($0.children ?? []) }
+        }
+        let nodes = flatten(card.components)
+        XCTAssertEqual(nodes.filter { $0.kind == .column }.count, 2)
+        XCTAssertFalse(nodes.contains { $0.kind == .stack }, "纵向内容不能用重叠布局。")
+        let keyValues = nodes.filter { $0.kind == .keyValue }
+        XCTAssertEqual(keyValues.count, 2)
+        for node in keyValues {
+            XCTAssertFalse((node.title ?? "").isEmpty)
+            XCTAssertFalse((node.text ?? "").isEmpty)
+            XCTAssertNil(node.rows, "keyValue 渲染 title/text，不渲染 rows。")
+        }
+        let comparison = try XCTUnwrap(nodes.first { $0.kind == .comparison })
+        XCTAssertEqual(comparison.options?.count, 2)
+        XCTAssertTrue(comparison.options?.allSatisfy { !($0.detail ?? "").isEmpty } == true)
+        XCTAssertNil(comparison.rows)
+        XCTAssertNil(comparison.fieldID, "展示比较项不是单选输入。")
+        for kind in [IOSIntelligentUIComponent.Kind.timeline, .steps] {
+            let node = try XCTUnwrap(nodes.first { $0.kind == kind })
+            XCTAssertEqual(node.rows?.count, 2)
+            XCTAssertTrue(node.rows?.allSatisfy { !$0.label.isEmpty && !($0.detail ?? "").isEmpty } == true)
+            XCTAssertNil(node.items, "流程组件渲染 rows，不渲染 items。")
+        }
+        let table = try XCTUnwrap(nodes.first { $0.kind == .table })
+        XCTAssertEqual(table.items, ["方式", "使用条件"])
+        let rows = try XCTUnwrap(table.rows)
+        XCTAssertEqual(rows.count, 2)
+        for row in rows {
+            XCTAssertEqual(row.cells?.count, table.items?.count)
+            XCTAssertEqual(row.cells?.first, row.label, "cells 必须包括实际展示的标签列。")
+        }
+    }
+
+    func testTextualRowValuesStayRejectedWhileSupportedDisplayShapesDecode() throws {
+        // Minimized from the USB-captured gallery: textual rows.value cannot decode as Double,
+        // and unrendered carrier mismatches (rows on keyValue/comparison, items on timeline/steps/list,
+        // or mismatched table cells) must fail validation instead of rendering blank.
+        let invalidComponents: [[String: Any]] = [
+            ["id": "protocol", "kind": "keyValue", "rows": [["label": "协议", "value": "每条消息最多 1 张"]]],
+            ["id": "protocol", "kind": "keyValue", "rows": [["label": "协议", "detail": "每条消息最多 1 张"]]],
+            ["id": "protocol", "kind": "comparison", "rows": [["label": "协议", "value": "每条消息最多 1 张"]]],
+            ["id": "protocol", "kind": "comparison", "rows": [["label": "协议", "detail": "每条消息最多 1 张"]]],
+            ["id": "flow", "kind": "timeline", "items": ["第一步", "第二步"]],
+            ["id": "flow", "kind": "steps", "items": ["第一步", "第二步"]],
+            ["id": "flow", "kind": "list", "items": ["第一项", "第二项"]],
+            ["id": "grid", "kind": "table", "items": ["方式", "条件"], "rows": [["label": "本地", "cells": ["仅一列"]]]]
+        ]
+        for component in invalidComponents {
+            var object = try exampleObject()
+            object["components"] = [component]
+            XCTAssertThrowsError(try IOSIntelligentUIProtocol.decode(json(object)), "\(component["kind"] ?? "")")
+        }
+        var object = try exampleObject()
+        object["components"] = [
+            ["id": "protocol", "kind": "keyValue", "title": "每张卡数量", "text": "每条消息最多 1 张"],
+            ["id": "paths", "kind": "comparison", "options": [
+                ["id": "native", "label": "task-ui", "detail": "原生控件、本地交互、结构固定"],
+                ["id": "web", "label": "full_html", "detail": "自由布局、需展开查看"]]]
+        ]
+        let card = try IOSIntelligentUIProtocol.decode(json(object))
+        XCTAssertEqual(card.components[0].text, "每条消息最多 1 张")
+        XCTAssertEqual(card.components[1].options?.first?.detail, "原生控件、本地交互、结构固定")
+        XCTAssertEqual(try IOSIntelligentUIProtocol.decode(String(decoding: JSONEncoder().encode(card), as: UTF8.self)), card)
+    }
+
+}
+
+extension IOSIntelligentUIProtocolTests {
+    func testFieldOptionsRemainRejectedWhileComponentOptionsAreValid() throws {
+        let data = Data(IOSIntelligentUIProtocol.formExampleJSON.utf8)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var fields = try XCTUnwrap(object["fields"] as? [[String: Any]])
+        let components = try XCTUnwrap(object["components"] as? [[String: Any]])
+        fields[1]["options"] = try XCTUnwrap(components[1]["options"])
+        object["fields"] = fields
+        XCTAssertThrowsError(try IOSIntelligentUIProtocol.decode(json(object))) { error in
+            XCTAssertEqual(error.localizedDescription, "任务卡包含不支持的字段：options。")
+        }
+        fields[1].removeValue(forKey: "options")
+        object["fields"] = fields
+        XCTAssertNoThrow(try IOSIntelligentUIProtocol.decode(json(object)))
     }
 
     func testOptionalFieldsCanBeOmittedWithoutInventingInputs() throws {
@@ -323,7 +461,10 @@ final class IOSIntelligentUIProtocolTests: XCTestCase {
 
     func testNativeStyleTokensRoundTripAndVisualOutputRemainsSeparate() throws {
         var object = try exampleObject()
-        object["components"] = [["id": "summary", "kind": "body", "text": "内容", "style": ["tone": "accent", "emphasis": "outlined", "density": "compact", "alignment": "center", "spacing": "small", "padding": "medium"]]]
+        object["components"] = [["id": "summary", "kind": "body", "text": "内容", "style": [
+            "tone": "accent", "emphasis": "outlined", "density": "compact",
+            "alignment": "center", "spacing": "small", "padding": "medium"
+        ]]]
         let card = try IOSIntelligentUIProtocol.decode(json(object))
         XCTAssertEqual(card.components.first?.style?.padding, .medium)
         XCTAssertTrue(IOSIntelligentUIProtocol.capabilityPrompt.contains("80 个原生组件"))

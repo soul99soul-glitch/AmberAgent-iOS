@@ -359,11 +359,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                                                requireUnchangedObservation: $3, runner: runner) },
                     choose: { [jev, runID] goal, observation, candidates, recent, expectation in
                         await jev.chooseAction(goal: goal, observation: observation, candidates: candidates,
-                                               recentSteps: recent, expectation: expectation, runID: runID)
+                                               recentSteps: recent, expectation: expectation, runID: runID,
+                                               screenshotProvider: { try await runner.screenshotObservation() })
                     },
                     advise: { [jev, runID] goal, expectation, before, after, verification in
                         await jev.adviseAfterAction(goal: goal, expectation: expectation, before: before,
-                                                   after: after, verification: verification, runID: runID)
+                                                   after: after, verification: verification, runID: runID,
+                                                   screenshotProvider: { try await runner.screenshotObservation() })
                     },
                     mode: { Self.phoneActionMode() },
                     isCurrent: { [controller, runID] in controller.canDispatchAction(runID: runID) },
@@ -465,7 +467,8 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             }
             let advice = await jev.adviseAfterAction(
                 goal: "核验本次动作的指定界面条件", expectation: expectation,
-                before: before, after: after, verification: checked, runID: runID)
+                before: before, after: after, verification: checked, runID: runID,
+                screenshotProvider: { try await runner.screenshotObservation() })
             fields["next_step"] = advice.rawValue
             return await observationResult(fields: fields, observation: after,
                                            needsScreenshot: checked.needsScreenshot || advice == .needsScreenshot, runner: runner)

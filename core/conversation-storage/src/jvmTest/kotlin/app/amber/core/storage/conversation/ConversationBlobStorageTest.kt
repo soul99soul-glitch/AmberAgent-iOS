@@ -186,6 +186,41 @@ class ConversationBlobStorageTest {
     }
 
     @Test
+    fun corruptBlobKeepsReferenceAndRecoversWhenRestored() = runTest {
+        val id = Uuid.random()
+        val shot = pngDataUrl(25)
+        storage.saveConversation(conversation(id, listOf(screenshotTool("t", shot))))
+        val file = File(root, "$id.json")
+        val blob = File(root, "$id.blobs").listFiles()!!.single()
+        val ref = BLOB_URL_SCHEME + blob.name
+        val original = blob.readBytes()
+        val corruptions = listOf(
+            original.copyOf().apply { this[lastIndex] = (last().toInt() xor 1).toByte() },
+            byteArrayOf(),
+        )
+        for (corrupt in corruptions) {
+            blob.writeBytes(corrupt)
+
+            assertFailsWith<ConversationStorageException> {
+                inlineConversationBlobsForExport(file.absolutePath, file.readText())
+            }
+
+            val fresh = JsonConversationStorage(dir)
+            val loaded = fresh.loadConversation(id)!!
+            val image = allImages(loaded).single()
+            assertTrue(image.isMissingBlobPlaceholder())
+            assertEquals(JsonPrimitive(ref), image.metadata?.get(MISSING_BLOB_METADATA_KEY))
+
+            fresh.saveConversation(loaded)
+            assertTrue(file.readText().contains(ref))
+            assertContentEquals(corrupt, blob.readBytes(), "saving a placeholder must preserve the unresolved blob")
+
+            blob.writeBytes(original)
+            assertEquals(listOf(shot), allImageUrls(fresh.loadConversation(id)!!))
+        }
+    }
+
+    @Test
     fun replacedPlaceholderDropsMarker() = runTest {
         val id = Uuid.random()
         storage.saveConversation(conversation(id, listOf(screenshotTool("t", pngDataUrl(6)))))

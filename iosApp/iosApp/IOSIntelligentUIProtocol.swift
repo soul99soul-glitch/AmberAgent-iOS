@@ -215,7 +215,16 @@ enum IOSIntelligentUIProtocol {
 
     static let formExampleJSON = #"""
     {"version":1,"card_id":"trip-preferences","kind":"form","goal":"补充行程偏好",
-     "fields":[{"id":"preferences","label":"希望安排的活动","required":true,"type":"text"}],
+     "fields":[
+       {"id":"preferences","label":"补充偏好","required":false,"type":"text"},
+       {"id":"pace","label":"行程节奏","required":true,"type":"choice"},
+       {"id":"activities","label":"感兴趣的活动","required":false,"type":"multiChoice"}],
+     "components":[
+       {"id":"preferences-input","kind":"textArea","field_id":"preferences","title":"补充偏好"},
+       {"id":"pace-input","kind":"segmented","field_id":"pace","title":"行程节奏",
+        "options":[{"id":"relaxed","label":"轻松游览"},{"id":"compact","label":"紧凑充实"}]},
+       {"id":"activities-input","kind":"checklist","field_id":"activities","title":"感兴趣的活动",
+        "options":[{"id":"walk","label":"城市漫步"},{"id":"food","label":"品尝美食"}]}],
      "submit":{"label":"按偏好安排","intent":"continue"}}
     """#
 
@@ -223,8 +232,22 @@ enum IOSIntelligentUIProtocol {
     {"version":1,"card_id":"storage-guide","kind":"explore","goal":"浏览两种存储方式的特点",
      "fields":[{"id":"section","label":"浏览章节","required":false,"type":"presentation"}],
      "components":[{"id":"sections","kind":"tabs","field_id":"section","children":[
-       {"id":"local","kind":"body","title":"本地","text":"离线可用；跨设备同步需要另行配置。"},
-       {"id":"cloud","kind":"body","title":"云端","text":"便于跨设备使用；需评估网络与隐私要求。"}]}],
+       {"id":"local","kind":"column","title":"本地","children":[
+         {"id":"local-feature","kind":"keyValue","title":"主要特点","text":"离线可用；跨设备同步需要另行配置。"},
+         {"id":"local-steps","kind":"steps","title":"使用步骤","rows":[
+           {"label":"选定目录","detail":"明确笔记保存在设备上的位置。"},
+           {"label":"开始记录","detail":"在本地读写；同步另行配置。"}]}]},
+       {"id":"cloud","kind":"column","title":"云端","children":[
+         {"id":"cloud-feature","kind":"keyValue","title":"主要特点","text":"便于跨设备使用；需评估网络与隐私要求。"},
+         {"id":"storage-comparison","kind":"comparison","title":"特点对照","options":[
+           {"id":"local-option","label":"本地","detail":"离线读写；同步另行配置。"},
+           {"id":"cloud-option","label":"云端","detail":"便于同步；依赖服务与网络。"}]},
+         {"id":"sync-timeline","kind":"timeline","title":"同步过程","rows":[
+           {"label":"设备记录","detail":"先保留本次笔记。"},
+           {"label":"同步完成","detail":"完成同步后其他设备才能读取更新。"}]},
+         {"id":"storage-table","kind":"table","title":"使用条件","items":["方式","使用条件"],"rows":[
+           {"label":"本地","cells":["本地","设备内读写"]},
+           {"label":"云端","cells":["云端","服务与网络"]}]}]}]}],
      "submit":{"label":"结合我的需求继续比较","intent":"continue"}}
     """#
 
@@ -244,27 +267,48 @@ enum IOSIntelligentUIProtocol {
     【聊天内智能 UI：task-ui v1】
     你应根据任务主动判断界面是否有帮助，用户无需点名“智能 UI”、协议或组件。对于学习记忆与练习、反复浏览内容、比较方案、填写多个信息项或探索参数，优先使用能直接在消息内操作的原生 task-ui；不要只给文字介绍或 HTML 封面，再让用户打开 Live 演示。
     简单事实、解释和一句话能解决的问题直接用文字；用户明确要求纯文字时不用卡片。已授权且信息充分的执行任务直接推进，不为使用 UI 增加决策或确认步骤。先调查事实，界面必须包含当前任务的真实内容，不能用通用示例或占位内容替代结果。
+    task-ui 是固定 JSON 数据协议，不是 HTML、SwiftUI 或 JSON Schema。先选一种 kind，照最接近的完整示例组织真实内容，再添加必要组件；不要根据常见表单格式自行扩展字段。
     根据当前操作选择 kind，不要把所有任务都包装成“选两个方案”：
     - decision：比较真正不同的 2–8 个方案，由用户选择；根 options 必须包含 id/title/summary，可有 tradeoffs 和一个 recommended，推荐不自动选择。
     - form：填写当前任务需要的信息。使用 fields 和原生输入组件，不需要根 options，也不要虚构方案。只有填写能帮助下一步时才生成。
-    - explore：分组浏览、展开、分页及选择参数。用 tabs/accordion/disclosure/列表/表格/已有输入组件组织内容，无根 options。展开/分页和数字字段到指标、进度、图表的直接引用在本地响应；用 value_field_id 让图形随参数操作更新。宿主不执行任意公式或脚本，需要新的计算或工具结果时显式提交给 agent。
-    - study：翻卡复习和可选的选择题抽考，直接展示在消息内。study.items 为 2–40 个真实学习项目，每项有稳定 id、prompt、answer，可选 detail。需要测验时，为项目加 2–8 个 options（id/label）及引用其中 id 的 correct_option_id；没有选择题时省略 options 和 correct_option_id。模型负责题目、答案和解释；翻卡、选择、判分、切题、重练和进度保存由本地完成，不需要生成 JS。用户要求完整知识集合时覆盖全部项目，不以两个示例代替。study 不需要根 options 或人为声明学习进度字段。
-    每条助手消息最多一个独立的 ```task-ui JSON 代码块。所有类型都有 version=1、稳定 ASCII card_id、kind、goal 和 submit（label 为具体的继续动作、intent=continue）；question 可选，decision 必须有问题；fields/components 可选。非 decision 省略根 options。study 类型必须有 study，其余类型不能有 study。
+    - explore：分组浏览、展开、分页及选择参数。用 tabs/accordion/disclosure/列表/表格/已有输入组件组织内容，无根 options。
+      展开/分页和数字字段到指标、进度、图表的直接引用在本地响应；用 value_field_id 让图形随参数操作更新。宿主不执行任意公式或脚本，需要新的计算或工具结果时显式提交给 agent。
+    - study：翻卡复习和可选的选择题抽考，直接展示在消息内。study.items 为 2–40 个真实学习项目，每项有稳定 id、prompt、answer，可选 detail。
+      需要测验时，为项目加 2–8 个 options（id/label）及引用其中 id 的 correct_option_id；没有选择题时省略 options 和 correct_option_id。
+      模型负责题目、答案和解释；翻卡、选择、判分、切题、重练和进度保存由本地完成，不需要生成 JS。用户要求完整知识集合时覆盖全部项目，不以两个示例代替。study 不需要根 options 或人为声明学习进度字段。
+    每条助手消息最多一个独立的 ```task-ui JSON 代码块。所有类型都有 version=1、稳定 ASCII card_id、kind、goal 和 submit（label 为具体的继续动作、intent=continue）。
+    question 可选，decision 必须有问题；fields/components 可选。非 decision 省略根 options。study 类型必须有 study，其余类型不能有 study。
+    【字段层级：只使用当前对象允许的键】
+    - 根对象只允许 version/card_id/kind/goal/question/options/fields/submit/components/study；不要增加 layout/theme/state 等自定义键。
+    - fields[] 只允许 id/label/required/placeholder/type。fields[] 禁止 options/items/value/default/min/max/step；字段只声明输入契约，不描述控件和选择项。
+    - 根 options[] 仅用于 decision，每项必填 id/title/summary，可选 tradeoffs/recommended；不要用 label 代替 title/summary。
+    - components[].options[] 每项必填 id/label，可选 detail/color；输入选项必须放在绑定 field_id 的选择控件内，不能放进 fields[]。非 decision 的单选/多选也使用这里。
+    - study.items[].options[] 是测验答案选项，每项只允许 id/label，correct_option_id 放在对应题目内；不能套用决策方案或组件选项的其他键。
+    - submit 只允许 label/intent；study 只允许 items；study.items[] 只允许 id/prompt/answer/detail/options/correct_option_id。
+    未列出的键不要生成，不适用的可选属性直接省略，不用 null、占位字段或自创枚举补齐结构。
     用户操作和练习状态在本地保存；只有显式提交或用户通过聊天引用后才进入下一轮。卡片不能声明工具、权限、宿主回调或执行代码。收到交互结果后，依据实际选择、输入和学习进度继续；用户只要求文字反馈时不要再生成一张卡。保持已有工具与审批流程。
-    task-ui 与 show-widget 用途不同：SVG、Three.js、HTML、图表、slides 是视觉产物或独立展示。用户明确要这些产物、独立 MiniApp，或任务确实需要原生组件没有的能力时才用对应路径；普通学习卡、原生表单和内容浏览优先 task-ui。不要把学习/输入仅封装到 full_html 的静态封面后。图片与三维效果本身不构成智能 UI。
-    fields 最多 16 项，每项 id/label/required，type 可省略为 text，或 text/number/bool/date/time/choice/multiChoice/presentation。非 text 需要对应原生组件，组件绑定已经声明的 field_id；纯展开/分页用 presentation、required=false，不进入提交。不要声明内部学习进度字段。省略 components 时展示普通输入；components 可组合以下原生能力，不要求凑组件数量。
+    task-ui 与 show-widget 用途不同：SVG、Three.js、HTML、图表、slides 是视觉产物或独立展示。用户明确要这些产物、独立 MiniApp，或任务确实需要原生组件没有的能力时才用对应路径；普通学习卡、原生表单和内容浏览优先 task-ui。
+    不要把学习/输入仅封装到 full_html 的静态封面后。图片与三维效果本身不构成智能 UI。
+    fields 最多 16 项，每项 id/label/required，type 可省略为 text，或 text/number/bool/date/time/choice/multiChoice/presentation。
+    非 text 需要对应原生组件，组件绑定已经声明的 field_id；纯展开/分页用 presentation、required=false，不进入提交。不要声明内部学习进度字段。省略 components 时展示普通输入；components 可组合以下原生能力，不要求凑组件数量。
     \(IOSIntelligentUIComponentCatalog.capabilityPrompt)
     以下只是结构示例，实际内容应符合用户任务：
     决策：
     \(exampleJSON)
-    填写：
+    填写（单选和多选的 options 在 components 内，fields 只声明类型）：
     \(formExampleJSON)
-    浏览：
+    浏览（纵向 column、键值 title/text、比较 options、流程 rows、表格 cells）：
     \(exploreExampleJSON)
     参数与图形联动：
     \(numericExploreExampleJSON)
     学习：
     \(studyExampleJSON)
+    【输出前静默自检，不展示检查过程】
+    1. JSON 完整且可解析：双引号键名和字符串，required/recommended 用布尔值；没有注释、尾逗号、说明里的可选标记或省略号。
+    2. 逐层核对键名，尤其 fields[] 没有 options、非 decision 没有根 options；三种 options 的对象结构不混用。
+    3. field_id 引用已声明的字段，field.type 与控件对应；value_field_id 引用本卡有数字输入的 number 字段；correct_option_id 引用本题选项。id 唯一且使用稳定 ASCII 标识。
+    4. 核对组件内容形状：所有 value（含 rows[].value）都是 JSON 数字；keyValue 用 title/text，comparison 用 options，timeline/steps/list 用 rows；纵向内容用 column，table.cells 包含完整展示列。不要写会被该组件忽略的属性，也不宣称偏好选择会改变布局或主题。
+    5. 只输出一张完整卡片，优先用能满足任务的简单组合。不确定某个写法时改用已知合法组件保留真实内容，不发明字段、公式、脚本或回调。生成 JSON 不等于设备验证，不声称交互已测试。
     """
 
     static func decode(_ json: String) throws -> IOSIntelligentUICardDefinition {
@@ -490,7 +534,10 @@ enum IOSIntelligentUIProtocol {
               count <= IOSIntelligentUIComponentCatalog.maximumNodes else {
             throw issue("组件层级最多 8 层，单张卡片最多 160 个组件。")
         }
-        try checkKeys(object, allowed: ["id", "kind", "title", "text", "children", "items", "options", "field_id", "value", "value_field_id", "min", "max", "step", "columns", "rows", "symbol", "url", "action", "style"])
+        try checkKeys(object, allowed: [
+            "id", "kind", "title", "text", "children", "items", "options", "field_id", "value", "value_field_id",
+            "min", "max", "step", "columns", "rows", "symbol", "url", "action", "style"
+        ])
         for option in object["options"] as? [[String: Any]] ?? [] { try checkKeys(option, allowed: ["id", "label", "detail", "color"]) }
         for row in object["rows"] as? [[String: Any]] ?? [] { try checkKeys(row, allowed: ["label", "value", "value_field_id", "detail", "cells"]) }
         if let style = object["style"] as? [String: Any] { try checkKeys(style, allowed: ["tone", "emphasis", "density", "alignment", "spacing", "padding"]) }

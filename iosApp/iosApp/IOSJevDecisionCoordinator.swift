@@ -56,17 +56,19 @@ struct IOSJevBatchPart: Sendable {
     var requiredScopes: Set<IOSJevDataScope>
     var state: String
     var questions: [IOSJevQuestion]
+    var assets: [String: IOSJevImageAsset]
     var cacheKey: String?
     var metricSuggestionProvider: (@Sendable (IOSJevDecision) -> (suggestedTop1: String?, keywordTop1: String?))?
     var metricNumbersProvider: (@Sendable (IOSJevDecision) -> [String: Double]?)?
     var metricIdsProvider: (@Sendable (IOSJevDecision) -> [String: String]?)?
 
-    init(id: String, useCase: IOSJevUseCase, requiredScopes: Set<IOSJevDataScope>, state: String, questions: [IOSJevQuestion], cacheKey: String? = nil, metricSuggestionProvider: (@Sendable (IOSJevDecision) -> (suggestedTop1: String?, keywordTop1: String?))? = nil, metricNumbersProvider: (@Sendable (IOSJevDecision) -> [String: Double]?)? = nil, metricIdsProvider: (@Sendable (IOSJevDecision) -> [String: String]?)? = nil) {
+    init(id: String, useCase: IOSJevUseCase, requiredScopes: Set<IOSJevDataScope>, state: String, questions: [IOSJevQuestion], assets: [String: IOSJevImageAsset] = [:], cacheKey: String? = nil, metricSuggestionProvider: (@Sendable (IOSJevDecision) -> (suggestedTop1: String?, keywordTop1: String?))? = nil, metricNumbersProvider: (@Sendable (IOSJevDecision) -> [String: Double]?)? = nil, metricIdsProvider: (@Sendable (IOSJevDecision) -> [String: String]?)? = nil) {
         self.id = id
         self.useCase = useCase
         self.requiredScopes = requiredScopes
         self.state = state
         self.questions = questions
+        self.assets = assets
         self.cacheKey = cacheKey
         self.metricSuggestionProvider = metricSuggestionProvider
         self.metricNumbersProvider = metricNumbersProvider
@@ -232,6 +234,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         requiredScopes: Set<IOSJevDataScope>,
         state: String,
         questions: [IOSJevQuestion],
+        assets: [String: IOSJevImageAsset] = [:],
         context: IOSJevRunContext,
         cacheKey: String? = nil,
         waitBudgetMs: Int? = nil,
@@ -241,7 +244,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
     ) async -> IOSJevDecisionOutcome {
         let part = IOSJevBatchPart(
             id: "single", useCase: useCase, requiredScopes: requiredScopes,
-            state: state, questions: questions, cacheKey: cacheKey,
+            state: state, questions: questions, assets: assets, cacheKey: cacheKey,
             metricSuggestionProvider: metricSuggestionProvider,
             metricNumbersProvider: metricNumbersProvider
         )
@@ -285,12 +288,14 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
                 results[part.id] = .skipped(reason: "mode_off")
                 continue
             }
-            guard settings.canSend(useCase: part.useCase, required: part.requiredScopes) else {
+            guard settings.canSend(useCase: part.useCase, required: part.requiredScopes),
+                  part.assets.isEmpty || settings.canSendPhoneScreenshots(for: part.useCase) else {
                 record(useCase: part.useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "scope_not_allowed", suggestion: nil, runId: context.runId)
                 results[part.id] = .skipped(reason: "scope_not_allowed")
                 continue
             }
-            let key = part.cacheKey.map {
+            // Images represent a live phone snapshot; never reuse a text-only cache entry.
+            let key = (part.assets.isEmpty ? part.cacheKey : nil).map {
                 IOSJevRunContext.cacheKey(
                     useCase: part.useCase, mode: mode, apiStyle: settings.apiStyle, model: model,
                     scopes: part.requiredScopes, policyVersion: policy.policyVersion, settingsRevision: settings.revision,
@@ -521,7 +526,14 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         if cooling { return .skipped("cooling_down") }
         let state = chunk.parts.map { "## \($0.part.useCase.rawValue).\($0.part.id)\n\($0.part.state)" }.joined(separator: "\n\n")
         let questions = chunk.questions.map(\.question)
-        let input = IOSJevClient.RequestInput(endpoint: settings.resolvedEndpoint, apiKey: apiKey, model: settings.activeModelVersion, state: state, questions: questions, style: settings.apiStyle)
+        var assets: [String: IOSJevImageAsset] = [:]
+        for item in chunk.parts {
+            for (reference, asset) in item.part.assets {
+                guard assets[reference] == nil || assets[reference] == asset else { return .failed("conflicting_image_reference") }
+                assets[reference] = asset
+            }
+        }
+        let input = IOSJevClient.RequestInput(endpoint: settings.resolvedEndpoint, apiKey: apiKey, model: settings.activeModelVersion, state: state, questions: questions, style: settings.apiStyle, assets: assets)
         let bodyBytes: Int
         do {
             bodyBytes = try deps.client.requestBodyByteCount(input)
@@ -529,7 +541,8 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             return .failed("invalid_request")
         }
         guard state.utf8.count <= settings.policy.maxStateBytes else { return .failed("state_too_large") }
-        guard bodyBytes <= settings.policy.maxRequestBytes else { return .failed("request_too_large") }
+        let maximumBytes = assets.isEmpty ? settings.policy.maxRequestBytes : IOSJevPolicy.maxImageRequestBytes
+        guard bodyBytes <= maximumBytes else { return .failed("request_too_large") }
         guard let budgetDay = beginBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, policy: settings.policy) else {
             return .skipped("budget_exhausted")
         }
@@ -775,7 +788,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         var outputTokens: Int?
     }
 
-    func runConnectionTest(apiKey: String) async -> ConnectionTestResult {
+    func runConnectionTest(apiKey: String, modelVersion: String? = nil) async -> ConnectionTestResult {
         let epochBefore = synchronized { configurationEpoch }
         let settings = deps.settingsProvider()
         guard configurationIsCurrent(epochBefore) else {
@@ -786,7 +799,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         let input = IOSJevClient.RequestInput(
             endpoint: settings.resolvedEndpoint,
             apiKey: apiKey,
-            model: settings.activeModelVersion,
+            model: modelVersion ?? settings.activeModelVersion,
             state: state,
             questions: [question],
             style: settings.apiStyle
@@ -797,6 +810,9 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             let latency = Int(deps.now().timeIntervalSince(startedAt) * 1_000)
             guard configurationIsCurrent(epochBefore), deps.settingsProvider().revision == settings.revision else {
                 return ConnectionTestResult(succeeded: false, modelVersion: nil, latencyMs: latency, errorReason: "config_changed", inputTokens: nil, outputTokens: nil)
+            }
+            if let modelVersion, decision.modelVersion != modelVersion {
+                return ConnectionTestResult(succeeded: false, modelVersion: decision.modelVersion, latencyMs: latency, errorReason: "model_version_mismatch", inputTokens: decision.usage?.inputTokens, outputTokens: decision.usage?.outputTokens)
             }
             // 显式连接测试成功即恢复认证暂停/冷却（用户拿新 Key 验证通过的场景）。
             resetAuthState()

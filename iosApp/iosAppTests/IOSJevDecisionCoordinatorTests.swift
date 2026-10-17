@@ -675,7 +675,7 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
     private func makeVercelSettings(mode: IOSJevMode = .active, model: String = "typesafe-ai/jev") -> IOSJevSettings {
         var settings = makeSettings(mode: mode)
         settings.setAPIStyle(.vercelGateway)
-        settings.setVercelModel(model)
+        settings.setProviderModel(model)
         return settings
     }
 
@@ -698,8 +698,8 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         )!
     }
 
-    /// vercel 模式：出站打到 gateway evaluation endpoint，body 为
-    /// {state, questions} 评估负载，模型 slug 走 ai-model-id header；
+    /// vercel 模式：出站打到 gateway decision endpoint，body 为
+    /// {stateParts, questions}，模型 slug 走 ai-model-id header；
     /// 答案映射后正常 applied。
     func testVercelModeRoutesToGatewayEndpointAndModel() async throws {
         let box = SettingsBox(makeVercelSettings())
@@ -727,10 +727,14 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
 
         let body = try XCTUnwrap(transport.lastBody)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertNil(object["model"], "evaluation body 不含 model（走 ai-model-id header）")
-        XCTAssertNil(object["messages"], "evaluation body 不是 chat completions 形态")
-        XCTAssertNotNil(object["state"])
-        XCTAssertNotNil(object["questions"], "evaluation body 顶层携带 questions map")
+        XCTAssertNil(object["model"], "decision body 不含 model（走 ai-model-id header）")
+        XCTAssertNil(object["messages"], "decision body 不是 chat completions 形态")
+        XCTAssertNil(object["state"])
+        let stateParts = try XCTUnwrap(object["stateParts"] as? [[String: Any]])
+        XCTAssertEqual(stateParts.count, 1)
+        XCTAssertEqual(stateParts[0]["type"] as? String, "text")
+        XCTAssertTrue(try XCTUnwrap(stateParts[0]["text"] as? String).contains(state))
+        XCTAssertNotNil(object["questions"], "decision body 顶层携带 questions map")
     }
 
     /// vercel 未配置模型 slug：active 收口 shadow 后仍按 model_unspecified 零网络跳过。
@@ -772,7 +776,7 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
             from: JSONSerialization.data(withJSONObject: legacy)
         )
         XCTAssertEqual(decoded.apiStyle, .systemone)
-        XCTAssertEqual(decoded.vercelModel, "")
+        XCTAssertEqual(decoded.providerModel, "")
         XCTAssertEqual(decoded.resolvedEndpoint, IOSJevSettings.productionEndpoint)
         settings.setAPIStyle(.vercelGateway)
         XCTAssertEqual(settings.resolvedEndpoint, IOSJevSettings.vercelGatewayEndpoint)

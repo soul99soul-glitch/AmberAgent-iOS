@@ -202,6 +202,27 @@ enum IOSIntelligentUIComponentCatalog {
             guard let rows = node.rows, !rows.isEmpty,
                   rows.allSatisfy({ $0.value?.isFinite == true || $0.valueFieldID != nil }) else { throw issue("图表每行需要有限 value 或 value_field_id。") }
         }
+        if node.kind == .keyValue {
+            guard node.rows == nil, !(node.title ?? "").isEmpty, !(node.text ?? "").isEmpty else {
+                throw issue("keyValue 需要 title 和 text，且不使用 rows。")
+            }
+        }
+        if node.kind == .comparison {
+            guard !(node.options ?? []).isEmpty, node.rows == nil else {
+                throw issue("comparison 需要 options，且不使用 rows。")
+            }
+        }
+        if [.timeline, .steps, .list].contains(node.kind) {
+            guard !(node.rows ?? []).isEmpty, node.items == nil else {
+                throw issue("\(node.kind.rawValue) 需要 rows，且不使用 items。")
+            }
+        }
+        if node.kind == .table {
+            guard let rows = node.rows, !rows.isEmpty,
+                  (node.items ?? []).isEmpty || rows.allSatisfy({ $0.cells == nil || $0.cells?.count == node.items?.count }) else {
+                throw issue("table 需要 rows，且 cells 列数需与 items 列标题一致。")
+            }
+        }
         if node.kind == .tabs || node.kind == .accordion {
             guard let children = node.children, !children.isEmpty,
                   children.allSatisfy({ !($0.title ?? "").isEmpty }) else { throw issue("tabs 和 accordion 的每个子组件需要标题。") }
@@ -292,7 +313,9 @@ enum IOSIntelligentUIComponentCatalog {
 
     static let capabilityPrompt = """
     可选 components 支持 80 个原生组件，以数据组合界面，不执行代码。每个节点有唯一 id、kind，可选 title/text。
+    组件节点只允许 id/kind/title/text/children/items/options/field_id/value/value_field_id/min/max/step/columns/rows/symbol/url/action/style；children 内的节点遵守同一规则。下面的键是按组件需要选择的可选能力，不要给每个节点填满全部属性。
     布局：stack,column,row,grid,card,panel,group,inset,divider,spacer。
+    column 纵向排列，row 横向排列；stack 是重叠布局（ZStack），不是纵向列表。标签页内有多项内容时使用 column，不用 stack 叠在一起。
     文本：title,subtitle,body,caption,callout,quote,inlineCode,bulletList,numberedList,keyValue,footnote,highlight。
     状态：badge,chip,tag,statusDot,progress,stepProgress,skeleton,emptyState,notice,alert。
     输入：singleChoice,multiChoice,segmented,picker,toggle,textField,textArea,numberField,slider,stepper,datePicker,timePicker,rating,colorChoice。
@@ -301,17 +324,31 @@ enum IOSIntelligentUIComponentCatalog {
     任务：goal,context,source,reason,tradeoff,result,assumptions,decisionSummary。
     操作：button,buttonGroup,submitButton,resetButton,disclosure,tabs,accordion,menu。
     输入及 checklist/disclosure/tabs/accordion/menu 必须 field_id 引用 fields 已声明的 id。只有 decision 的决策方案由根 options 单选承担，其他任务不需要根 options。
-    选项 options:[{id,label,detail?,color?}]；列表 items:[文字]；数据 rows:[{label,value?,detail?,cells?}]。
-    数值可带 min/max/step/value；网格 columns 为1–4。slider/stepper 传数值字符串，toggle 传 true/false，multiChoice/checklist 传 id 的JSON数组字符串。
-    metric/progress/stepProgress 可用 value_field_id 代替 value；barChart/lineChart 的每行也可用 value_field_id 代替 value。引用必须是本卡 fields 中 type=number 且由 numberField/slider/stepper/rating 输入绑定的字段。相同字段的多个数字输入必须有一致范围、步长和预览初值。输入变化立即更新对应图形；不支持公式、跨卡引用或脚本。progress.max 是总值，stepProgress.items 是步骤标签。value 与 value_field_id 不能同时出现。
+    field.type 与绑定组件对应：text→textField/textArea（也可不绑定）；number→numberField/slider/stepper/rating；bool→toggle；date→datePicker；time→timePicker。
+    choice→singleChoice/segmented/picker/colorChoice/menu；multiChoice→multiChoice/checklist；presentation→disclosure/tabs/accordion。字段 type 不是控件 kind，不写 type=slider/select/checkbox。
+    组件的 options 每项必填 id/label，可选 detail/color，选择控件需 1–20 项；items 是文字数组；rows 每行只允许 label/value/value_field_id/detail/cells，cells 是文字数组。
+    【内容形状：按实际渲染入口填写，不套用通用表格结构】
+    - rows[].value 只能是 JSON 数字，不能放文字或数字字符串。文字说明用 rows[].detail，表格文字用 rows[].cells；组件的 value 也只能为数字。
+    - keyValue 使用 title/text 展示一对键值，不读取 rows。多对键值用 column.children 内的多个 keyValue；不要写 rows:[{label,value:"文字"}]。
+    - comparison 使用 options（id/label/detail）展示比较项，不读取 rows，也不需要 field_id；它不是 singleChoice，不会选择方案。
+    - timeline/steps/list 使用 rows，每行必填 label、可选 detail；这些组件不读取 items。bulletList/numberedList 使用 items；stepProgress.items 是步骤标签。
+    - table.items 是列标题，rows[].cells 是要显示的完整一行，包括第一列；提供 cells 后不会自动加上 row.label。若要显示行标签，请把它也放入 cells。
+    min/max/step/value 使用 JSON 数字，网格 columns 为1–4的整数。用户操作后宿主草稿才使用字符串：slider/stepper 为数值字符串，toggle 为 true/false，多选为 id 的JSON数组字符串；不要把草稿值格式写进组件 JSON。
+    toggle 和选择控件不设置 value/selected/default，不替用户预选。选项的 id/label 是字符串，required/recommended 是布尔值，不写成字符串。
+    metric/progress/stepProgress 可用 value_field_id 代替 value；barChart/lineChart 的每行也可用 value_field_id 代替 value。
+    引用必须是本卡 fields 中 type=number 且由 numberField/slider/stepper/rating 输入绑定的字段。相同字段的多个数字输入必须有一致范围、步长和预览初值。
+    只有通过 value_field_id 引用的数字输入变化会立即更新对应图形；不支持公式、跨卡引用或脚本。progress.max 是总值，stepProgress.items 是步骤标签。value 与 value_field_id 不能同时出现。
+    segmented/picker/colorChoice 等选择控件只保存字段偏好，不驱动布局、主题或图表；colorChoice 只展示色板，不改变 App 配色。不声称切换它们会更新其他组件，需要进一步处理时显式提交给 agent。
     数字输入的 value 仅是未确认的预览初值，slider/stepper 未指定时预览范围下界；其他数字输入未指定初值时等待输入。预览不保存、不进入提交，用户操作或确认后才保存数值；非法数值显示错误，不替换成零。
     datePicker 传 yyyy-MM-dd，timePicker 传 HH:mm，rating 传整数，其他单选传 option.id。不要用默认值替用户做选择。
-    children 只用于布局容器、metricGrid/imageGrid/buttonGroup 和 disclosure/tabs/accordion；最大8层、160节点。
-    tabs/accordion 的子节点要有 title，field_id 分别保存当前子 id / 展开子 id 数组；disclosure 保存 true/false。
+    children 只用于 stack/column/row/grid/card/panel/group/inset/metricGrid/imageGrid/buttonGroup/disclosure/tabs/accordion；最大8层、160节点。
+    tabs/accordion 的页面内容放在 children，不是 options；每个子节点要有 title，field_id 绑定 type=presentation、required=false 的字段，分别保存当前子 id / 展开子 id 数组；disclosure 保存 true/false。
     媒体 url 只接受 HTTPS；linkCard/fileCard/source 仅展示引用，不执行打开或工具动作；不能将模型文案标成已验证事实。
     button.action 只能 continue 或 reset；submitButton/resetButton 固定由宿主提交/重置。
     colorChoice.option.color 支持 accent,red,orange,yellow,green,cyan,blue,indigo,purple,pink,gray。
-    样式 style 可选 tone:neutral/accent/success/warning/danger；emphasis:plain/soft/outlined/filled；density:compact/comfortable；alignment:leading/center；spacing 和 padding:none/small/medium/large。状态颜色只表达文案含义，不证明执行结果。
+    样式 style 只允许 tone/emphasis/density/alignment/spacing/padding；不要生成 CSS、hex 颜色或自定义尺寸。
+    tone:neutral/accent/success/warning/danger；emphasis:plain/soft/outlined/filled；density:compact/comfortable；alignment:leading/center；spacing 和 padding:none/small/medium/large。
+    状态颜色只表达文案含义，不证明执行结果。
     需要简洁时不填 components，按当前 kind 使用默认界面；study 的翻卡和测验无需额外组件。适合补充数据时选少量组件组合，不为展示目录而堆砌。
     例：{"id":"budget","kind":"slider","title":"预算","field_id":"budget","min":0,"max":10000,"step":100}。
     例：{"id":"evidence","kind":"disclosure","title":"查看依据","field_id":"evidence_open","children":[{"id":"source1","kind":"source","text":"用户提供的需求；未做外部核验"}]}。

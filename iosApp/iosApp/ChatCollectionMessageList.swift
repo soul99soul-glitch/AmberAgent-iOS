@@ -383,8 +383,10 @@ struct NativeChatTimelineView: View {
     @State private var historyBoundaryIDs: Set<String> = []
     @State private var laidOutHistoryFirstMessageID: String?
     @State private var expandedPhoneToolGroupIDs = ChatPhoneToolGroupExpansionStore.shared.expandedIDs
+    @State private var phoneToolGroupToggleHandler = ChatPhoneToolGroupToggleHandler()
 
     var body: some View {
+        let _ = phoneToolGroupToggleHandler.action = togglePhoneToolGroup
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
@@ -482,7 +484,7 @@ struct NativeChatTimelineView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
                 .padding(.bottom, 28)
-                .environment(\.chatPhoneToolGroupToggle, togglePhoneToolGroup)
+                .environment(\.chatPhoneToolGroupToggle, phoneToolGroupToggleHandler)
                 .scrollTargetLayout()
                 .onGeometryChange(for: String?.self) { _ in
                     projection.entries.first(where: { $0.kind == .message })?.messageId

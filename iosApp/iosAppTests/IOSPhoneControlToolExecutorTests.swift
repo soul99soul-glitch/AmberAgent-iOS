@@ -505,5 +505,5 @@ private actor ToolExecutorPairingStore: IOSPhoneControlCredentialStoring {
 private actor ToolApplicationDiscovery: PhoneControlApplicationDiscovering {
     let applications: [PhoneControlInstalledApp]
     init(applications: [PhoneControlInstalledApp]) { self.applications = applications }
-    func installedApplications(pairing: Data) -> [PhoneControlInstalledApp] { applications }
+    func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) -> [PhoneControlInstalledApp] { applications }
 }

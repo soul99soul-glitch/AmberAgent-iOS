@@ -1303,6 +1303,7 @@ final class ChatKernelRunHost {
             fullToolNames: handoff.fullToolNames,
             dynamicToolSnapshot: handoff.dynamicToolSnapshot,
             executionPolicy: handoff.executionPolicy,
+            subAgentTimeoutSeconds: handoff.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: handoff.phoneAutomaticReasoning
         )
     }

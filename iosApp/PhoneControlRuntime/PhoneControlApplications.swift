@@ -16,7 +16,7 @@ struct PhoneControlInstalledApp: Decodable, Equatable, Identifiable, Sendable {
 }
 
 protocol PhoneControlApplicationDiscovering: Sendable {
-    func installedApplications(pairing: Data) async throws -> [PhoneControlInstalledApp]
+    func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) async throws -> [PhoneControlInstalledApp]
 }
 
 enum PhoneControlApplicationsError: LocalizedError {
@@ -39,11 +39,11 @@ actor PhoneControlApplications: PhoneControlApplicationDiscovering {
     private var native: NativePhoneApplicationsHandle?
     private var closing: Task<Void, Never>?
 
-    func installedApplications(pairing: Data) async throws -> [PhoneControlInstalledApp] {
+    func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode = .embedded) async throws -> [PhoneControlInstalledApp] {
         try Task.checkCancellation()
         guard operationID == nil else { throw PhoneControlSessionError.occupied }
         let id = UUID()
-        let handle = try NativePhoneApplicationsHandle(pairing: pairing)
+        let handle = try NativePhoneApplicationsHandle(pairing: pairing, connectionMode: connectionMode)
         operationID = id
         native = handle
         return try await withTaskCancellationHandler {
@@ -123,10 +123,11 @@ actor PhoneControlApplications: PhoneControlApplicationDiscovering {
 private final class NativePhoneApplicationsHandle: @unchecked Sendable {
     private var handle: OpaquePointer?
 
-    init(pairing: Data) throws {
+    init(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) throws {
         handle = pairing.withUnsafeBytes { bytes in
             IOSPhoneControlLoopbackRoute.endpoint.withCString { endpoint in
-                amber_iphone_control_apps_start(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, endpoint)
+                amber_iphone_control_apps_start(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, endpoint,
+                                               connectionMode.nativeRouteMode)
             }
         }
         guard handle != nil else { throw PhoneControlApplicationsError.unavailable }

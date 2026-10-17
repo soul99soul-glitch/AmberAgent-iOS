@@ -3,11 +3,13 @@
 Standalone Rust static library for the app-owned development session. Public C
 ABI is `include/AmberIPhoneControl.h`; Swift imports `AmberIPhoneControl` using
 the adjacent module map. The app supplies already prepared RemotePairing bytes,
-an endpoint, installed runner bundle ID, built test module, and a new hex token.
+an endpoint, installed runner bundle ID, built test module, a new hex token and
+an explicit route mode.
 
 ```
 ./build.sh
 cargo test --locked -p amber-iphone-control
+cargo clippy --locked -p amber-iphone-control --all-targets --no-deps -- -D warnings
 ```
 
 Libraries are `target/aarch64-apple-ios/release/libamber_iphone_control.a` and
@@ -82,7 +84,7 @@ path, **not proof that a particular iOS version allows self-control**.
 
 The control-start ABI defaults to `10.7.0.1:49152`, matching Amber's embedded
 local tunnel and the previously verified LocalDevVPN address plan. Other explicit endpoints remain available for protocol diagnostics.
-The first-preparation C ABI retains its legacy null default `127.0.0.1:49152`;
+In embedded mode, the first-preparation C ABI retains its legacy null default `127.0.0.1:49152`;
 the formal Swift caller explicitly supplies this local tunnel peer. The library never
 installs or changes VPN/network settings. Neither endpoint's TCP availability
 proves pairing or automation authorization.
@@ -238,14 +240,36 @@ do not trigger it.
 
 ## Same-device local tunnel
 
-The formal app uses the local tunnel peer `10.7.0.1:49152`. On Apple
-platforms, every TCP socket to that peer, including the dynamically assigned
-TLS port, requires exactly one up `utun` interface with address `10.7.1.1`.
+The formal app uses the local tunnel peer `10.7.0.1:49152`. With the embedded
+route mode, every TCP socket to that peer on Apple platforms, including the
+dynamically assigned TLS port, requires exactly one up `utun` interface with address `10.7.1.1`.
 `IP_BOUND_IF` binds the actual socket before connect. Missing, ambiguous or
 unusable interfaces stop startup; the route never falls back to ordinary LAN.
 Other explicit endpoints retain their existing behavior for diagnostics and
 local protocol tests. Pairing verification still authenticates the service;
 the interface match alone is not an authentication result.
+
+The three internal start entries (`start`, `apps_start`, `pairing_start`) take
+a final `uint32_t route_mode`: `AMBER_IPHONE_CONTROL_ROUTE_EMBEDDED` (0) or
+`AMBER_IPHONE_CONTROL_ROUTE_EXISTING_VPN` (1). Unknown modes are rejected before
+starting the runtime or any I/O. Existing VPN mode accepts only
+`10.7.0.1:49152`; its null endpoint also selects that peer. It does not enable
+a relay or a user-configurable remote destination.
+
+Existing VPN mode queries the kernel-selected source using UDP connect and
+local_addr without sending a UDP payload. That actual source must match
+exactly one UP `utun` interface with a nonzero index; its address need not be
+`10.7.1.1`. The real TCP socket is bound with `IP_BOUND_IF` before connect.
+Both the initial RemotePairing connection and the dynamically assigned
+TLS-PSK port use the same selected mode and repeat this lookup for each new
+socket. Missing, ambiguous, down or unusable routes preserve their actionable
+route errors and never fall back to LAN, `lo0` or cellular interfaces.
+The credential-free `inspect_routed_handshake` diagnostic uses the same
+existing-route connector, without altering the selected production mode.
+The external VPN must already implement the development-service loopback;
+matching a `utun` alone does not prove that service, pairing or control work.
+The library never starts, stops or changes that VPN. Physical-device VPN
+coexistence and continuous cellular operation remain separate acceptance gates.
 
 The previously delivered route uses the separately installed
 [LocalDevVPN af3fd697](https://github.com/jkcoxson/LocalDevVPN/tree/af3fd697803ada4ac2b8d518358f5ab0a534844c).

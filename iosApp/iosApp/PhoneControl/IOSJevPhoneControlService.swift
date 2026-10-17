@@ -48,7 +48,8 @@ final class IOSJevPhoneControlService {
 
     func chooseAction(goal: String, observation: PhoneObservation, candidates: [Candidate],
                       recentSteps: [String], expectation: IOSPhoneGoalExpectation? = nil,
-                      runID: String) async -> Selection {
+                      runID: String,
+                      screenshotProvider: (() async throws -> PhoneScreenshot)? = nil) async -> Selection {
         guard !Task.isCancelled else { return .handback("cancelled") }
         let settings = deps.settingsProvider()
         guard settings.effectiveMode(for: .phoneActions) != .off else { return .handback("mode_off") }
@@ -63,10 +64,19 @@ final class IOSJevPhoneControlService {
         guard candidates.count + Self.reservedOptions.count <= min(64, settings.policy.maxCandidates) else {
             return .handback("candidate_budget_exceeded")
         }
+        let screenshot: PreparedScreenshot?
+        do {
+            screenshot = try await prepareScreenshot(observation: observation, useCase: .phoneActions,
+                                                     settings: settings, provider: screenshotProvider)
+        } catch {
+            return .handback(Self.screenshotFailureReason(error))
+        }
+        let assets = screenshot?.assets ?? [:]
+        let requiredScopes = screenshot == nil ? Self.scopes : Self.scopes.union([.phoneScreenshots])
         // Large pages (long lists, ~1000 AX nodes) must still reach Jev: the request is fitted
         // to both the state and the whole-request byte limits instead of failing.
         let fitted = Self.fitRequest(
-            useCase: .phoneActions, settings: settings, instructions: Self.actionInstructions,
+            useCase: .phoneActions, settings: settings, instructions: Self.actionInstructions, assets: assets,
             descriptionCaps: Self.descriptionCaps(candidateCount: candidates.count, settings: settings),
             options: { cap in
                 var options = Dictionary(uniqueKeysWithValues: candidates.map {
@@ -79,7 +89,8 @@ final class IOSJevPhoneControlService {
             },
             state: { budget in
                 Self.state(goal: goal, candidates: candidates, recentSteps: recentSteps, before: nil,
-                           after: observation, expectation: expectation, verification: nil, budget: budget)
+                           after: observation, expectation: expectation, verification: nil, budget: budget,
+                           screenshot: screenshot?.state)
             })
         let state: String, question: IOSJevQuestion
         switch fitted {
@@ -88,9 +99,11 @@ final class IOSJevPhoneControlService {
         }
         let options = Set(candidates.map(\.id)).union(Self.reservedOptions)
         let outcome = await decide(useCase: .phoneActions, state: state, question: question,
-                                   runID: runID, settings: settings)
+                                   runID: runID, settings: settings, requiredScopes: requiredScopes, assets: assets)
         guard !Task.isCancelled else { return .handback("cancelled") }
-        guard settingsAreCurrent(settings, useCase: .phoneActions) else { return .handback("config_changed") }
+        guard settingsAreCurrent(settings, useCase: .phoneActions, requiredScopes: requiredScopes) else {
+            return .handback("config_changed")
+        }
         guard settings.effectiveMode(for: .phoneActions) == .active else { return .handback("shadow") }
         guard let choice = Self.choice(from: outcome, options: options, settings: settings) else {
             return .handback(Self.failureReason(outcome))
@@ -105,7 +118,8 @@ final class IOSJevPhoneControlService {
 
     func adviseAfterAction(goal: String, expectation: IOSPhoneGoalExpectation,
                            before: PhoneObservation?, after: PhoneObservation,
-                           verification: IOSPhoneGoalVerificationResult, runID: String) async -> Advice {
+                           verification: IOSPhoneGoalVerificationResult, runID: String,
+                           screenshotProvider: (() async throws -> PhoneScreenshot)? = nil) async -> Advice {
         guard !Task.isCancelled else { return .handback }
         let localAdvice = Self.localAdvice(before: before, after: after, verification: verification)
         // Already-proven success needs no remote judgment. Advice never mutates verification.
@@ -116,20 +130,34 @@ final class IOSJevPhoneControlService {
         guard settings.canSend(useCase: .phoneVerification, required: Self.scopes) else {
             return mode == .shadow ? localAdvice : .handback
         }
+        let screenshot: PreparedScreenshot?
+        do {
+            screenshot = try await prepareScreenshot(observation: after, useCase: .phoneVerification,
+                                                     settings: settings, provider: screenshotProvider)
+        } catch {
+            guard !Task.isCancelled else { return .handback }
+            return mode == .shadow ? localAdvice : .handback
+        }
+        let assets = screenshot?.assets ?? [:]
+        let requiredScopes = screenshot == nil ? Self.scopes : Self.scopes.union([.phoneScreenshots])
         let fitted = Self.fitRequest(
-            useCase: .phoneVerification, settings: settings, instructions: Self.verificationInstructions,
+            useCase: .phoneVerification, settings: settings, instructions: Self.verificationInstructions, assets: assets,
             descriptionCaps: [Self.maxDescriptionBytes],
             options: { _ in Self.verificationOptions },
             state: { budget in
                 Self.state(goal: goal, candidates: [], recentSteps: [], before: before, after: after,
-                           expectation: expectation, verification: verification, budget: budget)
+                           expectation: expectation, verification: verification, budget: budget,
+                           screenshot: screenshot?.state)
             })
         guard case .fitted(let state, let question) = fitted else {
             return mode == .shadow ? localAdvice : .handback
         }
         let outcome = await decide(useCase: .phoneVerification, state: state, question: question,
-                                   runID: runID, settings: settings)
-        guard !Task.isCancelled, settingsAreCurrent(settings, useCase: .phoneVerification) else { return .handback }
+                                   runID: runID, settings: settings, requiredScopes: requiredScopes, assets: assets)
+        guard !Task.isCancelled,
+              settingsAreCurrent(settings, useCase: .phoneVerification, requiredScopes: requiredScopes) else {
+            return .handback
+        }
         guard settings.effectiveMode(for: .phoneVerification) == .active else { return localAdvice }
         guard let choice = Self.choice(from: outcome, options: Set(Self.verificationOptions.keys), settings: settings),
               let advice = Advice(rawValue: choice) else { return .handback }
@@ -141,7 +169,7 @@ final class IOSJevPhoneControlService {
     /// Handback reasons caused by a transient or low-confidence decision rather than by
     /// Jev declining. The goal loop re-reads the screen and asks again before handing back.
     static func isRetryableHandback(_ reason: String) -> Bool {
-        ["invalid_or_low_confidence_decision", "timeout", "transport", "concurrency_limit",
+        ["invalid_or_low_confidence_decision", "timeout", "late", "transport", "concurrency_limit",
          "invalid_response", "incomplete_response", "http_429", "shadow_dropped"].contains(reason)
             || reason.hasPrefix("http_5")
     }
@@ -161,10 +189,11 @@ final class IOSJevPhoneControlService {
         let unavailable: Set<String> = ["mode_off", "scope_not_allowed", "missing_key", "model_unspecified",
                                         "auth_paused", "cooling_down", "budget_exhausted", "concurrency_limit",
                                         "shadow", "shadow_dropped", "config_changed", "cancelled"]
-        let failed: Set<String> = ["state_too_large", "request_too_large", "timeout", "transport",
+        let failed: Set<String> = ["state_too_large", "request_too_large", "timeout", "late", "transport",
                                    "invalid_response", "incomplete_response", "invalid_request",
                                    "invalid_candidates", "candidate_budget_exceeded", "duplicate_part_id",
-                                   "duplicate_question_id", "empty_batch", "unknown_error"]
+                                   "duplicate_question_id", "empty_batch", "unknown_error",
+                                   "screenshot_unavailable", "screenshot_observation_mismatch"]
         if unavailable.contains(reason) { return .unavailable }
         if failed.contains(reason) || reason.hasPrefix("http_") { return .failed }
         return .declined
@@ -182,10 +211,11 @@ final class IOSJevPhoneControlService {
     }
 
     private func decide(useCase: IOSJevUseCase, state: String, question: IOSJevQuestion,
-                        runID: String, settings: IOSJevSettings) async -> IOSJevDecisionOutcome {
+                        runID: String, settings: IOSJevSettings, requiredScopes: Set<IOSJevDataScope>,
+                        assets: [String: IOSJevImageAsset]) async -> IOSJevDecisionOutcome {
         await deps.coordinator.decide(
-            useCase: useCase, requiredScopes: Self.scopes, state: state,
-            questions: [question],
+            useCase: useCase, requiredScopes: requiredScopes, state: state,
+            questions: [question], assets: assets,
             context: .init(runId: runID, turnBudgetKey: runID,
                            inputHash: IOSJevToolDiscoveryService.stableHash(state)),
             cacheKey: nil,
@@ -245,10 +275,11 @@ final class IOSJevPhoneControlService {
     /// question id prefixed with "single."). The state shrinks until the body fits; only
     /// mandatory evidence that cannot fit at all fails the request.
     private static func fitRequest(useCase: IOSJevUseCase, settings: IOSJevSettings, instructions: String,
+                                   assets: [String: IOSJevImageAsset],
                                    descriptionCaps: [Int], options: (Int) -> [String: String?],
                                    state: (Int) -> String?) -> Fit {
         let header = "## \(useCase.rawValue).single\n"
-        let requestLimit = settings.policy.maxRequestBytes
+        let requestLimit = assets.isEmpty ? settings.policy.maxRequestBytes : IOSJevPolicy.maxImageRequestBytes
         // The coordinator wraps each part with a short section header.
         let stateCeiling = max(0, min(48 * 1_024, settings.policy.maxStateBytes) - 128)
         for cap in descriptionCaps {
@@ -258,12 +289,14 @@ final class IOSJevPhoneControlService {
             wire.id = "single." + question.id
             func bodyBytes(_ text: String) -> Int? {
                 (try? IOSJevClient.encodedRequestBody(model: settings.activeModelVersion, state: header + text,
-                                                     questions: [wire], style: settings.apiStyle))?.count
+                                                     questions: [wire], style: settings.apiStyle, assets: assets))?.count
             }
-            guard let fixed = bodyBytes("") else { return .failed("invalid_request") }
-            var budget = min(stateCeiling, requestLimit - fixed)
+            // Image references must occur once in the real state, so measure the complete
+            // request rather than estimating asset overhead with an empty placeholder.
+            var budget = stateCeiling
             for _ in 0..<6 {
-                guard budget > 0, let text = state(budget), let bytes = bodyBytes(text) else { break }
+                guard budget > 0, let text = state(budget) else { break }
+                guard let bytes = bodyBytes(text) else { return .failed("invalid_request") }
                 if bytes <= requestLimit { return .fitted(state: text, question: question) }
                 // Every state byte costs at least one body byte (escaping only adds).
                 budget = min(budget, text.utf8.count) - (bytes - requestLimit)
@@ -272,11 +305,60 @@ final class IOSJevPhoneControlService {
         return .failed(state(stateCeiling) == nil ? "state_too_large" : "request_too_large")
     }
 
-    private func settingsAreCurrent(_ settings: IOSJevSettings, useCase: IOSJevUseCase) -> Bool {
+    private func settingsAreCurrent(_ settings: IOSJevSettings, useCase: IOSJevUseCase,
+                                    requiredScopes: Set<IOSJevDataScope>) -> Bool {
         let current = deps.settingsProvider()
         return current.revision == settings.revision
             && current.effectiveMode(for: useCase) == settings.effectiveMode(for: useCase)
-            && current.canSend(useCase: useCase, required: Self.scopes)
+            && current.canSend(useCase: useCase, required: requiredScopes)
+    }
+
+    private struct ScreenshotState: Encodable {
+        let description = "Current screenshot for the after observation. Screen bounds map to contentBounds within this image; padding is not phone UI."
+        let image: String
+        let observationID: String
+        /// Left, top, right, bottom in the encoded image, normalized from the top left.
+        let contentBounds: [Double]
+    }
+
+    private struct PreparedScreenshot {
+        let state: ScreenshotState
+        let assets: [String: IOSJevImageAsset]
+    }
+
+    private enum ScreenshotFailure: String, Swift.Error {
+        case stale = "screenshot_observation_mismatch"
+        case configurationChanged = "config_changed"
+    }
+
+    private func prepareScreenshot(observation: PhoneObservation, useCase: IOSJevUseCase,
+                                   settings: IOSJevSettings,
+                                   provider: (() async throws -> PhoneScreenshot)?) async throws -> PreparedScreenshot? {
+        guard settings.canSendPhoneScreenshots(for: useCase), let provider else { return nil }
+        try Task.checkCancellation()
+        let screenshot = try await provider()
+        let requiredScopes = Self.scopes.union([.phoneScreenshots])
+        guard settingsAreCurrent(settings, useCase: useCase, requiredScopes: requiredScopes) else {
+            throw ScreenshotFailure.configurationChanged
+        }
+        guard screenshot.observationID == observation.observationID else { throw ScreenshotFailure.stale }
+        if let bounds = observation.screenBounds,
+           screenshot.width != bounds.width || screenshot.height != bounds.height {
+            throw ScreenshotFailure.stale
+        }
+        let image = try await IOSJevPhoneImage.prepare(from: screenshot)
+        guard settingsAreCurrent(settings, useCase: useCase, requiredScopes: requiredScopes) else {
+            throw ScreenshotFailure.configurationChanged
+        }
+        let reference = "image-" + UUID().uuidString.lowercased()
+        return PreparedScreenshot(state: .init(image: reference, observationID: screenshot.observationID,
+                                               contentBounds: image.contentBounds),
+                                  assets: [reference: image.asset])
+    }
+
+    private static func screenshotFailureReason(_ error: Swift.Error) -> String {
+        if error is CancellationError { return "cancelled" }
+        return (error as? ScreenshotFailure)?.rawValue ?? "screenshot_unavailable"
     }
 
     private static func choice(from outcome: IOSJevDecisionOutcome, options: Set<String>,
@@ -307,6 +389,7 @@ final class IOSJevPhoneControlService {
         /// On-screen nodes left out of every observation to fit the byte budget.
         var trimmedNodes: Int
         var observations: [ObservationState]
+        var currentScreenshot: ScreenshotState?
     }
 
     private struct ObservationState: Encodable {
@@ -386,7 +469,7 @@ final class IOSJevPhoneControlService {
     private static func state(goal: String, candidates: [Candidate], recentSteps: [String],
                               before: PhoneObservation?, after: PhoneObservation,
                               expectation: IOSPhoneGoalExpectation?, verification: IOSPhoneGoalVerificationResult?,
-                              budget: Int) -> String? {
+                              budget: Int, screenshot: ScreenshotState? = nil) -> String? {
         let source = before.map { [$0, after] } ?? [after]
         let afterIndex = source.count - 1
         // Nodes covered by a pushed page are not on screen; they never reach Jev.
@@ -451,7 +534,7 @@ final class IOSJevPhoneControlService {
         var state = State(goal: goal, candidates: candidates.map(\.id), expectation: expectation,
                           verification: verification, recentSteps: [],
                           trimmedNodes: observations.reduce(0) { $0 + $1.omittedNodes },
-                          observations: observations)
+                          observations: observations, currentScreenshot: screenshot)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let initial = try? encoder.encode(state), initial.count <= budget else { return nil }

@@ -1136,6 +1136,191 @@ final class IOSPhoneControlControllerTests: XCTestCase {
         XCTAssertTrue(fixture.activity.states.isEmpty)
     }
 
+    @MainActor
+    func testExternalConnectionModePersistsAndNeverPreparesAmberVPN() async throws {
+        let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("existingVPN", forKey: IOSPhoneControlController.connectionModePreferenceKey)
+        let tunnel = PhoneControlTunnelStub()
+        tunnel.isPrepared = false
+        let controller = IOSPhoneControlController(defaults: defaults,
+            credentials: MemoryPairingStore(data: try pairingData()), localTunnel: tunnel)
+        await controller.refreshPreparation()
+        XCTAssertEqual(controller.connectionMode, .existingVPN)
+        XCTAssertTrue(controller.isConnectionPrepared)
+        do { try await controller.prepareConnection(); XCTFail("External mode must not create a VPN configuration") }
+        catch IOSPhoneControlError.externallyManagedConnection { }
+        controller.enabled = true
+        controller.selectedBundleIDs = ["app.amber.ios"]
+        XCTAssertTrue(controller.claim(runID: "external", onStop: {}))
+        XCTAssertTrue(controller.statusText(runID: "external").contains("availability=available"))
+        XCTAssertThrowsError(try controller.setConnectionMode(.embedded))
+        await controller.stop(runID: "external")
+        assertNoTunnelCalls(tunnel)
+        try controller.setConnectionMode(.embedded)
+        XCTAssertEqual(defaults.string(forKey: IOSPhoneControlController.connectionModePreferenceKey), "embedded")
+        XCTAssertFalse(controller.isConnectionPrepared)
+    }
+
+    @MainActor
+    func testReturningFromExternalModeRefreshesExistingEmbeddedPreparation() async throws {
+        let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("existingVPN", forKey: IOSPhoneControlController.connectionModePreferenceKey)
+        let tunnel = PhoneControlTunnelStub()
+        tunnel.isPrepared = false
+        let controller = IOSPhoneControlController(defaults: defaults,
+            credentials: MemoryPairingStore(data: try pairingData()), localTunnel: tunnel)
+        await controller.refreshPreparation()
+        assertNoTunnelCalls(tunnel)
+        let refreshed = expectation(description: "Switching back reloads the saved Amber VPN configuration")
+        tunnel.refreshOperation = {
+            tunnel.isPrepared = true
+            refreshed.fulfill()
+        }
+        try controller.setConnectionMode(.embedded)
+        await fulfillment(of: [refreshed], timeout: 2)
+        XCTAssertTrue(controller.isConnectionPrepared)
+        XCTAssertEqual(tunnel.prepareCount, 0, "Reading an existing configuration must not save or enable it")
+        XCTAssertTrue(tunnel.startOwners.isEmpty)
+        XCTAssertTrue(tunnel.stopOwners.isEmpty)
+    }
+
+    @MainActor
+    func testExternalReadinessUsesRealRunnerReadAndCleansUpWithoutTouchingVPN() async throws {
+        let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("existingVPN", forKey: IOSPhoneControlController.connectionModePreferenceKey)
+        let http = ReadinessHTTPFixture(bundleID: try XCTUnwrap(Bundle.main.bundleIdentifier))
+        defer { http.unregister() }
+        let session = ReadinessSessionStub(fixture: http)
+        let tunnel = PhoneControlTunnelStub()
+        tunnel.isPrepared = false
+        let controller = IOSPhoneControlController(defaults: defaults,
+            credentials: MemoryPairingStore(data: try pairingData()), session: session, localTunnel: tunnel)
+        controller.enabled = true
+        try await controller.checkReadiness()
+        let modes = await session.connectionModes
+        XCTAssertEqual(modes, [.existingVPN])
+        XCTAssertNotNil(controller.readinessReport?.connectionVerifiedAt)
+        XCTAssertNotNil(controller.readinessReport?.uiReadAt)
+        XCTAssertNil(controller.readinessReport?.failureMessage)
+        XCTAssertTrue(controller.readinessReport?.cleanupComplete == true)
+        XCTAssertNil(controller.ownerRunID)
+        XCTAssertTrue(http.paths.contains("/source"))
+        assertNoTunnelCalls(tunnel)
+        try controller.setConnectionMode(.embedded)
+        XCTAssertNil(controller.readinessReport, "A different route must not inherit a previous readiness result")
+    }
+
+    @MainActor
+    func testExternalStartupFailureAndCancellationLeaveVPNUntouched() async throws {
+        for cancel in [false, true] {
+            let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.set("existingVPN", forKey: IOSPhoneControlController.connectionModePreferenceKey)
+            let http = ReadinessHTTPFixture(bundleID: try XCTUnwrap(Bundle.main.bundleIdentifier))
+            defer { http.unregister() }
+            let session = ReadinessSessionStub(fixture: http, failStartup: !cancel, blockStartup: cancel)
+            let tunnel = PhoneControlTunnelStub()
+            let controller = IOSPhoneControlController(defaults: defaults,
+                credentials: MemoryPairingStore(data: try pairingData()), session: session, localTunnel: tunnel)
+            controller.enabled = true
+            let checking = Task { try await controller.checkReadiness() }
+            await session.waitUntilStarted()
+            if cancel {
+                XCTAssertThrowsError(try controller.setConnectionMode(.embedded))
+                controller.cancelReadinessCheck()
+                await session.releaseStartup()
+            }
+            try await checking.value
+            XCTAssertNil(controller.ownerRunID)
+            XCTAssertTrue(controller.readinessReport?.cleanupComplete == true)
+            XCTAssertEqual(controller.readinessReport?.wasCancelled, cancel)
+            XCTAssertNil(controller.readinessReport?.uiReadAt)
+            assertNoTunnelCalls(tunnel)
+        }
+    }
+
+    @MainActor
+    func testExternalApplicationQuerySuccessFailureAndCancellationNeverManageVPN() async throws {
+        for scenario in ["success", "failure", "cancel"] {
+            let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.set("existingVPN", forKey: IOSPhoneControlController.connectionModePreferenceKey)
+            let discovery = ControllerApplicationDiscovery([
+                PhoneControlInstalledApp(bundleID: "app.example", name: "Example")
+            ], blockFirst: scenario == "cancel")
+            if scenario == "failure" { await discovery.failQueries() }
+            let tunnel = PhoneControlTunnelStub()
+            let controller = IOSPhoneControlController(defaults: defaults,
+                credentials: MemoryPairingStore(data: try pairingData()), applications: discovery, localTunnel: tunnel)
+            let querying = Task { try await controller.loadInstalledApplications() }
+            await discovery.waitUntilStarted()
+            if scenario == "cancel" {
+                XCTAssertThrowsError(try controller.setConnectionMode(.embedded))
+                querying.cancel()
+                await discovery.release()
+            }
+            do {
+                let applications = try await querying.value
+                XCTAssertEqual(scenario, "success")
+                XCTAssertEqual(applications.map(\.bundleID), ["app.example"])
+            } catch {
+                XCTAssertNotEqual(scenario, "success")
+                XCTAssertTrue(controller.installedApplications.isEmpty)
+            }
+            let modes = await discovery.connectionModes
+            XCTAssertEqual(modes, [.existingVPN])
+            XCTAssertFalse(controller.isLoadingApplications)
+            assertNoTunnelCalls(tunnel)
+        }
+    }
+
+    @MainActor
+    func testExternalFirstPairingSuccessFailureAndCancellationNeverManageVPN() async throws {
+        for scenario in ["success", "failure", "cancel"] {
+            let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.set("existingVPN", forKey: IOSPhoneControlController.connectionModePreferenceKey)
+            let pairing = ExternalPairingStub(data: try pairingData(), scenario: scenario)
+            let credentials = MemoryPairingStore(data: nil)
+            let tunnel = PhoneControlTunnelStub()
+            let controller = IOSPhoneControlController(defaults: defaults,
+                credentials: credentials, localTunnel: tunnel, pairingSession: pairing)
+            let preparing = Task { try await controller.preparePairing() }
+            await pairing.waitUntilStarted()
+            if scenario == "cancel" {
+                XCTAssertThrowsError(try controller.setConnectionMode(.embedded))
+                controller.cancelPreparation()
+            }
+            do {
+                try await preparing.value
+                XCTAssertEqual(scenario, "success")
+            } catch { XCTAssertNotEqual(scenario, "success") }
+            let modes = await pairing.connectionModes
+            XCTAssertEqual(modes, [.existingVPN])
+            let saved = await credentials.loadPairing()
+            XCTAssertEqual(saved != nil, scenario == "success")
+            XCTAssertFalse(controller.isUpdatingPairing)
+            assertNoTunnelCalls(tunnel)
+        }
+    }
+
+    @MainActor
+    private func assertNoTunnelCalls(_ tunnel: PhoneControlTunnelStub, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(tunnel.refreshCount, 0, file: file, line: line)
+        XCTAssertEqual(tunnel.prepareCount, 0, file: file, line: line)
+        XCTAssertTrue(tunnel.startOwners.isEmpty, file: file, line: line)
+        XCTAssertTrue(tunnel.stopOwners.isEmpty, file: file, line: line)
+    }
+
     private func pairingDictionary() throws -> [String: Any] {
         let key = Curve25519.Signing.PrivateKey()
         return ["public_key": key.publicKey.rawRepresentation, "private_key": key.rawRepresentation,
@@ -1145,6 +1330,31 @@ final class IOSPhoneControlControllerTests: XCTestCase {
     private func pairingData() throws -> Data {
         try PropertyListSerialization.data(fromPropertyList: pairingDictionary(), format: .xml, options: 0)
     }
+}
+
+private actor ExternalPairingStub: PhoneControlPairingServing {
+    let data: Data
+    let scenario: String
+    private(set) var connectionModes: [IOSPhoneControlConnectionMode] = []
+    private var started: CheckedContinuation<Void, Never>?
+
+    init(data: Data, scenario: String) { self.data = data; self.scenario = scenario }
+
+    func prepare(id: UUID, connectionMode: IOSPhoneControlConnectionMode,
+                 progress: @Sendable (PhoneControlLaunchStatus) async -> Void) async throws -> Data {
+        connectionModes.append(connectionMode)
+        started?.resume()
+        started = nil
+        if scenario == "cancel" { try await Task.sleep(for: .seconds(60)) }
+        if scenario == "failure" { throw URLError(.cannotConnectToHost) }
+        return data
+    }
+
+    func waitUntilStarted() async {
+        if connectionModes.isEmpty { await withCheckedContinuation { started = $0 } }
+    }
+
+    func cancel(id: UUID) { }
 }
 
 private actor MemoryPairingStore: IOSPhoneControlCredentialStoring {
@@ -1172,14 +1382,16 @@ private actor ControllerApplicationDiscovery: PhoneControlApplicationDiscovering
     private var started: CheckedContinuation<Void, Never>?
     private(set) var callCount = 0
     private(set) var completedCount = 0
+    private(set) var connectionModes: [IOSPhoneControlConnectionMode] = []
 
     init(_ applications: [PhoneControlInstalledApp], blockFirst: Bool = false) {
         self.applications = applications
         self.blockFirst = blockFirst
     }
 
-    func installedApplications(pairing: Data) async throws -> [PhoneControlInstalledApp] {
+    func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) async throws -> [PhoneControlInstalledApp] {
         callCount += 1
+        connectionModes.append(connectionMode)
         started?.resume()
         started = nil
         if blockFirst && callCount == 1 {
@@ -1233,6 +1445,7 @@ actor ReadinessSessionStub: IOSPhoneControlSessionServing {
     private var started: CheckedContinuation<Void, Never>?
     private var blocked: CheckedContinuation<Void, Never>?
     private(set) var startedScopes: [Set<String>] = []
+    private(set) var connectionModes: [IOSPhoneControlConnectionMode] = []
 
     init(fixture: ReadinessHTTPFixture, failStartup: Bool = false, blockStartup: Bool = false) {
         self.fixture = fixture
@@ -1242,6 +1455,7 @@ actor ReadinessSessionStub: IOSPhoneControlSessionServing {
 
     func start(runID: UUID, configuration: PhoneControlLaunchConfiguration) async throws -> PhoneRunnerStatus {
         startedScopes.append(configuration.allowedBundleIDs)
+        connectionModes.append(configuration.connectionMode)
         started?.resume()
         started = nil
         if blockStartup { await withCheckedContinuation { blocked = $0 } }

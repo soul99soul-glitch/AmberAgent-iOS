@@ -7,6 +7,42 @@ const VPN_PEER: Ipv4Addr = Ipv4Addr::new(10, 7, 0, 1);
 #[cfg(any(target_vendor = "apple", test))]
 const VPN_INTERFACE_ADDRESS: Ipv4Addr = Ipv4Addr::new(10, 7, 1, 1);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RouteMode {
+    Embedded,
+    ExistingVpn,
+}
+
+impl TryFrom<u32> for RouteMode {
+    type Error = Failure;
+
+    fn try_from(value: u32) -> Result<Self, Failure> {
+        match value {
+            0 => Ok(Self::Embedded),
+            1 => Ok(Self::ExistingVpn),
+            _ => Err(Failure::new("invalid_route_mode", "本机连接方式无效，连接未发送。")),
+        }
+    }
+}
+
+impl RouteMode {
+    pub(super) fn validate_endpoint(self, endpoint: SocketAddr) -> Result<SocketAddr, Failure> {
+        if self == Self::ExistingVpn && (endpoint.ip() != IpAddr::V4(VPN_PEER) || endpoint.port() != 49152) {
+            return Err(Failure::new("invalid_endpoint", "现有 VPN 仅支持本机开发地址 10.7.0.1:49152。"));
+        }
+        Ok(endpoint)
+    }
+
+    pub(super) async fn connect(
+        self, endpoint: SocketAddr, failure_code: &'static str, failure_message: &'static str,
+    ) -> Result<TcpStream, Failure> {
+        match self {
+            Self::Embedded => connect(endpoint, failure_code, failure_message).await,
+            Self::ExistingVpn => connect_using_current_route(endpoint, failure_code, failure_message).await,
+        }
+    }
+}
+
 /// Scope the real connection, including dynamically assigned tunnel ports.
 /// A separate route probe cannot constrain a later TCP socket if the VPN stops.
 pub(super) async fn connect(
@@ -40,33 +76,35 @@ pub(super) async fn connect(
     }
 }
 
-/// Diagnostic only: discover the kernel's current VPN route without sending a
-/// UDP payload, then constrain the actual greeting socket to that interface.
-/// Production connections retain the fixed Amber interface selection above.
-pub(super) async fn connect_using_current_route(endpoint: SocketAddr) -> Result<TcpStream, Failure> {
+/// Discover the kernel's current VPN route without sending a UDP payload, then
+/// constrain the actual socket to that interface. Every new connection repeats
+/// this lookup, including a dynamically assigned development tunnel port.
+pub(super) async fn connect_using_current_route(
+    endpoint: SocketAddr, failure_code: &'static str, failure_message: &'static str,
+) -> Result<TcpStream, Failure> {
     let endpoint = validate_routed_endpoint(endpoint)?;
     #[cfg(target_vendor = "apple")]
     {
         let source = route_source_address(endpoint)?;
         let interface = unique_interface_index_for_address(&local_interfaces()?, source)?;
         let socket = tokio::net::TcpSocket::new_v4().map_err(|error| {
-            Failure::device("connection_failed", "无法创建开发服务诊断连接。", error.into())
+            Failure::device(failure_code, failure_message, error.into())
         })?;
         bind_interface(&socket, interface)?;
         socket.connect(endpoint).await.map_err(|error| {
-            Failure::device("connection_failed", "当前 VPN 路由无法连接本机开发服务。", error.into())
+            Failure::device(failure_code, failure_message, error.into())
         })
     }
     #[cfg(not(target_vendor = "apple"))]
     {
-        let _ = endpoint;
+        let _ = (endpoint, failure_code, failure_message);
         Err(Failure::new("loopback_route_unavailable", "当前平台无法约束本机连接路由，连接未发送。"))
     }
 }
 
 pub(super) fn validate_routed_endpoint(endpoint: SocketAddr) -> Result<SocketAddr, Failure> {
     if !endpoint.is_ipv4() || endpoint.port() == 0 {
-        return Err(Failure::new("invalid_endpoint", "当前 VPN 路由诊断必须使用显式 IPv4 地址和有效端口。"));
+        return Err(Failure::new("invalid_endpoint", "当前 VPN 路由必须使用显式 IPv4 地址和有效端口。"));
     }
     Ok(endpoint)
 }
@@ -74,14 +112,14 @@ pub(super) fn validate_routed_endpoint(endpoint: SocketAddr) -> Result<SocketAdd
 #[cfg(target_vendor = "apple")]
 fn route_source_address(endpoint: SocketAddr) -> Result<Ipv4Addr, Failure> {
     let route_error = |error: std::io::Error| {
-        Failure::device("loopback_route_unavailable", "无法查询开发地址的当前路由，诊断未发送。", error.into())
+        Failure::device("loopback_route_unavailable", "无法查询开发地址的当前路由，连接未发送。", error.into())
     };
     let probe = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).map_err(route_error)?;
     // UDP connect only selects a route and peer; no send/write is performed.
     probe.connect(endpoint).map_err(route_error)?;
     match probe.local_addr().map_err(route_error)?.ip() {
         IpAddr::V4(source) => Ok(source),
-        IpAddr::V6(_) => Err(Failure::new("loopback_route_unavailable", "开发地址未选中 IPv4 路由，诊断未发送。")),
+        IpAddr::V6(_) => Err(Failure::new("loopback_route_unavailable", "开发地址未选中 IPv4 路由，连接未发送。")),
     }
 }
 
@@ -178,6 +216,40 @@ fn bind_interface(socket: &tokio::net::TcpSocket, index: u32) -> Result<(), Fail
 mod tests {
     use super::*;
 
+    #[test]
+    fn route_mode_is_explicit_and_existing_vpn_keeps_the_fixed_development_peer() {
+        assert_eq!(RouteMode::try_from(0).ok(), Some(RouteMode::Embedded));
+        assert_eq!(RouteMode::try_from(1).ok(), Some(RouteMode::ExistingVpn));
+        assert_eq!(RouteMode::try_from(2).err().unwrap().code, "invalid_route_mode");
+        assert_eq!(RouteMode::try_from(u32::MAX).err().unwrap().code, "invalid_route_mode");
+        assert!(RouteMode::ExistingVpn.validate_endpoint("10.7.0.1:49152".parse().unwrap()).is_ok());
+        for endpoint in ["127.0.0.1:49152", "192.0.2.1:49152", "10.7.0.1:49153", "[::1]:49152"] {
+            let endpoint = endpoint.parse().unwrap();
+            assert_eq!(RouteMode::ExistingVpn.validate_endpoint(endpoint).err().unwrap().code, "invalid_endpoint");
+            assert!(RouteMode::Embedded.validate_endpoint(endpoint).is_ok(), "existing diagnostic endpoints remain available");
+        }
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[tokio::test]
+    async fn selected_mode_applies_to_both_pairing_and_dynamic_tls_sockets() {
+        // Two actual listeners represent RemotePairing and the later port from
+        // create_tcp_listener. Embedded permits explicit localhost fixtures;
+        // ExistingVpn must not fall back to either reachable localhost socket.
+        for failure_code in ["connection_failed", "tunnel_connection_failed"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = listener.local_addr().unwrap();
+            let connected = RouteMode::Embedded.connect(endpoint, failure_code, "fixture").await;
+            assert!(connected.is_ok());
+            let _accepted = listener.accept().await.unwrap();
+            drop(connected);
+
+            let failure = RouteMode::ExistingVpn.connect(endpoint, failure_code, "fixture").await.err().unwrap();
+            assert_eq!(failure.code, "loopback_route_unavailable", "route errors retain their actionable code");
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept()).await.is_err());
+        }
+    }
+
     fn interface(name: &str, up: bool, address: [u8; 4], index: u32) -> Interface {
         Interface { name: name.into(), up, address: Ipv4Addr::from(address), index }
     }
@@ -191,7 +263,7 @@ mod tests {
             vec![interface("utun4", true, [10, 7, 0, 1], 5)],
             vec![interface("utun4", true, [10, 7, 1, 1], 0)],
         ] {
-            let error = unique_interface_index(&candidates).err().expect("route must be rejected");
+            let error = unique_interface_index(&candidates).expect_err("route must be rejected");
             assert_eq!(error.code, "loopback_route_unavailable");
         }
         assert_eq!(unique_interface_index(&[
@@ -206,7 +278,7 @@ mod tests {
         let error = unique_interface_index(&[
             interface("utun4", true, [10, 7, 1, 1], 5),
             interface("utun8", true, [10, 7, 1, 1], 9),
-        ]).err().expect("ambiguous route must be rejected");
+        ]).expect_err("ambiguous route must be rejected");
         assert_eq!(error.code, "loopback_route_ambiguous");
     }
 
@@ -236,13 +308,13 @@ mod tests {
             vec![interface("utun4", true, [198, 18, 0, 1], 0)],
             vec![interface("utun4", true, [10, 7, 1, 1], 4)],
         ] {
-            let failure = unique_interface_index_for_address(&candidates, source).err().expect("route must be rejected");
+            let failure = unique_interface_index_for_address(&candidates, source).expect_err("route must be rejected");
             assert_eq!(failure.code, "loopback_route_unavailable");
         }
         let failure = unique_interface_index_for_address(&[
             interface("utun4", true, [198, 18, 0, 1], 4),
             interface("utun5", true, [198, 18, 0, 1], 5),
-        ], source).err().expect("ambiguous route must be rejected");
+        ], source).expect_err("ambiguous route must be rejected");
         assert_eq!(failure.code, "loopback_route_ambiguous");
     }
 
@@ -271,7 +343,7 @@ mod tests {
             (&mut actual as *mut u32).cast(), &mut length,
         ) }, 0);
         assert_eq!(actual, index);
-        let error = bind_interface(&socket, u32::MAX).err().expect("invalid interface must fail");
+        let error = bind_interface(&socket, u32::MAX).expect_err("invalid interface must fail");
         assert_eq!(error.code, "loopback_route_bind_failed");
     }
 }

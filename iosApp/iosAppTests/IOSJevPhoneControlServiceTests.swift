@@ -23,6 +23,14 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         return settings
     }
 
+    private func imageSettings(mode: IOSJevMode = .active) -> IOSJevSettings {
+        var settings = settings(mode: mode)
+        for useCase in [IOSJevUseCase.phoneActions, .phoneVerification] {
+            settings.setScopes([.selectedTaskText, .phoneContent, .phoneScreenshots], for: useCase)
+        }
+        return settings
+    }
+
     private func service(_ box: SettingsBox, transport: JevStubTransport) -> Service {
         let coordinator = IOSJevDecisionCoordinator(deps: .init(
             client: IOSJevClient(transport: transport), settingsProvider: { box.get() },
@@ -39,8 +47,16 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         ])
     }
 
-    private func transport(_ choice: String = "a1", confidence: Double? = 0.95) -> JevStubTransport {
-        JevStubTransport { _ in (Self.payload(choice, confidence: confidence), jevResponse(200)) }
+    private func transport(_ choice: String = "a1", confidence: Double? = 0.95,
+                           style: IOSJevAPIStyle = .systemone) -> JevStubTransport {
+        JevStubTransport { _ in
+            if style == .systemone { return (Self.payload(choice, confidence: confidence), jevResponse(200)) }
+            let payload: [String: Any] = [
+                "answers": ["single.next_step": ["type": "choice", "choice": choice]],
+                "providerMetadata": ["typesafe": ["confidence": ["single.next_step": confidence ?? 0]]],
+            ]
+            return (try JSONSerialization.data(withJSONObject: payload), jevResponse(200))
+        }
     }
 
     private func outboundState(_ transport: JevStubTransport) throws -> (text: String, json: [String: Any]) {
@@ -96,6 +112,183 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         XCTAssertEqual(action, .handback("mode_off"))
         XCTAssertEqual(advice, .handback)
         XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testScreenshotsAreLazyForOffUnconsentedAndUnsupportedGatewaySettings() async throws {
+        var off = imageSettings()
+        off.setMode(.off, for: .phoneActions)
+        var gateway = imageSettings()
+        gateway.setAPIStyle(.vercelGateway)
+        gateway.setProviderModel("typesafe-ai/jev")
+        for (settings, expectedCalls) in [(off, 0), (settings(), 1), (gateway, 1)] {
+            let transport = transport()
+            var screenshots = 0
+            _ = await service(SettingsBox(settings), transport: transport).chooseAction(
+                goal: "选择下一步", observation: observation(), candidates: [candidate],
+                recentSteps: [], runID: "lazy-screenshot",
+                screenshotProvider: {
+                    screenshots += 1
+                    throw URLError(.badServerResponse)
+                })
+            XCTAssertEqual(screenshots, 0)
+            XCTAssertEqual(transport.calls, expectedCalls)
+            if let body = transport.lastBody {
+                let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                XCTAssertNil(request["assets"])
+            }
+        }
+    }
+
+    func testAuthorizedScreenshotIsIncludedInTheFirstAndOnlyDecision() async throws {
+        let transport = transport()
+        let screenshot = PhoneScreenshot(data: try jevPhonePNG(), observationID: "o1", width: 402, height: 874)
+        var screenshots = 0
+        let result = await service(SettingsBox(imageSettings()), transport: transport).chooseAction(
+            goal: "选择下一步", observation: observation(), candidates: [candidate, .init(id: "a2", description: "第二项")],
+            recentSteps: [], runID: "image-choice", screenshotProvider: { screenshots += 1; return screenshot })
+        XCTAssertEqual(result, .action("a1"))
+        XCTAssertEqual(screenshots, 1)
+        XCTAssertEqual(transport.calls, 1, "Image evidence must not add a preceding text-only request")
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(transport.lastBody)) as? [String: Any])
+        let assets = try XCTUnwrap(request["assets"] as? [String: [String: Any]])
+        let reference = try XCTUnwrap(assets.keys.first)
+        XCTAssertEqual(assets.count, 1)
+        XCTAssertNotNil(UUID(uuidString: String(reference.dropFirst("image-".count))))
+        XCTAssertEqual(assets[reference]?["format"] as? String, "jpg")
+        XCTAssertEqual(assets[reference]?["type"] as? String, "image")
+        let state = try outboundState(transport)
+        let current = try XCTUnwrap(state.json["currentScreenshot"] as? [String: Any])
+        XCTAssertEqual(current["observationID"] as? String, "o1")
+        XCTAssertEqual(current["image"] as? String, reference)
+        XCTAssertEqual(current["contentBounds"] as? [Double], [0, 0, 1, 1])
+        XCTAssertEqual(state.text.components(separatedBy: reference).count - 1, 1)
+        XCTAssertFalse(state.text.contains("data_base64"))
+    }
+
+    func testAuthorizedGateway114ScreenshotSelectsExistingCandidateInOneRequest() async throws {
+        var configured = imageSettings()
+        configured.setAPIStyle(.vercelGateway)
+        configured.setProviderModel("typesafe-ai/jev-1.14.0")
+        let transport = JevStubTransport { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "ai-model-id"), "typesafe-ai/jev-1.14.0")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "ai-decision-model-specification-version"), "4")
+            let payload: [String: Any] = [
+                "answers": ["single.next_step": ["type": "choice", "choice": "a1"]],
+                "providerMetadata": ["typesafe": ["confidence": ["single.next_step": 0.95]]],
+            ]
+            return (try JSONSerialization.data(withJSONObject: payload), jevResponse(200))
+        }
+        var screenshots = 0
+        let screenshot = PhoneScreenshot(data: try jevPhonePNG(), observationID: "o1", width: 402, height: 874)
+        let result = await service(SettingsBox(configured), transport: transport).chooseAction(
+            goal: "选择下一步", observation: observation(), candidates: [candidate, .init(id: "a2", description: "第二项")],
+            recentSteps: [], runID: "gateway-image-choice", screenshotProvider: { screenshots += 1; return screenshot })
+        XCTAssertEqual(result, .action("a1"))
+        XCTAssertEqual(screenshots, 1)
+        XCTAssertEqual(transport.calls, 1)
+        let body = try XCTUnwrap(transport.lastBody)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertNil(request["state"])
+        XCTAssertNil(request["assets"])
+        XCTAssertNil(request["model"])
+        let parts = try XCTUnwrap(request["stateParts"] as? [[String: Any]])
+        let files = parts.filter { $0["type"] as? String == "file" }
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(files.first?["mediaType"] as? String, "image/jpeg")
+        let fileData = try XCTUnwrap(files.first?["data"] as? [String: Any])
+        XCTAssertEqual(fileData["type"] as? String, "data")
+        let base64 = try XCTUnwrap(fileData["data"] as? String)
+        XCTAssertFalse(try XCTUnwrap(Data(base64Encoded: base64)).isEmpty)
+        let text = parts.compactMap { $0["text"] as? String }.joined()
+        XCTAssertTrue(text.contains("选择下一步"))
+        XCTAssertTrue(text.contains("Current screenshot"))
+        XCTAssertTrue(text.contains("o1"))
+    }
+
+    func testFailedOrStaleScreenshotNeverFallsBackToOldTextAction() async throws {
+        let png = try jevPhonePNG()
+        for failure in ["capture", "observation", "geometry"] {
+            let transport = transport()
+            let result = await service(SettingsBox(imageSettings()), transport: transport).chooseAction(
+                goal: "选择下一步", observation: observation(), candidates: [candidate], recentSteps: [], runID: failure,
+                screenshotProvider: {
+                    if failure == "capture" { throw URLError(.cannotDecodeContentData) }
+                    return PhoneScreenshot(data: png, observationID: failure == "observation" ? "old" : "o1",
+                                           width: failure == "geometry" ? 874 : 402, height: 874)
+                })
+            XCTAssertEqual(result, .handback(failure == "capture" ? "screenshot_unavailable" : "screenshot_observation_mismatch"))
+            XCTAssertEqual(transport.calls, 0)
+        }
+    }
+
+    func testScreenshotConsentRevokedDuringCapturePreventsRequest() async throws {
+        let box = SettingsBox(imageSettings())
+        let transport = transport()
+        let screenshot = PhoneScreenshot(data: try jevPhonePNG(), observationID: "o1", width: 402, height: 874)
+        let result = await service(box, transport: transport).chooseAction(
+            goal: "选择下一步", observation: observation(), candidates: [candidate], recentSteps: [], runID: "revoke-capture",
+            screenshotProvider: {
+                box.change { $0.setScopes([.selectedTaskText, .phoneContent], for: .phoneActions) }
+                return screenshot
+            })
+        XCTAssertEqual(result, .handback("config_changed"))
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testScreenshotConsentRevokedDuringRequestDiscardsAction() async throws {
+        let box = SettingsBox(imageSettings())
+        let transport = JevStubTransport { _ in
+            box.change { $0.setScopes([.selectedTaskText, .phoneContent], for: .phoneActions) }
+            return (Self.payload("a1"), jevResponse(200))
+        }
+        let screenshot = PhoneScreenshot(data: try jevPhonePNG(), observationID: "o1", width: 402, height: 874)
+        let result = await service(box, transport: transport).chooseAction(
+            goal: "选择下一步", observation: observation(), candidates: [candidate], recentSteps: [], runID: "revoke-request",
+            screenshotProvider: { screenshot })
+        XCTAssertEqual(result, .handback("config_changed"))
+        XCTAssertEqual(transport.calls, 1)
+    }
+
+    func testVerificationScreenshotDoesNotChangeLocalSuccessOrInventProgress() async throws {
+        let transport = transport("continue")
+        let service = service(SettingsBox(imageSettings()), transport: transport)
+        var screenshots = 0
+        let screenshot = PhoneScreenshot(data: try jevPhonePNG(), observationID: "o2", width: 402, height: 874)
+        let provider: () async throws -> PhoneScreenshot = { screenshots += 1; return screenshot }
+        let success = await service.adviseAfterAction(
+            goal: "找到结果", expectation: expectation, before: observation(), after: observation(id: "o2"),
+            verification: .init(status: .satisfied, reason: "target_visible", needsScreenshot: false),
+            runID: "local-success", screenshotProvider: provider)
+        XCTAssertEqual(success, .continueTask)
+        XCTAssertEqual(screenshots, 0)
+        XCTAssertEqual(transport.calls, 0)
+        let unchanged = await service.adviseAfterAction(
+            goal: "找到结果", expectation: expectation, before: observation(), after: observation(id: "o2"),
+            verification: unmet, runID: "unchanged", screenshotProvider: provider)
+        XCTAssertEqual(unchanged, .handback)
+        XCTAssertEqual(screenshots, 1)
+        XCTAssertEqual(transport.calls, 1)
+        let state = try outboundState(transport)
+        let current = try XCTUnwrap(state.json["currentScreenshot"] as? [String: Any])
+        XCTAssertEqual(current["observationID"] as? String, "o2")
+        XCTAssertEqual(unmet.status, .unmet)
+    }
+
+    func testShadowImageAdviceKeepsLocalResultOnCaptureFailureAndRemoteSuccess() async throws {
+        let png = try jevPhonePNG()
+        let evidence = IOSPhoneGoalVerificationResult(status: .insufficient, reason: "empty_tree", needsScreenshot: true)
+        for captureFails in [true, false] {
+            let transport = transport("wait")
+            let result = await service(SettingsBox(imageSettings(mode: .shadow)), transport: transport).adviseAfterAction(
+                goal: "找到结果", expectation: expectation, before: observation(), after: observation(id: "o2"),
+                verification: evidence, runID: "shadow-image",
+                screenshotProvider: {
+                    if captureFails { throw URLError(.badServerResponse) }
+                    return PhoneScreenshot(data: png, observationID: "o2", width: 402, height: 874)
+                })
+            XCTAssertEqual(result, .needsScreenshot)
+            XCTAssertEqual(transport.calls, captureFails ? 0 : 1)
+        }
     }
 
     func testBothScopesAreRequiredIndependently() async {
@@ -585,6 +778,78 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
         XCTAssertEqual(observation["omittedNodes"] as? Int, state.json["trimmedNodes"] as? Int)
     }
 
+    func testLargePageScreenshotFitsBothWireStylesWithoutUsingTextOnlyLimit() async throws {
+        let screen = largeListObservation(id: "o1")
+        let candidates = IOSPhoneGoalLoop.liveCandidates(in: screen, limit: 61).map(\.decisionCandidate)
+        let screenshot = PhoneScreenshot(data: try jevPhonePNG(), observationID: "o1", width: 402, height: 874)
+        for style in [IOSJevAPIStyle.systemone, .vercelGateway] {
+            var configured = imageSettings()
+            configured.setAPIStyle(style)
+            if style == .vercelGateway { configured.setProviderModel("typesafe-ai/jev-1.14.0") }
+            configured.policy.maxRequestBytes = 8 * 1_024
+            let transport = transport(candidates[0].id, style: style)
+            var screenshots = 0
+            let result = await service(SettingsBox(configured), transport: transport).chooseAction(
+                goal: "打开群聊", observation: screen, candidates: candidates, recentSteps: [],
+                runID: "large-image-\(style.rawValue)", screenshotProvider: { screenshots += 1; return screenshot })
+            XCTAssertEqual(result, .action(candidates[0].id), style.rawValue)
+            XCTAssertEqual(screenshots, 1)
+            XCTAssertEqual(transport.calls, 1)
+            let body = try XCTUnwrap(transport.lastBody)
+            XCTAssertGreaterThan(body.count, configured.policy.maxRequestBytes)
+            XCTAssertLessThanOrEqual(body.count, IOSJevPolicy.maxImageRequestBytes)
+            let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            if style == .systemone {
+                let state = try outboundState(transport)
+                XCTAssertLessThanOrEqual(state.text.utf8.count, configured.policy.maxStateBytes - 128)
+                XCTAssertNotNil(state.json["currentScreenshot"])
+                XCTAssertEqual(state.json["candidates"] as? [String], candidates.map(\.id))
+                XCTAssertEqual((request["assets"] as? [String: Any])?.count, 1)
+            } else {
+                let parts = try XCTUnwrap(request["stateParts"] as? [[String: Any]])
+                XCTAssertEqual(parts.filter { $0["type"] as? String == "file" }.count, 1)
+                let text = parts.compactMap { $0["text"] as? String }.joined()
+                XCTAssertTrue(text.contains("currentScreenshot"))
+                XCTAssertTrue(text.contains("trimmedNodes"))
+            }
+        }
+    }
+
+    func testLargePageVerificationRetainsScreenshotAndRequiredEvidenceInBothWireStyles() async throws {
+        let screenshot = PhoneScreenshot(data: try jevPhonePNG(), observationID: "after", width: 402, height: 874)
+        for style in [IOSJevAPIStyle.systemone, .vercelGateway] {
+            var configured = imageSettings()
+            configured.setAPIStyle(style)
+            if style == .vercelGateway { configured.setProviderModel("typesafe-ai/jev-1.14.0") }
+            configured.policy.maxRequestBytes = 8 * 1_024
+            let transport = transport("wait", style: style)
+            let result = await service(SettingsBox(configured), transport: transport).adviseAfterAction(
+                goal: "打开群聊", expectation: .init(kind: .visible, target: .init(label: "李晨, 邓璐良, 刘剑崑")),
+                before: largeListObservation(id: "before"), after: largeListObservation(id: "after"),
+                verification: unmet, runID: "large-image-advice-\(style.rawValue)",
+                screenshotProvider: { screenshot })
+            XCTAssertEqual(result, .wait, style.rawValue)
+            XCTAssertEqual(transport.calls, 1)
+            let body = try XCTUnwrap(transport.lastBody)
+            XCTAssertGreaterThan(body.count, configured.policy.maxRequestBytes)
+            XCTAssertLessThanOrEqual(body.count, IOSJevPolicy.maxImageRequestBytes)
+            if style == .systemone {
+                let state = try outboundState(transport)
+                let observations = try XCTUnwrap(state.json["observations"] as? [[String: Any]])
+                XCTAssertEqual(observations.compactMap { $0["phase"] as? String }, ["before", "after"])
+                XCTAssertEqual((state.json["currentScreenshot"] as? [String: Any])?["observationID"] as? String, "after")
+                for observation in observations {
+                    let nodes = try XCTUnwrap(observation["nodes"] as? [[String: Any]])
+                    XCTAssertEqual(nodes.first?["label"] as? String, "李晨, 邓璐良, 刘剑崑")
+                }
+            } else {
+                let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let parts = try XCTUnwrap(request["stateParts"] as? [[String: Any]])
+                XCTAssertEqual(parts.filter { $0["type"] as? String == "file" }.count, 1)
+            }
+        }
+    }
+
     func testTightRequestLimitShrinksStateInsteadOfFailing() async throws {
         var limited = settings()
         limited.policy.maxRequestBytes = 24 * 1_024
@@ -624,9 +889,11 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
     }
 
     func testHandbackKindsSeparateJevFailureFromDecline() {
-        for reason in ["request_too_large", "state_too_large", "timeout", "transport", "http_500", "http_401",
-                       "invalid_response", "incomplete_response", "candidate_budget_exceeded"] {
+        for reason in ["request_too_large", "state_too_large", "timeout", "late", "transport", "http_500", "http_401",
+                       "invalid_response", "incomplete_response", "candidate_budget_exceeded",
+                       "screenshot_unavailable", "screenshot_observation_mismatch"] {
             XCTAssertEqual(Service.handbackKind(reason), .failed, reason)
+            XCTAssertEqual(IOSPhoneGoalLoop.jevReasonCode(reason), .jevFailed, reason)
         }
         for reason in ["mode_off", "scope_not_allowed", "missing_key", "budget_exhausted", "cooling_down",
                        "auth_paused", "shadow", "concurrency_limit"] {
