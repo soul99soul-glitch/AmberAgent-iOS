@@ -400,6 +400,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                         max(1, min(64, IOSSharedSettingsStore.loadPersistedJevSettings().policy.maxCandidates) - 3)
                     }
                 ))
+                let priorPath = PhoneRecipeStore.lastPath(bundleID: request.bundleID)
                 let result = await loop.run(request)
                 // 跑完切回 Amber：只在任务真的完成时做。runner 只允许 scope 内的 bundle，
                 // 宿主自身不在用户的受控应用列表里，先临时扩 scope 再激活；unknown 不抢前台。
@@ -407,6 +408,10 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     let host = Bundle.main.bundleIdentifier ?? "app.amber.ios"
                     try? await runner.allowApplication(host)
                     _ = await runner.act(.launch(bundleID: host))
+                }
+                // 沉淀成功路径：下一轮同一 App 的任务会把上次的做法还给模型参考。
+                if result.status == .completed {
+                    PhoneRecipeStore.save(bundleID: request.bundleID, goal: request.goal, steps: result.steps)
                 }
                 var fields: [String: Any] = [
                     "status": result.status.rawValue,
@@ -424,6 +429,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     fields["withheld_final_actions_hint"] = "这些最终提交/授权控件不会被自动点击；确认符合用户意图后用 phone_act 执行。"
                 }
                 if let continuedFrom = result.continuedFrom { fields["continued_from"] = continuedFrom.rawValue }
+                if let priorPath { fields["last_successful_path"] = priorPath }
                 if let jevReason = result.jevReason { fields["jev_reason"] = jevReason }
                 if request.steps != nil {
                     fields["verified_step_count"] = result.verifiedStepCount

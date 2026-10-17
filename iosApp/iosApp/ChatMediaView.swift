@@ -124,6 +124,9 @@ struct ChatMediaImage: View {
     @State private var retry = 0
 
     var body: some View {
+        #if DEBUG
+        let _ = print("MEDIA_BODY image=\(image != nil) failed=\(failed) visible=\(visible) bytes=\(url.utf8.count)")
+        #endif
         ZStack {
             AmberTheme.surface2
             if let image {
@@ -146,16 +149,30 @@ struct ChatMediaImage: View {
             print("MEDIA_VISIBILITY viewport=\(viewport) imageSize=\(proxy.size) intersects=\(viewport.intersects(CGRect(origin: .zero, size: proxy.size)))")
             #endif
             return viewport.intersects(CGRect(origin: .zero, size: proxy.size))
-        } action: { visible = $0 }
+        } action: {
+            #if DEBUG
+            print("MEDIA_ACTION visible=\($0) bytes=\(url.utf8.count)")
+            #endif
+            visible = $0
+        }
         .task(id: LoadRequest(url: url, visible: visible, retry: retry, pixelLimit: pixelLimit)) {
+            #if DEBUG
+            print("MEDIA_TASK start visible=\(visible) bytes=\(url.utf8.count) cancelled=\(Task.isCancelled)")
+            #endif
             guard visible else { image = nil; return }
             image = nil
             failed = false
             do {
                 let loaded = try await ChatMediaImageLoader.shared.image(urlString: url, pixelLimit: pixelLimit)
+                #if DEBUG
+                print("MEDIA_TASK loaded size=\(loaded.size) bytes=\(url.utf8.count) cancelled=\(Task.isCancelled)")
+                #endif
                 try Task.checkCancellation()
                 image = loaded
             } catch {
+                #if DEBUG
+                print("MEDIA_TASK failure bytes=\(url.utf8.count) cancelled=\(Task.isCancelled) error=\(String(describing: type(of: error)))")
+                #endif
                 guard !Task.isCancelled else { return }
                 failed = true
             }
