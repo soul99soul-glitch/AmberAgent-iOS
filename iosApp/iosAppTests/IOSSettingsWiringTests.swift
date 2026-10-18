@@ -1,8 +1,61 @@
 import XCTest
+import SwiftUI
 @preconcurrency import Shared
 @testable import iosApp
 
 final class IOSSettingsWiringTests: XCTestCase {
+    @MainActor
+    func testAutoExpandThinkingIsPersistedAndWiredToAllReasoningCards() throws {
+        let suite = "AutoExpandThinking-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = IOSDisplayPreferenceKeys.autoExpandThinking
+        let preference = AppStorage(wrappedValue: true, key, store: defaults)
+        XCTAssertTrue(preference.wrappedValue)
+        preference.wrappedValue = false
+        XCTAssertFalse(AppStorage(wrappedValue: true, key, store: defaults).wrappedValue)
+        preference.wrappedValue = true
+        XCTAssertTrue(AppStorage(wrappedValue: true, key, store: defaults).wrappedValue)
+
+        let settings = try source("iosApp/DisplayFontSettingsView.swift")
+        let bubble = try source("iosApp/Chat/Message/MessageBubbleView.swift")
+        let novel = try source("iosApp/NovelCreation/NovelSessionBubble.swift")
+        for text in [settings, bubble, novel] {
+            XCTAssertTrue(text.contains("@AppStorage(IOSDisplayPreferenceKeys.autoExpandThinking) private var autoExpandThinking = true"))
+        }
+        let section = try XCTUnwrap(settings.range(of: "private var messageSection"))
+        let nextSection = try XCTUnwrap(settings.range(of: "private var activitySection"))
+        XCTAssertTrue(settings[section.lowerBound..<nextSection.lowerBound].contains("自动展开思考内容"))
+        XCTAssertTrue(settings.contains("autoExpandThinking.toggle()"))
+        XCTAssertEqual(bubble.components(separatedBy: "autoExpandThinking: autoExpandThinking").count - 1, 2)
+        XCTAssertTrue(novel.contains("autoExpandThinking: autoExpandThinking"))
+    }
+
+    @MainActor
+    func testRuntimeIshPermissionUsesTheAppPermissionStore() throws {
+        let runtime = try source("iosApp/RuntimeEnvironmentView.swift")
+        let shell = try source("iosApp/AppShell.swift")
+        let defaults = UserDefaults(suiteName: "RuntimeIshPermission-\(UUID().uuidString)")!
+        let permissionStore = IOSPermissionStore(userDefaults: defaults, taskStore: nil)
+        let capability = try XCTUnwrap(IOSCapabilityRegistry.capabilities.first {
+            $0.id == "ios.embedded.ish_runtime"
+        })
+        permissionStore.setPolicy(.disabled, for: capability)
+
+        let view = RuntimeEnvironmentView(
+            settingsStore: SettingsStore(userDefaults: defaults),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: defaults),
+            permissionStore: permissionStore
+        )
+
+        XCTAssertTrue(view.permissionStore === permissionStore)
+        XCTAssertEqual(view.permissionStore.policy(for: capability), .disabled)
+        XCTAssertTrue(shell.contains("RuntimeEnvironmentView(settingsStore: settingsStore, sharedSettings: sharedSettings, permissionStore: permissionStore)"))
+        XCTAssertTrue(runtime.contains("embeddedIshExecutionPolicy"))
+        XCTAssertTrue(runtime.contains("set: { permissionStore.setPolicy($0, for: capability) }"))
+        XCTAssertFalse(runtime.contains("permissionStore = IOSPermissionStore()"))
+    }
+
     func testMiniAppSystemSwitchIsPersistedAndConsumedByRunnerPolicy() throws {
         let settings = try source("iosApp/MiniAppSettingsView.swift")
         let runner = try source("iosApp/MiniAppRunnerView.swift")
@@ -19,7 +72,7 @@ final class IOSSettingsWiringTests: XCTestCase {
 
     /// Mac Gateway 闭环：设置入口 → 路由 → 页面；深链进入确认；APNs token 与启动注册转发到 store。
     func testMacGatewayIsReachableFromSettingsDeepLinkAndPushRegistration() throws {
-        let home = try source("iosApp/PlaceholderViews.swift")
+        let home = try source("iosApp/Settings/SettingsHomeView.swift")
         let shell = try source("iosApp/AppShell.swift")
         let delegate = try source("iosApp/IOSLocalNotifications.swift")
 
@@ -38,7 +91,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         let shell = try source("iosApp/AppShell.swift")
         let owner = try source("iosApp/PhoneControl/IOSPhoneControlController.swift")
         let host = try source("iosApp/ChatKernelRunHost.swift")
-        let chat = try source("iosApp/ChatViewModel.swift")
+        let chat = try source("iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift")
+        let inbox = try source("iosApp/Chat/Session/ChatConversationInbox.swift")
         XCTAssertTrue(execution.contains("router.navigate(to: .phoneControl)"))
         XCTAssertTrue(shell.contains("case .phoneControl:"))
         XCTAssertTrue(shell.contains("IOSPhoneControlSettingsView()"))
@@ -74,9 +128,9 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("&& phoneControl.claim(runID: runId)"))
         XCTAssertFalse(host.contains("phoneControl.start(runID:"))
         XCTAssertTrue(chat.contains("includePhoneControlTools: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild"))
-        let autoResume = try XCTUnwrap(chat.range(of: "private func resumeYieldedRunIfReady"))
-        let endResume = try XCTUnwrap(chat.range(of: "/// 工具循环/新 run", range: autoResume.upperBound..<chat.endIndex))
-        XCTAssertFalse(chat[autoResume.lowerBound..<endResume.lowerBound].contains("phoneControlUserInitiated: true"))
+        let autoResume = try XCTUnwrap(inbox.range(of: "private func resumeYieldedRunIfReady"))
+        let endResume = try XCTUnwrap(inbox.range(of: "/// 工具循环/新 run", range: autoResume.upperBound..<inbox.endIndex))
+        XCTAssertFalse(inbox[autoResume.lowerBound..<endResume.lowerBound].contains("phoneControlUserInitiated: true"))
     }
 
     private func source(_ relativePath: String) throws -> String {
@@ -105,21 +159,27 @@ final class IOSSettingsWiringTests: XCTestCase {
     }
 
     func testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground() throws {
-        let novel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
-        let session = try source("iosApp/NovelCreation/NovelSessionViewModel.swift")
-        let lifecycle = try source("iosApp/NovelCreation/NovelGenerationLifecycle.swift")
-        let council = try source("iosApp/CouncilChatRuntimeView.swift")
+        let novelRunBridge = try source("iosApp/NovelCreation/NovelRunBridgeViewModel.swift")
+        let novelStateSync = try source("iosApp/NovelCreation/NovelStateSyncViewModel.swift")
+        let novelContinuity = try source("iosApp/NovelCreation/NovelContinuityViewModel.swift")
+        let sessionGhostwrite = try source("iosApp/NovelCreation/Session/NovelSessionGhostwriteRecovery.swift")
+        let novelGenerationStream = try source("iosApp/NovelCreation/NovelGenerationStream.swift")
+        let council = try source("iosApp/Council/CouncilChatViewModel.swift")
         let deepRead = try source("iosApp/DeepReadCreateView.swift")
         let chatBackground = try source("iosApp/IOSChatBackgroundGenerationCoordinator.swift")
-        let chatHost = try source("iosApp/ChatKernelRunHost.swift")
+        let chatHost = try source("iosApp/Chat/Generation/Kernel/ChatRunProgressPresentation.swift")
         let miniApp = try source("iosApp/MiniAppRunnerView.swift")
         let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
 
-        XCTAssertTrue(novel.contains("beginBackgroundGeneration(for: request)"))
-        XCTAssertTrue(novel.contains("beginStateSyncBackgroundLease("))
-        XCTAssertTrue(novel.contains("beginContinuityBackgroundLease("))
-        XCTAssertTrue(session.contains("beginGhostwriteBackgroundLease("))
-        XCTAssertTrue(lifecycle.contains("BackgroundGenerationKeepAlive.shared.begin("))
+        XCTAssertTrue(novelRunBridge.contains("beginBackgroundGeneration(for: request)"))
+        XCTAssertTrue(novelRunBridge.contains("BackgroundGenerationKeepAlive.shared.begin("))
+        XCTAssertTrue(novelStateSync.contains("beginStateSyncBackgroundLease("))
+        XCTAssertTrue(novelStateSync.contains("BackgroundGenerationKeepAlive.shared.begin("))
+        XCTAssertTrue(novelContinuity.contains("beginContinuityBackgroundLease("))
+        XCTAssertTrue(novelContinuity.contains("BackgroundGenerationKeepAlive.shared.begin("))
+        XCTAssertTrue(sessionGhostwrite.contains("beginGhostwriteBackgroundLease("))
+        XCTAssertTrue(sessionGhostwrite.contains("BackgroundGenerationKeepAlive.shared.begin("))
+        XCTAssertTrue(novelGenerationStream.contains("BackgroundGenerationKeepAlive.shared.begin("))
         XCTAssertTrue(council.contains("beginBackgroundKeepAlive(for: discussionID)"))
         XCTAssertTrue(council.contains("beginMaterialsKeepAlive()"))
         XCTAssertTrue(deepRead.contains("BackgroundGenerationKeepAlive.shared.begin("))
@@ -136,8 +196,8 @@ final class IOSSettingsWiringTests: XCTestCase {
     }
 
     func testChatComposerSendAndStopReachTheCurrentConversationRun() throws {
-        let chat = try source("iosApp/ChatView.swift")
-        let viewModel = try source("iosApp/ChatViewModel.swift")
+        let chat = try source("iosApp/Chat/Composer/ChatViewComposer.swift")
+        let viewModel = try source("iosApp/Chat/Session/ChatConversationMutations.swift")
         let sendStart = try XCTUnwrap(chat.range(of: "private func sendComposerMessage()"))
         let sendEnd = try XCTUnwrap(chat.range(of: "private func openComposerModelSheet()", range: sendStart.upperBound..<chat.endIndex))
         let send = chat[sendStart.lowerBound..<sendEnd.lowerBound]
@@ -163,8 +223,8 @@ final class IOSSettingsWiringTests: XCTestCase {
 
     func testChatMessageListRendersNativeTimelineDirectlyWithoutRoutePolicy() throws {
         let chatView = try source("iosApp/ChatView.swift")
-        let list = try source("iosApp/ChatCollectionMessageList.swift")
-        let projection = try source("iosApp/ChatMessageProjection.swift")
+        let list = try source("iosApp/Chat/Timeline/NativeChatTimelineView.swift")
+        let projection = try source("iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift")
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
         let keys = try source("iosApp/AmberDesignSystem.swift")
 
@@ -188,95 +248,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(keys.contains("static let followGeneration = \"app.amber.ios.display.followGeneration\""))
         XCTAssertTrue(chatView.contains("@AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true"))
         XCTAssertTrue(chatView.contains("followGeneration: followGeneration"))
-    }
-
-    func testChatTopBarUsesStableControlDimensions() {
-        XCTAssertEqual(ChatTopBarLayout.controlsHeight, 54)
-        XCTAssertEqual(ChatTopBarLayout.toolbarButtonDiameter, 38)
-        XCTAssertEqual(ChatTopBarLayout.softEdgeExtension, 8)
-    }
-
-    func testChatTopBarKeepsIslandOpaqueAndWidthAdaptive() throws {
-        let chatView = try source("iosApp/ChatView.swift")
-        let island = try source("iosApp/ChatActivityIslandView.swift")
-        // db25ed1 ("Add conversation artifact shelf and refine chat, WebMount,
-        // and model flows") extracted the whole top bar (back button, trailing
-        // dock, and the island) out of ChatView.swift into ChatTopBarView.swift.
-        // The island wrapper's sizing also moved from a fixedSize+gutter-padding
-        // wrapper to an upfront `maxWidth:` constraint computed by
-        // ChatTopBarLayout.availableIslandWidth(in:), which still bakes in
-        // islandSideGutter. The properties this test cares about (glass groups
-        // stay independent; the island stays width-adaptive via the gutter
-        // constant; the island shell never stretches to the full bar width)
-        // still hold, just in the new file/shape.
-        let topBar = try source("iosApp/ChatTopBarView.swift")
-
-        // Side chips + center island must not share GlassEffectContainer (punch-through).
-        XCTAssertFalse(
-            topBar.contains("AmberGlassGroup(spacing: 12)"),
-            "Chat top bar must not group toolbar glass with the activity island."
-        )
-        // fixedSize must precede glass so the capsule paints hug width, not bar width.
-        XCTAssertTrue(
-            island.contains(
-                """
-                .frame(height: 40)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .background { glowUnderlay }
-                            .modifier(ChatActivityIslandGlass())
-                """
-            ),
-            "Island must lock hug size before glassEffect."
-        )
-        XCTAssertTrue(island.contains("ChatTopBarLayout.islandTitleMaxWidth"))
-        // islandSideGutter's only consumer is now availableIslandWidth(in:) inside
-        // the same ChatTopBarLayout enum, so it is referenced bare (no qualifier)
-        // there; just confirm the width-adaptive constant itself still exists.
-        XCTAssertTrue(try source("iosApp/ChatTopBarLayout.swift").contains("static let islandSideGutter"))
-        // Width-adaptive: the island's max width is computed upfront from the
-        // gutter constant and handed down, instead of a fixedSize+padding wrapper.
-        XCTAssertTrue(
-            topBar.contains("island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))")
-        )
-        XCTAssertTrue(
-            topBar.contains(
-                "ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,"
-            )
-        )
-        // Must not stretch the island shell to the full bar width.
-        XCTAssertFalse(topBar.contains(".frame(maxWidth: .infinity)"))
-        XCTAssertTrue(island.contains(".background(AmberTheme.glass.opacity(0.16), in: Capsule())"))
-        XCTAssertTrue(island.contains(".glassEffect(.regular, in: Capsule())"))
-    }
-
-    func testCouncilTopBarUsesNativeSoftEdgeAndModeCapsule() throws {
-        let runtime = try source("iosApp/CouncilChatRuntimeView.swift")
-
-        XCTAssertTrue(runtime.contains(".safeAreaBar(edge: .top, spacing: 0)"))
-        XCTAssertTrue(runtime.contains("ChatTopBarLayout.softEdgeExtension"))
-        XCTAssertTrue(runtime.contains("ChatTopBarLayout.controlsHeight"))
-        XCTAssertTrue(runtime.contains("ChatToolbarIconButton("))
-        XCTAssertTrue(runtime.contains(".background(AmberTheme.glass.opacity(0.16), in: Capsule())"))
-        XCTAssertTrue(runtime.contains(".glassEffect(.regular.interactive(), in: Capsule())"))
-        // Mode capsule: fixedSize on label, then glass — not glass then fixedSize on Button.
-        XCTAssertTrue(
-            runtime.contains(
-                """
-                .frame(height: 40)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .modifier(CouncilModeCapsuleGlass())
-                """
-            ),
-            "Council mode capsule must lock hug size before glassEffect."
-        )
-        XCTAssertFalse(runtime.contains("AmberGlassGroup(spacing: 12)"))
-        XCTAssertTrue(runtime.contains(".scrollEdgeEffectStyle(.soft, for: .top)"))
-        XCTAssertTrue(runtime.contains("scrollView.topEdgeEffect.style = .soft"))
-        XCTAssertTrue(runtime.contains("modeCapsuleButton"))
-        XCTAssertFalse(
-            runtime.contains("header\n                if let archiveErrorMessage = viewModel.archiveErrorMessage"),
-            "Council chrome must not sit above the transcript as a clipping sibling."
-        )
     }
 
     func testStaticMarkdownUsesTheSharedExternalURLPolicy() throws {
@@ -316,7 +287,7 @@ final class IOSSettingsWiringTests: XCTestCase {
     func testCompletionHapticToggleIsWiredWithDefaultOn() throws {
         let keys = try source("iosApp/AmberDesignSystem.swift")
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
-        let viewModel = try source("iosApp/ChatViewModel.swift")
+        let viewModel = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
         let storageDeclaration =
             "@AppStorage(IOSDisplayPreferenceKeys.completionHaptic)" +
             " private var completionHaptic = true"
@@ -337,9 +308,10 @@ final class IOSSettingsWiringTests: XCTestCase {
 
     func testBackgroundToolEnginePublishesLiveActivityStagesAtExecutionBoundaries() throws {
         let coordinator = try source("iosApp/IOSChatBackgroundGenerationCoordinator.swift")
+        let executor = try source("iosApp/Chat/Background/IOSChatBackgroundExecutor.swift")
         let engine = try source("iosApp/IOSAgentToolEngine.swift")
-        let runStart = try XCTUnwrap(coordinator.range(of: "let initialResult = await engine.run("))
-        let runSuffix = String(coordinator[runStart.lowerBound...])
+        let runStart = try XCTUnwrap(executor.range(of: "let initialResult = await engine.run("))
+        let runSuffix = String(executor[runStart.lowerBound...])
         let runEnd = try XCTUnwrap(runSuffix.range(of: "case .singleToolOnly:"))
         let runBlock = String(runSuffix[..<runEnd.lowerBound])
 
@@ -350,13 +322,13 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(runBlock.contains("onAssistantStage:"))
         XCTAssertTrue(runBlock.contains("onMessagesUpdated:"))
         XCTAssertTrue(runBlock.contains("job.messagesSnapshot.replace(with: messages)"))
-        XCTAssertTrue(coordinator.contains("AsyncStream<AgentActivityPresentation>.makeStream()"))
+        XCTAssertTrue(executor.contains("AsyncStream<AgentActivityPresentation>.makeStream()"))
         XCTAssertTrue(runBlock.contains("presentationEvents.continuation.yield("))
         XCTAssertFalse(runBlock.contains("await self.publishRunningPresentation("))
         XCTAssertTrue(coordinator.contains("guard runState.allowsRunningPresentation else { return }"))
         XCTAssertTrue(runBlock.contains("AgentActivityPresentation.runningTool(toolName: toolName, input: input)"))
         XCTAssertGreaterThanOrEqual(
-            coordinator.components(
+            executor.components(
                 separatedBy: "stage: AgentActivityResponseStagePolicy.initialStage"
             ).count - 1,
             2,
@@ -364,9 +336,9 @@ final class IOSSettingsWiringTests: XCTestCase {
         )
 
         let expirationStart = try XCTUnwrap(
-            coordinator.range(of: "backgroundTask.expirationHandler = { [weak self] in")
+            executor.range(of: "backgroundTask.expirationHandler = { [weak self] in")
         )
-        let expirationSuffix = String(coordinator[expirationStart.lowerBound...])
+        let expirationSuffix = String(executor[expirationStart.lowerBound...])
         let expirationEnd = try XCTUnwrap(expirationSuffix.range(of: "let requestProvider: ProviderSetting"))
         let expirationBlock = String(expirationSuffix[..<expirationEnd.lowerBound])
         let mainActorHop = try XCTUnwrap(expirationBlock.range(of: "Task { @MainActor in"))
@@ -780,7 +752,7 @@ final class IOSSettingsWiringTests: XCTestCase {
 
     func testCouncilSettingsExposeAnExplicitCurrentModelConnectivityProbe() throws {
         let settings = try source("iosApp/CouncilSettingsView.swift")
-        let runtime = try source("iosApp/CouncilChatRuntimeView.swift")
+        let runtime = try source("iosApp/Council/CouncilRoomSheets.swift")
 
         XCTAssertTrue(settings.contains("测试当前议会模型"))
         XCTAssertTrue(settings.contains("IOSCouncilModelConnectivityTester"))

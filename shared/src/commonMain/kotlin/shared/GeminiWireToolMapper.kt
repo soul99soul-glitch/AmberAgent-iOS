@@ -76,7 +76,14 @@ object GeminiWireToolMapper {
         is JsonObject -> JsonObject(
             toMap()
                 .filterKeys { it !in GEMINI_UNSUPPORTED_SCHEMA_KEYS }
-                .mapValues { (_, value) -> value.strippedForGemini() },
+                .mapValues { (key, value) ->
+                    if (key == "properties" && value is JsonObject) {
+                        // Property names are user data; only their schemas contain keywords.
+                        JsonObject(value.mapValues { (_, schema) -> schema.strippedForGemini() })
+                    } else {
+                        value.strippedForGemini()
+                    }
+                },
         )
         is JsonArray -> JsonArray(map { it.strippedForGemini() })
         else -> this

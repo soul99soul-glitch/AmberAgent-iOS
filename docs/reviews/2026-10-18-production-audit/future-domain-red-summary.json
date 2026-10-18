@@ -1,0 +1,173 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 15,
+      "passedTests" : 1,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 15,
+  "finishTime" : 1792285445.85,
+  "passedTests" : 1,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1792285421.881,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[]\") is not equal to (\"[iosApp.NovelChapterPlotModule(chapterID: 58659056-61fd-419e-aebd-f3a3fcd38d53, text: \"Opening revised.\", stale: false), iosApp.NovelChapterPlotModule(chapterID: 0e008d23-9bca-457c-9fb6-e8195c067003, text: \"Later consequences await author resolution.\", stale: true)]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 7,
+      "testIdentifierString" : "NovelDomainIntegrityRegressionTests/testClarifyingIdentityPreservesChapterPlotsAndStaleGate()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelDomainIntegrityRegressionTests/testClarifyingIdentityPreservesChapterPlotsAndStaleGate",
+      "testName" : "testClarifyingIdentityPreservesChapterPlotsAndStaleGate()"
+    },
+    {
+      "failureText" : "XCTAssertNil failed: \"2026-10-18 01:03:59 +0000\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 8,
+      "testIdentifierString" : "NovelDomainIntegrityRegressionTests/testDeletingChapterFromParentKeepsForkManuscriptVisible()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelDomainIntegrityRegressionTests/testDeletingChapterFromParentKeepsForkManuscriptVisible",
+      "testName" : "testDeletingChapterFromParentKeepsForkManuscriptVisible()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(false)\") is not equal to (\"Optional(true)\") - {\"backend\":\"playwright_mcp\",\"capabilities\":[\"wm_back\",\"wm_click\",\"wm_find\",\"wm_keys\",\"wm_observe\",\"wm_open\",\"wm_select\",\"wm_state\",\"wm_tap\",\"wm_type\",\"wm_wait\"],\"contract_version\":\"webmount.desktop.v2\",\"error\":\"wm_type requires text.\",\"error_code\":\"invalid_arguments\",\"may_have_applied\":false,\"mcp_server_name\":\"desktop-gateway\",\"ok\":false,\"redacted\":true,\"session_id\":\"literal-desktop-input\",\"status\":\"failed\",\"tool\":\"wm_type\",\"untrusted_page_content\":true,\"verified\":false}",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 1,
+      "testIdentifierString" : "IOSWebMountLiteralDesktopInputTests/testDesktopTypeAcceptsASingleLiteralSpace()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSWebMountLiteralDesktopInputTests/testDesktopTypeAcceptsASingleLiteralSpace",
+      "testName" : "testDesktopTypeAcceptsASingleLiteralSpace()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(false)\") is not equal to (\"Optional(true)\") - {\"backend\":\"playwright_mcp\",\"capabilities\":[\"wm_back\",\"wm_click\",\"wm_find\",\"wm_keys\",\"wm_observe\",\"wm_open\",\"wm_select\",\"wm_state\",\"wm_tap\",\"wm_type\",\"wm_wait\"],\"contract_version\":\"webmount.desktop.v2\",\"error\":\"wm_type requires text.\",\"error_code\":\"invalid_arguments\",\"may_have_applied\":false,\"mcp_server_name\":\"desktop-gateway\",\"ok\":false,\"redacted\":true,\"session_id\":\"literal-desktop-input\",\"status\":\"failed\",\"tool\":\"wm_type\",\"untrusted_page_content\":true,\"verified\":false}",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2,
+      "testIdentifierString" : "IOSWebMountLiteralDesktopInputTests/testDesktopTypeAcceptsEmptyTextToClearAnExistingField()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSWebMountLiteralDesktopInputTests/testDesktopTypeAcceptsEmptyTextToClearAnExistingField",
+      "testName" : "testDesktopTypeAcceptsEmptyTextToClearAnExistingField()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(\"first line\\nsecond line\")\") is not equal to (\"Optional(\"  first line\\nsecond line\\n  \")\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 3,
+      "testIdentifierString" : "IOSWebMountLiteralDesktopInputTests/testDesktopTypePreservesLeadingTrailingWhitespaceAndNewlines()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSWebMountLiteralDesktopInputTests/testDesktopTypePreservesLeadingTrailingWhitespaceAndNewlines",
+      "testName" : "testDesktopTypePreservesLeadingTrailingWhitespaceAndNewlines()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(\"draft\")\") is not equal to (\"Optional(\"\\n  draft  \\n\")\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 4,
+      "testIdentifierString" : "IOSWebMountLiteralDesktopInputTests/testDesktopTypeValueAliasPreservesItsLiteralPayload()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSWebMountLiteralDesktopInputTests/testDesktopTypeValueAliasPreservesItsLiteralPayload",
+      "testName" : "testDesktopTypeValueAliasPreservesItsLiteralPayload()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[]\") is not equal to (\"[iosApp.NovelChapterPlotModule(chapterID: f1ae97ae-c49c-4e35-9533-bc410d930ff1, text: \"Curated chapter 1.\", stale: false), iosApp.NovelChapterPlotModule(chapterID: 32167269-ad00-4ac1-922f-739a6a3b525a, text: \"Curated chapter 2.\", stale: false)]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 9,
+      "testIdentifierString" : "NovelDomainIntegrityRegressionTests/testGhostwriteAdjudicationPreservesPriorPlotsAndAddsCollectedChapter()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelDomainIntegrityRegressionTests/testGhostwriteAdjudicationPreservesPriorPlotsAndAddsCollectedChapter",
+      "testName" : "testGhostwriteAdjudicationPreservesPriorPlotsAndAddsCollectedChapter()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[]\") is not equal to (\"[48d1135f-b0fc-40bf-9301-aa3deb8fa9db, 6bd3974f-1df1-4d30-9b6f-8c9eae87da51]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 10,
+      "testIdentifierString" : "NovelDomainIntegrityRegressionTests/testManualSyncRefreshesRebuiltChapterPlotsWithoutStaleFlags()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelDomainIntegrityRegressionTests/testManualSyncRefreshesRebuiltChapterPlotsWithoutStaleFlags",
+      "testName" : "testManualSyncRefreshesRebuiltChapterPlotsWithoutStaleFlags()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 12,
+      "testIdentifierString" : "NovelStreamIntegrityRegressionTests/testPrefixRelatedReasoningDeltasPreserveEveryOccurrence()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelStreamIntegrityRegressionTests/testPrefixRelatedReasoningDeltasPreserveEveryOccurrence",
+      "testName" : "testPrefixRelatedReasoningDeltasPreserveEveryOccurrence()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 13,
+      "testIdentifierString" : "NovelStreamIntegrityRegressionTests/testRepeatedReasoningDeltasPreserveEveryOccurrence()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelStreamIntegrityRegressionTests/testRepeatedReasoningDeltasPreserveEveryOccurrence",
+      "testName" : "testRepeatedReasoningDeltasPreserveEveryOccurrence()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[\"persistent-local-1\"]\") is not equal to (\"[\"persistent-local-1\", \"persistent-local-2\"]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 5,
+      "testIdentifierString" : "IOSWebMountPersistentSessionRestoreTests/testRestartRetainsEveryPersistentLocalSessionAndItsCurrentSelection()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSWebMountPersistentSessionRestoreTests/testRestartRetainsEveryPersistentLocalSessionAndItsCurrentSelection",
+      "testName" : "testRestartRetainsEveryPersistentLocalSessionAndItsCurrentSelection()"
+    },
+    {
+      "failureText" : "XCTUnwrap failed: expected non-nil value of type \"NovelActiveRunRecord\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 16,
+      "testIdentifierString" : "NovelWorkspaceRetryTests/testRetryableGenerationFailureRemainsRetryableAfterWorkspaceReload()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelWorkspaceRetryTests/testRetryableGenerationFailureRemainsRetryableAfterWorkspaceReload",
+      "testName" : "testRetryableGenerationFailureRemainsRetryableAfterWorkspaceReload()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(\"围城旧雨。\\n```\")\") is not equal to (\"Optional(\"围城旧雨。\")\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 14,
+      "testIdentifierString" : "NovelStreamIntegrityRegressionTests/testSplitClosingFenceDoesNotLeakIntoStreamingProse()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelStreamIntegrityRegressionTests/testSplitClosingFenceDoesNotLeakIntoStreamingProse",
+      "testName" : "testSplitClosingFenceDoesNotLeakIntoStreamingProse()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(\"markdown\\n围城旧雨。\")\") is not equal to (\"Optional(\"围城旧雨。\")\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 15,
+      "testIdentifierString" : "NovelStreamIntegrityRegressionTests/testSplitOpeningFenceDoesNotLeakLanguageIntoStreamingProse()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelStreamIntegrityRegressionTests/testSplitOpeningFenceDoesNotLeakLanguageIntoStreamingProse",
+      "testName" : "testSplitOpeningFenceDoesNotLeakLanguageIntoStreamingProse()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[]\") is not equal to (\"[iosApp.NovelChapterPlotModule(chapterID: 6c5f7902-1de9-4009-b2bd-8f5de572713b, text: \"Author-curated opening plot.\", stale: false)]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 11,
+      "testIdentifierString" : "NovelDomainIntegrityRegressionTests/testStructuralManualSyncPreservesCompatibleBaseChapterPlots()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelDomainIntegrityRegressionTests/testStructuralManualSyncPreservesCompatibleBaseChapterPlots",
+      "testName" : "testStructuralManualSyncPreservesCompatibleBaseChapterPlots()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "13% of failures",
+      "text" : "2 runs of 2 tests failed with XCTUnwrap failed: expected non-nil value of type \"Call\""
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "13% of failures",
+      "text" : "2 runs of 2 tests failed with XCTAssertEqual failed: (\"Optional(false)\") is not equal to (\"Optional(true)\") - {\"backend\":\"playwright_mcp\",\"capabilities\":[\"wm_back\",\"wm_click\",\"wm_find\",\"wm_keys\",\"wm_observe\",\"wm_open\",\"wm_select\",\"wm_state\",\"wm_tap\",\"wm_type\",\"wm_wait\"],\"contract_version\":\"webmount.desktop.v2\",\"error\":\"wm_type requires text.\",\"error_code\":\"invalid_arguments\",\"may_have_applied\":false,\"mcp_server_name\":\"desktop-gateway\",\"ok\":false,\"redacted\":true,\"session_id\":\"literal-desktop-input\",\"status\":\"failed\",\"tool\":\"wm_type\",\"untrusted_page_content\":true,\"verified\":false}"
+    }
+  ],
+  "totalTestCount" : 16
+}

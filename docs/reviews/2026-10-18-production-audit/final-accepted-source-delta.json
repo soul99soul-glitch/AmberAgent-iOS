@@ -1,0 +1,8 @@
+{
+  "previous": "final-verified-source-freeze.json",
+  "changes": [
+    "iosApp/iosApp/IOSMcpClient.swift",
+    "iosApp/iosApp/IOSMcpManager.swift",
+    "iosApp/iosAppTests/IOSMcpClientTests.swift"
+  ]
+}

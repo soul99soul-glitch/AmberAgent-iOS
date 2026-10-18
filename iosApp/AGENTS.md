@@ -25,11 +25,14 @@ xcodebuild -quiet -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -parallel-testing-enabled NO \
   -only-testing:iosAppTests/ChatSwiftUIStreamReplayTests \
+  -only-testing:iosAppTests/ChatNativeTimelineReplayHistoryTests \
+  -only-testing:iosAppTests/ChatNativeTimelineReplayCompletionTests \
+  -only-testing:iosAppTests/ChatNativeTimelineReplayPerformanceTests \
   -only-testing:iosAppTests/NativeTimelineScrollCoreTests \
   -only-testing:iosAppTests/ChatViewportPolicyTests test
 ```
 
-根据改动补跑 `ChatRowContentHashCacheTests`、`ChatMessageProjectionTests` 或对应定点测试。模拟器通过后仍不得把视觉和手感标记为真机已验证。
+根据改动补跑 `ChatRowContentHashCacheTests`；投影、消息呈现、Markdown 和手机工具分组分别位于 `ChatMessageProjectionTests`、`ChatMessagePresentationTests`、`ChatMarkdownRenderingTests`、`ChatPhoneToolGroupingTests`。模拟器通过后仍不得把视觉和手感标记为真机已验证。
 
 ## State, Storage, And Background Work
 
@@ -48,6 +51,8 @@ xcodebuild -quiet -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
 优先运行受影响的测试类，例如：
 
 - `IOSConversationStoreTests`
+- `IOSConversationStorePersistenceTests`
+- `IOSConversationStoreConcurrencyTests`
 - `IOSConversationStoreBranchingTests`
 - `IOSParityRedLightTests`
 - `IOSAgentToolEngineTests`

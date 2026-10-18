@@ -1,0 +1,22 @@
+{
+  "mapped126": {
+    "expected": 126,
+    "missing": [],
+    "duplicates": [],
+    "results": {
+      "Passed": 125,
+      "Skipped": 1
+    }
+  },
+  "storeAndCompactionGate": "All selected DocumentAccess36,Compaction18,Store37+branch18+startup3+recap8,SharedSettings47 passed; Council88 passed/1originalmanualskip.",
+  "xcresult": "/tmp/amber-phase5-primary-r6.xcresult",
+  "all": {
+    "passed": 889,
+    "failed": 2,
+    "skipped": 2
+  },
+  "failures": [
+    "new MiniApp layout facility insists content that fits must scroll",
+    "unchanged Native terminal reasoning-collapse25pt bound observed28.67pt"
+  ]
+}

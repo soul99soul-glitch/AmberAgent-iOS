@@ -10,6 +10,14 @@ struct IOSDeepReadPriorCompletion: Sendable {
     let markdown: String
     let structuredJSON: String?
     let missingSections: [String]
+    let workspaceSyncFailed: String?
+
+    init(markdown: String, structuredJSON: String?, missingSections: [String], workspaceSyncFailed: String? = nil) {
+        self.markdown = markdown
+        self.structuredJSON = structuredJSON
+        self.missingSections = missingSections
+        self.workspaceSyncFailed = workspaceSyncFailed
+    }
 }
 
 /// Shared deep-read create+generate pipeline, used by both the hot-list tap path
@@ -81,7 +89,8 @@ enum IOSDeepReadLauncher {
             priorCompletion = IOSDeepReadPriorCompletion(
                 markdown: current.resultMarkdown,
                 structuredJSON: current.structuredJSON,
-                missingSections: missing
+                missingSections: missing,
+                workspaceSyncFailed: current.workspaceSyncFailed
             )
         } else {
             priorCompletion = nil
@@ -675,7 +684,8 @@ enum IOSDeepReadLauncher {
             id: taskId,
             markdown: prior.markdown,
             structuredJSON: prior.structuredJSON,
-            missingSections: prior.missingSections
+            missingSections: prior.missingSections,
+            workspaceSyncFailed: prior.workspaceSyncFailed
         )
     }
 

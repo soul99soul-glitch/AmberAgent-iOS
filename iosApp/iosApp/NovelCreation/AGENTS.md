@@ -36,6 +36,8 @@
 
 先跑最小行为测试，再按影响面组合以下套件：
 
+Phase 4 拆分后，下列原类名只保留对应职责的一部分；完整旧类到现有类的入口见 [XCTest 职责映射](../../../docs/reviews/2026-10-18-swift-modularization/phase-4-test-entrypoints.md)。对整个流程做回归时须覆盖映射中的全部类，并保留未拆分的领域、repository 和结构化输出套件；共享 base/support 不含测试方法。
+
 - 会话、流式与终态：`NovelSessionViewModelTests`、`NovelSessionReplayTests`、`NovelGenerationLifecycleTests`
 - 项目状态与注入：`NovelManualEditSyncTests`、`NovelInjectionPlannerTests`、`NovelFactTransactionLifecycleTests`
 - 结构化输出与真实适配：`NovelStructuredOutputTests`、`NovelStructuredModelExecutorTests`、`NovelLiveModelAdapterTests`

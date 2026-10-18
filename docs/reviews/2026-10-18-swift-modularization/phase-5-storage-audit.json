@@ -1,0 +1,1873 @@
+{
+  "timestamp": "2026-10-17T20:53:08.194625+00:00",
+  "scope": "Phase5 source only; no build/test",
+  "baseline": {
+    "DocumentAccessStore.swift": "c118aaecc6d55ae949a57c37f22062590a1ad9748b1a1f3fa04febef1073dd4a",
+    "IOSContextCompactionCoordinator.swift": "78a6e2756025b2cacf554b1008996e400327a7c548cf698d69cbe41ef886f27d",
+    "IOSConversationStore.swift": "e4ba99aa338dc822b05a91ead7ae9dfc8526e33ce5e74b27332e82904118e952",
+    "IOSSharedSettingsStore.swift": "51a5cfb039ce84d456b6d1e3a625c458d0addd00d7b64c43742aa2ce75431390"
+  },
+  "files": [
+    {
+      "path": "Chat/Compaction/IOSContextCompactionBudget.swift",
+      "lines": 478,
+      "sha256": "bfabace6cd16651fd46470dcd32f78f15bf116678aa4000a26a30d71d8cbf4cd",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "lines": 423,
+      "sha256": "f2055245b3b1e3f9512fd8c95fa546e7871389f823015eb95bc86fc6d624f913",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "Chat/Compaction/IOSContextCompactionPreparedContext.swift",
+      "lines": 244,
+      "sha256": "4c3ad3b846484607371b74a154c2ed033f5d770b6375f755fa03461e60b0c25f",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "Chat/Storage/IOSConversationBranching.swift",
+      "lines": 280,
+      "sha256": "f57549ab1fd3e13bb816f962f19e7884c67fbfe33f4348bf5624fd5ee491d87f",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "Chat/Storage/IOSConversationContentAccess.swift",
+      "lines": 244,
+      "sha256": "6e5be256ff5c32d7b6bb48d3af8b457be552861742ee0fcac91c1ca2638adbb0",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "DocumentAccessStore.swift",
+      "lines": 1043,
+      "sha256": "22a1315fadd42c164af1c230ce5d8da4e06ab48b36eb0a9b76d29bf1321fdf8b",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "IOSContextCompactionCoordinator.swift",
+      "lines": 951,
+      "sha256": "4acfa4cffb463768fa5b7064f042cecddfaa2183ecc7dcd4b34f7e940491bb5b",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "IOSConversationStore.swift",
+      "lines": 1485,
+      "sha256": "69c3bd1474d4512e60bb500103d7392d56ec88ff2ac6fd0a420cec781ceb7af6",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "IOSSharedSettingsStore.swift",
+      "lines": 1357,
+      "sha256": "77cdcbcd8da9d6d9203b3fdc2f3e974d0ab7b44e7a882b7b5455e199ba87ae6c",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "Infrastructure/Workspace/IOSWorkspaceStore.swift",
+      "lines": 1460,
+      "sha256": "88435574e9357a8c1cca6d7e6cd085d704da1823a8b85e5c265486292f167ef7",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "Settings/IOSSharedAgentFeatureSettings.swift",
+      "lines": 362,
+      "sha256": "e644054a873560e937588e0b91d4dcea079c56d670d80618163af6a983ec3025",
+      "length_ok": true,
+      "whitespace_ok": true
+    },
+    {
+      "path": "Settings/IOSSharedSettingsModels.swift",
+      "lines": 154,
+      "sha256": "c381acde1304cf513c58b1f2356e792eb053c1f8cb0663473d58510a62935663",
+      "length_ok": true,
+      "whitespace_ok": true
+    }
+  ],
+  "moved_segments": [
+    {
+      "original": "DocumentAccessStore.swift",
+      "original_lines": [
+        69,
+        1525
+      ],
+      "destination": "Infrastructure/Workspace/IOSWorkspaceStore.swift",
+      "destination_lines": [
+        4,
+        1460
+      ],
+      "original_sha256": "e2ae1c926c594411c11d1edcb53894272069730b7294c821ddc3117c5e064bb4",
+      "destination_sha256": "e2ae1c926c594411c11d1edcb53894272069730b7294c821ddc3117c5e064bb4",
+      "exact_match": true,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 69,
+          "signature": "enum IOSWorkspaceFileStatus"
+        },
+        {
+          "original_line": 77,
+          "signature": "var title"
+        },
+        {
+          "original_line": 91,
+          "signature": "enum IOSWorkspaceArtifactType"
+        },
+        {
+          "original_line": 100,
+          "signature": "var id"
+        },
+        {
+          "original_line": 102,
+          "signature": "var title"
+        },
+        {
+          "original_line": 117,
+          "signature": "struct IOSWorkspaceFileRecord"
+        },
+        {
+          "original_line": 118,
+          "signature": "let id"
+        },
+        {
+          "original_line": 119,
+          "signature": "var displayName"
+        },
+        {
+          "original_line": 120,
+          "signature": "var originalFileName"
+        },
+        {
+          "original_line": 121,
+          "signature": "var workspacePath"
+        },
+        {
+          "original_line": 122,
+          "signature": "var mimeType"
+        },
+        {
+          "original_line": 123,
+          "signature": "var sizeBytes"
+        },
+        {
+          "original_line": 124,
+          "signature": "var importedAtMillis"
+        },
+        {
+          "original_line": 125,
+          "signature": "var updatedAtMillis"
+        },
+        {
+          "original_line": 126,
+          "signature": "var status"
+        },
+        {
+          "original_line": 127,
+          "signature": "var statusMessage"
+        },
+        {
+          "original_line": 128,
+          "signature": "var preview"
+        },
+        {
+          "original_line": 129,
+          "signature": "var isTruncated"
+        },
+        {
+          "original_line": 130,
+          "signature": "var characterCount"
+        },
+        {
+          "original_line": 131,
+          "signature": "var source"
+        },
+        {
+          "original_line": 133,
+          "signature": "var byteSummary"
+        },
+        {
+          "original_line": 138,
+          "signature": "struct IOSWorkspaceArtifactRecord"
+        },
+        {
+          "original_line": 139,
+          "signature": "let id"
+        },
+        {
+          "original_line": 140,
+          "signature": "var title"
+        },
+        {
+          "original_line": 141,
+          "signature": "var type"
+        },
+        {
+          "original_line": 142,
+          "signature": "var contentPath"
+        },
+        {
+          "original_line": 143,
+          "signature": "var contentBytes"
+        },
+        {
+          "original_line": 144,
+          "signature": "var summary"
+        },
+        {
+          "original_line": 145,
+          "signature": "var createdAtMillis"
+        },
+        {
+          "original_line": 146,
+          "signature": "var updatedAtMillis"
+        },
+        {
+          "original_line": 147,
+          "signature": "var sourceKind"
+        },
+        {
+          "original_line": 148,
+          "signature": "var sourceId"
+        },
+        {
+          "original_line": 151,
+          "signature": "private struct IOSWorkspaceState"
+        },
+        {
+          "original_line": 152,
+          "signature": "var files"
+        },
+        {
+          "original_line": 153,
+          "signature": "var artifacts"
+        },
+        {
+          "original_line": 156,
+          "signature": "enum IOSWorkspaceStoreError"
+        },
+        {
+          "original_line": 166,
+          "signature": "var errorDescription"
+        },
+        {
+          "original_line": 188,
+          "signature": "enum IOSWorkspaceToolCatalog"
+        },
+        {
+          "original_line": 189,
+          "signature": "static let readToolNames"
+        },
+        {
+          "original_line": 190,
+          "signature": "static let writeToolNames"
+        },
+        {
+          "original_line": 191,
+          "signature": "static let supportedToolNames"
+        },
+        {
+          "original_line": 196,
+          "signature": "final class IOSWorkspaceStore"
+        },
+        {
+          "original_line": 197,
+          "signature": "static let shared"
+        },
+        {
+          "original_line": 204,
+          "signature": "let maxImportBytes"
+        },
+        {
+          "original_line": 205,
+          "signature": "let maxPreviewCharacters"
+        },
+        {
+          "original_line": 234,
+          "signature": "var recentFiles"
+        },
+        {
+          "original_line": 238,
+          "signature": "var recentArtifacts"
+        },
+        {
+          "original_line": 242,
+          "signature": "func reload"
+        },
+        {
+          "original_line": 265,
+          "signature": "func importFile"
+        },
+        {
+          "original_line": 331,
+          "signature": "func reparseFile"
+        },
+        {
+          "original_line": 349,
+          "signature": "func removeFile"
+        },
+        {
+          "original_line": 373,
+          "signature": "func saveArtifact"
+        },
+        {
+          "original_line": 414,
+          "signature": "func artifactContent"
+        },
+        {
+          "original_line": 421,
+          "signature": "func deleteArtifact"
+        },
+        {
+          "original_line": 444,
+          "signature": "func executeTool"
+        },
+        {
+          "original_line": 476,
+          "signature": "func fileRecord"
+        },
+        {
+          "original_line": 487,
+          "signature": "func fileURL"
+        },
+        {
+          "original_line": 491,
+          "signature": "func amberShellRootEntries"
+        },
+        {
+          "original_line": 495,
+          "signature": "func amberShellList"
+        },
+        {
+          "original_line": 515,
+          "signature": "func amberShellReadText"
+        },
+        {
+          "original_line": 533,
+          "signature": "func amberShellWriteText"
+        },
+        {
+          "original_line": 565,
+          "signature": "func amberShellValidateWriteTarget"
+        },
+        {
+          "original_line": 574,
+          "signature": "func amberShellPathIdentity"
+        },
+        {
+          "original_line": 580,
+          "signature": "func amberShellCreateDirectory"
+        },
+        {
+          "original_line": 590,
+          "signature": "func amberShellTouch"
+        },
+        {
+          "original_line": 623,
+          "signature": "func amberShellCopy"
+        },
+        {
+          "original_line": 655,
+          "signature": "func amberShellMove"
+        },
+        {
+          "original_line": 684,
+          "signature": "func amberShellRemove"
+        },
+        {
+          "original_line": 709,
+          "signature": "private func amberShellRelativePath"
+        },
+        {
+          "original_line": 750,
+          "signature": "private func amberShellURL"
+        },
+        {
+          "original_line": 790,
+          "signature": "private func amberShellRequireRegularFile"
+        },
+        {
+          "original_line": 803,
+          "signature": "private func amberShellIsSymbolicLink"
+        },
+        {
+          "original_line": 813,
+          "signature": "private func amberShellPreparedRecord"
+        },
+        {
+          "original_line": 840,
+          "signature": "private func amberShellRequireUnchanged"
+        },
+        {
+          "original_line": 853,
+          "signature": "private func commitFileRecord"
+        },
+        {
+          "original_line": 861,
+          "signature": "private func rollbackPayload"
+        },
+        {
+          "original_line": 872,
+          "signature": "private func restorePayload"
+        },
+        {
+          "original_line": 883,
+          "signature": "private func workspaceFileReadJSON"
+        },
+        {
+          "original_line": 944,
+          "signature": "private static func readWorkspaceFileLines"
+        },
+        {
+          "original_line": 1001,
+          "signature": "private static func workspaceLineNumber"
+        },
+        {
+          "original_line": 1013,
+          "signature": "private func workspaceFileWriteJSON"
+        },
+        {
+          "original_line": 1076,
+          "signature": "private func workspaceFileEditJSON"
+        },
+        {
+          "original_line": 1165,
+          "signature": "private static func workspaceEditDiffPreview"
+        },
+        {
+          "original_line": 1229,
+          "signature": "private func workspaceFileListJSON"
+        },
+        {
+          "original_line": 1251,
+          "signature": "private func workspaceFileSearchJSON"
+        },
+        {
+          "original_line": 1275,
+          "signature": "private func workspaceFileMoveJSON"
+        },
+        {
+          "original_line": 1314,
+          "signature": "private func workspaceArtifactReadJSON"
+        },
+        {
+          "original_line": 1331,
+          "signature": "private func workspaceArtifactDeleteJSON"
+        },
+        {
+          "original_line": 1339,
+          "signature": "private func parsedProposedRecord"
+        },
+        {
+          "original_line": 1351,
+          "signature": "private func parsedRecord"
+        },
+        {
+          "original_line": 1394,
+          "signature": "private func normalizeWorkspacePath"
+        },
+        {
+          "original_line": 1415,
+          "signature": "private func fileURL"
+        },
+        {
+          "original_line": 1419,
+          "signature": "private func startScopedAccessIfNeeded"
+        },
+        {
+          "original_line": 1428,
+          "signature": "private func ensureDirectories"
+        },
+        {
+          "original_line": 1433,
+          "signature": "private func persist"
+        },
+        {
+          "original_line": 1445,
+          "signature": "private func publish"
+        },
+        {
+          "original_line": 1450,
+          "signature": "private static func workspaceStatus"
+        },
+        {
+          "original_line": 1465,
+          "signature": "private static func isInsideAppContainer"
+        },
+        {
+          "original_line": 1470,
+          "signature": "private static func safeFileName"
+        },
+        {
+          "original_line": 1476,
+          "signature": "private static func summary"
+        },
+        {
+          "original_line": 1484,
+          "signature": "private static func millis"
+        },
+        {
+          "original_line": 1488,
+          "signature": "private static func fileSize"
+        },
+        {
+          "original_line": 1496,
+          "signature": "private static func jsonObject"
+        },
+        {
+          "original_line": 1504,
+          "signature": "static func json"
+        },
+        {
+          "original_line": 1514,
+          "signature": "private extension String"
+        },
+        {
+          "original_line": 1515,
+          "signature": "var workspaceNilIfBlank"
+        },
+        {
+          "original_line": 1521,
+          "signature": "private extension Comparable"
+        },
+        {
+          "original_line": 1522,
+          "signature": "func workspaceClamped"
+        }
+      ]
+    },
+    {
+      "original": "IOSContextCompactionCoordinator.swift",
+      "original_lines": [
+        692,
+        1164
+      ],
+      "destination": "Chat/Compaction/IOSContextCompactionBudget.swift",
+      "destination_lines": [
+        5,
+        477
+      ],
+      "original_sha256": "412491f0520fd3b49edd1c9eff0cb26834c09af3df506e9b2e4e0bbef59379f9",
+      "destination_sha256": "412491f0520fd3b49edd1c9eff0cb26834c09af3df506e9b2e4e0bbef59379f9",
+      "exact_match": true,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 692,
+          "signature": "static let defaultContextWindowTokens"
+        },
+        {
+          "original_line": 693,
+          "signature": "static let maxTimelineSummaryChars"
+        },
+        {
+          "original_line": 694,
+          "signature": "static let maxHandoffChars"
+        },
+        {
+          "original_line": 695,
+          "signature": "static let maxCompressionTextChars"
+        },
+        {
+          "original_line": 697,
+          "signature": "static let compressionInputRatio"
+        },
+        {
+          "original_line": 699,
+          "signature": "static func estimatePromptTokens"
+        },
+        {
+          "original_line": 703,
+          "signature": "static func estimateTokens"
+        },
+        {
+          "original_line": 710,
+          "signature": "static func nextTurnOccupancyTokens"
+        },
+        {
+          "original_line": 757,
+          "signature": "static func estimatePreparedMessages"
+        },
+        {
+          "original_line": 774,
+          "signature": "static func estimateDraftTokens"
+        },
+        {
+          "original_line": 780,
+          "signature": "static func estimateContextWindow"
+        },
+        {
+          "original_line": 787,
+          "signature": "static func planCompaction"
+        },
+        {
+          "original_line": 859,
+          "signature": "static func planForceCompaction"
+        },
+        {
+          "original_line": 933,
+          "signature": "static func prepareMessagesWithCompacts"
+        },
+        {
+          "original_line": 964,
+          "signature": "static func fitMessagesToTokenBudget"
+        },
+        {
+          "original_line": 1021,
+          "signature": "static func messageFittedToTokenBudget"
+        },
+        {
+          "original_line": 1041,
+          "signature": "static func truncatingToolOutputs"
+        },
+        {
+          "original_line": 1068,
+          "signature": "static func appendingTruncationNotice"
+        },
+        {
+          "original_line": 1081,
+          "signature": "static func truncationNoticeText"
+        },
+        {
+          "original_line": 1085,
+          "signature": "static func requestOverheadTokens"
+        },
+        {
+          "original_line": 1104,
+          "signature": "static func assertFitsRequest"
+        },
+        {
+          "original_line": 1122,
+          "signature": "static func trimmingCompactHandoffSystemMessages"
+        },
+        {
+          "original_line": 1140,
+          "signature": "static func isCompactHandoffSystemMessage"
+        },
+        {
+          "original_line": 1146,
+          "signature": "static func systemText"
+        },
+        {
+          "original_line": 1151,
+          "signature": "static func compactHandoffText"
+        }
+      ]
+    },
+    {
+      "original": "IOSContextCompactionCoordinator.swift",
+      "original_lines": [
+        1165,
+        1404
+      ],
+      "destination": "Chat/Compaction/IOSContextCompactionPreparedContext.swift",
+      "destination_lines": [
+        5,
+        244
+      ],
+      "original_sha256": "06abc5bbc960fcf9bb281cf8bebb8b29b1d88a9777d88e4a0615a83a1721eb27",
+      "destination_sha256": "06abc5bbc960fcf9bb281cf8bebb8b29b1d88a9777d88e4a0615a83a1721eb27",
+      "exact_match": true,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 1167,
+          "signature": "static func editPreparedContext"
+        },
+        {
+          "original_line": 1189,
+          "signature": "static func buildCompressionInput"
+        },
+        {
+          "original_line": 1201,
+          "signature": "static func buildCompressionPrompt"
+        },
+        {
+          "original_line": 1243,
+          "signature": "static func fillTemplate"
+        },
+        {
+          "original_line": 1258,
+          "signature": "static func normalizedPayload"
+        },
+        {
+          "original_line": 1302,
+          "signature": "static func isUsableHandoff"
+        },
+        {
+          "original_line": 1309,
+          "signature": "static let handoffSectionNames"
+        },
+        {
+          "original_line": 1315,
+          "signature": "static let compactionRetryPrompt"
+        },
+        {
+          "original_line": 1317,
+          "signature": "static func injectionText"
+        },
+        {
+          "original_line": 1326,
+          "signature": "static func injectionText"
+        },
+        {
+          "original_line": 1347,
+          "signature": "static func compactedToolResultsNote"
+        },
+        {
+          "original_line": 1351,
+          "signature": "static func timelineSummary"
+        },
+        {
+          "original_line": 1363,
+          "signature": "static func selectCompactsForInjection"
+        },
+        {
+          "original_line": 1380,
+          "signature": "static func validCompletedCompacts"
+        }
+      ]
+    },
+    {
+      "original": "IOSContextCompactionCoordinator.swift",
+      "original_lines": [
+        1406,
+        1825
+      ],
+      "destination": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "destination_lines": [
+        4,
+        423
+      ],
+      "original_sha256": "4ba0573c0052ed34ed47f8fcfca80ec5c9a79c62332cf3605fe8faeecbefa7dc",
+      "destination_sha256": "83e9c3f687f2dfc459c19288a08ec5ae1f61bf02d9e4c2e407555b018d35c7c7",
+      "exact_match": false,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 1406,
+          "signature": "private extension IOSContextCompactionCoordinator"
+        },
+        {
+          "original_line": 1407,
+          "signature": "static let defaultHandoffPrompt"
+        },
+        {
+          "original_line": 1421,
+          "signature": "static func skipped"
+        },
+        {
+          "original_line": 1433,
+          "signature": "static func estimateAfterCompaction"
+        },
+        {
+          "original_line": 1452,
+          "signature": "static func transitiveCompactIds"
+        },
+        {
+          "original_line": 1466,
+          "signature": "static func transitiveCoveredIds"
+        },
+        {
+          "original_line": 1483,
+          "signature": "static func estimatedChars"
+        },
+        {
+          "original_line": 1487,
+          "signature": "static func summaryLine"
+        },
+        {
+          "original_line": 1512,
+          "signature": "static func summarizeToolOutput"
+        },
+        {
+          "original_line": 1523,
+          "signature": "static func editMessageTools"
+        },
+        {
+          "original_line": 1554,
+          "signature": "static let compactedToolOutputMarker"
+        },
+        {
+          "original_line": 1556,
+          "signature": "static func trimToolResult"
+        },
+        {
+          "original_line": 1573,
+          "signature": "static func clearToolResult"
+        },
+        {
+          "original_line": 1591,
+          "signature": "static func replacingToolOutput"
+        },
+        {
+          "original_line": 1599,
+          "signature": "static func canEditPreparedResult"
+        },
+        {
+          "original_line": 1605,
+          "signature": "static func safeToClearPreparedResult"
+        },
+        {
+          "original_line": 1611,
+          "signature": "static let clearableToolNames"
+        },
+        {
+          "original_line": 1628,
+          "signature": "static let sensitiveSessionTools"
+        },
+        {
+          "original_line": 1631,
+          "signature": "private extension IOSContextCompactionCoordinator"
+        },
+        {
+          "original_line": 1632,
+          "signature": "static func limitContext"
+        },
+        {
+          "original_line": 1666,
+          "signature": "static func messageId"
+        },
+        {
+          "original_line": 1670,
+          "signature": "static func messageHasExecutedTool"
+        },
+        {
+          "original_line": 1674,
+          "signature": "static func messageHasPendingTool"
+        },
+        {
+          "original_line": 1678,
+          "signature": "static func messageHasMultimodalPart"
+        },
+        {
+          "original_line": 1682,
+          "signature": "static func partsContainMultimodal"
+        },
+        {
+          "original_line": 1695,
+          "signature": "static func outputLooksFailedOrDenied"
+        },
+        {
+          "original_line": 1705,
+          "signature": "static func outputChars"
+        },
+        {
+          "original_line": 1714,
+          "signature": "static func intValue"
+        },
+        {
+          "original_line": 1718,
+          "signature": "static func supportsTextGeneration"
+        },
+        {
+          "original_line": 1722,
+          "signature": "static func nowMillis"
+        },
+        {
+          "original_line": 1727,
+          "signature": "private extension IOSContextCompactionCoordinator"
+        },
+        {
+          "original_line": 1728,
+          "signature": "static func parseJSONObject"
+        },
+        {
+          "original_line": 1737,
+          "signature": "static func payloadObject"
+        },
+        {
+          "original_line": 1747,
+          "signature": "static func locateJSONObject"
+        },
+        {
+          "original_line": 1779,
+          "signature": "static func stringValue"
+        },
+        {
+          "original_line": 1789,
+          "signature": "static func stringList"
+        },
+        {
+          "original_line": 1795,
+          "signature": "static func jsonString"
+        },
+        {
+          "original_line": 1804,
+          "signature": "static func cleanHumanText"
+        },
+        {
+          "original_line": 1813,
+          "signature": "static func cleanMarkdown"
+        },
+        {
+          "original_line": 1817,
+          "signature": "static func coerceTimelineSummary"
+        }
+      ]
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_lines": [
+        61,
+        93
+      ],
+      "destination": "Chat/Storage/IOSConversationContentAccess.swift",
+      "destination_lines": [
+        4,
+        36
+      ],
+      "original_sha256": "65f62822d4ae10df1d19e8c7a51c051ae36c289c2752c8566f4bd86a7039b013",
+      "destination_sha256": "65f62822d4ae10df1d19e8c7a51c051ae36c289c2752c8566f4bd86a7039b013",
+      "exact_match": true,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 61,
+          "signature": "struct IOSConversationSearchResult"
+        },
+        {
+          "original_line": 74,
+          "signature": "let id"
+        },
+        {
+          "original_line": 75,
+          "signature": "let conversationId"
+        },
+        {
+          "original_line": 76,
+          "signature": "let kind"
+        },
+        {
+          "original_line": 77,
+          "signature": "let title"
+        },
+        {
+          "original_line": 78,
+          "signature": "let preview"
+        },
+        {
+          "original_line": 79,
+          "signature": "let highlight"
+        },
+        {
+          "original_line": 80,
+          "signature": "let updateAt"
+        },
+        {
+          "original_line": 86,
+          "signature": "struct IOSSessionSearchHit"
+        },
+        {
+          "original_line": 87,
+          "signature": "let conversationId"
+        },
+        {
+          "original_line": 88,
+          "signature": "let title"
+        },
+        {
+          "original_line": 89,
+          "signature": "let snippet"
+        },
+        {
+          "original_line": 90,
+          "signature": "let updatedAt"
+        },
+        {
+          "original_line": 91,
+          "signature": "let messageCount"
+        }
+      ]
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_lines": [
+        1193,
+        1381
+      ],
+      "destination": "Chat/Storage/IOSConversationContentAccess.swift",
+      "destination_lines": [
+        38,
+        226
+      ],
+      "original_sha256": "70daccb1c08e5b9cde00e31964f9f244d634928b22a1b467d26a4ff4b45b96a7",
+      "destination_sha256": "2edf1bb4f1e5f9d25283ff306ae5c853e60780795727ac27dcd2b8dc361644f0",
+      "exact_match": false,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 1193,
+          "signature": "func currentConversationDeepReadSource"
+        },
+        {
+          "original_line": 1209,
+          "signature": "func appendDeepReadResultToCurrentConversation"
+        },
+        {
+          "original_line": 1231,
+          "signature": "func searchConversations"
+        },
+        {
+          "original_line": 1282,
+          "signature": "func sessionSearchHits"
+        },
+        {
+          "original_line": 1329,
+          "signature": "func boardSignalCandidates"
+        },
+        {
+          "original_line": 1364,
+          "signature": "private static func boardRoleName"
+        },
+        {
+          "original_line": 1372,
+          "signature": "private static func searchableMessages"
+        }
+      ]
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_lines": [
+        1490,
+        1506
+      ],
+      "destination": "Chat/Storage/IOSConversationContentAccess.swift",
+      "destination_lines": [
+        227,
+        243
+      ],
+      "original_sha256": "d2cd29eb613ab119e17f5faefec2177de55af243e37d75ce8f0b76c4097c0f2f",
+      "destination_sha256": "d2cd29eb613ab119e17f5faefec2177de55af243e37d75ce8f0b76c4097c0f2f",
+      "exact_match": true,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 1490,
+          "signature": "private static func searchPreview"
+        }
+      ]
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_lines": [
+        1524,
+        1798
+      ],
+      "destination": "Chat/Storage/IOSConversationBranching.swift",
+      "destination_lines": [
+        5,
+        279
+      ],
+      "original_sha256": "e1a6ac768cc84f57dbca5d90d8e34d38baa327492baaff97f8a6ebec1a8e4f31",
+      "destination_sha256": "27dbf5865132100c50964a76fbf7f877d187bd11be22958d58738a20dc7d4461",
+      "exact_match": false,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 1548,
+          "signature": "func variantInfo"
+        },
+        {
+          "original_line": 1561,
+          "signature": "private func conversationForMessageMutation"
+        },
+        {
+          "original_line": 1580,
+          "signature": "func selectVariant"
+        },
+        {
+          "original_line": 1624,
+          "signature": "func appendVariant"
+        },
+        {
+          "original_line": 1666,
+          "signature": "func appendVariantAndTruncateAfter"
+        },
+        {
+          "original_line": 1715,
+          "signature": "func deleteMessage"
+        },
+        {
+          "original_line": 1753,
+          "signature": "func truncateAfter"
+        },
+        {
+          "original_line": 1783,
+          "signature": "private func conversationWithNodes"
+        }
+      ]
+    },
+    {
+      "original": "IOSSharedSettingsStore.swift",
+      "original_lines": [
+        1330,
+        1686
+      ],
+      "destination": "Settings/IOSSharedAgentFeatureSettings.swift",
+      "destination_lines": [
+        5,
+        361
+      ],
+      "original_sha256": "8045a4ecc61aa7e5a275e075e118e5d63ef2353ec5095ed09ffb7372f314fc10",
+      "destination_sha256": "8045a4ecc61aa7e5a275e075e118e5d63ef2353ec5095ed09ffb7372f314fc10",
+      "exact_match": true,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 1330,
+          "signature": "var savedSubAgentOverrides"
+        },
+        {
+          "original_line": 1335,
+          "signature": "var allowsDynamicSubAgents"
+        },
+        {
+          "original_line": 1339,
+          "signature": "var subAgentMaxConcurrentRuns"
+        },
+        {
+          "original_line": 1343,
+          "signature": "var subAgentTimeoutMinutes"
+        },
+        {
+          "original_line": 1347,
+          "signature": "var subAgentModelPool"
+        },
+        {
+          "original_line": 1351,
+          "signature": "func setDynamicSubAgentsAllowed"
+        },
+        {
+          "original_line": 1355,
+          "signature": "func setSubAgentExecutionLimits"
+        },
+        {
+          "original_line": 1363,
+          "signature": "func setSubAgentModelPool"
+        },
+        {
+          "original_line": 1370,
+          "signature": "func setSubAgentPoolReasoning"
+        },
+        {
+          "original_line": 1378,
+          "signature": "func configureSubAgentRole"
+        },
+        {
+          "original_line": 1401,
+          "signature": "func resetSubAgentRole"
+        },
+        {
+          "original_line": 1406,
+          "signature": "func subAgentReasoningLevels"
+        },
+        {
+          "original_line": 1415,
+          "signature": "func addSubAgentOverride"
+        },
+        {
+          "original_line": 1434,
+          "signature": "func removeSubAgentOverride"
+        },
+        {
+          "original_line": 1456,
+          "signature": "var currentAssistantEnabledSkillNames"
+        },
+        {
+          "original_line": 1460,
+          "signature": "func isSkillEnabled"
+        },
+        {
+          "original_line": 1464,
+          "signature": "func setSkillEnabled"
+        },
+        {
+          "original_line": 1477,
+          "signature": "func updateUserNickname"
+        },
+        {
+          "original_line": 1484,
+          "signature": "var modeInjections"
+        },
+        {
+          "original_line": 1488,
+          "signature": "func upsertModeInjection"
+        },
+        {
+          "original_line": 1496,
+          "signature": "func deleteModeInjection"
+        },
+        {
+          "original_line": 1502,
+          "signature": "var lorebooks"
+        },
+        {
+          "original_line": 1506,
+          "signature": "func upsertLorebook"
+        },
+        {
+          "original_line": 1513,
+          "signature": "func deleteLorebook"
+        },
+        {
+          "original_line": 1517,
+          "signature": "func removeSkillFromAllAssistants"
+        },
+        {
+          "original_line": 1529,
+          "signature": "func setMiniAppHostContextEnabled"
+        },
+        {
+          "original_line": 1539,
+          "signature": "func setMiniAppHostWriteEnabled"
+        },
+        {
+          "original_line": 1549,
+          "signature": "func updateMiniAppRuntime"
+        },
+        {
+          "original_line": 1577,
+          "signature": "var todayBoard"
+        },
+        {
+          "original_line": 1581,
+          "signature": "func updateTodayBoard"
+        },
+        {
+          "original_line": 1609,
+          "signature": "var ttsProviders"
+        },
+        {
+          "original_line": 1614,
+          "signature": "var selectedTTSProviderId"
+        },
+        {
+          "original_line": 1620,
+          "signature": "var providers"
+        },
+        {
+          "original_line": 1627,
+          "signature": "var chatModelIds"
+        },
+        {
+          "original_line": 1642,
+          "signature": "var assistants"
+        },
+        {
+          "original_line": 1647,
+          "signature": "var searchServices"
+        },
+        {
+          "original_line": 1652,
+          "signature": "var searchServiceSelected"
+        },
+        {
+          "original_line": 1655,
+          "signature": "var enableWebSearch"
+        },
+        {
+          "original_line": 1656,
+          "signature": "var searchBuiltinJinaEnabled"
+        },
+        {
+          "original_line": 1657,
+          "signature": "var searchBuiltinDuckDuckGoEnabled"
+        },
+        {
+          "original_line": 1658,
+          "signature": "var searchBuiltinBingEnabled"
+        },
+        {
+          "original_line": 1659,
+          "signature": "var searchBuiltinWikipediaEnabled"
+        },
+        {
+          "original_line": 1660,
+          "signature": "var searchBuiltinHackerNewsEnabled"
+        },
+        {
+          "original_line": 1661,
+          "signature": "var searchGoogleWebViewFallbackEnabled"
+        },
+        {
+          "original_line": 1664,
+          "signature": "var searchResultSize"
+        },
+        {
+          "original_line": 1667,
+          "signature": "var displaySetting"
+        },
+        {
+          "original_line": 1673,
+          "signature": "var agentRuntime"
+        },
+        {
+          "original_line": 1682,
+          "signature": "var imageGenerationModelId"
+        },
+        {
+          "original_line": 1683,
+          "signature": "var titleModelId"
+        },
+        {
+          "original_line": 1684,
+          "signature": "var suggestionModelId"
+        },
+        {
+          "original_line": 1685,
+          "signature": "var ocrModelId"
+        },
+        {
+          "original_line": 1686,
+          "signature": "var compressModelId"
+        }
+      ]
+    },
+    {
+      "original": "IOSSharedSettingsStore.swift",
+      "original_lines": [
+        1689,
+        1839
+      ],
+      "destination": "Settings/IOSSharedSettingsModels.swift",
+      "destination_lines": [
+        4,
+        154
+      ],
+      "original_sha256": "913965ef47489a6e09f44fd33371e9606aa11f01c878d2e766a83ddc92f3e404",
+      "destination_sha256": "913965ef47489a6e09f44fd33371e9606aa11f01c878d2e766a83ddc92f3e404",
+      "exact_match": true,
+      "match_after_declared_visibility_change": true,
+      "declarations": [
+        {
+          "original_line": 1689,
+          "signature": "struct MiniAppSettingPatch"
+        },
+        {
+          "original_line": 1690,
+          "signature": "var enabled"
+        },
+        {
+          "original_line": 1691,
+          "signature": "var networkEnabled"
+        },
+        {
+          "original_line": 1692,
+          "signature": "var externalImagesEnabled"
+        },
+        {
+          "original_line": 1693,
+          "signature": "var searchEnabled"
+        },
+        {
+          "original_line": 1694,
+          "signature": "var clipboardCopyEnabled"
+        },
+        {
+          "original_line": 1695,
+          "signature": "var boardSummaryUpdateEnabled"
+        },
+        {
+          "original_line": 1696,
+          "signature": "var hostContextEnabled"
+        },
+        {
+          "original_line": 1697,
+          "signature": "var hostWriteEnabled"
+        },
+        {
+          "original_line": 1698,
+          "signature": "var aiEnabled"
+        },
+        {
+          "original_line": 1699,
+          "signature": "var sharedStoreEnabled"
+        },
+        {
+          "original_line": 1700,
+          "signature": "var eventBusEnabled"
+        },
+        {
+          "original_line": 1701,
+          "signature": "var launchEnabled"
+        },
+        {
+          "original_line": 1702,
+          "signature": "var sensorEnabled"
+        },
+        {
+          "original_line": 1703,
+          "signature": "var locationEnabled"
+        },
+        {
+          "original_line": 1704,
+          "signature": "var clipboardReadEnabled"
+        },
+        {
+          "original_line": 1705,
+          "signature": "var webViewDebugEnabled"
+        },
+        {
+          "original_line": 1706,
+          "signature": "var showSourceButton"
+        },
+        {
+          "original_line": 1747,
+          "signature": "struct TodayBoardSettingPatch"
+        },
+        {
+          "original_line": 1748,
+          "signature": "var boardModelId"
+        },
+        {
+          "original_line": 1749,
+          "signature": "var clearBoardModelId"
+        },
+        {
+          "original_line": 1750,
+          "signature": "var hotListRefreshIntervalMinutes"
+        },
+        {
+          "original_line": 1751,
+          "signature": "var hotListWifiOnly"
+        },
+        {
+          "original_line": 1752,
+          "signature": "var hotListEnabledSources"
+        },
+        {
+          "original_line": 1753,
+          "signature": "var hotListFocusKeywords"
+        },
+        {
+          "original_line": 1754,
+          "signature": "var hotListFilterModeWireName"
+        },
+        {
+          "original_line": 1755,
+          "signature": "var boardReadingFontModeWireName"
+        },
+        {
+          "original_line": 1756,
+          "signature": "var boardReadingFontPackId"
+        },
+        {
+          "original_line": 1757,
+          "signature": "var clearBoardReadingFontPackId"
+        },
+        {
+          "original_line": 1758,
+          "signature": "var deepReadFontScale"
+        },
+        {
+          "original_line": 1759,
+          "signature": "var deepReadTemplateId"
+        },
+        {
+          "original_line": 1760,
+          "signature": "var hotListTranslateToChinese"
+        },
+        {
+          "original_line": 1793,
+          "signature": "struct IOSRemoteSyncStatus"
+        },
+        {
+          "original_line": 1794,
+          "signature": "var lastUploadAt"
+        },
+        {
+          "original_line": 1795,
+          "signature": "var lastDownloadAt"
+        },
+        {
+          "original_line": 1796,
+          "signature": "var remoteRevision"
+        },
+        {
+          "original_line": 1797,
+          "signature": "var provider"
+        },
+        {
+          "original_line": 1798,
+          "signature": "var providerRevisions"
+        },
+        {
+          "original_line": 1799,
+          "signature": "var deviceLabel"
+        },
+        {
+          "original_line": 1800,
+          "signature": "var lastBackupVersionName"
+        },
+        {
+          "original_line": 1801,
+          "signature": "var lastBackupVersionCode"
+        },
+        {
+          "original_line": 1802,
+          "signature": "var lastError"
+        },
+        {
+          "original_line": 1806,
+          "signature": "func remoteRevision"
+        },
+        {
+          "original_line": 1810,
+          "signature": "func scoped"
+        }
+      ]
+    }
+  ],
+  "retained_sources": [
+    {
+      "file": "DocumentAccessStore.swift",
+      "baseline_sha256": "c118aaecc6d55ae949a57c37f22062590a1ad9748b1a1f3fa04febef1073dd4a",
+      "current_sha256": "22a1315fadd42c164af1c230ce5d8da4e06ab48b36eb0a9b76d29bf1321fdf8b",
+      "current_lines": 1043,
+      "exact_after_removal_and_declared_visibility_change": true
+    },
+    {
+      "file": "IOSContextCompactionCoordinator.swift",
+      "baseline_sha256": "78a6e2756025b2cacf554b1008996e400327a7c548cf698d69cbe41ef886f27d",
+      "current_sha256": "4acfa4cffb463768fa5b7064f042cecddfaa2183ecc7dcd4b34f7e940491bb5b",
+      "current_lines": 951,
+      "exact_after_removal_and_declared_visibility_change": true
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "baseline_sha256": "e4ba99aa338dc822b05a91ead7ae9dfc8526e33ce5e74b27332e82904118e952",
+      "current_sha256": "69c3bd1474d4512e60bb500103d7392d56ec88ff2ac6fd0a420cec781ceb7af6",
+      "current_lines": 1485,
+      "exact_after_removal_and_declared_visibility_change": true
+    },
+    {
+      "file": "IOSSharedSettingsStore.swift",
+      "baseline_sha256": "51a5cfb039ce84d456b6d1e3a625c458d0addd00d7b64c43742aa2ce75431390",
+      "current_sha256": "77cdcbcd8da9d6d9203b3fdc2f3e974d0ab7b44e7a882b7b5455e199ba87ae6c",
+      "current_lines": 1357,
+      "exact_after_removal_and_declared_visibility_change": true
+    }
+  ],
+  "key_method_bodies": [
+    {
+      "original": "DocumentAccessStore.swift",
+      "original_start_line": 1645,
+      "method": "consumeSelectedFileRead",
+      "current": "DocumentAccessStore.swift",
+      "current_start_line": 188,
+      "body_sha256": "234b625311c8a0f3687c9daf9626aa3c28d8a2d581aaa31b86ad8c9523d25ede",
+      "body_exact": true
+    },
+    {
+      "original": "DocumentAccessStore.swift",
+      "original_start_line": 1433,
+      "method": "persist",
+      "current": "Infrastructure/Workspace/IOSWorkspaceStore.swift",
+      "current_start_line": 1368,
+      "body_sha256": "b8f35fb2ea2d0f9b1fa94839bc5528f8c152f948aeefd7e2fd63b56221031bda",
+      "body_exact": true
+    },
+    {
+      "original": "IOSContextCompactionCoordinator.swift",
+      "original_start_line": 364,
+      "method": "compactConversation",
+      "current": "IOSContextCompactionCoordinator.swift",
+      "current_start_line": 364,
+      "body_sha256": "c326189c1bceb97c88184531940c45af214d471ede453e7c93f3faff7692c7a3",
+      "body_exact": true
+    },
+    {
+      "original": "IOSContextCompactionCoordinator.swift",
+      "original_start_line": 403,
+      "method": "compactConversationLocked",
+      "current": "IOSContextCompactionCoordinator.swift",
+      "current_start_line": 403,
+      "body_sha256": "f07b41e8ff25c5f1a3731a04b0ebc91680b8527de417b91c3427470a8bd2f33d",
+      "body_exact": true
+    },
+    {
+      "original": "IOSContextCompactionCoordinator.swift",
+      "original_start_line": 574,
+      "method": "generateCompactSummary",
+      "current": "IOSContextCompactionCoordinator.swift",
+      "current_start_line": 574,
+      "body_sha256": "64222e830e9c7ea7a1da75419eba250925edf4c5b55db165236129766bf5620c",
+      "body_exact": true
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_start_line": 1800,
+      "method": "persist",
+      "current": "IOSConversationStore.swift",
+      "current_start_line": 1286,
+      "body_sha256": "50965fca811160d211c8c547fd4308d546111c536f7ffb48235573d5dec67951",
+      "body_exact": true
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_start_line": 1850,
+      "method": "acceptsWrite",
+      "current": "IOSConversationStore.swift",
+      "current_start_line": 1336,
+      "body_sha256": "0eb533cfacdcc0bb09bd93c4b5d07171136041acac5cd3dcdaa90085ad61c8ca",
+      "body_exact": true
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_start_line": 1873,
+      "method": "acceptsImportEpoch",
+      "current": "IOSConversationStore.swift",
+      "current_start_line": 1359,
+      "body_sha256": "97bf162d9162d11d9f08cac3b5ec39913b93f75a69220beb94e2e305217fe72e",
+      "body_exact": true
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_start_line": 1888,
+      "method": "beginConversationWrite",
+      "current": "IOSConversationStore.swift",
+      "current_start_line": 1374,
+      "body_sha256": "236b27bb7d0d0b5e28049b84b6f02f49259d110850af2e48e66bda942431d39f",
+      "body_exact": true
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_start_line": 1899,
+      "method": "finishConversationWrite",
+      "current": "IOSConversationStore.swift",
+      "current_start_line": 1385,
+      "body_sha256": "9d794144ec1d9fb73fcde0953ccdf019371a63e0b94e3dafc6102aa44ebc7dc4",
+      "body_exact": true
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_start_line": 1907,
+      "method": "waitForConversationWritesToDrain",
+      "current": "IOSConversationStore.swift",
+      "current_start_line": 1393,
+      "body_sha256": "53648b83f9bb502f033680df836ad6e60d4b60671ace295a3639a08c70cf5251",
+      "body_exact": true
+    },
+    {
+      "original": "IOSConversationStore.swift",
+      "original_start_line": 1914,
+      "method": "advanceWriteSequence",
+      "current": "IOSConversationStore.swift",
+      "current_start_line": 1400,
+      "body_sha256": "b2fc6b3551ce168bf3a2ace289456a7cddb00525d47d639d066e96934bc8a5dc",
+      "body_exact": true
+    },
+    {
+      "original": "IOSSharedSettingsStore.swift",
+      "original_start_line": 276,
+      "method": "restoreSnapshot",
+      "current": "IOSSharedSettingsStore.swift",
+      "current_start_line": 276,
+      "body_sha256": "5dddd6a571002cb718cbe001251377bc49eb0f1d2d68a3c3e394dee351c1b229",
+      "body_exact": true
+    },
+    {
+      "original": "IOSSharedSettingsStore.swift",
+      "original_start_line": 322,
+      "method": "credentialValues",
+      "current": "IOSSharedSettingsStore.swift",
+      "current_start_line": 322,
+      "body_sha256": "92cf5d9f8749704a5c775f62f50442de84f94344f5d3315fece9f2170857b3b3",
+      "body_exact": true
+    }
+  ],
+  "visibility_changes": [
+    {
+      "file": "DocumentAccessStore.swift",
+      "old": "fileprivate extension DocumentAccessError {",
+      "new": "extension DocumentAccessError {",
+      "reason": "Workspace tool error handling uses the same user-visible message across files"
+    },
+    {
+      "file": "IOSContextCompactionCoordinator.swift",
+      "old": "private struct IOSConversationCompact",
+      "new": "struct IOSConversationCompact",
+      "reason": "shared compact record across extracted helpers"
+    },
+    {
+      "file": "IOSContextCompactionCoordinator.swift",
+      "old": "private struct IOSCompactPolicy",
+      "new": "struct IOSCompactPolicy",
+      "reason": "shared planner policy across extracted helpers"
+    },
+    {
+      "file": "IOSContextCompactionCoordinator.swift",
+      "old": "private struct IOSCompactPlan",
+      "new": "struct IOSCompactPlan",
+      "reason": "shared plan result across extracted helpers"
+    },
+    {
+      "file": "IOSContextCompactionCoordinator.swift",
+      "old": "private extension String {",
+      "new": "extension String {",
+      "reason": "token/text helper called across files"
+    },
+    {
+      "file": "IOSContextCompactionCoordinator.swift",
+      "old": "private extension IOSCompactPolicy {",
+      "new": "extension IOSCompactPolicy {",
+      "reason": "six-field planner policy initializer called by budget extension"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private let storage: JsonConversationStorage",
+      "new": "    let storage: JsonConversationStorage",
+      "reason": "search and branch extension reads canonical storage"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private var importEpoch: UInt64",
+      "new": "    private(set) var importEpoch: UInt64",
+      "reason": "branch extension reads canonical restore epoch; only original owner may advance it"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func publishIOError(",
+      "new": "    func publishIOError(",
+      "reason": "branch extension reports canonical I/O error"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func nowInstant()",
+      "new": "    func nowInstant()",
+      "reason": "branch extension constructs mutated conversation"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func setCurrent(",
+      "new": "    func setCurrent(",
+      "reason": "branch extension uses canonical revision owner"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func persist(",
+      "new": "    func persist(",
+      "reason": "branch extension routes through canonical writer"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func acceptsImportEpoch(",
+      "new": "    func acceptsImportEpoch(",
+      "reason": "branch extension checks canonical restore gate"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func refreshSummaries()",
+      "new": "    func refreshSummaries()",
+      "reason": "branch extension refreshes canonical list"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func visibleSummariesForListing()",
+      "new": "    func visibleSummariesForListing()",
+      "reason": "search and Board extension use canonical visibility"
+    },
+    {
+      "file": "IOSConversationStore.swift",
+      "old": "    private func isDeletedConversation(",
+      "new": "    func isDeletedConversation(",
+      "reason": "branch extension checks canonical tombstones"
+    },
+    {
+      "file": "IOSSharedSettingsStore.swift",
+      "old": "    private let defaults: UserDefaults",
+      "new": "    let defaults: UserDefaults",
+      "reason": "agent feature extension reads canonical defaults"
+    },
+    {
+      "file": "IOSSharedSettingsStore.swift",
+      "old": "    private let subAgentOverridesKey =",
+      "new": "    let subAgentOverridesKey =",
+      "reason": "agent feature extension uses the same persisted key"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionBudget.swift",
+      "old": "private extension IOSContextCompactionCoordinator",
+      "new": "extension IOSContextCompactionCoordinator",
+      "reason": "cross-file coordinator helpers"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionPreparedContext.swift",
+      "old": "private extension IOSContextCompactionCoordinator",
+      "new": "extension IOSContextCompactionCoordinator",
+      "reason": "cross-file coordinator helpers"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "old": "private extension IOSContextCompactionCoordinator",
+      "new": "extension IOSContextCompactionCoordinator",
+      "reason": "message planning helpers used across files"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "old": "private extension IOSContextCompactionCoordinator",
+      "new": "extension IOSContextCompactionCoordinator",
+      "reason": "message helpers used across files"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "old": "private extension IOSContextCompactionCoordinator",
+      "new": "extension IOSContextCompactionCoordinator",
+      "reason": "handoff payload helpers used across files"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "old": "    static func messageHasExecutedTool(",
+      "new": "    private static func messageHasExecutedTool(",
+      "reason": "keep codec-only helper private after extension visibility change"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "old": "    static func partsContainMultimodal(",
+      "new": "    private static func partsContainMultimodal(",
+      "reason": "keep codec-only helper private after extension visibility change"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "old": "    static func outputLooksFailedOrDenied(",
+      "new": "    private static func outputLooksFailedOrDenied(",
+      "reason": "keep codec-only helper private after extension visibility change"
+    },
+    {
+      "file": "Chat/Compaction/IOSContextCompactionHandoffCodec.swift",
+      "old": "    static func locateJSONObject(",
+      "new": "    private static func locateJSONObject(",
+      "reason": "keep codec-only helper private after extension visibility change"
+    },
+    {
+      "file": "Chat/Storage/IOSConversationBranching.swift",
+      "old": "    private func conversationForMessageMutation(",
+      "new": "    func conversationForMessageMutation(",
+      "reason": "original store calls branch mutation loader"
+    },
+    {
+      "file": "Chat/Storage/IOSConversationBranching.swift",
+      "old": "    private func conversationWithNodes(",
+      "new": "    func conversationWithNodes(",
+      "reason": "original store calls branch node constructor"
+    },
+    {
+      "file": "Chat/Storage/IOSConversationContentAccess.swift",
+      "old": "    private static func searchableMessages(",
+      "new": "    static func searchableMessages(",
+      "reason": "empty-conversation reuse in original owner calls this helper"
+    }
+  ],
+  "source_guards": {
+    "HomeDesignContractTests:782": true
+  }
+}

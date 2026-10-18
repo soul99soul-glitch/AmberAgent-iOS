@@ -628,6 +628,10 @@ final class ChatMessageWidthOverflowTests: XCTestCase {
         let image = renderer.image { context in
             window.layer.render(in: context.cgContext)
         }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "overflow-\(label)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
         let pngPath = "\(Self.pngDir)/overflow-\(label).png"
         if let data = image.pngData() {
             do {

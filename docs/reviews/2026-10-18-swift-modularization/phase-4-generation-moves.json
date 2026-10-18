@@ -1,0 +1,1337 @@
+{
+  "scope": "Phase4 Generation worker, five original production Swift files and their new responsibility files only",
+  "baseline": {
+    "NovelCreationViewModel.swift": {
+      "path": "/tmp/amber-phase4-source-baseline/files/iosApp/iosApp/NovelCreation/NovelCreationViewModel.swift",
+      "physical_lines": 4459,
+      "sha256": "7a3372d0d5a2a8636cec843f6e248a0513c452e07c5d1673067a6e87583f2aea"
+    },
+    "NovelGenerationLifecycle.swift": {
+      "path": "/tmp/amber-phase4-source-baseline/files/iosApp/iosApp/NovelCreation/NovelGenerationLifecycle.swift",
+      "physical_lines": 2569,
+      "sha256": "1d67a5f0cadf7c0c1b45711d212f20783f844be57096b960be2193c3cfb8f54d"
+    },
+    "NovelLiveModelAdapter.swift": {
+      "path": "/tmp/amber-phase4-source-baseline/files/iosApp/iosApp/NovelCreation/NovelLiveModelAdapter.swift",
+      "physical_lines": 1821,
+      "sha256": "da175c404b0d02ae5207531addaa77dc023788263a1eb76fef411c4965bc1cea"
+    },
+    "NovelInjectionPlanner.swift": {
+      "path": "/tmp/amber-phase4-source-baseline/files/iosApp/iosApp/NovelCreation/NovelInjectionPlanner.swift",
+      "physical_lines": 1539,
+      "sha256": "e4c538cd64459bd9dc683799e9917e7c29a8ee92d8169a56c44d8f808b2e05a9"
+    },
+    "NovelPromptCatalog.swift": {
+      "path": "/tmp/amber-phase4-source-baseline/files/iosApp/iosApp/NovelCreation/NovelPromptCatalog.swift",
+      "physical_lines": 2056,
+      "sha256": "9de8fe3d83363f1b22dc891159ec71f743b55e2c29f4e85aa5f75b678e0dda01"
+    }
+  },
+  "result": {
+    "NovelCreationViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelCreationViewModel.swift",
+      "physical_lines": 1158,
+      "sha256": "b238d297e1aee5b18f889bc3f74fa4e9b91b7da76904525f9d026a77a9b005c3"
+    },
+    "NovelQuickStartViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelQuickStartViewModel.swift",
+      "physical_lines": 439,
+      "sha256": "6bff65619179a8417fcf51dcdd5180c68a7ab942f48a44f51a52d5d075820203"
+    },
+    "NovelProjectActionViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelProjectActionViewModel.swift",
+      "physical_lines": 875,
+      "sha256": "c2fd9cefab4e6917a8222142fd0fa5f9e63a0299b4ee412017fda1f573f1bda7"
+    },
+    "NovelRunBridgeViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelRunBridgeViewModel.swift",
+      "physical_lines": 345,
+      "sha256": "577d3ff71ac204fea625f04e15135f7a2df5ba6b296159b423778ee607138591"
+    },
+    "NovelStateSyncViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelStateSyncViewModel.swift",
+      "physical_lines": 805,
+      "sha256": "d3efc205636f6c6544a784b233df698bb6e17e8720bf7e3a92449bdabd66438c"
+    },
+    "NovelContinuityViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelContinuityViewModel.swift",
+      "physical_lines": 277,
+      "sha256": "fdbcf08f2ad18e871ac66b72982cc3006c49103f45dbe10d1b323c42fab4feb1"
+    },
+    "NovelWorkspaceViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelWorkspaceViewModel.swift",
+      "physical_lines": 245,
+      "sha256": "020567ff3305338688482c887415e5cde9f0c8d4862c17a5cf6bf5f3c74a66b9"
+    },
+    "NovelMutationViewModel.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelMutationViewModel.swift",
+      "physical_lines": 357,
+      "sha256": "7ddf9ac1f85766587d6f3314e9d175bdff237c917606adf2a69ea2c9602cca13"
+    },
+    "NovelGenerationLifecycle.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelGenerationLifecycle.swift",
+      "physical_lines": 968,
+      "sha256": "ede09c0e26b941be61e9ad323b45386e2dae6a0518a077830893fc44215c1217"
+    },
+    "NovelGenerationStream.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelGenerationStream.swift",
+      "physical_lines": 791,
+      "sha256": "da3bba4bb1b39f40a41694c0fc465fc8fedcee0e76597a6fedb2a8ba22b4a41c"
+    },
+    "NovelGenerationTerminal.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelGenerationTerminal.swift",
+      "physical_lines": 638,
+      "sha256": "95a6b28645b54c060087540fba68aa908e17f3057f01008dacb50026dcb1e230"
+    },
+    "NovelGenerationRequest.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelGenerationRequest.swift",
+      "physical_lines": 186,
+      "sha256": "53ec3891a7c38c90747459b5df79785d4745e36ea792603fd6c33016b0cf0d8e"
+    },
+    "NovelLiveModelAdapter.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelLiveModelAdapter.swift",
+      "physical_lines": 1388,
+      "sha256": "39d6ac0de9f58a670b17992d10b8639c8fa57a454e606acc5c64f073056cb3fb"
+    },
+    "NovelLiveTransportContract.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelLiveTransportContract.swift",
+      "physical_lines": 152,
+      "sha256": "676388f65ce0b49590ef9bbe0374cc6bccb718587334d3905768e043e33148c1"
+    },
+    "NovelDiscussionTransport.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelDiscussionTransport.swift",
+      "physical_lines": 286,
+      "sha256": "dd944333d730f8d82f17440b3ef4da0935bad9c530ef245e5b7ed9d0e7150479"
+    },
+    "NovelInjectionPlanner.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelInjectionPlanner.swift",
+      "physical_lines": 1177,
+      "sha256": "513e73ca3588d498199ed65a8d11eff67c5b17ae89fd72d78a1613a409035f90"
+    },
+    "NovelInjectionModels.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelInjectionModels.swift",
+      "physical_lines": 291,
+      "sha256": "0307aa8e94f6ea556d10ca157e50c1057bd9bd5fe094a7d76a05af40392f8393"
+    },
+    "NovelInjectionPanelPresentation.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelInjectionPanelPresentation.swift",
+      "physical_lines": 75,
+      "sha256": "e54d51444a03f464cb2241943a14263aabceaef9641031e59a83ab205a96b27e"
+    },
+    "NovelPromptCatalog.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelPromptCatalog.swift",
+      "physical_lines": 941,
+      "sha256": "87b3063717eda41c19d5bdde9291a28a4322fa298c06c1681661b5ef79198a6d"
+    },
+    "NovelHistoricalPrompts.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelHistoricalPrompts.swift",
+      "physical_lines": 1010,
+      "sha256": "3d890587fe521fd7aac161bd4a9df83d78a1fc5e06eaf4eb803a9482593a7bcc"
+    },
+    "NovelCandidateProseNormalization.swift": {
+      "path": "iosApp/iosApp/NovelCreation/NovelCandidateProseNormalization.swift",
+      "physical_lines": 112,
+      "sha256": "1b5ee19fa49764e7d472d06278792fb792d6529ce27e6d353922dfbcd424be97"
+    }
+  },
+  "moves": [
+    {
+      "from": "NovelCreationViewModel.swift",
+      "to": [
+        "NovelCreationViewModel.swift",
+        "NovelQuickStartViewModel.swift",
+        "NovelProjectActionViewModel.swift",
+        "NovelRunBridgeViewModel.swift",
+        "NovelStateSyncViewModel.swift",
+        "NovelContinuityViewModel.swift",
+        "NovelWorkspaceViewModel.swift",
+        "NovelMutationViewModel.swift"
+      ],
+      "responsibilities": {
+        "NovelCreationViewModel.swift": "single @Observable state owner, selection, drafts, operation gate, injection preview",
+        "NovelQuickStartViewModel.swift": "Quick Start request/consumer/cancel reconciliation with run identity and status models",
+        "NovelProjectActionViewModel.swift": "project, branch, material, chapter and collaboration commands routed through perform",
+        "NovelRunBridgeViewModel.swift": "App-level run lease and session action bridge",
+        "NovelStateSyncViewModel.swift": "manual/automatic needsSync orchestration, activity model, progress and recovery",
+        "NovelContinuityViewModel.swift": "audit/repair tasks and continuity background lease",
+        "NovelWorkspaceViewModel.swift": "project import/export and workspace plot actions",
+        "NovelMutationViewModel.swift": "single perform mutation gate, refresh/reload and committed-but-reload-failed handling"
+      },
+      "state_owner": "NovelCreationViewModel instance; project document mutations remain DefaultNovelCreation actor/reducer/repository; no copied run/task/token state"
+    },
+    {
+      "from": "NovelGenerationLifecycle.swift",
+      "to": [
+        "NovelGenerationLifecycle.swift",
+        "NovelGenerationStream.swift",
+        "NovelGenerationTerminal.swift",
+        "NovelGenerationRequest.swift"
+      ],
+      "responsibilities": {
+        "NovelGenerationLifecycle.swift": "policy/runtime types, start reservation, interrupt, recovery and injection preview",
+        "NovelGenerationStream.swift": "resume/attach, subscriber broadcast, event consumption, terminal claim and background lease",
+        "NovelGenerationTerminal.swift": "terminal persistence, durable settlement, sidecar, serialized commit and replay",
+        "NovelGenerationRequest.swift": "model policy, parameters, messages, budget and failure mapping"
+      },
+      "state_owner": "single DefaultNovelCreation actor and generationRuntimes dictionary; terminal claim and generation write lock unchanged"
+    },
+    {
+      "from": "NovelLiveModelAdapter.swift",
+      "to": [
+        "NovelLiveModelAdapter.swift",
+        "NovelLiveTransportContract.swift",
+        "NovelDiscussionTransport.swift"
+      ],
+      "responsibilities": {
+        "NovelLiveModelAdapter.swift": "single activeRuns/attemptID actor, route, provider transports, event mapping and FIFO callback sink",
+        "NovelLiveTransportContract.swift": "request/callback/cancellation/Codex hook value contracts",
+        "NovelDiscussionTransport.swift": "discussion tool-loop transport and step text accumulator"
+      },
+      "state_owner": "single NovelLiveModelAdapter actor; callback FIFO and cancellation-before-handle remain in actor file"
+    },
+    {
+      "from": "NovelInjectionPlanner.swift",
+      "to": [
+        "NovelInjectionPlanner.swift",
+        "NovelInjectionModels.swift",
+        "NovelInjectionPanelPresentation.swift"
+      ],
+      "responsibilities": {
+        "NovelInjectionPlanner.swift": "selection, budget, ordering and canonical input assembly",
+        "NovelInjectionModels.swift": "request/section/plan/receipt records",
+        "NovelInjectionPanelPresentation.swift": "receipt-to-panel projection"
+      },
+      "state_owner": "single NovelInjectionPlanner.plan canonical construction and existing receipt value"
+    },
+    {
+      "from": "NovelPromptCatalog.swift",
+      "to": [
+        "NovelPromptCatalog.swift",
+        "NovelHistoricalPrompts.swift",
+        "NovelCandidateProseNormalization.swift"
+      ],
+      "responsibilities": {
+        "NovelPromptCatalog.swift": "prompt dispatch, accepted versions, current text and shared JSON contracts",
+        "NovelHistoricalPrompts.swift": "historical systemText by version",
+        "NovelCandidateProseNormalization.swift": "polish sentinel and candidate wrapper normalization"
+      },
+      "state_owner": "single NovelPromptCatalog dispatch and exact historical version mapping"
+    }
+  ],
+  "visibility": {
+    "reason": "Swift private access is file-scoped for extensions. Only symbols referenced by a moved workflow were opened; original method bodies and state instance ownership are unchanged.",
+    "view_model_promotions": [
+      {
+        "file": "NovelQuickStartViewModel.swift",
+        "symbol": "NovelQuickStartOwner",
+        "consumers": [
+          "NovelQuickStartViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelStateSyncViewModel.swift",
+        "symbol": "NovelAutomaticStateSyncTarget",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelStateSyncViewModel.swift",
+        "symbol": "NovelAutomaticStateSyncFailure",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelContinuityViewModel.swift",
+        "symbol": "NovelContinuityAuditFailure",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "checkoutSidecarFailure",
+        "consumers": [
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "continuityAuditReport",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "continuityAuditPlanStorage",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "continuityAuditFailureStorage",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "continuityRepairReport",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "continuityAuditExpirationOwnerID",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "isPlanningContinuity",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "isAuditingContinuity",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "isRepairingContinuity",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "continuityAuditTask",
+        "consumers": [
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "projectListReadRevision",
+        "consumers": [
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "pendingSettingProposalIDs",
+        "consumers": [
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "pendingMaterialDeletionIDs",
+        "consumers": [
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "isRejectingAllSettingProposals",
+        "consumers": [
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "isAcceptingStalePlot",
+        "consumers": [
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "stalePlotAutoSyncTask",
+        "consumers": [
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "stateSyncActivity",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "reloadNoticeProjectID",
+        "consumers": [
+          "NovelProjectActionViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelWorkspaceViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "reloadNoticeBranchID",
+        "consumers": [
+          "NovelProjectActionViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "quickStartStatuses",
+        "consumers": [
+          "NovelQuickStartViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "quickStartStartingProjectID",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "quickStartStartingRun",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private(set)"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "creation",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelContinuityViewModel.swift",
+          "NovelWorkspaceViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "selectionToken",
+        "consumers": [
+          "NovelProjectActionViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "quickStartTasks",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelRunBridgeViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "quickStartTaskRunIDs",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelRunBridgeViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "quickStartCreationStartRunIDs",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelRunBridgeViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "cancelledQuickStartRunIDs",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelRunBridgeViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "lastSelectedBranchIDs",
+        "consumers": [
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "operationOwnerID",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift",
+          "NovelContinuityViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "stateSyncActivityOwnerID",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "stateSyncActivityTask",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "stateSyncReportedWorkByOwnerID",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "automaticStateSyncKeepAlive",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "manualStateSyncTask",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "manualStateSyncPendingID",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "manualStateSyncTarget",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "automaticStateSyncTask",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "automaticStateSyncTarget",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "queuedAutomaticStateSyncTarget",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "automaticStateSyncPresentationTarget",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "automaticStateSyncFailure",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "lastStateSyncOperationError",
+        "consumers": [
+          "NovelStateSyncViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "lastStateSyncOperationCause",
+        "consumers": [
+          "NovelStateSyncViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "userSuppressedStateSyncTargets",
+        "consumers": [
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "stateSyncStoppingTargets",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "ownMutationOperationIDs",
+        "consumers": [
+          "NovelProjectActionViewModel.swift",
+          "NovelRunBridgeViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "acquireOperation",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelContinuityViewModel.swift",
+          "NovelWorkspaceViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "releaseOperation",
+        "consumers": [
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelContinuityViewModel.swift",
+          "NovelWorkspaceViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelQuickStartViewModel.swift",
+        "symbol": "reconcileQuickStartAfterInterrupt",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelQuickStartViewModel.swift",
+        "symbol": "clearQuickStartTask",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelQuickStartViewModel.swift",
+        "symbol": "quickStartOwner",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelStateSyncViewModel.swift",
+        "symbol": "stateSyncContext",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelStateSyncViewModel.swift",
+        "symbol": "startStateSyncActivity",
+        "consumers": [
+          "NovelRunBridgeViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelStateSyncViewModel.swift",
+        "symbol": "stopStateSyncActivity",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelRunBridgeViewModel.swift",
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelStateSyncViewModel.swift",
+        "symbol": "startAutomaticStateSync",
+        "consumers": [
+          "NovelCreationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelStateSyncViewModel.swift",
+        "symbol": "publishAutomaticStateSyncFailure",
+        "consumers": [
+          "NovelCreationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelWorkspaceViewModel.swift",
+        "symbol": "scheduleStalePlotAutoSyncIfNeeded",
+        "consumers": [
+          "NovelCreationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "perform",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "clearReloadRequirement",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "reloadSelection",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "projectSummaries",
+        "consumers": [
+          "NovelCreationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "refreshProjectListIfLatest",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "updateProjectsIfChanged",
+        "consumers": [
+          "NovelCreationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "patchProjectSummary",
+        "consumers": [
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "refreshProjectSummaryAfterMutation",
+        "consumers": [
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "refreshCheckoutSidecarFailure",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "project",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "branch",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "rebasedBranchSnapshot",
+        "consumers": [
+          "NovelCreationViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "clearSelection",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelProjectActionViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "mutationContext",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelRunBridgeViewModel.swift",
+          "NovelStateSyncViewModel.swift",
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "report",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelQuickStartViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelContinuityViewModel.swift",
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelMutationViewModel.swift",
+        "symbol": "errorDescription",
+        "consumers": [
+          "NovelCreationViewModel.swift",
+          "NovelProjectActionViewModel.swift",
+          "NovelContinuityViewModel.swift"
+        ],
+        "previous": "private"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "NovelProjectSummary.init(snapshot:)",
+        "consumers": [
+          "NovelMutationViewModel.swift"
+        ],
+        "previous": "fileprivate"
+      },
+      {
+        "file": "NovelCreationViewModel.swift",
+        "symbol": "stalePlotAutoSyncNoticeID",
+        "consumers": [
+          "NovelWorkspaceViewModel.swift"
+        ],
+        "previous": "private(set)",
+        "reason": "workspace plot auto-sync increments the observed notice ID from a sibling extension file"
+      }
+    ],
+    "generation": [
+      "NovelTerminalCommit internal for terminal file",
+      "updateBackgroundLease/endBackgroundLease internal for terminal and recovery callers"
+    ],
+    "adapter": [
+      "six shared discussion event mapping helpers internal; unrelated mapping helpers explicitly private"
+    ],
+    "prompt": [
+      "evidenceIntegrityConstraint, stateDeltaJSONContract, stateRebuildJSONContract, chapterPlanProposalJSONContract internal because historical and current template files both interpolate them; five other contract literals remain private"
+    ]
+  },
+  "prompt_exact": {
+    "baseline_tsv": "/tmp/amber-phase4-prompt-baseline/digests.tsv",
+    "result_tsv": "/tmp/amber-phase4-prompt-current/digests.tsv",
+    "sha256": "f398b6b03ae2e732a8fbc8aca11841f2c4cc696373f14469d5d55672d9097aba",
+    "entries": 50,
+    "with_system_text": 46,
+    "accepted_without_retrievable_text": [
+      {
+        "kind": "manualSyncV1",
+        "version": "novel.manual-sync.v2"
+      },
+      {
+        "kind": "manualSyncV1",
+        "version": "novel.manual-sync.v3"
+      },
+      {
+        "kind": "stateDeltaV1",
+        "version": "novel.state-delta.v1"
+      },
+      {
+        "kind": "stateDeltaV1",
+        "version": "novel.state-delta.v2"
+      }
+    ],
+    "comparison": "baseline and result TSV bytes identical; each retrievable entry records exact systemText UTF8 byte count and SHA256",
+    "rows": [
+      {
+        "kind": "chapterAdjudicationV1",
+        "version": "novel.chapter-adjudication.v1",
+        "utf8_bytes": 480,
+        "sha256": "6cf796675486ff20120b7d88ea6b76ed88a4afecace48521c47c906ef4da379f"
+      },
+      {
+        "kind": "chapterAdjudicationV1",
+        "version": "novel.chapter-adjudication.v2",
+        "utf8_bytes": 5823,
+        "sha256": "47816d71b32583005dd0f450f17cfbb9b1b06412b75c9e393c0cd054e4bd9242"
+      },
+      {
+        "kind": "chapterPlanAcceptanceV1",
+        "version": "novel.chapter-plan-acceptance.v3",
+        "utf8_bytes": 1799,
+        "sha256": "1e50dd09ef3d9a0798d3adb74913fbb8891370d17bc132f66e25ee820fa65650"
+      },
+      {
+        "kind": "chapterPlanProposalV1",
+        "version": "novel.chapter-plan-proposal.v2",
+        "utf8_bytes": 1652,
+        "sha256": "efd686acc74bc00d7eacfd0f36f6b2614dca4ec516660f5c370ba84f0492b5c1"
+      },
+      {
+        "kind": "chapterPlanProposalV1",
+        "version": "novel.chapter-plan-proposal.v3",
+        "utf8_bytes": 1871,
+        "sha256": "3ee10a228be540d09c8b95f75e66653d3d0bbb006252166ddb5b439f1a6a3327"
+      },
+      {
+        "kind": "chapterPlanProposalV1",
+        "version": "novel.chapter-plan-proposal.v4",
+        "utf8_bytes": 1467,
+        "sha256": "3c88344069045765ea2d43969256670c1b3e585280e726a43cf5df706ddae677"
+      },
+      {
+        "kind": "characterProposal",
+        "version": "novel.character-proposal.v1",
+        "utf8_bytes": 1380,
+        "sha256": "987118119fe1dd1a01b232026fdab96524324429fab9a135e252d919b1fcbf4f"
+      },
+      {
+        "kind": "continuityAuditV1",
+        "version": "novel.continuity-audit.v1",
+        "utf8_bytes": 2837,
+        "sha256": "28ab447074fd6ad3e4fb84e6c19e9370e4bac43b7ad3ad65a6a290ce8c571cde"
+      },
+      {
+        "kind": "continuityRepairV1",
+        "version": "novel.continuity-repair.v1",
+        "utf8_bytes": 2333,
+        "sha256": "1ce573e44798ffa5bf714c454919b43d795b2eb6b354c6b9dd1400d8f44a485d"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v1",
+        "utf8_bytes": 322,
+        "sha256": "269a3d96781c04bebe35187c4f1bca4753d3e4ac36b8c0847347e5e83067f749"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v10",
+        "utf8_bytes": 6502,
+        "sha256": "dfab12b3a1b1fe708a31bfeea30b05a1392e61a6033883eb8939a8d444c64320"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v11",
+        "utf8_bytes": 7505,
+        "sha256": "e21ba6c12858ce2112874cf51449e6e4ed6c8ec7acc085c0f2c16edc090090db"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v12",
+        "utf8_bytes": 8096,
+        "sha256": "2363092a6ed50ede9731aee505280a43e0349cda7f65362eed2656913061cbea"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v13",
+        "utf8_bytes": 8886,
+        "sha256": "e328abb6848975fe0c2e8e48061fcf790b1c7569e99689ba07a79a2420506fd0"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v14",
+        "utf8_bytes": 9809,
+        "sha256": "016426fbfe7ecffb3dcb525c5f0e725103119b239dd1c850d1d13ef4460a1728"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v2",
+        "utf8_bytes": 1026,
+        "sha256": "756e3eefa98debefa26e6a1192679742a0732f36c25c8bb02fe999cf7b4cc4fa"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v3",
+        "utf8_bytes": 1314,
+        "sha256": "5a585de2a826846440552d321020d3670e0ea7de988fbb5ef81fc1178664d524"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v4",
+        "utf8_bytes": 1875,
+        "sha256": "3e48057249303b06c4231d6bb18941d69dc9202ec4bb78754d2f459d7b4aa0d1"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v5",
+        "utf8_bytes": 1982,
+        "sha256": "f9c5692edf2bb46734e7c5db519a73a217926cfa0c2e5fb171756df0a8dda7b5"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v6",
+        "utf8_bytes": 2014,
+        "sha256": "c58ddb23ee2bf1cf1a4458ca3a189212a2bab9eeb979cca399256274ac380a0a"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v7",
+        "utf8_bytes": 4293,
+        "sha256": "04ed2f02123fb17fb5ea841aeea437f282abe1008b0de3a8375bd672280cdcda"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v8",
+        "utf8_bytes": 4693,
+        "sha256": "4f4e0dec74d75d68c234ad1d4776d9a3d2f0e51b7f81b638c7e0187670378fbe"
+      },
+      {
+        "kind": "discussion",
+        "version": "novel.discussion.v9",
+        "utf8_bytes": 5800,
+        "sha256": "76f75cf766f7bd26fdd905589f4242f6820dad8c828b98b815b79f11926599d0"
+      },
+      {
+        "kind": "discussionArchiveV1",
+        "version": "novel.discussion-archive.v1",
+        "utf8_bytes": 739,
+        "sha256": "96427b48af64fa8359735b17d32c72d4e783fda1460d3650370149d5a2a63cde"
+      },
+      {
+        "kind": "manualSyncV1",
+        "version": "novel.manual-sync.v2",
+        "system_text": null
+      },
+      {
+        "kind": "manualSyncV1",
+        "version": "novel.manual-sync.v3",
+        "system_text": null
+      },
+      {
+        "kind": "manualSyncV1",
+        "version": "novel.manual-sync.v4",
+        "utf8_bytes": 3728,
+        "sha256": "40cf5671f9740c4d41dbce2abbefd44d250b9ca8ef5ea4d6c1ceeefb8bdc61d8"
+      },
+      {
+        "kind": "manualSyncV1",
+        "version": "novel.manual-sync.v5",
+        "utf8_bytes": 3968,
+        "sha256": "4aa79e66cf47ff717e6befa6488554fc041b4b42ee5594027f3fa774a2f02a9c"
+      },
+      {
+        "kind": "polishDriftV1",
+        "version": "novel.polish-drift.v1",
+        "utf8_bytes": 1010,
+        "sha256": "d8ad4e053affa41b92c06ef26bca0433469234d7723bc7d2f05722c057a74b8f"
+      },
+      {
+        "kind": "proseContinuation",
+        "version": "novel.prose-continuation.v1",
+        "utf8_bytes": 368,
+        "sha256": "8c66e3248855237332c8fe0d8fbc7b78b0bcd135ccb986e193ca4168c883dd47"
+      },
+      {
+        "kind": "proseContinuation",
+        "version": "novel.prose-continuation.v2",
+        "utf8_bytes": 707,
+        "sha256": "19baedcfe8f881357f822c1d3b2d54a363546a9f42ef1291b085ccfcfaa7f7e4"
+      },
+      {
+        "kind": "proseContinuation",
+        "version": "novel.prose-continuation.v3",
+        "utf8_bytes": 791,
+        "sha256": "59e92d35ed824a038371155cdcd0ec45abfa6f31d762a03a5628bdc0d8909d29"
+      },
+      {
+        "kind": "proseWholeChapter",
+        "version": "novel.prose-whole-chapter.v1",
+        "utf8_bytes": 366,
+        "sha256": "46deb16106dd7c861b7b95c4eea28ac2a9c5e1a24617f1ca0b971223805a431f"
+      },
+      {
+        "kind": "proseWholeChapter",
+        "version": "novel.prose-whole-chapter.v2",
+        "utf8_bytes": 722,
+        "sha256": "e92bd5676deb4c1a1b4a1692110d641061f7920af70f430121beb5f58e525854"
+      },
+      {
+        "kind": "proseWholeChapter",
+        "version": "novel.prose-whole-chapter.v3",
+        "utf8_bytes": 854,
+        "sha256": "1b7fc2f23dd2cb8a5d38722c81fc9007ff66269a35262aa14d48b6ff2b53f513"
+      },
+      {
+        "kind": "proseWholeChapter",
+        "version": "novel.prose-whole-chapter.v4",
+        "utf8_bytes": 854,
+        "sha256": "1b7fc2f23dd2cb8a5d38722c81fc9007ff66269a35262aa14d48b6ff2b53f513"
+      },
+      {
+        "kind": "proseWholeChapter",
+        "version": "novel.prose-whole-chapter.v5",
+        "utf8_bytes": 1062,
+        "sha256": "223e298137f8559e398491ad3e2e1e0e52e984998cb6750d20c4650ed8270a31"
+      },
+      {
+        "kind": "quickStart",
+        "version": "novel.quick-start.v2",
+        "utf8_bytes": 844,
+        "sha256": "68cfc3eb39c5ee7b963bef2ce639fe83737de3c013ca72262387445313d66828"
+      },
+      {
+        "kind": "quickStart",
+        "version": "novel.quick-start.v3",
+        "utf8_bytes": 1062,
+        "sha256": "8f38159a48b0dcd85ed9624a1bf1debe1be36893f5ace9a1c5f9d63a33d4b3e4"
+      },
+      {
+        "kind": "quickStart",
+        "version": "novel.quick-start.v4",
+        "utf8_bytes": 1241,
+        "sha256": "991c18b65cd13329c1f21084164209ed472981172c7e1129e007920e1c5f4c21"
+      },
+      {
+        "kind": "quickStart",
+        "version": "novel.quick-start.v5",
+        "utf8_bytes": 1863,
+        "sha256": "7b9aa0c31e00ea43aeb8f62d47486356247cbae5845f6399edbf1aa02f6fe523"
+      },
+      {
+        "kind": "stateDeltaV1",
+        "version": "novel.state-delta.v1",
+        "system_text": null
+      },
+      {
+        "kind": "stateDeltaV1",
+        "version": "novel.state-delta.v2",
+        "system_text": null
+      },
+      {
+        "kind": "stateDeltaV1",
+        "version": "novel.state-delta.v3",
+        "utf8_bytes": 4043,
+        "sha256": "63cd363ca9bb5fcf58dc5213d81e21e77d9fa6c044e3440bfd04d07a29c3c7a3"
+      },
+      {
+        "kind": "stateDeltaV1",
+        "version": "novel.state-delta.v4",
+        "utf8_bytes": 4370,
+        "sha256": "8be7002bc18192b88debd26b1117e8bc1b4d70103661727cf10a8702b0856ade"
+      },
+      {
+        "kind": "wholeChapterPolish",
+        "version": "novel.whole-chapter-polish.v2",
+        "utf8_bytes": 678,
+        "sha256": "3958c03f771242e40e2c0d1353d1a43cf644400f9ae712c88bb7bd5ee23b4daf"
+      },
+      {
+        "kind": "wholeChapterPolish",
+        "version": "novel.whole-chapter-polish.v3",
+        "utf8_bytes": 812,
+        "sha256": "fdaf9e55c5cd8f02af228079adda7447e5295d81b0fde0ca2da222c9096c5c7f"
+      },
+      {
+        "kind": "wholeChapterRegeneration",
+        "version": "novel.whole-chapter-regeneration.v1",
+        "utf8_bytes": 627,
+        "sha256": "77187d1ccf0937ac44f34f592d6556e9f18017297c5419a58bd0f765157423ae"
+      },
+      {
+        "kind": "wholeChapterRegeneration",
+        "version": "novel.whole-chapter-regeneration.v2",
+        "utf8_bytes": 706,
+        "sha256": "68033e49017f179871edacdaebe5827d47c44bcb78c5d627d7603c873eeb8a5c"
+      },
+      {
+        "kind": "workspacePlotV1",
+        "version": "novel.workspace-plot.v1",
+        "utf8_bytes": 715,
+        "sha256": "0152300f11a104001804857582fd3839ebdba458e8c2aa4d8d800a05f57d5968"
+      }
+    ]
+  },
+  "source_guards_root_owned": [
+    {
+      "test": "IOSNovelCreationWiringTests.testNovelDiscussionToolLoopAllowsSixteenSteps",
+      "old": "NovelLiveModelAdapter.swift",
+      "actual": "NovelDiscussionTransport.swift"
+    },
+    {
+      "test": "IOSNovelCreationWiringTests.testNovelGenerationOwnsTheSystemLeaseFromRuntimeStartToTerminal",
+      "actual": [
+        "NovelRunBridgeViewModel.swift",
+        "NovelGenerationStream.swift"
+      ]
+    },
+    {
+      "test": "IOSNovelCreationWiringTests.testNovelContextPanelUsesLatestInjectionReceiptDetails",
+      "old": "NovelInjectionPlanner.swift",
+      "actual": "NovelInjectionModels.swift"
+    },
+    {
+      "test": "IOSNovelCreationWiringTests.testStateSyncRecoveryAndStopAreReachableOutsideTheComposer",
+      "actual": [
+        "NovelProjectActionViewModel.swift",
+        "NovelStateSyncViewModel.swift"
+      ]
+    },
+    {
+      "test": "IOSNovelCreationWiringTests.testContinuityAuditEntryIsReachableFromTheLiveCompendiumView",
+      "actual": "NovelContinuityViewModel.swift"
+    },
+    {
+      "test": "IOSSettingsWiringTests.testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground",
+      "actual": [
+        "NovelRunBridgeViewModel.swift",
+        "NovelStateSyncViewModel.swift",
+        "NovelContinuityViewModel.swift",
+        "NovelGenerationLifecycle.swift",
+        "NovelGenerationStream.swift"
+      ]
+    }
+  ],
+  "suggested_tests": [
+    "iosAppTests/NovelCreationViewModelTests",
+    "iosAppTests/NovelGenerationLifecycleTests",
+    "iosAppTests/NovelLiveModelAdapterTests",
+    "iosAppTests/NovelInjectionPlannerTests",
+    "iosAppTests/NovelPromptCatalogTests",
+    "iosAppTests/NovelSessionViewModelTests",
+    "iosAppTests/NovelSessionReplayTests",
+    "iosAppTests/NovelManualEditSyncTests",
+    "iosAppTests/NovelFactTransactionLifecycleTests",
+    "iosAppTests/NovelStructuredModelExecutorTests",
+    "iosAppTests/IOSNovelCreationWiringTests",
+    "iosAppTests/IOSSettingsWiringTests"
+  ],
+  "verification": {
+    "swift_frontend_parse": "passed for all 21 owned files",
+    "diff_check": "passed for five tracked original files; whitespace scan passed for all 21 owned files",
+    "symbol_inventory": "five old-to-new declaration multisets identical",
+    "prompt_utf8_sha": "50 accepted kind/version rows identical; 46 retrievable system texts compared by actual UTF8 SHA256, 4 pre-existing missing texts unchanged",
+    "xcodebuild": "not run by worker per Root instruction",
+    "gradle": "not run by worker per Root instruction",
+    "integration_build_r1": "Standalone Novel ARM64 found a private setter boundary for stalePlotAutoSyncNoticeID; this narrow fix parsed and passed diff-check; Root rerun pending"
+  }
+}

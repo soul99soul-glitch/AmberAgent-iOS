@@ -1,0 +1,217 @@
+{
+  "IOSNovelCreationWiringTests": {
+    "Passed": 47
+  },
+  "IOSNovelProjectToolAssemblyTests": {
+    "Passed": 2
+  },
+  "IOSNovelProjectToolExecutorTests": {
+    "Passed": 35
+  },
+  "NovelAppSettingsStoreTests": {
+    "Passed": 15
+  },
+  "NovelAppToolHostTests": {
+    "Passed": 3
+  },
+  "NovelBatchPolishTests": {
+    "Passed": 10
+  },
+  "NovelBranchLifecycleTests": {
+    "Passed": 7
+  },
+  "NovelChapterPlanProposalTests": {
+    "Passed": 7
+  },
+  "NovelChapterReplacementStateTests": {
+    "Passed": 2
+  },
+  "NovelCharacterIdentityCandidateTests": {
+    "Passed": 12
+  },
+  "NovelCollaborationModeTests": {
+    "Passed": 10
+  },
+  "NovelCollectionTests": {
+    "Passed": 12
+  },
+  "NovelCompatibilityLineageTests": {
+    "Passed": 6
+  },
+  "NovelContinuityAuditTests": {
+    "Passed": 38
+  },
+  "NovelContinuityAuditViewModelTests": {
+    "Passed": 4
+  },
+  "NovelCreationActionPresentationTests": {
+    "Passed": 12
+  },
+  "NovelCreationModuleTests": {
+    "Passed": 14
+  },
+  "NovelCreationPresentationTests": {
+    "Passed": 28
+  },
+  "NovelCreationProjectPresentationTests": {
+    "Passed": 11
+  },
+  "NovelCreationQuickStartTests": {
+    "Passed": 8
+  },
+  "NovelCreationSyncAndRecoveryTests": {
+    "Passed": 9
+  },
+  "NovelCreationViewModelTests": {
+    "Passed": 27
+  },
+  "NovelCreationWorkspaceMutationTests": {
+    "Passed": 12
+  },
+  "NovelDesignLogicTests": {
+    "Passed": 3
+  },
+  "NovelDocumentValidationTests": {
+    "Passed": 38
+  },
+  "NovelDomainIntegrityRegressionTests": {
+    "Passed": 5
+  },
+  "NovelFactOutputValidationAnchorTests": {
+    "Passed": 7
+  },
+  "NovelFactTransactionLifecycleTests": {
+    "Passed": 39
+  },
+  "NovelForkTests": {
+    "Passed": 7
+  },
+  "NovelGenerationLifecycleTests": {
+    "Passed": 56
+  },
+  "NovelGenerationReducerTests": {
+    "Passed": 36
+  },
+  "NovelGhostwriteGenerationTests": {
+    "Passed": 14
+  },
+  "NovelGhostwriteInjectionTests": {
+    "Passed": 7
+  },
+  "NovelGhostwriteRecoveryTests": {
+    "Passed": 19
+  },
+  "NovelInjectionPlannerTests": {
+    "Passed": 23
+  },
+  "NovelInkSealStampTests": {
+    "Passed": 6
+  },
+  "NovelLiveModelAdapterTests": {
+    "Passed": 33
+  },
+  "NovelManualEditSyncTests": {
+    "Passed": 23
+  },
+  "NovelModelAdapterTests": {
+    "Passed": 7
+  },
+  "NovelModularizationLayoutTests": {
+    "Passed": 3
+  },
+  "NovelPolishIntegrityTests": {
+    "Passed": 16
+  },
+  "NovelPolishTests": {
+    "Passed": 7
+  },
+  "NovelProjectConfigurationTests": {
+    "Passed": 16
+  },
+  "NovelProjectFileDocumentTests": {
+    "Passed": 7
+  },
+  "NovelProjectLifecycleOperationTests": {
+    "Passed": 12
+  },
+  "NovelProjectPackageTests": {
+    "Passed": 18
+  },
+  "NovelProjectRepositoryTests": {
+    "Passed": 28,
+    "Skipped": 1
+  },
+  "NovelPromptCatalogTests": {
+    "Passed": 7
+  },
+  "NovelRecentChapterRevertTests": {
+    "Passed": 5
+  },
+  "NovelReducerTests": {
+    "Passed": 10
+  },
+  "NovelSessionFollowPolicyTests": {
+    "Passed": 18
+  },
+  "NovelSessionManualSyncTests": {
+    "Passed": 23
+  },
+  "NovelSessionQuickStartTests": {
+    "Passed": 13
+  },
+  "NovelSessionReplayTests": {
+    "Passed": 12
+  },
+  "NovelSessionRetryAndPolishTests": {
+    "Passed": 12
+  },
+  "NovelSessionRowActionTests": {
+    "Passed": 13
+  },
+  "NovelSessionRunOwnershipTests": {
+    "Passed": 12
+  },
+  "NovelSessionSelectionTests": {
+    "Passed": 12
+  },
+  "NovelSessionStreamingPerformanceTests": {
+    "Passed": 3
+  },
+  "NovelSessionTailPresentationTests": {
+    "Passed": 23
+  },
+  "NovelSessionTranscriptProjectionTests": {
+    "Passed": 10
+  },
+  "NovelSessionViewModelTests": {
+    "Passed": 9
+  },
+  "NovelStreamIntegrityRegressionTests": {
+    "Passed": 6
+  },
+  "NovelStructuredModelExecutorTests": {
+    "Passed": 17
+  },
+  "NovelStructuredOutputTests": {
+    "Passed": 24
+  },
+  "NovelWorkspaceBackupTests": {
+    "Passed": 7
+  },
+  "NovelWorkspaceContextTests": {
+    "Passed": 3
+  },
+  "NovelWorkspaceContractTests": {
+    "Passed": 12
+  },
+  "NovelWorkspaceLedgerTests": {
+    "Passed": 20,
+    "Skipped": 1
+  },
+  "NovelWorkspaceRepositoryTests": {
+    "Passed": 24
+  },
+  "NovelWorkspaceRetryTests": {
+    "Passed": 1
+  }
+}

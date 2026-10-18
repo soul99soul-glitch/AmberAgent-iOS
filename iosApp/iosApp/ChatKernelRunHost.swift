@@ -2,45 +2,11 @@ import Foundation
 import UIKit
 @preconcurrency import Shared
 
-/// KMP RecallResult 未声明 Sendable；并行任务只跨边界传 Void，结果留在主 actor。
-@MainActor
-private final class JevRecallResultBox {
-    var value: ChatMemoryContextBuilder.RecallResult?
-}
-
-/// P0-2 B1: 内核前台 run 的 Host——把 `ChatRunKernelAdapter` 的回调面接到
-/// 与 `ChatGenerationCoordinator`(CGC)完全相同的副作用序列:
-///
-/// - start preamble(CG-C start :1037-1166):runId/startedAt、I-4 设置定格、
-///   LiveActivity 起步、keepalive begin + 0/4 进度、recordRun(.running) →
-///   mcp sync → Codex resolve → 适配器 run;
-/// - 逐轮上传准备(prepareUploadMessages,CG-C prepareAndStartStreaming
-///   :1960-2050 等价):Generative UI 引导/单次补绘 → 运行时语境注入 →
-///   压缩 → 图像提示 → 编排链接刷新 →
-///   记忆召回标记 → finalize → coalesce;
-/// - 暂停(approvalDecider,CG-C pauseForApproval :3798-3873):bump
-///   .awaitingToolApproval → markRunAwaitingPermission → 脱敏快照持久化 →
-///   keepalive end → LiveActivity waitingForUser → setIsLoading(false) →
-///   Watch 发布 → 发卡,随后挂起等待审批入口恢复;
-/// - 恢复(CG-C executeApprovedAsyncTool :4425-4476 + resumeAfterApproval
-///   :4551-4623):入口清卡 + setIsLoading(true) + keepalive begin +
-///   LiveActivity generating,适配器在 Started 之后经 onRunResumed 做
-///   resumeRunAfterPermission 持久化认领(失败 → 账本补
-///   Finished(not_executed_permission_claim_failed) + failed 收口);
-/// - 终态:completed = CG-C :2732-2797(miniApp 事务 + persist → recordRun →
-///   Watch/LiveActivity 收尾)+ finishStreaming :4919-4979 收尾序列;
-///   failed = presentStreamError :2483-2533(provider/上传失败带用户向
-///   错误泡;截断由适配器 A4 分支追加提示,这里不再加泡);
-///   cancelled = cancel :1485-1581(填充/快照持久化 → recordRun(cause)→
-///   Watch/LiveActivity cancelled → keepalive end,restoreSteerQueueLeftover
-///   而非 handleSteerQueueAtTerminal)。
-///
-/// 记录在案的 v1 差异(相对 CGC 前台):
-/// - 无逐拍推进/终端 drain:B2 投影在引擎侧按 CGC 同一 48ms 节拍门控推送,
-///   provisional 气泡一次放出全部已收增量(CG-C 是每拍推进 12-36 字);
-/// - 取消的同步拆解比 CGC 晚一个 MainActor hop(取消填充仍同步上屏);
-/// - 首轮 mailbox/steer 预折进 working,上传准备会覆盖它们(CG-C 首轮是
-///   准备后再追加;上传字节序差异接受)。
+/// App 持有的前台 run 协调器。它唯一决定 runId、取消、终态认领和身份清理。
+/// 请求准备、图片工具、审批等待及终态持久化分别由同一 run 的具体 owner 执行。
+/// 开始时先冻结设置和工具目录；审批先持久化等待态再发卡；结束时先写
+/// durable terminal，再发布 Watch/LiveActivity 结果。取消后迟到的适配器
+/// 快照不再覆盖权威消息，后台交接也只作用于当前 run。
 @MainActor
 final class ChatKernelRunHost {
 
@@ -57,22 +23,14 @@ final class ChatKernelRunHost {
         }
     }
 
-    /// 审批卡类目(入口分发用;与 ChatToolApprovalPrompt 九案一一对应)。
-    private enum ApprovalCategory {
-        case memory, search, webMount, workspace, ish, mcp, council, askUser, recipe
-    }
-
-    private enum ImageToolTerminalClaimResult: Equatable {
-        case recorded
-        case alreadyClaimed
-        case failed
-    }
+    private typealias ImageToolTerminalClaimResult = ChatImageToolRun.TerminalClaimResult
 
     private let dependencies: ChatGenerationDependencies
     private let bindings: ChatGenerationBindings
     private let backgroundExecution: BackgroundGenerationKeepAlive
     private let toolLedger: IOSAgentRunLedgering
     private let phoneControl: IOSPhoneControlController
+    private let backgroundCoordinator: IOSChatBackgroundGenerationCoordinator
     /// 全 provider 文本适配器；OpenAI/Claude/Codex/Grok/Gemini 的协议分流
     /// 由唯一 Engine/Adapter 边界完成。
     private let textProviderOverride: (any IOSAgentTextProvider)?
@@ -98,6 +56,10 @@ final class ChatKernelRunHost {
     }()
 #if DEBUG
     var toolRuntimeForTesting: ChatToolRuntime { toolRuntime }
+    func installDurableResponseSessionForTesting() {
+        guard let runId = currentRunId else { return }
+        durableResponseSession = ChatDurableResponseSession(host: self, runId: runId, backgroundCoordinator: backgroundCoordinator)
+    }
 #endif
 
     // MARK: - run 作用域状态
@@ -118,42 +80,23 @@ final class ChatKernelRunHost {
     private var runExecutionPolicy: IOSExecutionPolicySnapshot?
     /// 空回复判定里的 miniApp 语境基线(CG-C 用 run 的展示基线)。
     private var displayBaseline: [UIMessage] = []
-    private var currentGenerativeUiRequirement: IOSGenerativeUiRequirement = .none
-    private var currentGenerativeUiFallbackAttempted = false
-    private var currentGenerativeUiRetryIssue: String?
+    private var uploadPreparation: ChatRunUploadPreparation?
     private var backgroundHandoff: IOSChatBackgroundHandoff?
     private weak var pendingBackgroundConversationStore: IOSConversationStore?
     private var activeToolExecutionName: String?
     private var activeToolEffectClass: IOSToolEffectClass?
     private var activeTextProvider: (any IOSAgentTextProvider)?
-    private var activeDurableTextProvider: ChatKernelDurableTextProvider?
-    private var activeImageToolCall: UIMessagePart.Tool?
-    private var imageExecutionTask: Task<[UIMessage], Never>?
-    private var imageExecutionToken: UUID?
-    private var imageToolDidStart = false
-    private var imageToolTerminalClaimed = false
+    private var durableResponseSession: ChatDurableResponseSession?
+    private var imageToolRun: ChatImageToolRun?
 #if DEBUG
     var imageToolExecutionOverrideForTesting: (@MainActor (UIMessagePart.Tool, [UIMessage]) async -> [UIMessage])?
 #endif
-    private var durableResponseCursor: (responseId: String, sequenceNumber: Int64)?
-    private var durableCheckpointPersisted = false
     private var citationTracker: IOSMemoryCitationTracker?
     private var streamClock = ChatGenerationSpeedClock()
-    private var didRecordJevFirstDelta = false
-    private var jevModelStepCount = 0
-    private var lastJevToolOutcomeAssistantMessageId: String?
+    private var progressPresentation: ChatRunProgressPresentation?
     private var keepaliveHeld = false
-    private var didReportFirstDeltaThisRound = false
-    private var reportsPhoneWorkProgress = false
     private var phoneAutomaticReasoning = false
-    private var lastPhoneProgressContent: [PhoneProgressContent] = []
-    private var reportedPhoneToolResults: Set<String> = []
-
-    private enum PhoneProgressContent: Equatable {
-        case text(String)
-        case reasoning(String)
-        case tool(String, String)
-    }
+    private var reportsPhoneWorkProgress: Bool { progressPresentation?.reportsPhoneWorkProgress ?? false }
     /// 适配器已进入 run()(决定 cancel 是否调用 adapter.cancel——进入前
     /// working 还是空的,取消填充会把空数组发布成 transcript)。
     private var adapterDidStart = false
@@ -172,11 +115,10 @@ final class ChatKernelRunHost {
     // MARK: - 审批挂起状态
 
     private var pendingApprovalToolCallId: String?
-    private var pendingPrompt: ChatToolApprovalPrompt?
-    private var approvalWaiter: CheckedContinuation<ChatKernelApprovalDecision?, Never>?
+    private var approvalSession = ChatRunApprovalSession()
 
     var isRunning: Bool { currentRunId != nil }
-    var hasPendingToolApproval: Bool { approvalWaiter != nil }
+    var hasPendingToolApproval: Bool { approvalSession.hasPendingApproval }
     private var canHandoffActiveTool: Bool {
         activeToolExecutionName == nil ||
             activeToolEffectClass == .pure ||
@@ -189,7 +131,8 @@ final class ChatKernelRunHost {
         backgroundExecution: BackgroundGenerationKeepAlive = .shared,
         toolLedger: IOSAgentRunLedgering = IOSAgentRunLedger(),
         textProvider: (any IOSAgentTextProvider)? = nil,
-        phoneControl: IOSPhoneControlController = .shared
+        phoneControl: IOSPhoneControlController = .shared,
+        backgroundCoordinator: IOSChatBackgroundGenerationCoordinator = .shared
     ) {
         self.dependencies = dependencies
         self.bindings = bindings
@@ -197,6 +140,7 @@ final class ChatKernelRunHost {
         self.toolLedger = toolLedger
         self.textProviderOverride = textProvider
         self.phoneControl = phoneControl
+        self.backgroundCoordinator = backgroundCoordinator
     }
 
     /// P1-c 编排服务用(CG-C :971 同款):按会话 hex 匹配当前 run。
@@ -217,6 +161,24 @@ final class ChatKernelRunHost {
     /// CG-C :984 同款(Watch 确认入口的归属判定)。
     func hasPendingApproval(runId: String) -> Bool {
         currentRunId == runId && hasPendingToolApproval
+    }
+
+    func isImageRunCurrent(_ runId: String) -> Bool { currentRunId == runId }
+    func isImageRunCancelled(_ runId: String) -> Bool {
+        currentRunId == runId && cancelCause != nil
+    }
+    func isImageRunActive(_ runId: String) -> Bool {
+        currentRunId == runId && cancelCause == nil
+    }
+    func claimImageFailureTerminal(_ runId: String) -> Bool {
+        guard currentRunId == runId, !didFinalizeTerminal else { return false }
+        didFinalizeTerminal = true
+        return true
+    }
+    func claimImageTerminal(_ runId: String) -> Bool {
+        guard currentRunId == runId, cancelCause == nil, !didFinalizeTerminal else { return false }
+        didFinalizeTerminal = true
+        return true
     }
 
     // MARK: - start(CG-C start :1037-1166)
@@ -270,22 +232,29 @@ final class ChatKernelRunHost {
             ?? IOSDynamicToolRegistry.shared.currentSnapshot
         currentToolExposureBridge = bridge
         currentDynamicToolSnapshot = pinnedRecipeCatalog
-        currentGenerativeUiRequirement = .none
-        currentGenerativeUiFallbackAttempted = false
-        currentGenerativeUiRetryIssue = nil
+        uploadPreparation = ChatRunUploadPreparation(
+            runId: runId,
+            conversationId: conversationId,
+            settings: runSettings ?? dependencies.sharedSettings.snapshot,
+            toolExposureBridge: bridge,
+            mcpEnabled: { [weak self] in self?.mcpEnabledForRun ?? false },
+            bindings: bindings,
+            isCurrentRun: { [weak self] in self?.currentRunId == runId },
+            onPreparedUpload: { [weak self] provider, effectiveParams, messages in
+                try self?.refreshBackgroundHandoff(
+                    runId: runId, providerSetting: provider,
+                    params: effectiveParams, uploadMessages: messages
+                )
+            }
+        )
         backgroundHandoff = nil
         pendingBackgroundConversationStore = nil
         activeToolExecutionName = nil
         activeToolEffectClass = nil
         activeTextProvider = nil
-        activeDurableTextProvider = nil
-        activeImageToolCall = nil
-        imageExecutionTask = nil
-        imageExecutionToken = nil
-        imageToolDidStart = false
-        imageToolTerminalClaimed = false
-        durableResponseCursor = nil
-        durableCheckpointPersisted = false
+        durableResponseSession = nil
+        imageToolRun = nil
+        approvalSession = ChatRunApprovalSession()
         didFinalizeTerminal = false
         cancelCause = nil
         cancelBaseline = nil
@@ -293,17 +262,19 @@ final class ChatKernelRunHost {
         lastFailureMessage = nil
         adapterDidStart = false
         keepaliveHeld = false
-        didReportFirstDeltaThisRound = false
-        reportsPhoneWorkProgress = false
-        lastPhoneProgressContent = []
-        reportedPhoneToolResults = []
         streamClock = ChatGenerationSpeedClock()
-        didRecordJevFirstDelta = false
-        jevModelStepCount = 0
-        lastJevToolOutcomeAssistantMessageId = nil
         let tracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         citationTracker = tracker
 
+        progressPresentation = ChatRunProgressPresentation(
+            runId: runId, startedAt: startedAt, displayBaseline: displayBaseline,
+            reportsPhoneWorkProgress: false,
+            initialMessages: uploadMessages,
+            backgroundExecution: backgroundExecution,
+            liveActivityController: dependencies.liveActivityController,
+            conversationId: conversationId,
+            isCurrentRun: { [weak self] in self?.currentRunId == runId }
+        )
         bindings.startLiveActivity(
             runId,
             conversationId,
@@ -317,12 +288,11 @@ final class ChatKernelRunHost {
             IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name)
         }
         let phoneControlClaimed = phoneControlUserInitiated && hasPhoneDeclarations
-            && phoneControl.claim(runID: runId) { [weak self, weak phoneControl] in
+            && phoneControl.claim(runID: runId) { [weak self, weak phoneControl, backgroundCoordinator] in
             guard phoneControl?.hasRequestedSession(runID: runId) == true else { return }
             if self?.currentRunId == runId { self?.cancel(cause: .backgroundInterruption) }
-            _ = IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
+            _ = backgroundCoordinator.cancelJob(runId: runId)
         }
-        reportsPhoneWorkProgress = phoneControlClaimed
         if phoneControlClaimed {
             // Screenshots, actions and model thinking can each exceed the system's ~30s
             // progress cadence; without a heartbeat the continued-processing task is
@@ -333,12 +303,7 @@ final class ChatKernelRunHost {
         // Actual phone activity is checked by the engine at each request boundary.
         phoneAutomaticReasoning = phoneControlClaimed
             && runSettings?.getCurrentAssistant().reasoningLevel == .auto_
-        if phoneControlClaimed {
-            reportedPhoneToolResults = Set(uploadMessages.flatMap(\.parts).compactMap { part in
-                guard let tool = part as? UIMessagePart.Tool, !tool.output.isEmpty else { return nil }
-                return tool.toolCallId
-            })
-        }
+        progressPresentation?.activatePhoneProgress(phoneControlClaimed)
         // Phone loops have no fixed number of turns; only actual work advances their progress.
         backgroundExecution.updateProgress(
             runId,
@@ -500,17 +465,14 @@ final class ChatKernelRunHost {
         runSettings = nil
         runExecutionPolicy = nil
         displayBaseline = bindings.getMessages()
-        currentGenerativeUiRequirement = .none
-        currentGenerativeUiFallbackAttempted = false
-        currentGenerativeUiRetryIssue = nil
+        uploadPreparation = nil
         backgroundHandoff = nil
         pendingBackgroundConversationStore = nil
         activeToolExecutionName = "generate_image"
         activeToolEffectClass = .sideEffect
         activeTextProvider = nil
-        activeDurableTextProvider = nil
-        durableResponseCursor = nil
-        durableCheckpointPersisted = false
+        durableResponseSession = nil
+        approvalSession = ChatRunApprovalSession()
         didFinalizeTerminal = false
         cancelCause = nil
         cancelBaseline = nil
@@ -519,44 +481,28 @@ final class ChatKernelRunHost {
         adapter = nil
         adapterDidStart = false
         keepaliveHeld = true
-        reportsPhoneWorkProgress = false
-        lastPhoneProgressContent = []
-        reportedPhoneToolResults = []
         citationTracker = nil
         streamClock = ChatGenerationSpeedClock()
-        didRecordJevFirstDelta = false
-        jevModelStepCount = 0
-        lastJevToolOutcomeAssistantMessageId = nil
 
-        let imagePresentation = AgentActivityPresentation.runningTool(toolName: "generate_image")
-        bindings.startLiveActivity(runId, conversationId, imagePresentation)
-        backgroundExecution.begin(
-            runId,
-            title: IOSAppLocalization.string(
-                "Amber 正在生成图片",
-                defaultValue: "Amber 正在生成图片"
-            ),
-            subtitle: modelDisplayName,
+        progressPresentation = ChatRunProgressPresentation(
+            runId: runId, startedAt: startedAt, displayBaseline: displayBaseline,
+            reportsPhoneWorkProgress: false, initialMessages: displayBaseline,
+            backgroundExecution: backgroundExecution,
+            liveActivityController: dependencies.liveActivityController,
+            conversationId: conversationId,
+            isCurrentRun: { [weak self] in self?.currentRunId == runId }
+        )
+        ChatImageToolRun.beginActivity(
+            runId: runId, conversationId: conversationId,
+            modelDisplayName: modelDisplayName,
+            bindings: bindings, backgroundExecution: backgroundExecution,
             onExpire: { [weak self] in
-                guard let self, self.currentRunId == runId else { return }
-                self.cancel(cause: .backgroundInterruption)
-            },
-            onSystemTaskExpiration: { [weak self] in
                 guard let self, self.currentRunId == runId else { return }
                 self.cancel(cause: .backgroundInterruption)
             }
         )
-        backgroundExecution.updateProgress(
-            runId,
-            completed: 0,
-            total: 3,
-            subtitle: IOSAppLocalization.string("准备图片请求", defaultValue: "准备图片请求")
-        )
 
         let toolCall = toolRuntime.userInitiatedImageToolCall(input: input)
-        activeImageToolCall = toolCall
-        imageToolDidStart = false
-        imageToolTerminalClaimed = false
         var snapshot = bindings.getMessages()
         snapshot.append(UIMessage(
             id: KotlinUuid.companion.random(),
@@ -572,413 +518,32 @@ final class ChatKernelRunHost {
         bindings.setMessages(snapshot)
         bindings.bumpMessageRevision(.toolCallStarted, 1)
 
-        runTask = Task { @MainActor [weak self] in
-            guard let self, self.currentRunId == runId else { return }
-            if self.cancelCause != nil {
-                await self.finalizeTerminal(runId: runId)
-                return
-            }
-            let didRecordRun = await self.bindings.recordRun(
-                runId,
-                startedAt,
-                .running,
-                inputDigest,
-                conversationId?.toHexDashString(),
-                nil
-            )
-            guard didRecordRun else {
-                if self.cancelCause != nil {
-                    await self.finalizeTerminal(runId: runId)
-                    return
-                }
-                await self.failImageToolCallBeforeExecution(
-                    toolCall,
-                    in: snapshot,
-                    runId: runId,
-                    startedAt: startedAt,
-                    inputDigest: inputDigest,
-                    conversationId: conversationId,
-                    reason: IOSAppLocalization.string(
-                        "无法保存任务状态，图片生成未开始。",
-                        defaultValue: "无法保存任务状态，图片生成未开始。"
-                    )
-                )
-                return
-            }
-            guard self.currentRunId == runId, self.cancelCause == nil else {
-                await self.finalizeTerminal(runId: runId)
-                return
-            }
-
-            let argsDigest = chatInputDigest(for: toolCall.input)
-            let preparation = await self.toolLedger.recordToolCallPrepared(
-                runId: runId,
-                toolCallId: toolCall.toolCallId,
-                toolName: toolCall.toolName,
-                argsDigest: argsDigest,
-                effectClass: .sideEffect
-            )
-            guard self.currentRunId == runId, self.cancelCause == nil else {
-                _ = await self.toolLedger.recordToolCallRecoveryTransition(
-                    runId: runId,
-                    toolCallId: toolCall.toolCallId,
-                    expected: .prepared,
-                    to: .reconciled,
-                    outcome: "cancelled_before_execution"
-                )
-                await self.finalizeTerminal(runId: runId)
-                return
-            }
-            guard preparation == .ready else {
-                _ = await self.toolLedger.recordToolCallRecoveryTransition(
-                    runId: runId,
-                    toolCallId: toolCall.toolCallId,
-                    expected: .prepared,
-                    to: .reconciled,
-                    outcome: "not_executed_prepare_failed"
-                )
-                await self.failImageToolCallBeforeExecution(
-                    toolCall,
-                    in: snapshot,
-                    runId: runId,
-                    startedAt: startedAt,
-                    inputDigest: inputDigest,
-                    conversationId: conversationId,
-                    reason: IOSAppLocalization.string(
-                        "无法保存工具执行前状态，请检查存储空间后重试。",
-                        defaultValue: "无法保存工具执行前状态，请检查存储空间后重试。"
-                    )
-                )
-                return
-            }
-
-            let baseline = self.bindings.capturePersistMessagesBaseline(conversationId)
-            let didPersistBeforeExecution = await self.bindings.persistMessagesSnapshot(
-                snapshot,
-                conversationId,
-                baseline
-            )
-            guard self.currentRunId == runId, self.cancelCause == nil else {
-                _ = await self.toolLedger.recordToolCallRecoveryTransition(
-                    runId: runId,
-                    toolCallId: toolCall.toolCallId,
-                    expected: .prepared,
-                    to: .reconciled,
-                    outcome: "cancelled_before_execution"
-                )
-                await self.finalizeTerminal(runId: runId)
-                return
-            }
-            guard didPersistBeforeExecution else {
-                _ = await self.toolLedger.recordToolCallRecoveryTransition(
-                    runId: runId,
-                    toolCallId: toolCall.toolCallId,
-                    expected: .prepared,
-                    to: .reconciled,
-                    outcome: "not_executed_persist_failed"
-                )
-                await self.failImageToolCallBeforeExecution(
-                    toolCall,
-                    in: snapshot,
-                    runId: runId,
-                    startedAt: startedAt,
-                    inputDigest: inputDigest,
-                    conversationId: conversationId,
-                    reason: IOSAppLocalization.string(
-                        "无法保存工具执行前状态，请检查存储空间后重试。",
-                        defaultValue: "无法保存工具执行前状态，请检查存储空间后重试。"
-                    )
-                )
-                return
-            }
-
-            let didRecordStarted = await self.toolLedger.recordToolCallStarted(
-                runId: runId,
-                toolCallId: toolCall.toolCallId,
-                toolName: toolCall.toolName,
-                argsDigest: argsDigest,
-                effectClass: .sideEffect
-            )
-            self.imageToolDidStart = didRecordStarted
-            guard self.currentRunId == runId, self.cancelCause == nil else {
-                if didRecordStarted {
-                    let terminalClaim = await self.recordImageToolTerminalIfNeeded(
-                        runId: runId,
-                        toolCall: toolCall,
-                        outcome: "cancelled_before_execution",
-                        resultPayload: nil
-                    )
-                    if terminalClaim == .failed {
-                        await self.failImageToolDurability(runId: runId)
-                        return
-                    }
-                    guard terminalClaim == .recorded else { return }
-                } else {
-                    await self.reconcileImageToolStartFailure(
-                        runId: runId,
-                        toolCallId: toolCall.toolCallId,
-                        outcome: "cancelled_before_execution"
-                    )
-                }
-                await self.finalizeTerminal(runId: runId)
-                return
-            }
-            guard didRecordStarted else {
-                await self.reconcileImageToolStartFailure(
-                    runId: runId,
-                    toolCallId: toolCall.toolCallId,
-                    outcome: "not_executed_start_failed"
-                )
-                await self.failImageToolCallBeforeExecution(
-                    toolCall,
-                    in: snapshot,
-                    runId: runId,
-                    startedAt: startedAt,
-                    inputDigest: inputDigest,
-                    conversationId: conversationId,
-                    reason: IOSAppLocalization.string(
-                        "无法保存工具执行前状态，请检查存储空间后重试。",
-                        defaultValue: "无法保存工具执行前状态，请检查存储空间后重试。"
-                    )
-                )
-                return
-            }
-
-            let executionToken = UUID()
+        let imageRun = ChatImageToolRun(
+            toolCall: toolCall, bindings: bindings, toolRuntime: toolRuntime,
+            toolLedger: toolLedger, dependencies: dependencies
+        )
 #if DEBUG
-            let imageToolExecutionOverrideForTesting = self.imageToolExecutionOverrideForTesting
-            let executionTask = Task { @MainActor [toolRuntime = self.toolRuntime] in
-                if let imageToolExecutionOverrideForTesting {
-                    return await imageToolExecutionOverrideForTesting(toolCall, snapshot)
-                }
-                return await toolRuntime.messagesByExecutingImageToolCall(toolCall, in: snapshot)
-            }
-#else
-            let executionTask = Task { @MainActor [toolRuntime = self.toolRuntime] in
-                await toolRuntime.messagesByExecutingImageToolCall(toolCall, in: snapshot)
-            }
+        imageRun.executionOverrideForTesting = imageToolExecutionOverrideForTesting
 #endif
-            self.imageExecutionToken = executionToken
-            self.imageExecutionTask = executionTask
-            let resumed = await executionTask.value
-            if self.imageExecutionToken == executionToken {
-                self.imageExecutionToken = nil
-                self.imageExecutionTask = nil
-            }
-            let failureReason = ChatToolOutputFormatter.imageFailureReason(in: resumed, matching: toolCall)
-            let resultParts = resumed
-                .flatMap(\.parts)
-                .compactMap { $0 as? UIMessagePart.Tool }
-                .first { $0.toolCallId == toolCall.toolCallId }?
-                .output
-            guard self.currentRunId == runId else { return }
-            if self.cancelCause != nil {
-                let terminalClaim = await self.markImageToolOutcomeUnknownIfNeeded(
-                    runId: runId,
-                    toolCall: toolCall,
-                    outcome: "cancelled_during_execution"
-                )
-                if terminalClaim == .failed {
-                    await self.failImageToolDurability(runId: runId)
-                    return
-                }
-                guard terminalClaim == .recorded else { return }
-                await self.finalizeTerminal(runId: runId)
-                return
-            }
-            let terminalClaim = await self.recordImageToolTerminalIfNeeded(
-                runId: runId,
-                toolCall: toolCall,
-                outcome: failureReason == nil ? "completed" : "failed",
-                resultPayload: resultParts.map { IosToolOutputJsonBridge.shared.encode(parts: $0) }
-            )
-            if terminalClaim == .failed {
-                await self.failImageToolDurability(runId: runId)
-                return
-            }
-            guard terminalClaim == .recorded else { return }
-            guard self.currentRunId == runId else { return }
-            if self.cancelCause != nil {
-                await self.finalizeTerminal(runId: runId)
-                return
-            }
-            guard !self.didFinalizeTerminal else { return }
-            self.didFinalizeTerminal = true
-
-            self.bindings.setMessages(resumed)
-            self.bindings.bumpMessageRevision(.toolResultAppended, 1)
-            let conversationHex = conversationId?.toHexDashString()
-            let didPersist = await self.bindings.persistMessages(conversationId)
-            if didPersist {
-                await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
-            }
-            let succeeded = failureReason == nil && didPersist
-            let terminalStatus: AgentRunStatus = didPersist
-                ? (failureReason == nil ? .completed : .failed)
-                : .recoveryPending
-            let didRecordTerminalRun = await self.bindings.recordRun(
-                runId,
-                startedAt,
-                terminalStatus,
-                inputDigest,
-                conversationHex,
-                nil
-            )
-            guard didRecordTerminalRun else {
-                self.releaseLocalRunAfterTerminalRecordFailure(runId: runId)
-                return
-            }
-            if succeeded {
-                WatchTaskCoordinator.shared.publishCompleted(
-                    runId: runId,
-                    conversationId: conversationHex,
-                    summary: ChatGenerationSupport.watchSummary(from: resumed),
-                    kind: .imageGeneration
-                )
-            } else {
-                WatchTaskCoordinator.shared.publish(
-                    runId: runId,
-                    conversationId: conversationHex,
-                    presentation: .failed(),
-                    summary: WatchTaskText.clipped(
-                        failureReason ?? IOSAppLocalization.string(
-                            "图片已生成，但结果保存失败。",
-                            defaultValue: "图片已生成，但结果保存失败。"
-                        ),
-                        maxLength: 200
-                    )
-                )
-            }
-            await self.dependencies.liveActivityController.end(
-                runId: runId,
-                presentation: succeeded ? .completed(toolTitle: "图片生成") : .failed()
-            )
-            self.teardownRun(
-                runId: runId,
-                terminalEvent: succeeded ? .generationCompleted : .generationFailed,
-                terminalStatus: terminalStatus
-            )
-            if succeeded {
-                self.bindings.generationSucceeded()
-            }
+        imageToolRun = imageRun
+        let context = ChatImageToolRun.Run(
+            runId: runId, startedAt: startedAt, inputDigest: inputDigest,
+            conversationId: conversationId, snapshot: snapshot
+        )
+        runTask = Task { @MainActor [weak self, imageRun] in
+            guard let self else { return }
+            await imageRun.execute(run: context, host: self)
         }
     }
 
-    private func failImageToolCallBeforeExecution(
-        _ toolCall: UIMessagePart.Tool,
-        in snapshot: [UIMessage],
-        runId: String,
-        startedAt: Int64,
-        inputDigest: String,
-        conversationId: KotlinUuid?,
-        reason: String
-    ) async {
-        guard currentRunId == runId, !didFinalizeTerminal else { return }
-        didFinalizeTerminal = true
-        let failure = ChatToolOutputFormatter.toolFailureJSON(
-            toolName: toolCall.toolName,
-            reason: reason,
-            cancelled: false
-        )
-        let failedMessages = toolRuntime.messagesByFinishingToolCall(
-            toolCall,
-            outputText: failure,
-            in: snapshot
-        )
-        bindings.setMessages(failedMessages)
-        bindings.bumpMessageRevision(.toolResultAppended, 1)
-        let conversationHex = conversationId?.toHexDashString()
-        let didPersist = await bindings.persistMessages(conversationId)
-        let terminalStatus: AgentRunStatus = didPersist ? .failed : .recoveryPending
-        let didRecordRun = await bindings.recordRun(
-            runId,
-            startedAt,
-            terminalStatus,
-            inputDigest,
-            conversationHex,
-            nil
-        )
-        guard didRecordRun else {
-            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
-            return
-        }
-        WatchTaskCoordinator.shared.publish(
-            runId: runId,
-            conversationId: conversationHex,
-            presentation: .failed(),
-            summary: WatchTaskText.clipped(reason, maxLength: 200)
-        )
-        await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
-        teardownRun(runId: runId, terminalEvent: .generationFailed, terminalStatus: terminalStatus)
-    }
-
-    private func recordImageToolTerminalIfNeeded(
-        runId: String,
-        toolCall: UIMessagePart.Tool,
-        outcome: String,
-        resultPayload: String?
-    ) async -> ImageToolTerminalClaimResult {
-        guard currentRunId == runId,
-              imageToolDidStart else { return .failed }
-        guard !imageToolTerminalClaimed else { return .alreadyClaimed }
-        imageToolTerminalClaimed = true
-        return await toolLedger.recordToolCallTerminal(
-            runId: runId,
-            toolCallId: toolCall.toolCallId,
-            outcome: outcome,
-            resultPayload: resultPayload
-        ) ? .recorded : .failed
-    }
-
-    private func failImageToolDurability(runId: String) async {
+    func failImageToolDurability(runId: String) async {
         guard currentRunId == runId, !didFinalizeTerminal else { return }
         didFinalizeTerminal = true
         lastFailureMessage = IOSAppLocalization.string(
             "tool result ledger write failed",
             defaultValue: "tool result ledger write failed"
         )
-        await failedTerminal(runId: runId, requiresRecovery: true)
-    }
-
-    private func markImageToolOutcomeUnknownIfNeeded(
-        runId: String,
-        toolCall: UIMessagePart.Tool,
-        outcome: String
-    ) async -> ImageToolTerminalClaimResult {
-        guard currentRunId == runId,
-              imageToolDidStart else { return .failed }
-        guard !imageToolTerminalClaimed else { return .alreadyClaimed }
-        imageToolTerminalClaimed = true
-        return await toolLedger.recordToolCallRecoveryTransition(
-            runId: runId,
-            toolCallId: toolCall.toolCallId,
-            expected: .started,
-            to: .outcomeUnknown,
-            outcome: outcome
-        ) ? .recorded : .failed
-    }
-
-    private func reconcileImageToolStartFailure(
-        runId: String,
-        toolCallId: String,
-        outcome: String
-    ) async {
-        let closedStarted = await toolLedger.recordToolCallRecoveryTransition(
-            runId: runId,
-            toolCallId: toolCallId,
-            expected: .started,
-            to: .reconciled,
-            outcome: outcome
-        )
-        if !closedStarted {
-            _ = await toolLedger.recordToolCallRecoveryTransition(
-                runId: runId,
-                toolCallId: toolCallId,
-                expected: .prepared,
-                to: .reconciled,
-                outcome: outcome
-            )
-        }
+        await commitTerminal(runId: runId, requiresRecovery: true)
     }
 
     private func makeRunRequest(
@@ -994,52 +559,29 @@ final class ChatKernelRunHost {
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?,
         citationTracker: IOSMemoryCitationTracker
     ) -> ChatRunKernelAdapter.RunRequest {
-        let bindingsBox = UncheckedHostBindingsBox(bindings)
-        let conversationBox = UncheckedHostConversationIdBox(conversationId)
-        return ChatRunKernelAdapter.RunRequest(
-            provider: adapterProvider,
-            providerSetting: providerSetting,
-            params: params,
-            runId: runId,
-            startedAt: startedAt,
-            inputDigest: inputDigest,
-            conversationId: conversationId,
-            initialMessages: initialMessages,
-            toolExposureBridge: toolExposureBridge,
-            recipeCatalogSnapshot: recipeCatalogSnapshot,
-            recipeCatalogRefresh: {
-                await IOSDynamicToolRegistry.shared.refresh()
-            },
+        ChatRunRequestFactory(
+            bindings: bindings,
+            maxToolResumeCount: dependencies.settingsStore.chatMaxToolResumeCount,
             executionPolicy: runExecutionPolicy,
             phoneAutomaticReasoning: phoneAutomaticReasoning,
             phoneControl: phoneControl,
-            maxToolResumeCount: dependencies.settingsStore.chatMaxToolResumeCount,
-            drainSteer: {
-                let boxed = await MainActor.run {
-                    IOSMailboxDrainResult(values: bindingsBox.value.drainSteerQueue(conversationBox.value))
-                }
-                return boxed.values
-            },
-            mailboxDrain: {
-                await Task { @MainActor in
-                    IOSMailboxDrainResult(values: await bindingsBox.value.drainMailbox(conversationBox.value))
-                }.value
-            },
-            citationTracker: citationTracker,
             prepareUploadMessages: { [weak self] messages in
-                guard let self else { return messages }
-                return try await self.prepareUploadMessages(
-                    messages,
-                    runId: runId,
-                    provider: providerSetting,
-                    params: params
+                guard let self, self.currentRunId == runId,
+                      let preparation = self.uploadPreparation else { return messages }
+                return try await preparation.prepareUploadMessages(
+                    messages, provider: providerSetting, params: params
                 )
             },
-            nestedToolRunner: nil,
             approvalDecider: { [weak self] prompt in
                 guard let self else { return nil }
                 return await self.approvalDecider(prompt, runId: runId)
             }
+        ).make(
+            adapterProvider: adapterProvider, providerSetting: providerSetting,
+            params: params, runId: runId, startedAt: startedAt,
+            inputDigest: inputDigest, conversationId: conversationId,
+            initialMessages: initialMessages, toolExposureBridge: toolExposureBridge,
+            recipeCatalogSnapshot: recipeCatalogSnapshot, citationTracker: citationTracker
         )
     }
 
@@ -1054,17 +596,18 @@ final class ChatKernelRunHost {
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?,
         tracker: IOSMemoryCitationTracker
     ) async {
-        guard terminalWireName == AgentRunStatus.completed.wireName,
-              !currentGenerativeUiFallbackAttempted,
+        guard let uploadPreparation,
+              terminalWireName == AgentRunStatus.completed.wireName,
+              !uploadPreparation.fallbackAttempted,
               !toolRuntime.hasUnresolvedToolCall(in: bindings.getMessages()),
               let issue = IOSGenerativeUiRequestPolicy.widgetIssue(
                 in: bindings.getMessages(),
                 afterDisplayMessageCount: displayBaseline.count,
-                requirement: currentGenerativeUiRequirement
+                requirement: uploadPreparation.requirement
               ) else { return }
 
-        currentGenerativeUiFallbackAttempted = true
-        currentGenerativeUiRetryIssue = issue
+        uploadPreparation.fallbackAttempted = true
+        uploadPreparation.retryIssue = issue
         let retryBase = IOSGenerativeUiRequestPolicy.retryBaseMessages(bindings.getMessages())
         projection.publishClosedAssistantMessages(retryBase)
         terminalWireName = nil
@@ -1108,7 +651,7 @@ final class ChatKernelRunHost {
         if IOSGenerativeUiRequestPolicy.widgetIssue(
             in: bindings.getMessages(),
             afterDisplayMessageCount: retryBase.count,
-            requirement: currentGenerativeUiRequirement
+            requirement: uploadPreparation.requirement
         ) != nil {
             projection.publishClosedAssistantMessages(
                 IOSGenerativeUiRequestPolicy.terminalRepairFailureMessages(
@@ -1144,7 +687,7 @@ final class ChatKernelRunHost {
         guard let runId = currentRunId, cancelCause == nil, !didFinalizeTerminal else { return }
         // 图片结果已返回并开始写工具终态后即进入提交点；此时再把 UI 改写为
         // cancelled 会制造 Finished(completed) 与取消消息互相矛盾的快照。
-        if activeImageToolCall != nil, imageToolTerminalClaimed { return }
+        if imageToolRun?.terminalClaimed == true { return }
         cancelCause = cause
         phoneControl.revoke(runID: runId)
         toolRuntime.discardPreparedThemeImport()
@@ -1161,12 +704,13 @@ final class ChatKernelRunHost {
                 defaultValue: "Generation interrupted by the system."
             )
         }
-        IOSChatBackgroundGenerationCoordinator.shared.discardDurableResponse(runId: runId)
+        backgroundCoordinator.discardDurableResponse(runId: runId)
         cancelRemoteDurableResponseIfNeeded()
         cancelBaseline = bindings.capturePersistMessagesBaseline(currentConversationIdForRun)
-        if let activeImageToolCall {
-            let wasExecuting = imageExecutionTask != nil
-            imageExecutionTask?.cancel()
+        if let imageToolRun {
+            let activeImageToolCall = imageToolRun.toolCall
+            let wasExecuting = imageToolRun.isExecuting
+            imageToolRun.cancelExecution()
             var messages = bindings.getMessages()
             if toolRuntime.hasUnresolvedToolCall(in: messages) {
                 messages = toolRuntime.messagesByFailingPendingToolCalls(
@@ -1176,19 +720,19 @@ final class ChatKernelRunHost {
                 )
                 bindings.setMessages(messages)
             }
-            if imageToolDidStart {
+            if imageToolRun.didStart {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     let terminalClaim: ImageToolTerminalClaimResult
                     if wasExecuting {
-                        terminalClaim = await self.markImageToolOutcomeUnknownIfNeeded(
-                            runId: runId,
+                        terminalClaim = await imageToolRun.markOutcomeUnknownIfNeeded(
+                            host: self, runId: runId,
                             toolCall: activeImageToolCall,
                             outcome: "cancelled_during_execution"
                         )
                     } else {
-                        terminalClaim = await self.recordImageToolTerminalIfNeeded(
-                            runId: runId,
+                        terminalClaim = await imageToolRun.recordTerminalIfNeeded(
+                            host: self, runId: runId,
                             toolCall: activeImageToolCall,
                             outcome: "cancelled_before_execution",
                             resultPayload: nil
@@ -1212,9 +756,7 @@ final class ChatKernelRunHost {
         }
         // 审批等待中取消:放行决定器(返回 nil),适配器走 cancel 优先分支,
         // 不再写账本/副作用。
-        approvalWaiter?.resume(returning: nil)
-        approvalWaiter = nil
-        pendingPrompt = nil
+        approvalSession.cancel()
     }
 
     @discardableResult
@@ -1225,7 +767,8 @@ final class ChatKernelRunHost {
         guard let runId = currentRunId,
               cancelCause == nil,
               !didFinalizeTerminal,
-              !hasPendingToolApproval else { return false }
+              !hasPendingToolApproval,
+              durableResponseSession?.requiresRecovery != true else { return false }
         if detachDurableResponse(runId: runId) { return true }
         if honorKeepAliveLease {
             switch backgroundExecution.executionAssertion(for: runId) {
@@ -1237,7 +780,11 @@ final class ChatKernelRunHost {
             }
         }
         guard canHandoffActiveTool,
-              let handoff = currentBackgroundHandoff(),
+              let handoff = ChatRunBackgroundHandoffBuilder.displaySnapshot(
+                  backgroundHandoff,
+                  messages: bindings.getMessages(),
+                  baseline: displayBaseline
+              ),
               let conversationStore else {
             pendingBackgroundConversationStore = conversationStore
             return false
@@ -1254,7 +801,7 @@ final class ChatKernelRunHost {
                 return override(handoff, conversationStore)
             }
 #endif
-            return IOSChatBackgroundGenerationCoordinator.shared.start(
+            return backgroundCoordinator.startForegroundHandoff(
                 handoff: handoff,
                 conversationStore: conversationStore,
                 toolRuntime: toolRuntime,
@@ -1281,85 +828,38 @@ final class ChatKernelRunHost {
         return true
     }
 
-    private func currentBackgroundHandoff() -> IOSChatBackgroundHandoff? {
-        guard let handoff = backgroundHandoff else { return nil }
-        return IOSChatBackgroundHandoff(
-            runId: handoff.runId,
-            startedAt: handoff.startedAt,
-            inputDigest: handoff.inputDigest,
-            conversationId: handoff.conversationId,
-            providerId: handoff.providerId,
-            providerSetting: handoff.providerSetting,
-            params: handoff.params,
-            uploadMessages: handoff.uploadMessages,
-            displayMessages: IOSIntelligentUITerminal.markSourcesPending(
-                bindings.getMessages(), baseline: displayBaseline, runID: handoff.runId
-            ),
-            mode: handoff.mode,
-            responseId: handoff.responseId,
-            responseSequenceNumber: handoff.responseSequenceNumber,
-            generativeUiRequirement: handoff.generativeUiRequirement,
-            generativeUiFallbackAttempted: handoff.generativeUiFallbackAttempted,
-            fullToolNames: handoff.fullToolNames,
-            dynamicToolSnapshot: handoff.dynamicToolSnapshot,
-            executionPolicy: handoff.executionPolicy,
-            subAgentTimeoutSeconds: handoff.subAgentTimeoutSeconds,
-            phoneAutomaticReasoning: handoff.phoneAutomaticReasoning
-        )
-    }
-
     private func makeTextProvider(runId: String) -> any IOSAgentTextProvider {
         if let textProviderOverride { return textProviderOverride }
-        let provider = ChatKernelDurableTextProvider(
-            onCheckpoint: { [weak self] responseId, sequenceNumber in
-                Task { @MainActor in
-                    self?.recordDurableResponseCheckpoint(
-                        runId: runId,
-                        responseId: responseId,
-                        sequenceNumber: sequenceNumber
-                    )
-                }
-            },
-            onDurableDisconnect: { [weak self] message in
-                Task { @MainActor in
-                    guard let self,
-                          self.currentRunId == runId,
-                          self.cancelCause == nil else { return }
-                    if !self.detachDurableResponse(runId: runId) {
-                        self.activeDurableTextProvider?.failLocalStream(message: message)
-                    }
-                }
-            }
-        )
-        activeDurableTextProvider = provider
-        return provider
+        let session = ChatDurableResponseSession(host: self, runId: runId, backgroundCoordinator: backgroundCoordinator)
+        durableResponseSession = session
+        return session.provider
     }
 
-    private func recordDurableResponseCheckpoint(
-        runId: String,
-        responseId: String,
-        sequenceNumber: Int64
+    func recordDurableResponseCheckpoint(
+        runId: String, responseId: String, sequenceNumber: Int64,
+        requestToken: UUID? = nil
     ) {
-        guard currentRunId == runId,
-              cancelCause == nil,
-              var handoff = backgroundHandoff else { return }
-        let isNewCheckpoint = handoff.responseId != responseId
-            || handoff.responseSequenceNumber == nil
-            || sequenceNumber > (handoff.responseSequenceNumber ?? -1)
-        durableResponseCursor = (responseId, sequenceNumber)
-        handoff.mode = .resumeResponse
-        handoff.responseId = responseId
-        handoff.responseSequenceNumber = sequenceNumber
-        guard IOSChatBackgroundGenerationCoordinator.shared.checkpointDurableResponse(handoff) else {
-            return
-        }
-        backgroundHandoff = handoff
-        durableCheckpointPersisted = true
-        if isNewCheckpoint, canReportPhoneWorkProgress(runId: runId) {
+        guard currentRunId == runId, cancelCause == nil,
+              let handoff = backgroundHandoff,
+              let session = durableResponseSession,
+              let checkpoint = session.checkpoint(
+                responseId: responseId, sequenceNumber: sequenceNumber, handoff: handoff,
+                requestToken: requestToken
+              ) else { return }
+        backgroundHandoff = checkpoint.handoff
+        if checkpoint.isNew, canReportPhoneWorkProgress(runId: runId) {
             backgroundExecution.advanceProgress(runId)
         }
         if pendingBackgroundConversationStore != nil {
             _ = detachDurableResponse(runId: runId)
+        }
+    }
+
+    func handleDurableDisconnect(runId: String, message: String, requestToken: UUID? = nil) {
+        guard currentRunId == runId, cancelCause == nil else { return }
+        if let requestToken, durableResponseSession?.provider.isCurrentRequest(requestToken) != true { return }
+        if !detachDurableResponse(runId: runId) {
+            durableResponseSession?.provider.failLocalStream(message: message)
         }
     }
 
@@ -1368,10 +868,10 @@ final class ChatKernelRunHost {
         guard currentRunId == runId,
               cancelCause == nil,
               !didFinalizeTerminal,
-              durableCheckpointPersisted,
+              durableResponseSession?.canDetach(handoff: backgroundHandoff) == true,
               canHandoffActiveTool,
               !hasPendingToolApproval else { return false }
-        activeDurableTextProvider?.cancelLocalStream()
+        durableResponseSession?.provider.cancelLocalStream()
         adapter?.detachForBackgroundHandoff()
         runTask?.cancel()
         runTask = nil
@@ -1381,28 +881,18 @@ final class ChatKernelRunHost {
         adapter = nil
         citationTracker = nil
         activeTextProvider = nil
-        activeDurableTextProvider = nil
+        durableResponseSession = nil
         keepaliveHeld = false
         bindings.setContextCompactState(.idle)
         bindings.setIsLoading(false)
         projection.clearAllApprovals()
         bindings.bumpMessageRevision(.generationHandedOffToBackground, 1)
-        IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
+        backgroundCoordinator.resumeDetachedResponsesIfNeeded()
         return true
     }
 
     private func cancelRemoteDurableResponseIfNeeded() {
-        guard let cursor = durableResponseCursor,
-              let handoff = backgroundHandoff,
-              let openAI = handoff.providerSetting as? ProviderSetting.OpenAI else { return }
-        activeDurableTextProvider?.cancelLocalStream()
-        _ = try? IOSSharedKmpProviders.openAIBackgroundTransport.cancelBackground(
-            providerSetting: openAI,
-            responseId: cursor.responseId,
-            customHeaders: handoff.params.customHeaders,
-            onComplete: {},
-            onError: { _ in }
-        )
+        durableResponseSession?.cancelRemote(handoff: backgroundHandoff)
     }
 
     // MARK: - 审批入口(CG-C :1819-1882 同款面)
@@ -1446,7 +936,7 @@ final class ChatKernelRunHost {
     ) {
         let runId = currentRunId
         let conversationId = currentConversationIdForRun
-        guard case .ish(let approvalRequest) = pendingPrompt,
+        guard case .ish(let approvalRequest) = approvalSession.prompt,
               approvalRequest.runId == requestRunId else { return }
         guard resolvePendingApproval(
             decision: .approve,
@@ -1475,7 +965,7 @@ final class ChatKernelRunHost {
     }
 
     func denyPendingIshHandoffTool(requestId: String, requestRunId: String?) {
-        guard case .ish(let approvalRequest) = pendingPrompt,
+        guard case .ish(let approvalRequest) = approvalSession.prompt,
               approvalRequest.runId == requestRunId else { return }
         _ = resolvePendingApproval(decision: .deny, category: .ish, requestId: requestId)
     }
@@ -1523,14 +1013,14 @@ final class ChatKernelRunHost {
         allow: Bool
     ) -> Bool {
         guard currentRunId == runId,
-              let prompt = pendingPrompt,
-              Self.requestId(of: prompt) == requestId,
-              Self.category(of: prompt) != .askUser else {
+              let prompt = approvalSession.prompt,
+              ChatRunApprovalSession.requestId(of: prompt) == requestId,
+              ChatRunApprovalSession.category(of: prompt) != .askUser else {
             return false
         }
         return resolvePendingApproval(
             decision: allow ? .approve : .deny,
-            category: Self.category(of: prompt),
+            category: ChatRunApprovalSession.category(of: prompt),
             requestId: requestId
         )
     }
@@ -1542,9 +1032,9 @@ final class ChatKernelRunHost {
         answer: String
     ) -> Bool {
         guard currentRunId == runId,
-              let prompt = pendingPrompt,
+              let prompt = approvalSession.prompt,
               case .askUser = prompt,
-              Self.requestId(of: prompt) == requestId else {
+              ChatRunApprovalSession.requestId(of: prompt) == requestId else {
             return false
         }
         return resolvePendingApproval(
@@ -1561,23 +1051,14 @@ final class ChatKernelRunHost {
     @discardableResult
     private func resolvePendingApproval(
         decision: ChatKernelApprovalDecision,
-        category: ApprovalCategory,
+        category: ChatRunApprovalSession.Category,
         requestId: String? = nil
     ) -> Bool {
-        guard let waiter = approvalWaiter,
-              let prompt = pendingPrompt,
-              let runId = currentRunId,
-              Self.category(of: prompt) == category else { return false }
-        if let requestId, Self.requestId(of: prompt) != requestId { return false }
-        if case .webMount(let request) = prompt,
-           let requestRunId = request.runId,
-           requestRunId != runId { return false }
-        if case .ish(let request) = prompt,
-           let requestRunId = request.runId,
-           requestRunId != runId { return false }
-        projection.clearApproval(prompt)
-        approvalWaiter = nil
-        pendingPrompt = nil
+        guard let runId = currentRunId,
+              let claim = approvalSession.claim(
+                category: category, requestId: requestId, runId: runId
+              ) else { return false }
+        projection.clearApproval(claim.prompt)
         bindings.setIsLoading(true)
         if !keepaliveHeld {
             beginKeepAlive(runId: runId, subtitle: currentParams?.model.displayName ?? "")
@@ -1587,43 +1068,8 @@ final class ChatKernelRunHost {
             currentConversationIdForRun,
             AgentActivityPresentation.response(stage: .generating)
         )
-        waiter.resume(returning: decision)
+        claim.waiter.resume(returning: decision)
         return true
-    }
-
-    private static func category(of prompt: ChatToolApprovalPrompt) -> ApprovalCategory {
-        switch prompt {
-        case .memory: return .memory
-        case .search: return .search
-        case .webMount: return .webMount
-        case .workspace: return .workspace
-        case .ish: return .ish
-        case .mcp: return .mcp
-        case .council: return .council
-        case .askUser: return .askUser
-        case .recipe: return .recipe
-        }
-    }
-
-    /// 提问（askUser）需要打字作答，不在灵动岛上给「允许 / 拒绝」。
-    private static func activityApproval(for prompt: ChatToolApprovalPrompt) -> AgentActivityApproval? {
-        guard category(of: prompt) != .askUser,
-              let requestId = requestId(of: prompt) else { return nil }
-        return AgentActivityApproval(requestId: requestId, title: prompt.toolTitle)
-    }
-
-    private static func requestId(of prompt: ChatToolApprovalPrompt) -> String? {
-        switch prompt {
-        case .memory(let request): return request.id
-        case .search(let request): return request.id
-        case .webMount(let request): return request.id
-        case .workspace(let request): return request.id
-        case .ish(let request): return request.id
-        case .mcp(let request): return request.id
-        case .council(let request): return request.id
-        case .askUser(let request): return request.id
-        case .recipe(let request): return request.id
-        }
     }
 
     // MARK: - 适配器装配
@@ -1632,8 +1078,12 @@ final class ChatKernelRunHost {
         var callbacks = ChatRunKernelAdapter.Callbacks()
         callbacks.onMessagesUpdated = { [weak self] messages in
             guard let self, self.currentRunId == runId else { return }
-            self.recordPhoneToolResultProgress(runId: runId, messages: messages)
-            self.recordJevNextModelStepIfNeeded(runId: runId, messages: messages)
+            if self.canReportPhoneWorkProgress(runId: runId) {
+                self.progressPresentation?.recordPhoneToolResultProgress(messages)
+            }
+            if self.currentRunId == runId {
+                self.progressPresentation?.recordJevNextModelStepIfNeeded(messages)
+            }
             self.activeToolExecutionName = nil
             self.activeToolEffectClass = nil
             // 权威快照落地:刚完成的 assistant 消息已在其中(与 provisional
@@ -1674,16 +1124,24 @@ final class ChatKernelRunHost {
             self.toolOutcomeUnknownSignal = signal
             self.phoneControl.revoke(runID: runId)
         }
+        callbacks.onAssistantTurnCompleted = { [weak self] messages in
+            guard let self, self.currentRunId == runId, self.cancelCause == nil else { return false }
+            guard let session = self.durableResponseSession, session.hasPersistedOwner,
+                  let handoff = self.backgroundHandoff else { return true }
+            let continuation = ChatRunBackgroundHandoffBuilder.continuingAfterResponse(handoff, messages: messages)
+            guard session.persistContinuation(continuation) else { return false }
+            self.backgroundHandoff = continuation
+            return true
+        }
         callbacks.onAssistantTurnStarted = { [weak self] in
             guard let self, self.currentRunId == runId else { return }
-            self.jevModelStepCount += 1
-            self.didReportFirstDeltaThisRound = false
+            self.progressPresentation?.recordModelStep()
             self.streamClock.resetRound()
             self.bindings.setMessages(
                 self.bindings.getMessages().clearingLastAssistantGenerationDuration()
             )
             self.projection.discardProvisionalAssistant()
-            self.lastPhoneProgressContent = []
+            self.progressPresentation?.beginModelRound()
             self.backgroundExecution.updateProgress(
                 runId,
                 completed: self.reportsPhoneWorkProgress ? 0 : 1,
@@ -1734,69 +1192,23 @@ final class ChatKernelRunHost {
             guard let self, self.currentRunId == runId else { return }
             self.activeToolExecutionName = toolName
             self.activeToolEffectClass = IOSToolEffectClassMapping.forToolName(toolName, input: input)
-            self.backgroundExecution.updateProgress(
-                runId,
-                completed: self.reportsPhoneWorkProgress ? 0 : 3,
-                total: self.reportsPhoneWorkProgress ? -1 : 4,
-                subtitle: IOSAppLocalization.string("正在执行工具", defaultValue: "正在执行工具")
-            )
-            let presentation = AgentActivityPresentation.runningTool(toolName: toolName, input: input)
-            WatchTaskCoordinator.shared.publish(
-                runId: runId,
-                conversationId: self.currentConversationIdForRun?.toHexDashString(),
-                presentation: presentation
-            )
-            Task { @MainActor [weak self] in
-                guard let self, self.currentRunId == runId else { return }
-                await self.dependencies.liveActivityController.update(
-                    runId: runId,
-                    presentation: presentation,
-                    force: true
-                )
-            }
+            self.progressPresentation?.publishToolStarted(toolName: toolName, input: input)
         }
         callbacks.onAssistantStage = { [weak self] stage in
             guard let self, self.currentRunId == runId else { return }
-            let presentation = AgentActivityPresentation.response(stage: stage)
-            WatchTaskCoordinator.shared.publish(
-                runId: runId,
-                conversationId: self.currentConversationIdForRun?.toHexDashString(),
-                presentation: presentation
-            )
-            Task { @MainActor [weak self] in
-                guard let self, self.currentRunId == runId else { return }
-                await self.dependencies.liveActivityController.update(
-                    runId: runId,
-                    presentation: presentation
-                )
-            }
+            self.progressPresentation?.publishAssistantStage(stage)
         }
         callbacks.onAssistantFirstVisibleDelta = { [weak self] in
-            // 文本与推理都沿 CG-C chunkHasVisibleContent 口径计为可见内容;
-            // 适配器已按真实模型轮次只转递首次事件。
-            guard let self,
-                  self.currentRunId == runId,
-                  !self.didFinalizeTerminal else { return }
-            if !self.didRecordJevFirstDelta {
-                self.didRecordJevFirstDelta = true
-                let elapsed = max(0, Int64(Date().timeIntervalSince1970 * 1_000) - self.currentStartedAt)
-                IOSJevMetricsStore.appendRunNumbers(runId: runId, numbers: ["first_visible_delta_ms": Double(elapsed)])
-            }
+            guard let self, self.currentRunId == runId, !self.didFinalizeTerminal else { return }
+            self.progressPresentation?.recordFirstJevDelta()
             self.streamClock.noteVisibleDelta()
-            if !self.didReportFirstDeltaThisRound {
-                self.didReportFirstDeltaThisRound = true
-                ChatPerfTrace.event("FirstDelta")
-                self.backgroundExecution.updateProgress(
-                    runId,
-                    completed: self.reportsPhoneWorkProgress ? 0 : 2,
-                    total: self.reportsPhoneWorkProgress ? -1 : 4,
-                    subtitle: IOSAppLocalization.string("正在接收回复", defaultValue: "正在接收回复")
-                )
-            }
+            self.progressPresentation?.recordFirstVisibleProgress()
         }
         callbacks.onAssistantMessageSnapshot = { [weak self] message in
             guard let self, self.currentRunId == runId else { return }
-            self.recordPhoneModelProgress(runId: runId, message: message)
+            if self.canReportPhoneWorkProgress(runId: runId) {
+                self.progressPresentation?.recordPhoneModelProgress(message)
+            }
             self.projection.publishProvisionalAssistant(message)
             // 同一步骤长时间输出时续期灵动岛，避免仍在输出却被系统判为过期。
             self.dependencies.liveActivityController.noteProgress(runId: runId)
@@ -1814,81 +1226,24 @@ final class ChatKernelRunHost {
         runId: String
     ) async -> ChatKernelApprovalDecision? {
         guard currentRunId == runId, cancelCause == nil else { return nil }
-        let conversationId = currentConversationIdForRun
-        let toolCallId = pendingApprovalToolCallId ?? ""
-        // CG-C :3798-3799:暂停快照即适配器刚发布的 working,这里只补
-        // awaitingToolApproval 的 revision 语义。
-        bindings.bumpMessageRevision(.awaitingToolApproval, 1)
-        let writeBaseline = bindings.capturePersistMessagesBaseline(conversationId)
-        let didMark = await bindings.markRunAwaitingPermission(runId, toolCallId)
-        guard currentRunId == runId, cancelCause == nil else { return nil }
-        guard didMark else {
-            await pauseStorageFailed(rawMessage: IOSAppLocalization.string(
-                "无法保存待确认恢复信息，请重试。",
-                defaultValue: "无法保存待确认恢复信息，请重试。"
-            ))
-            return nil
-        }
-        // 脱敏快照持久化(CG-C :3817-3824):审批中快照不含敏感配置。
-        let approvalMessages = IOSProviderConfigToolCatalog.redactedApprovalMessages(bindings.getMessages())
-        let didPersist = await bindings.persistMessagesSnapshot(approvalMessages, conversationId, writeBaseline)
-        guard currentRunId == runId, cancelCause == nil else { return nil }
-        guard didPersist else {
-            await pauseStorageFailed(rawMessage: IOSAppLocalization.string(
-                "无法保存待确认状态，请检查存储空间后重试。",
-                defaultValue: "无法保存待确认状态，请检查存储空间后重试。"
-            ))
-            return nil
-        }
-
-        // 等人点按钮不需要后台执行权(CG-C :3844-3846);可见 baseMessages
-        // 已耐久保存后才还租约。
-        backgroundExecution.end(runId)
-        keepaliveHeld = false
-        await dependencies.liveActivityController.update(
+        let result = await approvalSession.pause(
+            prompt: prompt,
             runId: runId,
-            presentation: .waitingForUser(
-                kind: prompt.activityKind,
-                approval: Self.activityApproval(for: prompt)
-            ),
-            force: true
+            toolCallId: pendingApprovalToolCallId ?? "",
+            conversationId: currentConversationIdForRun,
+            bindings: bindings,
+            projection: projection,
+            backgroundExecution: backgroundExecution,
+            liveActivityController: dependencies.liveActivityController,
+            isCurrentRun: { [weak self] in self?.currentRunId == runId && self?.cancelCause == nil },
+            onKeepAliveReleased: { [weak self] in self?.keepaliveHeld = false }
         )
-        guard currentRunId == runId, cancelCause == nil else { return nil }
-        bindings.setIsLoading(false)
-        if case .askUser(let request) = prompt {
-            WatchTaskCoordinator.shared.publishAskUser(
-                runId: runId,
-                conversationId: conversationId?.toHexDashString(),
-                request: WatchAskUserRequest(
-                    id: request.id,
-                    question: request.question,
-                    options: request.options
-                )
-            )
-        } else {
-            WatchTaskCoordinator.shared.publishWaitingApproval(
-                runId: runId,
-                conversationId: conversationId?.toHexDashString(),
-                prompt: prompt
-            )
+        switch result {
+        case .decision(let decision): return decision
+        case .storageFailure(let message):
+            lastFailureMessage = message
+            return nil
         }
-        projection.publishApproval(prompt)
-
-        pendingPrompt = prompt
-        let decision = await withCheckedContinuation {
-            (continuation: CheckedContinuation<ChatKernelApprovalDecision?, Never>) in
-            approvalWaiter = continuation
-        }
-        approvalWaiter = nil
-        pendingPrompt = nil
-        return decision
-    }
-
-    /// 暂停持久化失败(CG-C :3805-3816/:3826-3837):清卡 + 备好错误串;
-    /// 适配器收到 nil 后以 failed 收口,failed 终态统一呈现。
-    private func pauseStorageFailed(rawMessage: String) async {
-        projection.clearAllApprovals()
-        lastFailureMessage = rawMessage
     }
 
     // MARK: - 逐轮上传准备(CG-C prepareAndStartStreaming :1960-2050)
@@ -1908,313 +1263,28 @@ final class ChatKernelRunHost {
         return policy.policy(for: capability) != .disabled
     }
 
-    private func messagesByInjectingRuntimeContext(
-        _ messages: [UIMessage],
-        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
-    ) -> [UIMessage] {
-        bindings.messagesByInjectingRuntimeContextForRun?(messages, mcpEnabledForRun, memoryRecallOverride)
-            ?? bindings.messagesByInjectingRuntimeContext(messages)
-    }
-
-    /// 每轮上传前的完整准备。压缩失败抛错,沿引擎
-    /// 通用 catch 以 providerFailure 收口(CG-C 压缩失败 → presentStreamError
-    /// 语义),错误串带「上下文压缩失败：」前缀。
-    private func prepareUploadMessages(
-        _ messages: [UIMessage],
-        runId: String,
-        provider: ProviderSetting,
-        params: TextGenerationParams
-    ) async throws -> [UIMessage] {
-        var prepareInterval = ChatPerfTrace.begin("PrepareUpload")
-        defer { ChatPerfTrace.end(&prepareInterval) }
-        guard currentRunId == runId else { return messages }
-        let settings = runSettings ?? dependencies.sharedSettings.snapshot
-        let conversationId = currentConversationIdForRun
-        let effectiveParams = params.replacingTools(
-            currentToolExposureBridge?.visibleTools() ?? params.tools
-        )
-        let plan = IOSGenerativeUiRequestPolicy.plan(
-            setting: settings.agentRuntime.generativeUi,
-            messages: messages,
-            params: effectiveParams,
-            suppressForMiniApp: settings.agentRuntime.miniApp.enabled
-                && ChatRuntimeContextBuilder.miniAppTurnContext(in: messages) != nil
-        )
-        if !currentGenerativeUiFallbackAttempted {
-            currentGenerativeUiRequirement = plan.requirement
-        }
-        let requestMessages: [UIMessage]
-        if let issue = currentGenerativeUiRetryIssue {
-            requestMessages = IOSGenerativeUiRequestPolicy.retryMessages(
-                plan.uploadMessages,
-                requirement: currentGenerativeUiRequirement,
-                issue: issue
-            )
-        } else {
-            requestMessages = plan.uploadMessages
-        }
-        // 记忆候选只依赖本轮 canonical 用户输入；尽早启动，使网络等待与
-        // 压缩、上下文投影、图片准备重叠。本轮选择仍只在注入前读取一次。
-        let recallBox = JevRecallResultBox()
-        let memoryRecallTask = Task { @MainActor in
-            recallBox.value = await bindings.prepareJevMemoryRecall(requestMessages, runId)
-        }
-        defer { memoryRecallTask.cancel() }
-
-        // 基线注入只用于压缩预算估算，先算一次召回结果给它；最终注入在下方
-        // 按原时机（压缩与投影的 await 之后）现算，保证读到注入前最新的记忆。
-        let fallbackMemoryRecallResult = bindings.memoryRecallResultForRun(requestMessages)
-
-        // 注入开销估算基于 canonical 输入（无投影），保证压缩预算口径与
-        // 原行为一致（等价于 Phase 1 之前 Host 的估算方式）。
-        let runtimeBaseline = messagesByInjectingRuntimeContext(
-            requestMessages,
-            memoryRecallOverride: fallbackMemoryRecallResult
-        )
-        let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
-            setting: provider,
-            model: effectiveParams.model
-        )
-        let runtimeOverheadTokens = max(
-            IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimeBaseline) -
-                IOSContextCompactionCoordinator.estimatedTokensForRequest(requestMessages),
-            0
-        )
-        let requestSystemIds = Set(requestMessages.filter { $0.role == MessageRole.system }.map { $0.id })
-        let runtimeFragments = runtimeBaseline.filter {
-            $0.role == MessageRole.system && !requestSystemIds.contains($0.id)
-        }
-        let historyOverhead: (([UIMessage]) -> Int)? = transcriptCapabilities.systemUpdates ? { retained in
-            let fresh = runtimeFragments + retained
-            let replayed = PromptTranscript.shared.prepare(
-                canonicalMessages: messages, preparedMessages: fresh, tools: effectiveParams.tools
-            ).messages
-            return max(IOSContextCompactionCoordinator.estimatedTokensForRequest(replayed)
-                - IOSContextCompactionCoordinator.estimatedTokensForRequest(fresh), 0)
-        } : nil
-
-        let preparedUploadMessages: [UIMessage]
-        do {
-            preparedUploadMessages = try await IOSContextCompactionCoordinator.shared.prepareMessagesForRequest(
-                uploadMessages: requestMessages,
-                conversationId: conversationId,
-                settings: settings,
-                params: effectiveParams,
-                fallbackProvider: provider,
-                promptOverheadTokens: runtimeOverheadTokens,
-                additionalHistoryOverhead: historyOverhead,
-                onEvent: { [weak self] event in
-                    guard let self,
-                          ChatContextCompactEventRouter.shouldApply(
-                            event: event,
-                            eventRunId: runId,
-                            currentRunId: self.currentRunId
-                          ) else { return }
-                    self.applyCompactEvent(event)
-                }
-            )
-        } catch {
-            if currentRunId == runId {
-                applyCompactEvent(.failed(message: (error as NSError).localizedDescription))
-            }
-            throw Self.uploadPrepError(IOSAppLocalization.formatted(
-                "上下文压缩失败：%@",
-                defaultValue: "上下文压缩失败：%@",
-                arguments: [(error as NSError).localizedDescription]
-            ))
-        }
-        guard currentRunId == runId else { return messages }
-        let promptedUploadMessages = Self.messagesByInjectingImageGenerationPromptIfNeeded(
-            preparedUploadMessages,
-            params: effectiveParams
-        )
-
-        // Jev Phase 2（上下文筛选）：投影放在压缩之后——压缩摘要的来源始终是
-        // canonical 原文（P0），且压缩的预算截断不会伤及省略 marker；同时投影
-        // 只作用于请求副本，canonical 历史/持久化不受影响。off/shadow/失败
-        // 返回原数组。
-        let projectedMessages = await IOSJevContextSelectionService.shared.projectedMessages(
-            promptedUploadMessages,
-            identity: IOSJevContextSelectionService.RunIdentity(
-                runId: runId,
-                conversationId: conversationId?.toHexDashString()
-            )
-        )
-
-        // 每轮组装前刷新编排链接缓存(CG-C :2022-2024)。
-        await bindings.refreshOrchestrationLinks()
-
-        // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
-        // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
-        // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
-        await memoryRecallTask.value
-        // Jev 未给出结果时在注入时刻现算（与原行为同一时机与输入），并复用给
-        // usage marking，使标记的记忆与实际注入的一致。
-        let memoryRecallOverride = recallBox.value ?? bindings.memoryRecallResultForRun(projectedMessages)
-        let runtimePreparedMessages = try await bindings.prepareImageAttachments(
-            messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride),
-            effectiveParams.model,
-            settings,
-            conversationId
-        )
-        try Task.checkCancellation()
-        guard currentRunId == runId else { throw CancellationError() }
-        let selectedMemoryIds = bindings.memoryRecordIdsForRuntimeContext(
-            promptedUploadMessages,
-            memoryRecallOverride
-        )
-        let finalizedUploadMessages: [UIMessage]
-        do {
-            let transcriptMessages = transcriptCapabilities.systemUpdates
-                ? PromptTranscript.shared.prepare(
-                    canonicalMessages: messages,
-                    preparedMessages: runtimePreparedMessages,
-                    tools: effectiveParams.tools
-                ).messages
-                : runtimePreparedMessages
-            let transitionOverhead = max(
-                IOSContextCompactionCoordinator.estimatedTokensForRequest(transcriptMessages)
-                    - IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimePreparedMessages), 0
-            )
-            finalizedUploadMessages = try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(
-                runtimePreparedMessages,
-                settings: settings,
-                params: effectiveParams,
-                additionalOverheadTokens: transitionOverhead
-            )
-            if transcriptCapabilities.systemUpdates {
-                // Rebuild after fitting so covered transitions become a checkpoint.
-                // Validate without allowing the fitter to move inline system events.
-                _ = try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(
-                    PromptTranscript.shared.prepare(
-                        canonicalMessages: messages,
-                        preparedMessages: finalizedUploadMessages,
-                        tools: effectiveParams.tools
-                    ).messages,
-                    settings: settings,
-                    params: effectiveParams,
-                    preserveMessageOrder: true
-                )
-            }
-        } catch {
-            if currentRunId == runId {
-                applyCompactEvent(.failed(message: (error as NSError).localizedDescription))
-            }
-            throw Self.uploadPrepError(IOSAppLocalization.formatted(
-                "上下文压缩失败：%@",
-                defaultValue: "上下文压缩失败：%@",
-                arguments: [(error as NSError).localizedDescription]
-            ))
-        }
-        // Native transcript endpoints need named system sections intact so the
-        // engine can emit only the changed section. Legacy/custom endpoints
-        // keep the historical single-system-message shape.
-        let finalUploadMessages = transcriptCapabilities.systemUpdates
-            ? finalizedUploadMessages
-            : ChatRuntimeContextBuilder.coalescingSystemMessages(finalizedUploadMessages)
-        // 召回标记(P2-b):不 force,去抖生效(CG-C :2049-2050)。
-        bindings.recordMemoryUsage(selectedMemoryIds, false)
-        refreshBackgroundHandoff(
-            runId: runId,
-            providerSetting: provider,
-            params: effectiveParams,
-            uploadMessages: finalUploadMessages
-        )
-        return finalUploadMessages
-    }
-
     private func refreshBackgroundHandoff(
-        runId: String,
-        providerSetting: ProviderSetting,
-        params: TextGenerationParams,
-        uploadMessages: [UIMessage]
-    ) {
-        guard currentRunId == runId,
-              let conversationId = currentConversationIdForRun else {
+        runId: String, providerSetting: ProviderSetting,
+        params: TextGenerationParams, uploadMessages: [UIMessage]
+    ) throws {
+        guard currentRunId == runId, let conversationId = currentConversationIdForRun else {
             backgroundHandoff = nil
             return
         }
-        let dynamicSnapshot = currentDynamicToolSnapshot
-        let backgroundDynamicNames = Set(
-            dynamicSnapshot?.backgroundEligibleDescriptors.map(\.toolId) ?? []
+        let preparedHandoff = ChatRunBackgroundHandoffBuilder.prepare(
+            runId: runId, startedAt: currentStartedAt, inputDigest: currentInputDigest,
+            conversationId: conversationId, providerSetting: providerSetting, params: params,
+            uploadMessages: uploadMessages, displayMessages: bindings.getMessages(), displayBaseline: displayBaseline,
+            toolExposureBridge: currentToolExposureBridge, dynamicSnapshot: currentDynamicToolSnapshot,
+            executionPolicy: runExecutionPolicy, phoneAutomaticReasoning: phoneAutomaticReasoning,
+            generativeUiRequirement: uploadPreparation?.requirement ?? .none,
+            generativeUiFallbackAttempted: uploadPreparation?.fallbackAttempted ?? false
         )
-        let backgroundVisibleTools = params.tools.filter { tool in
-            !IOSDynamicToolRegistry.isDynamicWorkflowToolName(tool.name)
-                || backgroundDynamicNames.contains(tool.name)
+        guard durableResponseSession?.persistContinuation(preparedHandoff) != false else {
+            throw NSError(domain: "AmberAgent.ChatCheckpoint", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "无法保存下一轮恢复信息，生成已暂停，请重试。"])
         }
-        backgroundHandoff = IOSChatBackgroundHandoff(
-            runId: runId,
-            startedAt: currentStartedAt,
-            inputDigest: currentInputDigest,
-            conversationId: conversationId,
-            providerId: providerSetting.id.toHexDashString(),
-            providerSetting: providerSetting,
-            params: params.replacingTools(backgroundVisibleTools),
-            uploadMessages: IOSIntelligentUITerminal.markSourcesPending(
-                uploadMessages, baseline: displayBaseline, runID: runId
-            ),
-            displayMessages: IOSIntelligentUITerminal.markSourcesPending(
-                bindings.getMessages(), baseline: displayBaseline, runID: runId
-            ),
-            mode: .continueModel,
-            generativeUiRequirement: currentGenerativeUiRequirement,
-            generativeUiFallbackAttempted: currentGenerativeUiFallbackAttempted,
-            fullToolNames: (currentToolExposureBridge?.fullToolDeclarations().map(\.name) ?? [])
-                .filter {
-                    !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0)
-                        || backgroundDynamicNames.contains($0)
-                },
-            dynamicToolSnapshot: dynamicSnapshot,
-            executionPolicy: runExecutionPolicy,
-            phoneAutomaticReasoning: phoneAutomaticReasoning
-        )
-    }
-
-    private static func uploadPrepError(_ message: String) -> NSError {
-        NSError(
-            domain: "AmberAgent.ChatKernelRunHost",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: message]
-        )
-    }
-
-    /// CG-C :2098-2118 同款:generate_image 在目录时前置路由指引系统消息。
-    private static func messagesByInjectingImageGenerationPromptIfNeeded(
-        _ messages: [UIMessage],
-        params: TextGenerationParams
-    ) -> [UIMessage] {
-        guard params.tools.contains(where: { $0.name == "generate_image" }) else {
-            return messages
-        }
-        let prompt = ChatImageGenerationReference.routingGuidancePrompt
-        let systemMessage = UIMessage(
-            id: KotlinUuid.companion.random(),
-            role: MessageRole.system,
-            parts: [UIMessagePart.Text(text: prompt, metadata: nil)],
-            annotations: [],
-            createdAt: chatNowLocalDateTime(),
-            finishedAt: nil,
-            modelId: nil,
-            usage: nil,
-            translation: nil
-        )
-        return [systemMessage] + messages
-    }
-
-    /// CG-C applyCompactEvent :2067-2096 同款映射。
-    private func applyCompactEvent(_ event: IOSContextCompactionEvent) {
-        switch event {
-        case .planning:
-            bindings.setContextCompactState(ChatContextCompactState(status: .planning, summary: "", updatedAt: Date()))
-        case .compacting:
-            bindings.setContextCompactState(ChatContextCompactState(status: .compacting, summary: "", updatedAt: Date()))
-        case .completed(let summary):
-            bindings.setContextCompactState(ChatContextCompactState(status: .completed, summary: summary, updatedAt: Date()))
-        case .failed(let message):
-            bindings.setContextCompactState(ChatContextCompactState(status: .failed, summary: message, updatedAt: Date()))
-        case .idle:
-            bindings.setContextCompactState(.idle)
-        }
+        backgroundHandoff = preparedHandoff
     }
 
     // MARK: - 终态收口
@@ -2223,481 +1293,79 @@ final class ChatKernelRunHost {
         guard currentRunId == runId, !didFinalizeTerminal else { return }
         didFinalizeTerminal = true
         lastFailureMessage = rawMessage
-        await failedTerminal(runId: runId)
+        await commitTerminal(runId: runId)
     }
 
-    private func finalizeTerminal(runId: String) async {
+    func finalizeTerminal(runId: String) async {
         guard currentRunId == runId, !didFinalizeTerminal else { return }
         didFinalizeTerminal = true
+        await commitTerminal(runId: runId)
+    }
+
+    private func commitTerminal(runId: String, requiresRecovery: Bool = false) async {
+        let run = ChatRunTerminalCommit.Run(
+            runId: runId, startedAt: currentStartedAt, inputDigest: currentInputDigest,
+            conversationId: currentConversationIdForRun, displayBaseline: displayBaseline,
+            citationTracker: citationTracker, streamClock: streamClock, failureMessage: lastFailureMessage,
+            modelId: currentParams?.model.modelId ?? "", cancelCause: cancelCause,
+            cancelBaseline: cancelBaseline, outcomeUnknownSignal: toolOutcomeUnknownSignal
+        )
+        let committer = ChatRunTerminalCommit(
+            bindings: bindings, dependencies: dependencies, phoneControl: phoneControl,
+            projection: projection, toolRuntime: toolRuntime, backgroundExecution: backgroundExecution
+        )
+        let result: ChatRunTerminalCommit.Result
         if cancelCause != nil {
-            await cancelledTerminal(runId: runId)
-            return
-        }
-        switch terminalWireName {
-        case AgentRunStatus.completed.wireName:
-            await completedTerminal(runId: runId)
-        case AgentRunStatus.outcomeUnknown.wireName:
-            await outcomeUnknownTerminal(runId: runId)
-        case AgentRunStatus.recoveryPending.wireName:
-            await failedTerminal(runId: runId, requiresRecovery: true)
-        default:
-            await failedTerminal(runId: runId)
-        }
-    }
-
-    private func outcomeUnknownTerminal(runId: String) async {
-        await phoneControl.stop(runID: runId)
-        projection.discardProvisionalAssistant()
-        let startedAt = currentStartedAt
-        let inputDigest = currentInputDigest
-        let conversationId = currentConversationIdForRun
-        let conversationHex = conversationId?.toHexDashString()
-        let finalMessages = bindings.getMessages()
-        let didPersist = await bindings.persistMessages(conversationId)
-        let terminalStatus: AgentRunStatus = didPersist ? .outcomeUnknown : .recoveryPending
-        let didRecordRun = await bindings.recordRun(
-            runId,
-            startedAt,
-            terminalStatus,
-            inputDigest,
-            conversationHex,
-            nil
-        )
-        guard didRecordRun else {
-            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
-            return
-        }
-        if didPersist, let conversationHex {
-            if let signal = toolOutcomeUnknownSignal {
-                let descriptor = IOSToolOutcomeUnknownDescriptor(
-                    runId: runId,
-                    conversationId: conversationHex,
-                    toolCallId: signal.toolCallId,
-                    toolName: signal.toolName
-                )
-                bindings.setToolOutcomeUnknown(descriptor)
-                _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(descriptor)
-            } else {
-                _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(
-                    runId: runId,
-                    conversationId: conversationHex
-                )
-            }
+            result = await committer.cancelled(run: run)
         } else {
-            WatchTaskCoordinator.shared.publish(
-                runId: runId,
-                conversationId: conversationHex,
-                presentation: .failed(),
-                summary: IOSAppLocalization.string(
-                    didPersist
-                        ? "操作结果待核实，但没有可打开的 iPhone 对话。"
-                        : "操作结果尚未保存，请在 iPhone 恢复。",
-                    defaultValue: didPersist
-                        ? "操作结果待核实，但没有可打开的 iPhone 对话。"
-                        : "操作结果尚未保存，请在 iPhone 恢复。"
-                )
-            )
-        }
-        await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
-        bindings.setMessages(finalMessages)
-        teardownRun(runId: runId, terminalEvent: .generationFailed, terminalStatus: terminalStatus)
-    }
-
-    /// completed(CG-C handleCompletedStream 正常分支 :2732-2797 +
-    /// 空回复分支 :2685-2730)。
-    private func completedTerminal(runId: String) async {
-        await phoneControl.stop(runID: runId)
-        projection.discardProvisionalAssistant()
-        let startedAt = currentStartedAt
-        let inputDigest = currentInputDigest
-        let conversationId = currentConversationIdForRun
-        let conversationHex = conversationId?.toHexDashString()
-        var final = bindings.getMessages()
-        // citation 使用标记:remainder 已由引擎逐段折进 transcript;这里记
-        // memory 使用(force:true,引用是模型信号,CG-C :2464-2466 同款)。
-        if let tracker = citationTracker {
-            let ids = tracker.citationIds
-            if !ids.isEmpty {
-                bindings.recordMemoryUsage(ids.sorted(), true)
-            }
-        }
-
-        // 空回复检测(CG-C :2685-2730)。
-        if ChatGenerationSupport.isEmptyAssistantResponse(final) {
-            let miniAppExpected = ChatRuntimeContextBuilder.miniAppTurnContext(in: displayBaseline) != nil
-            final.append(miniAppExpected
-                ? ChatGenerationSupport.emptyMiniAppResponseNotice()
-                : ChatGenerationSupport.emptyResponseNotice())
-            bindings.setMessages(final)
-            bindings.bumpMessageRevision(.toolResultAppended, 1)
-            let didPersist = await bindings.persistMessages(conversationId)
-            if didPersist {
-                await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
-            }
-            let succeeded = didPersist && !miniAppExpected
-            let terminalStatus: AgentRunStatus = didPersist
-                ? (miniAppExpected ? .failed : .completed)
-                : .recoveryPending
-            let didRecordRun = await bindings.recordRun(
-                runId, startedAt,
-                terminalStatus,
-                inputDigest, conversationHex, nil
-            )
-            guard didRecordRun else {
-                releaseLocalRunAfterTerminalRecordFailure(runId: runId)
-                return
-            }
-            if succeeded {
-                WatchTaskCoordinator.shared.publishCompleted(runId: runId, conversationId: conversationHex, summary: nil)
-            } else {
-                WatchTaskCoordinator.shared.publish(
-                    runId: runId,
-                    conversationId: conversationHex,
-                    presentation: .failed(),
-                    summary: miniAppExpected && didPersist
-                        ? IOSAppLocalization.string(
-                            "小应用生成失败：模型没有返回任何内容。",
-                            defaultValue: "小应用生成失败：模型没有返回任何内容。"
-                        )
-                        : IOSAppLocalization.string(
-                            "回复已生成，但最终结果保存失败。",
-                            defaultValue: "回复已生成，但最终结果保存失败。"
-                        )
+            switch terminalWireName {
+            case AgentRunStatus.completed.wireName:
+                result = await committer.completed(run: run)
+            case AgentRunStatus.outcomeUnknown.wireName:
+                result = await committer.outcomeUnknown(run: run)
+            case AgentRunStatus.recoveryPending.wireName:
+                result = await committer.failed(run: run, requiresRecovery: true)
+            default:
+                result = await committer.failed(
+                    run: run, requiresRecovery: requiresRecovery || durableResponseSession?.requiresRecovery == true
                 )
             }
-            await dependencies.liveActivityController.end(
-                runId: runId,
-                presentation: succeeded ? .completed() : .failed()
-            )
-            teardownRun(
-                runId: runId,
-                terminalEvent: succeeded ? .generationCompleted : .generationFailed,
-                terminalStatus: terminalStatus
-            )
-            if succeeded {
-                bindings.generationSucceeded()
-            }
-            return
         }
-
-        // miniApp 输出事务(CG-C :2732-2762)。
-        var finalSnapshot = final
-        let miniAppApplication = bindings.saveMiniAppIfPresent(final, conversationId)
-        if let miniAppApplication {
-            finalSnapshot = miniAppApplication.messages
-            bindings.setMessages(finalSnapshot)
-            bindings.bumpMessageRevision(.toolResultAppended, 1)
-        }
-
-        let miniAppFailed = miniAppApplication?.outcome == .failed
-        let unstampedFinalSnapshot = finalSnapshot
-        if !miniAppFailed {
-            finalSnapshot = IOSIntelligentUITerminal.markCompleted(
-                finalSnapshot, baseline: displayBaseline, runID: runId
-            )
-            if finalSnapshot != unstampedFinalSnapshot {
-                bindings.setMessages(finalSnapshot)
-                bindings.bumpMessageRevision(.toolResultAppended, 1)
-            }
-        }
-        let summary = ChatGenerationSupport.watchSummary(from: finalSnapshot)
-        let didPersist = await bindings.persistMessages(conversationId)
-        if didPersist {
-            await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
-        }
-        if !didPersist, finalSnapshot != unstampedFinalSnapshot {
-            finalSnapshot = unstampedFinalSnapshot
-            bindings.setMessages(finalSnapshot)
-            bindings.bumpMessageRevision(.toolResultAppended, 1)
-        }
-        if !didPersist, let miniAppApplication {
-            if miniAppApplication.rollback() {
-                bindings.setMessages(miniAppApplication.rollbackMessages)
-                bindings.bumpMessageRevision(.toolResultAppended, 1)
-            } else {
-                NSLog("[AmberChat] MiniApp rollback skipped because its persisted state changed")
-            }
-        }
-        if didPersist, let miniAppApplication, !miniAppApplication.commit() {
-            NSLog("[AmberChat] MiniApp transaction commit remains pending for cold-start reconciliation")
-        }
-        if didPersist,
-           let workspaceFailure = miniAppApplication?.syncWorkspaceAfterConversationPersistence() {
-            finalSnapshot = workspaceFailure.messages
-            bindings.setMessages(finalSnapshot)
-            bindings.bumpMessageRevision(.toolResultAppended, 1)
-            _ = await bindings.persistMessages(conversationId)
-        }
-        let terminalStatus: AgentRunStatus = didPersist
-            ? (miniAppFailed ? .failed : .completed)
-            : .recoveryPending
-        let didRecordRun = await bindings.recordRun(
-            runId, startedAt,
-            terminalStatus,
-            inputDigest, conversationHex, nil
-        )
-        guard didRecordRun else {
+        switch result {
+        case .recordRejected:
             releaseLocalRunAfterTerminalRecordFailure(runId: runId)
-            return
-        }
-        if didPersist, !miniAppFailed {
-            WatchTaskCoordinator.shared.publishCompleted(
-                runId: runId,
-                conversationId: conversationHex,
-                summary: summary,
-                resultTitle: miniAppApplication?.resultTitle
-            )
-        } else {
-            WatchTaskCoordinator.shared.publish(
-                runId: runId,
-                conversationId: conversationHex,
-                presentation: .failed(),
-                summary: miniAppFailed && didPersist
-                    ? IOSAppLocalization.string(
-                        "小应用生成未完成，错误详情已保存在会话中。",
-                        defaultValue: "小应用生成未完成，错误详情已保存在会话中。"
-                    )
-                    : IOSAppLocalization.string(
-                        "回复已生成，但最终结果保存失败。",
-                        defaultValue: "回复已生成，但最终结果保存失败。"
-                    )
-            )
-        }
-        await dependencies.liveActivityController.end(
-            runId: runId,
-            presentation: didPersist && !miniAppFailed ? .completed() : .failed()
-        )
-        if didPersist, !miniAppFailed, let conversationId {
-            bindings.scheduleMemoryExtraction(conversationId, displayBaseline, finalSnapshot)
-        }
-        teardownRun(
-            runId: runId,
-            terminalEvent: didPersist && !miniAppFailed ? .generationCompleted : .generationFailed,
-            terminalStatus: terminalStatus
-        )
-        if didPersist && !miniAppFailed {
-            bindings.generationSucceeded()
+        case .recorded(let event, let status, let succeeded, let cancelled):
+            if cancelled {
+                finishCancelledRun(runId: runId, terminalStatus: status)
+            } else {
+                teardownRun(runId: runId, terminalEvent: event, terminalStatus: status)
+            }
+            if succeeded { bindings.generationSucceeded() }
         }
     }
 
-    /// failed(CG-C presentStreamError :2483-2533;截断终态由适配器 A4 分支
-    /// 追加过输出上限提示,这里不再加泡,对齐 completeTruncatedStream
-    /// :2802-2843 的 Watch/LiveActivity 形状)。
-    private func failedTerminal(runId: String, requiresRecovery: Bool = false) async {
-        await phoneControl.stop(runID: runId)
-        projection.discardProvisionalAssistant()
-        let startedAt = currentStartedAt
-        let inputDigest = currentInputDigest
-        let conversationId = currentConversationIdForRun
-        let conversationHex = conversationId?.toHexDashString()
-        var updated = bindings.getMessages()
-        var watchSummary: String? = ChatGenerationSupport.watchSummary(from: updated)
-
-        if let rawMessage = lastFailureMessage {
-            let userFacing = bindings.userFacingGenerationError(
-                rawMessage,
-                currentParams?.model.modelId ?? ""
-            )
-            if toolRuntime.hasUnresolvedToolCall(in: updated) {
-                updated = toolRuntime.messagesByFailingPendingToolCalls(
-                    in: updated,
-                    failureReason: IOSAppLocalization.string(
-                        "Generation failed before the tool call completed.",
-                        defaultValue: "Generation failed before the tool call completed."
-                    )
-                )
-            }
-            // 引擎在 provider 失败时已在尾部追加 "[engine] provider error: …"
-            // 占位泡——升级为 CG-C 同款用户向错误泡(保留位置/id);没有则追加。
-            if let lastIndex = updated.indices.last,
-               updated[lastIndex].role == MessageRole.assistant,
-               let text = updated[lastIndex].parts.first as? UIMessagePart.Text,
-               text.text.hasPrefix("[engine] provider error:") {
-                let last = updated[lastIndex]
-                updated[lastIndex] = UIMessage(
-                    id: last.id,
-                    role: MessageRole.assistant,
-                    parts: [MessageKt.localGenerationErrorTextPart(text: userFacing)],
-                    annotations: last.annotations,
-                    createdAt: last.createdAt,
-                    finishedAt: chatNowLocalDateTime(),
-                    modelId: last.modelId,
-                    usage: last.usage,
-                    translation: last.translation
-                )
-            } else {
-                updated.append(UIMessage(
-                    id: KotlinUuid.companion.random(),
-                    role: MessageRole.assistant,
-                    parts: [MessageKt.localGenerationErrorTextPart(text: userFacing)],
-                    annotations: [],
-                    createdAt: chatNowLocalDateTime(),
-                    finishedAt: chatNowLocalDateTime(),
-                    modelId: nil,
-                    usage: nil,
-                    translation: nil
-                ))
-            }
-            bindings.setMessages(updated)
-            watchSummary = WatchTaskText.clipped(userFacing, maxLength: 200)
-        }
-
-        let didPersist = await bindings.persistMessages(conversationId)
-        if didPersist {
-            await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
-        }
-        let terminalStatus: AgentRunStatus = didPersist && !requiresRecovery
-            ? .failed
-            : .recoveryPending
-        let didRecordRun = await bindings.recordRun(
-            runId, startedAt, terminalStatus,
-            inputDigest, conversationHex, nil
-        )
-        guard didRecordRun else {
-            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
-            return
-        }
-        let currentRunMessages = updated.dropFirst(min(displayBaseline.count, updated.count))
-        let retryableFailure = didPersist
-            && !requiresRecovery
-            && !currentRunMessages.contains { message in
-                message.parts.contains { $0 is UIMessagePart.Tool }
-            }
-        let failurePresentation = AgentActivityPresentation.failed(
-            retryable: retryableFailure
-        )
-        AgentActivityRetryEligibilityStore.shared.setEligible(
-            retryableFailure,
-            runId: runId,
-            conversationId: conversationHex
-        )
-        WatchTaskCoordinator.shared.publish(
-            runId: runId,
-            conversationId: conversationHex,
-            presentation: failurePresentation,
-            summary: watchSummary
-        )
-        await dependencies.liveActivityController.end(
-            runId: runId,
-            presentation: failurePresentation
-        )
-        if !didPersist {
-            print("[AmberChat] Failed to persist kernel failure terminal run=\(runId)")
-        }
-        teardownRun(runId: runId, terminalEvent: .generationFailed, terminalStatus: terminalStatus)
-    }
-
-    /// cancelled(CG-C cancel 尾 :1501-1581):取消填充/快照已由适配器同步
-    /// 发布;这里补 stamp、持久化、durable 终态与收尾。注意与 finishStreaming
-    /// 尾的差异:恢复 steer leftover 进 composer,不走 handleSteerQueueAtTerminal,
-    /// 也不 generationSucceeded。
-    private func cancelledTerminal(runId: String) async {
-        await phoneControl.stop(runID: runId)
-        // cancelledTerminal 不经过 teardownRun,单独补同名事件,保持三种终态
-        // (完成/失败/取消)都能发出 RunTerminal。
-        ChatPerfTrace.event("RunTerminal")
-        projection.discardProvisionalAssistant()
-        let cause = cancelCause ?? .user
-        let startedAt = currentStartedAt
-        let inputDigest = currentInputDigest
-        let conversationId = currentConversationIdForRun
-        let conversationHex = conversationId?.toHexDashString()
-
-        var messages = bindings.getMessages()
-        // preamble 取消时适配器未起跑,tracker 还没被 flush 过;已起跑时
-        // adapter.cancel() 已把 remainder 折进填充,这里 finish() 幂等返回空。
-        if let tracker = citationTracker {
-            let remainder = tracker.finish()
-            if !remainder.isEmpty {
-                messages = IOSMemoryCitationTracker.appendingCitationRemainder(remainder, to: messages)
-            }
-            let ids = tracker.citationIds
-            if !ids.isEmpty {
-                bindings.recordMemoryUsage(ids.sorted(), true)
-            }
-        }
-        messages = messages.applyingLastAssistantGenerationDuration(streamClock.duration())
-        bindings.setMessages(messages)
-        ChatStreamRecorder.shared.finish(runId: runId)
-        projection.clearAllApprovals()
-        bindings.setIsLoading(false)
-        bindings.setContextCompactState(.idle)
-        bindings.restoreSteerQueueLeftover(conversationId)
-        bindings.bumpMessageRevision(.generationCancelled, 1)
-        // 系统 continued-processing 立即掐掉(CG-C :1539-1542);持久化完成前
-        // 保留 UIKit 短窗,下方 end 统一归还。
-        backgroundExecution.abandonSystemAssertion(runId)
-        keepaliveHeld = false
-
-        let baseline = cancelBaseline ?? bindings.capturePersistMessagesBaseline(conversationId)
-        let didPersist = await bindings.persistMessagesSnapshot(messages, conversationId, baseline)
-        if didPersist {
-            await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
-        }
-        let terminalStatus: AgentRunStatus = didPersist ? cause.durableStatus : .recoveryPending
-        let didRecordRun = await bindings.recordRun(
-            runId, startedAt,
-            terminalStatus,
-            inputDigest, conversationHex, nil
-        )
-        guard didRecordRun else {
-            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
-            return
-        }
-        let terminalPresentation: AgentActivityPresentation
-        let terminalSummary: String?
-        if !didPersist {
-            terminalPresentation = .failed()
-            terminalSummary = IOSAppLocalization.string(
-                "已停止生成，但最终状态保存失败。",
-                defaultValue: "已停止生成，但最终状态保存失败。"
-            )
-        } else {
-            switch cause {
-            case .user:
-                terminalPresentation = .cancelled()
-                terminalSummary = nil
-            case .backgroundInterruption:
-                terminalPresentation = .failed()
-                terminalSummary = IOSAppLocalization.string(
-                    "后台生成被系统中断，可以重试。",
-                    defaultValue: "后台生成被系统中断，可以重试。"
-                )
-            }
-        }
-        WatchTaskCoordinator.shared.publish(
-            runId: runId,
-            conversationId: conversationHex,
-            presentation: terminalPresentation,
-            summary: terminalSummary
-        )
-        await dependencies.liveActivityController.end(
-            runId: runId,
-            presentation: terminalPresentation
-        )
+    private func finishCancelledRun(runId: String, terminalStatus: AgentRunStatus) {
         backgroundExecution.end(runId)
-        // P1-c 终态回传(CG-C :1570-1579 同款;服务按 runId 幂等去重)。
-        let terminalMessages = messages
-        finishJevToolDiscoveryStep(
-            runId: runId,
-            messages: terminalMessages,
-            terminalStatus: terminalStatus
+        keepaliveHeld = false
+        let terminalMessages = bindings.getMessages(), terminalBaseline = displayBaseline
+        progressPresentation?.finishJevToolDiscoveryStep(
+            messages: terminalMessages, terminalStatus: terminalStatus
         )
-        recordJevRunCompletion(runId: runId, messages: terminalMessages)
-        let terminalConversationId = conversationId
+        progressPresentation?.recordJevRunCompletion(messages: terminalMessages)
+        let conversationId = currentConversationIdForRun
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         phoneControl.revoke(runID: runId)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
-        Task { @MainActor [bindings, terminalConversationId, runId, terminalMessages, terminalStatus] in
-            await bindings.onRunTerminal(terminalConversationId, runId, terminalStatus, terminalMessages)
+        Task { @MainActor [bindings, conversationId, runId, terminalMessages, terminalBaseline, terminalStatus] in
+            await bindings.onRunTerminal(conversationId, runId, terminalStatus, terminalMessages, terminalBaseline)
         }
     }
 
     /// finishStreaming :4919-4979 的 kernel 等价。durable checkpoint 在正常
     /// 终态丢弃，前台投影没有 CGC 独立 pacer/consumer 任务需要清理。
-    private func teardownRun(
+    func teardownRun(
         runId: String,
         terminalEvent: ChatMessageUpdateReason,
         terminalStatus: AgentRunStatus
@@ -2705,7 +1373,9 @@ final class ChatKernelRunHost {
         // 完成/失败共用的收尾路径；取消走 cancelledTerminal 下方单独打点。
         ChatPerfTrace.event("RunTerminal")
         let runConversationId = currentConversationIdForRun
-        IOSChatBackgroundGenerationCoordinator.shared.discardDurableResponse(runId: runId)
+        if terminalStatus != .recoveryPending || durableResponseSession?.hasPersistedOwner != true {
+            backgroundCoordinator.discardDurableResponse(runId: runId)
+        }
         if terminalEvent == .generationCompleted {
             backgroundExecution.updateProgress(
                 runId,
@@ -2719,13 +1389,11 @@ final class ChatKernelRunHost {
         ChatStreamRecorder.shared.finish(runId: runId)
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         phoneControl.revoke(runID: runId)
-        let terminalMessages = bindings.getMessages()
-        finishJevToolDiscoveryStep(
-            runId: runId,
-            messages: terminalMessages,
-            terminalStatus: terminalStatus
+        let terminalMessages = bindings.getMessages(), terminalBaseline = displayBaseline
+        progressPresentation?.finishJevToolDiscoveryStep(
+            messages: terminalMessages, terminalStatus: terminalStatus
         )
-        recordJevRunCompletion(runId: runId, messages: terminalMessages)
+        progressPresentation?.recordJevRunCompletion(messages: terminalMessages)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
@@ -2738,73 +1406,15 @@ final class ChatKernelRunHost {
         }
         bindings.handleSteerQueueAtTerminal(runConversationId, terminalEvent == .generationCompleted)
         // P1-c 终态回传(CG-C :4970-4977 同款 fire-and-forget)。
-        Task { @MainActor [bindings, runConversationId, runId, terminalMessages, terminalStatus] in
-            await bindings.onRunTerminal(runConversationId, runId, terminalStatus, terminalMessages)
+        Task { @MainActor [bindings, runConversationId, runId, terminalMessages, terminalBaseline, terminalStatus] in
+            await bindings.onRunTerminal(runConversationId, runId, terminalStatus, terminalMessages, terminalBaseline)
         }
-    }
-
-    private func recordJevRunCompletion(runId: String, messages: [UIMessage]) {
-        var numbers: [String: Double] = ["model_steps": Double(jevModelStepCount)]
-        let generated = messages.filter { message in
-            message.role == MessageRole.assistant
-                && (ChatContextSnapshot.epochMillis(from: message.createdAt) ?? 0) >= currentStartedAt
-        }
-        let inputTokens = generated.compactMap(\.usage).reduce(0) { $0 + Int($1.promptTokens) }
-        let cachedTokens = generated.compactMap(\.usage).reduce(0) { $0 + Int($1.cachedTokens) }
-        if inputTokens > 0 {
-            numbers["cache_hit_ratio"] = Double(cachedTokens) / Double(inputTokens)
-        }
-        IOSJevMetricsStore.appendRunNumbers(runId: runId, numbers: numbers)
-    }
-
-    private func recordJevNextModelStepIfNeeded(runId: String, messages: [UIMessage]) {
-        let baselineIds = Set(displayBaseline.map { $0.id.toHexDashString() })
-        guard currentRunId == runId,
-              let assistant = messages.reversed().first(where: { message in
-                  message.role == MessageRole.assistant
-                      && !baselineIds.contains(message.id.toHexDashString())
-                      && (ChatContextSnapshot.epochMillis(from: message.createdAt) ?? 0) >= currentStartedAt
-              }) else { return }
-        let messageId = assistant.id.toHexDashString()
-        guard lastJevToolOutcomeAssistantMessageId != messageId else { return }
-        let calledToolNames = Set(assistant.parts.compactMap { ($0 as? UIMessagePart.Tool)?.toolName })
-        guard !calledToolNames.isEmpty else { return }
-        lastJevToolOutcomeAssistantMessageId = messageId
-        IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
-            runId: runId,
-            calledToolNames: calledToolNames
-        )
-    }
-
-    private func finishJevToolDiscoveryStep(
-        runId: String,
-        messages: [UIMessage],
-        terminalStatus: AgentRunStatus
-    ) {
-        let baselineIds = Set(displayBaseline.map { $0.id.toHexDashString() })
-        if terminalStatus == .completed,
-           let assistant = messages.reversed().first(where: { message in
-               message.role == MessageRole.assistant
-                   && !baselineIds.contains(message.id.toHexDashString())
-                   && (ChatContextSnapshot.epochMillis(from: message.createdAt) ?? 0) >= currentStartedAt
-           }) {
-            let messageId = assistant.id.toHexDashString()
-            if lastJevToolOutcomeAssistantMessageId != messageId {
-                lastJevToolOutcomeAssistantMessageId = messageId
-                let calledToolNames = Set(assistant.parts.compactMap { ($0 as? UIMessagePart.Tool)?.toolName })
-                IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
-                    runId: runId,
-                    calledToolNames: calledToolNames
-                )
-            }
-        }
-        IOSJevToolDiscoveryMetricsTracker.discardPending(runId: runId)
     }
 
     /// The durable row rejected this terminal, so do not publish a terminal to
     /// Watch/orchestration. The provider is already done; release only the
     /// process-local owner so the composer cannot remain stuck forever.
-    private func releaseLocalRunAfterTerminalRecordFailure(runId: String) {
+    func releaseLocalRunAfterTerminalRecordFailure(runId: String) {
         guard currentRunId == runId else { return }
         ChatPerfTrace.event("RunTerminal")
         IOSJevToolDiscoveryMetricsTracker.discardPending(runId: runId)
@@ -2837,35 +1447,22 @@ final class ChatKernelRunHost {
         runExecutionPolicy = nil
         phoneAutomaticReasoning = false
         displayBaseline = []
-        currentGenerativeUiRequirement = .none
-        currentGenerativeUiFallbackAttempted = false
-        currentGenerativeUiRetryIssue = nil
+        uploadPreparation = nil
         backgroundHandoff = nil
         pendingBackgroundConversationStore = nil
         activeToolExecutionName = nil
         activeToolEffectClass = nil
         activeTextProvider = nil
-        activeDurableTextProvider = nil
-        activeImageToolCall = nil
-        imageExecutionTask = nil
-        imageExecutionToken = nil
-        imageToolDidStart = false
-        imageToolTerminalClaimed = false
-        durableResponseCursor = nil
-        durableCheckpointPersisted = false
+        durableResponseSession = nil
+        imageToolRun = nil
         cancelCause = nil
         cancelBaseline = nil
         terminalWireName = nil
         lastFailureMessage = nil
         toolOutcomeUnknownSignal = nil
         pendingApprovalToolCallId = nil
-        pendingPrompt = nil
-        approvalWaiter = nil
+        approvalSession.cancel()
         adapterDidStart = false
-        didReportFirstDeltaThisRound = false
-        reportsPhoneWorkProgress = false
-        lastPhoneProgressContent = []
-        reportedPhoneToolResults = []
     }
 
     // MARK: - keepalive
@@ -2875,58 +1472,13 @@ final class ChatKernelRunHost {
             && !didFinalizeTerminal && keepaliveHeld && phoneControl.handoffState(runID: runId) != nil
     }
 
-    private func recordPhoneModelProgress(runId: String, message: UIMessage) {
-        guard canReportPhoneWorkProgress(runId: runId) else { return }
-        let content: [PhoneProgressContent] = message.parts.compactMap { part in
-            if let text = part as? UIMessagePart.Text, !text.text.isEmpty {
-                return .text(text.text)
-            }
-            if let reasoning = part as? UIMessagePart.Reasoning, !reasoning.reasoning.isEmpty {
-                return .reasoning(reasoning.reasoning)
-            }
-            if let tool = part as? UIMessagePart.Tool, !tool.input.isEmpty {
-                return .tool(tool.toolCallId, tool.input)
-            }
-            return nil
-        }
-        // A replayed snapshot or a metadata-only chunk is not additional work.
-        guard !content.isEmpty, content != lastPhoneProgressContent else { return }
-        lastPhoneProgressContent = content
-        backgroundExecution.advanceProgress(runId)
-    }
-
-    private func recordPhoneToolResultProgress(runId: String, messages: [UIMessage]) {
-        guard canReportPhoneWorkProgress(runId: runId) else { return }
-        let completed = Set(messages.flatMap(\.parts).compactMap { part -> String? in
-            guard let tool = part as? UIMessagePart.Tool, !tool.output.isEmpty else { return nil }
-            return tool.toolCallId
-        })
-        let newResults = completed.subtracting(reportedPhoneToolResults)
-        reportedPhoneToolResults.formUnion(completed)
-        guard !newResults.isEmpty else { return }
-        backgroundExecution.advanceProgress(runId, by: Int64(newResults.count))
-    }
-
     private func beginKeepAlive(runId: String, subtitle: String) {
-        backgroundExecution.begin(
-            runId,
-            // The system retains this title briefly after completion; the subtitle carries the phase.
-            title: "Amber",
-            subtitle: subtitle,
-            onExpire: { [weak self] in
-                guard let self, self.currentRunId == runId else { return }
-                self.handleKeepAliveExpiration(runId: runId)
-            },
-            onSystemTaskExpiration: { [weak self] in
-                guard let self, self.currentRunId == runId else { return }
-                self.handleKeepAliveExpiration(runId: runId)
-            }
-        )
-        keepaliveHeld = true
-        if reportsPhoneWorkProgress {
-            backgroundExecution.updateProgress(runId, completed: 0, total: -1)
-            backgroundExecution.enableLivenessHeartbeat(runId)
+        guard currentRunId == runId, let progressPresentation else { return }
+        progressPresentation.beginKeepAlive(subtitle: subtitle) { [weak self] in
+            guard let self, self.currentRunId == runId else { return }
+            self.handleKeepAliveExpiration(runId: runId)
         }
+        keepaliveHeld = true
     }
 
     /// 租约到期且 App 已不在前台时先尝试把模型轮交给后台协调器；无法安全
@@ -2942,176 +1494,4 @@ final class ChatKernelRunHost {
         cancel(cause: .backgroundInterruption)
     }
 
-}
-
-/// 引擎 @Sendable 钩子捕获 bindings(非 Sendable 闭包结构体)的跨边界盒;
-/// 所有实际访问都经 MainActor.run 回到主 actor。
-private struct UncheckedHostBindingsBox: @unchecked Sendable {
-    let value: ChatGenerationBindings
-    init(_ value: ChatGenerationBindings) { self.value = value }
-}
-
-/// 会话 id(KMP KotlinUuid 非 Sendable)的同款跨边界盒。
-private struct UncheckedHostConversationIdBox: @unchecked Sendable {
-    let value: KotlinUuid?
-    init(_ value: KotlinUuid?) { self.value = value }
-}
-
-/// 官方 Responses background transport 的 Kernel provider 薄适配。它只管
-/// 流与 checkpoint；消息累加、工具循环、审批和终态仍由 Engine/Host 拥有。
-private final class ChatKernelDurableTextProvider: IOSAgentTextProvider, IOSAgentStreamingProvider, @unchecked Sendable {
-    private let base = OpenAIKmpProviderAdapter()
-    private let onCheckpoint: @Sendable (String, Int64) -> Void
-    private let onDurableDisconnect: @Sendable (String) -> Void
-    private let lock = NSLock()
-    private var activeJob: Kotlinx_coroutines_coreJob?
-    private var activeOnError: (@Sendable (KotlinThrowable) -> Void)?
-    private var hasCheckpoint = false
-
-    init(
-        onCheckpoint: @escaping @Sendable (String, Int64) -> Void,
-        onDurableDisconnect: @escaping @Sendable (String) -> Void
-    ) {
-        self.onCheckpoint = onCheckpoint
-        self.onDurableDisconnect = onDurableDisconnect
-    }
-
-    func generateText(
-        providerSetting: ProviderSetting,
-        messages: [UIMessage],
-        params: TextGenerationParams
-    ) async throws -> MessageChunk {
-        try await base.generateText(
-            providerSetting: providerSetting,
-            messages: messages,
-            params: params
-        )
-    }
-
-    func prepareRequest(
-        providerSetting: ProviderSetting,
-        params: TextGenerationParams
-    ) async throws -> (ProviderSetting, TextGenerationParams) {
-        try await base.prepareRequest(providerSetting: providerSetting, params: params)
-    }
-
-    func supportsStreaming(providerSetting: ProviderSetting) -> Bool {
-        if let openAI = providerSetting as? ProviderSetting.OpenAI,
-           Self.usesBackgroundResponses(openAI) {
-            return true
-        }
-        return base.supportsStreaming(providerSetting: providerSetting)
-    }
-
-    func streamText(
-        providerSetting: ProviderSetting,
-        messages: [UIMessage],
-        params: TextGenerationParams,
-        onChunk: @escaping @Sendable (MessageChunk) -> Void,
-        onComplete: @escaping @Sendable () -> Void,
-        onError: @escaping @Sendable (KotlinThrowable) -> Void
-    ) -> Kotlinx_coroutines_coreJob? {
-        guard let openAI = providerSetting as? ProviderSetting.OpenAI,
-              Self.usesBackgroundResponses(openAI) else {
-            return base.streamText(
-                providerSetting: providerSetting,
-                messages: messages,
-                params: params,
-                onChunk: onChunk,
-                onComplete: onComplete,
-                onError: onError
-            )
-        }
-
-        lock.lock()
-        hasCheckpoint = false
-        activeOnError = onError
-        lock.unlock()
-        do {
-            let job = try IOSSharedKmpProviders.openAIBackgroundTransport.startBackground(
-                providerSetting: openAI,
-                messages: messages,
-                params: params,
-                onChunk: onChunk,
-                onCheckpoint: { [weak self] responseId, sequenceNumber in
-                    guard let self else { return }
-                    self.lock.lock()
-                    self.hasCheckpoint = true
-                    self.lock.unlock()
-                    self.onCheckpoint(responseId, sequenceNumber.int64Value)
-                },
-                onComplete: { [weak self] in
-                    self?.clearActiveJob()
-                    onComplete()
-                },
-                onDisconnected: { [weak self] error in
-                    guard let self else { return }
-                    self.lock.lock()
-                    let canDetach = self.hasCheckpoint
-                    self.lock.unlock()
-                    if canDetach {
-                        self.onDurableDisconnect(error.message ?? String(describing: error))
-                    } else {
-                        self.clearActiveJob()
-                        onError(KotlinThrowable(message: error.message ?? String(describing: error)))
-                    }
-                },
-                onFailure: { [weak self] error in
-                    self?.clearActiveJob()
-                    onError(KotlinThrowable(message: error.message ?? String(describing: error)))
-                }
-            )
-            lock.lock()
-            activeJob = job
-            lock.unlock()
-            return job
-        } catch {
-            clearActiveJob()
-            onError(KotlinThrowable(message: (error as NSError).localizedDescription))
-            return nil
-        }
-    }
-
-    func cancelLocalStream() {
-        lock.lock()
-        let job = activeJob
-        activeJob = nil
-        activeOnError = nil
-        lock.unlock()
-        job?.cancel(cause: nil)
-    }
-
-    /// 服务端已有 checkpoint、但本地持久化/接管失败时，必须恢复 Engine 的
-    /// continuation；否则 provider 已断线而 Host 又没有后台 owner，run 会挂住。
-    func failLocalStream(message: String) {
-        lock.lock()
-        let job = activeJob
-        let onError = activeOnError
-        activeJob = nil
-        activeOnError = nil
-        lock.unlock()
-        job?.cancel(cause: nil)
-        onError?(KotlinThrowable(message: message))
-    }
-
-    private func clearActiveJob() {
-        lock.lock()
-        activeJob = nil
-        activeOnError = nil
-        lock.unlock()
-    }
-
-    private static func usesBackgroundResponses(_ provider: ProviderSetting.OpenAI) -> Bool {
-        guard provider.useResponseApi,
-              provider.authMode != OpenAIAuthMode.codexOauth,
-              let url = URL(string: provider.baseUrl),
-              url.scheme?.lowercased() == "https",
-              url.host?.lowercased() == "api.openai.com",
-              url.port == nil,
-              url.user == nil,
-              url.password == nil else {
-            return false
-        }
-        return true
-    }
 }

@@ -8,6 +8,7 @@ struct DisplayFontSettingsView: View {
     @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
     @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
     @AppStorage(IOSDisplayPreferenceKeys.agentName) private var agentName = true
+    @AppStorage(IOSDisplayPreferenceKeys.autoExpandThinking) private var autoExpandThinking = true
     @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
     @AppStorage(IOSDisplayPreferenceKeys.completionHaptic) private var completionHaptic = true
@@ -145,6 +146,16 @@ struct DisplayFontSettingsView: View {
             AmberSectionLabel(text: "消息显示")
             AmberFormGroup {
                 DisplayToggleRow(title: "显示 Agent 名字", isOn: agentName) { agentName.toggle() }
+
+                DisplayDivider()
+
+                DisplayToggleRow(
+                    title: "自动展开思考内容",
+                    subtitle: "关闭后默认折叠，仍可点击查看思考内容。",
+                    isOn: autoExpandThinking
+                ) {
+                    autoExpandThinking.toggle()
+                }
 
                 DisplayDivider()
 

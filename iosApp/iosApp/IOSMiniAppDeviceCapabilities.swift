@@ -293,7 +293,7 @@ final class IOSMiniAppDeviceCapabilities: ObservableObject {
             guard !normalizedHost.hasSuffix(".localhost"),
                   !normalizedHost.hasSuffix(".local"),
                   normalizedHost != "localhost",
-                  IOSSearchExecutor.publicHostAllowed(normalizedHost) else {
+                  IOSPublicURLPolicy.publicHostAllowed(normalizedHost) else {
                 throw IOSMiniAppDeviceCapabilitiesError.invalidParameter(
                     "HTTPS URL must target a public host"
                 )

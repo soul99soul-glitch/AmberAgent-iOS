@@ -1,0 +1,297 @@
+{
+  "baseline_sha256": {
+    "runtime": "adcfc5dd141e161476fb25046e093b2fb4ff55cd1d921a7801026815f95aa1b6",
+    "runner": "e92381c0556342e6e107ac0c242a94c7317ec0818e09f86f238532d3cdbd3ca9"
+  },
+  "all_original_lines_accounted_for": true,
+  "blocks": [
+    {
+      "name": "runtime-view",
+      "source": "runtime:1-907",
+      "owner": "CouncilChatRuntimeView.swift",
+      "original_sha256": "60b4e126e3ece435ea7dc2f3954abd6fdcbe4c9523c115de61683753d2c6b20c",
+      "migrated_sha256": "5bd3227a7319d7e429198303b0ab457e364278cc7d4e231efac23f802982ade3",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1,
+      "ui_layout_exception": {
+        "old_header_sha256": "98e1b05d3ddaa46d8cfa3c755c101829feb7e4a74e9bb6a5b115f6a2a87aef79",
+        "new_header_sha256": "5b96ad83fe45e8d69aab0c6e040415dae5fc66909f17f574fe40636c9764688c",
+        "new_CouncilHeaderLayout_sha256": "63796e5f7a1008b3b21247c010560036c092b936926ccfe4ed6a3ac7c40e6cf7",
+        "old_capsule_comment_sha256": "b583e7b373d2c71c9f9f0d1d737146d6c5be480614e9265a67531949c54b7279",
+        "new_capsule_comment_sha256": "01c0d6d19382b2503574a8d41ff7db0e68617bc5a7800c6424e452f6b1c63663",
+        "all_other_original_view_bytes_unchanged_sha256": "b54a914c8b9d2e7493975cb6bbdb4390d8d679bcc05c1216c61c5d19a5e53bee",
+        "reason": "320pt long-text screenshot showed centered capsule overlapping history button; measured three-child layout clamps center to the control clearance while 393pt remains centered."
+      }
+    },
+    {
+      "name": "runtime-transcript-rows",
+      "source": "runtime:908-1131",
+      "owner": "Council/CouncilTranscriptViews.swift",
+      "original_sha256": "dc3eaa6f606a69ae2864664c56468a33c499a279cdd8082b8c0ec36c7dcc4746",
+      "migrated_sha256": "7e22e637d0a6e086ec0ad91f23068e4dc5727855d3324fb0bd820fbdb3746c4d",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-room-sheets",
+      "source": "runtime:1132-1766",
+      "owner": "Council/CouncilRoomSheets.swift",
+      "original_sha256": "9b59e6e58df0e573e7bb61d6396ce38d7cd43a35326401d0b6fd59f80e66159d",
+      "migrated_sha256": "4854a0ba2595a6a492a08f9e0452bc78b7b8a9fbb47d8b06664e64c4812ff3a8",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-sheet-and-resume-types",
+      "source": "runtime:1767-1790",
+      "owner": "Council/CouncilPresentationModels.swift",
+      "original_sha256": "d710ca27156849ac0e2326b5aace30037e20af9cc060df97087989aff048115f",
+      "migrated_sha256": "d710ca27156849ac0e2326b5aace30037e20af9cc060df97087989aff048115f",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-single-viewmodel",
+      "source": "runtime:1791-3250",
+      "owner": "Council/CouncilChatViewModel.swift",
+      "original_sha256": "4d9f292d50f9e4366abaff87babe501c87198bcf1b3f66c2732bb4eb501bef40",
+      "migrated_sha256": "a0e49e1fd4dfe586c1748438929cfe1b30da711eb23b9234db90d7b5cacb8e1c",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-presentation-models",
+      "source": "runtime:3251-3853",
+      "owner": "Council/CouncilPresentationModels.swift",
+      "original_sha256": "311d8446e7ba5356c17b7391c809d25eb291e6ca7dd200389df8764eb18a6ba2",
+      "migrated_sha256": "d07ace282e13e04919d639a333478ff6db53dd5448f2fc330664eb95bfb32d7e",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-persisted-models-and-store",
+      "source": "runtime:3854-4229",
+      "owner": "Council/CouncilRoomArchiveStore.swift",
+      "original_sha256": "75bea47607e96ef031d6c2b3f6b75846920716114bf763ae0354498e2074653f",
+      "migrated_sha256": "75bea47607e96ef031d6c2b3f6b75846920716114bf763ae0354498e2074653f",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-pin-modifier",
+      "source": "runtime:4230-4242",
+      "owner": "CouncilChatRuntimeView.swift",
+      "original_sha256": "d8b485ef83211d556688cd690f37676e8c18d4ce0725bb2daa507e7906403dd7",
+      "migrated_sha256": "d8b485ef83211d556688cd690f37676e8c18d4ce0725bb2daa507e7906403dd7",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-color-hex-helper",
+      "source": "runtime:4243-4263",
+      "owner": "Council/CouncilRoomArchiveStore.swift",
+      "original_sha256": "66a9a07e9db062730a2b4bd60a03c9e620f8bf0c65e5a0303182ef41c750efd1",
+      "migrated_sha256": "66a9a07e9db062730a2b4bd60a03c9e620f8bf0c65e5a0303182ef41c750efd1",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-detail-type",
+      "source": "runtime:4264-4272",
+      "owner": "Council/CouncilPresentationModels.swift",
+      "original_sha256": "a5b995244d17cbc79e01435096e01c2bfe48d523f632c6b73e0812dacfb51bb7",
+      "migrated_sha256": "a5b995244d17cbc79e01435096e01c2bfe48d523f632c6b73e0812dacfb51bb7",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-string-helper-vm",
+      "source": "runtime:4273-4284",
+      "owner": "Council/CouncilChatViewModel.swift",
+      "original_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "migrated_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-string-helper-models",
+      "source": "runtime:4273-4284",
+      "owner": "Council/CouncilPresentationModels.swift",
+      "original_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "migrated_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-history-sheet",
+      "source": "runtime:4285-4408",
+      "owner": "Council/CouncilRoomSheets.swift",
+      "original_sha256": "c14e15c97a66a46964fb43a64874815c7ffd179d45a2c620d63297495dffed25",
+      "migrated_sha256": "f43ba81c2a2d13650389005e4aeb30a2679fac26d5a93aad24725e731653d761",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runtime-preview",
+      "source": "runtime:4409-4414",
+      "owner": "CouncilChatRuntimeView.swift",
+      "original_sha256": "203ef320255b7fc73fe7d0933f633d54bfe9354a9601b5406b7060df62a47f20",
+      "migrated_sha256": "203ef320255b7fc73fe7d0933f633d54bfe9354a9601b5406b7060df62a47f20",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-settings",
+      "source": "runner:5-354",
+      "owner": "Council/CouncilRoomSettings.swift",
+      "original_sha256": "dab5deb866d8ae0d0051692ddf5b3e2f80c11740fd5289d648c6241e6897d71b",
+      "migrated_sha256": "dab5deb866d8ae0d0051692ddf5b3e2f80c11740fd5289d648c6241e6897d71b",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-contracts",
+      "source": "runner:355-522",
+      "owner": "Council/CouncilRoomRunTypes.swift",
+      "original_sha256": "118d4fa7f16543a50460519a58c21cc72347cd0b61d78135597bc5409ea7bcbe",
+      "migrated_sha256": "118d4fa7f16543a50460519a58c21cc72347cd0b61d78135597bc5409ea7bcbe",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-streaming-and-research",
+      "source": "runner:523-1048",
+      "owner": "Council/CouncilTextStreaming.swift",
+      "original_sha256": "45087bab4727e808a709ac7d9231fb8fe8da65a8ff7b8e19d63cdf229d28d171",
+      "migrated_sha256": "45087bab4727e808a709ac7d9231fb8fe8da65a8ff7b8e19d63cdf229d28d171",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-single-owner-head",
+      "source": "runner:1049-1935",
+      "owner": "CouncilRunner.swift",
+      "original_sha256": "b1e9629ca227f7a87ea2d785e04d79cf477b557b63087d4d09b8a91e4590a06b",
+      "migrated_sha256": "b1e9629ca227f7a87ea2d785e04d79cf477b557b63087d4d09b8a91e4590a06b",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-planned-seats-and-routes",
+      "source": "runner:1936-2070",
+      "owner": "Council/CouncilRoomPlanning.swift",
+      "original_sha256": "80a25b87c0ea5300c606c67fd9b5af52cbd95e28d0af78488c646720312c97b7",
+      "migrated_sha256": "80a25b87c0ea5300c606c67fd9b5af52cbd95e28d0af78488c646720312c97b7",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-single-owner-middle",
+      "source": "runner:2071-2392",
+      "owner": "CouncilRunner.swift",
+      "original_sha256": "6980140acae181d0f4ed26e2ec5deec415afe74ae562b6749a9937af3fa421a0",
+      "migrated_sha256": "05fedb0771c0e75daa280b27fc954a9fdf2dd08b03cdc799338ec03d8050a78e",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-topic-seatplan-and-sanitize",
+      "source": "runner:2393-2542",
+      "owner": "Council/CouncilRoomPlanning.swift",
+      "original_sha256": "afcb91645364f25ec64e70f2a4561ff9b86b7d8b4ceca9cf10d27027e2d33d1a",
+      "migrated_sha256": "df37d3a24f1bb086a4a2b46df3ee83dcd5826b5eb8f5680509f2c5a61a92bdb5",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-single-owner-tail",
+      "source": "runner:2543-2755",
+      "owner": "CouncilRunner.swift",
+      "original_sha256": "5429bb0f3afcfc3ce0430e2c39ff2bf5ba1eb802d9e1f7b683ce8748f0731fe8",
+      "migrated_sha256": "e4e3142c49da36bde9b37693224ed55002b5c7edc7433b5008beed9e412a4c03",
+      "body_equal_except_visibility_or_wrapper": false,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-string-helper-settings",
+      "source": "runner:2745-2756",
+      "owner": "Council/CouncilRoomSettings.swift",
+      "original_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "migrated_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-string-helper-types",
+      "source": "runner:2745-2756",
+      "owner": "Council/CouncilRoomRunTypes.swift",
+      "original_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "migrated_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-string-helper-planning",
+      "source": "runner:2745-2756",
+      "owner": "Council/CouncilRoomPlanning.swift",
+      "original_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "migrated_sha256": "7cb929a23247fd609a6ba5b4014b21ae50af370a3bc4016f54c41888a7b5b37b",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    },
+    {
+      "name": "runner-live-tool-presentation",
+      "source": "runner:2757-3031",
+      "owner": "Council/CouncilLiveModel.swift",
+      "original_sha256": "5546790d28d8a88a4e2f6ad6d6b08c3221909254421f42e40aae7032d6b42781",
+      "migrated_sha256": "5546790d28d8a88a4e2f6ad6d6b08c3221909254421f42e40aae7032d6b42781",
+      "body_equal_except_visibility_or_wrapper": true,
+      "expected_copies": 1
+    }
+  ],
+  "visibility_only_changes": [
+    "CouncilTranscriptMessagesView / four sheets",
+    "CouncilDisplayCopy",
+    "IOSCouncilRoomRunner.routeKey / digest",
+    "IOSCouncilRoomRunner host/topic/seat-plan prompt methods",
+    "CouncilChatViewModel.attachmentRoomGeneration getter: fileprivate -> internal; private setter and body unchanged; compiler required runtime view access after file split"
+  ],
+  "owner_file_sha256": {
+    "CouncilChatRuntimeView.swift": "e89358ab6d9563553efe9bb856fc79171a0f7b68003187fac679181d227abe62",
+    "CouncilRunner.swift": "63d6f6820d325ce284c45630260752634f7de9249c87188d1d6095983c9fc130",
+    "CouncilRoomArchiveStore.swift": "3d6c418191f8fe0e940cd71c3ad77a4f285c062459098e1838d8b3f5dba3342f",
+    "CouncilLiveModel.swift": "d2123082599b38dffa4ace794c5b16cb592b050cbab2077a66577830f66a4cd8",
+    "CouncilPresentationModels.swift": "19f7c22300b58869bc537611dd7c57141554a27e7d3fbc1d938b275f00ae0a8e",
+    "CouncilTextStreaming.swift": "4690e9440b56f6e81766d6701c72c2d8e600e857a005862d70636b5b5dc58ae3",
+    "CouncilRoomPlanning.swift": "1137709c678ca58716ecdcf4761a211d59c2ec269b147d2631c475e89ad764f5",
+    "CouncilRoomSheets.swift": "aaf1259e0e79f694501db32609311cddde5ac834e85e3ac83e9d176f55b3beee",
+    "CouncilRoomSettings.swift": "0c6bbb58002d4fd8c382efce09c2172cc55aca98072b078aff205a73cc6b3fa6",
+    "CouncilTranscriptViews.swift": "cb93ab38b8023ce27e78a7b2d05a6ea5e359c2b5a0465add6d2f33676b76754f",
+    "CouncilChatViewModel.swift": "40c54b02225f3058fbf453cb0af11798afcfa2951af76c2db4b673fbe8804c93",
+    "CouncilRoomRunTypes.swift": "33ba3ded8e70e88abdf4800b007b0a38c992bd8336cb16a6413fb4863b087e63"
+  },
+  "intentional_duplicate_private_helpers": {
+    "reason": "File-private, stateless normalization retained where extracted declarations call it; avoids broad String API or another abstraction during mechanical split.",
+    "original_source_files": [
+      "CouncilChatRuntimeView.swift",
+      "CouncilRunner.swift"
+    ],
+    "migrated_files": [
+      "Council/CouncilChatViewModel.swift",
+      "Council/CouncilPresentationModels.swift",
+      "Council/CouncilRoomSheets.swift",
+      "Council/CouncilRoomSettings.swift",
+      "Council/CouncilRoomRunTypes.swift",
+      "Council/CouncilRoomPlanning.swift",
+      "CouncilRunner.swift"
+    ],
+    "trimmedOr_statement_body_sha256": "5ec8e67633f26162f4aeffce00729a70285d4771b6860d967168141086754fbd",
+    "trimmedNilIfBlank_statement_body_sha256": "affdcf1dad3e9121cc6112c2cd263465239c04b27edb9e69dadf8868f836aa48",
+    "trimmedOr_original_locations": 2,
+    "trimmedOr_migrated_locations": 7,
+    "trimmedNilIfBlank_original_locations": 2,
+    "trimmedNilIfBlank_migrated_locations": 6,
+    "sheets_only_uses_trimmedOr": true,
+    "these_are_added_copies_not_distinct_original_declarations": true
+  }
+}

@@ -1,0 +1,1322 @@
+{
+  "schemaVersion": 1,
+  "phase": 6,
+  "scope": "Phone tests mechanical decomposition with original XCTest class IDs",
+  "baseline": [
+    {
+      "file": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "path": "/tmp/amber-phase6-source-baseline/files/iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "lines": 2098,
+      "sha256": "695a772042bd8aa683c7935c0c5e591801eef58000f6355889ee58bf3a77b787"
+    },
+    {
+      "file": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "path": "/tmp/amber-phase6-source-baseline/files/iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "lines": 1577,
+      "sha256": "2719fc5f355669464d25291dd2b91bd5235303951932ef826f214e284b9b1661"
+    },
+    {
+      "file": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "path": "/tmp/amber-phase6-source-baseline/files/iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "lines": 1632,
+      "sha256": "be032183d98564a4d6fb00a3a5d48e6db1d7c538ee59310970767a04d3b7ae10"
+    }
+  ],
+  "outputs": [
+    {
+      "file": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "lines": 727,
+      "sha256": "2bdaaba4ce6ad72218f407dcc7c0bf2b79393ad6aa98ec51d5888622a9994e43"
+    },
+    {
+      "file": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "lines": 601,
+      "sha256": "abd2a481fc016fb25c4c9866e21d3c12c641fcff64aebc82751246dc773af225"
+    },
+    {
+      "file": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "lines": 270,
+      "sha256": "97df403c0e70d35b370c7ef4c5db6befbdf53ec1d6c4c536f33279247973358d"
+    },
+    {
+      "file": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "lines": 338,
+      "sha256": "d19ee2835da3e74621d637763339b90bbf9815fc6f3335ff2e2e1f3f1f8b2984"
+    },
+    {
+      "file": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "lines": 191,
+      "sha256": "328feddfe69bfdacea6624c3fe8d1178421e6ffca725341cf190cb32135024ad"
+    },
+    {
+      "file": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "lines": 1273,
+      "sha256": "50fe949adc8914cbf893b1d9fbc5500e2843f93c09c530aaf4ed5cd697d510aa"
+    },
+    {
+      "file": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "lines": 201,
+      "sha256": "68f1e3f9f79e9a71ea8373f885f2c40c114b279e2b694ddf134e0571729535aa"
+    },
+    {
+      "file": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "lines": 116,
+      "sha256": "3f39097c75ec315e9c33c0fde4f9508a2cdb28caf1d2cc6b26cb04ca94b58ab7"
+    },
+    {
+      "file": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "lines": 1205,
+      "sha256": "441401d20b8c17c99764fcdb7209b77276120173d0708f1baa8e04077578ff0c"
+    },
+    {
+      "file": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "lines": 432,
+      "sha256": "a627a25162498a5e822d55f976d17055e607cb8606018bc3d41db7c1c8fd3719"
+    }
+  ],
+  "counts": {
+    "oldMethods": 228,
+    "newMethods": 228,
+    "oldHelperFunctions": 68,
+    "newHelperFunctions": 68,
+    "oldSupportTypes": 18,
+    "newSupportTypes": 18,
+    "byClassOld": {
+      "PhoneRunnerClientTests": 104,
+      "RunnerPhaseTimingTests": 1,
+      "IOSPhoneControlControllerTests": 46,
+      "IOSPhoneGoalLoopTests": 77
+    },
+    "byClassNew": {
+      "PhoneRunnerClientTests": 104,
+      "RunnerPhaseTimingTests": 1,
+      "IOSPhoneControlControllerTests": 46,
+      "IOSPhoneGoalLoopTests": 77
+    }
+  },
+  "helperFunctions": [
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "node",
+      "oldLine": 273,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newSymbol": "node",
+      "newLine": 273,
+      "oldBodySHA256": "edb96bb04ae7a0bc6c7875b82cb3f475ea79944ebdf27792d0cb1fe4afb3a0d0",
+      "newBodySHA256": "edb96bb04ae7a0bc6c7875b82cb3f475ea79944ebdf27792d0cb1fe4afb3a0d0",
+      "oldDeclaration": "func node(_ index: Int, _ type: String, label: String? = nil, enabled: Bool = true, focused: Bool = false) -> PhoneObservationNode {",
+      "newDeclaration": "func node(_ index: Int, _ type: String, label: String? = nil, enabled: Bool = true, focused: Bool = false) -> PhoneObservationNode {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "source",
+      "oldLine": 518,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newSymbol": "source",
+      "newLine": 518,
+      "oldBodySHA256": "2b21fb2f8688cb4dc14ecd3acf2f3eec084551b0cd53880ddd51613fc01a441f",
+      "newBodySHA256": "2b21fb2f8688cb4dc14ecd3acf2f3eec084551b0cd53880ddd51613fc01a441f",
+      "oldDeclaration": "func source(historyCount: Int, includeComposer: Bool) throws -> Fixture.Reply {",
+      "newDeclaration": "func source(historyCount: Int, includeComposer: Bool) throws -> Fixture.Reply {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "makeClient",
+      "oldLine": 1889,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newSymbol": "makeClient",
+      "newLine": 704,
+      "oldBodySHA256": "c6c9122680494995500d51c157e1264ff19cceeb42ac1b74937a34fbc23d83f7",
+      "newBodySHA256": "c6c9122680494995500d51c157e1264ff19cceeb42ac1b74937a34fbc23d83f7",
+      "oldDeclaration": "private func makeClient(_ fixture: Fixture) throws -> PhoneRunnerClient {",
+      "newDeclaration": "func makeClient(_ fixture: Fixture) throws -> PhoneRunnerClient {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "assertUnsent",
+      "oldLine": 1894,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newSymbol": "assertUnsent",
+      "newLine": 709,
+      "oldBodySHA256": "cde49604ed6a3349139bdf39cfec4116dd26864354b5f02e778125e47a26b746",
+      "newBodySHA256": "cde49604ed6a3349139bdf39cfec4116dd26864354b5f02e778125e47a26b746",
+      "oldDeclaration": "private func assertUnsent(_ result: PhoneActionResult, kind: PhoneControlProblem.Kind,",
+      "newDeclaration": "func assertUnsent(_ result: PhoneActionResult, kind: PhoneControlProblem.Kind,"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "json",
+      "oldLine": 1922,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "json",
+      "newLine": 26,
+      "oldBodySHA256": "f90a2b1a3717906895a9e03979cc7233a0de1877353b86fc2d22c3243d8eb10e",
+      "newBodySHA256": "f90a2b1a3717906895a9e03979cc7233a0de1877353b86fc2d22c3243d8eb10e",
+      "oldDeclaration": "static func json(_ method: String, _ path: String, _ json: String,",
+      "newDeclaration": "static func json(_ method: String, _ path: String, _ json: String,"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "failure",
+      "oldLine": 1926,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "failure",
+      "newLine": 30,
+      "oldBodySHA256": "e71c33fa078d88174991499ba3f4e22058bc5064861dad6f4176743690dd27e7",
+      "newBodySHA256": "e71c33fa078d88174991499ba3f4e22058bc5064861dad6f4176743690dd27e7",
+      "oldDeclaration": "static func failure(_ method: String, _ path: String, _ error: URLError.Code) -> Reply {",
+      "newDeclaration": "static func failure(_ method: String, _ path: String, _ error: URLError.Code) -> Reply {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "settle",
+      "oldLine": 1933,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "settle",
+      "newLine": 37,
+      "oldBodySHA256": "2893280229833163fec5371ca4dd3fc1a5ee1a9bfd7dca61c12a91796e5f8021",
+      "newBodySHA256": "2893280229833163fec5371ca4dd3fc1a5ee1a9bfd7dca61c12a91796e5f8021",
+      "oldDeclaration": "static func settle(stable: Bool = true, blank: Bool = false, gate: ReplyGate? = nil) -> Reply {",
+      "newDeclaration": "static func settle(stable: Bool = true, blank: Bool = false, gate: ReplyGate? = nil) -> Reply {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "inputObservation",
+      "oldLine": 1945,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "inputObservation",
+      "newLine": 49,
+      "oldBodySHA256": "8fff6a48d8c59c034a4bbdf1523f6c50b20d263c0f496d1d815a920e6a60a973",
+      "newBodySHA256": "8fff6a48d8c59c034a4bbdf1523f6c50b20d263c0f496d1d815a920e6a60a973",
+      "oldDeclaration": "static func inputObservation(type: String = \"XCUIElementTypeTextField\", enabled: Bool = true) -> [Reply] {",
+      "newDeclaration": "static func inputObservation(type: String = \"XCUIElementTypeTextField\", enabled: Bool = true) -> [Reply] {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "alertObservation",
+      "oldLine": 1949,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "alertObservation",
+      "newLine": 53,
+      "oldBodySHA256": "e000507b52ec096dedb2906c929d6193957aba446d4d1734e6d72fc630423871",
+      "newBodySHA256": "e000507b52ec096dedb2906c929d6193957aba446d4d1734e6d72fc630423871",
+      "oldDeclaration": "static func alertObservation(names: [String] = [\"Cancel\", \"Allow\"], supported: Bool = true) throws -> [Reply] {",
+      "newDeclaration": "static func alertObservation(names: [String] = [\"Cancel\", \"Allow\"], supported: Bool = true) throws -> [Reply] {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "makePNG",
+      "oldLine": 1979,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "makePNG",
+      "newLine": 83,
+      "oldBodySHA256": "d0b518d37e4cba5759deb0bd36e877c5bc7bbdef18fc5730980c09fb8056a26f",
+      "newBodySHA256": "d0b518d37e4cba5759deb0bd36e877c5bc7bbdef18fc5730980c09fb8056a26f",
+      "oldDeclaration": "static func makePNG(width: Int, height: Int) -> Data {",
+      "newDeclaration": "static func makePNG(width: Int, height: Int) -> Data {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "reply",
+      "oldLine": 2008,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "reply",
+      "newLine": 112,
+      "oldBodySHA256": "22e76e7c728bcd3a0211cff111e95aea9b00fdf81395b5c56ce02cc8dbe10925",
+      "newBodySHA256": "22e76e7c728bcd3a0211cff111e95aea9b00fdf81395b5c56ce02cc8dbe10925",
+      "oldDeclaration": "func reply(to request: URLRequest) -> Reply {",
+      "newDeclaration": "func reply(to request: URLRequest) -> Reply {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "nextPort",
+      "oldLine": 2045,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "nextPort",
+      "newLine": 149,
+      "oldBodySHA256": "45465253dbb8b65da9bbac685e57e61a16d442d1f4e2a947a912e24ac75b3edb",
+      "newBodySHA256": "45465253dbb8b65da9bbac685e57e61a16d442d1f4e2a947a912e24ac75b3edb",
+      "oldDeclaration": "static func nextPort() -> UInt16 {",
+      "newDeclaration": "static func nextPort() -> UInt16 {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "register",
+      "oldLine": 2048,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "register",
+      "newLine": 152,
+      "oldBodySHA256": "0115aa5c60844a1a5c60b62c129cb0ba2d44f76baf407bb8751522a0de898ea3",
+      "newBodySHA256": "0115aa5c60844a1a5c60b62c129cb0ba2d44f76baf407bb8751522a0de898ea3",
+      "oldDeclaration": "static func register(_ fixture: Fixture) {",
+      "newDeclaration": "static func register(_ fixture: Fixture) {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "canInit",
+      "oldLine": 2052,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "canInit",
+      "newLine": 156,
+      "oldBodySHA256": "f123e66b48926eb4fc37623ac7a3db51b8371b793638f23ba0cc976b60eb0819",
+      "newBodySHA256": "f123e66b48926eb4fc37623ac7a3db51b8371b793638f23ba0cc976b60eb0819",
+      "oldDeclaration": "override class func canInit(with request: URLRequest) -> Bool { request.url?.host == \"127.0.0.1\" }",
+      "newDeclaration": "override class func canInit(with request: URLRequest) -> Bool { request.url?.host == \"127.0.0.1\" }"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "canonicalRequest",
+      "oldLine": 2053,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "canonicalRequest",
+      "newLine": 157,
+      "oldBodySHA256": "432ef3a8644df4e5e5704a8079dddf577e53b7aa5d54fb96c60e2c85946e0fe3",
+      "newBodySHA256": "432ef3a8644df4e5e5704a8079dddf577e53b7aa5d54fb96c60e2c85946e0fe3",
+      "oldDeclaration": "override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }",
+      "newDeclaration": "override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "startLoading",
+      "oldLine": 2054,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "startLoading",
+      "newLine": 158,
+      "oldBodySHA256": "18ef3244c6058e896f41db5525412dbc04b86653207c1a4660b53d9eaf96e91d",
+      "newBodySHA256": "18ef3244c6058e896f41db5525412dbc04b86653207c1a4660b53d9eaf96e91d",
+      "oldDeclaration": "override func startLoading() {",
+      "newDeclaration": "override func startLoading() {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "stopLoading",
+      "oldLine": 2070,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "stopLoading",
+      "newLine": 174,
+      "oldBodySHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "newBodySHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "oldDeclaration": "override func stopLoading() {}",
+      "newDeclaration": "override func stopLoading() {}"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "enqueue",
+      "oldLine": 2078,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "enqueue",
+      "newLine": 182,
+      "oldBodySHA256": "b1d71780b2d3a512c1f9a123dcb19b808e18d740c9882f3df6d2f512e483361a",
+      "newBodySHA256": "b1d71780b2d3a512c1f9a123dcb19b808e18d740c9882f3df6d2f512e483361a",
+      "oldDeclaration": "func enqueue(_ send: @escaping @Sendable () -> Void) {",
+      "newDeclaration": "func enqueue(_ send: @escaping @Sendable () -> Void) {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "release",
+      "oldLine": 2083,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newSymbol": "release",
+      "newLine": 187,
+      "oldBodySHA256": "4f0aab88d704df522f1f10279147ddd055c8283b8d0b5a9662b7f376eaf20af3",
+      "newBodySHA256": "4f0aab88d704df522f1f10279147ddd055c8283b8d0b5a9662b7f376eaf20af3",
+      "oldDeclaration": "func release() {",
+      "newDeclaration": "func release() {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "assertNoTunnelCalls",
+      "oldLine": 1317,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "assertNoTunnelCalls",
+      "newLine": 1124,
+      "oldBodySHA256": "cf87afb0e5ca4cb7de958373f1283cef33dcfb1843ddae7112fdafd54f8d52f9",
+      "newBodySHA256": "cf87afb0e5ca4cb7de958373f1283cef33dcfb1843ddae7112fdafd54f8d52f9",
+      "oldDeclaration": "private func assertNoTunnelCalls(_ tunnel: PhoneControlTunnelStub, file: StaticString = #filePath, line: UInt = #line) {",
+      "newDeclaration": "private func assertNoTunnelCalls(_ tunnel: PhoneControlTunnelStub, file: StaticString = #filePath, line: UInt = #line) {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "pairingDictionary",
+      "oldLine": 1324,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "pairingDictionary",
+      "newLine": 1131,
+      "oldBodySHA256": "0a5bbcebb5216c4758bd8bef11c031589b208edecc3728c5b79fa8842849c230",
+      "newBodySHA256": "0a5bbcebb5216c4758bd8bef11c031589b208edecc3728c5b79fa8842849c230",
+      "oldDeclaration": "private func pairingDictionary() throws -> [String: Any] {",
+      "newDeclaration": "private func pairingDictionary() throws -> [String: Any] {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "pairingData",
+      "oldLine": 1330,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "pairingData",
+      "newLine": 1137,
+      "oldBodySHA256": "737764393d1e899820bd8dcf0bd863254adec9237684ab118a0921f931a0703a",
+      "newBodySHA256": "737764393d1e899820bd8dcf0bd863254adec9237684ab118a0921f931a0703a",
+      "oldDeclaration": "private func pairingData() throws -> Data {",
+      "newDeclaration": "func pairingData() throws -> Data {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "prepare",
+      "oldLine": 1343,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "prepare",
+      "newLine": 1150,
+      "oldBodySHA256": "cd1666d9a8e36932682b2de0224a44e5e6c7a114963e36acca3532b7c6d5d1b2",
+      "newBodySHA256": "cd1666d9a8e36932682b2de0224a44e5e6c7a114963e36acca3532b7c6d5d1b2",
+      "oldDeclaration": "func prepare(id: UUID, connectionMode: IOSPhoneControlConnectionMode,",
+      "newDeclaration": "func prepare(id: UUID, connectionMode: IOSPhoneControlConnectionMode,"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "waitUntilStarted",
+      "oldLine": 1353,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "waitUntilStarted",
+      "newLine": 1160,
+      "oldBodySHA256": "5dc7725c83f7d78401002d38846a963a6b79a686b8fdb2537f54b967d3387fc6",
+      "newBodySHA256": "5dc7725c83f7d78401002d38846a963a6b79a686b8fdb2537f54b967d3387fc6",
+      "oldDeclaration": "func waitUntilStarted() async {",
+      "newDeclaration": "func waitUntilStarted() async {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "cancel",
+      "oldLine": 1357,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "cancel",
+      "newLine": 1164,
+      "oldBodySHA256": "36a9e7f1c95b82ffb99743e0c5c4ce95d83c9a430aac59f84ef3cbfab6145068",
+      "newBodySHA256": "36a9e7f1c95b82ffb99743e0c5c4ce95d83c9a430aac59f84ef3cbfab6145068",
+      "oldDeclaration": "func cancel(id: UUID) { }",
+      "newDeclaration": "func cancel(id: UUID) { }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "loadPairing",
+      "oldLine": 1367,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "loadPairing",
+      "newLine": 1174,
+      "oldBodySHA256": "8037efed3ec414dbca611108572587118f7962ed143ae460842e401178a80470",
+      "newBodySHA256": "8037efed3ec414dbca611108572587118f7962ed143ae460842e401178a80470",
+      "oldDeclaration": "func loadPairing() -> Data? { data }",
+      "newDeclaration": "func loadPairing() -> Data? { data }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "savePairing",
+      "oldLine": 1368,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "savePairing",
+      "newLine": 1175,
+      "oldBodySHA256": "12ec43e022495483d409fd4a172903fcae33f16292ca40fe55c29140add20856",
+      "newBodySHA256": "12ec43e022495483d409fd4a172903fcae33f16292ca40fe55c29140add20856",
+      "oldDeclaration": "func savePairing(_ data: Data) throws {",
+      "newDeclaration": "func savePairing(_ data: Data) throws {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "deletePairing",
+      "oldLine": 1373,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "deletePairing",
+      "newLine": 1180,
+      "oldBodySHA256": "6c8c033b2d17653f75970851087931ac3a4938cee26888dce1361e1419263c8b",
+      "newBodySHA256": "6c8c033b2d17653f75970851087931ac3a4938cee26888dce1361e1419263c8b",
+      "oldDeclaration": "func deletePairing() { data = nil }",
+      "newDeclaration": "func deletePairing() { data = nil }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "replaceUnchecked",
+      "oldLine": 1374,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "replaceUnchecked",
+      "newLine": 1181,
+      "oldBodySHA256": "2e2921ff6bb9025fdbcabbc849a271ac04247e7a5392678042c6c7a98068bac6",
+      "newBodySHA256": "2e2921ff6bb9025fdbcabbc849a271ac04247e7a5392678042c6c7a98068bac6",
+      "oldDeclaration": "func replaceUnchecked(_ data: Data) { self.data = data }",
+      "newDeclaration": "func replaceUnchecked(_ data: Data) { self.data = data }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "installedApplications",
+      "oldLine": 1392,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "installedApplications",
+      "newLine": 1199,
+      "oldBodySHA256": "03e2a972e855e27a70e0ffb39201ab948e12a4046abccc89542857c80f102fa4",
+      "newBodySHA256": "03e2a972e855e27a70e0ffb39201ab948e12a4046abccc89542857c80f102fa4",
+      "oldDeclaration": "func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) async throws -> [PhoneControlInstalledApp] {",
+      "newDeclaration": "func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) async throws -> [PhoneControlInstalledApp] {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "waitUntilStarted",
+      "oldLine": 1406,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "waitUntilStarted",
+      "newLine": 1213,
+      "oldBodySHA256": "0542d2ce804e3fb340b1c7107eafcbdc219537f2b9cea511c001fcb2b374cb41",
+      "newBodySHA256": "0542d2ce804e3fb340b1c7107eafcbdc219537f2b9cea511c001fcb2b374cb41",
+      "oldDeclaration": "func waitUntilStarted() async {",
+      "newDeclaration": "func waitUntilStarted() async {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "release",
+      "oldLine": 1411,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "release",
+      "newLine": 1244,
+      "oldBodySHA256": "78fbb0d942883703efe1f979a0dfbf150faf30c6d11f652f95f406caad08e629",
+      "newBodySHA256": "78fbb0d942883703efe1f979a0dfbf150faf30c6d11f652f95f406caad08e629",
+      "oldDeclaration": "func release() { pending?.resume(); pending = nil }",
+      "newDeclaration": "func release() { pending?.resume(); pending = nil }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "failQueries",
+      "oldLine": 1412,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "failQueries",
+      "newLine": 1219,
+      "oldBodySHA256": "becd4f60281a08a2733d81077728f89c4392c83c9805259940e4a533150aac66",
+      "newBodySHA256": "becd4f60281a08a2733d81077728f89c4392c83c9805259940e4a533150aac66",
+      "oldDeclaration": "func failQueries() { shouldFail = true }",
+      "newDeclaration": "func failQueries() { shouldFail = true }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "markEntered",
+      "oldLine": 1421,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "markEntered",
+      "newLine": 1228,
+      "oldBodySHA256": "f46987de5a20a61823cd957891dd278dbdadcf0465974a5c51d8c1f7f32fd890",
+      "newBodySHA256": "f46987de5a20a61823cd957891dd278dbdadcf0465974a5c51d8c1f7f32fd890",
+      "oldDeclaration": "func markEntered() {",
+      "newDeclaration": "func markEntered() {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "suspend",
+      "oldLine": 1427,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "suspend",
+      "newLine": 1234,
+      "oldBodySHA256": "6cbdb9111e6042e9d608ccc5281bc99078ff3cea32ec72ec39e860852dc89ec9",
+      "newBodySHA256": "6cbdb9111e6042e9d608ccc5281bc99078ff3cea32ec72ec39e860852dc89ec9",
+      "oldDeclaration": "func suspend() async {",
+      "newDeclaration": "func suspend() async {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "waitUntilEntered",
+      "oldLine": 1432,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "waitUntilEntered",
+      "newLine": 1239,
+      "oldBodySHA256": "53106f8a82c0212ea0b40dd2a9d947c2cbc2a133e797b8fb97948610a995a19c",
+      "newBodySHA256": "53106f8a82c0212ea0b40dd2a9d947c2cbc2a133e797b8fb97948610a995a19c",
+      "oldDeclaration": "func waitUntilEntered() async {",
+      "newDeclaration": "func waitUntilEntered() async {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "release",
+      "oldLine": 1437,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "release",
+      "newLine": 1218,
+      "oldBodySHA256": "78fbb0d942883703efe1f979a0dfbf150faf30c6d11f652f95f406caad08e629",
+      "newBodySHA256": "78fbb0d942883703efe1f979a0dfbf150faf30c6d11f652f95f406caad08e629",
+      "oldDeclaration": "func release() { pending?.resume(); pending = nil }",
+      "newDeclaration": "func release() { pending?.resume(); pending = nil }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "start",
+      "oldLine": 1456,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "start",
+      "newLine": 23,
+      "oldBodySHA256": "b91dcea4a5e840ecf3838e61724aaacf61d0b6b979aaadd3514883e361bc21fc",
+      "newBodySHA256": "b91dcea4a5e840ecf3838e61724aaacf61d0b6b979aaadd3514883e361bc21fc",
+      "oldDeclaration": "func start(runID: UUID, configuration: PhoneControlLaunchConfiguration) async throws -> PhoneRunnerStatus {",
+      "newDeclaration": "func start(runID: UUID, configuration: PhoneControlLaunchConfiguration) async throws -> PhoneRunnerStatus {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "runner",
+      "oldLine": 1476,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "runner",
+      "newLine": 43,
+      "oldBodySHA256": "8eddb432a4ba4a3cade24aed6e3cba8030ac6ef0fed81362190592af6efd29ad",
+      "newBodySHA256": "8eddb432a4ba4a3cade24aed6e3cba8030ac6ef0fed81362190592af6efd29ad",
+      "oldDeclaration": "func runner(runID: UUID) throws -> PhoneRunnerClient { try XCTUnwrap(client) }",
+      "newDeclaration": "func runner(runID: UUID) throws -> PhoneRunnerClient { try XCTUnwrap(client) }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "stop",
+      "oldLine": 1477,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "stop",
+      "newLine": 44,
+      "oldBodySHA256": "270f570c503c647138686549f0c9d96245c27477fc64bfe2aed26b8e4f19c672",
+      "newBodySHA256": "270f570c503c647138686549f0c9d96245c27477fc64bfe2aed26b8e4f19c672",
+      "oldDeclaration": "func stop(runID: UUID) async { await client?.stop() }",
+      "newDeclaration": "func stop(runID: UUID) async { await client?.stop() }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "launchStatus",
+      "oldLine": 1478,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "launchStatus",
+      "newLine": 45,
+      "oldBodySHA256": "f83850dc166cbbe229d58ac78a6a8d25411456b1124c3537535d9d6647430816",
+      "newBodySHA256": "f83850dc166cbbe229d58ac78a6a8d25411456b1124c3537535d9d6647430816",
+      "oldDeclaration": "func launchStatus(runID: UUID) -> PhoneControlLaunchStatus? { nil }",
+      "newDeclaration": "func launchStatus(runID: UUID) -> PhoneControlLaunchStatus? { nil }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "cachedApplications",
+      "oldLine": 1479,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "cachedApplications",
+      "newLine": 46,
+      "oldBodySHA256": "7e58d2487a2aaa36b6c1f57dbe1b513f1637fce9b58bb771797daa980dcdb3eb",
+      "newBodySHA256": "7e58d2487a2aaa36b6c1f57dbe1b513f1637fce9b58bb771797daa980dcdb3eb",
+      "oldDeclaration": "func cachedApplications(runID: UUID) -> [PhoneControlInstalledApp] { [] }",
+      "newDeclaration": "func cachedApplications(runID: UUID) -> [PhoneControlInstalledApp] { [] }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "waitUntilStarted",
+      "oldLine": 1480,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "waitUntilStarted",
+      "newLine": 47,
+      "oldBodySHA256": "d7510b8ab3dfe3a8e2a6cb1273600f66b10153b576f1c3f6cca61cda22d40ff7",
+      "newBodySHA256": "d7510b8ab3dfe3a8e2a6cb1273600f66b10153b576f1c3f6cca61cda22d40ff7",
+      "oldDeclaration": "func waitUntilStarted() async {",
+      "newDeclaration": "func waitUntilStarted() async {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "releaseStartup",
+      "oldLine": 1484,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "releaseStartup",
+      "newLine": 51,
+      "oldBodySHA256": "f8824995de80d83da05778fa5d331263457d47db034246164444db1922cdd2c1",
+      "newBodySHA256": "f8824995de80d83da05778fa5d331263457d47db034246164444db1922cdd2c1",
+      "oldDeclaration": "func releaseStartup() { blocked?.resume(); blocked = nil }",
+      "newDeclaration": "func releaseStartup() { blocked?.resume(); blocked = nil }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "unregister",
+      "oldLine": 1503,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "unregister",
+      "newLine": 70,
+      "oldBodySHA256": "f567d2d6bcff50199c61a8ee1d6e97852cde7b9dfe114e917286a8be3177aee4",
+      "newBodySHA256": "f567d2d6bcff50199c61a8ee1d6e97852cde7b9dfe114e917286a8be3177aee4",
+      "oldDeclaration": "func unregister() { ReadinessHTTPProtocol.remove(port) }",
+      "newDeclaration": "func unregister() { ReadinessHTTPProtocol.remove(port) }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "body",
+      "oldLine": 1504,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "body",
+      "newLine": 71,
+      "oldBodySHA256": "11b42338f9cc82466e5a634c127dfb75da519951ee9519db9dbae0261e58803b",
+      "newBodySHA256": "11b42338f9cc82466e5a634c127dfb75da519951ee9519db9dbae0261e58803b",
+      "oldDeclaration": "func body(for request: URLRequest) throws -> String {",
+      "newDeclaration": "func body(for request: URLRequest) throws -> String {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "nextPort",
+      "oldLine": 1530,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "nextPort",
+      "newLine": 97,
+      "oldBodySHA256": "bcd3328dc924325eca69314a828a4e598e9b11e34927981542fb581b5e1dcf4f",
+      "newBodySHA256": "bcd3328dc924325eca69314a828a4e598e9b11e34927981542fb581b5e1dcf4f",
+      "oldDeclaration": "static func nextPort() -> UInt16 { registry.lock.withLock { registry.port += 1; return registry.port } }",
+      "newDeclaration": "static func nextPort() -> UInt16 { registry.lock.withLock { registry.port += 1; return registry.port } }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "register",
+      "oldLine": 1531,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "register",
+      "newLine": 98,
+      "oldBodySHA256": "7b83b85baa4dc32c74ebbcee66b6d6e9f1ac6f153300023b988ae973b6ee081f",
+      "newBodySHA256": "7b83b85baa4dc32c74ebbcee66b6d6e9f1ac6f153300023b988ae973b6ee081f",
+      "oldDeclaration": "static func register(_ fixture: ReadinessHTTPFixture) { registry.lock.withLock { registry.fixtures[fixture.port] = fixture } }",
+      "newDeclaration": "static func register(_ fixture: ReadinessHTTPFixture) { registry.lock.withLock { registry.fixtures[fixture.port] = fixture } }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "remove",
+      "oldLine": 1532,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "remove",
+      "newLine": 99,
+      "oldBodySHA256": "958263030240e60dbd6bc7d677a2ef0bcd503f95a581dcd6d49ec554ea5f2dd8",
+      "newBodySHA256": "958263030240e60dbd6bc7d677a2ef0bcd503f95a581dcd6d49ec554ea5f2dd8",
+      "oldDeclaration": "static func remove(_ port: UInt16) { _ = registry.lock.withLock { registry.fixtures.removeValue(forKey: port) } }",
+      "newDeclaration": "static func remove(_ port: UInt16) { _ = registry.lock.withLock { registry.fixtures.removeValue(forKey: port) } }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "canInit",
+      "oldLine": 1533,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "canInit",
+      "newLine": 100,
+      "oldBodySHA256": "f123e66b48926eb4fc37623ac7a3db51b8371b793638f23ba0cc976b60eb0819",
+      "newBodySHA256": "f123e66b48926eb4fc37623ac7a3db51b8371b793638f23ba0cc976b60eb0819",
+      "oldDeclaration": "override class func canInit(with request: URLRequest) -> Bool { request.url?.host == \"127.0.0.1\" }",
+      "newDeclaration": "override class func canInit(with request: URLRequest) -> Bool { request.url?.host == \"127.0.0.1\" }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "canonicalRequest",
+      "oldLine": 1534,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "canonicalRequest",
+      "newLine": 1194,
+      "oldBodySHA256": "432ef3a8644df4e5e5704a8079dddf577e53b7aa5d54fb96c60e2c85946e0fe3",
+      "newBodySHA256": "432ef3a8644df4e5e5704a8079dddf577e53b7aa5d54fb96c60e2c85946e0fe3",
+      "oldDeclaration": "override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }",
+      "newDeclaration": "override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "startLoading",
+      "oldLine": 1535,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "startLoading",
+      "newLine": 102,
+      "oldBodySHA256": "8cb3be41c565ebfab9977f01299b00b632975a444964d1a3ba8380cd862e5146",
+      "newBodySHA256": "8cb3be41c565ebfab9977f01299b00b632975a444964d1a3ba8380cd862e5146",
+      "oldDeclaration": "override func startLoading() {",
+      "newDeclaration": "override func startLoading() {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "stopLoading",
+      "oldLine": 1548,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "stopLoading",
+      "newLine": 1202,
+      "oldBodySHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "newBodySHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "oldDeclaration": "override func stopLoading() {}",
+      "newDeclaration": "override func stopLoading() {}"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "clear",
+      "oldLine": 1570,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newSymbol": "clear",
+      "newLine": 1266,
+      "oldBodySHA256": "0d66195d3ea6f2e46cd443a2f7511906413bb2878a530f40c09650ed123f9b29",
+      "newBodySHA256": "0d66195d3ea6f2e46cd443a2f7511906413bb2878a530f40c09650ed123f9b29",
+      "oldDeclaration": "func clear() { defaults.removePersistentDomain(forName: suite) }",
+      "newDeclaration": "func clear() { defaults.removePersistentDomain(forName: suite) }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "sequenceRequest",
+      "oldLine": 1057,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "sequenceRequest",
+      "newLine": 1057,
+      "oldBodySHA256": "d3b2e68ffd726b82974df2d9129cefe5607ee512d8e53b68cccae6ddbe4808a8",
+      "newBodySHA256": "d3b2e68ffd726b82974df2d9129cefe5607ee512d8e53b68cccae6ddbe4808a8",
+      "oldDeclaration": "private func sequenceRequest() -> IOSPhoneGoalRequest {",
+      "newDeclaration": "private func sequenceRequest() -> IOSPhoneGoalRequest {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "sequenceScreens",
+      "oldLine": 1068,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "sequenceScreens",
+      "newLine": 1068,
+      "oldBodySHA256": "f41a0d127e137cdf54122ab6c325df1678174773073af694ce7f489ec58d85de",
+      "newBodySHA256": "f41a0d127e137cdf54122ab6c325df1678174773073af694ce7f489ec58d85de",
+      "oldDeclaration": "private func sequenceScreens() -> [PhoneObservation] {",
+      "newDeclaration": "private func sequenceScreens() -> [PhoneObservation] {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "request",
+      "oldLine": 1079,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "request",
+      "newLine": 1079,
+      "oldBodySHA256": "e50fa1fbb070a2484ef47553f6547e8494986ead0ed3b44540aa4b9fde48a26e",
+      "newBodySHA256": "e50fa1fbb070a2484ef47553f6547e8494986ead0ed3b44540aa4b9fde48a26e",
+      "oldDeclaration": "private func request(maxSteps: Int = 6) -> IOSPhoneGoalRequest {",
+      "newDeclaration": "private func request(maxSteps: Int = 6) -> IOSPhoneGoalRequest {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "branchingRequest",
+      "oldLine": 1084,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "branchingRequest",
+      "newLine": 1084,
+      "oldBodySHA256": "7748e72df72651a8993fe2eb9392095e2f06e13251c5f9447f53f52a92a6009b",
+      "newBodySHA256": "7748e72df72651a8993fe2eb9392095e2f06e13251c5f9447f53f52a92a6009b",
+      "oldDeclaration": "private func branchingRequest() -> IOSPhoneGoalRequest {",
+      "newDeclaration": "func branchingRequest() -> IOSPhoneGoalRequest {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "observation",
+      "oldLine": 1091,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "observation",
+      "newLine": 1091,
+      "oldBodySHA256": "8926b4110ac02ce29ad1ffdc13f58418662eab076f5a14fd8687a727e0fbbd22",
+      "newBodySHA256": "8926b4110ac02ce29ad1ffdc13f58418662eab076f5a14fd8687a727e0fbbd22",
+      "oldDeclaration": "private func observation(_ id: String, _ nodes: [PhoneObservationNode], pid: Int = 42, truncated: Bool = false,",
+      "newDeclaration": "func observation(_ id: String, _ nodes: [PhoneObservationNode], pid: Int = 42, truncated: Bool = false,"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "node",
+      "oldLine": 1097,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "node",
+      "newLine": 1097,
+      "oldBodySHA256": "e1e16241cfcaf2ab9faebbddfa363cab1e91c6c5ed5911c3c3d68e11dd08f0f0",
+      "newBodySHA256": "e1e16241cfcaf2ab9faebbddfa363cab1e91c6c5ed5911c3c3d68e11dd08f0f0",
+      "oldDeclaration": "private func node(_ ref: String?, id: String, type: String = \"XCUIElementTypeButton\", value: String? = nil,",
+      "newDeclaration": "func node(_ ref: String?, id: String, type: String = \"XCUIElementTypeButton\", value: String? = nil,"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "nextObservation",
+      "oldLine": 1140,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "nextObservation",
+      "newLine": 1140,
+      "oldBodySHA256": "ec8faf917c14f6a638697dcd66d5676ca0f89f2d950a868f2b2385bdd1578a35",
+      "newBodySHA256": "ec8faf917c14f6a638697dcd66d5676ca0f89f2d950a868f2b2385bdd1578a35",
+      "oldDeclaration": "private func nextObservation() throws -> PhoneObservation {",
+      "newDeclaration": "private func nextObservation() throws -> PhoneObservation {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "loop",
+      "oldLine": 1147,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "loop",
+      "newLine": 1147,
+      "oldBodySHA256": "b012646e2bd9deb022f5b09606d006d82297b892d100c3ea6d387103dda9bc6f",
+      "newBodySHA256": "b012646e2bd9deb022f5b09606d006d82297b892d100c3ea6d387103dda9bc6f",
+      "oldDeclaration": "func loop() -> IOSPhoneGoalLoop {",
+      "newDeclaration": "func loop() -> IOSPhoneGoalLoop {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "canInit",
+      "oldLine": 1193,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "canInit",
+      "newLine": 1193,
+      "oldBodySHA256": "9a9ca42e5a322a32318306752b402a7466fb1a98c27d3d8aa1af364b6d550832",
+      "newBodySHA256": "9a9ca42e5a322a32318306752b402a7466fb1a98c27d3d8aa1af364b6d550832",
+      "oldDeclaration": "override class func canInit(with request: URLRequest) -> Bool { true }",
+      "newDeclaration": "override class func canInit(with request: URLRequest) -> Bool { true }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "canonicalRequest",
+      "oldLine": 1194,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "canonicalRequest",
+      "newLine": 101,
+      "oldBodySHA256": "432ef3a8644df4e5e5704a8079dddf577e53b7aa5d54fb96c60e2c85946e0fe3",
+      "newBodySHA256": "432ef3a8644df4e5e5704a8079dddf577e53b7aa5d54fb96c60e2c85946e0fe3",
+      "oldDeclaration": "override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }",
+      "newDeclaration": "override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "startLoading",
+      "oldLine": 1195,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newSymbol": "startLoading",
+      "newLine": 1195,
+      "oldBodySHA256": "2ded4f31b1c973a64e58ed7e2c01609a7bfc4e69d785c2b11c63db7c2a4ab2ec",
+      "newBodySHA256": "2ded4f31b1c973a64e58ed7e2c01609a7bfc4e69d785c2b11c63db7c2a4ab2ec",
+      "oldDeclaration": "override func startLoading() {",
+      "newDeclaration": "override func startLoading() {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "stopLoading",
+      "oldLine": 1202,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newSymbol": "stopLoading",
+      "newLine": 115,
+      "oldBodySHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "newBodySHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "oldDeclaration": "override func stopLoading() {}",
+      "newDeclaration": "override func stopLoading() {}"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "duplicateWordScreen",
+      "oldLine": 1210,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newSymbol": "duplicateWordScreen",
+      "newLine": 10,
+      "oldBodySHA256": "f5d99c4ede1918c53e057abff6b12ee060c6b37d1d315fc4044a12a1026cce85",
+      "newBodySHA256": "f5d99c4ede1918c53e057abff6b12ee060c6b37d1d315fc4044a12a1026cce85",
+      "oldDeclaration": "private func duplicateWordScreen(_ id: String, prefix: String = \"\") -> PhoneObservation {",
+      "newDeclaration": "private func duplicateWordScreen(_ id: String, prefix: String = \"\") -> PhoneObservation {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "screen",
+      "oldLine": 1580,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newSymbol": "screen",
+      "newLine": 380,
+      "oldBodySHA256": "c6492c3e1f8213aab10652839bc36ad6b1c8e93bf39c2b7bff172501abf2fea0",
+      "newBodySHA256": "c6492c3e1f8213aab10652839bc36ad6b1c8e93bf39c2b7bff172501abf2fea0",
+      "oldDeclaration": "func screen(_ id: String) -> PhoneObservation {",
+      "newDeclaration": "func screen(_ id: String) -> PhoneObservation {"
+    }
+  ],
+  "supportTypes": [
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldType": "Fixture",
+      "kind": "class",
+      "oldLine": 1903,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newType": "Fixture",
+      "newLine": 7,
+      "oldBodySHA256": "124d79e9a3f108c397a543618f1bb2bc743f0c57193d9add4d71bb093665cf18",
+      "newBodySHA256": "124d79e9a3f108c397a543618f1bb2bc743f0c57193d9add4d71bb093665cf18",
+      "oldDeclaration": "private final class Fixture: @unchecked Sendable {",
+      "newDeclaration": "final class Fixture: @unchecked Sendable {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldType": "Request",
+      "kind": "struct",
+      "oldLine": 1904,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newType": "Request",
+      "newLine": 8,
+      "oldBodySHA256": "34716eecc6bacdaba960a1893cabded90d71302879b9eedae51a3d5c8dd7ba5a",
+      "newBodySHA256": "34716eecc6bacdaba960a1893cabded90d71302879b9eedae51a3d5c8dd7ba5a",
+      "oldDeclaration": "struct Request: Sendable {",
+      "newDeclaration": "struct Request: Sendable {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldType": "Reply",
+      "kind": "struct",
+      "oldLine": 1913,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newType": "Reply",
+      "newLine": 17,
+      "oldBodySHA256": "083f75b2f11620f2a1e386d8c7c1e1a4f3129de5517b6a01afc30a9c5f857830",
+      "newBodySHA256": "083f75b2f11620f2a1e386d8c7c1e1a4f3129de5517b6a01afc30a9c5f857830",
+      "oldDeclaration": "struct Reply: Sendable {",
+      "newDeclaration": "struct Reply: Sendable {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldType": "FixtureProtocol",
+      "kind": "class",
+      "oldLine": 2037,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newType": "FixtureProtocol",
+      "newLine": 141,
+      "oldBodySHA256": "abac88571b5116b9b84dc957b46e33aa9b0098838eb7818bb55474335a11956d",
+      "newBodySHA256": "abac88571b5116b9b84dc957b46e33aa9b0098838eb7818bb55474335a11956d",
+      "oldDeclaration": "private final class FixtureProtocol: URLProtocol, @unchecked Sendable {",
+      "newDeclaration": "private final class FixtureProtocol: URLProtocol, @unchecked Sendable {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldType": "Registry",
+      "kind": "class",
+      "oldLine": 2038,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newType": "Registry",
+      "newLine": 142,
+      "oldBodySHA256": "6c3f69b800a6d2bb82b6115f4c5da02f6dfe74982a76add9702e832348889376",
+      "newBodySHA256": "6c3f69b800a6d2bb82b6115f4c5da02f6dfe74982a76add9702e832348889376",
+      "oldDeclaration": "private final class Registry: @unchecked Sendable {",
+      "newDeclaration": "private final class Registry: @unchecked Sendable {"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldType": "ReplyGate",
+      "kind": "class",
+      "oldLine": 2073,
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "newType": "ReplyGate",
+      "newLine": 177,
+      "oldBodySHA256": "75681ccada6c4dd92664239cc3761f4bec7a537db357a4972673aa95d02396c3",
+      "newBodySHA256": "75681ccada6c4dd92664239cc3761f4bec7a537db357a4972673aa95d02396c3",
+      "oldDeclaration": "private final class ReplyGate: @unchecked Sendable {",
+      "newDeclaration": "final class ReplyGate: @unchecked Sendable {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "ExternalPairingStub",
+      "kind": "actor",
+      "oldLine": 1335,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newType": "ExternalPairingStub",
+      "newLine": 1142,
+      "oldBodySHA256": "b0e5cb353aac7c1375b8f672bb4d127b6d2209b9965646ed891ff9c803e1c065",
+      "newBodySHA256": "b0e5cb353aac7c1375b8f672bb4d127b6d2209b9965646ed891ff9c803e1c065",
+      "oldDeclaration": "private actor ExternalPairingStub: PhoneControlPairingServing {",
+      "newDeclaration": "private actor ExternalPairingStub: PhoneControlPairingServing {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "MemoryPairingStore",
+      "kind": "actor",
+      "oldLine": 1360,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newType": "MemoryPairingStore",
+      "newLine": 1167,
+      "oldBodySHA256": "d2203ef5d643a7e691b246ea6c9a45622467a3256cc15c159b799c048e533969",
+      "newBodySHA256": "d2203ef5d643a7e691b246ea6c9a45622467a3256cc15c159b799c048e533969",
+      "oldDeclaration": "private actor MemoryPairingStore: IOSPhoneControlCredentialStoring {",
+      "newDeclaration": "actor MemoryPairingStore: IOSPhoneControlCredentialStoring {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "ControllerApplicationDiscovery",
+      "kind": "actor",
+      "oldLine": 1377,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newType": "ControllerApplicationDiscovery",
+      "newLine": 1184,
+      "oldBodySHA256": "69ea68827ec8e59424417bbeae2dbf00f471859b51971369d029302c044bfa2f",
+      "newBodySHA256": "69ea68827ec8e59424417bbeae2dbf00f471859b51971369d029302c044bfa2f",
+      "oldDeclaration": "private actor ControllerApplicationDiscovery: PhoneControlApplicationDiscovering {",
+      "newDeclaration": "private actor ControllerApplicationDiscovery: PhoneControlApplicationDiscovering {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "ControllerOperationGate",
+      "kind": "class",
+      "oldLine": 1416,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newType": "ControllerOperationGate",
+      "newLine": 1223,
+      "oldBodySHA256": "ff87eecd7935844e4a7b5266d3a4e5c455ac0a3bc94027f4e317b02faeb4b478",
+      "newBodySHA256": "ff87eecd7935844e4a7b5266d3a4e5c455ac0a3bc94027f4e317b02faeb4b478",
+      "oldDeclaration": "private final class ControllerOperationGate {",
+      "newDeclaration": "private final class ControllerOperationGate {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "ReadinessSessionStub",
+      "kind": "actor",
+      "oldLine": 1440,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newType": "ReadinessSessionStub",
+      "newLine": 7,
+      "oldBodySHA256": "29c0ccb4b9741726953d89f7a6ee8fc1bacf671264d45a473d7bf25c428c8406",
+      "newBodySHA256": "29c0ccb4b9741726953d89f7a6ee8fc1bacf671264d45a473d7bf25c428c8406",
+      "oldDeclaration": "actor ReadinessSessionStub: IOSPhoneControlSessionServing {",
+      "newDeclaration": "actor ReadinessSessionStub: IOSPhoneControlSessionServing {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "ReadinessHTTPFixture",
+      "kind": "class",
+      "oldLine": 1487,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newType": "ReadinessHTTPFixture",
+      "newLine": 54,
+      "oldBodySHA256": "d48a35f0ba593e969015f7260dd7470a14e0b9856d12e99ed9724ed5312db56c",
+      "newBodySHA256": "d48a35f0ba593e969015f7260dd7470a14e0b9856d12e99ed9724ed5312db56c",
+      "oldDeclaration": "final class ReadinessHTTPFixture: @unchecked Sendable {",
+      "newDeclaration": "final class ReadinessHTTPFixture: @unchecked Sendable {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "ReadinessHTTPProtocol",
+      "kind": "class",
+      "oldLine": 1523,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newType": "ReadinessHTTPProtocol",
+      "newLine": 90,
+      "oldBodySHA256": "884a8e9e764e493b57f41247859a55efe6bbe5d4a04c8bd3a7c460fc4839a9c3",
+      "newBodySHA256": "884a8e9e764e493b57f41247859a55efe6bbe5d4a04c8bd3a7c460fc4839a9c3",
+      "oldDeclaration": "private final class ReadinessHTTPProtocol: URLProtocol, @unchecked Sendable {",
+      "newDeclaration": "private final class ReadinessHTTPProtocol: URLProtocol, @unchecked Sendable {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "Registry",
+      "kind": "class",
+      "oldLine": 1524,
+      "newFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift",
+      "newType": "Registry",
+      "newLine": 91,
+      "oldBodySHA256": "db30c8c2e22bb28b9684ac4c6084d426b0f90ec08f1323b22a6a809b73a177ba",
+      "newBodySHA256": "db30c8c2e22bb28b9684ac4c6084d426b0f90ec08f1323b22a6a809b73a177ba",
+      "oldDeclaration": "private final class Registry: @unchecked Sendable {",
+      "newDeclaration": "private final class Registry: @unchecked Sendable {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "HandoffControllerFixture",
+      "kind": "class",
+      "oldLine": 1552,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newType": "HandoffControllerFixture",
+      "newLine": 1248,
+      "oldBodySHA256": "6912b0216a8db01ec78bb6d697136c11b0a13018137e6000aadff0b9c4a9fbfd",
+      "newBodySHA256": "6912b0216a8db01ec78bb6d697136c11b0a13018137e6000aadff0b9c4a9fbfd",
+      "oldDeclaration": "private final class HandoffControllerFixture {",
+      "newDeclaration": "private final class HandoffControllerFixture {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldType": "HandoffActivityRecorder",
+      "kind": "class",
+      "oldLine": 1574,
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newType": "HandoffActivityRecorder",
+      "newLine": 1270,
+      "oldBodySHA256": "e9f3bad1e1ab7f48ffbe5ffed1238a312c00c26bc89370ed8c6159322d3858d7",
+      "newBodySHA256": "e9f3bad1e1ab7f48ffbe5ffed1238a312c00c26bc89370ed8c6159322d3858d7",
+      "oldDeclaration": "private final class HandoffActivityRecorder {",
+      "newDeclaration": "private final class HandoffActivityRecorder {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldType": "Fixture",
+      "kind": "class",
+      "oldLine": 1105,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newType": "Fixture",
+      "newLine": 1105,
+      "oldBodySHA256": "a88744526286b062fb605e5b5704185a2c617683c5286dc787f200673238f714",
+      "newBodySHA256": "a88744526286b062fb605e5b5704185a2c617683c5286dc787f200673238f714",
+      "oldDeclaration": "private final class Fixture {",
+      "newDeclaration": "final class Fixture {"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldType": "GoalLoopFailureProtocol",
+      "kind": "class",
+      "oldLine": 1192,
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newType": "GoalLoopFailureProtocol",
+      "newLine": 1192,
+      "oldBodySHA256": "54084299b681ff80aa017b5fc1bb040b7258a4b444874fdf9f123aec6e994dc7",
+      "newBodySHA256": "54084299b681ff80aa017b5fc1bb040b7258a4b444874fdf9f123aec6e994dc7",
+      "oldDeclaration": "private final class GoalLoopFailureProtocol: URLProtocol, @unchecked Sendable {",
+      "newDeclaration": "private final class GoalLoopFailureProtocol: URLProtocol, @unchecked Sendable {"
+    }
+  ],
+  "accessChanges": [
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "makeClient",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldDeclaration": "private func makeClient(_ fixture: Fixture) throws -> PhoneRunnerClient {",
+      "newDeclaration": "func makeClient(_ fixture: Fixture) throws -> PhoneRunnerClient {",
+      "reason": "Three moved Runner extensions reuse the original client constructor; same XCTest class, test-target only.",
+      "oldDeclarationSHA256": "1e26961389936fd6bdb6bbc77d652a340f50f294f0eb2e2c5849366275743ae1",
+      "newDeclarationSHA256": "f213771375c9037065cb7a8d6681de5f0015b3bcd37f3411404e8e337167bbc5"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "assertUnsent",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldDeclaration": "private func assertUnsent(_ result: PhoneActionResult, kind: PhoneControlProblem.Kind,",
+      "newDeclaration": "func assertUnsent(_ result: PhoneActionResult, kind: PhoneControlProblem.Kind,",
+      "reason": "Moved Runner extensions reuse the original assertion helper; same XCTest class, test-target only.",
+      "oldDeclarationSHA256": "ececf09a4455cd8e49280bbde129dc82dd5e050c740bc4edd82daa209905bd1b",
+      "newDeclarationSHA256": "2e01a58d1d707147f5ff7879a580e36383279566242a505e1c338ae1b1fdfaad"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "pairingData",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldDeclaration": "private func pairingData() throws -> Data {",
+      "newDeclaration": "func pairingData() throws -> Data {",
+      "reason": "Moved Readiness extension calls the original class pairing builder.",
+      "oldDeclarationSHA256": "b21192e22eb191db66ec29ac60abf8797967d81f55bc2780e234cea0ca440cfa",
+      "newDeclarationSHA256": "810bf373c512d216a4c693c1e6a21f039208040319ced125b69853a005e19667"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "branchingRequest",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldDeclaration": "private func branchingRequest() -> IOSPhoneGoalRequest {",
+      "newDeclaration": "func branchingRequest() -> IOSPhoneGoalRequest {",
+      "reason": "Moved GoalLoop recovery extension calls the original branch request builder.",
+      "oldDeclarationSHA256": "406eb66509c738f8bc8e095156fb72f8f1c19e10ea54fb9ac55fdb2f5056577c",
+      "newDeclarationSHA256": "a3879e1e757abbbc50e04ff4b6a4228e112ebef440ad39db45e399a85e31db6e"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "observation",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldDeclaration": "private func observation(_ id: String, _ nodes: [PhoneObservationNode], pid: Int = 42, truncated: Bool = false,",
+      "newDeclaration": "func observation(_ id: String, _ nodes: [PhoneObservationNode], pid: Int = 42, truncated: Bool = false,",
+      "reason": "Moved GoalLoop recovery extension calls the original observation builder.",
+      "oldDeclarationSHA256": "80a5c09c30cee2466a925a037de187d4d060b6c9246849c5666495c1db390ef3",
+      "newDeclarationSHA256": "8237c054e9748cddbd8b0d3dc67548f7d8c8e0a511dff7f7913bcba76809ccd3"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "node",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldDeclaration": "private func node(_ ref: String?, id: String, type: String = \"XCUIElementTypeButton\", value: String? = nil,",
+      "newDeclaration": "func node(_ ref: String?, id: String, type: String = \"XCUIElementTypeButton\", value: String? = nil,",
+      "reason": "Moved GoalLoop recovery extension calls the original node builder.",
+      "oldDeclarationSHA256": "a1f16c22138958d4c9d4dcd5d6632ffca7a4f4f5f71061def9d1b9314f33965d",
+      "newDeclarationSHA256": "7a4976b2fca0b13fe40aedb1ee7b07a9c168c3fbe3bd7996dd95c62b67ce6669"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "Fixture",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "oldDeclaration": "private final class Fixture: @unchecked Sendable {",
+      "newDeclaration": "final class Fixture: @unchecked Sendable {",
+      "reason": "Moved Runner extensions need the single package fixture; moved GoalLoop extension needs its existing nested fixture.",
+      "oldDeclarationSHA256": "2520302e2b944e99fe0d84d630ad3998a41c8cc4a763663e60eb42332673b5a4",
+      "newDeclarationSHA256": "62892c625cb3ce3e241b0f9b36c8ff8c958def2b588bba5c7d88572159057e31"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "ReplyGate",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTestSupport.swift",
+      "oldDeclaration": "private final class ReplyGate: @unchecked Sendable {",
+      "newDeclaration": "final class ReplyGate: @unchecked Sendable {",
+      "reason": "Moved Runner extensions need the existing shared request gate.",
+      "oldDeclarationSHA256": "9e33f2a70d4c7f2d5e38e378c0097165e3d1ee9c02ef22b2e6b9daae50815685",
+      "newDeclarationSHA256": "c9ade8dd491fb944b41974337985cace37f6dec5d79e6ae338923d9407abdc4a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldSymbol": "MemoryPairingStore",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldDeclaration": "private actor MemoryPairingStore: IOSPhoneControlCredentialStoring {",
+      "newDeclaration": "actor MemoryPairingStore: IOSPhoneControlCredentialStoring {",
+      "reason": "Moved Readiness extension uses the existing credential actor.",
+      "oldDeclarationSHA256": "eeb23176982dc2bea5d44454d93e871d4d9b4697aee5b96c325fe6ac7d86ca35",
+      "newDeclarationSHA256": "6b97b3147eee2e0c3d2d370322191e63367cf66ae24cb7d0ee9156325dfa9d6f"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldSymbol": "Fixture",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldDeclaration": "private final class Fixture {",
+      "newDeclaration": "final class Fixture {",
+      "reason": "Moved Runner extensions need the single package fixture; moved GoalLoop extension needs its existing nested fixture.",
+      "oldDeclarationSHA256": "2a16de84c7138db85fa586119fb9393eafb8a1542b1b15403569201ca72e9737",
+      "newDeclarationSHA256": "3fa1a9073b7554ccf29a1ec438bf374d7315ca368131efe127d7b18d0f524130"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldSymbol": "PhoneRunnerClientTests.token",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldDeclaration": "private let token = \"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\"",
+      "newDeclaration": "let token = \"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\"",
+      "reason": "Ownership extension directly reads the pinned signing token; same XCTest class, test-target only.",
+      "oldDeclarationSHA256": "2665876461e4467bfb7e806092f232dca13cbc1e92dd5df86d4299ec6739ce43",
+      "newDeclarationSHA256": "e55ea11087fed77357d6c89c76e2c1ab46abb6f8172ee65685a150a068c97b3a"
+    }
+  ],
+  "membership": {
+    "package": "AmberPhoneControlTests default Tests/AmberPhoneControlTests source discovery",
+    "xcode": "iosAppTests path: iosAppTests recursive source membership",
+    "readinessVisualConsumers": [
+      "IOSPhoneControlSettingsVisualTests.swift:25-27",
+      "IOSPhoneControlSettingsVisualTests.swift:165-170"
+    ],
+    "readinessSupportFile": "iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift"
+  },
+  "verification": {
+    "testMethodBodySHA256AllEqual": true,
+    "helperFunctionBodySHA256AllEqual": true,
+    "supportTypeBodySHA256AllEqual": true,
+    "allFilesAtMost1500Lines": true,
+    "parse": "swiftc -frontend -parse passed for all 10 output Swift files",
+    "diffCheck": "tracked git diff --check and seven untracked no-index diff --check passed",
+    "buildAndTests": "Root-owned; not run by worker",
+    "membershipStatic": "SwiftPM default Tests/AmberPhoneControlTests and Xcode iosAppTests directory scan; no manifest/YAML edits; Root owns actual compile/test discovery"
+  },
+  "testCaseContainers": [
+    {
+      "class": "PhoneRunnerClientTests",
+      "oldMethods": 104,
+      "newMethods": 104,
+      "newExtensions": [
+        "PhoneRunnerClientOwnershipTests.swift",
+        "PhoneRunnerClientObservationTests.swift",
+        "PhoneRunnerClientVisualActionTests.swift"
+      ]
+    },
+    {
+      "class": "RunnerPhaseTimingTests",
+      "oldMethods": 1,
+      "newMethods": 1,
+      "newExtensions": []
+    },
+    {
+      "class": "IOSPhoneControlControllerTests",
+      "oldMethods": 46,
+      "newMethods": 46,
+      "newExtensions": [
+        "IOSPhoneControlReadinessTests.swift"
+      ]
+    },
+    {
+      "class": "IOSPhoneGoalLoopTests",
+      "oldMethods": 77,
+      "newMethods": 77,
+      "newExtensions": [
+        "IOSPhoneGoalLoopRecoveryTests.swift"
+      ]
+    }
+  ],
+  "fixtureRegistryOwnership": {
+    "package": "one FixtureProtocol.Registry in PhoneRunnerClientTestSupport.swift",
+    "xcode": "one ReadinessHTTPProtocol.Registry in PhoneControlReadinessTestSupport.swift",
+    "goalLoop": "one IOSPhoneGoalLoopTests.Fixture in IOSPhoneGoalLoopTests.swift"
+  },
+  "maintainabilityReview": "One bounded pass: each moved test group has its existing XCTestCase owner; Runner HTTP reply/port registry and Readiness HTTP registry each have one fixture owner; SettingsVisual continues to consume same Readiness test-only types; only 11 required private access declarations were changed. No additional abstraction, test inheritance, duplicated fixture, or production API change was introduced."
+}

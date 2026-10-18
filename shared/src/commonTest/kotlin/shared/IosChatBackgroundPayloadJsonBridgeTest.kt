@@ -245,4 +245,95 @@ class IosChatBackgroundPayloadJsonBridgeTest {
         assertTrue(decoded.generativeUiExpectFullHtmlDeck)
         assertTrue(decoded.generativeUiFallbackAttempted)
     }
+
+    @Test
+    fun encodePersistsRunDisplayBaselineSeparatelyFromDisplayMessages() {
+        val provider = ProviderSetting.OpenAI(
+            id = Uuid.random(),
+            models = listOf(Model(modelId = "gpt-test", displayName = "GPT Test")),
+        )
+        val runDisplayBaseline = listOf(
+            UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Original request"))),
+        )
+        val displayMessages = runDisplayBaseline + UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Text("Checkpoint response")),
+        )
+
+        val decoded = IosChatBackgroundPayloadJsonBridge.decode(
+            IosChatBackgroundPayloadJsonBridge.encode(
+                runId = "run-original-baseline",
+                startedAt = 6L,
+                inputDigest = "digest",
+                conversationId = Uuid.random(),
+                providerSetting = provider,
+                params = TextGenerationParams(model = provider.models.first()),
+                uploadMessages = emptyList(),
+                displayMessages = displayMessages,
+                runDisplayBaseline = runDisplayBaseline,
+            )
+        )
+
+        assertEquals(runDisplayBaseline, decoded.runDisplayBaseline)
+        assertEquals(displayMessages, decoded.displayMessages)
+    }
+
+    @Test
+    fun encodePreservesExplicitEmptyRunDisplayBaseline() {
+        val provider = ProviderSetting.OpenAI(
+            id = Uuid.random(),
+            models = listOf(Model(modelId = "gpt-test", displayName = "GPT Test")),
+        )
+        val displayMessages = listOf(
+            UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Text("Checkpoint response"))),
+        )
+
+        val decoded = IosChatBackgroundPayloadJsonBridge.decode(
+            IosChatBackgroundPayloadJsonBridge.encode(
+                runId = "run-empty-baseline",
+                startedAt = 7L,
+                inputDigest = "digest",
+                conversationId = Uuid.random(),
+                providerSetting = provider,
+                params = TextGenerationParams(model = provider.models.first()),
+                uploadMessages = emptyList(),
+                displayMessages = displayMessages,
+                runDisplayBaseline = emptyList(),
+            )
+        )
+
+        assertEquals(emptyList<UIMessage>(), decoded.runDisplayBaseline)
+        assertEquals(displayMessages, decoded.displayMessages)
+    }
+
+    @Test
+    fun decodePayloadWithoutRunDisplayBaselineDefaultsToNull() {
+        val provider = ProviderSetting.OpenAI(
+            id = Uuid.random(),
+            models = listOf(Model(modelId = "gpt-test", displayName = "GPT Test")),
+        )
+        val displayMessages = listOf(
+            UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Original request"))),
+        )
+        val jsonWithKey = IosChatBackgroundPayloadJsonBridge.encode(
+            runId = "run-legacy-baseline",
+            startedAt = 8L,
+            inputDigest = "digest",
+            conversationId = Uuid.random(),
+            providerSetting = provider,
+            params = TextGenerationParams(model = provider.models.first()),
+            uploadMessages = emptyList(),
+            displayMessages = displayMessages,
+            runDisplayBaseline = displayMessages,
+        )
+        val encoded = Json.parseToJsonElement(jsonWithKey).jsonObject
+        assertTrue("runDisplayBaseline" in encoded)
+        val legacyPayload = JsonObject(encoded - "runDisplayBaseline")
+        assertFalse("runDisplayBaseline" in legacyPayload)
+
+        val decoded = IosChatBackgroundPayloadJsonBridge.decode(legacyPayload.toString())
+
+        assertEquals(null, decoded.runDisplayBaseline)
+        assertEquals(displayMessages, decoded.displayMessages)
+    }
 }

@@ -1,0 +1,49 @@
+{
+  "owner": "phase4_layout_tests",
+  "source": "iosApp/iosAppTests/NovelModularizationLayoutTests.swift",
+  "status": "passed; three render probes and independent20PNG review",
+  "configurations": [
+    "320pt + DynamicType.large",
+    "393pt + DynamicType.large",
+    "320pt + DynamicType.accessibility3",
+    "393pt + DynamicType.accessibility3"
+  ],
+  "cases": [
+    {
+      "test": "testLongCandidateRendersWithinNarrowScrollViewport",
+      "production_entry": "NovelSessionBubble via NovelSessionView row",
+      "fixture": "completed prose candidate with long CJK Markdown and collectProse action; no provider or repository",
+      "assertions": "real vertical UIScrollView content extends beyond viewport and reaches a nonzero bottom offset; scroll viewport stays within window horizontally; contentSize.width <= bounds.width + 1",
+      "png_attachments": "novel-candidate-{320,393}-{normal,ax3} (bottom; 4 PNG)"
+    },
+    {
+      "test": "testAskUserCardRendersAtTopAndBottomOfViewport",
+      "production_entry": "NovelSessionBubble -> NovelAskUserCard",
+      "fixture": "unanswered NovelAskUserPrompt with long Chinese question and two long options; no provider or repository",
+      "assertions": "real scroll viewport stays within window horizontally and contentSize.width <= bounds.width + 1 at top and bottom",
+      "png_attachments": "novel-ask-user-{top,bottom}-{320,393}-{normal,ax3} (8 PNG; positions may coincide when content fits)"
+    },
+    {
+      "test": "testCollectionSheetRendersEditablePreviewWithinViewport",
+      "production_entry": "NovelCollectCandidateSheet",
+      "fixture": "four long NovelParagraphRecord values, no existing chapter, inert onCollect closure",
+      "assertions": "select first visible outer Form UIScrollView by host view-tree order, not largest estimated contentSize; move down 0.75 viewport per step until lazy UITextView mounts and intersects viewport (24-step bound), then repeatedly move to recomputed actual max offset until two stable-bottom passes (24-step bound); require chapter title UITextField to mount and intersect bottom viewport; both fields and scroll content fit horizontally",
+      "png_attachments": "novel-collect-sheet-{editor,bottom}-{320,393}-{normal,ax3} (8 PNG)"
+    }
+  ],
+  "evidence_output_when_run": "/tmp/amber-phase4-layout-tests/*.png and kept XCTAttachment images (20 expected)",
+  "visual_review_pending": "Independent reviewer must inspect all 20 PNGs for nonblack rendering, candidate action, Ask User question/options/confirmation, collection editor/toolbar, clipping and spacing.",
+  "evidence_boundary": "This unit host does not expose accessibility labels (Focused19: none for all three hosted components). These probes do not verify AX activation, onAction callbacks, 44pt physical hit area, or touch behavior. Existing behavior suites and actual Novel UI navigation provide separate evidence.",
+  "verification": [
+    "swiftc -frontend -parse passed; git diff --no-index --check had no whitespace diagnostics (exit 1 because the file is new)",
+    "r3 candidate and Ask User render probes passed; Collect normal PNG showed only chapter-position start at bottom and AX3 editor was not mounted before scroll",
+    "Collect lazy-scroll correction has not run; root owns the next focused run",
+    "Final outer Form/lazy editor/actual bottom traversal passed all four width/type configurations; finalCollect8 reviewed independently."
+  ],
+  "not_run": [
+    "Root owns xcodebuild, simulator rerun, and PNG visual review",
+    "physical device, keyboard/IME, and provider behavior are outside this layout fixture"
+  ],
+  "actual_result": "/tmp/amber-phase4-stream-red.xcresult:3/3 layout probes passed",
+  "independent_review": "docs/reviews/2026-10-18-swift-modularization/phase-4-ui-review.md: all20PNG+actual navigation reviewed"
+}

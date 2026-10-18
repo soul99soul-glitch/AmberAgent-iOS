@@ -100,7 +100,7 @@ final class ChatArtifactActionsTests: XCTestCase {
         )
 
         XCTAssertTrue(markdown.contains("- 第 3 轮：海报\n\n  ![海报](<https://example.test/a.png>)"))
-        XCTAssertTrue(markdown.contains("- 第 3 轮：生成图片"))
+        XCTAssertTrue(markdown.contains("- 第 3 轮：图片"))
         XCTAssertFalse(markdown.contains("data:image"))
         XCTAssertTrue(markdown.contains("```swift\nlet fence = \"```\"\nprint(fence)\n```"))
     }

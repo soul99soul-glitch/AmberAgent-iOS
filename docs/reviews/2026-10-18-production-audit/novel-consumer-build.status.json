@@ -1,0 +1,22 @@
+{
+  "exitCode": 0,
+  "elapsedSeconds": 147.75,
+  "log": "/tmp/amber-audit-20261018-current/novel-consumer-build.log",
+  "summary": {
+    "devicesAndConfigurations": [],
+    "environmentDescription": "Novel \u00b7 Built with macOS 27.2",
+    "expectedFailures": 0,
+    "failedTests": 0,
+    "finishTime": 1792289405.063,
+    "passedTests": 0,
+    "result": "unknown",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1792289269.713,
+    "statistics": [],
+    "testFailures": [],
+    "title": "Test - Novel",
+    "topInsights": [],
+    "totalTestCount": 0
+  }
+}

@@ -1,0 +1,558 @@
+{
+  "phase": "Phase4 source-string guard corrections",
+  "preEditSnapshot": "/tmp/amber-phase4-guard-pre",
+  "baselineNote": "Pre-edit snapshot preserves concurrent test-worker changes; compare original full source against /tmp/amber-phase4-source-baseline/files separately.",
+  "sessionTestMap": "/tmp/amber-phase4-session-test-identifiers.json",
+  "guardCount": 27,
+  "changedCount": 22,
+  "bodyHashExceptions": [
+    "iosAppTests/IOSNovelCreationWiringTests/testCharacterIdentityQuestionHasIgnoreAndCustomAnswerPaths",
+    "iosAppTests/IOSNovelCreationWiringTests/testNovelDiscussionToolLoopAllowsSixteenSteps",
+    "iosAppTests/IOSNovelCreationWiringTests/testWorkspaceExitDetachesConsumerWhileAppOwnsBackgroundLease",
+    "iosAppTests/IOSNovelCreationWiringTests/testNovelGenerationOwnsTheSystemLeaseFromRuntimeStartToTerminal",
+    "iosAppTests/IOSNovelCreationWiringTests/testWholeChapterCollectionPrefillsTheGeneratedTitleWithoutASecondRequest",
+    "iosAppTests/IOSNovelCreationWiringTests/testShortNovelSheetsUseContentFittedSizingWithoutFixedHeightCompensation",
+    "iosAppTests/IOSNovelCreationWiringTests/testWritingContextKeepsThisGenerationDraftWhenOpeningPreferenceEditors",
+    "iosAppTests/IOSNovelCreationWiringTests/testProposalAcceptanceEditsTheExactContentWrittenAtomically",
+    "iosAppTests/IOSNovelCreationWiringTests/testSessionAssistantBodyAlwaysUsesMarkdownViewNotPlainText",
+    "iosAppTests/IOSNovelCreationWiringTests/testNovelDraftActionsCommitMarkedTextBeforeReadingState",
+    "iosAppTests/IOSNovelCreationWiringTests/testHistoricalCharacterIdentityFlowsThroughSessionAndCharacterSurfaces",
+    "iosAppTests/IOSNovelCreationWiringTests/testNovelContextPanelUsesLatestInjectionReceiptDetails",
+    "iosAppTests/IOSNovelCreationWiringTests/testDiscussionArchiveHasOnlyManualAndPostWholeChapterEntryPoints",
+    "iosAppTests/IOSNovelCreationWiringTests/testSessionSheetsPreserveUserDraftsAndSeparateArchiveRetryPaths",
+    "iosAppTests/IOSNovelCreationWiringTests/testProjectTitleOpensWritingAndHierarchicalContextSheet",
+    "iosAppTests/IOSNovelCreationWiringTests/testStateSyncRecoveryAndStopAreReachableOutsideTheComposer",
+    "iosAppTests/IOSNovelCreationWiringTests/testStateSyncActivityIsProjectScopedAndScheduledSyncKeepsBackgroundLease",
+    "iosAppTests/IOSNovelCreationWiringTests/testContinuityAuditEntryIsReachableFromTheLiveCompendiumView",
+    "iosAppTests/IOSSettingsWiringTests/testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground",
+    "iosAppTests/NovelSessionFollowPolicyTests/testSessionViewPresentsAlreadyLoadedRowsFromAwaitingInitialState",
+    "iosAppTests/NovelSessionFollowPolicyTests/testSessionViewFeedsMeasuredTerminalContentGrowthIntoFollowPolicy",
+    "iosAppTests/NovelSessionRowActionTests/testPolishRetryEntrypointsShareOwnedTaskWithVisibleStopFeedback"
+  ],
+  "methods": [
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testCharacterIdentityQuestionHasIgnoreAndCustomAnswerPaths",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testCharacterIdentityQuestionHasIgnoreAndCustomAnswerPaths",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionIdentityCardsView.swift"
+      ],
+      "oldBodySHA256": "a1e8b2c47a186fd67ccfda8d4ab5b75cfbbdf66efadfe3094f5c3018da9c922a",
+      "newBodySHA256": "ca56ddcf7fd936f4933bee6d05c715058c13a8ce400396860e018f298d46afb6",
+      "actualOwnerAndReason": "Session parent delegates identity cards; card child owns ignore, clarify, start and IME commit."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelDiscussionToolLoopAllowsSixteenSteps",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelDiscussionToolLoopAllowsSixteenSteps",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelLiveModelAdapter.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelDiscussionTransport.swift"
+      ],
+      "oldBodySHA256": "b01debc6b60ee8bc4b2ae508260e70d19f5147b3b01d118fbe6545229f6ea4f3",
+      "newBodySHA256": "ed6a659f2101238e5cb759a542732e8a1065086130fc19818c4063415d102982",
+      "actualOwnerAndReason": "Discussion transport now owns tool-loop round limit."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testWorkspaceExitDetachesConsumerWhileAppOwnsBackgroundLease",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testWorkspaceExitDetachesConsumerWhileAppOwnsBackgroundLease",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/AppShell.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/AppShell.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift",
+        "iosApp/NovelCreation/NovelRunBridgeViewModel.swift"
+      ],
+      "oldBodySHA256": "af89ae78c1d59cf10d7cdef2115ee2d9b7d0b14bf30599ebb9c7dbf0d79db213",
+      "newBodySHA256": "cb62d7e6f6c5195dc6a6e69e1135b7d7b1daeae2dffb2b2bf9f82327c44b13ac",
+      "actualOwnerAndReason": "Run bridge now owns foreground check and detached-run resumption; view model still reloads workspace."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelGenerationOwnsTheSystemLeaseFromRuntimeStartToTerminal",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelGenerationOwnsTheSystemLeaseFromRuntimeStartToTerminal",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelCreationViewModel.swift",
+        "iosApp/NovelCreation/NovelGenerationLifecycle.swift",
+        "iosApp/NovelCreation/NovelWorkspaceLifecycleCoordinator.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelRunBridgeViewModel.swift",
+        "iosApp/NovelCreation/NovelGenerationStream.swift",
+        "iosApp/NovelCreation/NovelWorkspaceLifecycleCoordinator.swift"
+      ],
+      "oldBodySHA256": "3328eceac72eea10ebb5c4e2ad7661f35de7081a450af46cd292cb1e8927ac1d",
+      "newBodySHA256": "ce02469680c4a9a8d8b2968b3d061102ea7e33e59e49d5bb5693c6c6fd943492",
+      "actualOwnerAndReason": "Run bridge starts lease before suspension; generation stream ends lease after replay terminal."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testWholeChapterCollectionPrefillsTheGeneratedTitleWithoutASecondRequest",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testWholeChapterCollectionPrefillsTheGeneratedTitleWithoutASecondRequest",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionSheets.swift",
+        "iosApp/NovelCreation/NovelPromptCatalog.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelCollectCandidateSheet.swift",
+        "iosApp/NovelCreation/NovelPromptCatalog.swift"
+      ],
+      "oldBodySHA256": "1ba00a3dd8b96c57c1bb76db565a96bb4c4ac1d451d260ea27fa44a8c7f7022e",
+      "newBodySHA256": "ddc5d0f0f5a13b1b956b0f080b82a538692ab81620d4214010987162d69c0655",
+      "actualOwnerAndReason": "Collect candidate sheet now owns chapter title presentation."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testShortNovelSheetsUseContentFittedSizingWithoutFixedHeightCompensation",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testShortNovelSheetsUseContentFittedSizingWithoutFixedHeightCompensation",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionSheets.swift",
+        "iosApp/NovelCreation/NovelProjectListView.swift",
+        "iosApp/NovelCreation/NovelBranchesView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelDiscussionArchiveSheets.swift",
+        "iosApp/NovelCreation/NovelProjectListView.swift",
+        "iosApp/NovelCreation/NovelBranchesView.swift"
+      ],
+      "oldBodySHA256": "319af2ab7d10f19eb65a94c622112170eacbffde291959688e35887f308703c7",
+      "newBodySHA256": "e701fcdd860a73f8255c6668efdebc64482c4401c5fb5ffd24c3fc50f3c24887",
+      "actualOwnerAndReason": "Discussion archive sheet moved to its own file."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testWritingContextKeepsThisGenerationDraftWhenOpeningPreferenceEditors",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testWritingContextKeepsThisGenerationDraftWhenOpeningPreferenceEditors",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionSheets.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionSheets.swift"
+      ],
+      "oldBodySHA256": "29a53051b2b250859c967ee5542a532ebbac70ef12782d12fd27ce8fc908023c",
+      "newBodySHA256": "7a3d77d33c2bcd3af8a9fe7971ffa631bbf7bf062e9c8ac39435fd2c74b44bb4",
+      "actualOwnerAndReason": "Writing context sheet is last declaration in its new owner file; obsolete next-sheet delimiter removed."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testLongFormMaterialAndBranchEditorsProtectUnsavedChanges",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testLongFormMaterialAndBranchEditorsProtectUnsavedChanges",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "unchanged_valid",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelMaterialsView.swift",
+        "iosApp/NovelCreation/NovelBranchesView.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelMaterialsView.swift",
+        "iosApp/NovelCreation/NovelBranchesView.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift"
+      ],
+      "oldBodySHA256": "a902526afc5eeaac710a5324641d4f01442c3bcd477431332a4e787e2f36c01f",
+      "newBodySHA256": "a902526afc5eeaac710a5324641d4f01442c3bcd477431332a4e787e2f36c01f",
+      "actualOwnerAndReason": "Unchanged: source guard still targets its current owner."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testProposalAcceptanceEditsTheExactContentWrittenAtomically",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testProposalAcceptanceEditsTheExactContentWrittenAtomically",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelMaterialsView.swift",
+        "iosApp/NovelCreation/NovelActions.swift",
+        "iosApp/NovelCreation/NovelProjectConfiguration.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelMaterialsView.swift",
+        "iosApp/NovelCreation/NovelCommands.swift",
+        "iosApp/NovelCreation/NovelProjectConfiguration.swift"
+      ],
+      "oldBodySHA256": "13d241d4ed5b69f75a3b1e86aab3b45ccc035e974b718a96d6d93db1baad1832",
+      "newBodySHA256": "612ce1644b88b8a4d8a31bebd2e4dc85830dd645bb729bb4b73147314118294f",
+      "actualOwnerAndReason": "Resolution title/content fields now live in NovelCommands; check resolution before command use."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testSessionAssistantBodyAlwaysUsesMarkdownViewNotPlainText",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testSessionAssistantBodyAlwaysUsesMarkdownViewNotPlainText",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionBubble.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionBubble.swift",
+        "iosApp/NovelCreation/NovelSessionLongTextView.swift"
+      ],
+      "oldBodySHA256": "6e1f7b03f473bc969dbed44b81dfcbcaa4ad18a4f0855e4977555eb0af2ebe16",
+      "newBodySHA256": "2038e2845a14635b8cb1c95c300cb331a78099775eb219d25bd0bbb8f5e1d796",
+      "actualOwnerAndReason": "Bubble invokes windowed markdown component; long text file owns paging and markdown rendering."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelDraftActionsCommitMarkedTextBeforeReadingState",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelDraftActionsCommitMarkedTextBeforeReadingState",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelPresentationSupport.swift",
+        "iosApp/NovelCreation/NovelProjectListView.swift",
+        "iosApp/NovelCreation/NovelCompendiumView.swift",
+        "iosApp/NovelCreation/NovelMaterialsView.swift",
+        "iosApp/NovelCreation/NovelBranchesView.swift",
+        "iosApp/NovelCreation/NovelChapterReaderView.swift",
+        "iosApp/NovelCreation/NovelSessionSheets.swift",
+        "iosApp/NovelCreation/NovelSessionBubble.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelPresentationSupport.swift",
+        "iosApp/NovelCreation/NovelProjectListView.swift",
+        "iosApp/NovelCreation/NovelCompendiumView.swift",
+        "iosApp/NovelCreation/NovelMaterialsView.swift",
+        "iosApp/NovelCreation/NovelBranchesView.swift",
+        "iosApp/NovelCreation/NovelChapterReaderView.swift",
+        "iosApp/NovelCreation/NovelSessionSheets.swift",
+        "iosApp/NovelCreation/NovelSessionBubble.swift",
+        "iosApp/NovelCreation/NovelSessionApprovalCards.swift",
+        "iosApp/NovelCreation/NovelSessionIdentityCardsView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "oldBodySHA256": "6e1f867001d85b813b97e0d8c9e191c7de30d9e466ec3c707956c7d7bc7a19dc",
+      "newBodySHA256": "9972d5b85510ec27fe89df19aee6518e4f1b7985af45e61718f42bdb993709a5",
+      "actualOwnerAndReason": "Approval and identity cards now own IME commit; parent bubble and session invoke those children. The save-bound form loop checks approvalCards for the ask-user bank and fieldBank pass; bubble remains checked only as the caller.",
+      "reviewFollowup": "Root corrected the save-bound loop from bubble to approvalCards after independent review; earlier literal audit did not cover array-driven loop assertions."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testHistoricalCharacterIdentityFlowsThroughSessionAndCharacterSurfaces",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testHistoricalCharacterIdentityFlowsThroughSessionAndCharacterSurfaces",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelCharacterPagesView.swift",
+        "iosApp/NovelCreation/NovelSessionViewModel.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelCharacterPagesView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionIdentityCardsView.swift",
+        "iosApp/NovelCreation/Session/NovelSessionProjectionStore.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift"
+      ],
+      "oldBodySHA256": "029fb6a35f4b327d2ef543d788d6ef6e6ec8edfc82d9f3ee24f90d98d98d9a0b",
+      "newBodySHA256": "2176669590d01ee699081ebbae8e2da1f0a41cfe7f0a0ecf726374a827c2c3b1",
+      "actualOwnerAndReason": "Session invokes identity card; projection store resolves effective aliases; creation view model remains alias owner."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelComposerDraftCommitsMarkedTextBeforeSheetAndPersistence",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelComposerDraftCommitsMarkedTextBeforeSheetAndPersistence",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "unchanged_valid",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "oldBodySHA256": "ae4825435c7f228a58b39d39eb1cb679c93e001de26a3155977ef2fb6af5fd96",
+      "newBodySHA256": "ae4825435c7f228a58b39d39eb1cb679c93e001de26a3155977ef2fb6af5fd96",
+      "actualOwnerAndReason": "Unchanged: composer guard still targets its current owner."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelContextPanelUsesLatestInjectionReceiptDetails",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testNovelContextPanelUsesLatestInjectionReceiptDetails",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/ComposerDockComponents.swift",
+        "iosApp/NovelCreation/NovelInjectionPlanner.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/ComposerDockComponents.swift",
+        "iosApp/NovelCreation/NovelInjectionModels.swift"
+      ],
+      "oldBodySHA256": "2bc6e548266f0e68a78f5f7d5c4697129eec9ec9a2d683b3aad5c6800296d45f",
+      "newBodySHA256": "a6bb09c554cad59270902a2d18fd3fbe050f55a1af481f9bd76d86c836708bf5",
+      "actualOwnerAndReason": "Injection receipt fields now live in NovelInjectionModels."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testDiscussionArchiveHasOnlyManualAndPostWholeChapterEntryPoints",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testDiscussionArchiveHasOnlyManualAndPostWholeChapterEntryPoints",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionComposerView.swift",
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift"
+      ],
+      "oldBodySHA256": "6d56593259f544d7b9659cd4ee0eb5101b8e428b1fa83db15661ce0e62f01e95",
+      "newBodySHA256": "385981f65e0610ae7e1d664d053e88273cadfceba5930ec82a7f7fed022ca1bb",
+      "actualOwnerAndReason": "Session invokes composer dock; composer owns archive button and scoped availability."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testSessionSheetsPreserveUserDraftsAndSeparateArchiveRetryPaths",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testSessionSheetsPreserveUserDraftsAndSeparateArchiveRetryPaths",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionSheets.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelDiscussionArchiveSheets.swift",
+        "iosApp/NovelCreation/NovelCollectCandidateSheet.swift",
+        "iosApp/NovelCreation/NovelSessionSheets.swift",
+        "iosApp/NovelCreation/NovelWritingInjectionContextViews.swift"
+      ],
+      "oldBodySHA256": "84a2038864077b6a515151b91a9c4aac236711f520b38b706974d97d38519c79",
+      "newBodySHA256": "2516effca3d6ded54c88034ebc8639e2633ec45afeb00c7e456bc996ce02b890",
+      "actualOwnerAndReason": "Archive, collect and writing context are separate sheet owners; context views own revision/branch snapshot."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testProjectTitleOpensWritingAndHierarchicalContextSheet",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testProjectTitleOpensWritingAndHierarchicalContextSheet",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelSessionSheets.swift",
+        "iosApp/NovelCreation/NovelCompendiumView.swift",
+        "iosApp/AppShell.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelSessionSheets.swift",
+        "iosApp/NovelCreation/NovelWritingInjectionContextViews.swift",
+        "iosApp/NovelCreation/NovelGhostwriteProgressBoard.swift",
+        "iosApp/NovelCreation/NovelCompendiumView.swift",
+        "iosApp/AppShell.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "oldBodySHA256": "48a54989014ab91338e60d26ce0479bf35b5694d6cc3498b0e6b4d816e946f9f",
+      "newBodySHA256": "24569beb18cb1d99a8a93187935f5464dd3ab8debef79dffaad8ff2a4d6213f5",
+      "actualOwnerAndReason": "Parent sheet invokes context and ghostwrite children; those children own category navigation and board text."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testStateSyncRecoveryAndStopAreReachableOutsideTheComposer",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testStateSyncRecoveryAndStopAreReachableOutsideTheComposer",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelChapterReaderView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelChapterReaderView.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionChrome.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift",
+        "iosApp/NovelCreation/NovelProjectActionViewModel.swift"
+      ],
+      "oldBodySHA256": "a10271179c97c45e62a24d86f6254ac20b01923d5a6bbb6ae25920b5867a134d",
+      "newBodySHA256": "15897315c8e0d3f75d114a4c0e62d189e7c9bd964733de6280b0e0766794fc96",
+      "actualOwnerAndReason": "Session invokes chrome; chrome owns banner; project action view model owns chapter delete."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testStateSyncActivityIsProjectScopedAndScheduledSyncKeepsBackgroundLease",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testStateSyncActivityIsProjectScopedAndScheduledSyncKeepsBackgroundLease",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelCreationViewModel.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelCreationViewModel.swift",
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionChrome.swift"
+      ],
+      "oldBodySHA256": "b523a8149dc38e7d0f106aeb32afd2b4b81e75b4ff2ea833ae9ea3c0ad34145d",
+      "newBodySHA256": "58bd00b817c702d1727668eb28cec6f7ca9c449b7eade2aac5ba04de268b4f8e",
+      "actualOwnerAndReason": "Session invokes chrome; chrome now owns scoped activity while view model retains background probe."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testContinuityAuditEntryIsReachableFromTheLiveCompendiumView",
+      "newIdentifier": "iosAppTests/IOSNovelCreationWiringTests/testContinuityAuditEntryIsReachableFromTheLiveCompendiumView",
+      "testFile": "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelProjectListView.swift",
+        "iosApp/NovelCreation/NovelCompendiumView.swift",
+        "iosApp/NovelCreation/NovelContinuityAuditView.swift",
+        "iosApp/NovelCreation/NovelCreationViewModel.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelProjectWorkspaceView.swift",
+        "iosApp/NovelCreation/NovelProjectListView.swift",
+        "iosApp/NovelCreation/NovelCompendiumView.swift",
+        "iosApp/NovelCreation/NovelContinuityAuditView.swift",
+        "iosApp/NovelCreation/NovelContinuityViewModel.swift"
+      ],
+      "oldBodySHA256": "406e6f9e6f2d4ae90208e5b4c6ea5c69967435f87e76f5f5bc3470d99f54972c",
+      "newBodySHA256": "866d7792585550f1faaafde7b60ea6a9ca1daad0b8101e5de550f38a3c310238",
+      "actualOwnerAndReason": "Continuity view model now owns plan, audit, repair and task state."
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSSettingsWiringTests/testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground",
+      "newIdentifier": "iosAppTests/IOSSettingsWiringTests/testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground",
+      "testFile": "iosApp/iosAppTests/IOSSettingsWiringTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelCreationViewModel.swift",
+        "iosApp/NovelCreation/NovelSessionViewModel.swift",
+        "iosApp/NovelCreation/NovelGenerationLifecycle.swift",
+        "iosApp/CouncilChatRuntimeView.swift",
+        "iosApp/DeepReadCreateView.swift",
+        "iosApp/IOSChatBackgroundGenerationCoordinator.swift",
+        "iosApp/Chat/Generation/Kernel/ChatRunProgressPresentation.swift",
+        "iosApp/MiniAppRunnerView.swift",
+        "iosApp/BackgroundGenerationKeepAlive.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelRunBridgeViewModel.swift",
+        "iosApp/NovelCreation/NovelStateSyncViewModel.swift",
+        "iosApp/NovelCreation/NovelContinuityViewModel.swift",
+        "iosApp/NovelCreation/Session/NovelSessionGhostwriteRecovery.swift",
+        "iosApp/NovelCreation/NovelGenerationStream.swift",
+        "iosApp/CouncilChatRuntimeView.swift",
+        "iosApp/DeepReadCreateView.swift",
+        "iosApp/IOSChatBackgroundGenerationCoordinator.swift",
+        "iosApp/Chat/Generation/Kernel/ChatRunProgressPresentation.swift",
+        "iosApp/MiniAppRunnerView.swift",
+        "iosApp/BackgroundGenerationKeepAlive.swift"
+      ],
+      "oldBodySHA256": "456f66c9abb0649245d80b9542508c929af15fb33ef488873c0e1d55daa919b4",
+      "newBodySHA256": "aab34c183efc9dbc0043a16f2b8f67bf3b05dd3fcd68e79998eb91849cecb2f9",
+      "actualOwnerAndReason": "Novel lease entrypoints have distinct run bridge, state sync, continuity, session recovery and stream owners; non-Novel checks preserved from pre-edit snapshot."
+    },
+    {
+      "oldIdentifier": "iosAppTests/NovelSessionReplayTests/testTranscriptUsesEagerStacksForWindowedHistory",
+      "newIdentifier": "iosAppTests/NovelSessionTranscriptProjectionTests/testTranscriptUsesEagerStacksForWindowedHistory",
+      "testFile": "iosApp/iosAppTests/NovelSessionTranscriptProjectionTests.swift",
+      "changeKind": "unchanged_valid",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "oldBodySHA256": "3f965088e6509c6c7005d480efd2ceb675374c5979d533b974d1d0f43aa61ad7",
+      "newBodySHA256": "3f965088e6509c6c7005d480efd2ceb675374c5979d533b974d1d0f43aa61ad7",
+      "actualOwnerAndReason": "Unchanged: eager stack guard still targets its current owner."
+    },
+    {
+      "oldIdentifier": "iosAppTests/NovelSessionReplayTests/testSessionViewPresentsAlreadyLoadedRowsFromAwaitingInitialState",
+      "newIdentifier": "iosAppTests/NovelSessionFollowPolicyTests/testSessionViewPresentsAlreadyLoadedRowsFromAwaitingInitialState",
+      "testFile": "iosApp/iosAppTests/NovelSessionFollowPolicyTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionTranscriptComponents.swift"
+      ],
+      "oldBodySHA256": "f6fb267e01aebf2d3bef1a98809a0cf95dc594572d13fca6b52516c558b7bf81",
+      "newBodySHA256": "a79b1c8231009c808d244686e3b17dce47a23c4f8f82db654e7af2e6e0c5dd31",
+      "actualOwnerAndReason": "Parent passes initial-row callback to transcript scope; child owns task and callback invocation."
+    },
+    {
+      "oldIdentifier": "iosAppTests/NovelSessionReplayTests/testSessionViewFeedsMeasuredTerminalContentGrowthIntoFollowPolicy",
+      "newIdentifier": "iosAppTests/NovelSessionFollowPolicyTests/testSessionViewFeedsMeasuredTerminalContentGrowthIntoFollowPolicy",
+      "testFile": "iosApp/iosAppTests/NovelSessionFollowPolicyTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionChrome.swift"
+      ],
+      "oldBodySHA256": "4d0b496504498ddc9e39fd9e9c40dacb6564ba2d92ae13ae42d2e1211b24a2cb",
+      "newBodySHA256": "038070ba0cfc8807da0079e3cc51c5a476321df7edefdb65ea253e23216d99e8",
+      "actualOwnerAndReason": "Session retains measured follow policy and invokes chrome; chrome owns pending branch-operation indicator."
+    },
+    {
+      "oldIdentifier": "iosAppTests/NovelSessionReplayTests/testHistoryWindowAbsorbsAppendedRowsRegardlessOfBottomProximity",
+      "newIdentifier": "iosAppTests/NovelSessionFollowPolicyTests/testHistoryWindowAbsorbsAppendedRowsRegardlessOfBottomProximity",
+      "testFile": "iosApp/iosAppTests/NovelSessionFollowPolicyTests.swift",
+      "changeKind": "unchanged_valid",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "oldBodySHA256": "2731d593dd27e1963f11002c19ed33474d895aff9582fd1f9c36ce3130c8870c",
+      "newBodySHA256": "2731d593dd27e1963f11002c19ed33474d895aff9582fd1f9c36ce3130c8870c",
+      "actualOwnerAndReason": "Unchanged: history-window guard still targets its current owner."
+    },
+    {
+      "oldIdentifier": "iosAppTests/NovelSessionReplayTests/testExplicitBottomAnimationOwnsItsFullWindowAndReplaysOnePendingFollow",
+      "newIdentifier": "iosAppTests/NovelSessionFollowPolicyTests/testExplicitBottomAnimationOwnsItsFullWindowAndReplaysOnePendingFollow",
+      "testFile": "iosApp/iosAppTests/NovelSessionFollowPolicyTests.swift",
+      "changeKind": "unchanged_valid",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift"
+      ],
+      "oldBodySHA256": "02da4be792d370804399fc83c2653be21c6d0a577f503c32afe930335f11a55e",
+      "newBodySHA256": "02da4be792d370804399fc83c2653be21c6d0a577f503c32afe930335f11a55e",
+      "actualOwnerAndReason": "Unchanged: bottom animation guard still targets its current owner."
+    },
+    {
+      "oldIdentifier": "iosAppTests/NovelSessionReplayTests/testPolishRetryEntrypointsShareOwnedTaskWithVisibleStopFeedback",
+      "newIdentifier": "iosAppTests/NovelSessionRowActionTests/testPolishRetryEntrypointsShareOwnedTaskWithVisibleStopFeedback",
+      "testFile": "iosApp/iosAppTests/NovelSessionRowActionTests.swift",
+      "changeKind": "source_guard_adjustment",
+      "oldSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionBubble.swift",
+        "iosApp/NovelCreation/NovelSessionViewModel.swift"
+      ],
+      "newSourcePaths": [
+        "iosApp/NovelCreation/NovelSessionView.swift",
+        "iosApp/NovelCreation/NovelSessionBubble.swift",
+        "iosApp/NovelCreation/NovelSessionChrome.swift",
+        "iosApp/NovelCreation/NovelSessionActionButtons.swift",
+        "iosApp/NovelCreation/NovelSessionViewModel.swift"
+      ],
+      "oldBodySHA256": "11bf4235a6347772400d5f71e827558ce06dd704317f39a9f4883d29c0ac5e40",
+      "newBodySHA256": "37ccf4571ecd97880cbff27775beef8ceb8b7f5eacc0033186072570741a957d",
+      "actualOwnerAndReason": "Session invokes chrome and row actions; chrome owns retry banner, buttons own stop callback, view model remains sole task owner with ObservationIgnored storage."
+    }
+  ]
+}

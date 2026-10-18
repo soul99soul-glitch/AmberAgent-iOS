@@ -1,0 +1,10 @@
+{
+  "taskDevice": "B3C3F24B-7D39-4695-86BB-588EEC6469A4",
+  "taskDeviceName": "Amber Audit 20261018",
+  "taskDeviceDeleted": true,
+  "originalDevice": "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+  "originalDeviceStateBefore": "Booted",
+  "originalDeviceStateAfter": "Booted",
+  "otherDevicesTouched": false,
+  "physicalDevicesTouched": false
+}

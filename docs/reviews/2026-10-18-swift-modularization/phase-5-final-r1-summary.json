@@ -1,0 +1,67 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 993,
+      "skippedTests" : 2,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1792271748.052,
+  "passedTests" : 993,
+  "result" : "Passed",
+  "runtimeWarnings" : [
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Accessing Environment<DynamicTypeSize>'s value outside of being installed on a View. This will always read the default value and will not update."
+    },
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Thread running at User-interactive quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSCouncilRoomArchiveStoreTests.swift"
+    },
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Accessing State's value outside of being installed on a View. This will result in a constant Binding of the initial value and will not update.",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSSharedSettingsStoreProvidersWriteBackTests.swift"
+    },
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Accessing Environment<DynamicTypeSize>'s value outside of being installed on a View. This will always read the default value and will not update.",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/SwiftModularizationHostingFixture.swift"
+    }
+  ],
+  "skippedTests" : 2,
+  "startTime" : 1792271461.12,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "57% of duration",
+      "text" : "18 longest test runs with outlier durations exceeding 3.03s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 995
+}

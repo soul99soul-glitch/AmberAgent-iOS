@@ -1,0 +1,48 @@
+{
+  "mapped_tests": 327,
+  "byte_identical_method_bodies": 321,
+  "source_guard_adjustments": [
+    {
+      "identifier": "iosAppTests/ChatMessagePresentationTests/testGeneratedImageLoadingShowsOnePlaceholderPerRequestedImage",
+      "file": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "original_body_sha256": "65356585c77cf841cd3543173ca9c89ed69684c707600ecfdd720494c9c67606",
+      "integrated_body_sha256": "895acad4870a725a1c02856035bd9011e46f1ebb92442d58d071e66b4fe78517",
+      "reason": "Source ownership/path assertion follows the actual extracted implementation; behavior assertions and thresholds retained."
+    },
+    {
+      "identifier": "iosAppTests/ChatMarkdownRenderingTests/testStreamingMarkdownConfigCacheKeyTracksPaperAndAccent",
+      "file": "iosApp/iosAppTests/ChatMarkdownRenderingTests.swift",
+      "original_body_sha256": "ca508afaf0c45121fad142d122f9d10a08f2fbfb72f94a49ad191d4db0c4ce31",
+      "integrated_body_sha256": "e6c8b1fd9358fcdd69bca26a6d5736441344c00a4095a25994309d7d773523a6",
+      "reason": "Source ownership/path assertion follows the actual extracted implementation; behavior assertions and thresholds retained."
+    },
+    {
+      "identifier": "iosAppTests/ChatMarkdownRenderingTests/testStreamingTableBlockUsesVendorMarkdownRendererAndAsyncBlockController",
+      "file": "iosApp/iosAppTests/ChatMarkdownRenderingTests.swift",
+      "original_body_sha256": "c9c3a95cab059c2bc2e29c5452a3c19d6c46770a0a883a14e63ffb2f4c77219a",
+      "integrated_body_sha256": "524f2812ae571e276669629903fb7a45dcc1c26bc87bb9c09e3c1eb562cc4bd4",
+      "reason": "Source ownership/path assertion follows the actual extracted implementation; behavior assertions and thresholds retained."
+    },
+    {
+      "identifier": "iosAppTests/ChatMessagePresentationTests/testThinkingFallbackWaitsForVisibleAssistantText",
+      "file": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "original_body_sha256": "3304d0c7c42e4f7131bc63c94326e53d764432708637fa5455a1ae5adae974ad",
+      "integrated_body_sha256": "725dabdd64c0c929c07c1b23ce220862e1af9cfeda40710ffb52a6e08c9d3568",
+      "reason": "Source ownership/path assertion follows the actual extracted implementation; behavior assertions and thresholds retained."
+    },
+    {
+      "identifier": "iosAppTests/ChatMessagePresentationTests/testToolDetailSelectionKeepsStableIdentityAndResolvesCurrentMessageOutput",
+      "file": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "original_body_sha256": "8d3497c43251442afb34e406359839e410f60759ed96e5ab06f1d60d4dafcbb1",
+      "integrated_body_sha256": "5a24ecdf0ead5d0ffd5ee5513fdd70dd1ec0a41482a8d381509badc73d34b881",
+      "reason": "Source ownership/path assertion follows the actual extracted implementation; behavior assertions and thresholds retained."
+    },
+    {
+      "identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingAssistantTextDoesNotSnapshotOnEveryChunk",
+      "file": "iosApp/iosAppTests/IOSAgentToolEngineStreamingTests.swift",
+      "original_body_sha256": "2585bc8fcc5b0e01c893b1886e8ec808cdfac7941ea4ae9bfe3126a87a9d6a4c",
+      "integrated_body_sha256": "4f6e6f7f50847b92c2d23c5d0253338665e699296f7b3b6129ac6136a3bb6571",
+      "reason": "Source ownership/path assertion follows the actual extracted implementation; behavior assertions and thresholds retained."
+    }
+  ]
+}

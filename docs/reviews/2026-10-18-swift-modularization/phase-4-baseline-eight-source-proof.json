@@ -1,0 +1,660 @@
+{
+  "baseline_manifest_sha256": "192fba062af3459a6736b79e8756436eb3a5fceb53998fd5cfd3134c4d7e51df",
+  "baseline_project_sha256": "444d1453d41bee185519a9a390b7871d1eac6efb3b14622e2f00e454167b7059",
+  "counts": {
+    "external_read_only_links": 110,
+    "novel_app_files": 23,
+    "production": 78,
+    "tests": 46
+  },
+  "external_read_only_links": {
+    "iosApp/Resources/Fonts/jetbrains_mono.ttf": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/Resources/Fonts/jetbrains_mono.ttf",
+    "iosApp/Resources/Fonts/noto_serif_sc.otf": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/Resources/Fonts/noto_serif_sc.otf",
+    "iosApp/iosApp/AgentActivityModels.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentActivityModels.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderAdapter.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderAdapter.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderStep.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderStep.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolBatchExecutor.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolBatchExecutor.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolContracts.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolContracts.swift",
+    "iosApp/iosApp/AmberDesignSystem.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AmberDesignSystem.swift",
+    "iosApp/iosApp/AmberThemeDesign.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AmberThemeDesign.swift",
+    "iosApp/iosApp/AmberThemePack.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AmberThemePack.swift",
+    "iosApp/iosApp/AmberThemePackLibrary.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AmberThemePackLibrary.swift",
+    "iosApp/iosApp/BackgroundAudioKeepAlive.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/BackgroundAudioKeepAlive.swift",
+    "iosApp/iosApp/BackgroundGenerationKeepAlive.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/BackgroundGenerationKeepAlive.swift",
+    "iosApp/iosApp/BackgroundLocationKeepAlive.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/BackgroundLocationKeepAlive.swift",
+    "iosApp/iosApp/Chat/Media/ChatDataImageLoadState.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Media/ChatDataImageLoadState.swift",
+    "iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift",
+    "iosApp/iosApp/Chat/Media/ChatWidthDrivenAspectRatio.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Media/ChatWidthDrivenAspectRatio.swift",
+    "iosApp/iosApp/Chat/Rendering/Markdown/ChatAssistantMarkdownView.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Rendering/Markdown/ChatAssistantMarkdownView.swift",
+    "iosApp/iosApp/Chat/Rendering/Markdown/ChatStableStreamingMarkdown.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Rendering/Markdown/ChatStableStreamingMarkdown.swift",
+    "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlockParser.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlockParser.swift",
+    "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlocks.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlocks.swift",
+    "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownDetection.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownDetection.swift",
+    "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownTypography.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownTypography.swift",
+    "iosApp/iosApp/ChatArtifactPinAction.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatArtifactPinAction.swift",
+    "iosApp/iosApp/ChatContextSnapshot.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatContextSnapshot.swift",
+    "iosApp/iosApp/ChatIntelligentUISupport.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatIntelligentUISupport.swift",
+    "iosApp/iosApp/ChatKoboyoIcons.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatKoboyoIcons.swift",
+    "iosApp/iosApp/ChatMarkdownMedia.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatMarkdownMedia.swift",
+    "iosApp/iosApp/ChatMediaView.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatMediaView.swift",
+    "iosApp/iosApp/ChatMessageEnvironment.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatMessageEnvironment.swift",
+    "iosApp/iosApp/ChatMessageListSupport.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatMessageListSupport.swift",
+    "iosApp/iosApp/ChatMiscViews.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatMiscViews.swift",
+    "iosApp/iosApp/ChatPerfTrace.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatPerfTrace.swift",
+    "iosApp/iosApp/ChatProviderConfiguration.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatProviderConfiguration.swift",
+    "iosApp/iosApp/ChatStreamPrimitives.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatStreamPrimitives.swift",
+    "iosApp/iosApp/ChatStreamingTailPolicy.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatStreamingTailPolicy.swift",
+    "iosApp/iosApp/ChatTextWindow.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatTextWindow.swift",
+    "iosApp/iosApp/ChatToolCallParsing.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatToolCallParsing.swift",
+    "iosApp/iosApp/ChatTopBarLayout.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatTopBarLayout.swift",
+    "iosApp/iosApp/ChatVideoView.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatVideoView.swift",
+    "iosApp/iosApp/ComposerDockComponents.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ComposerDockComponents.swift",
+    "iosApp/iosApp/ComposerModelPicker.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ComposerModelPicker.swift",
+    "iosApp/iosApp/DeepReadCore/IOSDeepReadHTMLSecurity.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/DeepReadCore/IOSDeepReadHTMLSecurity.swift",
+    "iosApp/iosApp/DeepReadStructures.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/DeepReadStructures.swift",
+    "iosApp/iosApp/HomePhosphorIcons.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/HomePhosphorIcons.swift",
+    "iosApp/iosApp/IOSAgentRunLedgerTypes.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSAgentRunLedgerTypes.swift",
+    "iosApp/iosApp/IOSAgentToolEngine.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSAgentToolEngine.swift",
+    "iosApp/iosApp/IOSAntigravityOAuthClient.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSAntigravityOAuthClient.swift",
+    "iosApp/iosApp/IOSAppLanguage.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSAppLanguage.swift",
+    "iosApp/iosApp/IOSBackgroundLifecycleLog.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSBackgroundLifecycleLog.swift",
+    "iosApp/iosApp/IOSCodexOAuthClient.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSCodexOAuthClient.swift",
+    "iosApp/iosApp/IOSCodexProviderResolver.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSCodexProviderResolver.swift",
+    "iosApp/iosApp/IOSCredentialRedactor.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSCredentialRedactor.swift",
+    "iosApp/iosApp/IOSCredentialSideTable.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSCredentialSideTable.swift",
+    "iosApp/iosApp/IOSDeepReadEditorialRenderer.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSDeepReadEditorialRenderer.swift",
+    "iosApp/iosApp/IOSDeepReadStructuredRenderer.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSDeepReadStructuredRenderer.swift",
+    "iosApp/iosApp/IOSDocumentExportSupport.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSDocumentExportSupport.swift",
+    "iosApp/iosApp/IOSDurableRunStore.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSDurableRunStore.swift",
+    "iosApp/iosApp/IOSExecutionPreferenceKeys.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSExecutionPreferenceKeys.swift",
+    "iosApp/iosApp/IOSFreeSearchAggregator.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSFreeSearchAggregator.swift",
+    "iosApp/iosApp/IOSGeminiProvider.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGeminiProvider.swift",
+    "iosApp/iosApp/IOSGenerativeWidgetCard.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGenerativeWidgetCard.swift",
+    "iosApp/iosApp/IOSGenerativeWidgetParser.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGenerativeWidgetParser.swift",
+    "iosApp/iosApp/IOSGenerativeWidgetRenderer.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGenerativeWidgetRenderer.swift",
+    "iosApp/iosApp/IOSGenerativeWidgetSanitizer.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGenerativeWidgetSanitizer.swift",
+    "iosApp/iosApp/IOSGoogleWebViewSearch.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGoogleWebViewSearch.swift",
+    "iosApp/iosApp/IOSGrokOAuthClient.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGrokOAuthClient.swift",
+    "iosApp/iosApp/IOSGrokWebProvider.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSGrokWebProvider.swift",
+    "iosApp/iosApp/IOSIntelligentUICard.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUICard.swift",
+    "iosApp/iosApp/IOSIntelligentUIComponentView.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIComponentView.swift",
+    "iosApp/iosApp/IOSIntelligentUIComponents.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIComponents.swift",
+    "iosApp/iosApp/IOSIntelligentUIProtocol.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIProtocol.swift",
+    "iosApp/iosApp/IOSIntelligentUIStateStore.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIStateStore.swift",
+    "iosApp/iosApp/IOSIntelligentUIStreamingPreview.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIStreamingPreview.swift",
+    "iosApp/iosApp/IOSIntelligentUIStreamingPreviewView.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIStreamingPreviewView.swift",
+    "iosApp/iosApp/IOSIntelligentUIStudy.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIStudy.swift",
+    "iosApp/iosApp/IOSIntelligentUIStudyView.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSIntelligentUIStudyView.swift",
+    "iosApp/iosApp/IOSJevRunSummary.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSJevRunSummary.swift",
+    "iosApp/iosApp/IOSMemoryCitationStripper.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSMemoryCitationStripper.swift",
+    "iosApp/iosApp/IOSNativeGenerationMotion.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSNativeGenerationMotion.swift",
+    "iosApp/iosApp/IOSProviderConfigToolCatalog.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSProviderConfigToolCatalog.swift",
+    "iosApp/iosApp/IOSProviderRequestHeaders.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSProviderRequestHeaders.swift",
+    "iosApp/iosApp/IOSSearchExecutor.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSSearchExecutor.swift",
+    "iosApp/iosApp/IOSSearchToolDispatch.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSSearchToolDispatch.swift",
+    "iosApp/iosApp/IOSSettingsSnapshotSource.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSSettingsSnapshotSource.swift",
+    "iosApp/iosApp/IOSShareSupport.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSShareSupport.swift",
+    "iosApp/iosApp/IOSSharedExtensions.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSSharedExtensions.swift",
+    "iosApp/iosApp/IOSToolFailurePayload.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSToolFailurePayload.swift",
+    "iosApp/iosApp/IOSToolLoopGuard.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSToolLoopGuard.swift",
+    "iosApp/iosApp/IOSToolOutputLimits.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSToolOutputLimits.swift",
+    "iosApp/iosApp/IOSUIGenerationMotion.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSUIGenerationMotion.swift",
+    "iosApp/iosApp/IOSVerifiedHTTPScrapeTransport.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSVerifiedHTTPScrapeTransport.swift",
+    "iosApp/iosApp/IOSWebMountPublicDNS.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/IOSWebMountPublicDNS.swift",
+    "iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift",
+    "iosApp/iosApp/Localizable.xcstrings": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Localizable.xcstrings",
+    "iosApp/iosApp/MarkdownBridge.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/MarkdownBridge.swift",
+    "iosApp/iosApp/MarkdownView.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/MarkdownView.swift",
+    "iosApp/iosApp/NativeTimelineScrollCore.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/NativeTimelineScrollCore.swift",
+    "iosApp/iosApp/NativeTimelineScrollDriver.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/NativeTimelineScrollDriver.swift",
+    "iosApp/iosApp/PackedAstReader.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/PackedAstReader.swift",
+    "iosApp/iosApp/PhoneControl/IOSPhoneAutomationRequestPolicy.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/PhoneControl/IOSPhoneAutomationRequestPolicy.swift",
+    "iosApp/iosApp/PhoneControl/IOSPhoneControlToolCatalog.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/PhoneControl/IOSPhoneControlToolCatalog.swift",
+    "iosApp/iosApp/Search/IOSSearchHTTPTransport.swift": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Search/IOSSearchHTTPTransport.swift",
+    "iosApp/iosApp/generative-libs/amber-ui-generation.js": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/generative-libs/amber-ui-generation.js",
+    "iosApp/iosApp/generative-libs/transitions-ui-generation-LICENSE.txt": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/generative-libs/transitions-ui-generation-LICENSE.txt",
+    "iosApp/iosApp/generative-libs/ui-generation.css": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/generative-libs/ui-generation.css",
+    "iosApp/iosApp/generative-libs/ui-generation.js": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/generative-libs/ui-generation.js",
+    "iosApp/vendor/SwiftStreamingMarkdown": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/vendor/SwiftStreamingMarkdown",
+    "native/AmberNative.xcframework": "/Users/arquiel/Downloads/AI/amberagent-ios/native/AmberNative.xcframework",
+    "shared/build/bin": "/Users/arquiel/Downloads/AI/amberagent-ios/shared/build/bin"
+  },
+  "novel_app_files": {
+    "iosApp/NovelApp/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json": "ba9f7e575cd2b69d8f6c390b47fd5d00dc577dae72ebaaecec891612c8771f7b",
+    "iosApp/NovelApp/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024-dark.png": "08981a414caf3793448c4b895b3703dcb4dec2b7807a6e885bfae0d799094d65",
+    "iosApp/NovelApp/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024-tinted.png": "3410c9cfca152367cf82b2fb2bb106d18157e91ce5a554ac475688c4b3f1ac73",
+    "iosApp/NovelApp/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png": "f30b1498c1e3abf465971582f50ac1744e0db9d5d8056f7a11e1576a4ca04e71",
+    "iosApp/NovelApp/Resources/Assets.xcassets/Contents.json": "0fd49ba3c3585c709678e0046a821c3c60685ec7063720d30d3a3448be3a208b",
+    "iosApp/NovelApp/Resources/Assets.xcassets/SealGlyph.imageset/Contents.json": "9f3a2e75f5fbc4f375e35e719d0285f2c0a0074bbdfe766827e2a16e2130e360",
+    "iosApp/NovelApp/Resources/Assets.xcassets/SealGlyph.imageset/seal-glyph.png": "a5092f4a760bb06aebd096d3681de4c9032b5eb2fff654e11d8806d79a757dc8",
+    "iosApp/NovelApp/Resources/Info.plist": "78da011701d1c3e9a9378154c52adbfc4edc90066dc143d8001cc70230d11e98",
+    "iosApp/NovelApp/Resources/PrivacyInfo.xcprivacy": "7d2977b45666582f9e4ad144f189506567e0b9c068f14598239d08a695522dcf",
+    "iosApp/NovelApp/Sources/App/NovelApp.swift": "095c2cfec8e360f289a4c5f80213085c18c9e2821ae144816352c2a943074821",
+    "iosApp/NovelApp/Sources/App/NovelAppToolHost.swift": "05fe2063b1abca24a554a57bd1584facfcc2d4a28bb7dadbc46059b956dcd583",
+    "iosApp/NovelApp/Sources/Design/NovelAboutSection.swift": "ab5bbc5ce653f4834dee6439e8ba36f0515d2ebf1ae4c00767900731971a1662",
+    "iosApp/NovelApp/Sources/Design/NovelLaunchCurtain.swift": "b30698536e2a654b25841cb1da3d10ee5efb898303b37efae85fd341fb3a944a",
+    "iosApp/NovelApp/Sources/Settings/NovelAppConfiguration.swift": "5f54ed126e7f44621df477b75ec052557aedc4f6bc33ec76eec6382300bf92c9",
+    "iosApp/NovelApp/Sources/Settings/NovelAppSettingsStore.swift": "0d85a8a16d58adbf1960db740c656a5bbd014b819dc7b1c301b84b5efe9cdd9b",
+    "iosApp/NovelApp/Sources/Settings/NovelAppSettingsView.swift": "8f328e0cd488f15b30aed280a0ec8989470595f78a761fcfb0e67caed97b7725",
+    "iosApp/NovelApp/Sources/Settings/NovelAppearanceView.swift": "fa8e76d1ed4219aa9095f8fe350e9bd7b11ef462b9bb97f1cfc2fb945b190985",
+    "iosApp/NovelApp/Sources/Settings/NovelCredentialStorage.swift": "31daa09ca76bf24c00a154d956a832a8f74b47dc340e127b9aa76884d1a3b04d",
+    "iosApp/NovelApp/Sources/Support/IOSToolEffectClassMapping.swift": "80a4afd60f221cb67f8932482443367b70a509bba90d25f3a3b3c41a2914a2e6",
+    "iosApp/NovelApp/Tests/NovelAppSettingsStoreTests.swift": "b1ae91e2c654d8c979c5b76418e3b7285680fe29225f2ba9e2aef6d6a8a16db8",
+    "iosApp/NovelApp/Tests/NovelAppToolHostTests.swift": "0e55ce1a561704bd7eebf474c3b1a79d06dab6e177719d350d61c2a813639ede",
+    "iosApp/NovelApp/Tests/NovelDesignLogicTests.swift": "dbfe990ae26d6401b06a603869b2f480d3f43e539218ea94d782948dc8c28ca5",
+    "iosApp/NovelApp/Tests/NovelTestSettingsFactory.swift": "51e599685baa5aaf902ddb358bbb4d77b8e83e5c69229597235da9a27d27fd5c"
+  },
+  "production": {
+    "iosApp/iosApp/NovelCreation/IOSNovelProjectToolExecutor.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "fd9465f385ed65d7622fdf6ffea305256dcc76215640c0406835b065bb64064d"
+    },
+    "iosApp/iosApp/NovelCreation/IOSNovelWorkspaceTools.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "6897c5eb88c19b59c5bb0eb90ce1dfb3ed7a8baebd5fb06575d5478f268e54b5"
+    },
+    "iosApp/iosApp/NovelCreation/NovelActions.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "be37e483f6846e76587c8cc398cbbd0b9460dd3fa90953635c2c5ccef9a46308"
+    },
+    "iosApp/iosApp/NovelCreation/NovelApprovalCommit.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "4b2a8a25fc5e7c1942fdd50a99afe2871a48f774528df4e71f72db9c0cac60d5"
+    },
+    "iosApp/iosApp/NovelCreation/NovelBatchPolishSheet.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "e399d5827731778662bd81a7c508ccdecdaf35dbe0ba70af1e4451d4441a25f6"
+    },
+    "iosApp/iosApp/NovelCreation/NovelBranchOperations.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "4937a8bec30d017b60436123aacf32b8f2f2cafca21df15c8daf05a4f8dfde98"
+    },
+    "iosApp/iosApp/NovelCreation/NovelBranchesView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "044e6c90a39e904cbc09e494a1151db30794f1d254ca8d4bbe888121418b49a9"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCandidateSemantics.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "50cff526a0b5dee27a11880db35c0a8c5dc229866e972748efa2d1d9c1ee723b"
+    },
+    "iosApp/iosApp/NovelCreation/NovelChapterPlanAcceptanceLifecycle.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "d6b898c897527ebe47f6440e9681877f46371c3f73824b9e8a3cc2cc01cfbe2c"
+    },
+    "iosApp/iosApp/NovelCreation/NovelChapterPlanProposalLifecycle.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "314ad939a64c7778b727425b0c2fe9ccbf1d8dd5bdfbf6171584221ff9353208"
+    },
+    "iosApp/iosApp/NovelCreation/NovelChapterReaderView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ba983eab15afc230a354fc38ad0db773e60b4ff5dbdae534a47c79d56a2680ed"
+    },
+    "iosApp/iosApp/NovelCreation/NovelChapterViews.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "6e6401b3e966715e728840e344aa34e393a393186c5d126fd1f0331be5e85709"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCharacterPagesView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "a52be5c1ad2bfe3608c34ab57621ffbbce622dc703cf1b371b9f244eb444e1e7"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCompatibilityLineage.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "fb6a7ee7370600a2eb1a98fa9e931ecc691267a328e736fdbe4a48fe7c23efd2"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCompendiumView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "00b882e476cebbc9e7abb02102109fb2e34f83bf51764e0b835f471ecdb55e45"
+    },
+    "iosApp/iosApp/NovelCreation/NovelContinuityAudit.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "207b903bcb901bebeec155e09fb4954c69db03cd0d65b924ad111b8d27a0cab5"
+    },
+    "iosApp/iosApp/NovelCreation/NovelContinuityAuditLifecycle.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ee66edfb1b29e32ccf31ba5ae6ad27f0204b18455b6ca267c4702f88415ca07e"
+    },
+    "iosApp/iosApp/NovelCreation/NovelContinuityAuditView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "1511a03f19730c32d4e3dfcb674b4dab27dc253a32122b0f4dab0a563b140400"
+    },
+    "iosApp/iosApp/NovelCreation/NovelContinuityRepair.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "4c27f72593191cf0a457841a9f3e8d730420c463a815b7cb6584cb976356d73e"
+    },
+    "iosApp/iosApp/NovelCreation/NovelContinuityRepairLifecycle.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "6516c940ce0e50a070e2f211a4a1c71ec88cfacb44c7dc93a6c511c3690368ff"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCreation.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "bd23ff47f059d64b1aac7747a709fed5875b0bba907b3e91b896f53ff6720646"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCreationComposition.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "dfc7fabfacf04d6db9aded56a401a6b984e9adc5965e6e1f545ea4d941bb4b48"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCreationModelPreferences.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ae1c503dfd027b868e995b5fc18aa54bba5c30b5405181c949e3d28842ba245d"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCreationSettingsView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "122a7af9b04442dea2f039b6b9e9f9d06a6a0d86197023f5d4a11e8442c7a332"
+    },
+    "iosApp/iosApp/NovelCreation/NovelCreationViewModel.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "7a3372d0d5a2a8636cec843f6e248a0513c452e07c5d1673067a6e87583f2aea"
+    },
+    "iosApp/iosApp/NovelCreation/NovelDiscussionToolHost.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "346ce4ff1dc3aface8e56f4aac8d67197504861ff00dfba408696672cd1f4c62"
+    },
+    "iosApp/iosApp/NovelCreation/NovelDocumentValidator.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "069f6eb7ae4e5af9e6c0a08dfc83fcad9260d520f0b97fa6580b85669166b461"
+    },
+    "iosApp/iosApp/NovelCreation/NovelDomainModels.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "cb05df3ab053ede0262ba0cec1d4a01035a25abccc05e2e5c857cd60dfa02551"
+    },
+    "iosApp/iosApp/NovelCreation/NovelFactOutputValidation.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "33a698eed1345771592761fe6883f29cf1a1a53b126afa31ae2514742f113dae"
+    },
+    "iosApp/iosApp/NovelCreation/NovelFactRequestReceipts.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "3fbf9b3af6b1cbc6e87cd266f241054041d6824aa71ebd32f56de4bcc70aade3"
+    },
+    "iosApp/iosApp/NovelCreation/NovelFactTransactionLifecycle.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ada3e354ad69d19d180631bb11cabfba1d643da69b7c7faa78ae23529616ae1f"
+    },
+    "iosApp/iosApp/NovelCreation/NovelFactTransactions.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "668b3d4c5adb1dc69c9b4efb7643de7e6f5a3c8f028d2be395ded4b57a7767ed"
+    },
+    "iosApp/iosApp/NovelCreation/NovelGenerationDocumentValidator.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "42f00257333403bd7c084960b63bc589c1dbc2d60f6b98a8124aa598f4f264a1"
+    },
+    "iosApp/iosApp/NovelCreation/NovelGenerationLifecycle.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "1d67a5f0cadf7c0c1b45711d212f20783f844be57096b960be2193c3cfb8f54d"
+    },
+    "iosApp/iosApp/NovelCreation/NovelGenerationReducer.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "e23ed1fceaea7df976885c29c546fca22399b23be8bc234946eb7f83a5173241"
+    },
+    "iosApp/iosApp/NovelCreation/NovelGhostwritePipeline.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "b9966b24099bc7c71db69d031f40ce9efd5bf5ce9b88f1740ef6e8f5a9e11613"
+    },
+    "iosApp/iosApp/NovelCreation/NovelGlobalModelWording.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "fa1c7612a6246f87e7a4e9e874b03e24a59513f01cf16d2393f1ff52fe00dc08"
+    },
+    "iosApp/iosApp/NovelCreation/NovelInjectionPlanner.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "e4c538cd64459bd9dc683799e9917e7c29a8ee92d8169a56c44d8f808b2e05a9"
+    },
+    "iosApp/iosApp/NovelCreation/NovelInkSeal.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "37e8f19d67e90a98a75cb05c65e3532b10d560854f21a0a16b7387a73fd6654b"
+    },
+    "iosApp/iosApp/NovelCreation/NovelLiveModelAdapter.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "da175c404b0d02ae5207531addaa77dc023788263a1eb76fef411c4965bc1cea"
+    },
+    "iosApp/iosApp/NovelCreation/NovelManualSyncProgress.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ada1317eb1c1700a8b179c59eb976ab6b8210a5fbe1f07bf5665863dd3996f88"
+    },
+    "iosApp/iosApp/NovelCreation/NovelMaterialResolver.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "8fdd50d921dc3c244a574827b75ff7ad6ca530a4d0f81daea58719566d4ea3c6"
+    },
+    "iosApp/iosApp/NovelCreation/NovelMaterialsView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "47acc6e1b6aeeb6328c8653bde9d7ec0cdcd967fc25b187c338bba799f927260"
+    },
+    "iosApp/iosApp/NovelCreation/NovelModelAdapter.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "3255e5c0132ce03e8c66015bcd80324d05fe38832f18065995f19d6c7265b8b2"
+    },
+    "iosApp/iosApp/NovelCreation/NovelParagraphSelection.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "7f9c8f2d84b56dfa5aabc035089fcc0cc014b807d6a40e502ed13f2cbbc47c4d"
+    },
+    "iosApp/iosApp/NovelCreation/NovelPolishDocumentValidator.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "aed3bf2f30cbf97c9b3ee93a418125600a56f299e34cd7ac644a70c38cc8a249"
+    },
+    "iosApp/iosApp/NovelCreation/NovelPolishLifecycle.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "3a3974859210779af97040fd81e6780d0a946adbc1c927cdaaff2c99f5f4af06"
+    },
+    "iosApp/iosApp/NovelCreation/NovelPolishRecords.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "d1fd64e29668057d21f0ee5dbf53da870cc9f281887eaa3a466051ae8c06e5f9"
+    },
+    "iosApp/iosApp/NovelCreation/NovelPolishTransactions.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "0bc8b0078cb6be2fd8a665f3c23c6766201c527abf0975f20b1ade7e41fd6168"
+    },
+    "iosApp/iosApp/NovelCreation/NovelPresentationSupport.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "1d647275493d5358bbb13fec5573bec027d5199640d4f9f1b04aa4649bab1a7b"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectConfiguration.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "e79763b4a99937403286563151eaa82c575506925250692012cfc59281a340f0"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectFileDocument.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ad39ea9048cb3aa0c4c3689b21acf1cb620ca701cdfe7236ecc364db180fe554"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectLifecycle.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ae1b53726915cf90e312df90a3a25d1ddf94bcfae6d8eb971215e2a4b7ad4b23"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectLifecycleOperations.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "16a8cd83efa5701dd5727bffcdeece0bd09455bdb37958e60239792df5110d7f"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectListView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "b729d9d9e7d1c4d6466e2be85cb9c0f320c2a7452f3ec2d4d8c3ee17ace748ed"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectPackage.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "05663224db921dbd3ddf277d21e7911a9518ef24c2762393fea3c3068b6a52c3"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectRepository.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "4dacd4e0c4502fd976c8ab0af84179662eb4ae4cfe2dd3bc1af25a299f699f47"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectSettingsDetailView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "fb164fd3bde8fd3b8f9fd683faf9d0385fc4237324f175b7139295cc83148d87"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectShardedStorage.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "0506de4e38ceae335af970ce4d561b8097147857831dc874c594d90a2ca0bbe0"
+    },
+    "iosApp/iosApp/NovelCreation/NovelProjectWorkspaceView.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "217ce90464f4bfbcfaa82272de7779a106f94236e633ec436ae01aa6e89a02c4"
+    },
+    "iosApp/iosApp/NovelCreation/NovelPromptCatalog.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "9de8fe3d83363f1b22dc891159ec71f743b55e2c29f4e85aa5f75b678e0dda01"
+    },
+    "iosApp/iosApp/NovelCreation/NovelReducer.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "a250ccfb199429851bc96046cc55c2c9cbee00a8114d707f6132d53e8decf221"
+    },
+    "iosApp/iosApp/NovelCreation/NovelSessionBubble.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "e92edf6ce658b4e7e3bf9cb83520348561a94cc561411596bd9d06c93e3768c6"
+    },
+    "iosApp/iosApp/NovelCreation/NovelSessionPendingPresentation.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "89d878d029e92fcd2acaa6a281de1648cab1079bdde8a61834287dffe0ce4383"
+    },
+    "iosApp/iosApp/NovelCreation/NovelSessionPresentation.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "d515382194fa15e6a654a7c1f119328eb939a08be1515ea857393e95122adc87"
+    },
+    "iosApp/iosApp/NovelCreation/NovelSessionSheets.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "8069b392a341ca13db8a25f1893363aa9f9b70e70d0813cabb179d9a1f6bc0a8"
+    },
+    "iosApp/iosApp/NovelCreation/NovelSessionView.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "7812d7318f09d8dafbbe7f99e99e7d63d84b544fef5a059f7ef9252343c940fa"
+    },
+    "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "42774f0f58d95097cf175ad57ce9ad46ba63ea236c51c84f120d6faa43c28e0d"
+    },
+    "iosApp/iosApp/NovelCreation/NovelStructuredModelExecutor.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "dabda3c3a2d79b611e66d0bc432f74f4e54b764c3d04b2f374b1183ca9609186"
+    },
+    "iosApp/iosApp/NovelCreation/NovelStructuredOutput.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "313dbd41464fec3f74e7323573467ea182aef90bb507a05bce04d07fba032a17"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceAuthority.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "c419fd1c62a6414d5a94f012acaaf715a08e8df7d4a525638bc8131eb0ec312f"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceBackup.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "aa62b584193b4299a02345e99191bfbe3f6a2606353811c20aa633872a8bf6b8"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceContextAssembler.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "1c77ca5d4b6d63394605588bf637960ac74c045d7d2b66135809d7f89e1437c3"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceFolderDocument.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "614595d5b59ed31e203edd5371054d5e61c6b00a33a04e8baee0d2e0cdec5b50"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceImporter.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "d9078168566453e4755a5d51a172d782315b84de93bc979e954c58c5eefa19fb"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceLedger.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "437cf631ab52cb3dbf6d441da84453f53115c19c597aea2f24024026333f266a"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceLifecycleCoordinator.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "01a021ba7beec6ee3cec4a2a73c0815fc27b675c4f76d71da87e7a48e4d30f10"
+    },
+    "iosApp/iosApp/NovelCreation/NovelWorkspaceProjectStore.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "b5f31dac9a0bbe42814241bc15540101baeedf55ee1a4650e049981ee6b93955"
+    }
+  },
+  "selectors": [
+    "NovelTests/NovelBatchPolishTests/testBatchPolishAdoptsAllCompatibleChapters",
+    "NovelTests/NovelBatchPolishTests/testBatchPolishCancellationStopsBeforeNextChapter",
+    "NovelTests/NovelBatchPolishTests/testBatchPolishRecordsGenerationFailureAndContinues",
+    "NovelTests/NovelBatchPolishTests/testBatchPolishSkipsIncompatibleChapterAndContinues",
+    "NovelTests/NovelChapterReplacementStateTests/testReplacingChapterKeepsEarlierFactsWhenCollectionsSkippedSync",
+    "NovelTests/NovelCreationModuleTests/testDegradedCommitFailureReconcilesCachedProjectToReadOnlyPrevious",
+    "NovelTests/NovelProjectLifecycleOperationTests/testCorruptPendingAndCompletedFileReceiptsFailClosedWithoutDeletingEvidence",
+    "NovelTests/NovelProjectLifecycleOperationTests/testExplicitPreviousRestoreBecomesWritableAndReplaysAcrossRestart"
+  ],
+  "source_head": "b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+  "temporary_project_change": "Gradle preBuild script replaced by existing Shared.framework existence check only",
+  "temporary_project_sha256": "4495492c5f119cf8818999537d26d0a945b965c0ddbe01556c70dc2e2214aca2",
+  "tests": {
+    "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "a0c590d97540a977c87c0c055bf8a6b530c7e924a17a1817e92b0a99a05c8480"
+    },
+    "iosApp/iosAppTests/IOSNovelProjectToolExecutorTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "e4a9c13834160217a33a7875a3b9eb30dffc3963377368f88a59830cecbc6340"
+    },
+    "iosApp/iosAppTests/NovelBatchPolishTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "f5b7845cf628f5ccad7b48489672b69253aa48cb8101b9642bad60310177a5bf"
+    },
+    "iosApp/iosAppTests/NovelBranchLifecycleTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ae73f442aae4c64dfb5176085fe89b54f770f9a14e675a1dba065e2380e31d60"
+    },
+    "iosApp/iosAppTests/NovelChapterReplacementStateTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "bdf0a802d7d156a56c212184135de916cd59a1547c80178521c7d2e141d92603"
+    },
+    "iosApp/iosAppTests/NovelCharacterIdentityCandidateTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "9145761c82299585cf1557e8f8e8c40b2ffb228fb271d0e10d0b85caa2e285f8"
+    },
+    "iosApp/iosAppTests/NovelCollaborationModeTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "9d098bcb1d550784d13ad9d486c54b0cfecba7131b8a84d170e710d4e4599796"
+    },
+    "iosApp/iosAppTests/NovelCollectionTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "9255087e5febd4d476e5b4105221de10356eaded018c7c495f4b2f28b8494411"
+    },
+    "iosApp/iosAppTests/NovelCompatibilityLineageTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "ba65dc624c7ef79ed3baa7a6d63772c8e684bd4e73951a323588b9862a66ce08"
+    },
+    "iosApp/iosAppTests/NovelContinuityAuditTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "f2cc0582f1577ed54260929c25ad971a1f6eae2d13d4ddec53804c513b9d4921"
+    },
+    "iosApp/iosAppTests/NovelCreationModuleTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "38aed461067ca8e7a5d271de13856dc2904b2ecf2e2a630419d8bd5f5048d988"
+    },
+    "iosApp/iosAppTests/NovelCreationPresentationTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "70ac41c8b329126f2fa38d84f7c60803b512202c53f28b5e74894f3270a7ba4f"
+    },
+    "iosApp/iosAppTests/NovelCreationViewModelTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "df168be7a56263813f342c4eec9387d20311b6c1865cd5229d1112c574f5f2c3"
+    },
+    "iosApp/iosAppTests/NovelDocumentValidationTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "e414051ad958c2ec5559916b4737f2b96f576a24f6acba796482291595ff8702"
+    },
+    "iosApp/iosAppTests/NovelFactOutputValidationAnchorTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "d28ccff66f365080a6429dcbdf4944746e7351fec08d52b1c1fc28dc46a9b209"
+    },
+    "iosApp/iosAppTests/NovelFactTransactionLifecycleTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "4bed2ba8707f6d6baebeda0619c470f408daaad4d1032509b75d3a1ed97cc9fa"
+    },
+    "iosApp/iosAppTests/NovelForkTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "34bb2a49d26f62c2f98fec8977a0a41c993771f641058de8c4b28c21dd237aea"
+    },
+    "iosApp/iosAppTests/NovelGenerationLifecycleTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "b2b4384fde98703f38c8ae838b681eabed9acdde0a839b3cd7f5a020c4c238ff"
+    },
+    "iosApp/iosAppTests/NovelGenerationReducerTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "f7a5cc57c1dfe98bf488431d6aabb028a82a2093d25b09bf5bb127411395a56d"
+    },
+    "iosApp/iosAppTests/NovelInjectionPlannerTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "43e853d0b551dad3d53873c60401a048152ab2ee853b5005e85d2cc49c35958c"
+    },
+    "iosApp/iosAppTests/NovelInkSealStampTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "6a0c0b640e00671144da65187270014ba9622bce6fad784636e4d6418c90ff3f"
+    },
+    "iosApp/iosAppTests/NovelLiveModelAdapterTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "57ea8f3a732f9b8959a4f528fd5e65ce4f8462add37d7b0a97d946f913601163"
+    },
+    "iosApp/iosAppTests/NovelManualEditSyncTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "0b29413e406ebda8c7974f27a6e3364e9fbcbe052fde3178b9c018a2fbfde9eb"
+    },
+    "iosApp/iosAppTests/NovelModelAdapterTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "b3bd8b4034a2cc7a077432b8b3bcd55d08be58fc12725b0156203edb1ec0037a"
+    },
+    "iosApp/iosAppTests/NovelPolishIntegrityTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "eb49b8b58807add21d0794f2400c4c3183295808fb700cf2d058fb3692060f6f"
+    },
+    "iosApp/iosAppTests/NovelPolishTestSupport.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "26beb815ccc54550df86523c2bfbc6587c90675e2a9c928632658c2b372c9657"
+    },
+    "iosApp/iosAppTests/NovelPolishTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "8bdeeffe326744615334f5d458e32252726e6d4970b39188618d2591affe7e7d"
+    },
+    "iosApp/iosAppTests/NovelProjectConfigurationTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "33514602d7f630d09a514488013bede0c72985fac0aa1c5d8aebe83649c7872c"
+    },
+    "iosApp/iosAppTests/NovelProjectFileDocumentTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "115186b51e4a383f69b3cca2136048d64179a27474d9115eb48950556823dc00"
+    },
+    "iosApp/iosAppTests/NovelProjectLifecycleOperationTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "c18007e3ffe17d909cc556a1c6fa1a9eccbafccca1aea0805e57f29fb80bd478"
+    },
+    "iosApp/iosAppTests/NovelProjectPackageTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "da4d6e4953b8db9543e9b360604c729839833de34b826051e59612a1e8f9df3e"
+    },
+    "iosApp/iosAppTests/NovelProjectRepositoryTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "e79d3d11523064dbefbe4e06501cce525268413040cf8ce970623c9706d679d8"
+    },
+    "iosApp/iosAppTests/NovelPromptCatalogTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "fbe25a9f1aec91e99c6725528780f2ad96ea2bb00750424ee4827bf64c1f12d1"
+    },
+    "iosApp/iosAppTests/NovelRecentChapterRevertTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "1c8ccac989e5f92038973c739d8afc6193c22a5d06db869228638bd0d7d9d30e"
+    },
+    "iosApp/iosAppTests/NovelReducerTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "bbb5098ca1be34cea460d0a57fa488492aeede172518607d1d2f88e17f65d589"
+    },
+    "iosApp/iosAppTests/NovelSessionReplayTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "f859e3a5bab1b0f5419e05277b587600d36cdc734ecfbf9651ce35d342b02a27"
+    },
+    "iosApp/iosAppTests/NovelSessionViewModelTests.swift": {
+      "origin": "phase4-source-baseline",
+      "sha256": "1ed16332825b76be18d99871583f412c278dbd6fe9468066d3458be40994a2c9"
+    },
+    "iosApp/iosAppTests/NovelStructuredModelExecutorTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "1b997895744ddaa77816d577e8eeabca82855bfb6d3688c29f9f5391b313344c"
+    },
+    "iosApp/iosAppTests/NovelStructuredOutputTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "a743b7e3f18ccf10e7a659e51ebf7d160dfc289102b099f18a4f80739d738ab3"
+    },
+    "iosApp/iosAppTests/NovelTestFixtures.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "5c0d6973a31932c999f823ce8603d7b652c41e8d520d3dc34d6b5e082ec20d66"
+    },
+    "iosApp/iosAppTests/NovelTestSupport.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "3936caace26fa060301ae7f31466e55a4f794fb2ea8534356cacbf1ff9089b56"
+    },
+    "iosApp/iosAppTests/NovelWorkspaceBackupTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "0c592d643fc2da5bbe5000dfdb5af17b83acb7cc4c6db93ffa301a00aa80b44b"
+    },
+    "iosApp/iosAppTests/NovelWorkspaceContextTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "224db6c69478c50be0a04f5cdb1978f6e3bde6f45978cd82902d94948076a368"
+    },
+    "iosApp/iosAppTests/NovelWorkspaceContractTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "0db9f75c2e58e469550a4bc838e6b745d8c2a0dcb4ce9891657bd514a8b2c88c"
+    },
+    "iosApp/iosAppTests/NovelWorkspaceLedgerTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "32dc7bff037b101730cdb58a45595dce6791b8f6cc0c7c9e86a106059c2dbe11"
+    },
+    "iosApp/iosAppTests/NovelWorkspaceRepositoryTests.swift": {
+      "origin": "git:b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+      "sha256": "57c3b5cbd33439b5e2d5174b5cde4987491cbf0e6e05b9818224dfac77136dc1"
+    }
+  }
+}

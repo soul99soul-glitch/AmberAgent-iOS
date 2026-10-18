@@ -93,7 +93,7 @@ struct IOSVerifiedHTTPScrapeAddressResolver {
         guard !systemAddresses.isEmpty else {
             throw IOSSearchExecutorError.disallowedURL("host could not be resolved")
         }
-        guard !systemAddresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
+        guard !systemAddresses.allSatisfy(IOSPublicURLPolicy.publicHostAllowed) else {
             return nil
         }
         return try await verifiedConnectionAddresses(
@@ -117,12 +117,12 @@ struct IOSVerifiedHTTPScrapeAddressResolver {
         guard !systemAddresses.isEmpty else {
             throw IOSSearchExecutorError.disallowedURL("host could not be resolved")
         }
-        if systemAddresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) {
+        if systemAddresses.allSatisfy(IOSPublicURLPolicy.publicHostAllowed) {
             return unique(systemAddresses)
         }
         guard systemAddresses.contains(where: isStandardFakeIPAddress),
               systemAddresses.allSatisfy({
-                  IOSSearchExecutor.publicHostAllowed($0) || isStandardFakeIPAddress($0)
+                  IOSPublicURLPolicy.publicHostAllowed($0) || isStandardFakeIPAddress($0)
               }) else {
             throw IOSSearchExecutorError.disallowedURL("host resolves to a non-public address")
         }
@@ -146,7 +146,7 @@ struct IOSVerifiedHTTPScrapeAddressResolver {
             }
             try check(deadline)
             guard !publicAddresses.isEmpty,
-                  publicAddresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
+                  publicAddresses.allSatisfy(IOSPublicURLPolicy.publicHostAllowed) else {
                 throw IOSSearchExecutorError.disallowedURL("fake-IP host could not be verified by public DNS")
             }
             return unique(publicAddresses)

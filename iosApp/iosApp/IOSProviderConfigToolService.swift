@@ -395,7 +395,9 @@ final class IOSProviderConfigToolService {
             }
         let beforeCount = provider.models.filter { $0.type == ModelType.chat }.count
         if mode == "replace_chat" {
-            _ = sharedSettings.updateProviderChatModels(providerId: providerId, models: chatPairs)
+            guard sharedSettings.updateProviderChatModels(providerId: providerId, models: chatPairs) != nil else {
+                return fail("provider_refresh_models", sharedSettings.credentialPersistenceError ?? "模型配置未能保存，请重试。")
+            }
         } else {
             _ = sharedSettings.mergeProviderChatModels(providerId: providerId, models: chatPairs)
         }

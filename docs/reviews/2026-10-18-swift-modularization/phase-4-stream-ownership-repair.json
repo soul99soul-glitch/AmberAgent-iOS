@@ -1,0 +1,51 @@
+{
+  "scope": "Per-local-model-stream ownership closes the proven foreground-resume/late-old-stream-end race without changing the existing run/terminal state machines.",
+  "beforeRed": {
+    "resultBundle": "/tmp/amber-phase4-stream-red-r2.xcresult",
+    "summary": "/tmp/amber-phase4-stream-red-r2-summary.json",
+    "details": "/tmp/amber-phase4-stream-red-r2-details.json",
+    "selector": "NovelGenerationLifecycleTests/testOldDetachedStreamEndCannotTerminalizeForegroundResume",
+    "result": "1 total, 0 passed, 1 failed on pre-patch production",
+    "interleavingEvidence": "Opt-in AsyncStream unfolding second next() was parked before detach, proving initial responseFrame consumption including sidecar/MainActor awaits had returned. Before releasing recovered-lease MainActor barrier, old consumer ended or terminal claim/runtime removal was observed. Failure was line 408 resumeRequests 0 != 1."
+  },
+  "sourcePatch": {
+    "path": "/tmp/amber-phase4-late-detach-production.patch",
+    "sha256": "3a57f54b1ab7040d4ef4179aae1f7b8b747f7002276272d05a06a4b3e7ebeb13",
+    "applied": true
+  },
+  "files": {
+    "runtimeOwner": {
+      "path": "iosApp/iosApp/NovelCreation/NovelGenerationLifecycle.swift",
+      "sha256": "7111dd7c0fb3121c2684438481b16d104e7e35d50d4510e744630f2e309f3d2e",
+      "lines": 970
+    },
+    "stream": {
+      "path": "iosApp/iosApp/NovelCreation/NovelGenerationStream.swift",
+      "sha256": "286bb837d9ba010f60809bb25104901338de41ec9521af0b469abf2e21f08918",
+      "lines": 814
+    },
+    "terminal": {
+      "path": "iosApp/iosApp/NovelCreation/NovelGenerationTerminal.swift",
+      "sha256": "4953f1bb8aae87a83409d83039a818287883b44691b7a2693ce260dc9cc99fee",
+      "lines": 643
+    }
+  },
+  "idLifecycle": [
+    "NovelRunRuntime adds optional modelStreamID next to existing modelTask; initial and recovered constructors set nil.",
+    "installModelStream creates fresh UUID, passes it to event/end/disconnect callbacks, then installs it on runtime before cancelling the old task and storing the new task.",
+    "detachResumableRunForBackground force-flushes accepted partial+remote cursor, then atomically sets detached true and clears modelStreamID before adapter.detach can finish the old local stream.",
+    "A newly installed foreground stream receives its own UUID; old event/end/disconnect callbacks fail the current-ID check and cannot mutate/terminalize/reconnect the replacement."
+  ],
+  "awaitClosures": [
+    "responseFrame checks current stream ID after flushRecoverySidecar and again after MainActor application-state await, then passes ID to detachResumableRunForBackground for guards before and after its forced sidecar flush.",
+    "reconnectAfterTransportDisconnect checks stream ID at entry after modelStreamEnded await, so an old disconnected stream cannot start a background automatic resume after revocation."
+  ],
+  "sidecarOrder": "responseFrame stores text/usage/remote cursor together before first await. Forced detach flush waits any in-flight sidecar write and then writes the latest accepted partial/cursor pair; only on success does detach set detached and revoke local stream ID, then asks adapter to finish. Unconsumed local frames remain available from durable remote cursor on foreground resume. Old consumer is not cancelled before adapter finish because that could cancel remote response.",
+  "verification": {
+    "swiftParse": "passed on all three production files",
+    "diffCheck": "passed (tracked lifecycle git diff --check; untracked Stream and Terminal no-index --check produced no whitespace diagnostics)",
+    "buildAndTests": "Root-owned; not run by Generation worker",
+    "testFiles": "frozen unchanged after before-red evidence"
+  },
+  "pending": "Independent reviewer is checking whether any stale runtime struct copy can overwrite modelStreamID across an await before Root build."
+}

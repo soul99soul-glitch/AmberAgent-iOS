@@ -235,17 +235,48 @@ final class ChatMarkdownMediaTests: XCTestCase {
                 XCTAssertFalse(content.contains("data:image"), content)
             }
         }
+        let scene = try await windowSceneForSnapshot()
         for blockRenderer in [false, true] {
             let host = UIHostingController(rootView: ChatAssistantMarkdownView(markdown: source, hasEverStreamed: blockRenderer).padding(16))
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 1200))
+            host.safeAreaRegions = []
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 320, height: 1)
             window.rootViewController = host
             window.makeKeyAndVisible()
+            defer { window.isHidden = true; window.rootViewController = nil }
             window.layoutIfNeeded()
-            try await Task.sleep(nanoseconds: 200_000_000)
-            let size = host.sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude))
+            let proposal = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+            window.frame.size.height = ceil(host.sizeThatFits(in: proposal).height)
+            window.layoutIfNeeded()
+            if blockRenderer {
+                // Parsed list items are separate text views. The temporary plain
+                // document instead contains all three lines with literal markers.
+                let expectedItems: Set<String> = ["第一项", "列表配图", "后一项"]
+                var renderedItems = Set<String>()
+                for _ in 0..<200 {
+                    window.layoutIfNeeded()
+                    renderedItems = Set(renderedTextViews(in: host.view).map {
+                        $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    })
+                    if expectedItems.isSubset(of: renderedItems) { break }
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                }
+                XCTAssertTrue(expectedItems.isSubset(of: renderedItems), "List parsing did not finish: \(renderedItems)")
+                XCTAssertFalse(renderedItems.contains(where: { $0.hasPrefix("- ") }), "Literal list markers remained: \(renderedItems)")
+            }
+            let size = host.sizeThatFits(in: proposal)
             XCTAssertLessThanOrEqual(size.width, 320)
             XCTAssertGreaterThan(size.height, 400)
-            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { window.layer.render(in: $0.cgContext) }
+            window.frame.size.height = ceil(size.height)
+            window.layoutIfNeeded()
+            await Task.yield()
+            window.layoutIfNeeded()
+            CATransaction.flush()
+            var captured = false
+            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                captured = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            XCTAssertTrue(captured, "The scene-backed Markdown container hierarchy must finish drawing")
             let name = blockRenderer ? "block" : "stable"
             let attachment = XCTAttachment(image: screenshot)
             attachment.name = "markdown-container-media-\(name)-320pt"
@@ -254,9 +285,25 @@ final class ChatMarkdownMediaTests: XCTestCase {
             let path = FileManager.default.temporaryDirectory.appendingPathComponent("amber-markdown-container-\(name)-320pt.png")
             try screenshot.pngData()?.write(to: path)
             print("MEDIA_SCREENSHOT=\(path.path)")
-            window.isHidden = true
-            window.rootViewController = nil
         }
+    }
+
+    @MainActor
+    private func renderedTextViews(in view: UIView) -> [UITextView] {
+        (view as? UITextView).map { [$0] } ?? view.subviews.flatMap { renderedTextViews(in: $0) }
+    }
+
+    @MainActor
+    private func windowSceneForSnapshot() async throws -> UIWindowScene {
+        for _ in 0..<100 {
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            if let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first {
+                return scene
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+                             "Markdown snapshots require a connected application window scene")
     }
 
     @MainActor
@@ -298,7 +345,9 @@ final class ChatMarkdownMediaTests: XCTestCase {
         let source = "文字与图片之间保持自然间距。\n\n![图片标题](\(dataURL))\n\n视频前的说明文字。\n\n[演示视频](https://example.com/demo.mp4)\n\n末尾的文字应保持左对齐。"
         let host = UIHostingController(rootView: ChatAssistantMarkdownView(markdown: source).dynamicTypeSize(.accessibility2).padding(16))
         host.safeAreaRegions = []
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 1200))
+        let scene = try await windowSceneForSnapshot()
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 1)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -306,6 +355,8 @@ final class ChatMarkdownMediaTests: XCTestCase {
         // Both measurements use the mounted hosting environment. Before the
         // first await, image-loading tasks have not had a chance to finish.
         let proposal = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        window.frame.size.height = ceil(host.sizeThatFits(in: proposal).height)
+        window.layoutIfNeeded()
         let before = host.sizeThatFits(in: proposal)
         let beforeInsets = host.view.safeAreaInsets
         let beforeBounds = host.view.bounds
@@ -317,7 +368,14 @@ final class ChatMarkdownMediaTests: XCTestCase {
         XCTAssertEqual(host.view.safeAreaInsets, beforeInsets)
         XCTAssertEqual(host.view.bounds, beforeBounds)
         XCTAssertEqual(before.height, after.height, accuracy: 1, "Image load must keep the Markdown media frame height")
-        let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { window.layer.render(in: $0.cgContext) }
+        await Task.yield()
+        window.layoutIfNeeded()
+        CATransaction.flush()
+        var captured = false
+        let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            captured = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        XCTAssertTrue(captured, "The scene-backed Markdown media hierarchy must finish drawing")
         let attachment = XCTAttachment(image: screenshot)
         attachment.name = "markdown-media-320pt-accessibility2"
         attachment.lifetime = .keepAlways

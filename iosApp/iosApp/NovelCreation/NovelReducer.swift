@@ -1012,7 +1012,7 @@ enum NovelChapterDiscardReducer {
     ) throws -> (NovelProjectDocumentV1, NovelOutcome) {
         try NovelReducer.requireProjectRevision(context, document: document)
         var next = document
-        guard let chapterIndex = next.chapters.firstIndex(where: { $0.id == chapterID }) else {
+        guard next.chapters.contains(where: { $0.id == chapterID }) else {
             throw NovelError.invalidInput("Chapter \(chapterID) does not exist.")
         }
         guard let branchIndex = next.branches.firstIndex(where: {
@@ -1043,11 +1043,6 @@ enum NovelChapterDiscardReducer {
             throw NovelError.invalidInput("Pending manuscript work must finish before deleting a chapter.")
         }
 
-        // Ensure discarded so restore path stays well-defined if re-attached later
-        // via checkpoint undo; and generation/export filters keep treating it as out.
-        if next.chapters[chapterIndex].discardedAt == nil {
-            next.chapters[chapterIndex].discardedAt = now
-        }
         next.branches[branchIndex].workingChapterSelections.removeAll {
             $0.chapterID == chapterID
         }
@@ -1078,7 +1073,7 @@ enum NovelChapterDiscardReducer {
             to: &next,
             now: now
         )
-        try NovelDocumentValidator.validate(next)
+        try NovelDocumentValidator.validateTransition(from: document, to: next)
         return (next, outcome)
     }
 }

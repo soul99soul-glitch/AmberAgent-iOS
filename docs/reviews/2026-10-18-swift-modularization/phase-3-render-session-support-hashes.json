@@ -1,0 +1,728 @@
+{
+  "originalDeclarations": 75,
+  "intentionallySplitRootClasses": 3,
+  "preservedSupportDeclarations": 72,
+  "originalTopLevelExtensions": 0,
+  "mappings": [
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 126,
+      "kind": "class",
+      "name": "MeasuredComposerTextView",
+      "newFile": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "newLine": 564,
+      "normalizedBodySHA256": "1a8a06dbe50caa01134254c25a58806f0ac706217022aa4fe8436d011d2127a5",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 165,
+      "kind": "class",
+      "name": "FocusProbeTextView",
+      "newFile": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "newLine": 573,
+      "normalizedBodySHA256": "d04d35b69fa424a79eb998f4719fd06e45c63054d51dfa3cb8db396a71a0899d",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 225,
+      "kind": "class",
+      "name": "SuggestionComposerModel",
+      "newFile": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "newLine": 591,
+      "normalizedBodySHA256": "ce7ab03e4a2c368afece12994800fe17a369fc34c4149a3b874a6023a4404739",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 246,
+      "kind": "struct",
+      "name": "SuggestionComposerHarness",
+      "newFile": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "newLine": 612,
+      "normalizedBodySHA256": "9185fb85cbac47c108c3d94cea7c574050e2cadeb48ef0f8b8052298242b17fe",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 322,
+      "kind": "class",
+      "name": "VisibilityProbeModel",
+      "newFile": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "newLine": 636,
+      "normalizedBodySHA256": "726d7acdb306889d9f8eb016296195180cde80e56ae7b66cef66e4408343909d",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 326,
+      "kind": "struct",
+      "name": "VisibilityProbe",
+      "newFile": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "newLine": 640,
+      "normalizedBodySHA256": "a8b6281423b4f1e7c5109afd78acc64c038f5680d777e91c1bf8e75261bcf2e5",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 334,
+      "kind": "struct",
+      "name": "VisibilityProbeHarness",
+      "newFile": "iosApp/iosAppTests/ChatMessagePresentationTests.swift",
+      "newLine": 648,
+      "normalizedBodySHA256": "dfdf0269f83cd3c8023e833e7af81aa6338c5306d21dc4d6c3b32391ad5b0dd1",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 622,
+      "kind": "func",
+      "name": "source",
+      "newFile": "iosApp/iosAppTests/ChatMessageProjectionTestCase.swift",
+      "newLine": 11,
+      "normalizedBodySHA256": "b1da5f7baccbd99acb7c34947083d800a69b0ecda0e58f421613b4378dbec62f",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2172,
+      "kind": "func",
+      "name": "astNodes",
+      "newFile": "iosApp/iosAppTests/ChatMessageProjectionTestCase.swift",
+      "newLine": 20,
+      "normalizedBodySHA256": "0a23d1bd164ad7e0b48eb99bb2cf43b991effd547923c446a43dc60aa5cff427",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2181,
+      "kind": "func",
+      "name": "firstNode",
+      "newFile": "iosApp/iosAppTests/ChatMessageProjectionTestCase.swift",
+      "newLine": 29,
+      "normalizedBodySHA256": "1e9836234e253f7e093c48d5a7fc2747e7f91af9810663573ea35a08af6ac942",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2193,
+      "kind": "func",
+      "name": "slice",
+      "newFile": "iosApp/iosAppTests/ChatMessageProjectionTestCase.swift",
+      "newLine": 41,
+      "normalizedBodySHA256": "81ad165536e95b8de2feb5fff4b25d92ae1763a133245ebba54db72298dda7c9",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2213,
+      "kind": "class",
+      "name": "ChatPhoneToolGroupingTests",
+      "newFile": "iosApp/iosAppTests/ChatPhoneToolGroupingTests.swift",
+      "newLine": 12,
+      "normalizedBodySHA256": "fa789a304621696eb090e04e0af214bf05d5a72914d89b98816fd7901a512f16",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2214,
+      "kind": "func",
+      "name": "assistant",
+      "newFile": "iosApp/iosAppTests/ChatPhoneToolGroupingTests.swift",
+      "newLine": 13,
+      "normalizedBodySHA256": "bc14c66f88b670f7a18f2bd051f631d286ffc360397999e3425d703809a52aea",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2220,
+      "kind": "func",
+      "name": "phone",
+      "newFile": "iosApp/iosAppTests/ChatPhoneToolGroupingTests.swift",
+      "newLine": 19,
+      "normalizedBodySHA256": "bb0a590581f8bda53cbbda30cf781e8cfcb4ddfd6d74a1c1569c51330ebdbc52",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2232,
+      "kind": "func",
+      "name": "reasoning",
+      "newFile": "iosApp/iosAppTests/ChatPhoneToolGroupingTests.swift",
+      "newLine": 31,
+      "normalizedBodySHA256": "4f57bb969476dc538bcb5728e2b392f1c1bdbf654b95adb61ccb63c0e9d25f0d",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2237,
+      "kind": "func",
+      "name": "id",
+      "newFile": "iosApp/iosAppTests/ChatPhoneToolGroupingTests.swift",
+      "newLine": 36,
+      "normalizedBodySHA256": "ac8bfe3b7c5ce027b2880c833154173a8b3d607d9a92aed1abd0bb6fbb8b1b0e",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2239,
+      "kind": "func",
+      "name": "project",
+      "newFile": "iosApp/iosAppTests/ChatPhoneToolGroupingTests.swift",
+      "newLine": 38,
+      "normalizedBodySHA256": "893c97bd99a48e50e45b19d403a1b36ab40c152ccd06e1ca8bda853f7dd53408",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "oldLine": 2261,
+      "kind": "func",
+      "name": "messageEntries",
+      "newFile": "iosApp/iosAppTests/ChatPhoneToolGroupingTests.swift",
+      "newLine": 60,
+      "normalizedBodySHA256": "e3b3d47f0dec0c81431314c4e4bf9eeef3e33fb1c7c55b014a3314df3c1df975",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 46,
+      "kind": "class",
+      "name": "HarnessModel",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 23,
+      "normalizedBodySHA256": "f332a7c868105b418a40cf2df1e9937f8c40d8abc804fcdf800f1465ee941598",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 74,
+      "kind": "struct",
+      "name": "Harness",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 51,
+      "normalizedBodySHA256": "c81977354e93431c4f2281d891adbc9f16db07f09376d561d0e5a4c6e0088da2",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 109,
+      "kind": "struct",
+      "name": "Fixture",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 86,
+      "normalizedBodySHA256": "a750183b90291c3d4f0dac87f0748260e73dcc72d901e87c9b57fcdf9ef2bc28",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 132,
+      "kind": "class",
+      "name": "DisplayLinkGapProbe",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 109,
+      "normalizedBodySHA256": "f4cf2fa30243405d113f7df861cce9ad823dcf94552c5d08c5b22dc03c755c15",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 158,
+      "kind": "class",
+      "name": "ScrollFrameProbe",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 135,
+      "normalizedBodySHA256": "14a1dc73ed781aa39e710e3edda4b2b7624a9b5bea9fb42c001ee18ec8bd0b91",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 340,
+      "kind": "func",
+      "name": "makeFixture",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 317,
+      "normalizedBodySHA256": "9ab3fdec00a8c17b810c2baf7b4b4357546b0b39e0a0e670eb52b14d8dd0adf2",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 374,
+      "kind": "func",
+      "name": "makeUserMessage",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 351,
+      "normalizedBodySHA256": "0230aef95441f3509869146864f8f95680afef8d77152b2c57cc244acfe21dd6",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 388,
+      "kind": "func",
+      "name": "makeAssistantMessage",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 365,
+      "normalizedBodySHA256": "10c818edacda37e96ce5d391197bff1efbf56d8bd16c751aa58c2b75fac51193",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 406,
+      "kind": "func",
+      "name": "makeCompletedImageMessage",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 383,
+      "normalizedBodySHA256": "5417cd652445146a50bb4fb477479bcc132a752748a86b3000fbdb97ba978e84",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 441,
+      "kind": "func",
+      "name": "longConversation",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 418,
+      "normalizedBodySHA256": "ce432091767bf09c4e28099914477608aef3bc9b0248a80182b5f37d001ed672",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 453,
+      "kind": "func",
+      "name": "longHistoricalConversation",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 430,
+      "normalizedBodySHA256": "75c83783b3cc264afc7904216071660c0298185df2809d8485812cc65563dbf5",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 518,
+      "kind": "func",
+      "name": "pump",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 449,
+      "normalizedBodySHA256": "63c2c601f81cc1463403b2fb08e6b5f00d241847091ec67850b5d1fbab8beb63",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 530,
+      "kind": "func",
+      "name": "pumpUntil",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 461,
+      "normalizedBodySHA256": "98f9aebb676feaa028905dbb54d2f4288092bc3488277f4d0f4770a3e50dd893",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 542,
+      "kind": "func",
+      "name": "percentile",
+      "newFile": "iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift",
+      "newLine": 473,
+      "normalizedBodySHA256": "4fbe35e17fc573c5171e4dd9e3afec154bd1cc62440be749e985848678f295b5",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 3093,
+      "kind": "func",
+      "name": "visibleTextViews",
+      "newFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "newLine": 1014,
+      "normalizedBodySHA256": "67630a9900137195103f10fac8a0c861e367de3c80be210f0fd6b2a82bde34f3",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 3102,
+      "kind": "func",
+      "name": "allTextViews",
+      "newFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "newLine": 1023,
+      "normalizedBodySHA256": "e48b51a6b6cde57440ad96e0cf25fa6bf14d5c5ba0ee746a254e2398168aae8b",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "oldLine": 3114,
+      "kind": "func",
+      "name": "tailLayoutDiagnostics",
+      "newFile": "iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift",
+      "newLine": 1035,
+      "normalizedBodySHA256": "82379fb0fe741fdbcf6cc21cdc91913aad64998d64489fc07eede10068cc1fa7",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 352,
+      "kind": "func",
+      "name": "makeImageUploadRun",
+      "newFile": "iosApp/iosAppTests/ChatComposerVisionContextTests.swift",
+      "newLine": 637,
+      "normalizedBodySHA256": "ad03bef88a70f236f1c187ecca0b17d8efdb65bf6e6652f5475b4e407034f958",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 376,
+      "kind": "func",
+      "name": "waitForImageUpload",
+      "newFile": "iosApp/iosAppTests/ChatComposerVisionContextTests.swift",
+      "newLine": 661,
+      "normalizedBodySHA256": "af5c015bdaface660f4a525ce67cca885c71b16ff29350269e38a2d5ca71b28d",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2063,
+      "kind": "func",
+      "name": "textContent",
+      "newFile": "iosApp/iosAppTests/ChatViewModelContextTestCase.swift",
+      "newLine": 8,
+      "normalizedBodySHA256": "32e93bc2b814a170d12fc41d95af685c8f66daf66973498ecf23b2374b6f143e",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2069,
+      "kind": "func",
+      "name": "terminalPendingSearchMessages",
+      "newFile": "iosApp/iosAppTests/ChatComposerVisionContextTests.swift",
+      "newLine": 670,
+      "normalizedBodySHA256": "3cedb65c61c5ae889bb2120f4d736b62de099d38b7d30c8fc712c892a71edbda",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2094,
+      "kind": "func",
+      "name": "jsonObject",
+      "newFile": "iosApp/iosAppTests/ChatViewModelContextTestCase.swift",
+      "newLine": 14,
+      "normalizedBodySHA256": "db9a1dd391e97d99d4f38c0b22bfcef2ee18c70345d4e18026bf2bf1655b0433",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2099,
+      "kind": "func",
+      "name": "memorySettings",
+      "newFile": "iosApp/iosAppTests/ChatMemoryContextToolTests.swift",
+      "newLine": 620,
+      "normalizedBodySHA256": "891c9360faa98621976fee0ad2b7956cdcca2abd21ee58b4d1c69704e3676f24",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2112,
+      "kind": "func",
+      "name": "visionFallbackSettings",
+      "newFile": "iosApp/iosAppTests/ChatComposerVisionContextTests.swift",
+      "newLine": 695,
+      "normalizedBodySHA256": "fcc4a3f5b0cc9101d95619d24274f498a76198004f1fb2c224a030c9b341cd83",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2165,
+      "kind": "func",
+      "name": "makeTempFile",
+      "newFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "newLine": 240,
+      "normalizedBodySHA256": "5d446c907ab03e2a0ba360e24ff516e04300e7a78a5d9c149909720cb50b9e73",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2173,
+      "kind": "func",
+      "name": "isolatedDefaults",
+      "newFile": "iosApp/iosAppTests/ChatViewModelContextTestCase.swift",
+      "newLine": 20,
+      "normalizedBodySHA256": "c45433da2dd6a0772b36d5b0da29a6e5324e90f66a6785121b6dc4374e13f68c",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2182,
+      "kind": "class",
+      "name": "ImageUploadRecordingProvider",
+      "newFile": "iosApp/iosAppTests/ChatVisionProviderTestDoubles.swift",
+      "newLine": 6,
+      "normalizedBodySHA256": "cbc72fff9f3cd0376d024693bad488b5583721a4be99a298290f6d9949c8e0d0",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2196,
+      "kind": "func",
+      "name": "generateText",
+      "newFile": "iosApp/iosAppTests/ChatVisionProviderTestDoubles.swift",
+      "newLine": 20,
+      "normalizedBodySHA256": "8a1aa70f2f98b0ce36859e3c0ce4e801bc85df5827078a033c203b749d2812d6",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2213,
+      "kind": "class",
+      "name": "BlockingVisionProvider",
+      "newFile": "iosApp/iosAppTests/ChatVisionProviderTestDoubles.swift",
+      "newLine": 37,
+      "normalizedBodySHA256": "b9d8711c0dc336418093a8b08e178c37c04e83f6ade75b9af9ac33665f34efc4",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2222,
+      "kind": "func",
+      "name": "generateText",
+      "newFile": "iosApp/iosAppTests/ChatVisionProviderTestDoubles.swift",
+      "newLine": 46,
+      "normalizedBodySHA256": "33c15e8e1efbfe88b3ada6d17ea2338a11a991e554c365f2236d8b3f8ac16a93",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2239,
+      "kind": "func",
+      "name": "finish",
+      "newFile": "iosApp/iosAppTests/ChatVisionProviderTestDoubles.swift",
+      "newLine": 63,
+      "normalizedBodySHA256": "7c05b6f0243e5ac5d7c3cd97d101d2f929da1ed6efcae6e84adf87ca5d5e4a0d",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2255,
+      "kind": "class",
+      "name": "ChatSearchTransport",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 6,
+      "normalizedBodySHA256": "fc5dc9fd950ba219c0d023a3aab7dfc1e008da786e1a2f974c1fe195684ffcd6",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2256,
+      "kind": "struct",
+      "name": "Response",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 7,
+      "normalizedBodySHA256": "b95e04fc2eff76c54d63278dfc220531f4d4659a6a23c883e1cd37ce1df06992",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2279,
+      "kind": "func",
+      "name": "send",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 30,
+      "normalizedBodySHA256": "17adcf58f53c1fc84faed51a64ce08ea5ddbf9c2f9b05d32556af3d293346776",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2294,
+      "kind": "class",
+      "name": "BlockingChatSearchTransport",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 45,
+      "normalizedBodySHA256": "5d44b8d8f6c04165aa727eef91cb7d4dcba0659f1af16920564f76fc4b1f2c92",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2305,
+      "kind": "func",
+      "name": "waitUntilRequestStarted",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 56,
+      "normalizedBodySHA256": "fa4172663277536981c1b50d566632b532aabc30e4dd58bb9c3bc93235ec187d",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2312,
+      "kind": "func",
+      "name": "complete",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 63,
+      "normalizedBodySHA256": "b29c0a4df90a9cacd4875ab4edc6e7ce7c35e006242d9afa020e0eb436255df5",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2325,
+      "kind": "func",
+      "name": "send",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 76,
+      "normalizedBodySHA256": "6e819dbbce85b2e46d7e5a22a9b6b5d3ec94334ee0457958f303037f7a5b0b82",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2337,
+      "kind": "class",
+      "name": "CancellingChatSearchTransport",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 88,
+      "normalizedBodySHA256": "edcd24fbad8b4cfb59098f2f1e321a974034a2006482fec29bc706874a222eac",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2343,
+      "kind": "func",
+      "name": "waitUntilRequestStarted",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 94,
+      "normalizedBodySHA256": "fa4172663277536981c1b50d566632b532aabc30e4dd58bb9c3bc93235ec187d",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2350,
+      "kind": "func",
+      "name": "send",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 101,
+      "normalizedBodySHA256": "9aed68fe1fcce399058d61ec85c095eb7fe86d01898b4d62d929bd9875aa69b5",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2376,
+      "kind": "func",
+      "name": "cancelFirstRequest",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 127,
+      "normalizedBodySHA256": "09578161d2afc6844e2d0640325dbf3ed65a22c299c49db655ed07ec08607616",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2384,
+      "kind": "class",
+      "name": "ChatWebMountCookieStore",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 135,
+      "normalizedBodySHA256": "bc169987f1a3170576f4dd1e19d9821574dc16aabc4d5364ed2cf6caf1dd29aa",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2387,
+      "kind": "func",
+      "name": "summary",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 138,
+      "normalizedBodySHA256": "cb4327a9d2d40838d9081db095456e3d89920e1290bd8de2cf4d9b9e40c1ac89",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2398,
+      "kind": "func",
+      "name": "clearSession",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 149,
+      "normalizedBodySHA256": "d5944f0edb9ee39414788f8f2a63d445295f2bbd2fe0ca6a8440d4da53fceef1",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2409,
+      "kind": "class",
+      "name": "ChatWebMountRuntime",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 160,
+      "normalizedBodySHA256": "d073ebfd6ad9d8ae8fb0f19625d5f0d25fc0ef6e45238949aee1d7b75e044bd5",
+      "accessOnlyChanged": true
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2413,
+      "kind": "func",
+      "name": "open",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 164,
+      "normalizedBodySHA256": "b0d4bfef792e51494c1ab2fd8a4b69502b525dd5b2e40ca932cebd69671c8612",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2429,
+      "kind": "func",
+      "name": "state",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 180,
+      "normalizedBodySHA256": "b3694316df2078bcd79f2bb359369e66c414d4739d678f58592953c1d82814c4",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2433,
+      "kind": "func",
+      "name": "extract",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 184,
+      "normalizedBodySHA256": "6222d9fe23378877fc814c246e1c2be78735c194df2f137c8fded9d22bcb9b55",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2437,
+      "kind": "func",
+      "name": "get",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 188,
+      "normalizedBodySHA256": "56a1939e4cfacbb0f3254e7d06dde1b9e5d1334145645e3d3a3ce9fea2b5fb13",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2447,
+      "kind": "func",
+      "name": "interact",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 198,
+      "normalizedBodySHA256": "6a0ca4c23af5be4649b09d51f2df85811b5784a9ac098c10a0e24a34bc96024b",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2451,
+      "kind": "func",
+      "name": "screenshot",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 202,
+      "normalizedBodySHA256": "6542cce0bff4b4f31c607275a2529776a4e4e6fa6d9ce7bd0a44a49b5969717e",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2455,
+      "kind": "func",
+      "name": "back",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 206,
+      "normalizedBodySHA256": "a3f8492307ba1931ad36fd8029532ada877d256c9b5ab514a43985c4921982f8",
+      "accessOnlyChanged": false
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/ChatViewModelSelectedFileContextTests.swift",
+      "oldLine": 2459,
+      "kind": "func",
+      "name": "forward",
+      "newFile": "iosApp/iosAppTests/ChatExternalToolTestDoubles.swift",
+      "newLine": 210,
+      "normalizedBodySHA256": "dbe83f1a0461d26df5911b804d87b9affafb9c10f0f759a9d66f642ec28a025c",
+      "accessOnlyChanged": false
+    }
+  ]
+}

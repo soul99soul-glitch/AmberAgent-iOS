@@ -1,0 +1,34 @@
+[
+  {
+    "test": "IOSFreeSearchAggregatorTests/testLiveEachFreeEngineReturnsResultsWhenEnabled()",
+    "reason": "Test skipped - Set AMBER_LIVE_FREE_SEARCH=1 to run the real free-search check."
+  },
+  {
+    "test": "IOSIntelligentUILiveProviderTests/testConfiguredProviderChoosesInlineStudyForNaturalMemoryRequest()",
+    "reason": "Test skipped - 真实 provider 验收需显式启用；不修改模型或认证设置。"
+  },
+  {
+    "test": "IOSIntelligentUILiveProviderTests/testConfiguredProviderProducesCardAndConsumesUserSelection()",
+    "reason": "Test skipped - 设置 AMBER_TASK_UI_LIVE_PROVIDER=1 才执行两轮真实 provider 验收。"
+  },
+  {
+    "test": "IOSLiveProviderSmokeTests/testOpenAICompatibleOrdinaryChatWithMemoryContextWhenKeyIsProvided()",
+    "reason": "Test skipped - Set AMBERAGENT_IOS_LIVE_OPENAI_API_KEY to run the real iOS ordinary-chat provider smoke."
+  },
+  {
+    "test": "IOSNativeGenerationMotionTests/testSystemReducedMotionShowsContentWithoutReveal()",
+    "reason": "Test skipped - Run with the simulator's Reduce Motion setting enabled"
+  },
+  {
+    "test": "IOSSearchExecutorTests/testLivePublicScrapeUsesProductionTransportWhenEnabled()",
+    "reason": "Test skipped - Set AMBER_LIVE_PUBLIC_SCRAPE=1 to run the real public scrape check."
+  },
+  {
+    "test": "NovelProjectRepositoryTests/testDeviceZhaodalaiPackageLoadsAndValidates()",
+    "reason": "Test skipped - Device package is not copied at /tmp/amber-novel-device/project"
+  },
+  {
+    "test": "NovelWorkspaceLedgerTests/testApplyRelinkOnDeviceZhaoDaPackage()",
+    "reason": "Test skipped - Device package is not copied to /tmp/amber-repro-pkg"
+  }
+]

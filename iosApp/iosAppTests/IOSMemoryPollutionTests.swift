@@ -486,6 +486,8 @@ final class IOSMemoryPollutionTests: XCTestCase {
 
         let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
         sharedSettings.setEnableWebSearch(true)
+        sharedSettings.setSearchGoogleWebViewFallbackEnabled(false)
+        IOSFreeSearchAggregator.resetCooldowns()
         let runtime = makeRuntime(sharedSettings: sharedSettings, marker: productionStyleMarker(store: store))
 
         let model = Model(
@@ -529,9 +531,13 @@ final class IOSMemoryPollutionTests: XCTestCase {
                 isUserInitiated: false
             )
         }
-        guard case .filled = outcome else {
+        guard case .filledParts(let parts) = outcome else {
             return XCTFail("后台 search_web 必须成功执行，got \(outcome)")
         }
+        let resultText = parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+        XCTAssertTrue(resultText.contains("First & Result"))
+        XCTAssertTrue(resultText.contains("https://example.com/one"))
+        XCTAssertNil(ChatToolOutputFormatter.failureReason(from: parts))
 
         let polluted = await waitUntilPolluted(store: store, id: runConversationId)
         XCTAssertTrue(polluted)
@@ -579,8 +585,10 @@ private final class PollutionSearchTransport: IOSSearchHTTPTransport {
     func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
         let html = """
         <html><body>
-        <a rel="nofollow" class='result-link' href="/l/?kh=-1&amp;uddg=https%3A%2F%2Fexample.com%2Fone">First &amp; Result</a>
-        <td class='result-snippet'>First snippet.</td>
+        <div class="result results_links web-result">
+          <a class="result__a" href="https://example.com/one">First &amp; Result</a>
+          <a class="result__snippet" href="https://example.com/one">First snippet.</a>
+        </div>
         </body></html>
         """
         let response = HTTPURLResponse(

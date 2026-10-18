@@ -344,13 +344,21 @@ final class ChatRowContentHashCacheTests: XCTestCase {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let appDirectory = testDirectory.deletingLastPathComponent().appendingPathComponent("iosApp")
         let source = try String(
-            contentsOf: appDirectory.appendingPathComponent("ChatCollectionMessageList.swift"),
+            contentsOf: appDirectory.appendingPathComponent("Chat/Timeline/Regression/ChatSwiftUIMessageList.swift"),
+            encoding: .utf8
+        )
+        let rows = try String(
+            contentsOf: appDirectory.appendingPathComponent("Chat/Timeline/ChatTimelineRows.swift"),
+            encoding: .utf8
+        )
+        let visibility = try String(
+            contentsOf: appDirectory.appendingPathComponent("Chat/Timeline/ChatTimelinePolicies.swift"),
             encoding: .utf8
         )
 
         XCTAssertTrue(
-            source.contains("private struct ChatSwiftUIMessageBubble: View, @MainActor Equatable"),
-            "Default SwiftUI clean-list rows must have their own Equatable wrapper; native-only row gating does not protect the default path."
+            rows.contains("struct ChatSwiftUIMessageBubble: View, @MainActor Equatable"),
+            "SwiftUI regression-list rows must retain their own Equatable wrapper."
         )
         XCTAssertTrue(
             source.contains("ChatSwiftUIMessageBubble(") && source.contains(".equatable()"),
@@ -360,19 +368,19 @@ final class ChatRowContentHashCacheTests: XCTestCase {
             source.contains("@State private var swiftUIContentHashCache = ChatRowContentHashCache()") &&
                 source.contains("@State private var swiftUIRenderStateStore = ChatRenderStateStore()") &&
                 source.contains("ChatRowDigests.digest("),
-            "Default SwiftUI rows must use the shared digest/content-hash gate instead of comparing full UIMessage values."
+            "SwiftUI regression-list rows must use the shared digest/content-hash gate instead of comparing full UIMessage values."
         )
         XCTAssertTrue(
             source.contains("ChatSwiftUIStreamingTailRenderPolicy.shouldSuspend(") &&
                 source.contains("isLastAssistant: row.isLast && row.role == MessageRole.assistant") &&
                 source.contains("hasEverStreamed: row.hasEverStreamed") &&
                 source.contains("swiftUIContentHashCache.suspendedStreamingTailLayoutToken(for: row)") &&
-                source.contains("proxy.bounds(of: .scrollView)"),
-            "The default clean-list may suspend streaming-tail invalidation only after that tail row is confirmed offscreen."
+                visibility.contains("proxy.bounds(of: .scrollView)"),
+            "The SwiftUI regression list may suspend streaming-tail invalidation only after that tail row is confirmed offscreen."
         )
         XCTAssertTrue(
-            source.contains("if lhs.updatesSuspended") &&
-                source.contains("lhs.updatesSuspended == rhs.updatesSuspended"),
+            rows.contains("if lhs.updatesSuspended") &&
+                rows.contains("lhs.updatesSuspended == rhs.updatesSuspended"),
             "Streaming deltas must keep a confirmed-offscreen tail bubble stable until it becomes visible."
         )
         XCTAssertFalse(

@@ -1,0 +1,35 @@
+{
+  "IOSChatBackgroundTerminalBoundaryTests": {
+    "Failed": 1,
+    "Passed": 2
+  },
+  "IOSChatDetachedResponseTerminalTests": {
+    "Passed": 7,
+    "Failed": 3
+  },
+  "IOSChatDurableOwnershipTests": {
+    "Passed": 6,
+    "Failed": 2
+  },
+  "IOSChatForegroundTerminalBoundaryTests": {
+    "Passed": 2
+  },
+  "IOSOrchestrationTerminalOwnershipTests": {
+    "Passed": 6
+  },
+  "NovelDocumentValidationTests": {
+    "Passed": 38
+  },
+  "NovelDomainIntegrityRegressionTests": {
+    "Passed": 5
+  },
+  "NovelManualEditSyncTests": {
+    "Passed": 23
+  },
+  "NovelWorkspaceRepositoryTests": {
+    "Passed": 24
+  },
+  "SearchNavigationTests": {
+    "Failed": 2
+  }
+}

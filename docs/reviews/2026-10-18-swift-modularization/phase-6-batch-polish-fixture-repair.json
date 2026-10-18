@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "phase": 6,
+  "kind": "postMigrationTestFixtureRepair",
+  "problem": "The test treated a placeholder activeRunID as proof that branch selection could be admitted, ignored the selection result, and then misattributed an unchanged running batch to binding-change cancellation.",
+  "mapping": {
+    "oldFile": "iosApp/iosAppTests/NovelBatchPolishTests.swift",
+    "oldClass": "NovelBatchPolishTests",
+    "oldMethod": "testBindingChangeCancelsRunningBatchWithoutStartingNextChapter",
+    "newFile": "iosApp/iosAppTests/NovelBatchPolishTests.swift",
+    "newClass": "NovelBatchPolishTests",
+    "newMethod": "testBindingChangeCancelsRunningBatchWithoutStartingNextChapter",
+    "oldBodySHA256": "aed3df927e204b9fe87fc123049ed60f74365196c9505dba156119bf254bb549",
+    "newBodySHA256": "6ae10399f5524473d0c927f66b6f2f72618c929a51db201be1440b8079a7a8f6"
+  },
+  "oldFileMatchesHEADExactly": true,
+  "oldFileSHA256": "f5b7845cf628f5ccad7b48489672b69253aa48cb8101b9642bad60310177a5bf",
+  "newFileSHA256": "e47b05e6c4fb0de54f356738fa32979b963a4f0d871196d257d860df57cd0ac7",
+  "methodChanges": [
+    "Use the existing eventually helper to wait for activeRunID, completed session start handshake, and open workspace project-selection admission.",
+    "Assert that selectBranch returns selected and include workspace.errorMessage for diagnosis."
+  ],
+  "unchangedContract": [
+    "XCTest class and selector identity",
+    "MainActor isolation",
+    "Original binding, progress, request-count, and durable-run assertions",
+    "Scripted provider pause and two-chapter order",
+    "Production branch-selection and batch-cancellation guards"
+  ],
+  "verification": {
+    "swiftParse": "passed",
+    "diffCheck": "passed",
+    "mainR1": "passed",
+    "mainR2": "passed",
+    "novelR1": "passed",
+    "mainR3BeforeRepair": "failed",
+    "mainR4BeforeRepair": "failed, sole failed case",
+    "fullNovelR2AfterRepair": {
+      "result": "passed",
+      "total": 1048,
+      "passed": 1045,
+      "failed": 0,
+      "skipped": 3,
+      "summary": "/tmp/amber-phase6-novel-r2-summary.json",
+      "tests": "/tmp/amber-phase6-novel-r2-tests.json"
+    },
+    "mainR5": {
+      "actualTestCases": 0,
+      "result": "test daemon not ready during bootstrap; Root-controlled stop and retained-data simulator reboot",
+      "diagnosis": "/tmp/amber-phase6-main-r5-bootstrap-diagnosis.json",
+      "resultKitCode12": "post-stop result-bundle write issue, not the bootstrap cause"
+    },
+    "fullMainR6AfterRepair": {
+      "result": "passed",
+      "total": 5089,
+      "passed": 5073,
+      "failed": 0,
+      "skipped": 16,
+      "repairedTest": "passed",
+      "summary": "/tmp/amber-phase6-main-r6-summary.json",
+      "tests": "/tmp/amber-phase6-main-r6-tests.json"
+    }
+  },
+  "review": "docs/reviews/2026-10-18-swift-modularization/phase-6-batch-polish-fixture-review.md"
+}

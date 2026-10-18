@@ -334,34 +334,11 @@ final class IOSMcpClientTests: XCTestCase {
     }
 
     func testConcurrentExpiredCallsShareOneReconnectAndRefresh() async throws {
-        let transport = FakeMcpHTTPTransport(
-            responses: [
-                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
-                ["jsonrpc": "2.0", "id": 2, "result": ["tools": [[
-                    "name": "search",
-                    "annotations": ["readOnlyHint": true],
-                ]]]],
-                ["jsonrpc": "2.0", "id": 3, "error": ["message": "expired"]],
-                ["jsonrpc": "2.0", "id": 4, "error": ["message": "expired"]],
-                ["jsonrpc": "2.0", "id": 5, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
-                ["jsonrpc": "2.0", "id": 6, "result": ["tools": [[
-                    "name": "search",
-                    "annotations": ["readOnlyHint": true],
-                ]]]],
-                ["jsonrpc": "2.0", "id": 7, "result": ["content": [["type": "text", "text": "fresh-a"]]]],
-                ["jsonrpc": "2.0", "id": 8, "result": ["content": [["type": "text", "text": "fresh-b"]]]],
-            ],
-            responseStatuses: [200, 200, 404, 404, 200, 200, 200, 200],
-            responseHeaders: [
-                ["Mcp-Session-Id": "session-1"], [:], [:], [:],
-                ["Mcp-Session-Id": "session-2"], [:], [:], [:],
-            ],
-            delayedMethods: ["tools/call": 20_000_000]
-        )
+        let client = ConcurrentExpiredMcpClient()
         let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
         let manager = IOSMcpManager(
             serverProvider: { [config] },
-            clientFactory: { _ in IOSMcpClient(transport: transport) }
+            clientFactory: { _ in client }
         )
         await manager.syncAll()
 
@@ -370,10 +347,91 @@ final class IOSMcpClientTests: XCTestCase {
         let outputs = try await [first.value, second.value]
 
         XCTAssertEqual(outputs.sorted(), ["fresh-a", "fresh-b"])
-        XCTAssertEqual(transport.sentMethods.filter { $0 == "initialize" }.count, 2)
-        XCTAssertEqual(transport.sentMethods.filter { $0 == "tools/list" }.count, 2)
-        XCTAssertEqual(transport.sentMethods.filter { $0 == "tools/call" }.count, 4)
+        XCTAssertEqual(client.connectCount, 2)
+        XCTAssertEqual(client.listToolsCount, 2)
+        XCTAssertEqual(client.callCount, 4)
+        XCTAssertEqual(client.initialExpiredCallCount, 2)
+        XCTAssertEqual(client.disconnectCount, 1)
+        XCTAssertEqual(manager.statusByServer["docs"], .connected)
+    }
+
+    func testQueuedCallsRecoverWhenSessionExpiresAheadOfThem() async throws {
+        let firstCallStarted = expectation(description: "First old-session HTTP request is held")
+        let secondCallStarted = expectation(description: "Second old-session HTTP request is held")
+        let recoveryDisconnected = expectation(description: "Recovery disconnected the old session")
+        let recoveryRequested = expectation(description: "Manager requested recovery while B is held")
+        let secondCallEntered = expectation(description: "Second caller entered the manager")
+        let thirdCallEntered = expectation(description: "Third caller entered the manager")
+        let transport = GatedExpiredMcpHTTPTransport(
+            onFirstCall: { firstCallStarted.fulfill() },
+            onSecondCall: { secondCallStarted.fulfill() },
+            onDisconnect: { recoveryDisconnected.fulfill() }
+        )
+        let client = IOSMcpClient(transport: transport, requestTimeoutSeconds: 5)
+        let observedClient = RecoveryObservingMcpClient(client: client) { recoveryRequested.fulfill() }
+        let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
+        let manager = IOSMcpManager(serverProvider: { [config] }, clientFactory: { _ in observedClient })
+        await manager.syncAll()
+
+        let first = Task { try await manager.callTool(serverName: "docs", toolName: "search", arguments: ["q": "a"]) }
+        await fulfillment(of: [firstCallStarted], timeout: 2)
+        let second = Task {
+            secondCallEntered.fulfill()
+            return try await manager.callTool(serverName: "docs", toolName: "search", arguments: ["q": "b"])
+        }
+        await fulfillment(of: [secondCallEntered], timeout: 2)
+        let third = Task {
+            thirdCallEntered.fulfill()
+            return try await manager.callTool(serverName: "docs", toolName: "search", arguments: ["q": "c"])
+        }
+        let calls = [first, second, third]
+        defer {
+            calls.forEach { $0.cancel() }
+            transport.releaseHeldCalls()
+        }
+        await fulfillment(of: [thirdCallEntered], timeout: 2)
+
+        // Entry signals alone do not prove queueing. Observe the real private
+        // queue once, solely to establish this interleaving without a timing delay.
+        let waiters = Mirror(reflecting: client).children.first { $0.label == "requestWaiters" }
+        let waiterCollection = waiters.map { Mirror(reflecting: $0.value) }
+        guard waiterCollection?.displayStyle == .collection,
+              waiterCollection?.children.count == 2 else {
+            XCTFail("Fixture setup failed: expected the real Client requestWaiters collection to contain B and C")
+            calls.forEach { $0.cancel() }
+            transport.releaseHeldCalls()
+            for call in calls { _ = await call.result }
+            return
+        }
+
+        transport.releaseCall(query: "a")
+        await fulfillment(of: [secondCallStarted, recoveryRequested], timeout: 2)
+        guard transport.isHoldingCall(query: "b"), observedClient.recoveryRequestCount == 1 else {
+            XCTFail("Fixture setup failed: expected B held in HTTP after the recovery request")
+            calls.forEach { $0.cancel() }
+            transport.releaseHeldCalls()
+            for call in calls { _ = await call.result }
+            return
+        }
+        transport.releaseCall(query: "b")
+        for (query, call) in zip(["a", "b", "c"], calls) {
+            switch await call.result {
+            case .success(let output): XCTAssertEqual(output, "fresh-\(query)")
+            case .failure(let error): XCTFail("Read-only call \(query) failed during recovery: \(error)")
+            }
+        }
+        await fulfillment(of: [recoveryDisconnected], timeout: 2)
+
+        let toolRequests = transport.requests.filter { $0.method == "tools/call" }
+        XCTAssertEqual(transport.requests.filter { $0.method == "initialize" }.count, 2)
+        XCTAssertEqual(transport.requests.filter { $0.method == "tools/list" }.count, 2)
+        XCTAssertEqual(toolRequests.count, 6)
+        XCTAssertEqual(toolRequests.filter { $0.sessionID == "session-1" }.compactMap(\.query).sorted(), ["a", "b", "c"])
+        XCTAssertEqual(toolRequests.filter { $0.sessionID == "session-2" }.compactMap(\.query).sorted(), ["a", "b", "c"])
+        XCTAssertTrue(transport.requests.filter { $0.method == "initialize" }.allSatisfy { $0.sessionID == nil })
         XCTAssertEqual(transport.disconnectedServers, ["docs"])
+        XCTAssertEqual(observedClient.recoveryRequestCount, 1)
+        XCTAssertEqual(transport.maximumConcurrentRequests, 1)
         XCTAssertEqual(manager.statusByServer["docs"], .connected)
     }
 
@@ -1080,6 +1138,172 @@ private final class GenericBrowserMcpClient: IOSMcpClienting {
     }
 
     func disconnect() {}
+}
+
+private final class ConcurrentExpiredMcpClient: IOSMcpClienting {
+    private(set) var connectCount = 0
+    private(set) var listToolsCount = 0
+    private(set) var callCount = 0
+    private(set) var initialExpiredCallCount = 0
+    private(set) var disconnectCount = 0
+    private var initialCalls: [CheckedContinuation<String, Error>] = []
+
+    func connect(config: IOSMcpServerConfig) async throws -> Bool {
+        connectCount += 1
+        return true
+    }
+
+    func listTools() async throws -> [IOSMcpTool] {
+        listToolsCount += 1
+        return [IOSMcpTool(name: "search", description: "Search", readOnlyHint: true)]
+    }
+
+    func callTool(name: String, arguments: [String: Any]) async throws -> String {
+        callCount += 1
+        if callCount <= 2 {
+            // Both callers must enter the original session before either sees
+            // expiry; task creation and transport sleeps cannot establish that.
+            initialExpiredCallCount += 1
+            return try await withCheckedThrowingContinuation { continuation in
+                initialCalls.append(continuation)
+                guard initialCalls.count == 2 else { return }
+                let expiredCalls = initialCalls
+                initialCalls.removeAll()
+                expiredCalls.forEach { $0.resume(throwing: IOSMcpClientError.mcpSessionExpired) }
+            }
+        }
+        return "fresh-\(arguments["q"] as? String ?? "missing-query")"
+    }
+
+    func disconnect() {
+        disconnectCount += 1
+    }
+}
+
+private final class RecoveryObservingMcpClient: IOSMcpClienting {
+    private let client: IOSMcpClient
+    private let onRecoveryRequest: () -> Void
+    private var connectCount = 0
+    private(set) var recoveryRequestCount = 0
+
+    init(client: IOSMcpClient, onRecoveryRequest: @escaping () -> Void) {
+        self.client = client
+        self.onRecoveryRequest = onRecoveryRequest
+    }
+
+    func connect(config: IOSMcpServerConfig) async throws -> Bool {
+        connectCount += 1
+        // Observe the previous Manager's disconnect/connect path as well, so
+        // restoring that implementation still exercises the same product failure.
+        if connectCount > 1 { recordRecoveryRequest() }
+        return try await client.connect(config: config)
+    }
+
+    func reconnect(config: IOSMcpServerConfig) async throws -> Bool {
+        recordRecoveryRequest()
+        return try await client.reconnect(config: config)
+    }
+
+    private func recordRecoveryRequest() {
+        recoveryRequestCount += 1
+        onRecoveryRequest()
+    }
+
+    func listTools() async throws -> [IOSMcpTool] { try await client.listTools() }
+    func callTool(name: String, arguments: [String: Any]) async throws -> String {
+        try await client.callTool(name: name, arguments: arguments)
+    }
+    func callToolOutput(name: String, arguments: [String: Any]) async throws -> IOSMcpToolOutput {
+        try await client.callToolOutput(name: name, arguments: arguments)
+    }
+    func disconnect() { client.disconnect() }
+}
+
+private final class GatedExpiredMcpHTTPTransport: IOSMcpHTTPTransport {
+    struct Request {
+        let method: String
+        let sessionID: String?
+        let query: String?
+    }
+
+    private let onFirstCall: () -> Void
+    private let onSecondCall: () -> Void
+    private let onDisconnect: () -> Void
+    private var heldCalls: [String: CheckedContinuation<Void, Never>] = [:]
+    private var initializeCount = 0
+    private var activeRequests = 0
+    private(set) var requests: [Request] = []
+    private(set) var disconnectedServers: [String] = []
+    private(set) var maximumConcurrentRequests = 0
+
+    init(onFirstCall: @escaping () -> Void, onSecondCall: @escaping () -> Void, onDisconnect: @escaping () -> Void) {
+        self.onFirstCall = onFirstCall
+        self.onSecondCall = onSecondCall
+        self.onDisconnect = onDisconnect
+    }
+
+    func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
+        let method = payload["method"] as? String ?? ""
+        let sessionID = config.headers["Mcp-Session-Id"]
+        let params = payload["params"] as? [String: Any]
+        let query = (params?["arguments"] as? [String: Any])?["q"] as? String
+        requests.append(Request(method: method, sessionID: sessionID, query: query))
+        activeRequests += 1
+        maximumConcurrentRequests = max(maximumConcurrentRequests, activeRequests)
+        defer { activeRequests -= 1 }
+
+        let result: [String: Any]
+        var headers: [String: String] = [:]
+        switch method {
+        case "initialize":
+            initializeCount += 1
+            headers["Mcp-Session-Id"] = "session-\(initializeCount)"
+            result = ["protocolVersion": "2024-11-05", "capabilities": [:]]
+        case "tools/list":
+            result = ["tools": [["name": "search", "annotations": ["readOnlyHint": true]]]]
+        case "tools/call" where sessionID == "session-1":
+            if let query, query == "a" || query == "b" {
+                await withCheckedContinuation { continuation in
+                    heldCalls[query] = continuation
+                    if query == "a" { onFirstCall() } else { onSecondCall() }
+                }
+            }
+            return IOSMcpHTTPResponse(status: 404, body: Data())
+        case "tools/call" where sessionID == "session-2":
+            guard let query else { throw IOSMcpClientError.invalidResponse }
+            result = ["content": [["type": "text", "text": "fresh-\(query)"]]]
+        default:
+            throw IOSMcpClientError.invalidResponse
+        }
+        let body = try JSONSerialization.data(withJSONObject: [
+            "jsonrpc": "2.0", "id": payload["id"] as Any, "result": result
+        ])
+        return IOSMcpHTTPResponse(status: 200, body: body, headers: headers)
+    }
+
+    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
+        requests.append(Request(method: payload["method"] as? String ?? "", sessionID: config.headers["Mcp-Session-Id"], query: nil))
+        return IOSMcpHTTPResponse(status: 200)
+    }
+
+    func disconnect(config: IOSMcpServerConfig) {
+        disconnectedServers.append(config.name)
+        onDisconnect()
+    }
+
+    func releaseCall(query: String) {
+        heldCalls.removeValue(forKey: query)?.resume()
+    }
+
+    func isHoldingCall(query: String) -> Bool {
+        heldCalls[query] != nil
+    }
+
+    func releaseHeldCalls() {
+        let continuations = Array(heldCalls.values)
+        heldCalls.removeAll()
+        continuations.forEach { $0.resume() }
+    }
 }
 
 private final class SuspendingRecoveryMcpClient: IOSMcpClienting {

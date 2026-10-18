@@ -15,6 +15,7 @@ enum NovelModelScriptStep: Equatable, Sendable {
     case activity
     /// Presentation-only thinking; must never land in manuscript partials.
     case reasoningDelta(String)
+    case reasoningReplacement(String)
     case delta(String)
     case replacement(String)
     case usage(NovelModelUsage)
@@ -142,6 +143,8 @@ actor ScriptedNovelModelAdapter: NovelModelRunning {
                 continuation.yield(.activity)
             case .reasoningDelta(let text):
                 continuation.yield(.reasoningDelta(text))
+            case .reasoningReplacement(let text):
+                continuation.yield(.reasoningReplacement(text))
             case .delta(let text):
                 continuation.yield(.textDelta(text))
             case .replacement(let text):

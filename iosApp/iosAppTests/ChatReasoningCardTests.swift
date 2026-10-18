@@ -2,6 +2,7 @@ import XCTest
 import SwiftUI
 import UIKit
 import QuartzCore
+@preconcurrency import Shared
 @testable import iosApp
 
 /// `ChatReasoningCard` 可见性判断的行为契约与热路径特征。
@@ -185,6 +186,7 @@ final class ChatReasoningCardTests: XCTestCase {
     private final class StreamingReasoningModel: ObservableObject {
         @Published var text: String
         @Published var isThinking = true
+        @Published var autoExpandThinking = true
 
         init(text: String) {
             self.text = text
@@ -207,7 +209,8 @@ final class ChatReasoningCardTests: XCTestCase {
                     bodyText: model.text,
                     isThinking: model.isThinking,
                     levelLabel: "高",
-                    autoCloseThinking: false
+                    autoCloseThinking: false,
+                    autoExpandThinking: model.autoExpandThinking
                 )
 
                 Spacer(minLength: 0)
@@ -264,6 +267,71 @@ final class ChatReasoningCardTests: XCTestCase {
     }
 
     // MARK: - 行为契约
+
+    func testAutoExpandDisabledKeepsInitialAndArrivingReasoningCollapsed() {
+        for initialText in ["", "已经收到的思考内容"] {
+            let model = StreamingReasoningModel(text: initialText)
+            model.autoExpandThinking = false
+            let fixture = mountHarness(model: model)
+            defer { fixture.window.isHidden = true; fixture.window.rootViewController = nil }
+            pump(seconds: 0.1)
+            XCTAssertNil(firstSubview(of: UITextView.self, in: fixture.host.view))
+            model.text = "新到达的思考内容"
+            pump(seconds: 0.15)
+            XCTAssertNil(firstSubview(of: UITextView.self, in: fixture.host.view))
+            model.isThinking = false
+            pump(seconds: 0.35)
+            model.isThinking = true
+            pump(seconds: 0.15)
+            XCTAssertNil(firstSubview(of: UITextView.self, in: fixture.host.view), "新一轮思考不能绕过已关闭的开关")
+        }
+    }
+
+    func testAutoExpandPreferenceUpdatesExistingAutomaticExpansion() throws {
+        let model = StreamingReasoningModel(text: "思考内容随显示选项展开")
+        let fixture = mountHarness(model: model)
+        defer { fixture.window.isHidden = true; fixture.window.rootViewController = nil }
+        pump(seconds: 0.15)
+        XCTAssertNotNil(firstSubview(of: UITextView.self, in: fixture.host.view), "默认保持原有自动展开行为")
+        model.autoExpandThinking = false
+        pump(seconds: 0.4)
+        XCTAssertNil(firstSubview(of: UITextView.self, in: fixture.host.view))
+        model.isThinking = false
+        pump(seconds: 0.35)
+        XCTAssertNil(firstSubview(of: UITextView.self, in: fixture.host.view), "完成且不自动收起的历史卡片也应尊重关闭自动展开")
+        model.autoExpandThinking = true
+        pump(seconds: 0.4)
+        XCTAssertEqual(firstSubview(of: UITextView.self, in: fixture.host.view)?.text, model.text)
+    }
+
+    func testMessageBubbleConsumesPersistedAutoExpandPreference() throws {
+        let suite = "ReasoningExpansion-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: IOSDisplayPreferenceKeys.autoExpandThinking)
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+        let message = UIMessage(
+            id: KotlinUuid.companion.random(), role: .assistant,
+            parts: [UIMessagePart.Reasoning(reasoning: "由消息气泡消费已保存的展开设置", createdAt: instant, finishedAt: nil, metadata: nil)],
+            annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: nil,
+            modelId: nil, usage: nil, translation: nil
+        )
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let host = UIHostingController(rootView: MessageBubbleView(message: message, isGenerating: true, isLastMessage: true)
+            .environment(IOSWorkspaceStore(baseDirectory: directory)).defaultAppStorage(defaults))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        pump(seconds: 0.2)
+        XCTAssertNil(firstSubview(of: UITextView.self, in: host.view))
+        defaults.set(true, forKey: IOSDisplayPreferenceKeys.autoExpandThinking)
+        pump(seconds: 0.5)
+        XCTAssertEqual(firstSubview(of: UITextView.self, in: host.view)?.text, "由消息气泡消费已保存的展开设置")
+    }
 
     @MainActor
     private final class TextStorageEditProbe {

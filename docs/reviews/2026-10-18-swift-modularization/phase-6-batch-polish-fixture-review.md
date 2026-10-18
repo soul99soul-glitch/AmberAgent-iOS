@@ -1,0 +1,13 @@
+# Phase 6 BatchPolish binding-change 测试时序审查
+
+`NovelBatchPolishTests/testBindingChangeCancelsRunningBatchWithoutStartingNextChapter` 在 Main r1 通过（0.070 秒）、Main r2 通过（0.076 秒）、Novel r1 通过（0.029 秒）；Main r3 与无 SavedTasks 诊断的 Main r4 分别在 0.078、0.064 秒以相同三项断言失败：workspace 仍选原分支、旧批进度仍为 `.running`、durable run 仍为 `.running`。`NovelBatchPolishTests.swift` 与 HEAD 精确同字节，文件 SHA-256 为 `f5b7845cf628f5ccad7b48489672b69253aa48cb8101b9642bad60310177a5bf`，该方法原正文 SHA-256 为 `aed3df927e204b9fe87fc123049ed60f74365196c9505dba156119bf254bb549`。因此这是既有测试在不同调度下暴露的时序缺口，不应归咎于 SavedTasks 诊断或 Phase 6 对该测试的修改。
+
+测试只等 `session.activeRunID != nil` 就尝试 `workspace.selectBranch(forkID)`，并忽略返回值。该条件在 `NovelSessionRunLifecycle.start` 调用 `installTail` 装入 **placeholder** 后即可成立；此时 `workspace.acquireSessionOperation` 取得的操作锁仍可能持有，直到 `workspace.startSessionRun(request)` 完成且 defer 释放。`NovelCreationViewModel.isProjectSelectionBlocked` 包含 `isPerforming`；`selectBranch` 在此状态直接返回 `.failed`，不改所选分支。接着 `bindToCurrentSelection` 看到的仍是原 binding，不会走 `cancelBatchPolishForBindingChange`，所以三项失败恰是这条可达早退路径的结果。当前 `selectBranch`、`isProjectSelectionBlocked`、`activeRunID`、`bindToCurrentSelection`、`startBatchPolish` 方法体与 HEAD 对应实现一致。日志本身没有记录 `selectBranch` 的返回值或锁状态，不能断言 r3/r4 必定命中了此 guard；它也可能在后续选分支阶段失败。新增对返回值的断言可将下次失败收窄到实际入口。
+
+生产边界保持合理：生成启动握手期间 workspace 操作锁禁止选分支；成功选分支会按原运行身份中断旧 run，后续 session rebind 才负责取消批任务并清理旧报告。测试要验证的是**成功切换 binding 后**旧批次停止且不开始下一章，不应把 placeholder 可见误当成选分支已可受理。
+
+最窄 fixture 调整计划：将既有 `eventually` 条件加强为 `activeRunID != nil && !session.isStarting && !workspace.isProjectSelectionBlocked`，只等页面已有 admission 状态，不读持久层、不加固定 sleep 或新 helper。对 `workspace.selectBranch(forkID)` 返回值增加 `XCTAssertEqual(.selected, workspace.errorMessage 诊断)`，再调用原 `bindToCurrentSelection()`；保留原分支、旧报告、请求数和 durable run 状态断言。`!session.isStarting` 保证启动握手的 session owner 已释放，`!workspace.isProjectSelectionBlocked` 保证 workspace 的操作锁及状态同步门禁在发起切换前开放，脚本中的 `.pause` 让该 run 仍保持运行以测试 route-exit 中断。没有额外异步写入者的 fixture 中，这两个现有状态足以给本例建立所需前置；若未来仍有 `.failed`，新增结果断言会准确报告未接受切换，而不会把它误记为批取消失败。生产 guard 与取消逻辑均不需修改。
+
+Main r4 最终完全退出，5089 项中 5072 通过、该 Batch 方法一项失败、16 项跳过。Root 随后授权且 Swift 解冻，我只在 `NovelBatchPolishTests.swift` 此一方法实施上述前置与 selection 结果断言；新正文 SHA-256 为 `6ae10399f5524473d0c927f66b6f2f72618c929a51db201be1440b8079a7a8f6`，原正文、类和 selector 见上。文件新 SHA-256 为 `e47b05e6c4fb0de54f356738fa32979b963a4f0d871196d257d860df57cd0ac7`。Swift 解析与 diff 检查通过；随后 Novel 最终 r2 全量 1048 项中 1045 通过、0 失败、3 项原有跳过，本方法及 Batch 套件实际通过。
+
+Main r5 没有执行任何测试方法：test daemon 在 bootstrap 阶段未就绪，Root 受控停止并保留数据重启模拟器；ResultKit Code 12 是停止后写结果包的收尾错误，不是 bootstrap 挂起的根因。最终无诊断的 Main r6 完整执行 5089 项，5073 通过、0 失败、16 项原有跳过；本方法实际通过（0.080 秒），四项原业务断言和新增 selection 结果断言均执行。机器可读修复映射见 `phase-6-batch-polish-fixture-repair.json`；原 HEAD 文件保持为迁前事实，不改历史 coverage map。

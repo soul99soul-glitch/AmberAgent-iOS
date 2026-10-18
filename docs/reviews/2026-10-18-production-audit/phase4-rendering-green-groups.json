@@ -1,0 +1,99 @@
+{
+  "ChatMarkdownCodeBlockTests": {
+    "Passed": 2
+  },
+  "ChatMarkdownRenderingTests": {
+    "Passed": 39
+  },
+  "ChatMarkdownSourceIntegrityTests": {
+    "Passed": 5
+  },
+  "ChatMessageProjectionTests": {
+    "Passed": 32
+  },
+  "ChatNativeTimelineReplayCompletionTests": {
+    "Passed": 10
+  },
+  "ChatNativeTimelineReplayHistoryTests": {
+    "Passed": 10
+  },
+  "ChatNativeTimelineReplayPerformanceTests": {
+    "Passed": 7
+  },
+  "ChatRowContentHashCacheTests": {
+    "Passed": 12
+  },
+  "ChatSwiftUIStreamReplayTests": {
+    "Passed": 10
+  },
+  "ChatViewportPolicyTests": {
+    "Passed": 4
+  },
+  "IOSChatDetachedResponseTerminalTests": {
+    "Passed": 6
+  },
+  "NativeTimelineScrollCoreTests": {
+    "Passed": 55
+  },
+  "NovelChapterReplacementStateTests": {
+    "Passed": 2
+  },
+  "NovelCharacterIdentityCandidateTests": {
+    "Passed": 12
+  },
+  "NovelDomainIntegrityRegressionTests": {
+    "Passed": 3,
+    "Failed": 2
+  },
+  "NovelFactTransactionLifecycleTests": {
+    "Passed": 39
+  },
+  "NovelForkTests": {
+    "Passed": 7
+  },
+  "NovelGenerationLifecycleTests": {
+    "Passed": 56
+  },
+  "NovelGhostwriteGenerationTests": {
+    "Passed": 14
+  },
+  "NovelLiveModelAdapterTests": {
+    "Passed": 33
+  },
+  "NovelManualEditSyncTests": {
+    "Passed": 21,
+    "Failed": 2
+  },
+  "NovelSessionRetryAndPolishTests": {
+    "Passed": 12
+  },
+  "NovelSessionRunOwnershipTests": {
+    "Passed": 12
+  },
+  "NovelSessionStreamingPerformanceTests": {
+    "Passed": 3
+  },
+  "NovelSessionTailPresentationTests": {
+    "Passed": 23
+  },
+  "NovelSessionTranscriptProjectionTests": {
+    "Passed": 10
+  },
+  "NovelStreamIntegrityRegressionTests": {
+    "Passed": 6
+  },
+  "NovelStructuredModelExecutorTests": {
+    "Passed": 17
+  },
+  "NovelWorkspaceLedgerTests": {
+    "Passed": 20,
+    "Skipped": 1
+  },
+  "NovelWorkspaceRepositoryTests": {
+    "Passed": 20,
+    "Failed": 4
+  },
+  "NovelWorkspaceRetryTests": {
+    "Passed": 1
+  }
+}

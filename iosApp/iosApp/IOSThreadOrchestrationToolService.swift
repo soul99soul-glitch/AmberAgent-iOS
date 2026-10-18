@@ -14,40 +14,6 @@ import Foundation
 /// - 终态回传：`notifyRunTerminal` 检查本会话是否有 Open 父 edge，有则向父线程
 ///   的 mailbox 投递 FINAL_ANSWER（前台 finishStreaming 与后台 job 终态两个挂钩点）。
 ///
-/// This is persisted as a private system-message marker in a child conversation
-/// so followup/background recovery cannot silently fall back to the parent's
-/// default role or tool set. It is only decoded from system messages.
-struct IOSOrchestrationAgentConfiguration: Codable, Equatable, Sendable {
-    let roleId: String?
-    let systemPrompt: String?
-    let context: String?
-    let toolScope: [String]?
-    let skillNames: [String]
-    let skillContext: String?
-    let modelId: String?
-    let reasoningLevel: String?
-
-    init(
-        roleId: String? = nil,
-        systemPrompt: String? = nil,
-        context: String? = nil,
-        toolScope: [String]? = nil,
-        skillNames: [String] = [],
-        skillContext: String? = nil,
-        modelId: String? = nil,
-        reasoningLevel: String? = nil
-    ) {
-        self.roleId = roleId
-        self.systemPrompt = systemPrompt
-        self.context = context
-        self.toolScope = toolScope
-        self.skillNames = skillNames
-        self.skillContext = skillContext
-        self.modelId = modelId
-        self.reasoningLevel = reasoningLevel
-    }
-}
-
 @MainActor
 final class IOSThreadOrchestrationToolService {
 
@@ -112,92 +78,10 @@ final class IOSThreadOrchestrationToolService {
         func cancelJob(runId: String) -> Bool
     }
 
-    /// Sendable 投影：Kotlin `ThreadEdgeEntity` 导出为非 Sendable，跨隔离边界只传
-    /// 字符串字段（转换在 DAO 回调内完成，遵循 IOSMailboxStore 既有模式）。
-    struct ThreadEdgeSnapshot: Sendable {
-        let childThreadId: String
-        let parentThreadId: String
-        let agentPath: String
-        let nickname: String?
-        let roleAssistantId: String?
-        let forkTurns: String
-        let status: String
 
-        init(_ entity: ThreadEdgeEntity) {
-            self.childThreadId = entity.childThreadId
-            self.parentThreadId = entity.parentThreadId
-            self.agentPath = entity.agentPath
-            self.nickname = entity.nickname
-            self.roleAssistantId = entity.roleAssistantId
-            self.forkTurns = entity.forkTurns
-            self.status = entity.status
-        }
-    }
 
-    /// P1-d 目标解析结果（hex = 目标会话 id，edge = 目标边记录，root 为 nil）。
-    private struct ResolvedTarget: Sendable {
-        let hex: String
-        let edge: ThreadEdgeSnapshot?
-    }
 
-    /// P1-d 目标解析错误（结构化 code/reason，由调用方以本工具名组装 errorJSON）。
-    private struct TargetError: Error, Sendable {
-        let code: String
-        let reason: String
-    }
 
-    private struct ResolvedAgentLaunch {
-        let configuration: IOSOrchestrationAgentConfiguration?
-        let providerSetting: ProviderSetting
-        let params: TextGenerationParams
-        let modelReservation: IOSSubAgentModelPool.Reservation?
-        let baselinePoolModelId: String?
-        let poolSelectionSnapshot: IOSSubAgentModelPool.SelectionSnapshot?
-        let poolSelectionCandidates: [IOSSubAgentModelPool.SelectionKey]
-    }
-
-    private struct DeferredShadowT3Batch {
-        let parts: [IOSJevBatchPart]
-        let context: IOSJevRunContext
-        let settings: IOSJevSettings
-        let modelCandidates: [IOSSubAgentModelPool.Candidate]
-        let modelPartId: String?
-        let hasIntentPart: Bool
-    }
-
-    private struct JevSpawnDecision {
-        var preferredModelIds: [String] = []
-        var observedPreferredModelIds: [String] = []
-        var modelRoutingObserved = false
-        var intent = IOSJevSubAgentIntentService.Suggestion(roleId: nil, alignmentDoubtful: false)
-        var intentRoutingRequested = false
-        var observedIntentRoleId: String?
-        var deferredShadowBatch: DeferredShadowT3Batch?
-        var settings = IOSJevSettings()
-        var modelRoutingRequested = false
-    }
-
-    private struct AgentLaunchError: Error {
-        let reason: String
-    }
-
-    /// A pending NEW_TASK projected out of Room so the terminal-resume path
-    /// never carries Kotlin entities across an async boundary.
-    private struct PendingTaskSnapshot: Sendable {
-        let id: String
-        let authorThreadId: String
-        let payload: String
-        let parentTurnId: String?
-    }
-
-    private static let configurationMarker = "[amber orchestration configuration v1]"
-
-    /// P1-d wait_agent 竞速结果。
-    private enum MailboxWaitOutcome: Sendable {
-        case activity
-        case timeout
-        case cancelled
-    }
 
     private let conversationStoreProvider: () -> IOSConversationStore?
     private let mailboxDaoProvider: () -> MailboxDao
@@ -233,7 +117,10 @@ final class IOSThreadOrchestrationToolService {
     /// exec store 的单一所有者；fork 时把父会话的 store 复制给子会话。
     private let jsCellRegistry: IOSJsCellRegistry
     private let jevSettingsProvider: () -> IOSJevSettings
-    private let modelPool = IOSSubAgentModelPool()
+    private let modelPool: IOSSubAgentModelPool
+    private let controlCommands: IOSOrchestrationControlCommands
+    private let launchPolicy: IOSOrchestrationLaunchPolicy
+    private let jevRouting: IOSOrchestrationJevRouting
     /// P1-d: wait_agent 超时 clamp 区间与默认值（测试注入小下限避免真实等待）。
     private let waitTimeoutMinMs: Int64
     private let waitTimeoutMaxMs: Int64
@@ -306,6 +193,26 @@ final class IOSThreadOrchestrationToolService {
         self.jevCoordinator = jevCoordinator
         self.jsCellRegistry = jsCellRegistry
         self.jevSettingsProvider = jevSettingsProvider
+        let modelPool = IOSSubAgentModelPool()
+        self.modelPool = modelPool
+        self.launchPolicy = IOSOrchestrationLaunchPolicy(sharedSettingsProvider: sharedSettingsProvider, modelPool: modelPool, backgroundCoordinator: backgroundCoordinator)
+        self.jevRouting = IOSOrchestrationJevRouting(sharedSettingsProvider: sharedSettingsProvider, modelPool: modelPool, jevCoordinator: jevCoordinator, jevSettingsProvider: jevSettingsProvider)
+        self.controlCommands = IOSOrchestrationControlCommands(
+            conversationStoreProvider: conversationStoreProvider,
+            mailboxDaoProvider: mailboxDaoProvider,
+            threadEdgeDaoProvider: threadEdgeDaoProvider,
+            agentRuntimeDaoProvider: agentRuntimeDaoProvider,
+            backgroundCoordinator: backgroundCoordinator,
+            currentConversationId: currentConversationId,
+            foregroundActiveRunId: foregroundActiveRunId,
+            cancelForegroundRun: cancelForegroundRun,
+            activityCenter: activityCenter,
+            sharedSettingsProvider: sharedSettingsProvider,
+            modelPool: modelPool,
+            waitTimeoutMinMs: waitTimeoutMinMs,
+            waitTimeoutMaxMs: waitTimeoutMaxMs,
+            waitTimeoutDefaultMs: waitTimeoutDefaultMs
+        )
     }
 
     // MARK: - Dispatch
@@ -332,11 +239,15 @@ final class IOSThreadOrchestrationToolService {
                 executionPolicy: executionPolicy
             )
         case "list_agents":
-            return await listAgents(arguments: arguments, conversationId: conversationId)
+            return await controlCommands.listAgents(
+                arguments: arguments,
+                conversationId: conversationId,
+                capacitySnapshot: { (self.configuredMaxConcurrentRuns, self.occupiedRunSlotCount) }
+            )
         case "interrupt_agent":
-            return await interruptAgent(arguments: arguments, conversationId: conversationId)
+            return await controlCommands.interruptAgent(arguments: arguments, conversationId: conversationId)
         case "send_message":
-            return await sendMessage(arguments: arguments, runId: runId, conversationId: conversationId)
+            return await controlCommands.sendMessage(arguments: arguments, runId: runId, conversationId: conversationId)
         case "followup_task":
             return await followupTask(
                 arguments: arguments,
@@ -348,7 +259,7 @@ final class IOSThreadOrchestrationToolService {
                 executionPolicy: executionPolicy
             )
         case "wait_agent":
-            return await waitAgent(arguments: arguments, conversationId: conversationId)
+            return await controlCommands.waitAgent(arguments: arguments, conversationId: conversationId)
         default:
             return Self.errorJSON(toolName: toolName, code: ErrorCode.invalidArguments, reason: "未知编排工具 \(toolName)")
         }
@@ -456,7 +367,7 @@ final class IOSThreadOrchestrationToolService {
         let threadEdgeDao = threadEdgeDaoProvider()
 
         // (b) 深度上限（父深度 >= 2 → 第 3 代拒绝）。
-        let parentDepth = await depth(of: parentHex, threadEdgeDao: threadEdgeDao)
+        let parentDepth = await IOSOrchestrationPersistence.depth(of: parentHex, threadEdgeDao: threadEdgeDao)
         guard parentDepth < Self.maxThreadDepth else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -480,12 +391,12 @@ final class IOSThreadOrchestrationToolService {
                 reason: "无法读取当前会话，无法 fork。"
             )
         }
-        let inheritedConfiguration = Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
-        let jevDecision = await jevSpawnDecision(
+        let inheritedConfiguration = IOSOrchestrationConfigurationCodec.orchestrationConfiguration(from: sourceConversation.currentMessages)
+        let jevDecision = await jevRouting.jevSpawnDecision(
             arguments: args,
             parentRunId: parentRunId,
             allowPoolForInheritedModel: true,
-            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
+            inherited: IOSOrchestrationLaunchPolicy.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
             sourceConversation: sourceConversation,
             includeRoleIntent: true
         )
@@ -503,10 +414,10 @@ final class IOSThreadOrchestrationToolService {
         inFlightBootstrapCount += 1
         defer { inFlightBootstrapCount -= 1 }
 
-        let parentAgentPath = await agentPath(of: parentHex, threadEdgeDao: threadEdgeDao)
+        let parentAgentPath = await IOSOrchestrationPersistence.agentPath(of: parentHex, threadEdgeDao: threadEdgeDao)
         // (a) 同父 task_name 冲突时优先换稳定英文名；仅当兜底名池耗尽
         // 才追加数字后缀（按已有直接子 agentPath 判定）。
-        let resolvedTaskName = await Self.uniqueTaskName(
+        let resolvedTaskName = await IOSOrchestrationPersistence.uniqueTaskName(
             taskName,
             parentAgentPath: parentAgentPath,
             threadEdgeDao: threadEdgeDao
@@ -518,18 +429,18 @@ final class IOSThreadOrchestrationToolService {
 
         // (d) fork 会话（三模式 + 变体折叠 + 截断安全），直接经 store 落盘。
         // fork 源与 inherited 已在占槽前读取（见 d-pre）。
-        let launchResult = resolveAgentLaunch(
+        let launchResult = launchPolicy.resolveAgentLaunch(
             arguments: args,
             providerSetting: providerSetting,
             params: params,
             toolExposureBridge: toolExposureBridge,
-            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
+            inherited: IOSOrchestrationLaunchPolicy.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
             allowPoolForInheritedModel: true,
             jevPreferredModelIds: jevDecision.preferredModelIds,
             jevObservedPreferredModelIds: jevDecision.observedPreferredModelIds,
             jevSuggestedRoleId: jevDecision.intent.roleId
         )
-        let launch: ResolvedAgentLaunch
+        let launch: IOSOrchestrationLaunchPolicy.ResolvedAgentLaunch
         switch launchResult {
         case .success(let value):
             launch = value
@@ -593,13 +504,13 @@ final class IOSThreadOrchestrationToolService {
             type: MailboxEnvelopeType.theNewTask.name,
             payload: message
         )
-        let forkMessages = Self.removingOrchestrationConfigurationMessages(from: forked.currentMessages)
+        let forkMessages = IOSOrchestrationConfigurationCodec.removingOrchestrationConfigurationMessages(from: forked.currentMessages)
         var childMessages = forkMessages
         if let configuration = launch.configuration {
-            childMessages.append(Self.orchestrationConfigurationMessage(configuration))
+            childMessages.append(IOSOrchestrationConfigurationCodec.orchestrationConfigurationMessage(configuration))
         }
         childMessages.append(newTaskMessage)
-        guard await Self.persistTargetMessages(store: store, conversationId: childConversationId, messages: childMessages) else {
+        guard await IOSOrchestrationPersistence.persistTargetMessages(store: store, conversationId: childConversationId, messages: childMessages) else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
                 code: ErrorCode.startFailed,
@@ -608,7 +519,7 @@ final class IOSThreadOrchestrationToolService {
         }
         // 审计信封入队失败不阻塞 spawn（会话与边已持久化；IGNORE 幂等且
         // 不会像 ABORT 那样把 SQLite 冲突异常带出 @Throws 边界）。
-        try? await Self.enqueueIfAbsent(
+        try? await IOSOrchestrationPersistence.enqueueIfAbsent(
             mailboxDao: mailboxDaoProvider(),
             envelope: MailboxEnvelopeEntity(
                 id: "new-task-\(childHex)",
@@ -646,15 +557,15 @@ final class IOSThreadOrchestrationToolService {
                 reason: "子线程已创建但后台任务提交失败（子会话与边已持久化，线程保留可再次派活）。"
             )
         }
-        recordSelectedPoolModelIfNeeded(
+        jevRouting.recordSelectedPoolModelIfNeeded(
             launch: launch,
             decision: jevDecision,
             runId: parentRunId,
             childRunId: childRunId,
             childThreadId: childHex
         )
-        recordIntentSelectionIfNeeded(launch: launch, decision: jevDecision, runId: parentRunId)
-        scheduleDeferredShadowT3ObservationIfNeeded(
+        jevRouting.recordIntentSelectionIfNeeded(launch: launch, decision: jevDecision, runId: parentRunId)
+        jevRouting.scheduleDeferredShadowT3ObservationIfNeeded(
             decision: jevDecision,
             launch: launch,
             runId: parentRunId,
@@ -684,7 +595,7 @@ final class IOSThreadOrchestrationToolService {
     /// 只读；含 Closed 边：interrupt 取消/已完成线程同样不可直接输入）。
     /// 调用方（ChatViewModel）在会话切换时刷新并缓存，不在每条 keystroke 上直查。
     func isOrchestratedChild(conversationId: KotlinUuid) async -> Bool {
-        await Self.edgeFor(
+        await IOSOrchestrationPersistence.edgeFor(
             childThreadId: conversationId.toHexDashString(),
             threadEdgeDao: threadEdgeDaoProvider()
         ) != nil
@@ -707,1084 +618,31 @@ final class IOSThreadOrchestrationToolService {
     /// T3：spawn 将模型调度与缺省角色意图合并成一次批量判断；followup 只加入模型调度。
     /// active 结果在占用 bootstrap 名额前等待；全 shadow 等 durable start 成功后再后台观察。
     /// 不持有模型预留；显式 model_id / role_id 整批跳过。
-    private func jevSpawnDecision(
-        arguments: [String: Any],
-        parentRunId: String,
-        allowPoolForInheritedModel: Bool,
-        inherited: IOSOrchestrationAgentConfiguration?,
-        sourceConversation: Conversation?,
-        includeRoleIntent: Bool
-    ) async -> JevSpawnDecision {
-        let jevSettings = jevSettingsProvider()
-        var result = JevSpawnDecision(settings: jevSettings)
-        guard Self.optionalTrimmedString(arguments["model_id"]) == nil,
-              Self.optionalTrimmedString(arguments["role_id"]) == nil else {
-            return result
-        }
-
-        let taskName = Self.optionalTrimmedString(arguments["task_name"]) ?? ""
-        let message = Self.optionalTrimmedString(arguments["message"]) ?? ""
-        let taskText = "\(taskName)\n\(message)"
-        let questionLimit = max(1, min(jevSettings.policy.maxQuestions, jevSettings.policy.maxCandidates))
-        var parts: [IOSJevBatchPart] = []
-        var modelCandidates: [IOSSubAgentModelPool.Candidate] = []
-        var modelPartId: String?
-
-        // 显式任务定义和继承角色继续优先于 Jev 角色建议。
-        if includeRoleIntent,
-           let sourceConversation,
-           (questionLimit >= 2
-               || jevSettings.effectiveMode(for: .subagentIntent) == .off
-               || !jevSettings.canSend(useCase: .subagentIntent, required: [.selectedTaskText, .toolMetadata])),
-           Self.shouldRequestJevSubAgentIntent(
-               arguments: arguments,
-               inheritedConfiguration: Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
-           ) {
-            let parentRequest = sourceConversation.currentMessages.reversed()
-                .first { $0.role == MessageRole.user }?.toText()
-            if let part = IOSJevSubAgentIntentService.makeBatchPart(
-                taskText: taskText,
-                parentRequestText: parentRequest,
-                settings: jevSettings
-            ) {
-                parts.append(part)
-            }
-        }
-
-        if let sharedSettings = sharedSettingsProvider() {
-            let inheritedBase = inherited
-            let allowDynamic = sharedSettings.snapshot.agentRuntime.subAgent.allowDynamicSubAgents
-            let effectiveRoleId = inheritedBase?.roleId ?? (allowDynamic ? nil : "explorer")
-            let savedModelId = effectiveRoleId.flatMap {
-                sharedSettings.snapshot.agentRuntime.subAgent.overrides[$0]?.modelId?.description()
-            }
-            let configuredModelId = inheritedBase?.modelId ?? savedModelId
-            let shouldSelectFromPool = configuredModelId == nil
-                || (allowPoolForInheritedModel && inheritedBase != nil)
-            if shouldSelectFromPool {
-                modelCandidates = modelPool.candidates(
-                    settings: sharedSettings.snapshot,
-                    sharedSettings: sharedSettings
-                )
-            }
-        }
-
-        // 同一 T3 请求不因模型池过大而在协调器内拆成多次出站。
-        // 适用且获允许的角色 part 占两题，其余额度给模型候选。
-        let intentPartIsSendable = parts.contains(where: { $0.id == IOSJevSubAgentIntentService.batchPartId })
-            && jevSettings.effectiveMode(for: .subagentIntent) != .off
-            && jevSettings.canSend(useCase: .subagentIntent, required: [.selectedTaskText, .toolMetadata])
-        result.intentRoutingRequested = intentPartIsSendable
-        let intentQuestionCount = intentPartIsSendable ? 2 : 0
-        let modelQuestionLimit = max(0, questionLimit - intentQuestionCount)
-        if !modelCandidates.isEmpty,
-           modelQuestionLimit > 0,
-           jevSettings.effectiveMode(for: .modelRouting) != .off {
-            let boundedCandidates = Array(modelCandidates.prefix(modelQuestionLimit))
-            if var part = IOSJevModelRoutingService.makeBatchPart(
-                taskText: taskText,
-                candidates: boundedCandidates
-            ) {
-                let mode = jevSettings.effectiveMode(for: .modelRouting)
-                part.cacheKey = mode == .shadow ? "model_routing_shadow" : "model_routing"
-                modelPartId = part.id
-                parts.append(part)
-                result.modelRoutingRequested = jevSettings.canSend(
-                    useCase: .modelRouting,
-                    required: part.requiredScopes
-                )
-            }
-        }
-
-        guard !parts.isEmpty else { return result }
-        let inputHash = IOSJevToolDiscoveryService.stableHash(
-            parts.map { "\($0.id):\($0.state)" }.joined(separator: "\n\n")
-        )
-        let context = IOSJevRunContext(
-            runId: parentRunId,
-            turnBudgetKey: parentRunId,
-            inputHash: inputHash
-        )
-        let sendableParts = parts.filter { part in
-            jevSettings.effectiveMode(for: part.useCase) != .off
-                && jevSettings.canSend(useCase: part.useCase, required: part.requiredScopes)
-        }
-        guard !sendableParts.isEmpty else { return result }
-        if sendableParts.allSatisfy({ jevSettings.effectiveMode(for: $0.useCase) == .shadow }) {
-            result.deferredShadowBatch = DeferredShadowT3Batch(
-                parts: parts,
-                context: context,
-                settings: jevSettings,
-                modelCandidates: modelCandidates,
-                modelPartId: modelPartId,
-                hasIntentPart: parts.contains { $0.id == IOSJevSubAgentIntentService.batchPartId }
-            )
-            return result
-        }
-        let outcomes = await jevCoordinator.decideBatch(
-            parts: parts,
-            context: context,
-            waitBudgetMs: jevSettings.policy.t3WaitBudgetMs
-        )
-        if let modelPartId {
-            let outcome = outcomes[modelPartId] ?? .skipped(reason: "missing_part_result")
-            result.preferredModelIds = IOSJevModelRoutingService.preferredModelIds(
-                from: outcome,
-                candidates: modelCandidates,
-                settings: jevSettings
-            )
-            if case .observed(let decision) = outcome {
-                result.modelRoutingObserved = true
-                result.observedPreferredModelIds = IOSJevModelRoutingService.preferredModelIds(
-                    from: decision, candidates: modelCandidates, settings: jevSettings
-                )
-            }
-        }
-        if parts.contains(where: { $0.id == IOSJevSubAgentIntentService.batchPartId }) {
-            let outcome = outcomes[IOSJevSubAgentIntentService.batchPartId] ?? .skipped(reason: "missing_part_result")
-            result.intent = IOSJevSubAgentIntentService.suggestion(
-                from: outcome,
-                settings: jevSettings
-            )
-            let observedDecision: IOSJevDecision?
-            switch outcome {
-            case .applied(let decision), .observed(let decision): observedDecision = decision
-            case .skipped, .failed: observedDecision = nil
-            }
-            result.observedIntentRoleId = observedDecision?.answers.first(where: { $0.id == "role_choice" })?.choice
-        }
-        return result
-    }
-
-    /// 只存被实际后台启动的池内候选 UUID；展示名和 API 模型名均不写指标。
-    private func recordSelectedPoolModelIfNeeded(
-        launch: ResolvedAgentLaunch,
-        decision: JevSpawnDecision,
-        runId: String,
-        childRunId: String,
-        childThreadId: String
-    ) {
-        guard decision.modelRoutingRequested,
-              launch.modelReservation != nil,
-              let modelId = launch.configuration?.modelId,
-              let uuid = Self.parseKotlinUuid(modelId) else { return }
-        let settings = decision.settings
-        let mode = settings.effectiveMode(for: .modelRouting)
-        var numbers: [String: Double]?
-        if mode == .shadow {
-            if decision.modelRoutingObserved,
-               let snapshot = launch.poolSelectionSnapshot {
-                let preferred = decision.observedPreferredModelIds
-                let keysById = launch.poolSelectionCandidates.reduce(into: [String: IOSSubAgentModelPool.SelectionKey]()) {
-                    $0[$1.modelId] = $1
-                }
-                let preferredKeys = preferred.compactMap { keysById[$0] }
-                let hypothetical = snapshot.selectedModelId(
-                    from: preferredKeys.isEmpty ? launch.poolSelectionCandidates : preferredKeys
-                )
-                var values = ["preferred_set_size": Double(preferred.count)]
-                if let hypothetical {
-                    values["difference"] = hypothetical == uuid.toHexDashString() ? 0 : 1
-                }
-                numbers = values
-            }
-        } else {
-            var values = ["preferred_set_size": Double(decision.preferredModelIds.count)]
-            if launch.baselinePoolModelId != nil {
-                values["difference"] = launch.baselinePoolModelId == uuid.toHexDashString() ? 0 : 1
-            }
-            numbers = values
-        }
-        IOSJevMetricsStore.append(IOSJevMetricsRecord(
-            timestamp: Date(),
-            useCase: .modelRouting,
-            mode: settings.effectiveMode(for: .modelRouting),
-            modelVersion: settings.activeModelVersion,
-            outcome: "summary",
-            latencyMs: 0,
-            requestBytes: 0,
-            responseBytes: 0,
-            inputTokens: nil,
-            outputTokens: nil,
-            reason: nil,
-            suggestedTop1: nil,
-            keywordTop1: nil,
-            topConfidence: nil,
-            topScore: nil,
-            runId: runId,
-            waitPhase: "t3",
-            waitedMs: nil,
-            numbers: numbers,
-            ids: [
-                "selected_model_id": uuid.toHexDashString(),
-                "child_run_id": childRunId,
-                "child_thread_id": childThreadId,
-            ]
-        ))
-    }
-
-    static let modelRoutingTimeoutTerminalReason = "subagent_timeout"
-
-    static func modelRoutingChildOutcomeNumber(
-        status: AgentRunStatus,
-        terminalReason: String?
-    ) -> String? {
-        switch status {
-        case .completed:
-            return "child_succeeded"
-        case .failed:
-            return terminalReason == modelRoutingTimeoutTerminalReason
-                ? "child_timed_out"
-                : "child_failed"
-        default:
-            return nil
-        }
-    }
-
-    /// Outcome counters are attached only to a durable child run that was
-    /// actually launched with a Jev-routed pool model. IDs are local and contain
-    /// no task text.
-    func recordModelRoutingChildOutcomeIfNeeded(
-        childThreadId: String,
-        childRunId: String,
-        terminalStatus: AgentRunStatus,
-        terminalReason: String?
-    ) {
-        guard let number = Self.modelRoutingChildOutcomeNumber(
-            status: terminalStatus,
-            terminalReason: terminalReason
-        ) else { return }
-        let records = IOSJevMetricsStore.load()
-        guard let routingRecord = records.last(where: {
-            $0.useCase == .modelRouting
-                && $0.outcome == "summary"
-                && $0.ids?["child_run_id"] == childRunId
-                && $0.ids?["child_thread_id"] == childThreadId
-        }),
-        let parentRunId = routingRecord.runId else {
-            return
-        }
-        guard !records.contains(where: {
-            $0.useCase == .modelRouting
-                && $0.outcome == "summary"
-                && $0.runId == parentRunId
-                && $0.ids?["child_run_id"] == childRunId
-                && $0.ids?["child_thread_id"] == childThreadId
-                && $0.ids?["child_outcome"] == "terminal"
-        }) else { return }
-
-        IOSJevMetricsStore.append(IOSJevMetricsRecord(
-            timestamp: Date(),
-            useCase: .modelRouting,
-            mode: routingRecord.mode,
-            modelVersion: routingRecord.modelVersion,
-            outcome: "summary",
-            latencyMs: 0,
-            requestBytes: 0,
-            responseBytes: 0,
-            inputTokens: nil,
-            outputTokens: nil,
-            reason: number,
-            suggestedTop1: nil,
-            keywordTop1: nil,
-            topConfidence: nil,
-            topScore: nil,
-            runId: parentRunId,
-            waitPhase: "t3",
-            waitedMs: nil,
-            numbers: [number: 1],
-            ids: [
-                "child_run_id": childRunId,
-                "child_thread_id": childThreadId,
-                "child_outcome": "terminal",
-            ]
-        ))
-    }
-
-    private func recordIntentSelectionIfNeeded(
-        launch: ResolvedAgentLaunch,
-        decision: JevSpawnDecision,
-        runId: String
-    ) {
-        guard decision.intentRoutingRequested,
-              let suggested = decision.observedIntentRoleId else { return }
-        let selected = launch.configuration?.roleId ?? "none"
-        let settings = decision.settings
-        IOSJevMetricsStore.append(IOSJevMetricsRecord(
-            timestamp: Date(), useCase: .subagentIntent,
-            mode: settings.effectiveMode(for: .subagentIntent),
-            modelVersion: settings.activeModelVersion,
-            outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
-            inputTokens: nil, outputTokens: nil, reason: nil,
-            runId: runId, waitPhase: "T3",
-            numbers: ["difference": suggested == selected ? 0 : 1],
-            ids: ["suggested_role_id": suggested, "selected_role_id": selected]
-        ))
-    }
-
-    /// 全 shadow 的 T3 在 durable child 接受后才出站。它不参与当前 spawn 的
-    /// 选择；后台观察完成后，只将同一选择点快照下的反事实差异写入指标。
-    private func scheduleDeferredShadowT3ObservationIfNeeded(
-        decision: JevSpawnDecision,
-        launch: ResolvedAgentLaunch,
-        runId: String,
-        childRunId: String,
-        childThreadId: String
-    ) {
-        guard let request = decision.deferredShadowBatch else { return }
-        let modelSelection = ShadowModelSelection(
-            selectionSnapshot: launch.poolSelectionSnapshot,
-            poolCandidates: launch.poolSelectionCandidates,
-            baselineModelId: launch.baselinePoolModelId,
-            selectedModelId: launch.configuration?.modelId.flatMap(Self.parseKotlinUuid)?.toHexDashString(),
-            selectedRoleId: launch.configuration?.roleId ?? "none"
-        )
-        let coordinator = jevCoordinator
-        Task(priority: .utility) { @MainActor [request, modelSelection] in
-            let outcomes = await coordinator.decideBatch(
-                parts: request.parts,
-                context: request.context,
-                // Background shadow may finish after the T3 foreground wait budget;
-                // wait up to the request deadline here so an observed result can be measured.
-                waitBudgetMs: max(request.settings.policy.deadlineMs, request.settings.policy.t3WaitBudgetMs),
-                expectedSettingsRevision: request.settings.revision
-            )
-            if let partId = request.modelPartId,
-               case .observed(let observed)? = outcomes[partId] {
-                self.recordDeferredShadowModelMetric(
-                    decision: observed,
-                    candidates: request.modelCandidates,
-                    selection: modelSelection,
-                    settings: request.settings,
-                    runId: runId,
-                    childRunId: childRunId,
-                    childThreadId: childThreadId
-                )
-            }
-            if request.hasIntentPart,
-               case .observed(let observed)? = outcomes[IOSJevSubAgentIntentService.batchPartId],
-               let suggestedRoleId = observed.answers.first(where: { $0.id == "role_choice" })?.choice {
-                self.recordDeferredShadowIntentMetric(
-                    suggestedRoleId: suggestedRoleId,
-                    selectedRoleId: modelSelection.selectedRoleId,
-                    settings: request.settings,
-                    runId: runId,
-                    childRunId: childRunId,
-                    childThreadId: childThreadId
-                )
-            }
-        }
-    }
-
-    private struct ShadowModelSelection {
-        let selectionSnapshot: IOSSubAgentModelPool.SelectionSnapshot?
-        let poolCandidates: [IOSSubAgentModelPool.SelectionKey]
-        let baselineModelId: String?
-        let selectedModelId: String?
-        let selectedRoleId: String
-    }
-
-    private func recordDeferredShadowModelMetric(
-        decision: IOSJevDecision,
-        candidates: [IOSSubAgentModelPool.Candidate],
-        selection: ShadowModelSelection,
-        settings: IOSJevSettings,
-        runId: String,
-        childRunId: String,
-        childThreadId: String
-    ) {
-        guard let snapshot = selection.selectionSnapshot,
-              let selectedModelId = selection.selectedModelId,
-              selection.baselineModelId != nil else { return }
-        let preferredIds = IOSJevModelRoutingService.preferredModelIds(
-            from: decision,
-            candidates: candidates,
-            settings: settings
-        )
-        let keysById = selection.poolCandidates.reduce(into: [String: IOSSubAgentModelPool.SelectionKey]()) {
-            $0[$1.modelId] = $1
-        }
-        let preferredKeys = preferredIds.compactMap { keysById[$0] }
-        let counterfactual = snapshot.selectedModelId(
-            from: preferredKeys.isEmpty ? selection.poolCandidates : preferredKeys
-        )
-        guard let counterfactual else { return }
-        IOSJevMetricsStore.append(IOSJevMetricsRecord(
-            timestamp: Date(),
-            useCase: .modelRouting,
-            mode: .shadow,
-            modelVersion: settings.activeModelVersion,
-            outcome: "summary",
-            latencyMs: 0,
-            requestBytes: 0,
-            responseBytes: 0,
-            inputTokens: nil,
-            outputTokens: nil,
-            reason: nil,
-            suggestedTop1: nil,
-            keywordTop1: nil,
-            topConfidence: nil,
-            topScore: nil,
-            runId: runId,
-            waitPhase: "t3",
-            waitedMs: nil,
-            numbers: [
-                "preferred_set_size": Double(preferredIds.count),
-                "difference": selectedModelId == counterfactual ? 0 : 1,
-            ],
-            ids: [
-                "selected_model_id": selectedModelId,
-                "counterfactual_model_id": counterfactual,
-                "child_run_id": childRunId,
-                "child_thread_id": childThreadId,
-            ]
-        ))
-    }
-
-    private func recordDeferredShadowIntentMetric(
-        suggestedRoleId: String,
-        selectedRoleId: String,
-        settings: IOSJevSettings,
-        runId: String,
-        childRunId: String,
-        childThreadId: String
-    ) {
-        IOSJevMetricsStore.append(IOSJevMetricsRecord(
-            timestamp: Date(),
-            useCase: .subagentIntent,
-            mode: .shadow,
-            modelVersion: settings.activeModelVersion,
-            outcome: "summary",
-            latencyMs: 0,
-            requestBytes: 0,
-            responseBytes: 0,
-            inputTokens: nil,
-            outputTokens: nil,
-            reason: nil,
-            suggestedTop1: nil,
-            keywordTop1: nil,
-            topConfidence: nil,
-            topScore: nil,
-            runId: runId,
-            waitPhase: "t3",
-            waitedMs: nil,
-            numbers: ["difference": suggestedRoleId == selectedRoleId ? 0 : 1],
-            ids: [
-                "suggested_role_id": suggestedRoleId,
-                "selected_role_id": selectedRoleId,
-                "child_run_id": childRunId,
-                "child_thread_id": childThreadId,
-            ]
-        ))
-    }
-
-    private func resolveAgentLaunch(
-        arguments: [String: Any],
-        providerSetting: ProviderSetting,
-        params: TextGenerationParams,
-        toolExposureBridge: IosToolExposureBridge?,
-        inherited: IOSOrchestrationAgentConfiguration?,
-        allowPoolForInheritedModel: Bool = false,
-        jevPreferredModelIds: [String] = [],
-        jevObservedPreferredModelIds: [String] = [],
-        jevSuggestedRoleId: String? = nil
-    ) -> Result<ResolvedAgentLaunch, AgentLaunchError> {
-        let settings = sharedSettingsProvider()?.snapshot
-        let allowDynamic = settings?.agentRuntime.subAgent.allowDynamicSubAgents ?? true
-
-        let roleArgument = Self.optionalTrimmedString(arguments["role_id"])
-        let systemPromptPresent = arguments.keys.contains("system_prompt")
-        let contextPresent = arguments.keys.contains("context")
-        let toolScopeArgument = Self.stringArrayArgument(arguments, keys: ["tool_scope", "tools"])
-        let skillNamesArgument = Self.stringArrayArgument(arguments, keys: ["skill_names", "skills"])
-        let hasTaskDefinition = roleArgument != nil
-            || systemPromptPresent
-            || contextPresent
-            || toolScopeArgument.present
-            || skillNamesArgument.present
-
-        let inheritedBase = roleArgument == nil ? inherited : nil
-        // Jev 意图路由建议仅在没有显式定义、也没有继承配置时补位
-        // （服务侧已做目录校验与置信门）。!allowDynamic 时一律 explorer：
-        // 该开关关闭的是"子代理形态的裁量权"，Jev 建议同属裁量源，不让位。
-        // 对齐回执（标注）不受此限，照常产出。
-        let canApplyJevRoleSuggestion = Self.shouldRequestJevSubAgentIntent(
-            arguments: arguments,
-            inheritedConfiguration: inheritedBase
-        )
-        let effectiveRoleId = roleArgument
-            ?? inheritedBase?.roleId
-            ?? (allowDynamic && canApplyJevRoleSuggestion ? jevSuggestedRoleId : nil)
-            ?? (allowDynamic ? nil : "explorer")
-        let role = effectiveRoleId.flatMap(IOSSubAgentRoleCatalog.resolve)
-
-        if !allowDynamic {
-            if role == nil, inheritedBase == nil {
-                return .failure(AgentLaunchError(reason: "动态子代理开关已关闭，只能使用内置 role_id。"))
-            }
-            if systemPromptPresent || contextPresent || toolScopeArgument.present || skillNamesArgument.present {
-                return .failure(AgentLaunchError(reason: "动态子代理开关已关闭，内置 role 只能使用设置中保存的配置。"))
-            }
-        } else if hasTaskDefinition, roleArgument != nil, role == nil,
-                  effectiveRoleId?.isEmpty == false {
-            // Unknown role ids are valid only as explicit dynamic definitions.
-            // They still need a prompt or another definition field to be useful.
-            if !systemPromptPresent && !contextPresent && !toolScopeArgument.present && !skillNamesArgument.present {
-                return .failure(AgentLaunchError(reason: "未知 role_id 需要同时提供 system_prompt、context、tool_scope 或 skill_names。"))
-            }
-        }
-        if toolScopeArgument.present, toolScopeArgument.values == nil {
-            return .failure(AgentLaunchError(reason: "tool_scope 必须是字符串数组。"))
-        }
-        if skillNamesArgument.present, skillNamesArgument.values == nil {
-            return .failure(AgentLaunchError(reason: "skill_names 必须是字符串数组。"))
-        }
-
-        let savedOverride = effectiveRoleId.flatMap { settings?.agentRuntime.subAgent.overrides[$0] }
-        let availableToolNames = Set(
-            (toolExposureBridge?.fullToolDeclarations() ?? params.tools).map(\.name)
-        )
-        let explicitPrompt = systemPromptPresent
-            ? Self.optionalTrimmedString(arguments["system_prompt"])
-            : nil
-        let explicitContext = contextPresent
-            ? Self.optionalTrimmedString(arguments["context"])
-            : nil
-        let systemPrompt = systemPromptPresent
-            ? explicitPrompt
-            : (inheritedBase?.systemPrompt ?? savedOverride?.systemPrompt ?? role?.systemPrompt)
-        let context = contextPresent ? explicitContext : inheritedBase?.context
-        let toolScope: [String]?
-        if toolScopeArgument.present {
-            toolScope = toolScopeArgument.values
-        } else if let inheritedScope = inheritedBase?.toolScope {
-            toolScope = inheritedScope
-        } else if let savedScope = savedOverride?.toolAllowlist {
-            toolScope = Array(savedScope).sorted()
-        } else if let effectiveRoleId, role != nil {
-            let mcpServers = (settings?.mcpServers.compactMap(IOSMcpServerConfig.init) ?? [])
-                + IOSMcpConfigStore.shared.servers
-            toolScope = IOSSubAgentRoleCatalog.defaultToolNames(
-                roleId: effectiveRoleId,
-                availableToolNames: Array(availableToolNames),
-                mcpServers: mcpServers
-            )
-        } else {
-            toolScope = nil
-        }
-        let skillNames: [String]
-        if skillNamesArgument.present {
-            skillNames = skillNamesArgument.values ?? []
-        } else if let inheritedSkills = inheritedBase?.skillNames {
-            skillNames = inheritedSkills
-        } else if let savedSkills = savedOverride?.defaultSkillNames {
-            skillNames = savedSkills
-        } else {
-            skillNames = []
-        }
-
-        if let toolScope {
-            let unknown = toolScope.filter { !availableToolNames.contains($0) }
-            if !unknown.isEmpty {
-                return .failure(AgentLaunchError(
-                    reason: "tool_scope 包含当前父线程不可用的工具：\(unknown.joined(separator: ", "))。"
-                ))
-            }
-        }
-
-        let normalizedSkills = skillNames.map(IOSSkillFileStore.normalizedSkillName)
-        let skillContext: String
-        do {
-            skillContext = try IOSSkillMcpToolService.loadEnabledSkillContext(
-                skillNames: normalizedSkills,
-                enabledSkillNames: sharedSettingsProvider()?.currentAssistantEnabledSkillNames ?? []
-            )
-        } catch {
-            return .failure(AgentLaunchError(reason: "无法加载子代理默认技能：\(error.localizedDescription)"))
-        }
-
-        var childProvider = providerSetting
-        var childModel = params.model
-        var switchedModel = false
-        let configuredModelId = inheritedBase?.modelId ?? savedOverride?.modelId?.description()
-        let explicitModelId = Self.optionalTrimmedString(arguments["model_id"])
-        let explicitReasoningRaw = Self.optionalTrimmedString(arguments["reasoning_level"])
-        var modelReservation: IOSSubAgentModelPool.Reservation?
-        var selectedPoolCandidate: IOSSubAgentModelPool.Candidate?
-        var baselinePoolModelId: String?
-        var poolSelectionSnapshot: IOSSubAgentModelPool.SelectionSnapshot?
-        var poolSelectionCandidates: [IOSSubAgentModelPool.SelectionKey] = []
-        let poolCandidates = settings.flatMap { settings in
-            sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) }
-        } ?? []
-
-        if let explicitModelId {
-            guard let parsed = Self.parseKotlinUuid(explicitModelId),
-                  let candidate = modelPool.candidate(
-                    for: parsed.toHexDashString(),
-                    from: poolCandidates
-                  ) else {
-                return .failure(AgentLaunchError(
-                    reason: "显式 model_id 必须是当前用户模型池中的可用模型：\(explicitModelId)"
-                ))
-            }
-            selectedPoolCandidate = candidate
-        } else {
-            let shouldSelectFromPool = configuredModelId == nil
-                || (allowPoolForInheritedModel && inheritedBase != nil)
-            if shouldSelectFromPool, !poolCandidates.isEmpty {
-                // Jev Phase 3（模型调度）：active 判断在这里之前完成，shadow
-                // 只排入后台观察；两者都不提前占用模型名额。select 与 reserve
-                // 仍在无 await 的同步临界段内；空首选集沿用本地负载/轮转选择。
-                let refreshedPoolCandidates = settings.flatMap { settings in
-                    sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) }
-                } ?? []
-                let selectionPool = IOSJevModelRoutingService.preferredCandidates(
-                    from: refreshedPoolCandidates,
-                    rankedIds: jevPreferredModelIds
-                )
-                let rankedPool = selectionPool.isEmpty ? refreshedPoolCandidates : selectionPool
-                let activeModelCounts = backgroundCoordinator.activeModelCounts
-                let activeProviderCounts = backgroundCoordinator.activeProviderCounts
-                let snapshot = modelPool.selectionSnapshot(
-                    activeModelCounts: activeModelCounts,
-                    activeProviderCounts: activeProviderCounts
-                )
-                poolSelectionSnapshot = snapshot
-                poolSelectionCandidates = refreshedPoolCandidates.map(\.selectionKey)
-                baselinePoolModelId = snapshot.selectedModelId(from: poolSelectionCandidates)
-                guard let selected = modelPool.select(
-                    from: rankedPool,
-                    activeModelCounts: activeModelCounts,
-                    activeProviderCounts: activeProviderCounts
-                ) else {
-                    return .failure(AgentLaunchError(reason: "模型池中没有可用模型，请在子代理设置中重新选择。"))
-                }
-                selectedPoolCandidate = selected
-            } else if shouldSelectFromPool,
-                      settings?.agentRuntime.subAgent.modelPool.isEmpty == false {
-                return .failure(AgentLaunchError(reason: "模型池中的模型均已停用、移除或配置不可用。"))
-            }
-        }
-
-        if let selectedPoolCandidate {
-            childProvider = selectedPoolCandidate.provider
-            childModel = selectedPoolCandidate.model
-            switchedModel = childModel.id != params.model.id
-        } else if let configuredModelId,
-                  let parsed = Self.parseKotlinUuid(configuredModelId),
-                  let settings,
-                  let configuredModel = settings.findModelById(uuid: parsed),
-                  let configuredProvider = ChatProviderConfiguration.provider(
-                      for: configuredModel,
-                      providers: settings.providers
-                  ) {
-            if let issue = ChatProviderConfiguration.issue(for: configuredModel, provider: configuredProvider) {
-                return .failure(AgentLaunchError(reason: "子代理模型不可用：\(issue.message)"))
-            }
-            childProvider = configuredProvider
-            childModel = configuredModel
-            switchedModel = configuredModel.id != params.model.id
-        } else if let configuredModelId, configuredModelId != params.model.id.description(), settings != nil {
-            return .failure(AgentLaunchError(reason: "子代理配置的模型已不存在，请重新选择模型。"))
-        }
-
-        let supportedReasoning = sharedSettingsProvider()?.subAgentReasoningLevels(
-            modelId: childModel.id.toHexDashString()
-        ) ?? []
-        let reasoning: ReasoningLevel
-        if let explicitReasoningRaw {
-            guard let parsed = Self.reasoningLevel(named: explicitReasoningRaw) else {
-                return .failure(AgentLaunchError(reason: "reasoning_level 无效：\(explicitReasoningRaw)"))
-            }
-            guard supportedReasoning.contains(parsed) else {
-                return .failure(AgentLaunchError(reason: "模型不支持 reasoning_level=\(explicitReasoningRaw)。"))
-            }
-            reasoning = parsed
-        } else if let selectedPoolCandidate {
-            let configured = selectedPoolCandidate.configuredReasoning
-            reasoning = configured.flatMap { supportedReasoning.contains($0) ? $0 : nil }
-                ?? modelPool.defaultReasoning(for: selectedPoolCandidate)
-        } else if let inheritedReasoning = inheritedBase?.reasoningLevel,
-                  let parsed = Self.reasoningLevel(named: inheritedReasoning) {
-            reasoning = parsed
-        } else if let savedReasoning = savedOverride?.reasoningLevel {
-            reasoning = savedReasoning
-        } else {
-            reasoning = params.reasoningLevel
-        }
-        if let selectedPoolCandidate {
-            modelReservation = modelPool.reserve(selectedPoolCandidate)
-        }
-
-        let configuration = IOSOrchestrationAgentConfiguration(
-            roleId: effectiveRoleId,
-            systemPrompt: systemPrompt,
-            context: context,
-            toolScope: toolScope,
-            skillNames: normalizedSkills,
-            skillContext: skillContext,
-            modelId: childModel.id.description(),
-            reasoningLevel: reasoning.name
-        )
-        let childHeaders: [CustomHeader]
-        let childBodies: [CustomBody]
-        if switchedModel, let settings {
-            let assistant = settings.getCurrentAssistant()
-            childHeaders = IOSProviderRequestHeaderStore.headers(
-                for: childProvider.id.description()
-            ) + assistant.customHeaders + childModel.customHeaders
-            childBodies = assistant.customBodies + childModel.customBodies
-        } else {
-            childHeaders = params.customHeaders
-            childBodies = params.customBody
-        }
-        let childParams = TextGenerationParams(
-            model: childModel,
-            temperature: params.temperature,
-            topP: params.topP,
-            maxTokens: params.maxTokens,
-            tools: toolScope.map { scope in params.tools.filter { scope.contains($0.name) } } ?? params.tools,
-            reasoningLevel: reasoning,
-            customHeaders: childHeaders,
-            customBody: childBodies
-        )
-        return .success(ResolvedAgentLaunch(
-            configuration: configuration,
-            providerSetting: childProvider,
-            params: childParams,
-            modelReservation: modelReservation,
-            baselinePoolModelId: baselinePoolModelId,
-            poolSelectionSnapshot: poolSelectionSnapshot,
-            poolSelectionCandidates: poolSelectionCandidates
-        ))
-    }
+    static let modelRoutingTimeoutTerminalReason = IOSOrchestrationJevRouting.modelRoutingTimeoutTerminalReason
 
     static func shouldRequestJevSubAgentIntent(
         arguments: [String: Any],
         inheritedConfiguration: IOSOrchestrationAgentConfiguration?
     ) -> Bool {
-        !Self.hasAgentConfigurationArguments(arguments) && inheritedConfiguration == nil
+        IOSOrchestrationLaunchPolicy.shouldRequestJevSubAgentIntent(
+            arguments: arguments, inheritedConfiguration: inheritedConfiguration
+        )
     }
 
-    private static func optionalTrimmedString(_ value: Any?) -> String? {
-        guard let value = value as? String else { return nil }
-        return value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    }
-
-    private static func stringArrayArgument(
-        _ arguments: [String: Any],
-        keys: [String]
-    ) -> (present: Bool, values: [String]?) {
-        guard let key = keys.first(where: { arguments.keys.contains($0) }) else {
-            return (false, nil)
-        }
-        let value = arguments[key]
-        if let values = value as? [String] {
-            return (true, values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
-        }
-        return (true, nil)
-    }
-
-    private static func hasAgentConfigurationArguments(_ arguments: [String: Any]) -> Bool {
-        arguments.keys.contains { key in
-            ["role_id", "system_prompt", "context", "tool_scope", "tools", "skill_names", "skills",
-             "model_id", "reasoning_level"].contains(key)
-        }
-    }
-
-    private static func parseKotlinUuid(_ value: String) -> KotlinUuid? {
-        let normalized = value.lowercased()
-        guard UUID(uuidString: normalized) != nil else { return nil }
-        return KotlinUuid.companion.parse(uuidString: normalized)
-    }
-
-    private static func reasoningLevel(named raw: String) -> ReasoningLevel? {
-        switch raw.lowercased() {
-        case "off": return .off
-        case "auto": return .auto_
-        case "low": return .low
-        case "medium": return .medium
-        case "high": return .high
-        case "xhigh": return .xhigh
-        case "max": return .max
-        default: return nil
-        }
-    }
-
-    private func subAgentTimeoutSeconds(
-        for configuration: IOSOrchestrationAgentConfiguration?
-    ) -> TimeInterval {
-        let settings = sharedSettingsProvider()?.snapshot
-        let globalMilliseconds = settings?.agentRuntime.subAgent.timeoutMs ?? 300_000
-        let global = min(3_600, max(1, Double(globalMilliseconds) / 1_000))
-        guard let roleId = configuration?.roleId,
-              let override = settings?.agentRuntime.subAgent.overrides[roleId]?.timeoutMsOverride else {
-            return global
-        }
-        let roleSeconds = min(3_600, max(1, Double(truncating: override) / 1_000))
-        return min(global, roleSeconds)
-    }
-
-    private static func orchestrationConfigurationMessage(
-        _ configuration: IOSOrchestrationAgentConfiguration
-    ) -> UIMessage {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let json = (try? encoder.encode(configuration)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-        return UIMessage.companion.system(prompt: "\(configurationMarker)\n\(json)")
-    }
-
-    private static func orchestrationConfiguration(from messages: [UIMessage]) -> IOSOrchestrationAgentConfiguration? {
-        for message in messages.reversed() where message.role == MessageRole.system {
-            let text = message.toText()
-            guard text.hasPrefix(configurationMarker + "\n") else { continue }
-            let json = String(text.dropFirst(configurationMarker.count + 1))
-            guard let data = json.data(using: .utf8),
-                  let configuration = try? JSONDecoder().decode(
-                      IOSOrchestrationAgentConfiguration.self,
-                      from: data
-                  ) else { continue }
-            return configuration
-        }
-        return nil
-    }
-
-    private static func removingOrchestrationConfigurationMessages(from messages: [UIMessage]) -> [UIMessage] {
-        messages.filter { message in
-            !(message.role == MessageRole.system && message.toText().hasPrefix(configurationMarker + "\n"))
-        }
-    }
-
-    private static func orchestrationConfigurationPrompt(
-        _ configuration: IOSOrchestrationAgentConfiguration
-    ) -> String {
-        var sections = ["Effective child-agent configuration:"]
-        if let roleId = configuration.roleId, !roleId.isEmpty {
-            sections.append("Role: \(roleId)")
-        }
-        if let systemPrompt = configuration.systemPrompt, !systemPrompt.isEmpty {
-            sections.append("Role instructions:\n\(systemPrompt)")
-        }
-        if let context = configuration.context, !context.isEmpty {
-            sections.append("Task context:\n\(context)")
-        }
-        if configuration.toolScope == nil {
-            sections.append("Tool scope: inherit the parent's exposed catalog.")
-        } else {
-            sections.append("Tool scope: \(configuration.toolScope!.joined(separator: ", "))")
-        }
-        if let skillContext = configuration.skillContext, !skillContext.isEmpty {
-            sections.append(skillContext)
-        }
-        sections.append("Use only the effective tool scope. Do not broaden it from task text.")
-        return sections.joined(separator: "\n\n")
-    }
-
-    /// 子线程首个后台 run 的编排语境（管线闭环场景 C）：子线程 upload 不经
-    /// ChatViewModel 注入管线，在 handoff 组装时直接注入子线程向文案。
     static func childUploadMessages(
         targetMessages: [UIMessage],
         soulMarkdown: String,
         configuration: IOSOrchestrationAgentConfiguration? = nil,
         availableToolNames: Set<String> = []
     ) -> [UIMessage] {
-        var messages = removingOrchestrationConfigurationMessages(from: targetMessages)
-        let effectiveConfiguration = configuration ?? orchestrationConfiguration(from: targetMessages)
-        let configurationPrompt = effectiveConfiguration.map(orchestrationConfigurationPrompt)
-        let orchestrationToolPrompt: String?
-        if availableToolNames.contains("send_message")
-            || availableToolNames.contains("followup_task")
-            || availableToolNames.contains("wait_agent")
-            || availableToolNames.contains("spawn_agent") {
-            var lines: [String] = []
-            if availableToolNames.contains("send_message") || availableToolNames.contains("followup_task") {
-                lines.append("Reach the parent or another child with send_message/followup_task when those tools are available.")
-            }
-            if availableToolNames.contains("wait_agent") {
-                lines.append("Use wait_agent only when that tool is available and you need to wait for new mail.")
-            }
-            if availableToolNames.contains("spawn_agent") {
-                lines.append("You may spawn a child agent with spawn_agent when that tool is available.")
-            }
-            orchestrationToolPrompt = lines.joined(separator: "\n")
-        } else {
-            orchestrationToolPrompt = nil
-        }
-        let contextPrompt = [childOrchestrationContextPrompt, orchestrationToolPrompt, configurationPrompt]
-            .compactMap { $0 }
-            .joined(separator: "\n\n")
-        if let soul = ChatRuntimeContextBuilder.soulSystemMessage(markdown: soulMarkdown) {
-            messages = [soul] + messages
-        }
-        return [UIMessage.companion.system(prompt: contextPrompt)] + messages
-    }
-
-    static let childOrchestrationContextPrompt = """
-    You are a child agent thread in a thread-orchestration tree.
-    - Your task arrives as a `[mailbox NEW_TASK from /root/...]` message; `[mailbox MESSAGE|FINAL_ANSWER from /root/...]` are inter-agent mail, not user input.
-    - Your final answer is delivered to the parent thread automatically when this run ends — no need to contact the user.
-    - Thread orchestration functions (spawn_agent, list_agents, interrupt_agent, send_message, followup_task, wait_agent) and session_read are native tools, not MCP tools. If a needed function is hidden and tool_search is available, search for its exact name, then call it directly; never wrap it in mcp_call.
-    - When you spawn a child, choose a short lowercase English first name dynamically. Check `list_agents` when sibling names may already exist, avoid reusing a sibling name, never append numeric suffixes yourself, and keep the returned `agent_path` for followups. The iOS runtime has a local collision fallback; it does not make another model request.
-    - \(IOSSubAgentOutputProjection.progressReportingInstruction)
-    """
-
-    /// 子线程 run 的输出 token 地板（真机回归：子线程曾继承聊天的几千 token
-    /// 上限，长报告被截断为"达到输出上限"终态）。
-    static let childRunMinOutputTokens: Int32 = 32_768
-
-    private func listAgents(arguments: String, conversationId: KotlinUuid?) async -> String {
-        // 根 = run 锚定的会话（execute 透传）；currentConversationId() 仅兜底。
-        guard let parentConversationId = conversationId ?? currentConversationId() else {
-            return Self.errorJSON(
-                toolName: "list_agents",
-                code: ErrorCode.missingContext,
-                reason: "当前会话不可用，无法列出子线程。"
-            )
-        }
-        let parentHex = parentConversationId.toHexDashString()
-        let args = ChatToolCallParsing.jsonObject(arguments)
-        let pathPrefix = (args?["path_prefix"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty
-
-        let edges = await Self.descendants(of: parentHex, threadEdgeDao: threadEdgeDaoProvider())
-        let runsByConversation = await Self.latestRunStatusByConversation(
-            agentRuntimeDao: agentRuntimeDaoProvider()
+        IOSOrchestrationConfigurationCodec.childUploadMessages(
+            targetMessages: targetMessages, soulMarkdown: soulMarkdown,
+            configuration: configuration, availableToolNames: availableToolNames
         )
-        var items: [[String: Any]] = []
-        for edge in edges {
-            if let pathPrefix, !edge.agentPath.hasPrefix(pathPrefix) { continue }
-            items.append([
-                "child_thread_id": edge.childThreadId,
-                "agent_path": edge.agentPath,
-                "nickname": edge.nickname ?? "",
-                "role": edge.roleAssistantId ?? "",
-                "status": edge.status,
-                "fork_turns": edge.forkTurns,
-                "run_status": runsByConversation[edge.childThreadId] ?? "none",
-            ])
-        }
-        return IOSWorkspaceStore.json([
-            "ok": true,
-            "tool": "list_agents",
-            "threads": items,
-            "count": items.count,
-            "model_pool": modelPoolSnapshot(),
-            "max_concurrent_runs": configuredMaxConcurrentRuns,
-            "occupied_runs": occupiedRunSlotCount,
-            "timeout_minutes": sharedSettingsProvider()?.subAgentTimeoutMinutes ?? 5,
-            "active_model_counts": backgroundCoordinator.activeModelCounts,
-            "active_provider_counts": backgroundCoordinator.activeProviderCounts,
-        ])
     }
 
-    private func modelPoolSnapshot() -> [[String: Any]] {
-        guard let sharedSettings = sharedSettingsProvider() else { return [] }
-        let settings = sharedSettings.snapshot
-        let candidates = modelPool.candidates(settings: settings, sharedSettings: sharedSettings)
-        let candidatesById = Dictionary(uniqueKeysWithValues: candidates.map { ($0.modelId, $0) })
-        return settings.agentRuntime.subAgent.modelPool.map { entry in
-            let modelId = entry.modelId.toHexDashString()
-            guard let candidate = candidatesById[modelId] else {
-                return [
-                    "model_id": modelId,
-                    "name": "",
-                    "provider": "",
-                    "available": false,
-                    "supported_reasoning": [],
-                    "default_reasoning": NSNull(),
-                    "active_model_runs": 0,
-                    "active_provider_runs": 0,
-                ]
-            }
-            let supported = candidate.supportedReasoning.map { $0.name.lowercased() }
-            let defaultReasoning = (entry.reasoningLevel.flatMap {
-                candidate.supportedReasoning.contains($0) ? $0.name.lowercased() : nil
-            })
-                ?? modelPool.defaultReasoning(for: candidate).name.lowercased()
-            return [
-                "model_id": candidate.modelId,
-                "name": candidate.model.displayName,
-                "provider": candidate.provider.name,
-                "available": true,
-                "supported_reasoning": supported,
-                "default_reasoning": defaultReasoning,
-                "active_model_runs": backgroundCoordinator.activeModelCounts[candidate.modelId, default: 0],
-                "active_provider_runs": backgroundCoordinator.activeProviderCounts[candidate.providerId, default: 0],
-            ]
-        }
-    }
-
-    // MARK: - interrupt_agent
-
-    private func interruptAgent(arguments: String, conversationId: KotlinUuid?) async -> String {
-        guard let args = ChatToolCallParsing.jsonObject(arguments),
-              let targetRaw = args["target"] as? String else {
-            return Self.errorJSON(
-                toolName: "interrupt_agent",
-                code: ErrorCode.invalidArguments,
-                reason: "interrupt_agent 需要 target（child_thread_id 或 agent path）。"
-            )
-        }
-        let target = targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty, target != "/root" else {
-            return Self.errorJSON(
-                toolName: "interrupt_agent",
-                code: ErrorCode.invalidArguments,
-                reason: "不能中断根线程或空 target。"
-            )
-        }
-        // 根 = run 锚定的会话（execute 透传）；currentConversationId() 仅兜底。
-        guard let parentConversationId = conversationId ?? currentConversationId() else {
-            return Self.errorJSON(
-                toolName: "interrupt_agent",
-                code: ErrorCode.missingContext,
-                reason: "当前会话不可用，无法解析目标线程。"
-            )
-        }
-        let parentHex = parentConversationId.toHexDashString()
-
-        // 按 childThreadId 或 agentPath 解析；必须是 run 锚定会话的 descendant。
-        let dao = threadEdgeDaoProvider()
-        let targetEdge: ThreadEdgeSnapshot?
-        if target.contains("/") {
-            let all = await Self.allEdges(threadEdgeDao: dao)
-            targetEdge = all.first { $0.agentPath == target }
-        } else {
-            targetEdge = await Self.edgeFor(childThreadId: target, threadEdgeDao: dao)
-        }
-        guard let targetEdge else {
-            return Self.errorJSON(
-                toolName: "interrupt_agent",
-                code: ErrorCode.unknownTarget,
-                reason: "找不到线程 \(target)。请用 list_agents 查看可寻址线程。"
-            )
-        }
-        let descendants = await Self.descendants(of: parentHex, threadEdgeDao: dao)
-        guard descendants.contains(where: { $0.childThreadId == targetEdge.childThreadId }) else {
-            return Self.errorJSON(
-                toolName: "interrupt_agent",
-                code: ErrorCode.notADescendant,
-                reason: "线程 \(target) 不是当前线程的后代，不能从中断它。"
-            )
-        }
-        let childHex = targetEdge.childThreadId
-
-        // 活跃 run：前台当前会话 run 优先，其次后台 job；都无 → idle（不算错误，
-        // 线程保留 edge 仍 Open）。
-        if let runId = foregroundActiveRunId(childHex) {
-            _ = cancelForegroundRun(runId)
-            return Self.interruptResultJSON(target: target, childHex: childHex, threadStatus: targetEdge.status, previousStatus: "running")
-        }
-        if let backgroundRunId = backgroundCoordinator.activeRunId(conversationHex: childHex) {
-            _ = backgroundCoordinator.cancelJob(runId: backgroundRunId)
-            return Self.interruptResultJSON(target: target, childHex: childHex, threadStatus: targetEdge.status, previousStatus: "running")
-        }
-        return Self.interruptResultJSON(target: target, childHex: childHex, threadStatus: targetEdge.status, previousStatus: "idle")
-    }
-
-    // MARK: - send_message / followup_task / wait_agent（P1-d）
+    /// Child work must not inherit the chat surface's small output budget.
+    static let childRunMinOutputTokens: Int32 = 32_768
 
     /// User-facing child-page followup. The page has no parent run to borrow for
     /// target resolution, so resolve the child's recorded parent first and then
@@ -1806,10 +664,10 @@ final class IOSThreadOrchestrationToolService {
             )
         }
         let childHex = targetConversationId.toHexDashString()
-        guard let edge = await Self.edgeFor(
+        guard let edge = await IOSOrchestrationPersistence.edgeFor(
             childThreadId: childHex,
             threadEdgeDao: threadEdgeDaoProvider()
-        ), let parentId = Self.parseKotlinUuid(edge.parentThreadId) else {
+        ), let parentId = IOSOrchestrationLaunchPolicy.parseKotlinUuid(edge.parentThreadId) else {
             return Self.errorJSON(
                 toolName: "followup_task",
                 code: ErrorCode.unknownTarget,
@@ -1852,20 +710,20 @@ final class IOSThreadOrchestrationToolService {
         // but keep the guard here as well for foreground/background races.
         guard foregroundActiveRunId(targetHex) == nil,
               backgroundCoordinator.activeRunId(conversationHex: targetHex) == nil,
-              let edge = await Self.edgeFor(
+              let edge = await IOSOrchestrationPersistence.edgeFor(
                   childThreadId: targetHex,
                   threadEdgeDao: threadEdgeDaoProvider()
               ),
               edge.status == EdgeStatus.open else {
             return false
         }
-        let pending = await Self.pendingTaskSnapshots(
+        let pending = await IOSOrchestrationPersistence.pendingTaskSnapshots(
             mailboxDao: mailboxDaoProvider(),
             recipientId: targetHex
         )
         guard !pending.isEmpty,
               let store = conversationStoreProvider(),
-              let targetId = Self.parseKotlinUuid(targetHex) else {
+              let targetId = IOSOrchestrationLaunchPolicy.parseKotlinUuid(targetHex) else {
             return false
         }
         guard occupiedRunSlotCount < configuredMaxConcurrentRuns else {
@@ -1884,8 +742,8 @@ final class IOSThreadOrchestrationToolService {
             currentMessages = conversation.currentMessages
         }
 
-        let inheritedConfiguration = Self.orchestrationConfiguration(from: currentMessages)
-        let launchResult = resolveAgentLaunch(
+        let inheritedConfiguration = IOSOrchestrationConfigurationCodec.orchestrationConfiguration(from: currentMessages)
+        let launchResult = launchPolicy.resolveAgentLaunch(
             arguments: [:],
             providerSetting: providerSetting,
             params: params,
@@ -1893,7 +751,7 @@ final class IOSThreadOrchestrationToolService {
             inherited: inheritedConfiguration,
             allowPoolForInheritedModel: false
         )  // 邮箱恢复路径无 task 文本，模型调度走现有选择
-        let launch: ResolvedAgentLaunch
+        let launch: IOSOrchestrationLaunchPolicy.ResolvedAgentLaunch
         switch launchResult {
         case .success(let value):
             launch = value
@@ -1912,9 +770,9 @@ final class IOSThreadOrchestrationToolService {
                 payload: envelope.payload
             )
         }
-        var updatedMessages = Self.removingOrchestrationConfigurationMessages(from: currentMessages)
+        var updatedMessages = IOSOrchestrationConfigurationCodec.removingOrchestrationConfigurationMessages(from: currentMessages)
         if let configuration = launch.configuration {
-            updatedMessages.append(Self.orchestrationConfigurationMessage(configuration))
+            updatedMessages.append(IOSOrchestrationConfigurationCodec.orchestrationConfigurationMessage(configuration))
         }
         // A previous start may have persisted these messages before BGTask
         // submission failed. Stable envelope-derived ids make a retry merge
@@ -1926,7 +784,7 @@ final class IOSThreadOrchestrationToolService {
 
         // Keep the same write-before-start ordering as the ordinary idle
         // followup bootstrap. If this fails, every envelope stays pending.
-        guard await Self.persistTargetMessages(
+        guard await IOSOrchestrationPersistence.persistTargetMessages(
             store: store,
             conversationId: targetId,
             messages: updatedMessages
@@ -1955,7 +813,7 @@ final class IOSThreadOrchestrationToolService {
         }
 
         let deliveredAt = Int64(Date().timeIntervalSince1970 * 1000)
-        let delivered = await Self.markDelivered(
+        let delivered = await IOSOrchestrationPersistence.markDelivered(
             mailboxDao: mailboxDaoProvider(),
             ids: pending.map(\.id),
             deliveredAt: deliveredAt
@@ -1976,70 +834,6 @@ final class IOSThreadOrchestrationToolService {
 
     /// P1-d: 投递不唤醒。信封（type=MESSAGE, triggerTurn=false）入目标 mailbox，
     /// idle 目标的消息留在 mailbox 直到其下次 run；运行中目标在工具循环边界折入。
-    private func sendMessage(arguments: String, runId: String, conversationId: KotlinUuid?) async -> String {
-        guard let args = ChatToolCallParsing.jsonObject(arguments),
-              let targetRaw = args["target"] as? String,
-              let message = args["message"] as? String else {
-            return Self.errorJSON(
-                toolName: "send_message",
-                code: ErrorCode.invalidArguments,
-                reason: "send_message 需要 target 与 message。"
-            )
-        }
-        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedMessage.isEmpty else {
-            return Self.errorJSON(
-                toolName: "send_message",
-                code: ErrorCode.invalidArguments,
-                reason: "message 不能为空。"
-            )
-        }
-        guard let runConversationId = conversationId ?? currentConversationId() else {
-            return Self.errorJSON(
-                toolName: "send_message",
-                code: ErrorCode.missingContext,
-                reason: "当前会话不可用，无法确定发送方线程。"
-            )
-        }
-        let resolved = await resolveTarget(targetRaw, runConversationId: runConversationId)
-        guard case .success(let target) = resolved else {
-            if case .failure(let failure) = resolved {
-                return Self.errorJSON(toolName: "send_message", code: failure.code, reason: failure.reason)
-            }
-            return Self.errorJSON(toolName: "send_message", code: ErrorCode.unknownTarget, reason: "找不到线程 \(targetRaw)。")
-        }
-        let senderAgentPath = await agentPath(of: runConversationId.toHexDashString(), threadEdgeDao: threadEdgeDaoProvider())
-        let envelope = MailboxEnvelopeEntity(
-            id: "msg-\(UUID().uuidString)",
-            authorThreadId: senderAgentPath,
-            recipientThreadId: target.hex,
-            type: MailboxEnvelopeType.message.name,
-            payload: trimmedMessage,
-            triggerTurn: false,
-            parentTurnId: runId,
-            createdAt: Int64(Date().timeIntervalSince1970 * 1000),
-            deliveredAt: nil
-        )
-        do {
-            try await Self.enqueue(mailboxDao: mailboxDaoProvider(), envelope: envelope)
-        } catch {
-            return Self.errorJSON(
-                toolName: "send_message",
-                code: ErrorCode.startFailed,
-                reason: "消息入队失败，请重试。"
-            )
-        }
-        // 信号在入队成功之后：wait_agent「先订阅、后查 pending」的防丢窗口由此闭合。
-        await activityCenter.signal(conversationIdHex: target.hex)
-        return IOSWorkspaceStore.json([
-            "ok": true,
-            "tool": "send_message",
-            "target": targetRaw,
-            "recipient_thread_id": target.hex,
-            "status": "queued",
-        ])
-    }
-
     /// P1-d: 投递 + 唤醒。目标无活跃 run（前台/后台两路径判定，与 interrupt 同）
     /// → spawn 同款 bootstrap（信封渲染直写目标会话 + 标 delivered + durable
     /// 后台 run 启动）；有活跃 run → 留 pending 等目标边界 drain。
@@ -2076,7 +870,7 @@ final class IOSThreadOrchestrationToolService {
                 reason: "当前会话不可用，无法确定发送方线程。"
             )
         }
-        let resolved = await resolveTarget(targetRaw, runConversationId: runConversationId)
+        let resolved = await controlCommands.resolveTarget(targetRaw, runConversationId: runConversationId)
         guard case .success(let target) = resolved else {
             if case .failure(let failure) = resolved {
                 return Self.errorJSON(toolName: "followup_task", code: failure.code, reason: failure.reason)
@@ -2090,13 +884,13 @@ final class IOSThreadOrchestrationToolService {
         await acquireFollowupGate(for: target.hex)
         defer { releaseFollowupGate(for: target.hex) }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let senderAgentPath = await agentPath(of: runConversationId.toHexDashString(), threadEdgeDao: threadEdgeDaoProvider())
+        let senderAgentPath = await IOSOrchestrationPersistence.agentPath(of: runConversationId.toHexDashString(), threadEdgeDao: threadEdgeDaoProvider())
 
         // 活跃 run 判定（前台当前会话 run 优先，其次后台 job；两路径与 interrupt 同）。
         let activeRunId = foregroundActiveRunId(target.hex)
             ?? backgroundCoordinator.activeRunId(conversationHex: target.hex)
         if activeRunId != nil {
-            if Self.hasAgentConfigurationArguments(args) {
+            if IOSOrchestrationLaunchPolicy.hasAgentConfigurationArguments(args) {
                 return Self.errorJSON(
                     toolName: "followup_task",
                     code: ErrorCode.invalidArguments,
@@ -2116,7 +910,7 @@ final class IOSThreadOrchestrationToolService {
                 deliveredAt: nil
             )
             do {
-                try await Self.enqueue(mailboxDao: mailboxDaoProvider(), envelope: envelope)
+                try await IOSOrchestrationPersistence.enqueue(mailboxDao: mailboxDaoProvider(), envelope: envelope)
             } catch {
                 return Self.errorJSON(
                     toolName: "followup_task",
@@ -2168,8 +962,8 @@ final class IOSThreadOrchestrationToolService {
             }
             currentMessages = conversation.currentMessages
         }
-        let inheritedConfiguration = Self.orchestrationConfiguration(from: currentMessages)
-        let jevDecision = await jevSpawnDecision(
+        let inheritedConfiguration = IOSOrchestrationConfigurationCodec.orchestrationConfiguration(from: currentMessages)
+        let jevDecision = await jevRouting.jevSpawnDecision(
             arguments: args,
             parentRunId: runId,
             allowPoolForInheritedModel: false,
@@ -2187,7 +981,7 @@ final class IOSThreadOrchestrationToolService {
         inFlightBootstrapCount += 1
         defer { inFlightBootstrapCount -= 1 }
 
-        let launchResult = resolveAgentLaunch(
+        let launchResult = launchPolicy.resolveAgentLaunch(
             arguments: args,
             providerSetting: providerSetting,
             params: params,
@@ -2197,7 +991,7 @@ final class IOSThreadOrchestrationToolService {
             jevPreferredModelIds: jevDecision.preferredModelIds,
             jevObservedPreferredModelIds: jevDecision.observedPreferredModelIds
         )
-        let launch: ResolvedAgentLaunch
+        let launch: IOSOrchestrationLaunchPolicy.ResolvedAgentLaunch
         switch launchResult {
         case .success(let value):
             launch = value
@@ -2214,14 +1008,14 @@ final class IOSThreadOrchestrationToolService {
             type: MailboxEnvelopeType.theNewTask.name,
             payload: trimmedMessage
         )
-        var updatedMessages = Self.removingOrchestrationConfigurationMessages(from: currentMessages)
+        var updatedMessages = IOSOrchestrationConfigurationCodec.removingOrchestrationConfigurationMessages(from: currentMessages)
         if let configuration = launch.configuration {
-            updatedMessages.append(Self.orchestrationConfigurationMessage(configuration))
+            updatedMessages.append(IOSOrchestrationConfigurationCodec.orchestrationConfigurationMessage(configuration))
         }
         updatedMessages.append(newTaskMessage)
         // 信封渲染消息直写目标会话（与 spawn 的 bootstrap 同语义：先持久化，
         // 后 durable 启动；进程死亡也不丢任务消息）。
-        guard await Self.persistTargetMessages(store: store, conversationId: targetId, messages: updatedMessages) else {
+        guard await IOSOrchestrationPersistence.persistTargetMessages(store: store, conversationId: targetId, messages: updatedMessages) else {
             return Self.errorJSON(
                 toolName: "followup_task",
                 code: ErrorCode.startFailed,
@@ -2249,14 +1043,14 @@ final class IOSThreadOrchestrationToolService {
                 reason: "目标线程已持久化但后台任务提交失败（线程保留，可再次 followup_task）。"
             )
         }
-        recordSelectedPoolModelIfNeeded(
+        jevRouting.recordSelectedPoolModelIfNeeded(
             launch: launch,
             decision: jevDecision,
             runId: runId,
             childRunId: targetRunId,
             childThreadId: target.hex
         )
-        scheduleDeferredShadowT3ObservationIfNeeded(
+        jevRouting.scheduleDeferredShadowT3ObservationIfNeeded(
             decision: jevDecision,
             launch: launch,
             runId: runId,
@@ -2264,7 +1058,7 @@ final class IOSThreadOrchestrationToolService {
             childThreadId: target.hex
         )
         // 审计信封：bootstrap 已直写会话，信封仅留审计记录（标 delivered，不参与 drain）。
-        try? await Self.enqueueIfAbsent(
+        try? await IOSOrchestrationPersistence.enqueueIfAbsent(
             mailboxDao: mailboxDaoProvider(),
             envelope: MailboxEnvelopeEntity(
                 id: "followup-\(UUID().uuidString)",
@@ -2292,223 +1086,7 @@ final class IOSThreadOrchestrationToolService {
     /// P1-d: 后台线程等待 mailbox 时先订阅（防丢信号）再查 pending；
     /// pending 非空立即返回，否则事件（含 steer 打断）与超时竞速。
     /// 前台根会话没有 mailbox 时返回 yielded 控制结果，让出交互 run。
-    private func waitAgent(arguments: String, conversationId: KotlinUuid?) async -> String {
-        guard let runConversationId = conversationId ?? currentConversationId() else {
-            return Self.errorJSON(
-                toolName: "wait_agent",
-                code: ErrorCode.missingContext,
-                reason: "当前会话不可用，无法等待 mailbox。"
-            )
-        }
-        let hex = runConversationId.toHexDashString()
-        let args = ChatToolCallParsing.jsonObject(arguments)
-        let requestedMs = (args?["timeout_ms"] as? NSNumber)?.int64Value
-
-        // A foreground root is an interactive turn. Waiting here holds the
-        // only foreground run owner, so return a control result immediately
-        // and let the host release the run. Child/background runs retain the
-        // event-backed wait below. The edge check is deliberate: a foreground
-        // child must still be able to wait and report its completion to its
-        // parent instead of being mistaken for the root conversation.
-        var isForegroundRoot = false
-        if foregroundActiveRunId(hex) != nil {
-            isForegroundRoot = await Self.edgeFor(
-                childThreadId: hex,
-                threadEdgeDao: threadEdgeDaoProvider()
-            ) == nil
-        }
-        if isForegroundRoot {
-            let pendingCount = await Self.pendingCount(
-                mailboxDao: mailboxDaoProvider(),
-                recipientId: hex
-            )
-            if pendingCount > 0 {
-                return IOSWorkspaceStore.json([
-                    "ok": true,
-                    "tool": "wait_agent",
-                    "message": "mailbox already has \(pendingCount) pending",
-                    "timed_out": false,
-                    "pending_count": pendingCount,
-                ])
-            }
-            let children: [ThreadEdgeSnapshot]
-            do {
-                children = try await withCheckedThrowingContinuation { continuation in
-                    threadEdgeDaoProvider().childrenOf(parentThreadId: hex) { result, error in
-                        if let error { continuation.resume(throwing: error) }
-                        else { continuation.resume(returning: (result ?? []).map(ThreadEdgeSnapshot.init)) }
-                    }
-                }
-            } catch {
-                return Self.errorJSON(
-                    toolName: "wait_agent", code: "state_unavailable",
-                    reason: "无法读取子代理状态：\(error.localizedDescription)"
-                )
-            }
-            // A child may finish while the edge query is suspended. Check its
-            // durable mail again before deciding whether another wait can help.
-            let pendingAfterLookup = await Self.pendingCount(mailboxDao: mailboxDaoProvider(), recipientId: hex)
-            if pendingAfterLookup > 0 {
-                return IOSWorkspaceStore.json([
-                    "ok": true, "tool": "wait_agent", "timed_out": false,
-                    "pending_count": pendingAfterLookup,
-                    "message": "mailbox already has \(pendingAfterLookup) pending",
-                ])
-            }
-            let activeChildren = children.filter { child in
-                child.status == EdgeStatus.open &&
-                    (foregroundActiveRunId(child.childThreadId) != nil ||
-                     backgroundCoordinator.activeRunId(conversationHex: child.childThreadId) != nil)
-            }
-            guard !activeChildren.isEmpty else {
-                return IOSWorkspaceStore.json([
-                    "ok": true, "tool": "wait_agent", "status": "no_active_children",
-                    "yielded": false, "timed_out": false, "pending_count": 0,
-                    "active_child_count": 0,
-                    "message": "No child run is active. Waiting does not restart an ended child. Read its saved report with native session_read (follow next_offset for truncated text). If more work is needed, call native followup_task before waiting again; send_message does not wake an idle child. Use tool_search first if a native tool is hidden, never mcp_call. Do not ask the user to reissue the task just to retrieve omitted results.",
-                ])
-            }
-            return IOSWorkspaceStore.json([
-                "ok": true,
-                "tool": "wait_agent",
-                "message": "Foreground run yielded; resume on a child completion report unless newer user input supersedes this wait.",
-                "timed_out": false,
-                "pending_count": 0,
-                "active_child_count": activeChildren.count,
-                "yielded": true,
-            ])
-        }
-
-        // 订阅在前：订阅后的信号由缓冲流兜住，订阅前的信号必已落 Room 由
-        // 下方 pending 检查兜住——两个窗口都不丢（选型理由见文件头注释）。
-        let stream = await activityCenter.events(for: hex)
-        let pendingCount = await Self.pendingCount(mailboxDao: mailboxDaoProvider(), recipientId: hex)
-        if pendingCount > 0 {
-            return IOSWorkspaceStore.json([
-                "ok": true,
-                "tool": "wait_agent",
-                "message": "mailbox already has \(pendingCount) pending",
-                "timed_out": false,
-                "pending_count": pendingCount,
-            ])
-        }
-        var timeoutMs = requestedMs ?? waitTimeoutDefaultMs
-        var clamped = false
-        if timeoutMs < waitTimeoutMinMs {
-            timeoutMs = waitTimeoutMinMs
-            clamped = true
-        }
-        if timeoutMs > waitTimeoutMaxMs {
-            timeoutMs = waitTimeoutMaxMs
-            clamped = true
-        }
-
-        let outcome = await Self.awaitMailboxEvent(stream: stream, timeoutMs: timeoutMs)
-        switch outcome {
-        case .activity:
-            // 事件后复查 mailbox：有信封 → 活动；无 → steer 打断（steer 不产生信封）。
-            let pendingAfterEvent = await Self.pendingCount(mailboxDao: mailboxDaoProvider(), recipientId: hex)
-            if pendingAfterEvent > 0 {
-                return IOSWorkspaceStore.json([
-                    "ok": true,
-                    "tool": "wait_agent",
-                    "message": "Mailbox activity detected.",
-                    "timed_out": false,
-                    "pending_count": pendingAfterEvent,
-                ])
-            }
-            return IOSWorkspaceStore.json([
-                "ok": true,
-                "tool": "wait_agent",
-                "message": "Wait interrupted by new input.",
-                "timed_out": false,
-            ])
-        case .timeout:
-            var payload: [String: Any] = [
-                "ok": true,
-                "tool": "wait_agent",
-                "message": "Timed out waiting for mailbox activity after \(timeoutMs) ms.",
-                "timed_out": true,
-                "timeout_ms": timeoutMs,
-            ]
-            if clamped {
-                // clamp 时在返回里说明（下限/上限按注入常量，测试可改小）。
-                payload["clamped"] = true
-                payload["clamp_range_ms"] = [waitTimeoutMinMs, waitTimeoutMaxMs]
-            }
-            return IOSWorkspaceStore.json(payload)
-        case .cancelled:
-            // Task 取消不吞：走既有工具取消语义——立即返回、不等到超时；
-            // 引擎在下一边界把 run 收口为 wasCancelled，输出不冒充成功。
-            return IOSWorkspaceStore.json([
-                "ok": true,
-                "tool": "wait_agent",
-                "status": "cancelled",
-                "message": "Wait cancelled.",
-                "timed_out": false,
-            ])
-        }
-    }
-
-    /// P1-d 目标解析共用：target 支持 childThreadId（hex）或 agentPath（含 "/"）。
-    /// 同树校验：从当前 run 会话沿 edge 走到 root，target == root 或 root 的
-    /// descendant 才合法；拒绝自身。未知/树外/自身分别给结构化错误。
-    private func resolveTarget(
-        _ targetRaw: String,
-        runConversationId: KotlinUuid
-    ) async -> Result<ResolvedTarget, TargetError> {
-        let runHex = runConversationId.toHexDashString()
-        let target = targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else {
-            return .failure(TargetError(code: ErrorCode.invalidArguments, reason: "target 不能为空。"))
-        }
-        let dao = threadEdgeDaoProvider()
-        let all = await Self.allEdges(threadEdgeDao: dao)
-        let targetEdge: ThreadEdgeSnapshot?
-        if target.contains("/") {
-            targetEdge = all.first { $0.agentPath == target }
-        } else {
-            targetEdge = await Self.edgeFor(childThreadId: target, threadEdgeDao: dao)
-        }
-        let rootHex = await Self.rootHex(of: runHex, threadEdgeDao: dao)
-        let targetHex: String
-        if let targetEdge {
-            targetHex = targetEdge.childThreadId
-        } else if target == "/root" || target == rootHex {
-            // 根线程本身（无 edge 记录）。
-            targetHex = rootHex
-        } else {
-            return .failure(TargetError(
-                code: ErrorCode.unknownTarget,
-                reason: "找不到线程 \(target)。请用 list_agents 查看可寻址线程。"
-            ))
-        }
-        let descendants = await Self.descendants(of: rootHex, threadEdgeDao: dao)
-        guard targetHex == rootHex || descendants.contains(where: { $0.childThreadId == targetHex }) else {
-            return .failure(TargetError(
-                code: ErrorCode.notADescendant,
-                reason: "线程 \(target) 不是当前线程所在树的后代，不能向其发送消息。"
-            ))
-        }
-        guard targetHex != runHex else {
-            return .failure(TargetError(
-                code: ErrorCode.cannotMessageSelf,
-                reason: "不能向自己发送消息。"
-            ))
-        }
-        return .success(ResolvedTarget(hex: targetHex, edge: targetEdge))
-    }
-
     /// P1-d 抽取（自 spawn (f) 段）：写基线 + 保存目标会话消息（spawn/followup 共用）。
-    private static func persistTargetMessages(
-        store: IOSConversationStore,
-        conversationId: KotlinUuid,
-        messages: [UIMessage]
-    ) async -> Bool {
-        let baseline = store.writeBaseline(for: conversationId)
-        return await store.save(messages: messages, to: conversationId, ifUnchangedSince: baseline)
-    }
-
     /// P1-d 抽取（自 spawn (g) 段）：把「记账（agent_run running）+ durable
     /// handoff → BGTask」收口为一个助手，spawn_agent 与 followup_task 共用。
     /// start 失败时回收 running 行（避免孤儿行计入并发限额，保留 failed 审计
@@ -2530,7 +1108,7 @@ final class IOSThreadOrchestrationToolService {
         defer { modelPool.release(modelReservation) }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let inputDigest = chatInputDigest(for: renderedText)
-        guard await Self.recordRunningRun(
+        guard await IOSOrchestrationPersistence.recordRunningRun(
             agentRuntimeDao: agentRuntimeDaoProvider(),
             runId: runId,
             conversationId: targetHex,
@@ -2562,7 +1140,7 @@ final class IOSThreadOrchestrationToolService {
         }
         // 管线闭环场景 C：子线程的后台 upload 不经 ChatViewModel 注入管线，
         // 直接在 handoff 里注入子线程向编排语境（仅 upload，不进展示/持久化）。
-        let uploadMessages = Self.childUploadMessages(
+        let uploadMessages = IOSOrchestrationConfigurationCodec.childUploadMessages(
             targetMessages: targetMessages,
             soulMarkdown: soulMarkdown(),
             configuration: configuration,
@@ -2590,7 +1168,8 @@ final class IOSThreadOrchestrationToolService {
             generativeUiFallbackAttempted: false,
             fullToolNames: fullToolNames,
             executionPolicy: executionPolicy,
-            subAgentTimeoutSeconds: subAgentTimeoutSeconds(for: configuration)
+            subAgentTimeoutSeconds: launchPolicy.subAgentTimeoutSeconds(for: configuration),
+            runDisplayBaseline: targetMessages
         )
         let didStart = !Task.isCancelled && backgroundCoordinator.start(
             handoff: handoff,
@@ -2602,7 +1181,7 @@ final class IOSThreadOrchestrationToolService {
         guard didStart else {
             // P1-c 修复语义：回收 running 记账行——避免 start 失败留下 running
             // 孤儿行污染恢复账本，也不把失败 run 静默抹掉。
-            await Self.markRunFailed(
+            await IOSOrchestrationPersistence.markRunFailed(
                 agentRuntimeDao: agentRuntimeDaoProvider(),
                 runId: runId,
                 now: Int64(Date().timeIntervalSince1970 * 1000)
@@ -2612,178 +1191,60 @@ final class IOSThreadOrchestrationToolService {
         return handoff
     }
 
-    private static func pendingTaskSnapshots(
-        mailboxDao: MailboxDao,
-        recipientId: String
-    ) async -> [PendingTaskSnapshot] {
-        await withCheckedContinuation { continuation in
-            mailboxDao.pendingForRecipient(recipientId: recipientId) { result, _ in
-                let snapshots = (result ?? []).compactMap { envelope -> PendingTaskSnapshot? in
-                    guard envelope.type == MailboxEnvelopeType.theNewTask.name,
-                          envelope.triggerTurn else {
-                        return nil
-                    }
-                    return PendingTaskSnapshot(
-                        id: envelope.id,
-                        authorThreadId: envelope.authorThreadId,
-                        payload: envelope.payload,
-                        parentTurnId: envelope.parentTurnId
-                    )
-                }
-                continuation.resume(returning: snapshots)
-            }
-        }
-    }
-
-    private static func markDelivered(
-        mailboxDao: MailboxDao,
-        ids: [String],
-        deliveredAt: Int64
-    ) async -> Int {
-        guard !ids.isEmpty else { return 0 }
-        return await withCheckedContinuation { continuation in
-            mailboxDao.markDelivered(ids: ids, deliveredAt: deliveredAt) { result, _ in
-                continuation.resume(returning: result?.intValue ?? 0)
-            }
-        }
-    }
-
-    private static func pendingCount(mailboxDao: MailboxDao, recipientId: String) async -> Int {
-        await withCheckedContinuation { cont in
-            mailboxDao.pendingForRecipient(recipientId: recipientId) { result, _ in
-                cont.resume(returning: result?.count ?? 0)
-            }
-        }
-    }
-
-    /// P1-d wait_agent 竞速：mailbox 活动事件 vs 超时 vs Task 取消。
-    /// 取消传播：父任务取消会取消 group 子任务；三个子任务全部以
-    /// CancellationError 收口 → 确定性返回 `.cancelled`（不吞、不等超时）。
-    private static func awaitMailboxEvent(
-        stream: AsyncStream<Void>,
-        timeoutMs: Int64
-    ) async -> MailboxWaitOutcome {
-        do {
-            return try await withThrowingTaskGroup(of: MailboxWaitOutcome.self) { group in
-                group.addTask {
-                    for await _ in stream {
-                        return .activity
-                    }
-                    // 流结束（AsyncStream 在任务取消时结束迭代）→ 视为取消。
-                    throw CancellationError()
-                }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
-                    return .timeout
-                }
-                group.addTask {
-                    // 取消观察：父取消传播到子任务后立即收口，不等超时。
-                    while !Task.isCancelled {
-                        try await Task.sleep(nanoseconds: 50_000_000)
-                    }
-                    throw CancellationError()
-                }
-                let first = try await group.next() ?? .timeout
-                group.cancelAll()
-                return first
-            }
-        } catch is CancellationError {
-            return .cancelled
-        } catch {
-            return .timeout
-        }
-    }
-
     // MARK: - FINAL_ANSWER 终态回传（前台 finishStreaming / 后台 job 完成共用）
 
     /// run 终态钩子：本会话有 Open 父 edge 时，向父线程 mailbox 投递 FINAL_ANSWER
     /// （payload = 最后 assistant 文本摘要，必要时附带原文分页引用；triggerTurn=false；
     /// parentTurnId = 本 runId）。父线程在其下一边界/下一 run 头经 P1-b 机制折入。
+    /// Production run owners pass their frozen display baseline; nil is only
+    /// for direct callers whose finalMessages already contain this run alone.
     func notifyRunTerminal(
         conversationId: KotlinUuid?,
         runId: String,
         finalMessages: [UIMessage],
+        displayBaseline: [UIMessage]? = nil,
         terminalStatus: AgentRunStatus? = nil,
         terminalReason: String? = nil
     ) async {
-        guard let conversationId else { return }
-        let childHex = conversationId.toHexDashString()
-        if let terminalStatus {
+        if let conversationId, let terminalStatus {
             recordModelRoutingChildOutcomeIfNeeded(
-                childThreadId: childHex,
+                childThreadId: conversationId.toHexDashString(),
                 childRunId: runId,
                 terminalStatus: terminalStatus,
                 terminalReason: terminalReason
             )
         }
-        guard let edge = await Self.edgeFor(childThreadId: childHex, threadEdgeDao: threadEdgeDaoProvider()),
-              edge.status == EdgeStatus.open else {
-            return
-        }
-        if let store = conversationStoreProvider() {
-            let parentID = KotlinUuid.companion.parse(uuidString: edge.parentThreadId)
-            do {
-                // Deleted parents cannot consume mail. The child transcript is
-                // retained and remains accessible from conversation storage.
-                guard try await store.loadConversationForOrchestration(parentID) != nil else { return }
-            } catch {
-                // A read error does not prove deletion; keep the result durable
-                // in the mailbox and surface the storage error.
-                store.publishUserVisibleError(IOSUserVisibleError(
-                    title: "读取父会话失败", message: error.localizedDescription, severity: .error
-                ))
-            }
-        }
-        let text = Self.lastAssistantText(finalMessages)
-        // P1-c 修复：空转录（如整轮失败、无 assistant 输出）也回传终态——改投
-        // 结构化信封携带终态语义，父线程不静默丢失子线程的终止信号；截断与
-        // runId 幂等去重与文本路径一致。
-        let payloadSource = text.isEmpty
-            ? "[run ended without assistant output]"
-            : text
-        let payload: String
-        if payloadSource.count > Self.finalAnswerMaxChars,
-           let message = finalMessages.last(where: { $0.role == MessageRole.assistant }) {
-            let reference = IOSWorkspaceStore.json([
-                "run_ended": true,
-                "truncated": true,
-                "total_chars": payloadSource.count,
-                "session_read": [
-                    "conversation_id": childHex,
-                    "message_id": message.id.toHexDashString(),
-                    "offset": 0,
-                ],
-            ])
-            payload = """
-            \(payloadSource.prefix(Self.finalAnswerMaxChars))
-
-            [Amber host: child result excerpt]
-            \(reference)
-            This child run has ended. The report above is a delivery excerpt, not a promise of another message. Read the stored full message with native session_read using the reference above, then follow next_offset until null. If the tool is hidden, use tool_search first; do not call it through mcp_call. Do not request regeneration or wait for more mail just because this excerpt was truncated.
-            """
-        } else {
-            payload = payloadSource
-        }
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let envelope = MailboxEnvelopeEntity(
-            id: "final-\(runId)",
-            authorThreadId: edge.agentPath,
-            recipientThreadId: edge.parentThreadId,
-            type: MailboxEnvelopeType.finalAnswer.name,
-            payload: payload,
-            triggerTurn: false,
-            parentTurnId: runId,
-            createdAt: now,
-            deliveredAt: nil
+        await controlCommands.notifyRunTerminal(
+            conversationId: conversationId,
+            runId: runId,
+            finalMessages: finalMessages,
+            displayBaseline: displayBaseline,
+            terminalStatus: terminalStatus,
+            terminalReason: terminalReason
         )
-        // 幂等去重：同 runId 的终态信封已存在（cancel/finishStreaming 双触发）
-        // 时 enqueueIfAbsent 静默跳过（IGNORE），不抛冲突异常、不双发。
-        try? await Self.enqueueIfAbsent(mailboxDao: mailboxDaoProvider(), envelope: envelope)
-        // P1-d: FINAL_ANSWER 落父 mailbox → 广播活动（父线程的 wait_agent 由此醒来）。
-        await activityCenter.signal(conversationIdHex: edge.parentThreadId)
+    }
+
+    /// Keep the service's existing outcome entry point for callers that record
+    /// a durable child terminal independently of mailbox delivery.
+    func recordModelRoutingChildOutcomeIfNeeded(
+        childThreadId: String,
+        childRunId: String,
+        terminalStatus: AgentRunStatus,
+        terminalReason: String?
+    ) {
+        jevRouting.recordModelRoutingChildOutcomeIfNeeded(
+            childThreadId: childThreadId,
+            childRunId: childRunId,
+            terminalStatus: terminalStatus,
+            terminalReason: terminalReason
+        )
     }
 
     // MARK: - 纯辅助
+
+    static func latestRunStatusByConversation(agentRuntimeDao: AgentRuntimeDao) async -> [String: String] {
+        await IOSOrchestrationPersistence.latestRunStatusByConversation(agentRuntimeDao: agentRuntimeDao)
+    }
 
     static func isValidTaskName(_ name: String) -> Bool {
         guard !name.isEmpty else { return false }
@@ -2792,16 +1253,6 @@ final class IOSThreadOrchestrationToolService {
                 || (character >= "0" && character <= "9")
                 || character == "_"
         }
-    }
-
-    static func lastAssistantText(_ messages: [UIMessage]) -> String {
-        guard let lastAssistant = messages.last(where: { $0.role == MessageRole.assistant }) else {
-            return ""
-        }
-        return lastAssistant.parts
-            .compactMap { ($0 as? UIMessagePart.Text)?.text }
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func errorJSON(toolName: String, code: String, reason: String) -> String {
@@ -2814,203 +1265,7 @@ final class IOSThreadOrchestrationToolService {
         ])
     }
 
-    private static func interruptResultJSON(
-        target: String,
-        childHex: String,
-        threadStatus: String,
-        previousStatus: String
-    ) -> String {
-        IOSWorkspaceStore.json([
-            "ok": true,
-            "tool": "interrupt_agent",
-            "target": target,
-            "child_thread_id": childHex,
-            "previous_status": previousStatus,
-            "thread_status": threadStatus,
-        ])
-    }
 
-    /// Stable English aliases used when the model reuses a sibling task name.
-    /// These are route segments, so they stay lowercase and satisfy the same
-    /// task-name grammar as the caller supplied name. The primary name comes
-    /// from the current parent model; this table is a local no-network fallback.
-    private static let collisionTaskNames = [
-        "nova", "leo", "nora", "sam", "milo", "iris", "theo", "luna",
-        "sage", "aria", "orion", "atlas", "ember", "quinn", "riley", "hazel",
-        "sora", "kai", "ivy", "remy", "zane", "cleo", "juno", "piper",
-        "wren", "finn", "skye", "mira", "evan", "rhea", "odin", "maven",
-        "echo", "kira", "vera", "axel", "lina", "miko", "tess", "niko",
-        "yuki", "zora", "cora", "navi", "elio", "nina", "otto", "ravi",
-        "uma", "yara", "basil", "cato", "dara", "elara", "faye", "gala",
-        "hugo", "jace", "kian", "lyra", "maia", "nate", "pax", "rory",
-        "selene", "talia", "una", "vito", "willa", "xena", "yves"
-    ]
-
-    /// Resolve a sibling task name without renaming existing edges. A repeated
-    /// model name first receives an unused stable English alias; numeric
-    /// suffixes are only the last fallback after the alias pool is exhausted.
-    private static func uniqueTaskName(
-        _ taskName: String,
-        parentAgentPath: String,
-        threadEdgeDao: ThreadEdgeDao
-    ) async -> String {
-        let children = await Self.children(of: parentAgentPath, threadEdgeDao: threadEdgeDao)
-        let existingNames = Set<String>(children.compactMap { edge in
-            guard edge.agentPath.hasPrefix(parentAgentPath + "/") else { return nil }
-            return edge.agentPath.dropFirst(parentAgentPath.count + 1)
-                .split(separator: "/").first.map(String.init)
-        })
-        guard existingNames.contains(taskName) else { return taskName }
-
-        if let alias = Self.collisionTaskNames.first(where: { !existingNames.contains($0) }) {
-            return alias
-        }
-
-        var suffix = 2
-        while existingNames.contains("\(taskName)_\(suffix)") {
-            suffix += 1
-        }
-        return "\(taskName)_\(suffix)"
-    }
-
-    /// 沿 edge 链向上数父深度：root 深度 0，其子深度 1，孙深度 2。
-    private func depth(of threadHex: String, threadEdgeDao: ThreadEdgeDao) async -> Int {
-        var current = threadHex
-        var depth = 0
-        while let edge = await Self.edgeFor(childThreadId: current, threadEdgeDao: threadEdgeDao) {
-            depth += 1
-            current = edge.parentThreadId
-        }
-        return depth
-    }
-
-    /// 沿 edge 链向上走到根：root 会话的 hex（无 edge 的顶层会话就是 root）。
-    private static func rootHex(of threadHex: String, threadEdgeDao: ThreadEdgeDao) async -> String {
-        var current = threadHex
-        while let edge = await Self.edgeFor(childThreadId: current, threadEdgeDao: threadEdgeDao) {
-            current = edge.parentThreadId
-        }
-        return current
-    }
-
-    private func agentPath(of threadHex: String, threadEdgeDao: ThreadEdgeDao) async -> String {
-        if let edge = await Self.edgeFor(childThreadId: threadHex, threadEdgeDao: threadEdgeDao) {
-            return edge.agentPath
-        }
-        return "/root"
-    }
-
-    // MARK: - DAO 桥（suspend → withCheckedContinuation，回调内归约成 Sendable 值）
-
-    private static func enqueue(mailboxDao: MailboxDao, envelope: MailboxEnvelopeEntity) async throws {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            mailboxDao.enqueue(envelope: envelope) { error in
-                if let error { cont.resume(throwing: error) }
-                else { cont.resume() }
-            }
-        }
-    }
-
-    /// 幂等入队（终态信封去重用）：IGNORE 冲突策略，同 id 重复入队静默跳过。
-    private static func enqueueIfAbsent(mailboxDao: MailboxDao, envelope: MailboxEnvelopeEntity) async throws {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            mailboxDao.enqueueIfAbsent(envelope: envelope) { error in
-                if let error { cont.resume(throwing: error) }
-                else { cont.resume() }
-            }
-        }
-    }
-
-    private static func edgeFor(childThreadId: String, threadEdgeDao: ThreadEdgeDao) async -> ThreadEdgeSnapshot? {
-        await withCheckedContinuation { cont in
-            threadEdgeDao.edgeFor(childThreadId: childThreadId) { result, _ in
-                cont.resume(returning: result.map(ThreadEdgeSnapshot.init))
-            }
-        }
-    }
-
-    /// 取某个 agentPath 下的直接子边（uniqueTaskName 冲突判定用；按 parent hex 存）。
-    private static func children(of parentAgentPath: String, threadEdgeDao: ThreadEdgeDao) async -> [ThreadEdgeSnapshot] {
-        let all = await allEdges(threadEdgeDao: threadEdgeDao)
-        let parentPath = parentAgentPath
-        return all.filter { edge in
-            // 直接子级：路径 = parentPath/单段
-            edge.agentPath.hasPrefix(parentPath + "/") &&
-                edge.agentPath.dropFirst(parentPath.count + 1).split(separator: "/").count == 1
-        }
-    }
-
-    private static func allEdges(threadEdgeDao: ThreadEdgeDao) async -> [ThreadEdgeSnapshot] {
-        await withCheckedContinuation { cont in
-            threadEdgeDao.allEdges() { result, _ in
-                cont.resume(returning: (result ?? []).map(ThreadEdgeSnapshot.init))
-            }
-        }
-    }
-
-    private static func descendants(of rootThreadId: String, threadEdgeDao: ThreadEdgeDao) async -> [ThreadEdgeSnapshot] {
-        await withCheckedContinuation { cont in
-            threadEdgeDao.descendantsOf(rootThreadId: rootThreadId) { result, _ in
-                cont.resume(returning: (result ?? []).map(ThreadEdgeSnapshot.init))
-            }
-        }
-    }
-
-    private static func countUnfinishedRuns(agentRuntimeDao: AgentRuntimeDao) async -> Int {
-        let store = IOSDurableRunStore(dao: agentRuntimeDao)
-        return (try? await store.recoverableRuns().count) ?? 0
-    }
-
-    static func latestRunStatusByConversation(agentRuntimeDao: AgentRuntimeDao) async -> [String: String] {
-        await withCheckedContinuation { cont in
-            agentRuntimeDao.listAllRuns() { result, _ in
-                let runs = result ?? []
-                var latestByConversation: [String: AgentRunEntity] = [:]
-                for run in runs {
-                    guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),
-                          let conversationId = run.conversationId else { continue }
-                    if let existing = latestByConversation[conversationId], existing.startedAt > run.startedAt {
-                        continue
-                    }
-                    latestByConversation[conversationId] = run
-                }
-                cont.resume(returning: latestByConversation.mapValues { $0.status })
-            }
-        }
-    }
-
-    private static func recordRunningRun(
-        agentRuntimeDao: AgentRuntimeDao,
-        runId: String,
-        conversationId: String,
-        startedAt: Int64,
-        inputDigest: String,
-        protocolContext: AgentRunProtocolContext
-    ) async -> Bool {
-        let store = IOSDurableRunStore(dao: agentRuntimeDao)
-        return (try? await store.startChatRun(
-            runId: runId,
-            startedAt: startedAt,
-            inputDigest: inputDigest,
-            conversationId: conversationId,
-            protocolContext: protocolContext
-        )) == true
-    }
-
-    /// 以 CAS 把活跃 run 收口为 failed（spawn start 失败回收）。
-    private static func markRunFailed(
-        agentRuntimeDao: AgentRuntimeDao,
-        runId: String,
-        now: Int64
-    ) async {
-        let store = IOSDurableRunStore(dao: agentRuntimeDao)
-        _ = try? await store.transition(
-            runId: runId,
-            expected: .running,
-            to: .failed,
-            at: now
-        )
-    }
 }
 
 extension IOSThreadOrchestrationToolService.BackgroundScheduling {

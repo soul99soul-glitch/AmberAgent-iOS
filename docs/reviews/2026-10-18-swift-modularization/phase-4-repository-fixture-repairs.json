@@ -1,0 +1,132 @@
+{
+  "scope": "Test fixture paths only; no production source or assertions changed.",
+  "baselineReproduction": {
+    "path": "/tmp/amber-phase4-original-repro/baseline-eight-results.json",
+    "totalCases": 8,
+    "failedCases": 8,
+    "relevantCases": [
+      {
+        "identifier": "NovelCreationModuleTests/testDegradedCommitFailureReconcilesCachedProjectToReadOnlyPrevious()",
+        "issues": [
+          {
+            "text": "failed - Expected expression to throw.",
+            "line": 402
+          },
+          {
+            "text": "XCTAssertEqual failed: (\"3\") is not equal to (\"1\")",
+            "line": 409
+          },
+          {
+            "text": "failed - Expected the previous project in degraded read-only mode",
+            "line": 411
+          }
+        ]
+      },
+      {
+        "identifier": "NovelProjectLifecycleOperationTests/testCorruptPendingAndCompletedFileReceiptsFailClosedWithoutDeletingEvidence()",
+        "issues": [
+          {
+            "text": "failed: caught error: \"Error Domain=NSCocoaErrorDomain Code=260 \"未能打开文件“1c509a01-2953-4bcc-8f55-5f28e9ef565e.json”，因为它不存在。\" UserInfo={NSFilePath=/Users/arquiel/Library/Developer/CoreSimulator/Devices/F3D5299E-EEA6-4098-BF61-AB1C516933C0/data/Containers/Data/Application/F66CCD50-1504-4684-9648-AC690BD18A6C/tmp/NovelCreationTests-753E56CC-66BB-4A25-8419-79377BBE0F1A/projects/1c509a01-2953-4bcc-8f55-5f28e9ef565e.json, NSURL=file:///Users/arquiel/Library/Developer/CoreSimulator/Devices/F3D5299E-EEA6-4098-BF61-AB1C516933C0/data/Containers/Data/Application/F66CCD50-1504-4684-9648-AC690BD18A6C/tmp/NovelCreationTests-753E56CC-66BB-4A25-8419-79377BBE0F1A/projects/1c509a01-2953-4bcc-8f55-5f28e9ef565e.json, NSUnderlyingError=0x1334acc30 {Error Domain=NSPOSIXErrorDomain Code=2 \"No such file or directory\"}}\"",
+            "line": 684
+          }
+        ]
+      },
+      {
+        "identifier": "NovelProjectLifecycleOperationTests/testExplicitPreviousRestoreBecomesWritableAndReplaysAcrossRestart()",
+        "issues": [
+          {
+            "text": "failed - Expected the previous copy to be read-only before confirmation.",
+            "line": 124
+          }
+        ]
+      }
+    ]
+  },
+  "rootCause": "Three test fixtures still addressed legacy project monofiles while default repository storage installs sharded project packages.",
+  "changes": [
+    {
+      "method": "testDegradedCommitFailureReconcilesCachedProjectToReadOnlyPrevious",
+      "previousFixture": "projects/<projectID>.json",
+      "actualFixture": "projects/<projectID>/layout.json",
+      "reason": "The repository stores the created project in the sharded package. Corrupting an unrelated legacy monofile left the installed primary valid, so the mutation succeeded instead of reaching degraded read-only recovery."
+    },
+    {
+      "method": "testExplicitPreviousRestoreBecomesWritableAndReplaysAcrossRestart",
+      "previousFixture": "projects/<projectID>.json and projects/<projectID>.previous.json",
+      "actualFixture": "projects/<projectID>/layout.json and projects/<projectID>/previous-layout.json",
+      "reason": "The installed primary and previous copies live in the sharded package. Corrupting a legacy monofile did not degrade the installed primary, so explicit restore assertions exercised the wrong state."
+    },
+    {
+      "method": "assertCorruptFileReceiptFailsClosed",
+      "caller": "testCorruptPendingAndCompletedFileReceiptsFailClosedWithoutDeletingEvidence",
+      "previousFixture": "projects/<projectID>.json",
+      "actualFixture": "projects/<projectID>/layout.json",
+      "reason": "The helper read a nonexistent legacy monofile before reaching its fail-closed, ledger and no-delete assertions. It now snapshots the installed layout bytes for before/after preservation checks."
+    }
+  ],
+  "files": {
+    "NovelCreationModuleTests.swift": {
+      "path": "iosApp/iosAppTests/NovelCreationModuleTests.swift",
+      "beforeSHA256": "38aed461067ca8e7a5d271de13856dc2904b2ecf2e2a630419d8bd5f5048d988",
+      "afterSHA256": "3c3a092e58d14b6261c33585154a378e7f536d91ad75d1d19887452a74778e35"
+    },
+    "NovelProjectLifecycleOperationTests.swift": {
+      "path": "iosApp/iosAppTests/NovelProjectLifecycleOperationTests.swift",
+      "beforeSHA256": "c18007e3ffe17d909cc556a1c6fa1a9eccbafccca1aea0805e57f29fb80bd478",
+      "afterSHA256": "5f352e4c55cfe6160441d8fdb48bedcf2a37a23688cbe6a99c8a9c3c6782f9e2"
+    }
+  },
+  "methods": {
+    "testDegradedCommitFailureReconcilesCachedProjectToReadOnlyPrevious": {
+      "file": "iosApp/iosAppTests/NovelCreationModuleTests.swift",
+      "beforeBodySHA256": "15cadda18bd38dba3faec9f9a214968a18a266b9c310da5afb1fb7e736f88861",
+      "afterBodySHA256": "b0f998dfcc1a6cad61302ff3a47598b1dd9f0feeb9bccff160eae8b49aec2bf8",
+      "assertionCountBefore": 10,
+      "assertionCountAfter": 10,
+      "assertionsIdentical": true,
+      "bodyUnchanged": false
+    },
+    "testExplicitPreviousRestoreBecomesWritableAndReplaysAcrossRestart": {
+      "file": "iosApp/iosAppTests/NovelProjectLifecycleOperationTests.swift",
+      "beforeBodySHA256": "ec2d19b6b19adbdb1b0a045f90a91d8a0b78ebf500177dd49313fd9a3d904a31",
+      "afterBodySHA256": "5fde78b959238aa46b67d9e03080f5424c714a581ab55200a29eec24fe5afabe",
+      "assertionCountBefore": 11,
+      "assertionCountAfter": 11,
+      "assertionsIdentical": true,
+      "bodyUnchanged": false
+    },
+    "testCorruptPendingAndCompletedFileReceiptsFailClosedWithoutDeletingEvidence": {
+      "file": "iosApp/iosAppTests/NovelProjectLifecycleOperationTests.swift",
+      "beforeBodySHA256": "b7b1065aab6fcbf76e8abfd73be84e437b1bd36b6805ffb9f0332c7046941150",
+      "afterBodySHA256": "b7b1065aab6fcbf76e8abfd73be84e437b1bd36b6805ffb9f0332c7046941150",
+      "assertionCountBefore": 0,
+      "assertionCountAfter": 0,
+      "assertionsIdentical": true,
+      "bodyUnchanged": true
+    },
+    "assertCorruptFileReceiptFailsClosed": {
+      "file": "iosApp/iosAppTests/NovelProjectLifecycleOperationTests.swift",
+      "beforeBodySHA256": "47be64f941b6189e5fc1b1b48adfe1ec0c8ca25d40498debea5e8621e215c7f1",
+      "afterBodySHA256": "fe84a8757368c666c26b4e4814267ffbd17e856ac22a4f675d34e149b0d76568",
+      "assertionCountBefore": 11,
+      "assertionCountAfter": 11,
+      "assertionsIdentical": true,
+      "bodyUnchanged": false
+    }
+  },
+  "assertionContract": "All XCTAssert, XCTFail, and NovelXCTAssert invocation lines in the four affected method bodies are byte-for-byte unchanged. The directly named receipt test body is unchanged; only its shared helper changes.",
+  "checks": [
+    {
+      "command": "swiftc -frontend -parse iosApp/iosAppTests/NovelCreationModuleTests.swift iosApp/iosAppTests/NovelProjectLifecycleOperationTests.swift",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "command": "git diff --check -- iosApp/iosAppTests/NovelCreationModuleTests.swift iosApp/iosAppTests/NovelProjectLifecycleOperationTests.swift",
+      "exitCode": 0,
+      "output": ""
+    }
+  ],
+  "buildRunByThisAgent": false,
+  "testsRunAfterRepairByThisAgent": false
+}

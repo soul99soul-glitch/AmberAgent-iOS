@@ -581,7 +581,7 @@ struct NovelStructuredModelExecutor: Sendable {
             switch event {
             case .activity:
                 onTextOutput?()
-            case .reasoningDelta:
+            case .reasoningDelta, .reasoningReplacement:
                 // Heartbeat only — structured JSON must not include thinking text.
                 onTextOutput?()
             case .textDelta(let delta):
@@ -599,7 +599,7 @@ struct NovelStructuredModelExecutor: Sendable {
                     switch frameEvent {
                     case .activity:
                         onTextOutput?()
-                    case .reasoningDelta:
+                    case .reasoningDelta, .reasoningReplacement:
                         onTextOutput?()
                     case .textDelta(let delta):
                         if !delta.isEmpty { onTextOutput?() }

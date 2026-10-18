@@ -1,0 +1,2230 @@
+{
+  "summary": {
+    "old_method_count": 347,
+    "new_method_count": 347,
+    "unmodified_method_count": 344,
+    "root_owned_source_guard_exception_count": 3,
+    "helper_function_count": 149,
+    "old_test_assertions_and_failures": 1969,
+    "new_test_assertions_and_failures": 1975,
+    "old_test_unwrap_assertions": 302,
+    "new_test_unwrap_assertions": 302,
+    "all_helper_body_sha256_equal": true,
+    "all_source_lines_covered": true,
+    "base_test_method_count": 0,
+    "files": 31,
+    "max_file_lines": 1197
+  },
+  "helpers": [
+    {
+      "name": "cardResponse",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 905,
+      "new_path": "iosApp/iosAppTests/NovelSessionTailPresentationTests.swift",
+      "new_line": 183,
+      "body_sha256": "b794b78abaefb9a653640efae369ec997d794a32c997ecdbd1c72cd6cec28721",
+      "old_full_sha256": "b794b78abaefb9a653640efae369ec997d794a32c997ecdbd1c72cd6cec28721",
+      "new_full_sha256": "b794b78abaefb9a653640efae369ec997d794a32c997ecdbd1c72cd6cec28721",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "assertGhostwritePlanApprovalPersistsAndStarts",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 945,
+      "new_path": "iosApp/iosAppTests/NovelSessionTailPresentationTests.swift",
+      "new_line": 223,
+      "body_sha256": "32fd4ead10ed2b13374053beeb297d6449708fabfbb4f2cb913e5a4423d59dc0",
+      "old_full_sha256": "7221e295c891ea132d0112cd0f4fb9ea5bdb991061c03c07ed3f08f8f07de8e8",
+      "new_full_sha256": "7221e295c891ea132d0112cd0f4fb9ea5bdb991061c03c07ed3f08f8f07de8e8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeWindow",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 4830,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 49,
+      "body_sha256": "71db87543a9f4b4b64a02d2d3c0e7ee17a46ac37fce1935c11e1a26e9e9e6f9f",
+      "old_full_sha256": "71db87543a9f4b4b64a02d2d3c0e7ee17a46ac37fce1935c11e1a26e9e9e6f9f",
+      "new_full_sha256": "71db87543a9f4b4b64a02d2d3c0e7ee17a46ac37fce1935c11e1a26e9e9e6f9f",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeHarness",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 4844,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 63,
+      "body_sha256": "e7835021933b32201c9465feef4540ac9668193eeebe7c43a44827dc17ec18ca",
+      "old_full_sha256": "b90f6da992ce381691efd0918efbff300b63935d98f878d6045cd70ad783cd25",
+      "new_full_sha256": "b90f6da992ce381691efd0918efbff300b63935d98f878d6045cd70ad783cd25",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "eventually",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 4911,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 130,
+      "body_sha256": "718b67e29c367d0d876db709e90de619a9246a97def581580a2ccaf20fc39594",
+      "old_full_sha256": "92eee7561b8af3898527fd3d8fd0b96aa01b088c62090e61721ddf9d5df3590e",
+      "new_full_sha256": "003b059ceb5ddedcd5160175284fba5152b03d0223f5b21c3e5fc1c3f05228e2",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 4930,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 149,
+      "body_sha256": "3837ca7d1d14b9c1661821a4908822d5fd3af58ecd866b76e273618f69727f6e",
+      "old_full_sha256": "3837ca7d1d14b9c1661821a4908822d5fd3af58ecd866b76e273618f69727f6e",
+      "new_full_sha256": "3837ca7d1d14b9c1661821a4908822d5fd3af58ecd866b76e273618f69727f6e",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "stop",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 4936,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 155,
+      "body_sha256": "420ed9ea093e5f85dfa3133921c8fc27a5f7908c808ac8fe82c94a4c3a6bcf14",
+      "old_full_sha256": "420ed9ea093e5f85dfa3133921c8fc27a5f7908c808ac8fe82c94a4c3a6bcf14",
+      "new_full_sha256": "420ed9ea093e5f85dfa3133921c8fc27a5f7908c808ac8fe82c94a4c3a6bcf14",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithChapter",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 4949,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 168,
+      "body_sha256": "1ee599ec75ef4ffee34435ffa2ff5efcd7c6e05bd92977ae04eea7e0c20cf75d",
+      "old_full_sha256": "3c51237fff6bfd431350de2178fcde444e8a21a275f28ee080682e9d34481555",
+      "new_full_sha256": "3c51237fff6bfd431350de2178fcde444e8a21a275f28ee080682e9d34481555",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "persistedManualSync",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 4995,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 214,
+      "body_sha256": "a5ffae1607baa77e3987bf0b4d472d07af084e4efef71e06c60cb11ab848c8ff",
+      "old_full_sha256": "657f6c13e6536448865cd9f4e817c17981dc0bb9d6e7a8cfa64f6de3a186626a",
+      "new_full_sha256": "657f6c13e6536448865cd9f4e817c17981dc0bb9d6e7a8cfa64f6de3a186626a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "overlayRetryableManualSync",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5050,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 269,
+      "body_sha256": "8242827cb0bdc0e70953fc6b78ad4376ae91e9d8ed2a211c10e883516f99acab",
+      "old_full_sha256": "c1a114a20978a79e9facb397ed29dc6c043b758fe349fe9c98ee1f255832a29b",
+      "new_full_sha256": "c1a114a20978a79e9facb397ed29dc6c043b758fe349fe9c98ee1f255832a29b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "assertPersistedManualSyncResumes",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5102,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 321,
+      "body_sha256": "14e3e89f95a02cb922868b0755e70fa69714fc5ba96932e772616c14a0f77b02",
+      "old_full_sha256": "106a2a8f4afcebdf34dec3b8f9384ba1f4bd937fce0678ad29e2d50fd39d68a9",
+      "new_full_sha256": "106a2a8f4afcebdf34dec3b8f9384ba1f4bd937fce0678ad29e2d50fd39d68a9",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithMaterials",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5135,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 354,
+      "body_sha256": "89c30e6512f0ccce83108ca259adb32c0fbe6daaa782d852e8a69fbf55e174ae",
+      "old_full_sha256": "20b543d49790bc32ac7c751b5c806ff243f00e1760f945fa8e6b0cd368c1131c",
+      "new_full_sha256": "20b543d49790bc32ac7c751b5c806ff243f00e1760f945fa8e6b0cd368c1131c",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithUnresolvedCharacterMention",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5156,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 375,
+      "body_sha256": "5dd6981b7700ee71e40b03126aa800b4cf0769c863f99f6889e2d420cd57665f",
+      "old_full_sha256": "0521d37257f41591456a334123cad37c01d5bf55cebee7bb6c9b3c24935e3402",
+      "new_full_sha256": "0521d37257f41591456a334123cad37c01d5bf55cebee7bb6c9b3c24935e3402",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "quickStartDocument",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5182,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 401,
+      "body_sha256": "0605f6707dc71aed1a68cdd12dfeca192823d81a86a826cfc6c35e1fa7756d9a",
+      "old_full_sha256": "0605f6707dc71aed1a68cdd12dfeca192823d81a86a826cfc6c35e1fa7756d9a",
+      "new_full_sha256": "0605f6707dc71aed1a68cdd12dfeca192823d81a86a826cfc6c35e1fa7756d9a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextBindingRestore",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5319,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 538,
+      "body_sha256": "8231ca966061db5e1dea852128b31e5017bef39fe90800763f6072cd17de6016",
+      "old_full_sha256": "8231ca966061db5e1dea852128b31e5017bef39fe90800763f6072cd17de6016",
+      "new_full_sha256": "8231ca966061db5e1dea852128b31e5017bef39fe90800763f6072cd17de6016",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "bindingRestoreIsBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5323,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 542,
+      "body_sha256": "329bb792e66b15abfd96cccdc285e4e744dc6895dd600c378d8c1584b8889a85",
+      "old_full_sha256": "329bb792e66b15abfd96cccdc285e4e744dc6895dd600c378d8c1584b8889a85",
+      "new_full_sha256": "329bb792e66b15abfd96cccdc285e4e744dc6895dd600c378d8c1584b8889a85",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBlockedBindingRestore",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5327,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 546,
+      "body_sha256": "8ee1d2fb23d7f88751369ae2709f65c10853f1dc0a80ae92332ac09df00429c5",
+      "old_full_sha256": "8ee1d2fb23d7f88751369ae2709f65c10853f1dc0a80ae92332ac09df00429c5",
+      "new_full_sha256": "8ee1d2fb23d7f88751369ae2709f65c10853f1dc0a80ae92332ac09df00429c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "loadGhostwriteBatchProgress",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5335,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 554,
+      "body_sha256": "c9cd25f9e07aaba7c2457fe69b3f9e49a836a06f94ff02f7e6f46f7935ca3797",
+      "old_full_sha256": "396118b581f85917187a9c1ac4d3a4de1c03683bd6586a2b36e51384b6c680df",
+      "new_full_sha256": "396118b581f85917187a9c1ac4d3a4de1c03683bd6586a2b36e51384b6c680df",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "failNextSnapshots",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5346,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 565,
+      "body_sha256": "5940deee4b71bfdaccfa58f11aea70dcf3ae5acde76129ca607e23fe9b06bc52",
+      "old_full_sha256": "5940deee4b71bfdaccfa58f11aea70dcf3ae5acde76129ca607e23fe9b06bc52",
+      "new_full_sha256": "5940deee4b71bfdaccfa58f11aea70dcf3ae5acde76129ca607e23fe9b06bc52",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "failNextBranchSnapshots",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5350,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 569,
+      "body_sha256": "8a3c029538dd011cca8395b069b77fa1358327d12f45e2ea427c7bea98108ca2",
+      "old_full_sha256": "8a3c029538dd011cca8395b069b77fa1358327d12f45e2ea427c7bea98108ca2",
+      "new_full_sha256": "8a3c029538dd011cca8395b069b77fa1358327d12f45e2ea427c7bea98108ca2",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "failNextProjectSnapshots",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5354,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 573,
+      "body_sha256": "31281b7db3fe5dd90a5e91005268e56faffc546cd5340c04e047544745bb527c",
+      "old_full_sha256": "31281b7db3fe5dd90a5e91005268e56faffc546cd5340c04e047544745bb527c",
+      "new_full_sha256": "31281b7db3fe5dd90a5e91005268e56faffc546cd5340c04e047544745bb527c",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5358,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 577,
+      "body_sha256": "77832772b42786b524fc926b1074be088ae1aaf67dd8b6ea322b7e9a3a3d7e3f",
+      "old_full_sha256": "77832772b42786b524fc926b1074be088ae1aaf67dd8b6ea322b7e9a3a3d7e3f",
+      "new_full_sha256": "77832772b42786b524fc926b1074be088ae1aaf67dd8b6ea322b7e9a3a3d7e3f",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshotIsBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5362,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 581,
+      "body_sha256": "c0aefc08bb8b2415547a560e2d4463cc28e927130b61e57c7738dab39f0f6d5a",
+      "old_full_sha256": "c0aefc08bb8b2415547a560e2d4463cc28e927130b61e57c7738dab39f0f6d5a",
+      "new_full_sha256": "c0aefc08bb8b2415547a560e2d4463cc28e927130b61e57c7738dab39f0f6d5a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBlockedSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5366,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 585,
+      "body_sha256": "143a20c0e7588f644646590631eb268cfdd69aa46f3239427a6d3866d03e2015",
+      "old_full_sha256": "143a20c0e7588f644646590631eb268cfdd69aa46f3239427a6d3866d03e2015",
+      "new_full_sha256": "143a20c0e7588f644646590631eb268cfdd69aa46f3239427a6d3866d03e2015",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextProjectSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5372,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 591,
+      "body_sha256": "3d78aaf9d6abde050d5e81da3b1845f33bcd74763f8e0faf37379476db5915d6",
+      "old_full_sha256": "3d78aaf9d6abde050d5e81da3b1845f33bcd74763f8e0faf37379476db5915d6",
+      "new_full_sha256": "3d78aaf9d6abde050d5e81da3b1845f33bcd74763f8e0faf37379476db5915d6",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "projectSnapshotIsBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5376,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 595,
+      "body_sha256": "dc3c06c5b908675e7191526b18049598b72daa1eca3904a75340248467e0054a",
+      "old_full_sha256": "dc3c06c5b908675e7191526b18049598b72daa1eca3904a75340248467e0054a",
+      "new_full_sha256": "dc3c06c5b908675e7191526b18049598b72daa1eca3904a75340248467e0054a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBlockedProjectSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5380,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 599,
+      "body_sha256": "b8e7106f5fdb7e596331aab5ba150cd332ff054cf7e68d7bd4caa463f9677137",
+      "old_full_sha256": "b8e7106f5fdb7e596331aab5ba150cd332ff054cf7e68d7bd4caa463f9677137",
+      "new_full_sha256": "b8e7106f5fdb7e596331aab5ba150cd332ff054cf7e68d7bd4caa463f9677137",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextPerform",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5386,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 605,
+      "body_sha256": "3bcde1685f358fb8ab7f5df25e160b87885e404ab896cd86b46db3f7eac4afe5",
+      "old_full_sha256": "3bcde1685f358fb8ab7f5df25e160b87885e404ab896cd86b46db3f7eac4afe5",
+      "new_full_sha256": "3bcde1685f358fb8ab7f5df25e160b87885e404ab896cd86b46db3f7eac4afe5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "performIsBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5390,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 609,
+      "body_sha256": "5a4fe7a2bcab6b933b306443b493b93d5cace6c95d231677353cb264e310d7fb",
+      "old_full_sha256": "5a4fe7a2bcab6b933b306443b493b93d5cace6c95d231677353cb264e310d7fb",
+      "new_full_sha256": "5a4fe7a2bcab6b933b306443b493b93d5cace6c95d231677353cb264e310d7fb",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBlockedPerform",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5394,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 613,
+      "body_sha256": "79aec792ead6f6a57d89af178e49b1b276dc567fc8961d6cb6365049dd778bd3",
+      "old_full_sha256": "79aec792ead6f6a57d89af178e49b1b276dc567fc8961d6cb6365049dd778bd3",
+      "new_full_sha256": "79aec792ead6f6a57d89af178e49b1b276dc567fc8961d6cb6365049dd778bd3",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockInterruptReturn",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5400,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 619,
+      "body_sha256": "ee9c147399b99b1329cf3bad0fbdb8f53dfd84444f0e312779bc34092f9a6abe",
+      "old_full_sha256": "ee9c147399b99b1329cf3bad0fbdb8f53dfd84444f0e312779bc34092f9a6abe",
+      "new_full_sha256": "ee9c147399b99b1329cf3bad0fbdb8f53dfd84444f0e312779bc34092f9a6abe",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptReturnIsBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5404,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 623,
+      "body_sha256": "ac8dcdbe8b430376bcfaea92e0d49137a0e1ad344f1f18c0ad2576d5af9f8d2d",
+      "old_full_sha256": "ac8dcdbe8b430376bcfaea92e0d49137a0e1ad344f1f18c0ad2576d5af9f8d2d",
+      "new_full_sha256": "ac8dcdbe8b430376bcfaea92e0d49137a0e1ad344f1f18c0ad2576d5af9f8d2d",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBlockedInterruptReturn",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5408,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 627,
+      "body_sha256": "9a9eb47e78d31438fb9a9ae41134c920294330dc4b78279f74037abbc0f78f85",
+      "old_full_sha256": "9a9eb47e78d31438fb9a9ae41134c920294330dc4b78279f74037abbc0f78f85",
+      "new_full_sha256": "9a9eb47e78d31438fb9a9ae41134c920294330dc4b78279f74037abbc0f78f85",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5414,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 633,
+      "body_sha256": "c9484087ec47484c4d0ac9a36c701486fd4b2c7fe7411384d632095799299813",
+      "old_full_sha256": "c9484087ec47484c4d0ac9a36c701486fd4b2c7fe7411384d632095799299813",
+      "new_full_sha256": "c9484087ec47484c4d0ac9a36c701486fd4b2c7fe7411384d632095799299813",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5442,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 661,
+      "body_sha256": "f71f520e551fda8f5c1ee0a8e9acd7e53a7a28768bd724d05825b9c5bf6b1a68",
+      "old_full_sha256": "f71f520e551fda8f5c1ee0a8e9acd7e53a7a28768bd724d05825b9c5bf6b1a68",
+      "new_full_sha256": "f71f520e551fda8f5c1ee0a8e9acd7e53a7a28768bd724d05825b9c5bf6b1a68",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5452,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 671,
+      "body_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "old_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "new_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptRun",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5456,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 675,
+      "body_sha256": "20c2bc03efbd1c638e8becab6ecdbab1770c94911913f962e88e02060fcb41d6",
+      "old_full_sha256": "20c2bc03efbd1c638e8becab6ecdbab1770c94911913f962e88e02060fcb41d6",
+      "new_full_sha256": "20c2bc03efbd1c638e8becab6ecdbab1770c94911913f962e88e02060fcb41d6",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5466,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 685,
+      "body_sha256": "7056478d8546dd11cdbebc9c8adafff0cad088dd5bbd40e0c5152946e2e4d688",
+      "old_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "new_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5478,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 697,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5482,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 701,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextStart",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5497,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 716,
+      "body_sha256": "83118d7c90699d3e079abe4aa94a6d791c77a94b8aaa1a571a74908cf08e8c9b",
+      "old_full_sha256": "83118d7c90699d3e079abe4aa94a6d791c77a94b8aaa1a571a74908cf08e8c9b",
+      "new_full_sha256": "83118d7c90699d3e079abe4aa94a6d791c77a94b8aaa1a571a74908cf08e8c9b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "failNextStart",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5501,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 720,
+      "body_sha256": "75dc63bc74927ce1d2c0df395a2f7028632dc3b37ecffbac15ec294d1c16ab0e",
+      "old_full_sha256": "75dc63bc74927ce1d2c0df395a2f7028632dc3b37ecffbac15ec294d1c16ab0e",
+      "new_full_sha256": "75dc63bc74927ce1d2c0df395a2f7028632dc3b37ecffbac15ec294d1c16ab0e",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "startIsBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5505,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 724,
+      "body_sha256": "89cc09748f98d93cf1fedfb74938697f2544fe760c14d3908a537c01e0bad158",
+      "old_full_sha256": "89cc09748f98d93cf1fedfb74938697f2544fe760c14d3908a537c01e0bad158",
+      "new_full_sha256": "89cc09748f98d93cf1fedfb74938697f2544fe760c14d3908a537c01e0bad158",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBlockedStart",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5509,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 728,
+      "body_sha256": "d298335ecc7c6eb98100bc752c4e77f945acc8c2b39958a475697b083417ad0e",
+      "old_full_sha256": "d298335ecc7c6eb98100bc752c4e77f945acc8c2b39958a475697b083417ad0e",
+      "new_full_sha256": "d298335ecc7c6eb98100bc752c4e77f945acc8c2b39958a475697b083417ad0e",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5515,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 734,
+      "body_sha256": "a45f63ffaab3a800b123b5c8a72e70210fb4d8bf297719792dec9f52eff8d47b",
+      "old_full_sha256": "a45f63ffaab3a800b123b5c8a72e70210fb4d8bf297719792dec9f52eff8d47b",
+      "new_full_sha256": "a45f63ffaab3a800b123b5c8a72e70210fb4d8bf297719792dec9f52eff8d47b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5519,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 738,
+      "body_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "old_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "new_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5523,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 742,
+      "body_sha256": "28aec00797c25a2b9d337c5a06981cf5d1c347deac6d8191611038f0b495e4ca",
+      "old_full_sha256": "28aec00797c25a2b9d337c5a06981cf5d1c347deac6d8191611038f0b495e4ca",
+      "new_full_sha256": "28aec00797c25a2b9d337c5a06981cf5d1c347deac6d8191611038f0b495e4ca",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptRun",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5537,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 756,
+      "body_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "old_full_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "new_full_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5541,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 760,
+      "body_sha256": "7056478d8546dd11cdbebc9c8adafff0cad088dd5bbd40e0c5152946e2e4d688",
+      "old_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "new_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5553,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 772,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5557,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 776,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextAdoptionReturn",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5573,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 792,
+      "body_sha256": "eb58025fa3beb4048956233978f3ab53bbb5a7f9b924a61073000b97d3a704e2",
+      "old_full_sha256": "eb58025fa3beb4048956233978f3ab53bbb5a7f9b924a61073000b97d3a704e2",
+      "new_full_sha256": "eb58025fa3beb4048956233978f3ab53bbb5a7f9b924a61073000b97d3a704e2",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "waitUntilAdoptionReturnBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5577,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 796,
+      "body_sha256": "880c031d29d19a8c23639a07fc522d8bb8add5d835d2caf671fdd25892363b92",
+      "old_full_sha256": "880c031d29d19a8c23639a07fc522d8bb8add5d835d2caf671fdd25892363b92",
+      "new_full_sha256": "880c031d29d19a8c23639a07fc522d8bb8add5d835d2caf671fdd25892363b92",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeAdoptionReturn",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5582,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 801,
+      "body_sha256": "d06c4fe5ff7b31290e22808ed92dc64b6be0b50412f03e52b1e1825980664b3c",
+      "old_full_sha256": "d06c4fe5ff7b31290e22808ed92dc64b6be0b50412f03e52b1e1825980664b3c",
+      "new_full_sha256": "d06c4fe5ff7b31290e22808ed92dc64b6be0b50412f03e52b1e1825980664b3c",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5589,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 808,
+      "body_sha256": "a45f63ffaab3a800b123b5c8a72e70210fb4d8bf297719792dec9f52eff8d47b",
+      "old_full_sha256": "a45f63ffaab3a800b123b5c8a72e70210fb4d8bf297719792dec9f52eff8d47b",
+      "new_full_sha256": "a45f63ffaab3a800b123b5c8a72e70210fb4d8bf297719792dec9f52eff8d47b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5593,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 812,
+      "body_sha256": "3501e7e64798e14730e5e31e658418d44ad9fba75b17368ffc071008b9dcf31d",
+      "old_full_sha256": "3501e7e64798e14730e5e31e658418d44ad9fba75b17368ffc071008b9dcf31d",
+      "new_full_sha256": "3501e7e64798e14730e5e31e658418d44ad9fba75b17368ffc071008b9dcf31d",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5605,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 824,
+      "body_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "old_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "new_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptRun",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5609,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 828,
+      "body_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "old_full_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "new_full_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5613,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 832,
+      "body_sha256": "7056478d8546dd11cdbebc9c8adafff0cad088dd5bbd40e0c5152946e2e4d688",
+      "old_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "new_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5625,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 844,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5629,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 848,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "failNextCommits",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5640,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 859,
+      "body_sha256": "bbb07b63e96696c81ccbe983756461e87f813dc802177423112ca44306f2e8a6",
+      "old_full_sha256": "bbb07b63e96696c81ccbe983756461e87f813dc802177423112ca44306f2e8a6",
+      "new_full_sha256": "bbb07b63e96696c81ccbe983756461e87f813dc802177423112ca44306f2e8a6",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextCommit",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5644,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 863,
+      "body_sha256": "e0d4d262574d17e3c37a73d8871376ee4d7b67c6cc2fdc7f1939055d133115c6",
+      "old_full_sha256": "e0d4d262574d17e3c37a73d8871376ee4d7b67c6cc2fdc7f1939055d133115c6",
+      "new_full_sha256": "e0d4d262574d17e3c37a73d8871376ee4d7b67c6cc2fdc7f1939055d133115c6",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "commitIsBlocked",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5648,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 867,
+      "body_sha256": "ba122d613b08030577ad7b464416aad7995e21f5b39169518d1c6561015849d2",
+      "old_full_sha256": "ba122d613b08030577ad7b464416aad7995e21f5b39169518d1c6561015849d2",
+      "new_full_sha256": "ba122d613b08030577ad7b464416aad7995e21f5b39169518d1c6561015849d2",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBlockedCommit",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5652,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 871,
+      "body_sha256": "1199a30fc9705ab78ac4bf719ccf266f8511b8809eb5bec1b4c8f7f8ba0bea44",
+      "old_full_sha256": "1199a30fc9705ab78ac4bf719ccf266f8511b8809eb5bec1b4c8f7f8ba0bea44",
+      "new_full_sha256": "1199a30fc9705ab78ac4bf719ccf266f8511b8809eb5bec1b4c8f7f8ba0bea44",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "listProjects",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5658,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 877,
+      "body_sha256": "652a0f282a295ab97dffceebbaa8becaea40793a51acfd627a3d086cd5153024",
+      "old_full_sha256": "652a0f282a295ab97dffceebbaa8becaea40793a51acfd627a3d086cd5153024",
+      "new_full_sha256": "652a0f282a295ab97dffceebbaa8becaea40793a51acfd627a3d086cd5153024",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "loadProject",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5662,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 881,
+      "body_sha256": "4bfb3fb16bccb637714d6c2ee93cd9fae582736eb1250573867b36a375effa8b",
+      "old_full_sha256": "4bfb3fb16bccb637714d6c2ee93cd9fae582736eb1250573867b36a375effa8b",
+      "new_full_sha256": "4bfb3fb16bccb637714d6c2ee93cd9fae582736eb1250573867b36a375effa8b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "createProject",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5666,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 885,
+      "body_sha256": "9baadbefc34cfd5e33808ac6bd0690e12734a15fcfae88417341fda8bd9cf97c",
+      "old_full_sha256": "9baadbefc34cfd5e33808ac6bd0690e12734a15fcfae88417341fda8bd9cf97c",
+      "new_full_sha256": "9baadbefc34cfd5e33808ac6bd0690e12734a15fcfae88417341fda8bd9cf97c",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "commitProject",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5670,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 889,
+      "body_sha256": "4921332d8ea48e1fb41a506b88a032434f9655688f57fe5539da33dc3994f2a3",
+      "old_full_sha256": "2b33c3a2e9560a2f4759c51b152f6f203093470ad3f7b40082ff5da4b6959a23",
+      "new_full_sha256": "2b33c3a2e9560a2f4759c51b152f6f203093470ad3f7b40082ff5da4b6959a23",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "restorePreviousProject",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5692,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 911,
+      "body_sha256": "5627b4d28884d8d812a9538831aef42e3330faa213a2ff81190044366e30712b",
+      "old_full_sha256": "1478e604dcd1fb53c99d2e84d9ff344c1b3ffcfd216ca1351d7632d266fccc49",
+      "new_full_sha256": "1478e604dcd1fb53c99d2e84d9ff344c1b3ffcfd216ca1351d7632d266fccc49",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "listRecoverySidecars",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5702,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 921,
+      "body_sha256": "75fb2c3639517788e463bf774e26195dec5e4976a8773263271c865aa3e4a793",
+      "old_full_sha256": "75fb2c3639517788e463bf774e26195dec5e4976a8773263271c865aa3e4a793",
+      "new_full_sha256": "75fb2c3639517788e463bf774e26195dec5e4976a8773263271c865aa3e4a793",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "writeRecoverySidecar",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5706,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 925,
+      "body_sha256": "05c8cf6879096c22491fc21172683362c79753807cf2cee9c88fffe77ac0dc47",
+      "old_full_sha256": "05c8cf6879096c22491fc21172683362c79753807cf2cee9c88fffe77ac0dc47",
+      "new_full_sha256": "05c8cf6879096c22491fc21172683362c79753807cf2cee9c88fffe77ac0dc47",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "removeRecoverySidecar",
+      "old_path": "iosApp/iosAppTests/NovelSessionViewModelTests.swift",
+      "old_line": 5710,
+      "new_path": "iosApp/iosAppTests/NovelSessionViewModelTestCase.swift",
+      "new_line": 929,
+      "body_sha256": "27e4102d85fa42998cc2db36c269b100406bbc2cb3200f1e8530b82e7f5fc231",
+      "old_full_sha256": "27e4102d85fa42998cc2db36c269b100406bbc2cb3200f1e8530b82e7f5fc231",
+      "new_full_sha256": "27e4102d85fa42998cc2db36c269b100406bbc2cb3200f1e8530b82e7f5fc231",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "drain",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 46,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "new_line": 46,
+      "body_sha256": "f1d35e9c687025af4bd8e94cb67ab60cc84c4f85047bd756264d219d3ca92636",
+      "old_full_sha256": "11a64230d980b061c89e2d2bf4844d49c1f58c251e361d5b47818866035746ed",
+      "new_full_sha256": "11a64230d980b061c89e2d2bf4844d49c1f58c251e361d5b47818866035746ed",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeFixture",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2547,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 14,
+      "body_sha256": "a6953b894110d3d13d8dce0014cada1c2623218aaa4b34cd2be9b380afdb8b94",
+      "old_full_sha256": "a6953b894110d3d13d8dce0014cada1c2623218aaa4b34cd2be9b380afdb8b94",
+      "new_full_sha256": "a6953b894110d3d13d8dce0014cada1c2623218aaa4b34cd2be9b380afdb8b94",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeInput",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2556,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 23,
+      "body_sha256": "d56dc31c3dc30ee985e8173f43b4630180487cb613112e2ddb22ef8d7484f465",
+      "old_full_sha256": "76911b8f285693036684cb1a34fa2f7b98d52eccd7f29ae65985639728ae3c3d",
+      "new_full_sha256": "76911b8f285693036684cb1a34fa2f7b98d52eccd7f29ae65985639728ae3c3d",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeMessage",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2591,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 58,
+      "body_sha256": "473db8b3b20d86d3f7c796c1fcc800ecff8e05e5a2a0edefe12d870b1f0a1c6b",
+      "old_full_sha256": "63c0e36417859c1dcaf8c79b9de21ddf956fdac9a55704eb1ab38be5104985b1",
+      "new_full_sha256": "63c0e36417859c1dcaf8c79b9de21ddf956fdac9a55704eb1ab38be5104985b1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeRun",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2616,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 83,
+      "body_sha256": "ac613d0bf9aa1e2ccb6a2f17246a2c3749feeb239cd8ebf349c6e1b3b0b84253",
+      "old_full_sha256": "8a350b8b9d08453c8af4282156920f751adf34fe580e8fb0731d3f6278582766",
+      "new_full_sha256": "8a350b8b9d08453c8af4282156920f751adf34fe580e8fb0731d3f6278582766",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "terminalRun",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2650,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 117,
+      "body_sha256": "2808e4d6e7ef2d2758143464ed01de907648cc70d56f56f6c050630b87a38fd8",
+      "old_full_sha256": "6a6d9c8fd71e207ade52c6a2427d18aede0c05f52f0fdc3c41c324e9e29a0e84",
+      "new_full_sha256": "6a6d9c8fd71e207ade52c6a2427d18aede0c05f52f0fdc3c41c324e9e29a0e84",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeCandidate",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2682,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 149,
+      "body_sha256": "838cf60e887a12813ad8b2267875c90ce4c585119de5e0606337d16f939b8488",
+      "old_full_sha256": "dfa7dc9de8e6058e14f998924c59d61517c5968a02c16627ebcbf862b5effa4f",
+      "new_full_sha256": "dfa7dc9de8e6058e14f998924c59d61517c5968a02c16627ebcbf862b5effa4f",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makePending",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2710,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 177,
+      "body_sha256": "17d00ef33003fed4cbbd4972708de92e0bf1b4155fd2538f39a8b04a0ef3633b",
+      "old_full_sha256": "ab4eb118adaafbcde034e4b69fd2b9e1a4fb60bdee94e8901b27aca472192227",
+      "new_full_sha256": "ab4eb118adaafbcde034e4b69fd2b9e1a4fb60bdee94e8901b27aca472192227",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makePolishTransaction",
+      "old_path": "iosApp/iosAppTests/NovelSessionReplayTests.swift",
+      "old_line": 2734,
+      "new_path": "iosApp/iosAppTests/NovelSessionReplayTestCase.swift",
+      "new_line": 201,
+      "body_sha256": "697cc8e413876ab121912c93bad5c318399075f3d68fa39d059811b7520d933a",
+      "old_full_sha256": "a9dd1d59a647095ab4447f17ad4df4cd66322e009dd0d75ec8c5f45e7a160e39",
+      "new_full_sha256": "a9dd1d59a647095ab4447f17ad4df4cd66322e009dd0d75ec8c5f45e7a160e39",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "flushMarkedTextIntoBinding",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 360,
+      "new_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "new_line": 360,
+      "body_sha256": "b71061978fcd60505784a6e4ea032b11d36d1ad42fe8e912c7df8d49c738080a",
+      "old_full_sha256": "b71061978fcd60505784a6e4ea032b11d36d1ad42fe8e912c7df8d49c738080a",
+      "new_full_sha256": "b71061978fcd60505784a6e4ea032b11d36d1ad42fe8e912c7df8d49c738080a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1512,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 342,
+      "body_sha256": "8bad4b37ed07d14274638db75d1dc1da6e99a39d3e2e54aeaab5de1eabe87b80",
+      "old_full_sha256": "8bad4b37ed07d14274638db75d1dc1da6e99a39d3e2e54aeaab5de1eabe87b80",
+      "new_full_sha256": "8bad4b37ed07d14274638db75d1dc1da6e99a39d3e2e54aeaab5de1eabe87b80",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1519,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 349,
+      "body_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "old_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "new_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1523,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 353,
+      "body_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "old_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "new_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1527,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 357,
+      "body_sha256": "7056478d8546dd11cdbebc9c8adafff0cad088dd5bbd40e0c5152946e2e4d688",
+      "old_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "new_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1539,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 369,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1543,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 373,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1557,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 387,
+      "body_sha256": "43de4c549b73e91a3261467524d49d31533197602655c8a18db31c81cc520df9",
+      "old_full_sha256": "43de4c549b73e91a3261467524d49d31533197602655c8a18db31c81cc520df9",
+      "new_full_sha256": "43de4c549b73e91a3261467524d49d31533197602655c8a18db31c81cc520df9",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1564,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 394,
+      "body_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "old_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "new_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1568,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 398,
+      "body_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "old_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "new_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1572,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 402,
+      "body_sha256": "7056478d8546dd11cdbebc9c8adafff0cad088dd5bbd40e0c5152946e2e4d688",
+      "old_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "new_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1584,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 414,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelCreationPresentationTests.swift",
+      "old_line": 1588,
+      "new_path": "iosApp/iosAppTests/NovelCreationProjectPresentationTests.swift",
+      "new_line": 418,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "request",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 882,
+      "new_path": "iosApp/iosAppTests/NovelCreationWorkspaceMutationTests.swift",
+      "new_line": 102,
+      "body_sha256": "16b0cb02a82a1e65c291192510b05adbdf60a691ee071db10aaf604cd7c5f6ea",
+      "old_full_sha256": "16b0cb02a82a1e65c291192510b05adbdf60a691ee071db10aaf604cd7c5f6ea",
+      "new_full_sha256": "16b0cb02a82a1e65c291192510b05adbdf60a691ee071db10aaf604cd7c5f6ea",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithChapter",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2153,
+      "new_path": "iosApp/iosAppTests/NovelCreationSyncAndRecoveryTests.swift",
+      "new_line": 552,
+      "body_sha256": "0a2b2713447a5d3a029a240448032240d6f24522f38aa3e5b48f89a89882fe01",
+      "old_full_sha256": "31965ea7fbe014d0680a010da8469edb54c1690c93bef2bd691ddcaf2ddba2c6",
+      "new_full_sha256": "31965ea7fbe014d0680a010da8469edb54c1690c93bef2bd691ddcaf2ddba2c6",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "eventually",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2264,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestCase.swift",
+      "new_line": 31,
+      "body_sha256": "b16e5b03a155a2070254909176b93e64c1d2fcd0d6b9b49fcad6c29a0135f68b",
+      "old_full_sha256": "337be3b077676ad037dec0d132f2353f0fa947b49e13b7f6e28a20eaeeaf107b",
+      "new_full_sha256": "eef0076ce2ffe3a8275015a512087f9524294f69c94650bc5697ea15028273ec",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "suspend",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2282,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 9,
+      "body_sha256": "658dbea39dd65924205d7e24de6094676ef3e2b442f7562b374cd407b9d9dcdb",
+      "old_full_sha256": "658dbea39dd65924205d7e24de6094676ef3e2b442f7562b374cd407b9d9dcdb",
+      "new_full_sha256": "658dbea39dd65924205d7e24de6094676ef3e2b442f7562b374cd407b9d9dcdb",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "waitUntilSuspended",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2289,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 16,
+      "body_sha256": "e1f72426caebc07ff9dcf32a3895dd00cc5c886377483cf3ce04c411cf17929f",
+      "old_full_sha256": "e1f72426caebc07ff9dcf32a3895dd00cc5c886377483cf3ce04c411cf17929f",
+      "new_full_sha256": "e1f72426caebc07ff9dcf32a3895dd00cc5c886377483cf3ce04c411cf17929f",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resume",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2294,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 21,
+      "body_sha256": "d7959f25983cc7dca5875f915692f18617049fbade97ff79b4f288365e586dad",
+      "old_full_sha256": "d7959f25983cc7dca5875f915692f18617049fbade97ff79b4f288365e586dad",
+      "new_full_sha256": "d7959f25983cc7dca5875f915692f18617049fbade97ff79b4f288365e586dad",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2313,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 40,
+      "body_sha256": "288d9f12fd9761d5f46e8ac78adc590d1500197cb2b65b8a50034bd35a8e8c26",
+      "old_full_sha256": "288d9f12fd9761d5f46e8ac78adc590d1500197cb2b65b8a50034bd35a8e8c26",
+      "new_full_sha256": "288d9f12fd9761d5f46e8ac78adc590d1500197cb2b65b8a50034bd35a8e8c26",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "blockNextProjectSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2329,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 56,
+      "body_sha256": "ab3618bd22f90dbab4c15684362df55de6610bac707652cf7f7794ded1595cc4",
+      "old_full_sha256": "ab3618bd22f90dbab4c15684362df55de6610bac707652cf7f7794ded1595cc4",
+      "new_full_sha256": "ab3618bd22f90dbab4c15684362df55de6610bac707652cf7f7794ded1595cc4",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "waitUntilBranchSnapshotRequested",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2333,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 60,
+      "body_sha256": "e2dd7c0832bb8686e5b57af3fdaf981ee9967d14f7240752f37486442c4b962a",
+      "old_full_sha256": "e2dd7c0832bb8686e5b57af3fdaf981ee9967d14f7240752f37486442c4b962a",
+      "new_full_sha256": "e2dd7c0832bb8686e5b57af3fdaf981ee9967d14f7240752f37486442c4b962a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "resumeBranchSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2340,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 67,
+      "body_sha256": "9c8f54974f8a9b2a95a4ae335805fa3c94a76a812a3a7bd4254fc0093a92e641",
+      "old_full_sha256": "9c8f54974f8a9b2a95a4ae335805fa3c94a76a812a3a7bd4254fc0093a92e641",
+      "new_full_sha256": "9c8f54974f8a9b2a95a4ae335805fa3c94a76a812a3a7bd4254fc0093a92e641",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2345,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 72,
+      "body_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "old_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "new_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2349,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 76,
+      "body_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "old_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "new_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2353,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 80,
+      "body_sha256": "7056478d8546dd11cdbebc9c8adafff0cad088dd5bbd40e0c5152946e2e4d688",
+      "old_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "new_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2365,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 92,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2369,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 96,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "waitUntilProjectListRequest",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2386,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 113,
+      "body_sha256": "5e833c7bceacdd509d720d7574ba271fd6520b565d0e301c3c941da2cc8ada5c",
+      "old_full_sha256": "5e833c7bceacdd509d720d7574ba271fd6520b565d0e301c3c941da2cc8ada5c",
+      "new_full_sha256": "5e833c7bceacdd509d720d7574ba271fd6520b565d0e301c3c941da2cc8ada5c",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "releaseProjectListRequest",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2393,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 120,
+      "body_sha256": "aacd82c572c718b08bd907f087add8aa11cac55c0a800f9bd8ca7cc580a4f2f3",
+      "old_full_sha256": "aacd82c572c718b08bd907f087add8aa11cac55c0a800f9bd8ca7cc580a4f2f3",
+      "new_full_sha256": "aacd82c572c718b08bd907f087add8aa11cac55c0a800f9bd8ca7cc580a4f2f3",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2398,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 125,
+      "body_sha256": "cab975e8a05142434b793814a8930d759fc2ba47ef04a570f6a2957dac59a280",
+      "old_full_sha256": "cab975e8a05142434b793814a8930d759fc2ba47ef04a570f6a2957dac59a280",
+      "new_full_sha256": "cab975e8a05142434b793814a8930d759fc2ba47ef04a570f6a2957dac59a280",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2413,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 140,
+      "body_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "old_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "new_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2417,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 144,
+      "body_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "old_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "new_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2421,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 148,
+      "body_sha256": "7056478d8546dd11cdbebc9c8adafff0cad088dd5bbd40e0c5152946e2e4d688",
+      "old_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "new_full_sha256": "8cbfbf7299ab16163de86b98c60d49bff0b88bb623eb7c04bb653e13252574c5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2433,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 160,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2437,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 164,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "failNextProjectSnapshots",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2459,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 186,
+      "body_sha256": "31281b7db3fe5dd90a5e91005268e56faffc546cd5340c04e047544745bb527c",
+      "old_full_sha256": "31281b7db3fe5dd90a5e91005268e56faffc546cd5340c04e047544745bb527c",
+      "new_full_sha256": "31281b7db3fe5dd90a5e91005268e56faffc546cd5340c04e047544745bb527c",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "failNextProjectListSnapshots",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2463,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 190,
+      "body_sha256": "9f716f18d5844936230a330ff8e6fd5818849cdc1863ccd28ed96fd4026f9d8c",
+      "old_full_sha256": "9f716f18d5844936230a330ff8e6fd5818849cdc1863ccd28ed96fd4026f9d8c",
+      "new_full_sha256": "9f716f18d5844936230a330ff8e6fd5818849cdc1863ccd28ed96fd4026f9d8c",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "gateNextProjectListSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2467,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 194,
+      "body_sha256": "7e455ab20e39166297b85225ab3fafb7b0c81586348b1025ed892fdd32f2fefd",
+      "old_full_sha256": "7e455ab20e39166297b85225ab3fafb7b0c81586348b1025ed892fdd32f2fefd",
+      "new_full_sha256": "7e455ab20e39166297b85225ab3fafb7b0c81586348b1025ed892fdd32f2fefd",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "waitUntilProjectListSnapshotRequested",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2471,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 198,
+      "body_sha256": "32890b3f55f70be333595515abd071b6e361bf8c7629441ba99a80edb3d5884b",
+      "old_full_sha256": "32890b3f55f70be333595515abd071b6e361bf8c7629441ba99a80edb3d5884b",
+      "new_full_sha256": "32890b3f55f70be333595515abd071b6e361bf8c7629441ba99a80edb3d5884b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "releaseProjectListSnapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2478,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 205,
+      "body_sha256": "65964179671dbcaaf501144e6e893d9527b9e3715bcdffb0b03af3790152907b",
+      "old_full_sha256": "65964179671dbcaaf501144e6e893d9527b9e3715bcdffb0b03af3790152907b",
+      "new_full_sha256": "65964179671dbcaaf501144e6e893d9527b9e3715bcdffb0b03af3790152907b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "snapshot",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2484,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 211,
+      "body_sha256": "979cb9d25368a7284f696b54e26b7166f09d04f81d58cf644bdad20c26711ea7",
+      "old_full_sha256": "979cb9d25368a7284f696b54e26b7166f09d04f81d58cf644bdad20c26711ea7",
+      "new_full_sha256": "979cb9d25368a7284f696b54e26b7166f09d04f81d58cf644bdad20c26711ea7",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "perform",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2509,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 236,
+      "body_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "old_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "new_full_sha256": "f239f01a9a4a521e5a12aee13d9c8eabe0f8c0f489ecb6b240e9f9bd7b574af1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "start",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2513,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 240,
+      "body_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "old_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "new_full_sha256": "5696f7f37d9577c9d9213696e39aabb99943f094015b837d503c9f30a5f36a6b",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptRun",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2517,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 244,
+      "body_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "old_full_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "new_full_sha256": "e122e251839720059c37a162f761b29da8eaa82bfbe2830b45e3bb9f0cb49ab1",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "interruptForBackground",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2521,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 248,
+      "body_sha256": "b539a0fe3f4d01b09c7cdd8b30853040f5dad4e7adac4a146652af7dab127d52",
+      "old_full_sha256": "ba9d04f7942ad0f455a7e7766ab36f5a9f55b2bb4023d9e0524aa5a8c4277893",
+      "new_full_sha256": "ba9d04f7942ad0f455a7e7766ab36f5a9f55b2bb4023d9e0524aa5a8c4277893",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "cancelInFlightBackgroundMutations",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2534,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 261,
+      "body_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "old_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "new_full_sha256": "42104592dba517ae1e0d50745f669e263c6301402459c746ee9e0a27714b18b8",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "retryPendingTerminal",
+      "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+      "old_line": 2538,
+      "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+      "new_line": 265,
+      "body_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "old_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "new_full_sha256": "713c542964def3cf418da1d8d5ae7e05cc630f0e04e7f998d010b2550d8d2e16",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithPendingManualSync",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1202,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 7,
+      "body_sha256": "78fcb9999cea74920b0c560712cbff5e97f94b961e5244e5a29aca722b17c24a",
+      "old_full_sha256": "78fcb9999cea74920b0c560712cbff5e97f94b961e5244e5a29aca722b17c24a",
+      "new_full_sha256": "78fcb9999cea74920b0c560712cbff5e97f94b961e5244e5a29aca722b17c24a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "copyPending",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1234,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 39,
+      "body_sha256": "d7b8b74481fbeb0ce3b54beb3e3b0f71f5acfa1c3c670025468f2242307d58fb",
+      "old_full_sha256": "9b19153d8f433a8dc179dbf6f9cf8eeee65313fabf98e50f0d6ff99b5967f6bc",
+      "new_full_sha256": "9b19153d8f433a8dc179dbf6f9cf8eeee65313fabf98e50f0d6ff99b5967f6bc",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithTwoCollectedChapters",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1263,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 68,
+      "body_sha256": "80b3bbce6e1dae42d3a7a0efe9a4d4f0b98e2d2e007674f1735bd4a006c688c0",
+      "old_full_sha256": "80b3bbce6e1dae42d3a7a0efe9a4d4f0b98e2d2e007674f1735bd4a006c688c0",
+      "new_full_sha256": "80b3bbce6e1dae42d3a7a0efe9a4d4f0b98e2d2e007674f1735bd4a006c688c0",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "collectLastCandidate",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1279,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 84,
+      "body_sha256": "5344948f64eb2197d96264492d021a4cb6c9751004031fcbd978ec9cff20ab9e",
+      "old_full_sha256": "5533e9db2fb1aaf6e7be5cffd78ba8aa4cfaf440a32335f084e8364cd27047e7",
+      "new_full_sha256": "5533e9db2fb1aaf6e7be5cffd78ba8aa4cfaf440a32335f084e8364cd27047e7",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "appendLastCandidate",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1320,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 125,
+      "body_sha256": "cacf7efa757b2e90f37a93d474f05a1374b53a9788e1e0e249fdbef5a4d6e297",
+      "old_full_sha256": "3ac0dad3caecaa0c8541577163cfd500788981d1a4f0ca7d9162f719a89c5576",
+      "new_full_sha256": "3ac0dad3caecaa0c8541577163cfd500788981d1a4f0ca7d9162f719a89c5576",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "collectCommand",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1381,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 186,
+      "body_sha256": "dfac4ceaf162474de45f7f219931e3b4151da27eab2c6e06a3fefe4dba22f5da",
+      "old_full_sha256": "fd8a78b7ca0153417f377fa16b0f5c93d3ddf7918c8c6f30e4200a2f1c46eedf",
+      "new_full_sha256": "fd8a78b7ca0153417f377fa16b0f5c93d3ddf7918c8c6f30e4200a2f1c46eedf",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "manualEditCommand",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1404,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 209,
+      "body_sha256": "7ea8e61d03bfbdff3a1f8d3e0c1214b017a60a752efcd7f0aa43563ebcfb167b",
+      "old_full_sha256": "05911bed2ee118c7e3ae4701ed922c8d09cedc8178f93279e9404afc7da2d2ec",
+      "new_full_sha256": "05911bed2ee118c7e3ae4701ed922c8d09cedc8178f93279e9404afc7da2d2ec",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "mutationContext",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1423,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 228,
+      "body_sha256": "48542870db20e5d91e7887dd12b27ccf4f4ee45f47768269551e5f5c43bbb63a",
+      "old_full_sha256": "19ad0caea75578a20850510ea71d4a88f3f594c14b241dc8cb1c4cdabf000200",
+      "new_full_sha256": "19ad0caea75578a20850510ea71d4a88f3f594c14b241dc8cb1c4cdabf000200",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithAvailableCandidate",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1436,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 241,
+      "body_sha256": "8668cc4dd0315bc6694c978a3a94bfbf2762d52c8f7ce901f6cbef8aa7043923",
+      "old_full_sha256": "eddb4cfad9affa59b4fc92e711aae5cca464f22d2bd9b16bf03de065c68351de",
+      "new_full_sha256": "eddb4cfad9affa59b4fc92e711aae5cca464f22d2bd9b16bf03de065c68351de",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "documentWithCandidate",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1475,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 280,
+      "body_sha256": "9e2a6079655d4a50343cc87132c64020bffa6259d5ce1d93ce83013c713c4513",
+      "old_full_sha256": "6f5b75d32275cd20829470e228a71edda3c9bf54b6bbb80e90dc5f5fe9d96832",
+      "new_full_sha256": "6f5b75d32275cd20829470e228a71edda3c9bf54b6bbb80e90dc5f5fe9d96832",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "rebuildOutput",
+      "old_path": "iosApp/iosAppTests/NovelManualEditSyncTests.swift",
+      "old_line": 1552,
+      "new_path": "iosApp/iosAppTests/NovelManualEditSyncTestCase.swift",
+      "new_line": 357,
+      "body_sha256": "995b5ac492af44bf1e41300da2638b2bae7640507d3d3755fed758fcdab51ed5",
+      "old_full_sha256": "995b5ac492af44bf1e41300da2638b2bae7640507d3d3755fed758fcdab51ed5",
+      "new_full_sha256": "995b5ac492af44bf1e41300da2638b2bae7640507d3d3755fed758fcdab51ed5",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "candidate",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 805,
+      "new_path": "iosApp/iosAppTests/NovelGhostwriteGenerationTests.swift",
+      "new_line": 465,
+      "body_sha256": "ad61a225d2bc490b434bf33784f876b2d3e88c819ed2af8d553d66ecb363530a",
+      "old_full_sha256": "ad61a225d2bc490b434bf33784f876b2d3e88c819ed2af8d553d66ecb363530a",
+      "new_full_sha256": "ad61a225d2bc490b434bf33784f876b2d3e88c819ed2af8d553d66ecb363530a",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeStartArtifacts",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 2356,
+      "new_path": "iosApp/iosAppTests/NovelCollaborationModeTestCase.swift",
+      "new_line": 5,
+      "body_sha256": "f8ebce6532a2b166e4173d4564a5c4ea9007a538f21084b9a977e675ec1b6bb1",
+      "old_full_sha256": "bd0261e7d3572cd2588b1627a8251af44873ae6b719417d7dedfd98689fbe1ec",
+      "new_full_sha256": "e8926e4d348edd92c7f3ec2ed88ac900f688aa73f122e805ba0aa9a9a4effbe7",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "assertGhostwriteBatchCompletes",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 2398,
+      "new_path": "iosApp/iosAppTests/NovelCollaborationModeTestCase.swift",
+      "new_line": 47,
+      "body_sha256": "bb0a2b4e85543b1b68374acf6fecfe48249a873c74794088099f682c4c12e855",
+      "old_full_sha256": "fb0d2342d94f52afc20ea3a789bc1f13a54dd399786042ab70748680a127bd21",
+      "new_full_sha256": "cd0f1322789aa1e9ea6e194495391db9abeca62ba132a1f1904fbe96afad8e98",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "makeBatchAdjudicationJSON",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 2534,
+      "new_path": "iosApp/iosAppTests/NovelCollaborationModeTestCase.swift",
+      "new_line": 183,
+      "body_sha256": "7533e3159701d5ae37c98c91eec18e47867c5376c4f0e327de4c01f76efb1080",
+      "old_full_sha256": "f59b9f9a4d1200d76786308e65073bcc7a3332fa619618ee79bcc42408046cdc",
+      "new_full_sha256": "a467108c79c9f66f3b35ad616af6aa43ad6d04453e2445948137582b8e57dd48",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "seedGhostwriteMaterials",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 2599,
+      "new_path": "iosApp/iosAppTests/NovelCollaborationModeTestCase.swift",
+      "new_line": 248,
+      "body_sha256": "943959c147cf3e775f06afe564c5e2dbc8da74296c65eb77b23076d4a0d5e31b",
+      "old_full_sha256": "24952b5d3028b2ea3b8b0c2a98534ccf9768d92d59e04b25d94748c5375a9191",
+      "new_full_sha256": "8632e427f547e0099d9ce44db3c46bc6ea859f99cd60ecc6a8248af74cb06d0f",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "revise",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 2624,
+      "new_path": "iosApp/iosAppTests/NovelCollaborationModeTestCase.swift",
+      "new_line": 273,
+      "body_sha256": "51db5a7ed0e2a18d53408907a9f1f888f0893d9fe117c23c7650ab1c02e6b6b9",
+      "old_full_sha256": "298c13bf5a04a52971f3f4d1a9b064b59efab4ed2bd4baac47686fcc38b57407",
+      "new_full_sha256": "b66c96fb8f2dae57347a5b9baad2ae9d11a6af8f058a3951019c3cf5cb76251f",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "bumpAttempt",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 2653,
+      "new_path": "iosApp/iosAppTests/NovelGhostwriteRecoveryTests.swift",
+      "new_line": 762,
+      "body_sha256": "b9853b54ef810f861ddd4714704b2806c8ef58c6277df387dedc4c0e7c8c09f3",
+      "old_full_sha256": "b9853b54ef810f861ddd4714704b2806c8ef58c6277df387dedc4c0e7c8c09f3",
+      "new_full_sha256": "b9853b54ef810f861ddd4714704b2806c8ef58c6277df387dedc4c0e7c8c09f3",
+      "body_sha256_equal": true
+    },
+    {
+      "name": "recordRetry",
+      "old_path": "iosApp/iosAppTests/NovelCollaborationModeTests.swift",
+      "old_line": 2657,
+      "new_path": "iosApp/iosAppTests/NovelGhostwriteRecoveryTests.swift",
+      "new_line": 766,
+      "body_sha256": "c1196f79fbe31930bbacf759ba87ab4c53e0e1b77edeb00524fd7a5f4146ad63",
+      "old_full_sha256": "c1196f79fbe31930bbacf759ba87ab4c53e0e1b77edeb00524fd7a5f4146ad63",
+      "new_full_sha256": "c1196f79fbe31930bbacf759ba87ab4c53e0e1b77edeb00524fd7a5f4146ad63",
+      "body_sha256_equal": true
+    }
+  ],
+  "computed_property": {
+    "name": "quickStartSuggestionsJSON",
+    "old_path": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+    "old_lines": [
+      2201,
+      2224
+    ],
+    "new_path": "iosApp/iosAppTests/NovelCreationViewModelTestCase.swift",
+    "new_lines": [
+      6,
+      29
+    ],
+    "old_sha256": "ee88b45285d6bd899e5c41d7e86e4f6e7f604ceaea4468376ac331d28ae648ac",
+    "new_sha256": "32109d2700b010dc6dd4bb2ade5a9128aaabe0fa214e959875d8700276752a0d",
+    "equal_after_private_to_internal": true
+  },
+  "inherited_helper_reachability": [
+    {
+      "suite": "NovelSessionViewModelTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeHarness",
+          "references": 7
+        },
+        {
+          "name": "eventually",
+          "references": 6
+        },
+        {
+          "name": "documentWithUnresolvedCharacterMention",
+          "references": 3
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionStreamingPerformanceTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "NovelSessionLayoutHarness",
+          "references": 4
+        },
+        {
+          "name": "makeWindow",
+          "references": 4
+        },
+        {
+          "name": "makeHarness",
+          "references": 4
+        },
+        {
+          "name": "eventually",
+          "references": 1
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionTailPresentationTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeHarness",
+          "references": 21
+        },
+        {
+          "name": "eventually",
+          "references": 49
+        },
+        {
+          "name": "documentWithChapter",
+          "references": 2
+        },
+        {
+          "name": "quickStartDocument",
+          "references": 1
+        },
+        {
+          "name": "quickStartSuggestionsJSON",
+          "references": 1
+        },
+        {
+          "name": "validRebuildJSON",
+          "references": 1
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionRunOwnershipTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeHarness",
+          "references": 12
+        },
+        {
+          "name": "eventually",
+          "references": 26
+        },
+        {
+          "name": "documentWithMaterials",
+          "references": 1
+        },
+        {
+          "name": "validDeltaJSON",
+          "references": 1
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionSelectionTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeHarness",
+          "references": 12
+        },
+        {
+          "name": "eventually",
+          "references": 16
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionQuickStartTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeHarness",
+          "references": 13
+        },
+        {
+          "name": "eventually",
+          "references": 29
+        },
+        {
+          "name": "quickStartDocument",
+          "references": 11
+        },
+        {
+          "name": "quickStartSuggestionsJSON",
+          "references": 6
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionManualSyncTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeHarness",
+          "references": 22
+        },
+        {
+          "name": "eventually",
+          "references": 27
+        },
+        {
+          "name": "documentWithChapter",
+          "references": 9
+        },
+        {
+          "name": "persistedManualSync",
+          "references": 12
+        },
+        {
+          "name": "overlayRetryableManualSync",
+          "references": 1
+        },
+        {
+          "name": "assertPersistedManualSyncResumes",
+          "references": 1
+        },
+        {
+          "name": "validDeltaJSON",
+          "references": 4
+        },
+        {
+          "name": "validRebuildJSON",
+          "references": 11
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionRetryAndPolishTests.swift",
+      "base": "NovelSessionViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeHarness",
+          "references": 12
+        },
+        {
+          "name": "eventually",
+          "references": 19
+        },
+        {
+          "name": "documentWithChapter",
+          "references": 9
+        },
+        {
+          "name": "compatibleDriftJSON",
+          "references": 2
+        },
+        {
+          "name": "incompatibleDriftJSON",
+          "references": 1
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionReplayTests.swift",
+      "base": "NovelSessionReplayTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": []
+    },
+    {
+      "suite": "NovelSessionTranscriptProjectionTests.swift",
+      "base": "NovelSessionReplayTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "now",
+          "references": 2
+        },
+        {
+          "name": "makeFixture",
+          "references": 6
+        },
+        {
+          "name": "makeInput",
+          "references": 12
+        },
+        {
+          "name": "makeMessage",
+          "references": 11
+        },
+        {
+          "name": "makeRun",
+          "references": 3
+        },
+        {
+          "name": "terminalRun",
+          "references": 3
+        },
+        {
+          "name": "makeCandidate",
+          "references": 2
+        },
+        {
+          "name": "makePending",
+          "references": 1
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionRowActionTests.swift",
+      "base": "NovelSessionReplayTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "now",
+          "references": 4
+        },
+        {
+          "name": "makeFixture",
+          "references": 12
+        },
+        {
+          "name": "makeInput",
+          "references": 45
+        },
+        {
+          "name": "makeMessage",
+          "references": 18
+        },
+        {
+          "name": "makeRun",
+          "references": 17
+        },
+        {
+          "name": "terminalRun",
+          "references": 12
+        },
+        {
+          "name": "makeCandidate",
+          "references": 8
+        },
+        {
+          "name": "makePending",
+          "references": 4
+        },
+        {
+          "name": "makePolishTransaction",
+          "references": 2
+        }
+      ]
+    },
+    {
+      "suite": "NovelSessionFollowPolicyTests.swift",
+      "base": "NovelSessionReplayTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": []
+    },
+    {
+      "suite": "NovelCreationViewModelTests.swift",
+      "base": "NovelCreationViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "eventually",
+          "references": 3
+        }
+      ]
+    },
+    {
+      "suite": "NovelCreationWorkspaceMutationTests.swift",
+      "base": "NovelCreationViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": []
+    },
+    {
+      "suite": "NovelCreationQuickStartTests.swift",
+      "base": "NovelCreationViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "quickStartSuggestionsJSON",
+          "references": 8
+        },
+        {
+          "name": "eventually",
+          "references": 3
+        }
+      ]
+    },
+    {
+      "suite": "NovelCreationSyncAndRecoveryTests.swift",
+      "base": "NovelCreationViewModelTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "eventually",
+          "references": 12
+        }
+      ]
+    },
+    {
+      "suite": "NovelManualEditSyncTests.swift",
+      "base": "NovelManualEditSyncTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "now",
+          "references": 41
+        },
+        {
+          "name": "documentWithPendingManualSync",
+          "references": 3
+        },
+        {
+          "name": "copyPending",
+          "references": 4
+        },
+        {
+          "name": "documentWithTwoCollectedChapters",
+          "references": 11
+        },
+        {
+          "name": "collectLastCandidate",
+          "references": 1
+        },
+        {
+          "name": "appendLastCandidate",
+          "references": 1
+        },
+        {
+          "name": "collectCommand",
+          "references": 3
+        },
+        {
+          "name": "manualEditCommand",
+          "references": 7
+        },
+        {
+          "name": "mutationContext",
+          "references": 10
+        },
+        {
+          "name": "documentWithAvailableCandidate",
+          "references": 1
+        },
+        {
+          "name": "documentWithCandidate",
+          "references": 4
+        },
+        {
+          "name": "rebuildOutput",
+          "references": 3
+        }
+      ]
+    },
+    {
+      "suite": "NovelCollaborationModeTests.swift",
+      "base": "NovelCollaborationModeTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "seedGhostwriteMaterials",
+          "references": 3
+        }
+      ]
+    },
+    {
+      "suite": "NovelGhostwriteGenerationTests.swift",
+      "base": "NovelCollaborationModeTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": [
+        {
+          "name": "makeStartArtifacts",
+          "references": 3
+        },
+        {
+          "name": "assertGhostwriteBatchCompletes",
+          "references": 2
+        },
+        {
+          "name": "seedGhostwriteMaterials",
+          "references": 5
+        }
+      ]
+    },
+    {
+      "suite": "NovelGhostwriteInjectionTests.swift",
+      "base": "NovelCollaborationModeTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": []
+    },
+    {
+      "suite": "NovelGhostwriteRecoveryTests.swift",
+      "base": "NovelCollaborationModeTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": []
+    },
+    {
+      "suite": "NovelChapterPlanProposalTests.swift",
+      "base": "NovelCollaborationModeTestCase.swift",
+      "inherits_base": true,
+      "inherited_helper_uses": []
+    }
+  ],
+  "file_audit": "/tmp/amber-phase4-session-file-audit-helper-fix.json",
+  "declaration_adaptations": [
+    {
+      "source": "NovelSessionViewModelTests.swift:4913",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "eventually condition gains @escaping for inherited helper; closure is not stored"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift:4925",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "nested DisplayLinkGapProbe visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionSnapshotFailingCreation visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionAttachBlockingCreation visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionPerformReturnBlockingCreation visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionFailingRepository visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "NovelPlanSaveCompletionGate visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "BranchSnapshotBlockingNovelCreation visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "OrderedProjectListNovelCreation visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "SnapshotFailureNovelCreation visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelManualEditSyncTests.swift:5",
+      "destination": "NovelManualEditSyncTestCase.swift",
+      "change": "per-instance now visibility private to internal for inherited fixture"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "makeStartArtifacts visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "assertGhostwriteBatchCompletes visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "makeBatchAdjudicationJSON visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "seedGhostwriteMaterials visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "revise visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift:5",
+      "destination": "NovelCreationViewModelTests.swift",
+      "change": "suite inherits testless NovelCreationViewModelTestCase"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift:5",
+      "destination": "NovelCreationWorkspaceMutationTests.swift",
+      "change": "suite inherits testless NovelCreationViewModelTestCase"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift:5",
+      "destination": "NovelCreationQuickStartTests.swift",
+      "change": "suite inherits testless NovelCreationViewModelTestCase"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift:5",
+      "destination": "NovelCreationSyncAndRecoveryTests.swift",
+      "change": "suite inherits testless NovelCreationViewModelTestCase"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift:2201",
+      "destination": "NovelCreationViewModelTestCase.swift",
+      "change": "quickStartSuggestionsJSON private to internal for inherited read-only fixture"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift:2264",
+      "destination": "NovelCreationViewModelTestCase.swift",
+      "change": "eventually private to internal and condition gains @escaping for inherited helper; no closure storage"
+    }
+  ]
+}

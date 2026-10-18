@@ -1,0 +1,194 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "B3C3F24B-7D39-4695-86BB-588EEC6469A4",
+        "deviceName" : "Amber Audit 20261018",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 17,
+      "passedTests" : 1,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 17,
+  "finishTime" : 1792286043.435,
+  "passedTests" : 1,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1792285996.578,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTUnwrap failed: expected non-nil value of type \"Dictionary<String, Any>\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 10,
+      "testIdentifierString" : "IOSOrchestrationTerminalOwnershipTests/testCancelledFollowupDeliversOnlyCurrentPartialWithTerminalStatusOnce()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSOrchestrationTerminalOwnershipTests/testCancelledFollowupDeliversOnlyCurrentPartialWithTerminalStatusOnce",
+      "testName" : "testCancelledFollowupDeliversOnlyCurrentPartialWithTerminalStatusOnce()"
+    },
+    {
+      "failureText" : "XCTAssertFalse failed - 本轮无输出时，旧 assistant 不能成为新 run 的答复。",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 11,
+      "testIdentifierString" : "IOSOrchestrationTerminalOwnershipTests/testCancelledFollowupWithoutNewAssistantDoesNotDeliverPreviousReport()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSOrchestrationTerminalOwnershipTests/testCancelledFollowupWithoutNewAssistantDoesNotDeliverPreviousReport",
+      "testName" : "testCancelledFollowupWithoutNewAssistantDoesNotDeliverPreviousReport()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(iosApp.IOSChatBackgroundHandoffMode.resumeResponse)\") is not equal to (\"Optional(iosApp.IOSChatBackgroundHandoffMode.continueModel)\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 3,
+      "testIdentifierString" : "IOSChatDurableOwnershipTests/testCompletedDetachedResponseTransfersExistingOwnerToToolLoopOnce()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDurableOwnershipTests/testCompletedDetachedResponseTransfersExistingOwnerToToolLoopOnce",
+      "testName" : "testCompletedDetachedResponseTransfersExistingOwnerToToolLoopOnce()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"resumeResponse\") is not equal to (\"continueModel\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 4,
+      "testIdentifierString" : "IOSChatDurableOwnershipTests/testCompletedForegroundResponseRetiresDiskCursorBeforeReadToolExecution()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDurableOwnershipTests/testCompletedForegroundResponseRetiresDiskCursorBeforeReadToolExecution",
+      "testName" : "testCompletedForegroundResponseRetiresDiskCursorBeforeReadToolExecution()"
+    },
+    {
+      "failureText" : "XCTAssertThrowsError failed: did not throw an error",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 1,
+      "testIdentifierString" : "DeepReadPersistenceRecoveryRegressionTests/testCorruptedHistoryRejectsNewTaskAndPreservesOriginalBytes()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/DeepReadPersistenceRecoveryRegressionTests/testCorruptedHistoryRejectsNewTaskAndPreservesOriginalBytes",
+      "testName" : "testCorruptedHistoryRejectsNewTaskAndPreservesOriginalBytes()"
+    },
+    {
+      "failureText" : "XCTAssertFalse failed",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 5,
+      "testIdentifierString" : "IOSChatDurableOwnershipTests/testDetachedTransferPersistenceFailureKeepsResponseOwner()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDurableOwnershipTests/testDetachedTransferPersistenceFailureKeepsResponseOwner",
+      "testName" : "testDetachedTransferPersistenceFailureKeepsResponseOwner()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"nil\") is not equal to (\"Optional(\"option-1\")\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 7,
+      "testIdentifierString" : "IOSJevWebMountSelectCandidateTests/testExplicitSelectValueReachesToolPayloadUnchanged()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSJevWebMountSelectCandidateTests/testExplicitSelectValueReachesToolPayloadUnchanged",
+      "testName" : "testExplicitSelectValueReachesToolPayloadUnchanged()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"nil\") is not equal to (\"Optional(\"Workspace export unavailable\")\") - 恢复的是同一篇原文章，它尚未保存 Workspace 的状态也必须恢复",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2,
+      "testIdentifierString" : "DeepReadPersistenceRecoveryRegressionTests/testFailedSectionRetryRestoresWorkspaceWarningAndAllowsWorkspaceOnlyRetry()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/DeepReadPersistenceRecoveryRegressionTests/testFailedSectionRetryRestoresWorkspaceWarningAndAllowsWorkspaceOnlyRetry",
+      "testName" : "testFailedSectionRetryRestoresWorkspaceWarningAndAllowsWorkspaceOnlyRetry()"
+    },
+    {
+      "failureText" : "XCTAssertFalse failed",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 12,
+      "testIdentifierString" : "IOSOrchestrationTerminalOwnershipTests/testInterruptedFollowupWithoutOutputReportsCurrentReasonInsteadOfOldReport()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSOrchestrationTerminalOwnershipTests/testInterruptedFollowupWithoutOutputReportsCurrentReasonInsteadOfOldReport",
+      "testName" : "testInterruptedFollowupWithoutOutputReportsCurrentReasonInsteadOfOldReport()"
+    },
+    {
+      "failureText" : "XCTAssertFalse failed",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 6,
+      "testIdentifierString" : "IOSChatDurableOwnershipTests/testNextForegroundRoundCannotDetachUsingPreviousResponseCheckpoint()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDurableOwnershipTests/testNextForegroundRoundCannotDetachUsingPreviousResponseCheckpoint",
+      "testName" : "testNextForegroundRoundCannotDetachUsingPreviousResponseCheckpoint()"
+    },
+    {
+      "failureText" : "XCTAssertFalse failed - 没有确定 option value 的观察不能提出可执行选择。",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 8,
+      "testIdentifierString" : "IOSJevWebMountSelectCandidateTests/testObservationWithoutOptionValuesDoesNotOfferSelectActions()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSJevWebMountSelectCandidateTests/testObservationWithoutOptionValuesDoesNotOfferSelectActions",
+      "testName" : "testObservationWithoutOptionValuesDoesNotOfferSelectActions()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed - 当前没有等待回答的问题",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 17,
+      "testIdentifierString" : "WatchCoordinatorDecisionOwnershipTests/testOlderApprovalDoesNotPreventAnsweringCurrentRun()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/WatchCoordinatorDecisionOwnershipTests/testOlderApprovalDoesNotPreventAnsweringCurrentRun",
+      "testName" : "testOlderApprovalDoesNotPreventAnsweringCurrentRun()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed - 这个操作不支持在 Apple Watch 上确认",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 18,
+      "testIdentifierString" : "WatchCoordinatorDecisionOwnershipTests/testOlderQuestionDoesNotPreventApprovingCurrentRun()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/WatchCoordinatorDecisionOwnershipTests/testOlderQuestionDoesNotPreventApprovingCurrentRun",
+      "testName" : "testOlderQuestionDoesNotPreventApprovingCurrentRun()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed - Search navigation did not settle",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 15,
+      "testIdentifierString" : "SearchNavigationTests/testRenderedSearchResultOpensTheSelectedConversation()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/SearchNavigationTests/testRenderedSearchResultOpensTheSelectedConversation",
+      "testName" : "testRenderedSearchResultOpensTheSelectedConversation()"
+    },
+    {
+      "failureText" : "XCTAssertNil failed: \"(\"wm_select\", \"{\\\"snapshot_id\\\":\\\"snapshot-4\\\",\\\"session_id\\\":\\\"session-1\\\",\\\"target\\\":\\\"select-ref\\\"}\")\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 9,
+      "testIdentifierString" : "IOSJevWebMountSelectCandidateTests/testSelectWithoutValueDoesNotProduceToolCall()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSJevWebMountSelectCandidateTests/testSelectWithoutValueDoesNotProduceToolCall",
+      "testName" : "testSelectWithoutValueDoesNotProduceToolCall()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed - Search navigation did not settle",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 16,
+      "testIdentifierString" : "SearchNavigationTests/testUnreadableSearchResultKeepsCurrentConversationAndShowsFailure()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/SearchNavigationTests/testUnreadableSearchResultKeepsCurrentConversationAndShowsFailure",
+      "testName" : "testUnreadableSearchResultKeepsCurrentConversationAndShowsFailure()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(\"https://fixture.example/search\")\") is not equal to (\"Optional(\"https://fixture.example/search?q=PS5#results\")\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 14,
+      "testIdentifierString" : "IOSWebMountReloadDestinationTests/testUserRefreshPreservesCurrentQueryAndFragment()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSWebMountReloadDestinationTests/testUserRefreshPreservesCurrentQueryAndFragment",
+      "testName" : "testUserRefreshPreservesCurrentQueryAndFragment()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "17% of failures",
+      "text" : "3 runs of 3 tests failed with XCTUnwrap failed: expected non-nil value of type \"Dictionary<String, Any>\""
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "11% of failures",
+      "text" : "2 runs of 2 tests failed with failed: caught error: \"InvalidTransition { "
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "11% of failures",
+      "text" : "2 runs of 2 tests failed with XCTAssertTrue failed - Search navigation did not settle"
+    }
+  ],
+  "totalTestCount" : 18
+}

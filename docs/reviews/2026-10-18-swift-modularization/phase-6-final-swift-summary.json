@@ -1,0 +1,27 @@
+{
+  "files": 1318,
+  "physicalLines": 549292,
+  "over1000": 127,
+  "over1500": 0,
+  "maximum": 1500,
+  "largestFiles": [
+    "iosApp/iosApp/AmberThemePack.swift"
+  ],
+  "byCategory": {
+    "production": {
+      "files": 765,
+      "over1000": 90,
+      "maximum": 1500
+    },
+    "tests": {
+      "files": 447,
+      "over1000": 37,
+      "maximum": 1490
+    },
+    "vendor": {
+      "files": 106,
+      "over1000": 0,
+      "maximum": 928
+    }
+  }
+}

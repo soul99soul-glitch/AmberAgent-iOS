@@ -328,6 +328,63 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertTrue((first?.toText() ?? "").contains(String(assistantSystemPrompt.prefix(40))))
     }
 
+    func testChatMediaGuidanceReachesEachUploadWithoutChangingHistoryOrAssistantPrompt() throws {
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        let originalPrompt = sharedSettings.snapshot.getCurrentAssistant().systemPrompt
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+            sharedSettings: sharedSettings,
+            localToolExecutor: localToolExecutor(),
+            autoGenerateResponses: false
+        )
+        let user = UIMessage.companion.user(prompt: "搜索几张宋太祖赵匡胤的图片")
+        let searchResult = executedToolMessage("web_search", output: #"{"image_url":"https://example.test/portrait.jpg","source_url":"https://example.test/portrait"}"#)
+        viewModel.messages = [user, searchResult]
+
+        for history in [[user], [user, searchResult]] {
+            let upload = viewModel.preparedUploadMessagesForTesting(history)
+            let mediaSections = upload.filter {
+                $0.role == MessageRole.system && $0.toText().contains("【聊天图片与视频展示】")
+            }
+            let guidance = try XCTUnwrap(mediaSections.first).toText()
+            XCTAssertEqual(mediaSections.count, 1)
+            XCTAssertTrue(guidance.contains("![图片说明](图片直链)"))
+            XCTAssertTrue(guidance.contains("[来源](页面URL)"))
+            XCTAssertTrue(guidance.contains("不要猜测或编造图片直链"))
+            XCTAssertTrue(guidance.contains("无需 allowRemoteImages"))
+            XCTAssertTrue(guidance.contains("Commons 的 File: 页面"))
+            XCTAssertTrue(guidance.contains("用户明确只要链接"))
+            XCTAssertTrue(upload.contains { $0.id == user.id })
+            if history.count == 2 {
+                XCTAssertTrue(upload.contains { $0.id == searchResult.id })
+            }
+        }
+
+        XCTAssertEqual(sharedSettings.snapshot.getCurrentAssistant().systemPrompt, originalPrompt)
+        XCTAssertEqual(viewModel.messages.map(\.id), [user.id, searchResult.id])
+        XCTAssertFalse(viewModel.messages.contains { $0.toText().contains("【聊天图片与视频展示】") })
+    }
+
+    func testChatMediaGuidanceSurvivesSystemMessageCoalescingWithMiniAppsDisabled() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let builder = ChatRuntimeContextBuilder(
+            sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
+            mcpTools: [],
+            miniAppRepository: IOSMiniAppRepository(baseDirectory: directory),
+            miniAppRuntimeEnabled: false
+        )
+        let user = UIMessage.companion.user(prompt: "展示搜索到的图片")
+        let upload = builder.injectingRuntimeContext(into: [user])
+        let systemMessages = upload.filter { $0.role == MessageRole.system }
+        XCTAssertEqual(systemMessages.count, 1)
+        let text = try XCTUnwrap(systemMessages.first).toText()
+        XCTAssertEqual(text.components(separatedBy: "【聊天图片与视频展示】").count - 1, 1)
+        XCTAssertTrue(text.contains("原生支持远程 Markdown 图片"))
+        XCTAssertTrue(text.contains("视频网页链接只作普通链接"))
+        XCTAssertEqual(upload.last?.id, user.id)
+    }
+
     /// System prompt must be upload-only — never persisted into the visible
     /// chat history (it would pollute the message list).
     func testSystemPromptInjectionDoesNotPersistToChatHistory() {
@@ -690,6 +747,36 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertFalse(names.contains("model_council_run"))
         XCTAssertFalse(names.contains("ish_handoff"))
         XCTAssertFalse(names.contains("ios_ish_execute"))
+    }
+
+    func testIshPermissionChangesRefreshTheNextRequestCatalogWithoutRecreatingChat() throws {
+        let defaults = isolatedDefaults()
+        let permissionStore = IOSPermissionStore(userDefaults: defaults, taskStore: nil)
+        let capabilityIds = ["ios.external.ish_handoff"]
+            + (IOSEmbeddedIshToolCatalog.supportedToolNames.isEmpty ? [] : ["ios.embedded.ish_runtime"])
+        let capabilities = try capabilityIds.map { id in
+            try XCTUnwrap(IOSCapabilityRegistry.capabilities.first { $0.id == id })
+        }
+        capabilities.forEach { permissionStore.setPolicy(.disabled, for: $0) }
+        let viewModel = exposureViewModel(permissionStore: permissionStore)
+        let toolNames = Set(capabilities.flatMap(\.modelToolNames))
+
+        func fullCatalog() -> Set<String> {
+            _ = viewModel.currentToolDeclarationNames()
+            return Set(viewModel.toolExposureBridgeForTesting()?.fullToolDeclarations().map(\.name) ?? [])
+        }
+
+        XCTAssertTrue(fullCatalog().isDisjoint(with: toolNames))
+
+        capabilities.forEach { permissionStore.setPolicy(.askEveryTime, for: $0) }
+        XCTAssertEqual(fullCatalog().intersection(toolNames), toolNames)
+        let reloaded = IOSPermissionStore(userDefaults: defaults, taskStore: nil)
+        for capability in capabilities {
+            XCTAssertEqual(reloaded.policy(for: capability), .askEveryTime)
+        }
+
+        capabilities.forEach { permissionStore.setPolicy(.disabled, for: $0) }
+        XCTAssertTrue(fullCatalog().isDisjoint(with: toolNames))
     }
 
     func testChatMaxToolResumeCountDefaultsTo128AndPersistsSupportedOptions() {

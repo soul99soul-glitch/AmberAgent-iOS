@@ -49,6 +49,8 @@ data class IosChatBackgroundPayload(
     val visibleToolNames: List<String> = emptyList(),
     val executionPolicyJson: String? = null,
     val subAgentTimeoutSeconds: Double? = null,
+    // Null identifies legacy payloads; an empty list is a valid empty run baseline.
+    val runDisplayBaseline: List<UIMessage>? = null,
 )
 
 /** Swift-facing bridge for persisted iOS chat background generation payloads. */
@@ -73,6 +75,7 @@ object IosChatBackgroundPayloadJsonBridge {
         fullToolNames: List<String> = emptyList(),
         executionPolicyJson: String? = null,
         subAgentTimeoutSeconds: Double? = null,
+        runDisplayBaseline: List<UIMessage>? = null,
     ): String = JsonInstant.encodeToString(
         IosChatBackgroundPayload(
             runId = runId,
@@ -94,6 +97,7 @@ object IosChatBackgroundPayloadJsonBridge {
             visibleToolNames = params.tools.map { it.name },
             executionPolicyJson = executionPolicyJson,
             subAgentTimeoutSeconds = subAgentTimeoutSeconds,
+            runDisplayBaseline = runDisplayBaseline,
         )
     )
 

@@ -643,6 +643,11 @@ final class IOSMiniAppBridgeRuntime {
     func close() {
         guard !isClosed else { return }
         isClosed = true
+        invalidateDocument()
+    }
+
+    /// Releases the old document's resources while keeping the runner reusable.
+    func invalidateDocument() {
         cancelPendingRequests()
         for id in eventSubscriptionIds {
             IOSMiniAppEventBus.unsubscribe(id)
@@ -1035,7 +1040,9 @@ final class IOSMiniAppBridgeRuntime {
         if let value = params[key] as? Int {
             raw = value
         } else if let value = params[key] as? Double {
-            raw = Int(value)
+            raw = value.isFinite
+                ? Int(value.clamped(to: Double(range.lowerBound)...Double(range.upperBound)))
+                : nil
         } else if let value = params[key] as? NSNumber {
             raw = value.intValue
         } else {

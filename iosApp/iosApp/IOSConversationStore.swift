@@ -58,39 +58,6 @@ private struct IOSConversationImportInProgressError: LocalizedError {
 
 // MARK: - IOSConversationStore
 
-struct IOSConversationSearchResult: Identifiable {
-    enum Kind: String {
-        case conversation
-        case message
-
-        var title: String {
-            switch self {
-            case .conversation: "会话"
-            case .message: "消息"
-            }
-        }
-    }
-
-    let id: String
-    let conversationId: KotlinUuid
-    let kind: Kind
-    let title: String
-    let preview: String
-    let highlight: String
-    let updateAt: Int64
-}
-
-/// session_search 工具的聚合命中（每会话一条）。由 [IOSConversationStore.sessionSearchHits]
-/// 从 [IOSConversationSearchResult] 派生：snippet 优先取消息命中预览（含关键词上下文），
-/// messageCount 取会话摘要的真实消息数。
-struct IOSSessionSearchHit {
-    let conversationId: KotlinUuid
-    let title: String
-    let snippet: String
-    let updatedAt: Int64
-    let messageCount: Int32
-}
-
 struct IOSConversationWriteBaseline: Equatable {
     fileprivate let key: String
     fileprivate let sequence: UInt64
@@ -199,7 +166,7 @@ final class IOSConversationStore {
         lastUserVisibleError = error
     }
 
-    private func publishIOError(operation: String, detail: String) {
+    func publishIOError(operation: String, detail: String) {
         let error = IOSConversationIOError(operation: operation, detail: detail)
         lastIOError = error
         publishUserVisibleError(error.userVisibleError)
@@ -207,7 +174,7 @@ final class IOSConversationStore {
 
     // MARK: - Private
 
-    private let storage: JsonConversationStorage
+    let storage: JsonConversationStorage
     private let listPreviewsFileURL: URL
     private let listIconsFileURL: URL
     private let subagentConversationIDsProvider: () async throws -> Set<String>
@@ -216,7 +183,9 @@ final class IOSConversationStore {
     private var subagentConversationIDs: Set<String> = []
     private var didLoadSummaries = false
     private var writeSequences: [String: UInt64] = [:]
-    private var importEpoch: UInt64 = 0
+    @ObservationIgnored var branchMutationConversationIDs: Set<String> = []
+    @ObservationIgnored var messageSnapshotWriteCounts: [String: Int] = [:]
+    private(set) var importEpoch: UInt64 = 0
     /// A restore must first drain snapshot writers that have already crossed
     /// into the Store, then keep newly-started writers out until the restored
     /// document is selected into `currentConversation`.
@@ -226,6 +195,7 @@ final class IOSConversationStore {
 
 #if DEBUG
     var beforePersistForTesting: ((Conversation) async -> Void)?
+    var afterPersistReservationForTesting: ((Conversation) async -> Void)?
     var beforeDeleteForTesting: (() async throws -> Void)?
     var beforeMessageLoadForTesting: ((KotlinUuid) -> Void)?
 #endif
@@ -630,6 +600,8 @@ final class IOSConversationStore {
         expectedImportEpoch: UInt64? = nil
     ) async -> Bool {
         let operationImportEpoch = expectedImportEpoch ?? importEpoch
+        guard beginMessageSnapshotWrite(to: id) else { return false }
+        defer { finishMessageSnapshotWrite(to: id) }
         guard !isDeletedConversation(id) else { return false }
         guard acceptsWrite(
             to: id,
@@ -989,7 +961,7 @@ final class IOSConversationStore {
     /// 当前时刻的 KotlinInstant。用 epoch 毫秒构造，避免 ISO 字符串 parse 的边界风险
     ///（不同平台对 fractional seconds / 时区偏移的容忍度不一致）。KotlinInstant companion
     /// 的 fromEpochMilliseconds 是无歧义的。
-    private func nowInstant() -> KotlinInstant {
+    func nowInstant() -> KotlinInstant {
         let epochMs = Int64(Date().timeIntervalSince1970 * 1000)
         return KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: epochMs)
     }
@@ -1190,195 +1162,6 @@ final class IOSConversationStore {
         }
     }
 
-    func currentConversationDeepReadSource(maxMessages: Int = 12) throws -> IOSDeepReadSource {
-        let messages = currentMessages.suffix(max(maxMessages, 1)).compactMap { message -> String? in
-            let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            return "\(Self.boardRoleName(message.role)): \(String(text.prefix(1_200)))"
-        }
-        let title = currentConversation?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? currentConversation?.title ?? "当前会话"
-            : "当前会话"
-        return try IOSDeepReadSourceNormalizer.conversationSource(
-            title: title,
-            messages: messages
-        )
-    }
-
-    @discardableResult
-    func appendDeepReadResultToCurrentConversation(_ task: IOSDeepReadTask) async -> Bool {
-        guard let conversation = currentConversation else { return false }
-        let markdown = task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !markdown.isEmpty else { return false }
-
-        var nextMessages = currentMessages
-        let message = UIMessage.companion.assistant(
-            prompt: """
-            已保存深度阅读结果：\(task.title)
-
-            \(markdown)
-            """
-        )
-        nextMessages.append(message)
-        await save(messages: nextMessages, to: conversation.id)
-        return true
-    }
-
-    /// Global search over persisted conversation titles and message text.
-    ///
-    /// Read-only by design: it does not switch current conversation, bump revision,
-    /// or mutate metadata. SearchView decides whether to open a result.
-    func searchConversations(query rawQuery: String, limit: Int = 60) async -> [IOSConversationSearchResult] {
-        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, limit > 0 else { return [] }
-
-        let sourceSummaries = await visibleSummariesForListing()
-
-        var results: [IOSConversationSearchResult] = []
-        for summary in sourceSummaries {
-            guard !Task.isCancelled else { return [] }
-            let title = summary.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新对话" : summary.title
-            let updateAt = summary.updateAt.toEpochMilliseconds()
-
-            if title.localizedCaseInsensitiveContains(query) {
-                results.append(IOSConversationSearchResult(
-                    id: "\(summary.id)-title",
-                    conversationId: summary.id,
-                    kind: .conversation,
-                    title: title,
-                    preview: "\(summary.messageCount) 条消息",
-                    highlight: query,
-                    updateAt: updateAt
-                ))
-                if results.count >= limit { break }
-            }
-
-            guard let conversation = try? await storage.loadConversation(id: summary.id) else { continue }
-            guard !Task.isCancelled else { return [] }
-            let messages = Self.searchableMessages(in: conversation)
-            for (messageIndex, message) in messages.enumerated() {
-                guard !Task.isCancelled else { return [] }
-                let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty, text.localizedCaseInsensitiveContains(query) else { continue }
-                results.append(IOSConversationSearchResult(
-                    id: "\(summary.id)-message-\(messageIndex)",
-                    conversationId: summary.id,
-                    kind: .message,
-                    title: title,
-                    preview: Self.searchPreview(from: text, around: query),
-                    highlight: query,
-                    updateAt: updateAt
-                ))
-                if results.count >= limit { break }
-            }
-            if results.count >= limit { break }
-        }
-        return Task.isCancelled ? [] : results
-    }
-
-    /// session_search 工具用：把 [searchConversations] 的逐条命中聚合为每会话一条。
-    /// 只读（不切当前会话、不 bump revision、不写盘）；snippet 优先取消息命中预览
-    /// （含关键词上下文），标题命中兜底；messageCount 取会话摘要的真实消息数。
-    func sessionSearchHits(query: String, limit: Int = 8) async -> [IOSSessionSearchHit] {
-        let results = await searchConversations(query: query, limit: limit)
-        guard !results.isEmpty else { return [] }
-
-        let sourceSummaries = await visibleSummariesForListing()
-        let countByConversation = Dictionary(
-            sourceSummaries.map { ($0.id.toHexDashString(), $0.messageCount) },
-            uniquingKeysWith: { first, _ in first }
-        )
-
-        var orderedKeys: [String] = []
-        var byConversation: [String: (id: KotlinUuid, title: String, titleSnippet: String?, messageSnippet: String?, updatedAt: Int64)] = [:]
-        for result in results {
-            let key = result.conversationId.toHexDashString()
-            if byConversation[key] == nil {
-                orderedKeys.append(key)
-                byConversation[key] = (result.conversationId, result.title, nil, nil, result.updateAt)
-            }
-            guard var entry = byConversation[key] else { continue }
-            if result.kind == .message {
-                if entry.messageSnippet == nil { entry.messageSnippet = result.preview }
-            } else if entry.titleSnippet == nil {
-                entry.titleSnippet = result.preview
-            }
-            entry.updatedAt = max(entry.updatedAt, result.updateAt)
-            byConversation[key] = entry
-        }
-
-        var hits: [IOSSessionSearchHit] = []
-        for key in orderedKeys {
-            guard let entry = byConversation[key] else { continue }
-            hits.append(IOSSessionSearchHit(
-                conversationId: entry.id,
-                title: entry.title,
-                snippet: entry.messageSnippet ?? entry.titleSnippet ?? "",
-                updatedAt: entry.updatedAt,
-                messageCount: countByConversation[key] ?? 0
-            ))
-        }
-        return hits
-    }
-
-    /// Read-only export for iOS Board chat-history collection.
-    ///
-    /// This does not switch `currentConversation`, bump `currentRevision`, mutate metadata,
-    /// or write back to disk. It loads recent conversations by summary id and returns a
-    /// compact tail window for the Board collector's local heuristics.
-    func boardSignalCandidates(limit: Int = 30) async -> [IOSBoardConversationCandidate] {
-        let sourceSummaries = await visibleSummariesForListing()
-
-        var candidates: [IOSBoardConversationCandidate] = []
-        for summary in sourceSummaries.prefix(max(limit, 0)) {
-            guard let conversation = try? await storage.loadConversation(id: summary.id) else { continue }
-            let title = conversation.title.isEmpty ? summary.title : conversation.title
-            let tailNodes = Array(conversation.messageNodes.suffix(6))
-            let tailTexts = tailNodes.flatMap { node in
-                node.messages.compactMap { message -> String? in
-                    let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { return nil }
-                    return "\(Self.boardRoleName(message.role)): \(String(text.prefix(500)))"
-                }
-            }
-
-            let fallbackTexts = conversation.currentMessages.compactMap { message -> String? in
-                let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return nil }
-                return "\(Self.boardRoleName(message.role)): \(String(text.prefix(500)))"
-            }
-
-            candidates.append(IOSBoardConversationCandidate(
-                id: String(describing: conversation.id),
-                title: title.isEmpty ? "未命名对话" : title,
-                updateAt: conversation.updateAt.toEpochMilliseconds(),
-                nodeCount: conversation.messageNodes.count,
-                tailTexts: tailTexts.isEmpty ? fallbackTexts : tailTexts
-            ))
-        }
-        return candidates
-    }
-
-    // MARK: - Private helpers
-
-    private static func boardRoleName(_ role: MessageRole) -> String {
-        if role == MessageRole.user { return "user" }
-        if role == MessageRole.assistant { return "assistant" }
-        if role == MessageRole.system { return "system" }
-        if role == MessageRole.tool { return "tool" }
-        return String(describing: role).lowercased()
-    }
-
-    private static func searchableMessages(in conversation: Conversation) -> [UIMessage] {
-        let nodeMessages = conversation.messageNodes.flatMap { node in
-            node.messages
-        }
-        if !nodeMessages.isEmpty {
-            return nodeMessages
-        }
-        return conversation.currentMessages
-    }
-
     private static func isReusableEmptyConversation(_ conversation: Conversation) -> Bool {
         !searchableMessages(in: conversation).contains { $0.role == MessageRole.user }
     }
@@ -1487,28 +1270,11 @@ final class IOSConversationStore {
         }
     }
 
-    private static func searchPreview(from text: String, around query: String, maxLength: Int = 96) -> String {
-        let compact = text
-            .split(whereSeparator: \.isNewline)
-            .joined(separator: " ")
-        guard compact.count > maxLength else { return compact }
-
-        guard let range = compact.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else {
-            return String(compact.prefix(maxLength)) + "..."
-        }
-
-        let prefix = String(compact[..<range.lowerBound].suffix(28))
-        let remainingLength = max(maxLength - prefix.count, 24)
-        let suffix = String(compact[range.lowerBound...].prefix(remainingLength))
-        let leading = compact.distance(from: compact.startIndex, to: range.lowerBound) > prefix.count ? "..." : ""
-        let trailing = compact.distance(from: range.lowerBound, to: compact.endIndex) > suffix.count ? "..." : ""
-        return leading + prefix + suffix + trailing
-    }
 
     /// 替换 currentConversation 并 bump currentRevision（驱动需要感知内容变化的 UI）。
     /// 不 bump conversationSwitchedRevision——调用方若代表「切到了别的会话」，
     /// 应改用 setCurrentAsSwitch。
-    private func setCurrent(_ conversation: Conversation?) {
+    func setCurrent(_ conversation: Conversation?) {
         currentConversation = conversation
         currentRevision &+= 1
     }
@@ -1521,293 +1287,21 @@ final class IOSConversationStore {
         conversationSwitchedRevision &+= 1
     }
 
-    // MARK: - Message branching (Android ChatService parity)
-    //
-    // The KMP `Conversation` already carries a `List<MessageNode>` tree where
-    // each node holds sibling `UIMessage` variants + a `selectIndex`. iOS loads
-    // and persists this tree today; it just never creates or navigates
-    // branches. These operations mirror Android's `ChatService` semantics
-    // (selectMessageNode / editMessage / regenerateAtMessage / deleteMessage):
-    //
-    //   - flat message index == node index (currentMessages = messageNodes.map
-    //     { node.messages[selectIndex] }), so callers address a branch by the
-    //     index of the message it shows in the flat chat list.
-    //   - edit/regenerate = APPEND a new variant to the node + select it (the
-    //     original is retained and reachable via selectVariant).
-    //   - delete = remove the message from its node; drop the node if it
-    //     becomes empty.
-
-    /// Variant info for a node, exposed so the UI can show `< 2/3 >` only when
-    /// a node actually carries more than one sibling.
-    struct VariantInfo: Equatable {
-        let variantCount: Int
-        let selectedIndex: Int
-        var hasMultipleVariants: Bool { variantCount > 1 }
-    }
-
-    func variantInfo(forMessageIndex index: Int) -> VariantInfo? {
-        guard let conversation = currentConversation,
-              index >= 0, index < conversation.messageNodes.count else {
-            return nil
-        }
-        let node = conversation.messageNodes[index]
-        // selectIndex bridges as Int32 (Kotlin Int → Obj-C Int32).
-        return VariantInfo(variantCount: node.messages.count, selectedIndex: Int(node.selectIndex))
-    }
-
-    /// Loads the conversation that a branch action was started for. The caller
-    /// may switch conversations while file I/O is suspended, so branch actions
-    /// must never re-read the mutable current selection after their first await.
-    private func conversationForMessageMutation(
-        id: KotlinUuid,
-        operation: String
-    ) async -> Conversation? {
-        guard !isDeletedConversation(id) else { return nil }
-        if currentConversation?.id == id {
-            return currentConversation
-        }
-        do {
-            return try await storage.loadConversation(id: id)
-        } catch {
-            publishIOError(operation: operation, detail: "\(id): \(error)")
-            return nil
-        }
-    }
-
-    /// Switch the selected variant of a node (cheap, no generation). Mirrors
-    /// `ChatService.selectMessageNode`.
     @discardableResult
-    func selectVariant(
-        messageIndex: Int,
-        variantIndex: Int,
-        conversationId: KotlinUuid? = nil
-    ) async -> Bool {
-        let operationImportEpoch = importEpoch
-        guard let targetConversationId = conversationId ?? currentConversation?.id,
-              acceptsImportEpoch(operationImportEpoch),
-              let conversation = await conversationForMessageMutation(
-                  id: targetConversationId,
-                  operation: "切换消息分支"
-              ),
-              acceptsImportEpoch(operationImportEpoch),
-              messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
-            return false
-        }
-        var nodes = conversation.messageNodes
-        let node = nodes[messageIndex]
-        guard variantIndex >= 0, variantIndex < node.messages.count, variantIndex != node.selectIndex else {
-            return false
-        }
-        nodes[messageIndex] = MessageNode(
-            id: node.id,
-            messages: node.messages,
-            selectIndex: Int32(variantIndex),
-            isFavorite: node.isFavorite
-        )
-        let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(
-            updated,
-            expectedImportEpoch: operationImportEpoch
-        ) else { return false }
-        if currentConversation?.id == targetConversationId {
-            setCurrent(persisted)
-        }
-        return true
-    }
-
-    /// Append a new variant to a node and select it. This is the shared
-    /// primitive for edit-message and regenerate-assistant. Mirrors
-    /// `ChatService.editMessage` / the append path of `mergeGeneratedMessagesByIndex`.
-    /// Returns the node index so the caller (e.g. ChatViewModel) can target
-    /// generation at it.
-    @discardableResult
-    func appendVariant(
-        messageIndex: Int,
-        message: UIMessage,
-        conversationId: KotlinUuid? = nil
-    ) async -> Int? {
-        let operationImportEpoch = importEpoch
-        guard let targetConversationId = conversationId ?? currentConversation?.id,
-              acceptsImportEpoch(operationImportEpoch),
-              let conversation = await conversationForMessageMutation(
-                  id: targetConversationId,
-                  operation: "保存消息分支"
-              ),
-              acceptsImportEpoch(operationImportEpoch),
-              messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
-            return nil
-        }
-        var nodes = conversation.messageNodes
-        let node = nodes[messageIndex]
-        var newMessages = node.messages
-        newMessages.append(message)
-        // Kotlin List bridges to NSArray-ish; use count-1 instead of lastIndex
-        // to avoid ambiguity. selectIndex is Int32 (Kotlin Int → Obj-C Int32).
-        nodes[messageIndex] = MessageNode(
-            id: node.id,
-            messages: newMessages,
-            selectIndex: Int32(newMessages.count - 1),
-            isFavorite: node.isFavorite
-        )
-        let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(
-            updated,
-            expectedImportEpoch: operationImportEpoch
-        ) else { return nil }
-        if currentConversation?.id == targetConversationId {
-            setCurrent(persisted)
-        }
-        return messageIndex
-    }
-
-    /// Append an assistant regeneration as a sibling variant of the original
-    /// assistant node, select it, and drop stale nodes after that reply.
-    @discardableResult
-    func appendVariantAndTruncateAfter(
-        messageIndex: Int,
-        message: UIMessage,
-        trailingMessages: [UIMessage] = [],
-        conversationId: KotlinUuid
-    ) async -> Bool {
-        let operationImportEpoch = importEpoch
-        guard let conversation = await conversationForMessageMutation(
-            id: conversationId,
-            operation: "保存重新生成分支"
-        ),
-              acceptsImportEpoch(operationImportEpoch),
-              messageIndex >= 0,
-              messageIndex < conversation.messageNodes.count else {
-            return false
-        }
-        var nodes = Array(conversation.messageNodes.prefix(messageIndex + 1))
-        let node = nodes[messageIndex]
-        var variants = node.messages
-        variants.append(message)
-        nodes[messageIndex] = MessageNode(
-            id: node.id,
-            messages: variants,
-            selectIndex: Int32(variants.count - 1),
-            isFavorite: node.isFavorite
-        )
-        nodes.append(contentsOf: trailingMessages.map { trailingMessage in
-            MessageNode(
-                id: KotlinUuid.companion.random(),
-                messages: [trailingMessage],
-                selectIndex: 0,
-                isFavorite: false
-            )
-        })
-        let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(
-            updated,
-            expectedImportEpoch: operationImportEpoch
-        ) else { return false }
-        if currentConversation?.id == conversationId {
-            setCurrent(persisted)
-        }
-        await refreshSummaries()
-        return acceptsImportEpoch(operationImportEpoch)
-    }
-
-    /// Remove a message from its node. If the node becomes empty it is removed
-    /// (and selectIndex clamped). Mirrors `ChatService.deleteMessage`.
-    @discardableResult
-    func deleteMessage(
-        messageIndex: Int,
-        conversationId: KotlinUuid? = nil
-    ) async -> Bool {
-        let operationImportEpoch = importEpoch
-        guard let targetConversationId = conversationId ?? currentConversation?.id,
-              acceptsImportEpoch(operationImportEpoch),
-              let conversation = await conversationForMessageMutation(
-                  id: targetConversationId,
-                  operation: "删除消息"
-              ),
-              acceptsImportEpoch(operationImportEpoch),
-              messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
-            return false
-        }
-        var nodes = conversation.messageNodes
-        // A node only ever holds the currently-selected variant for deletion
-        // purposes on iOS (the flat list shows the selected variant); drop the
-        // whole node. If we later support per-variant delete, this is where the
-        // `node.messages.remove(at:)` + clamp logic would go.
-        nodes.remove(at: messageIndex)
-        let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(
-            updated,
-            expectedImportEpoch: operationImportEpoch
-        ) else { return false }
-        if currentConversation?.id == targetConversationId {
-            setCurrent(persisted)
-        }
-        await refreshSummaries()
-        return acceptsImportEpoch(operationImportEpoch)
-    }
-
-    /// Truncate the conversation to end at (and include) the given node index.
-    /// Used by regenerate-from-USER-message: Android drops everything after the
-    /// user turn, then re-runs generation. Mirrors `ChatService.regenerateAtMessage`
-    /// (role == USER branch).
-    @discardableResult
-    func truncateAfter(
-        messageIndex: Int,
-        conversationId: KotlinUuid? = nil
-    ) async -> Bool {
-        let operationImportEpoch = importEpoch
-        guard let targetConversationId = conversationId ?? currentConversation?.id,
-              acceptsImportEpoch(operationImportEpoch),
-              let conversation = await conversationForMessageMutation(
-                  id: targetConversationId,
-                  operation: "截断消息分支"
-              ),
-              acceptsImportEpoch(operationImportEpoch),
-              messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
-            return false
-        }
-        let kept = Array(conversation.messageNodes.prefix(messageIndex + 1))
-        guard kept.count != conversation.messageNodes.count else { return false }
-        let updated = conversationWithNodes(conversation, nodes: kept)
-        guard let persisted = await persist(
-            updated,
-            expectedImportEpoch: operationImportEpoch
-        ) else { return false }
-        if currentConversation?.id == targetConversationId {
-            setCurrent(persisted)
-        }
-        return true
-    }
-
-    /// Rebuild a Conversation with a different `messageNodes` list (full-field
-    /// constructor, same pattern as `retitledCopy`). updateAt refreshed.
-    private func conversationWithNodes(_ conversation: Conversation, nodes: [MessageNode]) -> Conversation {
-        Conversation(
-            id: conversation.id,
-            assistantId: conversation.assistantId,
-            title: conversation.title,
-            messageNodes: nodes,
-            chatSuggestions: conversation.chatSuggestions,
-            isPinned: conversation.isPinned,
-            autoApproveToolCalls: conversation.autoApproveToolCalls,
-            memoryMode: conversation.memoryMode,
-            createAt: conversation.createAt,
-            updateAt: nowInstant(),
-            newConversation: conversation.newConversation
-        )
-    }
-
-    @discardableResult
-    private func persist(
+    func persist(
         _ conversation: Conversation,
         ifUnchangedSince baseline: IOSConversationWriteBaseline? = nil,
         expectedImportEpoch: UInt64,
-        allowDuringImport: Bool = false
+        allowDuringImport: Bool = false,
+        ownsBranchMutation: Bool = false
     ) async -> Conversation? {
         guard beginConversationWrite(
             expectedImportEpoch: expectedImportEpoch,
             allowDuringImport: allowDuringImport
         ) else { return nil }
         defer { finishConversationWrite() }
+        guard beginMessageSnapshotWrite(to: conversation.id, ownsBranchMutation: ownsBranchMutation) else { return nil }
+        defer { finishMessageSnapshotWrite(to: conversation.id) }
 
         do {
             guard !isDeletedConversation(conversation.id) else { return nil }
@@ -1831,6 +1325,9 @@ final class IOSConversationStore {
             ) else { return nil }
             advanceWriteSequence(for: conversation.id)
             let reservedSequence = writeSequences[sequenceKey(for: conversation.id), default: 0]
+#if DEBUG
+            await afterPersistReservationForTesting?(conversation)
+#endif
             let persisted = try await storage.saveConversation(conversation: conversation)
             let changedDuringSave = writeSequences[sequenceKey(for: conversation.id), default: 0] != reservedSequence
             // A concurrent metadata writer may finish before this continuation.
@@ -1870,7 +1367,7 @@ final class IOSConversationStore {
         return true
     }
 
-    private func acceptsImportEpoch(
+    func acceptsImportEpoch(
         _ expectedImportEpoch: UInt64,
         allowDuringImport: Bool = false
     ) -> Bool {
@@ -1950,7 +1447,7 @@ final class IOSConversationStore {
         }
     }
 
-    private func refreshSummaries() async {
+    func refreshSummaries() async {
         do {
             if !didLoadSummaries {
                 try await refreshSubagentConversationVisibility()
@@ -1969,7 +1466,7 @@ final class IOSConversationStore {
         return summaries
     }
 
-    private func visibleSummariesForListing() async -> [ConversationSummary] {
+    func visibleSummariesForListing() async -> [ConversationSummary] {
         await loadSummaryProjectionIfNeeded()
     }
 
@@ -1991,7 +1488,7 @@ final class IOSConversationStore {
         deletedConversationIds.remove(String(describing: id))
     }
 
-    private func isDeletedConversation(_ id: KotlinUuid) -> Bool {
+    func isDeletedConversation(_ id: KotlinUuid) -> Bool {
         deletedConversationIds.contains(String(describing: id))
     }
 }

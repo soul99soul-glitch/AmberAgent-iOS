@@ -455,17 +455,12 @@ final class IOSWebMountSiteMemoryLayoutTests: XCTestCase {
         window.isHidden = true
     }
 
-    /// Fixture-only access to the existing observed run state; no production setter or network.
+    /// Fixture-only access to the existing current run; no production setter or network.
     private func currentRunState(for model: ChatViewModel) throws -> ChatConversationRunState {
-        let runs = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "conversationRuns" }?.value)
-        for entry in Mirror(reflecting: runs).children {
-            guard let run = Mirror(reflecting: entry.value).children.first(where: { $0.label == "value" })?.value,
-                  let state = Mirror(reflecting: run).children.first(where: { $0.label == "state" })?.value as? ChatConversationRunState,
-                  state.conversationId?.toHexDashString() == model.currentConversationId?.toHexDashString() else { continue }
-            return state
-        }
-        XCTFail("The actual current conversation run must exist")
-        throw CocoaError(.coderInvalidValue)
+        let conversationID = try XCTUnwrap(model.currentConversationId)
+        let run = try XCTUnwrap(model.runRegistry.run(for: conversationID),
+                                "The actual current conversation run must exist")
+        return run.state
     }
 
     private func textViews(in view: UIView) -> [UITextView] {

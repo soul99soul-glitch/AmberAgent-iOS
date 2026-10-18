@@ -108,10 +108,12 @@ final class NovelProjectLifecycleOperationTests: XCTestCase {
             newer,
             expectedRevision: previous.project.revision
         )
-        let primaryURL = root.appendingPathComponent("projects", isDirectory: true)
-            .appendingPathComponent("\(previous.project.id.description).json")
-        let previousURL = root.appendingPathComponent("projects", isDirectory: true)
-            .appendingPathComponent("\(previous.project.id.description).previous.json")
+        let package = NovelProjectShardedStorage.packageDirectory(
+            projectDirectory: root.appendingPathComponent("projects", isDirectory: true),
+            projectID: previous.project.id
+        )
+        let primaryURL = NovelProjectShardedStorage.layoutURL(in: package)
+        let previousURL = NovelProjectShardedStorage.previousLayoutURL(in: package)
         try Data("broken primary".utf8).write(to: primaryURL, options: [.atomic])
 
         let creation = DefaultNovelCreation(repository: repository)
@@ -679,8 +681,11 @@ final class NovelProjectLifecycleOperationTests: XCTestCase {
         )
         let corruptBytes = Data("corrupt-\(state.rawValue)-receipt".utf8)
         try corruptBytes.write(to: receiptURL, options: [.atomic])
-        let primaryURL = root.appendingPathComponent("projects", isDirectory: true)
-            .appendingPathComponent("\(document.project.id.description).json")
+        let package = NovelProjectShardedStorage.packageDirectory(
+            projectDirectory: root.appendingPathComponent("projects", isDirectory: true),
+            projectID: document.project.id
+        )
+        let primaryURL = NovelProjectShardedStorage.layoutURL(in: package)
         let primaryBytes = try Data(contentsOf: primaryURL)
 
         let restarted = NovelFileProjectRepository(rootDirectory: root)

@@ -1,0 +1,64 @@
+{
+  "actionTitle": "Build \"Novel\"",
+  "analyzerWarningCount": 0,
+  "analyzerWarnings": [],
+  "destination": {
+    "architecture": "arm64",
+    "deviceId": "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+    "deviceName": "iPhone 17 Pro",
+    "modelName": "iPhone 17 Pro",
+    "osBuildNumber": "23F77",
+    "osVersion": "26.5",
+    "platform": "iOS Simulator"
+  },
+  "endTime": 1792270388.457,
+  "errorCount": 0,
+  "errors": [],
+  "startTime": 1792270358.967,
+  "status": "succeeded",
+  "warningCount": 7,
+  "warnings": [
+    {
+      "className": "DVTTextDocumentLocation",
+      "issueType": "Swift Compiler Warning",
+      "message": "Passing non-Sendable parameter 'expiration' to function expecting a '@Sendable' closure",
+      "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/BackgroundGenerationKeepAlive.swift#EndingColumnNumber=88&EndingLineNumber=127&StartingColumnNumber=88&StartingLineNumber=127&Timestamp=813963158.9704159"
+    },
+    {
+      "className": "DVTTextDocumentLocation",
+      "issueType": "Swift Compiler Warning",
+      "message": "Variable 'renderedEndIndex' was written to, but never read",
+      "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlockParser.swift#EndingColumnNumber=12&EndingLineNumber=132&StartingColumnNumber=12&StartingLineNumber=132&Timestamp=813963158.9704159"
+    },
+    {
+      "className": "DVTTextDocumentLocation",
+      "issueType": "ImplicitStrongCapture",
+      "message": "'weak' ownership of capture 'item' differs from implicitly-captured strong reference in outer scope",
+      "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatVideoView.swift#EndingColumnNumber=51&EndingLineNumber=305&StartingColumnNumber=51&StartingLineNumber=305&Timestamp=813963158.9704159"
+    },
+    {
+      "className": "DVTTextDocumentLocation",
+      "issueType": "VariableNeverMutated",
+      "message": "Variable 'projectExtensionLines' was never mutated; consider changing to 'let' constant",
+      "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/NovelCreation/NovelWorkspaceImporter.swift#EndingColumnNumber=12&EndingLineNumber=580&StartingColumnNumber=12&StartingLineNumber=580&Timestamp=813963158.9704159"
+    },
+    {
+      "className": "DVTTextDocumentLocation",
+      "issueType": "NoUsage",
+      "message": "Result of call to 'withLock' is unused",
+      "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/NovelCreation/NovelPresentationSupport.swift#EndingColumnNumber=13&EndingLineNumber=1108&StartingColumnNumber=13&StartingLineNumber=1108&Timestamp=813963158.9704159"
+    },
+    {
+      "className": "DVTTextDocumentLocation",
+      "issueType": "DeprecatedDeclaration",
+      "message": "'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination.",
+      "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift#EndingColumnNumber=37&EndingLineNumber=96&StartingColumnNumber=37&StartingLineNumber=96&Timestamp=813963158.9704159"
+    },
+    {
+      "className": "DVTTextDocumentLocation",
+      "issueType": "NoUsage",
+      "message": "Value 'branch' was defined but never used; consider replacing with boolean test",
+      "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/NovelCreation/NovelProjectLifecycle.swift#EndingColumnNumber=18&EndingLineNumber=217&StartingColumnNumber=18&StartingLineNumber=217&Timestamp=813963158.9704159"
+    }
+  ]
+}

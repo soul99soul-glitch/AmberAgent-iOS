@@ -1,0 +1,13 @@
+{
+  "scope": "iosApp/iosApp/NovelCreation/Session/NovelSessionGhostwriteChapter.swift",
+  "before_sha256": "0a26687c7ffcf2fab2543b0be66ab61acc094cfcae6e491c6efd502651d24ce8",
+  "after_sha256": "f4f15da4cf47d08f99976f8bca984b63cd8650e832aead232f0fed6dd389145e",
+  "before_evidence": "/tmp/amber-phase4-novel-tests-r2-summary.json:completed same Session run still active,2 model requests,next start rejected",
+  "change": "Reuse existing300ms cancellable awaitGhostwriteCandidate loop. During terminal handoff, existing consumer owns drain/refresh and polling does not clear its failure. Require original Session startup readiness before returning a candidate. Preserve detached start-gate/pause behavior and original5s failure grace/900s absolute timeout; no new task joins,state,timers,retries.",
+  "review": "phase3_review_runtime approved existing-wait readiness predicate. Removed the proposed whole-consumer Task.value join because persistenceBlocked can keep that task open; no observer cancellation handler or new state added.",
+  "verification": [
+    "Final Main64 passed64/0/0 including long-generation terminal-handoff regression; /tmp/amber-phase4-ghostwrite-handoff-final.xcresult",
+    "Final standalone Novel full r4 passed1045/0/3 original skips,total1048; /tmp/amber-phase4-novel-tests-r4.xcresult",
+    "All1022 standalone original Novel IDs executed exactly once:1019 passed/3 original skips; two Main-only Amber Settings bridge methods passed Mainr3"
+  ]
+}

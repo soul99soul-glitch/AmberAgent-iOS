@@ -467,11 +467,16 @@ final class NovelBatchPolishTests: XCTestCase {
         await harness.session.bindToCurrentSelection()
 
         harness.session.startBatchPolish(chapterIDs: fixture.chapterIDs)
-        let didStart = await eventually { harness.session.activeRunID != nil }
+        let didStart = await eventually {
+            harness.session.activeRunID != nil &&
+                !harness.session.isStarting &&
+                !harness.workspace.isProjectSelectionBlocked
+        }
         XCTAssertTrue(didStart)
         let ownedRunID = try XCTUnwrap(harness.session.activeRunID)
 
-        await harness.workspace.selectBranch(forkID)
+        let selection = await harness.workspace.selectBranch(forkID)
+        XCTAssertEqual(selection, .selected, harness.workspace.errorMessage ?? "分支切换未被接受。")
         await harness.session.bindToCurrentSelection()
 
         XCTAssertEqual(harness.session.binding?.branchID, forkID)

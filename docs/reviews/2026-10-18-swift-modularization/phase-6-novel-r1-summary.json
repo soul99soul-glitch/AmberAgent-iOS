@@ -1,0 +1,52 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 1045,
+      "skippedTests" : 3,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Novel · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1792274423.486,
+  "passedTests" : 1045,
+  "result" : "Passed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 3,
+  "startTime" : 1792274275.161,
+  "statistics" : [
+    {
+      "subtitle" : "1 test run",
+      "title" : "1 test collected performance metrics"
+    }
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - Novel",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "59% of duration",
+      "text" : "10 longest test runs with outlier durations exceeding 2.82s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 1048
+}

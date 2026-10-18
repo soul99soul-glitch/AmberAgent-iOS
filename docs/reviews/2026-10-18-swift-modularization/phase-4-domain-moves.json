@@ -1,0 +1,6368 @@
+{
+  "scope": "Phase4 NovelCreation domain six source files reorganized into 32 duty-specific Swift files",
+  "root": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/NovelCreation",
+  "baseline": "/tmp/amber-phase4-source-baseline/files/iosApp/iosApp/NovelCreation",
+  "source_reports": [
+    {
+      "source": "NovelDomainModels.swift",
+      "baseline_lines": 2417,
+      "baseline_sha256": "cb05df3ab053ede0262ba0cec1d4a01035a25abccc05e2e5c857cd60dfa02551",
+      "normalized_nonempty_line_multiset": {
+        "missing": 0,
+        "added": 0
+      },
+      "declaration_count": 173,
+      "declarations": [
+        {
+          "source_line": 4,
+          "kind": "struct",
+          "name": "NovelIdentifier",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 18,
+          "kind": "enum",
+          "name": "NovelProjectIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 19,
+          "kind": "enum",
+          "name": "NovelBranchIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 20,
+          "kind": "enum",
+          "name": "NovelSessionIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 21,
+          "kind": "enum",
+          "name": "NovelMessageIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 22,
+          "kind": "enum",
+          "name": "NovelCandidateIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 23,
+          "kind": "enum",
+          "name": "NovelChapterIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 24,
+          "kind": "enum",
+          "name": "NovelChapterVersionIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 25,
+          "kind": "enum",
+          "name": "NovelMaterialIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 26,
+          "kind": "enum",
+          "name": "NovelMaterialRevisionIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 27,
+          "kind": "enum",
+          "name": "NovelStateSnapshotIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 28,
+          "kind": "enum",
+          "name": "NovelEventIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 29,
+          "kind": "enum",
+          "name": "NovelCheckpointIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 30,
+          "kind": "enum",
+          "name": "NovelOperationIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 31,
+          "kind": "enum",
+          "name": "NovelRunIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 32,
+          "kind": "enum",
+          "name": "NovelPendingOperationIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 33,
+          "kind": "enum",
+          "name": "NovelReceiptIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 34,
+          "kind": "enum",
+          "name": "NovelProposalIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 35,
+          "kind": "enum",
+          "name": "NovelChapterPlanIDTag",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 37,
+          "kind": "typealias",
+          "name": "NovelProjectID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 38,
+          "kind": "typealias",
+          "name": "NovelBranchID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 39,
+          "kind": "typealias",
+          "name": "NovelSessionID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 40,
+          "kind": "typealias",
+          "name": "NovelMessageID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 41,
+          "kind": "typealias",
+          "name": "NovelCandidateID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 42,
+          "kind": "typealias",
+          "name": "NovelChapterID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 43,
+          "kind": "typealias",
+          "name": "NovelChapterVersionID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 44,
+          "kind": "typealias",
+          "name": "NovelMaterialID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 45,
+          "kind": "typealias",
+          "name": "NovelMaterialRevisionID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 46,
+          "kind": "typealias",
+          "name": "NovelStateSnapshotID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 47,
+          "kind": "typealias",
+          "name": "NovelEventID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 48,
+          "kind": "typealias",
+          "name": "NovelCheckpointID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 49,
+          "kind": "typealias",
+          "name": "NovelOperationID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 50,
+          "kind": "typealias",
+          "name": "NovelRunID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 51,
+          "kind": "typealias",
+          "name": "NovelPendingOperationID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 52,
+          "kind": "typealias",
+          "name": "NovelReceiptID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 53,
+          "kind": "typealias",
+          "name": "NovelProposalID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 54,
+          "kind": "typealias",
+          "name": "NovelChapterPlanID",
+          "target": "NovelIdentifiers.swift"
+        },
+        {
+          "source_line": 56,
+          "kind": "enum",
+          "name": "NovelProjectCreationMode",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 63,
+          "kind": "enum",
+          "name": "NovelCollaborationMode",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 88,
+          "kind": "enum",
+          "name": "NovelChapterPlanStatus",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 93,
+          "kind": "struct",
+          "name": "NovelChapterPlanRecord",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 111,
+          "kind": "func",
+          "name": "canonicalDigestPayload",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 131,
+          "kind": "func",
+          "name": "injectionText",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 155,
+          "kind": "func",
+          "name": "digest",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 159,
+          "kind": "func",
+          "name": "normalizedLines",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 166,
+          "kind": "enum",
+          "name": "NovelGhostwriteReadinessIssue",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 219,
+          "kind": "enum",
+          "name": "NovelGhostwriteReadiness",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 220,
+          "kind": "func",
+          "name": "issues",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 240,
+          "kind": "func",
+          "name": "issues",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 261,
+          "kind": "func",
+          "name": "hasNonEmptyMaterial",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 309,
+          "kind": "enum",
+          "name": "NovelGenerationGranularity",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 314,
+          "kind": "enum",
+          "name": "NovelProjectModelPolicy",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 320,
+          "kind": "enum",
+          "name": "NovelModelRole",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 327,
+          "kind": "struct",
+          "name": "NovelQuickStartSeed",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 333,
+          "kind": "struct",
+          "name": "NovelUpcomingArcRecord",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 354,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 360,
+          "kind": "func",
+          "name": "normalizedBeats",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 377,
+          "kind": "func",
+          "name": "injectionText",
+          "target": "NovelWritingPlanModels.swift"
+        },
+        {
+          "source_line": 382,
+          "kind": "enum",
+          "name": "NovelMaterialKind",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 394,
+          "kind": "enum",
+          "name": "NovelInjectionMode",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 400,
+          "kind": "enum",
+          "name": "NovelBranchSyncStatus",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 405,
+          "kind": "enum",
+          "name": "NovelBranchLifecycle",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 410,
+          "kind": "enum",
+          "name": "NovelCheckpointKind",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 420,
+          "kind": "enum",
+          "name": "NovelChapterVersionKind",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 427,
+          "kind": "enum",
+          "name": "NovelSessionRole",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 433,
+          "kind": "enum",
+          "name": "NovelSessionMode",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 438,
+          "kind": "enum",
+          "name": "NovelSessionMessageKind",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 447,
+          "kind": "struct",
+          "name": "NovelAskUserPrompt",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 481,
+          "kind": "enum",
+          "name": "NovelGhostwritePlanApproval",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 488,
+          "kind": "func",
+          "name": "approvedAnswer",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 492,
+          "kind": "func",
+          "name": "approvedChapterCount",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 505,
+          "kind": "struct",
+          "name": "NovelGhostwritePlanProposal",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 538,
+          "kind": "struct",
+          "name": "NovelWorkspacePlotProposal",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 544,
+          "kind": "enum",
+          "name": "NovelWorkspacePlotApproval",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 550,
+          "kind": "enum",
+          "name": "NovelChapterRevisionApproval",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 556,
+          "kind": "struct",
+          "name": "NovelChapterRevisionProposal",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 567,
+          "kind": "enum",
+          "name": "NovelManuscriptRevertApproval",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 573,
+          "kind": "struct",
+          "name": "NovelManuscriptRevertProposal",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 584,
+          "kind": "enum",
+          "name": "NovelManuscriptDeleteApproval",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 590,
+          "kind": "struct",
+          "name": "NovelManuscriptDeleteProposal",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 599,
+          "kind": "struct",
+          "name": "NovelAskUserResponse",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 604,
+          "kind": "enum",
+          "name": "NovelSessionInteraction",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 609,
+          "kind": "enum",
+          "name": "NovelCandidateKind",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 614,
+          "kind": "enum",
+          "name": "NovelCandidateStatus",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 623,
+          "kind": "enum",
+          "name": "NovelRunStatus",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 630,
+          "kind": "enum",
+          "name": "NovelRunInterruptionReason",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 638,
+          "kind": "enum",
+          "name": "NovelPendingOperationKind",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 643,
+          "kind": "enum",
+          "name": "NovelPendingOperationStatus",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 648,
+          "kind": "enum",
+          "name": "NovelCollectionTarget",
+          "target": "NovelDomainModels.swift"
+        },
+        {
+          "source_line": 657,
+          "kind": "struct",
+          "name": "NovelProjectRecord",
+          "target": "NovelProjectRecords.swift"
+        },
+        {
+          "source_line": 712,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelProjectRecords.swift"
+        },
+        {
+          "source_line": 766,
+          "kind": "func",
+          "name": "encode",
+          "target": "NovelProjectRecords.swift"
+        },
+        {
+          "source_line": 789,
+          "kind": "func",
+          "name": "configuredModelPolicy",
+          "target": "NovelProjectRecords.swift"
+        },
+        {
+          "source_line": 798,
+          "kind": "struct",
+          "name": "NovelMaterialRecord",
+          "target": "NovelProjectRecords.swift"
+        },
+        {
+          "source_line": 822,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelProjectRecords.swift"
+        },
+        {
+          "source_line": 846,
+          "kind": "func",
+          "name": "encode",
+          "target": "NovelProjectRecords.swift"
+        },
+        {
+          "source_line": 857,
+          "kind": "struct",
+          "name": "NovelCharacterIdentity",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 863,
+          "kind": "struct",
+          "name": "NovelCharacterIdentityResolver",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 878,
+          "kind": "func",
+          "name": "isKnown",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 882,
+          "kind": "func",
+          "name": "normalize",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 887,
+          "kind": "func",
+          "name": "normalizedAliases",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 901,
+          "kind": "func",
+          "name": "isLikelyCharacterIdentityCandidate",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 928,
+          "kind": "func",
+          "name": "looksLikeChineseToponymOrInstitution",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 954,
+          "kind": "func",
+          "name": "looksLikePolityOrRegime",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 977,
+          "kind": "func",
+          "name": "looksLikeLatinToponymOrInstitution",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1025,
+          "kind": "func",
+          "name": "looksLikePureOfficeOrRoleTitle",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1052,
+          "kind": "func",
+          "name": "looksLikePersonalNameStem",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1072,
+          "kind": "func",
+          "name": "looksLikeGenericCrowdLabel",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1079,
+          "kind": "func",
+          "name": "recommendedIdentityMatch",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1109,
+          "kind": "func",
+          "name": "identityMatchScore",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1132,
+          "kind": "func",
+          "name": "sharedSuffixLength",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1145,
+          "kind": "func",
+          "name": "sharedCharacterCount",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1160,
+          "kind": "enum",
+          "name": "NovelSettingProposalFilter",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1161,
+          "kind": "func",
+          "name": "isWorthProposing",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1168,
+          "kind": "func",
+          "name": "shouldSurface",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1190,
+          "kind": "func",
+          "name": "isSceneDressingTitle",
+          "target": "NovelCharacterIdentityResolver.swift"
+        },
+        {
+          "source_line": 1201,
+          "kind": "struct",
+          "name": "NovelMaterialRevisionRecord",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1213,
+          "kind": "struct",
+          "name": "NovelForkOrigin",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1218,
+          "kind": "struct",
+          "name": "NovelCharacterIdentityClarificationRecord",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1225,
+          "kind": "struct",
+          "name": "NovelBranchRecord",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1243,
+          "kind": "struct",
+          "name": "NovelDiscussionArchiveRecord",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1253,
+          "kind": "struct",
+          "name": "NovelSessionRecord",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1262,
+          "kind": "struct",
+          "name": "NovelSessionMessageRecord",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1299,
+          "kind": "struct",
+          "name": "NovelCandidateRecord",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1353,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelSessionRecords.swift"
+        },
+        {
+          "source_line": 1400,
+          "kind": "struct",
+          "name": "NovelChapterRecord",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1411,
+          "kind": "struct",
+          "name": "NovelChapterVersionRecord",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1447,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1480,
+          "kind": "func",
+          "name": "encode",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1495,
+          "kind": "struct",
+          "name": "NovelChapterSelection",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1500,
+          "kind": "enum",
+          "name": "NovelChapterText",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1501,
+          "kind": "func",
+          "name": "appending",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1508,
+          "kind": "struct",
+          "name": "NovelStoryEventRecord",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1517,
+          "kind": "struct",
+          "name": "NovelChapterPlotModule",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1530,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1543,
+          "kind": "func",
+          "name": "encode",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1553,
+          "kind": "struct",
+          "name": "NovelStateSnapshotRecord",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1596,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1637,
+          "kind": "func",
+          "name": "encode",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1657,
+          "kind": "func",
+          "name": "mergedHighlights",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1664,
+          "kind": "func",
+          "name": "normalizedHighlights",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1686,
+          "kind": "func",
+          "name": "injectionHighlightsText",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1707,
+          "kind": "enum",
+          "name": "NovelSessionCursor",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1712,
+          "kind": "struct",
+          "name": "NovelBranchCheckpointRecord",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1727,
+          "kind": "enum",
+          "name": "NovelFactReceiptKind",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1732,
+          "kind": "struct",
+          "name": "NovelFactReceiptLink",
+          "target": "NovelManuscriptRecords.swift"
+        },
+        {
+          "source_line": 1757,
+          "kind": "struct",
+          "name": "NovelGenerationReceiptRecord",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 1802,
+          "kind": "struct",
+          "name": "NovelActiveRunRecord",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 1834,
+          "kind": "struct",
+          "name": "NovelRecoverySidecarV1",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 1884,
+          "kind": "struct",
+          "name": "NovelPendingOperationRecord",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 1955,
+          "kind": "enum",
+          "name": "NovelSettingProposalOrigin",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 1965,
+          "kind": "struct",
+          "name": "NovelSettingProposalRecord",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 2004,
+          "kind": "struct",
+          "name": "NovelWorkspacePassthroughRecord",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 2024,
+          "kind": "enum",
+          "name": "NovelOperationKind",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 2065,
+          "kind": "struct",
+          "name": "NovelAppliedOperationRecord",
+          "target": "NovelRunRecords.swift"
+        },
+        {
+          "source_line": 2074,
+          "kind": "struct",
+          "name": "NovelProjectDocumentV1",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2104,
+          "kind": "extension",
+          "name": "NovelProjectDocumentV1",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2105,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2210,
+          "kind": "func",
+          "name": "encode",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2240,
+          "kind": "extension",
+          "name": "NovelProjectDocumentV1",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2241,
+          "kind": "func",
+          "name": "chapterPlan",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2245,
+          "kind": "func",
+          "name": "confirmedChapterPlan",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2249,
+          "kind": "func",
+          "name": "upcomingArc",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2253,
+          "kind": "func",
+          "name": "activeSettingProposals",
+          "target": "NovelProjectDocument.swift"
+        },
+        {
+          "source_line": 2274,
+          "kind": "enum",
+          "name": "NovelProjectLoadAccess",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2279,
+          "kind": "struct",
+          "name": "NovelLoadedProject",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2284,
+          "kind": "struct",
+          "name": "NovelProjectSummary",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2317,
+          "kind": "struct",
+          "name": "NovelProjectSnapshot",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2373,
+          "kind": "func",
+          "name": "chapterPlan",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2377,
+          "kind": "func",
+          "name": "confirmedChapterPlan",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2381,
+          "kind": "func",
+          "name": "upcomingArc",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2385,
+          "kind": "func",
+          "name": "activeSettingProposals",
+          "target": "NovelProjectSnapshots.swift"
+        },
+        {
+          "source_line": 2406,
+          "kind": "struct",
+          "name": "NovelBranchSnapshot",
+          "target": "NovelProjectSnapshots.swift"
+        }
+      ],
+      "targets": [
+        {
+          "path": "NovelIdentifiers.swift",
+          "original_line_ranges": [
+            [
+              1,
+              55
+            ]
+          ],
+          "responsibility": "typed identifiers",
+          "current_lines": 53,
+          "current_sha256": "3832edee72ee659e7b273b6ec83a466c050f5393b09b3d7baf100249254184fe"
+        },
+        {
+          "path": "NovelWritingPlanModels.swift",
+          "original_line_ranges": [
+            [
+              56,
+              381
+            ]
+          ],
+          "responsibility": "project modes, chapter plan, readiness and upcoming arc",
+          "current_lines": 328,
+          "current_sha256": "c27fa2283555be89b83beb87706c9b41037a084a38b7adefd794fc38414c741f"
+        },
+        {
+          "path": "NovelDomainModels.swift",
+          "original_line_ranges": [
+            [
+              382,
+              656
+            ]
+          ],
+          "responsibility": "shared domain enums and interaction contracts",
+          "current_lines": 276,
+          "current_sha256": "968fda899bca6d2f8785a9beb7367ee13b6999becc618cbc3bf01f43778bf17c"
+        },
+        {
+          "path": "NovelProjectRecords.swift",
+          "original_line_ranges": [
+            [
+              657,
+              856
+            ]
+          ],
+          "responsibility": "project and material records",
+          "current_lines": 201,
+          "current_sha256": "98fb66a5da32c7513af399181a1f9db58aa9d87278b07e04abd8cc88dcf2140f"
+        },
+        {
+          "path": "NovelCharacterIdentityResolver.swift",
+          "original_line_ranges": [
+            [
+              857,
+              1200
+            ]
+          ],
+          "responsibility": "character identity normalization and proposal filtering",
+          "current_lines": 345,
+          "current_sha256": "e56ed6f049cda27ce02563bec9f3ad18eb12a1e7ef3bf779c0625edadf0c9530"
+        },
+        {
+          "path": "NovelSessionRecords.swift",
+          "original_line_ranges": [
+            [
+              1201,
+              1399
+            ]
+          ],
+          "responsibility": "session, proposal, and candidate records",
+          "current_lines": 200,
+          "current_sha256": "f9f32efcfb447a6925489da24472181dc4fc71c4602a6ec948c68d135d6fd30e"
+        },
+        {
+          "path": "NovelManuscriptRecords.swift",
+          "original_line_ranges": [
+            [
+              1400,
+              1756
+            ]
+          ],
+          "responsibility": "chapter, state snapshot, and checkpoint records",
+          "current_lines": 358,
+          "current_sha256": "7539ca68148236d9a295d67f09a16e1d1c2da0557999fa8445cb5ab1f1f42b18"
+        },
+        {
+          "path": "NovelRunRecords.swift",
+          "original_line_ranges": [
+            [
+              1757,
+              2073
+            ]
+          ],
+          "responsibility": "run, pending operation, receipt, and ledger records",
+          "current_lines": 318,
+          "current_sha256": "c5d1c90f514b3c7dbfad19e588bf2b167a79ff8945dea25f70ec6a25215ec00c"
+        },
+        {
+          "path": "NovelProjectDocument.swift",
+          "original_line_ranges": [
+            [
+              2074,
+              2273
+            ]
+          ],
+          "responsibility": "single document aggregate and Codable defaults",
+          "current_lines": 201,
+          "current_sha256": "5cb208631d47f1b3c159451989a859bf8a79032c25cba34606365f56de479dc4"
+        },
+        {
+          "path": "NovelProjectSnapshots.swift",
+          "original_line_ranges": [
+            [
+              2274,
+              2417
+            ]
+          ],
+          "responsibility": "loaded project and read-only snapshots",
+          "current_lines": 146,
+          "current_sha256": "deb3382a1423d877ea8ee17ec5a7db7369fdce53157da02100143a27805540e3"
+        }
+      ],
+      "omitted_delimiters_or_blank_lines": []
+    },
+    {
+      "source": "NovelActions.swift",
+      "baseline_lines": 2131,
+      "baseline_sha256": "be37e483f6846e76587c8cc398cbbd0b9460dd3fa90953635c2c5ccef9a46308",
+      "normalized_nonempty_line_multiset": {
+        "missing": 0,
+        "added": 0
+      },
+      "declaration_count": 167,
+      "declarations": [
+        {
+          "source_line": 4,
+          "kind": "struct",
+          "name": "NovelMutationContext",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 12,
+          "kind": "struct",
+          "name": "NovelCreateProjectCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 25,
+          "kind": "struct",
+          "name": "NovelRenameProjectCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 31,
+          "kind": "struct",
+          "name": "NovelReviseMaterialCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 68,
+          "kind": "struct",
+          "name": "NovelDeleteMaterialCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 74,
+          "kind": "struct",
+          "name": "NovelSetModelPolicyCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 93,
+          "kind": "enum",
+          "name": "NovelSettingProposalResolution",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 107,
+          "kind": "struct",
+          "name": "NovelResolveSettingProposalCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 114,
+          "kind": "enum",
+          "name": "NovelBranchMaterialOverrideChange",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 126,
+          "kind": "struct",
+          "name": "NovelSetBranchMaterialOverrideCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 134,
+          "kind": "struct",
+          "name": "NovelSetMainBranchCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 140,
+          "kind": "struct",
+          "name": "NovelSetPolishPreferenceCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 146,
+          "kind": "struct",
+          "name": "NovelSetCollaborationModeCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 153,
+          "kind": "struct",
+          "name": "NovelSetPauseGhostwriteOnBlockingContinuityCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 159,
+          "kind": "struct",
+          "name": "NovelUpsertChapterPlanCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 173,
+          "kind": "struct",
+          "name": "NovelClearChapterPlanCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 179,
+          "kind": "struct",
+          "name": "NovelUpsertUpcomingArcCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 186,
+          "kind": "struct",
+          "name": "NovelClearUpcomingArcCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 192,
+          "kind": "struct",
+          "name": "NovelForkBranchCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 202,
+          "kind": "struct",
+          "name": "NovelRenameBranchCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 209,
+          "kind": "struct",
+          "name": "NovelDeleteBranchCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 215,
+          "kind": "struct",
+          "name": "NovelUndoBranchHeadCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 222,
+          "kind": "struct",
+          "name": "NovelConfirmedDiscussionDecision",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 230,
+          "kind": "struct",
+          "name": "NovelArchiveDiscussionCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 242,
+          "kind": "struct",
+          "name": "NovelClarifyCharacterIdentityCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 252,
+          "kind": "struct",
+          "name": "NovelCloneCandidateCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 260,
+          "kind": "struct",
+          "name": "NovelAdoptPolishCandidateCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 271,
+          "kind": "struct",
+          "name": "NovelAbandonPolishTransactionCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 280,
+          "kind": "struct",
+          "name": "NovelDiscardChapterCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 287,
+          "kind": "struct",
+          "name": "NovelRestoreChapterCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 296,
+          "kind": "struct",
+          "name": "NovelDeleteChapterFromManuscriptCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 304,
+          "kind": "struct",
+          "name": "NovelRestoreChapterVersionCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 314,
+          "kind": "struct",
+          "name": "NovelCancelRunCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 321,
+          "kind": "enum",
+          "name": "NovelCollectionSource",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 326,
+          "kind": "struct",
+          "name": "NovelCollectCandidateCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 343,
+          "kind": "struct",
+          "name": "NovelSaveManualEditCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 355,
+          "kind": "struct",
+          "name": "NovelSyncManualEditsCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 367,
+          "kind": "struct",
+          "name": "NovelRetryPendingCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 373,
+          "kind": "struct",
+          "name": "NovelImportProjectCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 380,
+          "kind": "struct",
+          "name": "NovelInjectionPreviewRequest",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 392,
+          "kind": "struct",
+          "name": "NovelInjectionPreviewSnapshot",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 405,
+          "kind": "struct",
+          "name": "NovelDeleteProjectCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 410,
+          "kind": "struct",
+          "name": "NovelRestorePreviousProjectCommand",
+          "target": "NovelCommands.swift"
+        },
+        {
+          "source_line": 415,
+          "kind": "enum",
+          "name": "NovelAction",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 595,
+          "kind": "func",
+          "name": "canonicalPayloadSHA256",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 866,
+          "kind": "extension",
+          "name": "NovelCreateProjectCommand",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 867,
+          "kind": "func",
+          "name": "canonicalPayloadSHA256",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 872,
+          "kind": "extension",
+          "name": "NovelCollectCandidateCommand",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 873,
+          "kind": "func",
+          "name": "canonicalPayloadSHA256",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 878,
+          "kind": "extension",
+          "name": "NovelSaveManualEditCommand",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 879,
+          "kind": "func",
+          "name": "canonicalPayloadSHA256",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 884,
+          "kind": "extension",
+          "name": "NovelSyncManualEditsCommand",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 885,
+          "kind": "func",
+          "name": "canonicalPayloadSHA256",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 890,
+          "kind": "extension",
+          "name": "NovelRetryPendingCommand",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 891,
+          "kind": "func",
+          "name": "canonicalPayloadSHA256",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 896,
+          "kind": "enum",
+          "name": "NovelCanonicalActionPayload",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 897,
+          "kind": "struct",
+          "name": "CreateProject",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 909,
+          "kind": "struct",
+          "name": "RenameProject",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 914,
+          "kind": "struct",
+          "name": "ReviseMaterial",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 926,
+          "kind": "struct",
+          "name": "DeleteMaterial",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 931,
+          "kind": "struct",
+          "name": "SetModelPolicy",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 937,
+          "kind": "struct",
+          "name": "ResolveSettingProposal",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 943,
+          "kind": "struct",
+          "name": "SetBranchMaterialOverride",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 950,
+          "kind": "struct",
+          "name": "SetMainBranch",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 955,
+          "kind": "struct",
+          "name": "SetPolishPreference",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 960,
+          "kind": "struct",
+          "name": "SetCollaborationMode",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 966,
+          "kind": "struct",
+          "name": "SetPauseGhostwriteOnBlockingContinuity",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 971,
+          "kind": "struct",
+          "name": "UpsertChapterPlan",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 984,
+          "kind": "struct",
+          "name": "ClearChapterPlan",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 989,
+          "kind": "struct",
+          "name": "UpsertUpcomingArc",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 995,
+          "kind": "struct",
+          "name": "ClearUpcomingArc",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1000,
+          "kind": "struct",
+          "name": "ForkBranch",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1009,
+          "kind": "struct",
+          "name": "RenameBranch",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1015,
+          "kind": "struct",
+          "name": "DeleteBranch",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1020,
+          "kind": "struct",
+          "name": "UndoBranchHead",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1025,
+          "kind": "struct",
+          "name": "ArchiveDiscussion",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1036,
+          "kind": "struct",
+          "name": "ClarifyCharacterIdentity",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1045,
+          "kind": "struct",
+          "name": "CloneCandidate",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1052,
+          "kind": "struct",
+          "name": "AdoptPolishCandidate",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1061,
+          "kind": "struct",
+          "name": "AbandonPolishTransaction",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1067,
+          "kind": "struct",
+          "name": "ChapterDiscardScope",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1073,
+          "kind": "struct",
+          "name": "DeleteChapterFromManuscript",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1080,
+          "kind": "struct",
+          "name": "RestoreChapterVersion",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1088,
+          "kind": "struct",
+          "name": "CancelRun",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1094,
+          "kind": "struct",
+          "name": "CollectCandidate",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1152,
+          "kind": "struct",
+          "name": "SaveManualEdit",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1162,
+          "kind": "struct",
+          "name": "SyncManualEdits",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1170,
+          "kind": "struct",
+          "name": "RetryPending",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1175,
+          "kind": "struct",
+          "name": "ImportProject",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1181,
+          "kind": "enum",
+          "name": "ImportPolicy",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1187,
+          "kind": "struct",
+          "name": "DeleteProject",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1191,
+          "kind": "struct",
+          "name": "RestorePreviousProject",
+          "target": "NovelActions.swift"
+        },
+        {
+          "source_line": 1233,
+          "kind": "enum",
+          "name": "NovelOutcome",
+          "target": "NovelOutcomes.swift"
+        },
+        {
+          "source_line": 1457,
+          "kind": "enum",
+          "name": "NovelSnapshotScope",
+          "target": "NovelOutcomes.swift"
+        },
+        {
+          "source_line": 1468,
+          "kind": "enum",
+          "name": "NovelSnapshot",
+          "target": "NovelOutcomes.swift"
+        },
+        {
+          "source_line": 1479,
+          "kind": "enum",
+          "name": "NovelRunKind",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1504,
+          "kind": "struct",
+          "name": "NovelRunRequest",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1587,
+          "kind": "func",
+          "name": "canonicalPayloadSHA256",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1618,
+          "kind": "struct",
+          "name": "NovelCanonicalRunPayload",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1640,
+          "kind": "struct",
+          "name": "NovelRunReceipt",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1647,
+          "kind": "struct",
+          "name": "NovelSessionMessageSnapshot",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1653,
+          "kind": "struct",
+          "name": "NovelFailure",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1659,
+          "kind": "struct",
+          "name": "NovelDiscussionArchiveDraftDecision",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1666,
+          "kind": "struct",
+          "name": "NovelDiscussionArchiveDraft",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1678,
+          "kind": "struct",
+          "name": "NovelGhostwriteChapterAdjudicationResult",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1688,
+          "kind": "struct",
+          "name": "NovelRun",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1693,
+          "kind": "enum",
+          "name": "NovelRunEvent",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1706,
+          "kind": "struct",
+          "name": "NovelProjectMutationEvent",
+          "target": "NovelRunContract.swift"
+        },
+        {
+          "source_line": 1722,
+          "kind": "protocol",
+          "name": "NovelCreation",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1723,
+          "kind": "func",
+          "name": "snapshot",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1724,
+          "kind": "func",
+          "name": "perform",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1725,
+          "kind": "func",
+          "name": "applyWorkspacePlot",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1731,
+          "kind": "func",
+          "name": "applyWorkspacePlot",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1738,
+          "kind": "func",
+          "name": "applyWorkspaceFastForwardPlot",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1745,
+          "kind": "func",
+          "name": "applyWorkspacePlotRelink",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1749,
+          "kind": "func",
+          "name": "applyWorkspacePlotAcceptStale",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1754,
+          "kind": "func",
+          "name": "materializeWorktreeDrafts",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1756,
+          "kind": "func",
+          "name": "worktreeDraftBody",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1760,
+          "kind": "func",
+          "name": "worktreeManifestExists",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1764,
+          "kind": "func",
+          "name": "mutationEvents",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1765,
+          "kind": "func",
+          "name": "start",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1768,
+          "kind": "func",
+          "name": "interruptRun",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1769,
+          "kind": "func",
+          "name": "interruptForBackground",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1776,
+          "kind": "func",
+          "name": "resumeDetachedGenerationRuns",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1777,
+          "kind": "func",
+          "name": "retryPendingTerminal",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1781,
+          "kind": "func",
+          "name": "cancelInFlightBackgroundMutations",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1782,
+          "kind": "func",
+          "name": "distillDiscussionArchive",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1788,
+          "kind": "func",
+          "name": "planContinuityAudit",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1793,
+          "kind": "func",
+          "name": "auditContinuity",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1799,
+          "kind": "func",
+          "name": "auditContinuityIncludingCandidate",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1806,
+          "kind": "func",
+          "name": "repairContinuity",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1813,
+          "kind": "func",
+          "name": "acceptChapterPlan",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1820,
+          "kind": "func",
+          "name": "adjudicateAndCollectGhostwriteChapter",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1827,
+          "kind": "func",
+          "name": "proposeAndConfirmNextChapterPlan",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1834,
+          "kind": "func",
+          "name": "proposeNextChapterPlanDraft",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1841,
+          "kind": "func",
+          "name": "loadGhostwriteBatchProgress",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1845,
+          "kind": "func",
+          "name": "saveGhostwriteBatchProgress",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1846,
+          "kind": "func",
+          "name": "removeGhostwriteBatchProgress",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1852,
+          "kind": "extension",
+          "name": "NovelCreation",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1853,
+          "kind": "func",
+          "name": "applyWorkspacePlot",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1866,
+          "kind": "func",
+          "name": "applyWorkspacePlot",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1879,
+          "kind": "func",
+          "name": "applyWorkspaceFastForwardPlot",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1894,
+          "kind": "func",
+          "name": "applyWorkspacePlotRelink",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1903,
+          "kind": "func",
+          "name": "applyWorkspacePlotAcceptStale",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1912,
+          "kind": "func",
+          "name": "materializeWorktreeDrafts",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1916,
+          "kind": "func",
+          "name": "worktreeDraftBody",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1925,
+          "kind": "func",
+          "name": "worktreeManifestExists",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1930,
+          "kind": "func",
+          "name": "mutationEvents",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1934,
+          "kind": "func",
+          "name": "loadGhostwriteBatchProgress",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1943,
+          "kind": "func",
+          "name": "saveGhostwriteBatchProgress",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1947,
+          "kind": "func",
+          "name": "removeGhostwriteBatchProgress",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1955,
+          "kind": "func",
+          "name": "resumeDetachedGenerationRuns",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1959,
+          "kind": "func",
+          "name": "cancelInFlightBackgroundMutations",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1963,
+          "kind": "func",
+          "name": "distillDiscussionArchive",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1971,
+          "kind": "func",
+          "name": "planContinuityAudit",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1978,
+          "kind": "func",
+          "name": "auditContinuity",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1985,
+          "kind": "func",
+          "name": "auditContinuityIncludingCandidate",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 1994,
+          "kind": "func",
+          "name": "repairContinuity",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2003,
+          "kind": "func",
+          "name": "acceptChapterPlan",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2011,
+          "kind": "func",
+          "name": "adjudicateAndCollectGhostwriteChapter",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2020,
+          "kind": "func",
+          "name": "proposeAndConfirmNextChapterPlan",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2029,
+          "kind": "func",
+          "name": "proposeNextChapterPlanDraft",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2038,
+          "kind": "func",
+          "name": "interruptRun",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2042,
+          "kind": "func",
+          "name": "interruptForBackground",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2050,
+          "kind": "func",
+          "name": "interruptForBackground",
+          "target": "NovelCreationContract.swift"
+        },
+        {
+          "source_line": 2059,
+          "kind": "enum",
+          "name": "NovelError",
+          "target": "NovelError.swift"
+        },
+        {
+          "source_line": 2094,
+          "kind": "extension",
+          "name": "NovelError",
+          "target": "NovelError.swift"
+        }
+      ],
+      "targets": [
+        {
+          "path": "NovelCommands.swift",
+          "original_line_ranges": [
+            [
+              1,
+              414
+            ]
+          ],
+          "responsibility": "mutation command value types",
+          "current_lines": 412,
+          "current_sha256": "0b13328944803408babad2abd9c8de753caf536bed10b7d832275763cef4a8e8"
+        },
+        {
+          "path": "NovelActions.swift",
+          "original_line_ranges": [
+            [
+              415,
+              1232
+            ]
+          ],
+          "responsibility": "action dispatch and canonical action payload",
+          "current_lines": 820,
+          "current_sha256": "5546bcd84bd5d047900c99eec0d45e82cc4ff68db7f17edf17dae0b8fe378c21"
+        },
+        {
+          "path": "NovelOutcomes.swift",
+          "original_line_ranges": [
+            [
+              1233,
+              1478
+            ]
+          ],
+          "responsibility": "outcomes and snapshot contracts",
+          "current_lines": 247,
+          "current_sha256": "d914fb5a4e10b2795203bcc582031f7a329dbc1812e10d46c6eddf1df91a852c"
+        },
+        {
+          "path": "NovelRunContract.swift",
+          "original_line_ranges": [
+            [
+              1479,
+              1721
+            ]
+          ],
+          "responsibility": "run request, canonical run payload, receipts, events",
+          "current_lines": 245,
+          "current_sha256": "6c14a9064ffd1760e978d787484caadb0b3dfb825aa42bb0c8ece0d593e3eb5f"
+        },
+        {
+          "path": "NovelCreationContract.swift",
+          "original_line_ranges": [
+            [
+              1722,
+              2058
+            ]
+          ],
+          "responsibility": "creation protocol and default capabilities",
+          "current_lines": 338,
+          "current_sha256": "2b9ee54c68d37148bbdb18ecf32a17fe6bb9a03fd9dbf05c84881f732184d0d1"
+        },
+        {
+          "path": "NovelError.swift",
+          "original_line_ranges": [
+            [
+              2059,
+              2131
+            ]
+          ],
+          "responsibility": "domain error and localized description",
+          "current_lines": 75,
+          "current_sha256": "474a37aac723f1b1d17758dcb2ba0ba9f536160e60f9683cb2297b2a047632aa"
+        }
+      ],
+      "omitted_delimiters_or_blank_lines": []
+    },
+    {
+      "source": "NovelStructuredOutput.swift",
+      "baseline_lines": 2407,
+      "baseline_sha256": "313dbd41464fec3f74e7323573467ea182aef90bb507a05bce04d07fba032a17",
+      "normalized_nonempty_line_multiset": {
+        "missing": 0,
+        "added": 0
+      },
+      "declaration_count": 144,
+      "declarations": [
+        {
+          "source_line": 4,
+          "kind": "struct",
+          "name": "NovelQuickStartSuggestionV1",
+          "target": "NovelQuickStartContracts.swift"
+        },
+        {
+          "source_line": 16,
+          "kind": "struct",
+          "name": "NovelQuickStartSuggestionsV2",
+          "target": "NovelQuickStartContracts.swift"
+        },
+        {
+          "source_line": 28,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelQuickStartContracts.swift"
+        },
+        {
+          "source_line": 55,
+          "kind": "enum",
+          "name": "NovelCharacterRelatedSuggestionKind",
+          "target": "NovelQuickStartContracts.swift"
+        },
+        {
+          "source_line": 61,
+          "kind": "struct",
+          "name": "NovelCharacterRelatedSuggestionV1",
+          "target": "NovelQuickStartContracts.swift"
+        },
+        {
+          "source_line": 67,
+          "kind": "struct",
+          "name": "NovelCharacterProposalV1",
+          "target": "NovelQuickStartContracts.swift"
+        },
+        {
+          "source_line": 78,
+          "kind": "enum",
+          "name": "NovelQuickStartStreamingPresentation",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 79,
+          "kind": "func",
+          "name": "markdown",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 106,
+          "kind": "func",
+          "name": "characterProposalMarkdown",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 133,
+          "kind": "func",
+          "name": "section",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 142,
+          "kind": "func",
+          "name": "section",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 155,
+          "kind": "func",
+          "name": "stringValue",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 171,
+          "kind": "func",
+          "name": "objectRange",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 185,
+          "kind": "func",
+          "name": "objectRanges",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 237,
+          "kind": "func",
+          "name": "containerRange",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 272,
+          "kind": "func",
+          "name": "unescapedKeyRange",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 298,
+          "kind": "func",
+          "name": "skipWhitespace",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 308,
+          "kind": "func",
+          "name": "decodeJSONString",
+          "target": "NovelQuickStartStreamingPresentation.swift"
+        },
+        {
+          "source_line": 359,
+          "kind": "struct",
+          "name": "NovelStateEventV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 367,
+          "kind": "struct",
+          "name": "NovelCharacterStateFactV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 375,
+          "kind": "struct",
+          "name": "NovelRelationshipFactV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 384,
+          "kind": "enum",
+          "name": "NovelForeshadowingStatusV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 391,
+          "kind": "struct",
+          "name": "NovelForeshadowingFactV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 399,
+          "kind": "struct",
+          "name": "NovelSettingProposalDraftV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 406,
+          "kind": "struct",
+          "name": "NovelStateDeltaV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 420,
+          "kind": "struct",
+          "name": "NovelStateRebuildV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 434,
+          "kind": "enum",
+          "name": "NovelPolishDifferenceCategoryV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 446,
+          "kind": "struct",
+          "name": "NovelPolishDifferenceV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 454,
+          "kind": "struct",
+          "name": "NovelPolishDriftV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 462,
+          "kind": "struct",
+          "name": "NovelChapterPlanAcceptanceV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 490,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 511,
+          "kind": "struct",
+          "name": "NovelChapterPlanProposalV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 543,
+          "kind": "enum",
+          "name": "NovelChapterPlanMarkdown",
+          "target": "NovelChapterPlanMarkdown.swift"
+        },
+        {
+          "source_line": 544,
+          "kind": "func",
+          "name": "looksLike",
+          "target": "NovelChapterPlanMarkdown.swift"
+        },
+        {
+          "source_line": 550,
+          "kind": "func",
+          "name": "parse",
+          "target": "NovelChapterPlanMarkdown.swift"
+        },
+        {
+          "source_line": 588,
+          "kind": "enum",
+          "name": "Section",
+          "target": "NovelChapterPlanMarkdown.swift"
+        },
+        {
+          "source_line": 621,
+          "kind": "func",
+          "name": "prose",
+          "target": "NovelChapterPlanMarkdown.swift"
+        },
+        {
+          "source_line": 628,
+          "kind": "func",
+          "name": "listItems",
+          "target": "NovelChapterPlanMarkdown.swift"
+        },
+        {
+          "source_line": 644,
+          "kind": "enum",
+          "name": "NovelContinuityIssueCategoryV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 658,
+          "kind": "enum",
+          "name": "NovelContinuityIssueSeverityV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 666,
+          "kind": "struct",
+          "name": "NovelContinuityReferenceV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 672,
+          "kind": "struct",
+          "name": "NovelContinuityIssueV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 681,
+          "kind": "struct",
+          "name": "NovelContinuityAuditV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 691,
+          "kind": "struct",
+          "name": "NovelContinuityRepairPatchV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 697,
+          "kind": "struct",
+          "name": "NovelContinuityRepairV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 707,
+          "kind": "struct",
+          "name": "NovelChapterAdjudicationV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 733,
+          "kind": "enum",
+          "name": "CodingKeys",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 751,
+          "kind": "struct",
+          "name": "NovelDiscussionArchiveDecisionV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 757,
+          "kind": "struct",
+          "name": "NovelDiscussionArchiveV1",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 765,
+          "kind": "enum",
+          "name": "NovelStructuredOutputErrorCategory",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 778,
+          "kind": "struct",
+          "name": "NovelStructuredOutputFailure",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 784,
+          "kind": "extension",
+          "name": "NovelStructuredOutputFailure",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 788,
+          "kind": "enum",
+          "name": "NovelPolishDriftVerdict",
+          "target": "NovelStructuredContracts.swift"
+        },
+        {
+          "source_line": 799,
+          "kind": "enum",
+          "name": "NovelStructuredOutputDecoder",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 800,
+          "kind": "func",
+          "name": "decodeCharacterProposal",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 804,
+          "kind": "func",
+          "name": "decodeCharacterProposal",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 815,
+          "kind": "func",
+          "name": "decodeQuickStartSuggestions",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 821,
+          "kind": "func",
+          "name": "decodeQuickStartSuggestions",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 834,
+          "kind": "func",
+          "name": "decodeStateDelta",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 838,
+          "kind": "func",
+          "name": "decodeStateDelta",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 848,
+          "kind": "func",
+          "name": "decodeStateRebuild",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 852,
+          "kind": "func",
+          "name": "decodeStateRebuild",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 866,
+          "kind": "func",
+          "name": "decodeFromObjectCandidates",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 886,
+          "kind": "func",
+          "name": "decodePolishDrift",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 890,
+          "kind": "func",
+          "name": "decodePolishDrift",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 898,
+          "kind": "func",
+          "name": "decodeChapterPlanAcceptance",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 902,
+          "kind": "func",
+          "name": "decodeChapterPlanAcceptance",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 913,
+          "kind": "func",
+          "name": "decodeChapterAdjudication",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 917,
+          "kind": "func",
+          "name": "decodeChapterAdjudication",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 928,
+          "kind": "func",
+          "name": "decodeChapterPlanProposal",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 938,
+          "kind": "func",
+          "name": "decodeChapterPlanProposal",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 949,
+          "kind": "func",
+          "name": "decodeContinuityRepair",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 953,
+          "kind": "func",
+          "name": "decodeContinuityRepair",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 964,
+          "kind": "func",
+          "name": "decodeContinuityAudit",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 968,
+          "kind": "func",
+          "name": "decodeContinuityAudit",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 979,
+          "kind": "func",
+          "name": "decodeDiscussionArchive",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 983,
+          "kind": "func",
+          "name": "decodeDiscussionArchive",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 994,
+          "kind": "func",
+          "name": "polishDriftVerdict",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 998,
+          "kind": "func",
+          "name": "polishDriftVerdict",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 1013,
+          "kind": "func",
+          "name": "decode",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 1030,
+          "kind": "func",
+          "name": "map",
+          "target": "NovelStructuredOutput.swift"
+        },
+        {
+          "source_line": 1060,
+          "kind": "enum",
+          "name": "NovelStructuredOutputValidation",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1061,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1092,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1135,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1151,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1165,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1191,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1230,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1285,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1334,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1355,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1389,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1423,
+          "kind": "func",
+          "name": "stateFacts",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1481,
+          "kind": "func",
+          "name": "schemaVersion",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1491,
+          "kind": "func",
+          "name": "required",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1501,
+          "kind": "func",
+          "name": "identifier",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1526,
+          "kind": "func",
+          "name": "uniqueNames",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1541,
+          "kind": "func",
+          "name": "normalized",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1545,
+          "kind": "func",
+          "name": "failure",
+          "target": "NovelStructuredOutputValidation.swift"
+        },
+        {
+          "source_line": 1554,
+          "kind": "enum",
+          "name": "StrictJSON",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1555,
+          "kind": "typealias",
+          "name": "Object",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1557,
+          "kind": "func",
+          "name": "rootObject",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1584,
+          "kind": "func",
+          "name": "objectCandidateDataList",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1625,
+          "kind": "func",
+          "name": "singleObjectData",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1632,
+          "kind": "func",
+          "name": "balancedObjectEnd",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1670,
+          "kind": "func",
+          "name": "validateQuickStartSuggestions",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1772,
+          "kind": "func",
+          "name": "validateCharacterProposal",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1808,
+          "kind": "func",
+          "name": "validateStateDelta",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1829,
+          "kind": "func",
+          "name": "validateStateRebuild",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1849,
+          "kind": "func",
+          "name": "validatePolishDrift",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1870,
+          "kind": "func",
+          "name": "validateChapterPlanAcceptance",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1920,
+          "kind": "func",
+          "name": "validateChapterPlanProposal",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1946,
+          "kind": "func",
+          "name": "validateContinuityRepair",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1963,
+          "kind": "func",
+          "name": "validateContinuityAudit",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 1999,
+          "kind": "func",
+          "name": "validateChapterAdjudication",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2043,
+          "kind": "func",
+          "name": "validateDiscussionArchive",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2064,
+          "kind": "func",
+          "name": "path",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2071,
+          "kind": "func",
+          "name": "eventArray",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2085,
+          "kind": "func",
+          "name": "characterArray",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2099,
+          "kind": "func",
+          "name": "relationshipArray",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2116,
+          "kind": "func",
+          "name": "foreshadowingArray",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2134,
+          "kind": "func",
+          "name": "proposalArray",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2147,
+          "kind": "func",
+          "name": "objectArray",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2172,
+          "kind": "func",
+          "name": "stringArray",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2181,
+          "kind": "func",
+          "name": "string",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2187,
+          "kind": "func",
+          "name": "nullableString",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2193,
+          "kind": "func",
+          "name": "integer",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2202,
+          "kind": "func",
+          "name": "boolean",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2209,
+          "kind": "func",
+          "name": "enumString",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2224,
+          "kind": "func",
+          "name": "schemaVersion",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2240,
+          "kind": "func",
+          "name": "keys",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2265,
+          "kind": "func",
+          "name": "typeFailure",
+          "target": "NovelStrictJSON.swift"
+        },
+        {
+          "source_line": 2280,
+          "kind": "struct",
+          "name": "JSONDuplicateKeyValidator",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2284,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2293,
+          "kind": "func",
+          "name": "parseValue",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2308,
+          "kind": "func",
+          "name": "parseObject",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2334,
+          "kind": "func",
+          "name": "parseArray",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2349,
+          "kind": "func",
+          "name": "parseString",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2370,
+          "kind": "func",
+          "name": "parsePrimitive",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2380,
+          "kind": "func",
+          "name": "skipWhitespace",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2386,
+          "kind": "func",
+          "name": "consume",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2396,
+          "kind": "func",
+          "name": "isWhitespace",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        },
+        {
+          "source_line": 2400,
+          "kind": "func",
+          "name": "malformed",
+          "target": "NovelJSONDuplicateKeyValidator.swift"
+        }
+      ],
+      "targets": [
+        {
+          "path": "NovelQuickStartContracts.swift",
+          "original_line_ranges": [
+            [
+              1,
+              77
+            ]
+          ],
+          "responsibility": "versioned quick-start and character proposal DTOs",
+          "current_lines": 76,
+          "current_sha256": "59ea14226456bdb0a7d141c457fe72ebd2b1b93d6123501b1074d3370208c6e9"
+        },
+        {
+          "path": "NovelQuickStartStreamingPresentation.swift",
+          "original_line_ranges": [
+            [
+              78,
+              358
+            ]
+          ],
+          "responsibility": "partial JSON display without trusted decoding",
+          "current_lines": 282,
+          "current_sha256": "28d0d2c5e8db5d1efbbebed9c67b5aeacfb3a3f2d0fe78dd9be216b511a5ef97"
+        },
+        {
+          "path": "NovelStructuredContracts.swift",
+          "original_line_ranges": [
+            [
+              359,
+              542
+            ],
+            [
+              644,
+              798
+            ]
+          ],
+          "responsibility": "versioned structured output DTOs and errors",
+          "current_lines": 341,
+          "current_sha256": "f6a010c68b6805d32d8ebab1a63659b489588e034129b3eef306d63a45533922"
+        },
+        {
+          "path": "NovelChapterPlanMarkdown.swift",
+          "original_line_ranges": [
+            [
+              543,
+              643
+            ]
+          ],
+          "responsibility": "chapter-plan Markdown fallback parser",
+          "current_lines": 102,
+          "current_sha256": "91f420f17d1e7917099dc026a340f6a636eb23c3ad0fdfa2a5a74117f5909504"
+        },
+        {
+          "path": "NovelStructuredOutput.swift",
+          "original_line_ranges": [
+            [
+              799,
+              1059
+            ]
+          ],
+          "responsibility": "trusted decode dispatch and error mapping",
+          "current_lines": 262,
+          "current_sha256": "3953612df0126194011ba03d69565aab6a16656e1160147946dac7214f84c5a1"
+        },
+        {
+          "path": "NovelStructuredOutputValidation.swift",
+          "original_line_ranges": [
+            [
+              1060,
+              1553
+            ]
+          ],
+          "responsibility": "semantic validation",
+          "current_lines": 495,
+          "current_sha256": "cd42ce16046ab66f09515dec5985345715e15b7c7d8686de236cebf2e68047dd"
+        },
+        {
+          "path": "NovelStrictJSON.swift",
+          "original_line_ranges": [
+            [
+              1554,
+              2279
+            ]
+          ],
+          "responsibility": "strict JSON shape, key and type validation",
+          "current_lines": 729,
+          "current_sha256": "b0ff66c41e251cd09bfb6e0925185d1fca7455017503f437cf882e20987f2e66"
+        },
+        {
+          "path": "NovelJSONDuplicateKeyValidator.swift",
+          "original_line_ranges": [
+            [
+              2280,
+              2407
+            ]
+          ],
+          "responsibility": "duplicate-key byte parser",
+          "current_lines": 130,
+          "current_sha256": "e15d6ebadccef7ce0a42753403f556d6d0549744b9ebbdd86c40e910b57004f7"
+        }
+      ],
+      "omitted_delimiters_or_blank_lines": []
+    },
+    {
+      "source": "NovelDocumentValidator.swift",
+      "baseline_lines": 3012,
+      "baseline_sha256": "069f6eb7ae4e5af9e6c0a08dfc83fcad9260d520f0b97fa6580b85669166b461",
+      "normalized_nonempty_line_multiset": {
+        "missing": 0,
+        "added": 0
+      },
+      "declaration_count": 43,
+      "declarations": [
+        {
+          "source_line": 4,
+          "kind": "struct",
+          "name": "NovelValidatedProjectTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 17,
+          "kind": "enum",
+          "name": "NovelDocumentValidator",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 18,
+          "kind": "func",
+          "name": "validate",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 46,
+          "kind": "func",
+          "name": "validateRecovery",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 77,
+          "kind": "func",
+          "name": "validateTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 89,
+          "kind": "func",
+          "name": "validateTransitionFromValidatedCurrent",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 181,
+          "kind": "func",
+          "name": "validateNewUndoTransitions",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 206,
+          "kind": "func",
+          "name": "isSHA256",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 217,
+          "kind": "func",
+          "name": "quietRestDroppedCompletedOriginRun",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 224,
+          "kind": "func",
+          "name": "sha256",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 230,
+          "kind": "func",
+          "name": "validateFactAttemptTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 287,
+          "kind": "func",
+          "name": "validateProject",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 387,
+          "kind": "func",
+          "name": "validateMaterials",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 468,
+          "kind": "func",
+          "name": "validateSessionsAndBranches",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 652,
+          "kind": "func",
+          "name": "validateSessionInteractions",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 687,
+          "kind": "func",
+          "name": "validateChaptersAndState",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 764,
+          "kind": "func",
+          "name": "validateSettingProposals",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 962,
+          "kind": "func",
+          "name": "validateCheckpoints",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 976,
+          "kind": "struct",
+          "name": "ChapterVersionKey",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 1128,
+          "kind": "func",
+          "name": "validateIdentityClarificationCheckpoint",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 1163,
+          "kind": "func",
+          "name": "validateCandidates",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 1335,
+          "kind": "func",
+          "name": "validateRunsAndPendingOperations",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 1594,
+          "kind": "func",
+          "name": "checkpointIsAncestorOrSelf",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 1612,
+          "kind": "func",
+          "name": "validateOperationLedger",
+          "target": "NovelOperationLedgerValidation.swift"
+        },
+        {
+          "source_line": 2181,
+          "kind": "func",
+          "name": "validateLatestBranchOverrides",
+          "target": "NovelOperationLedgerValidation.swift"
+        },
+        {
+          "source_line": 2185,
+          "kind": "struct",
+          "name": "Key",
+          "target": "NovelOperationLedgerValidation.swift"
+        },
+        {
+          "source_line": 2217,
+          "kind": "func",
+          "name": "validateBranchOperationOrder",
+          "target": "NovelOperationLedgerValidation.swift"
+        },
+        {
+          "source_line": 2307,
+          "kind": "func",
+          "name": "validateCollectionOutcome",
+          "target": "NovelOperationLedgerValidation.swift"
+        },
+        {
+          "source_line": 2339,
+          "kind": "func",
+          "name": "validateManualSyncOutcome",
+          "target": "NovelOperationLedgerValidation.swift"
+        },
+        {
+          "source_line": 2357,
+          "kind": "func",
+          "name": "appendDuplicateIssue",
+          "target": "NovelDocumentRecordValidation.swift"
+        },
+        {
+          "source_line": 2369,
+          "kind": "func",
+          "name": "appendUnchangedPrefixIssue",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2384,
+          "kind": "func",
+          "name": "validateMaterialTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2407,
+          "kind": "func",
+          "name": "validateChapterTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2492,
+          "kind": "func",
+          "name": "validateBranchTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2517,
+          "kind": "func",
+          "name": "validateSessionTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2557,
+          "kind": "func",
+          "name": "validateCandidateTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2589,
+          "kind": "func",
+          "name": "validateSettingProposalTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2657,
+          "kind": "func",
+          "name": "validatePendingOperationTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2697,
+          "kind": "func",
+          "name": "validateCheckpointLineage",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 2784,
+          "kind": "func",
+          "name": "validateBranchHeadTimeline",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 2883,
+          "kind": "func",
+          "name": "candidateStatusCanTransition",
+          "target": "NovelDocumentValidator.swift"
+        },
+        {
+          "source_line": 2902,
+          "kind": "func",
+          "name": "checkpoint",
+          "target": "NovelDocumentCheckpointValidation.swift"
+        },
+        {
+          "source_line": 2923,
+          "kind": "extension",
+          "name": "NovelOutcome",
+          "target": "NovelDocumentValidator.swift"
+        }
+      ],
+      "targets": [
+        {
+          "path": "NovelDocumentValidator.swift",
+          "original_line_ranges": [
+            [
+              1,
+              212
+            ],
+            [
+              224,
+              286
+            ],
+            [
+              2369,
+              2696
+            ],
+            [
+              2883,
+              2901
+            ],
+            [
+              2923,
+              3012
+            ]
+          ],
+          "responsibility": "single validation and transition entry, issue aggregation, transition guards, outcome projection",
+          "current_lines": 714,
+          "current_sha256": "3817fbf837e1d9756547deabcd2809f121233fc79ad8462a461a572c628b89f9"
+        },
+        {
+          "path": "NovelDocumentRecordValidation.swift",
+          "original_line_ranges": [
+            [
+              213,
+              223
+            ],
+            [
+              287,
+              961
+            ],
+            [
+              2357,
+              2368
+            ]
+          ],
+          "responsibility": "project, material, branch, session, chapter, proposal record validation",
+          "current_lines": 702,
+          "current_sha256": "704e0d92495e8ef198f450c3ae1fa5fc0219399c26a0de17da440a09f8f18c40"
+        },
+        {
+          "path": "NovelDocumentCheckpointValidation.swift",
+          "original_line_ranges": [
+            [
+              962,
+              1611
+            ],
+            [
+              2697,
+              2882
+            ],
+            [
+              2902,
+              2921
+            ]
+          ],
+          "responsibility": "checkpoint, candidate, run, pending operation and lineage validation",
+          "current_lines": 859,
+          "current_sha256": "eaaf2cee351f15a04a3c7fb68359d16604e5c75c48f551741eb349985b109fa6"
+        },
+        {
+          "path": "NovelOperationLedgerValidation.swift",
+          "original_line_ranges": [
+            [
+              1612,
+              2356
+            ]
+          ],
+          "responsibility": "operation ledger and outcome consistency",
+          "current_lines": 749,
+          "current_sha256": "398a7484cca46cb0969207e4333af0c44f51066b8b2ad55c2df9227436870ccc"
+        }
+      ],
+      "omitted_delimiters_or_blank_lines": [
+        2922
+      ]
+    },
+    {
+      "source": "NovelFactTransactions.swift",
+      "baseline_lines": 2428,
+      "baseline_sha256": "668b3d4c5adb1dc69c9b4efb7643de7e6f5a3c8f028d2be395ded4b57a7767ed",
+      "normalized_nonempty_line_multiset": {
+        "missing": 0,
+        "added": 0
+      },
+      "declaration_count": 66,
+      "declarations": [
+        {
+          "source_line": 3,
+          "kind": "struct",
+          "name": "NovelManualRebuildChapter",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 11,
+          "kind": "struct",
+          "name": "NovelCollectionExtractionInput",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 20,
+          "kind": "struct",
+          "name": "NovelManualRebuildInput",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 31,
+          "kind": "struct",
+          "name": "NovelFactTransactionReceiptArtifacts",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 36,
+          "kind": "typealias",
+          "name": "NovelPendingFactTransactionResult",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 37,
+          "kind": "typealias",
+          "name": "NovelFactTransactionResult",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 39,
+          "kind": "struct",
+          "name": "NovelValidatedFactTransactionResult",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 48,
+          "kind": "enum",
+          "name": "NovelManualSyncPreparation",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 67,
+          "kind": "enum",
+          "name": "NovelFactTransactionReducer",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 68,
+          "kind": "func",
+          "name": "replayOutcome",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 82,
+          "kind": "func",
+          "name": "prepareCollection",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 116,
+          "kind": "func",
+          "name": "recoverPendingCollectionWithoutStateSync",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 131,
+          "kind": "func",
+          "name": "commitCollectionWithoutStateSync",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 157,
+          "kind": "func",
+          "name": "commitCollectionWithPlot",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 202,
+          "kind": "struct",
+          "name": "CollectionPlotUpdate",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 214,
+          "kind": "func",
+          "name": "commitGhostwriteAdjudication",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 289,
+          "kind": "func",
+          "name": "commitPreparedCollection",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 436,
+          "kind": "func",
+          "name": "makeCollectionPending",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 636,
+          "kind": "func",
+          "name": "collectionExtractionInput",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 653,
+          "kind": "func",
+          "name": "finalizeCollection",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 678,
+          "kind": "func",
+          "name": "commitStateDeltaCollection",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 898,
+          "kind": "func",
+          "name": "confirmedChapterPlan",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 945,
+          "kind": "func",
+          "name": "saveManualEdit",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1063,
+          "kind": "func",
+          "name": "saveManualEditWithPlot",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1230,
+          "kind": "func",
+          "name": "prepareManualSync",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1389,
+          "kind": "func",
+          "name": "commitStructuralManualSync",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1469,
+          "kind": "func",
+          "name": "manualRebuildInput",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1495,
+          "kind": "func",
+          "name": "validateRetryCommand",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1525,
+          "kind": "func",
+          "name": "finalizeManualSync",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1702,
+          "kind": "func",
+          "name": "markRetryable",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1726,
+          "kind": "struct",
+          "name": "ManualPayload",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 1731,
+          "kind": "struct",
+          "name": "StateContextPayload",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1739,
+          "kind": "func",
+          "name": "matchingPending",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1761,
+          "kind": "func",
+          "name": "requireUnusedOperation",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1773,
+          "kind": "func",
+          "name": "requireProject",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1782,
+          "kind": "func",
+          "name": "requireBranch",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1792,
+          "kind": "func",
+          "name": "requireContext",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1824,
+          "kind": "func",
+          "name": "requirePending",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1837,
+          "kind": "func",
+          "name": "requirePendingGuards",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1862,
+          "kind": "func",
+          "name": "requirePayloadHash",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1868,
+          "kind": "func",
+          "name": "requireReservedIDs",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1904,
+          "kind": "func",
+          "name": "requireNewFactCompatibilityID",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1917,
+          "kind": "func",
+          "name": "validateRetry",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 1978,
+          "kind": "func",
+          "name": "validateDurableAttempt",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2001,
+          "kind": "func",
+          "name": "appendLedger",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2032,
+          "kind": "func",
+          "name": "appendLedger",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2062,
+          "kind": "func",
+          "name": "appendFactReceipts",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2117,
+          "kind": "func",
+          "name": "advanceProjectRevision",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2125,
+          "kind": "func",
+          "name": "checkpoint",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2135,
+          "kind": "func",
+          "name": "stateSnapshot",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2145,
+          "kind": "func",
+          "name": "rebuildBaseCheckpoint",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2180,
+          "kind": "func",
+          "name": "latestCompatibleRebuildBase",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2205,
+          "kind": "func",
+          "name": "staleStateBaseCheckpoint",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2223,
+          "kind": "func",
+          "name": "firstChangedChapterIndex",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2236,
+          "kind": "func",
+          "name": "validateWorkingManuscriptEvolution",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2268,
+          "kind": "func",
+          "name": "isOrderPreservingSubsequence",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2277,
+          "kind": "func",
+          "name": "orderPreservingSubsequenceLength",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2290,
+          "kind": "func",
+          "name": "encodeManualPayload",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2302,
+          "kind": "func",
+          "name": "decodeManualPayload",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2318,
+          "kind": "func",
+          "name": "manualRebuildManuscript",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2324,
+          "kind": "func",
+          "name": "validateManualPayload",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2358,
+          "kind": "func",
+          "name": "stateContext",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2392,
+          "kind": "func",
+          "name": "normalizedRequired",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2400,
+          "kind": "func",
+          "name": "normalizeLineEndings",
+          "target": "NovelManualEditTransactions.swift"
+        },
+        {
+          "source_line": 2405,
+          "kind": "func",
+          "name": "validateTransition",
+          "target": "NovelFactTransactions.swift"
+        },
+        {
+          "source_line": 2413,
+          "kind": "extension",
+          "name": "NovelBranchCheckpointRecord",
+          "target": "NovelManualEditTransactions.swift"
+        }
+      ],
+      "targets": [
+        {
+          "path": "NovelFactTransactions.swift",
+          "original_line_ranges": [
+            [
+              1,
+              944
+            ],
+            [
+              1702,
+              1725
+            ],
+            [
+              1731,
+              2144
+            ],
+            [
+              2358,
+              2399
+            ],
+            [
+              2405,
+              2411
+            ]
+          ],
+          "responsibility": "single fact reducer owner, collection and shared transaction guards, receipts and revision",
+          "current_lines": 1431,
+          "current_sha256": "67c6b23d488c290d38f46dd1b146f9782922cc49b76c184655951b98c9f34b87"
+        },
+        {
+          "path": "NovelManualEditTransactions.swift",
+          "original_line_ranges": [
+            [
+              945,
+              1701
+            ],
+            [
+              1726,
+              1730
+            ],
+            [
+              2145,
+              2357
+            ],
+            [
+              2400,
+              2404
+            ],
+            [
+              2413,
+              2428
+            ]
+          ],
+          "responsibility": "manual edit, sync/rebuild, retry and checkpoint baseline policy",
+          "current_lines": 1001,
+          "current_sha256": "150855fce7011b6fb9664ba1f8904ac5a879e3198149ccf124a3d552dd9305b2"
+        }
+      ],
+      "omitted_delimiters_or_blank_lines": [
+        2412
+      ]
+    },
+    {
+      "source": "NovelProjectRepository.swift",
+      "baseline_lines": 2165,
+      "baseline_sha256": "4dacd4e0c4502fd976c8ab0af84179662eb4ae4cfe2dd3bc1af25a299f699f47",
+      "normalized_nonempty_line_multiset": {
+        "missing": 0,
+        "added": 0
+      },
+      "declaration_count": 94,
+      "declarations": [
+        {
+          "source_line": 4,
+          "kind": "enum",
+          "name": "NovelRepositoryFailureStage",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 20,
+          "kind": "actor",
+          "name": "NovelFileProjectRepository",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 27,
+          "kind": "struct",
+          "name": "IndexV1",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 34,
+          "kind": "struct",
+          "name": "IndexManifestV1",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 35,
+          "kind": "struct",
+          "name": "Entry",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 47,
+          "kind": "struct",
+          "name": "SchemaHeader",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 51,
+          "kind": "struct",
+          "name": "ProjectLifecycleMarkerV1",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 52,
+          "kind": "enum",
+          "name": "Kind",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 63,
+          "kind": "struct",
+          "name": "RecoveryFileIdentity",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 68,
+          "kind": "struct",
+          "name": "RecoveryFileStamp",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 74,
+          "kind": "struct",
+          "name": "CachedRecoverySidecar",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 80,
+          "kind": "struct",
+          "name": "LifecycleFileIdentity",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 85,
+          "kind": "enum",
+          "name": "FileReadFailure",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 122,
+          "kind": "func",
+          "name": "defaultRootDirectory",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 134,
+          "kind": "func",
+          "name": "listProjects",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 160,
+          "kind": "func",
+          "name": "loadProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 201,
+          "kind": "func",
+          "name": "createProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 248,
+          "kind": "func",
+          "name": "createProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 303,
+          "kind": "func",
+          "name": "commitProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 334,
+          "kind": "func",
+          "name": "commitProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 399,
+          "kind": "func",
+          "name": "installValidatedCommit",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 436,
+          "kind": "func",
+          "name": "replaceProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 509,
+          "kind": "func",
+          "name": "deleteProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 529,
+          "kind": "func",
+          "name": "discardUnavailableProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 545,
+          "kind": "func",
+          "name": "deleteProjectArtifacts",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 572,
+          "kind": "func",
+          "name": "lifecycleOperation",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 585,
+          "kind": "func",
+          "name": "lifecycleOperationIDs",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 602,
+          "kind": "func",
+          "name": "listPendingLifecycleOperations",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 633,
+          "kind": "func",
+          "name": "blockedLifecycleProjectIDs",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 655,
+          "kind": "func",
+          "name": "writeLifecycleOperation",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 687,
+          "kind": "func",
+          "name": "removeLifecycleOperation",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 707,
+          "kind": "func",
+          "name": "restorePreviousProject",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 729,
+          "kind": "func",
+          "name": "listRecoverySidecars",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 760,
+          "kind": "func",
+          "name": "writeRecoverySidecar",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 829,
+          "kind": "func",
+          "name": "removeRecoverySidecar",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 841,
+          "kind": "func",
+          "name": "loadGhostwriteBatchProgress",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 856,
+          "kind": "func",
+          "name": "saveGhostwriteBatchProgress",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 872,
+          "kind": "func",
+          "name": "removeGhostwriteBatchProgress",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 891,
+          "kind": "func",
+          "name": "isWorkspaceNative",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 903,
+          "kind": "func",
+          "name": "engineStorageDirectory",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 938,
+          "kind": "func",
+          "name": "primaryURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 943,
+          "kind": "func",
+          "name": "previousURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 948,
+          "kind": "func",
+          "name": "packageURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 955,
+          "kind": "func",
+          "name": "projectExistsOnDisk",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 974,
+          "kind": "func",
+          "name": "tombstoneURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 978,
+          "kind": "func",
+          "name": "replacementMarkerURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 982,
+          "kind": "func",
+          "name": "recoveryURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 988,
+          "kind": "func",
+          "name": "ghostwriteProgressURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 997,
+          "kind": "func",
+          "name": "lifecycleOperationURL",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1006,
+          "kind": "func",
+          "name": "lifecycleFileIdentity",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1029,
+          "kind": "func",
+          "name": "readLifecycleOperation",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1051,
+          "kind": "func",
+          "name": "quarantineInvalidLifecycleOperation",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1062,
+          "kind": "func",
+          "name": "recoveryFileIdentity",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1087,
+          "kind": "func",
+          "name": "readRecoverySidecar",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1109,
+          "kind": "func",
+          "name": "recoveryFileStamp",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1123,
+          "kind": "func",
+          "name": "quarantineInvalidRecovery",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1134,
+          "kind": "func",
+          "name": "ensureDirectories",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1167,
+          "kind": "func",
+          "name": "isDeletionTombstoned",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1171,
+          "kind": "func",
+          "name": "isReplacementMarked",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1175,
+          "kind": "func",
+          "name": "writeLifecycleMarker",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1184,
+          "kind": "func",
+          "name": "deletionTombstoneProjectIDs",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1201,
+          "kind": "func",
+          "name": "finishDeletionTombstonesBestEffort",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1207,
+          "kind": "func",
+          "name": "finishDeletionBestEffort",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1215,
+          "kind": "func",
+          "name": "finishReplacementBestEffort",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1225,
+          "kind": "func",
+          "name": "cleanupProjectFiles",
+          "target": "NovelProjectRepository.swift"
+        },
+        {
+          "source_line": 1253,
+          "kind": "func",
+          "name": "writeShardedProject",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1385,
+          "kind": "func",
+          "name": "canCommitValidatedTransitionFromCache",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1406,
+          "kind": "func",
+          "name": "engineLayoutMatchesCache",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1436,
+          "kind": "func",
+          "name": "readInstalledProjectDocument",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1505,
+          "kind": "func",
+          "name": "readPreviousProjectDocument",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1549,
+          "kind": "func",
+          "name": "finalizeLoadedDocument",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1691,
+          "kind": "func",
+          "name": "pointerFingerprint",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1703,
+          "kind": "func",
+          "name": "shouldMigrateLegacyProject",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1710,
+          "kind": "func",
+          "name": "publishWorktreeIfNeeded",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1747,
+          "kind": "func",
+          "name": "readProjectDocument",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1755,
+          "kind": "func",
+          "name": "decodeProject",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1789,
+          "kind": "func",
+          "name": "readData",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1815,
+          "kind": "func",
+          "name": "readIndex",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1828,
+          "kind": "func",
+          "name": "loadCachedProjectSummariesIfFresh",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1849,
+          "kind": "struct",
+          "name": "DiskProjectInventory",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1854,
+          "kind": "func",
+          "name": "diskProjectInventory",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1905,
+          "kind": "func",
+          "name": "fileSignatureEntry",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1956,
+          "kind": "func",
+          "name": "fileSignature",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1972,
+          "kind": "func",
+          "name": "scanProjectSummaries",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 1992,
+          "kind": "func",
+          "name": "loadProjectSynchronously",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2023,
+          "kind": "func",
+          "name": "writeIndexBestEffort",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2043,
+          "kind": "func",
+          "name": "readIndexManifest",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2052,
+          "kind": "func",
+          "name": "refreshIndexBestEffort",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2064,
+          "kind": "func",
+          "name": "upsertIndexBestEffort",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2104,
+          "kind": "func",
+          "name": "invalidateIndex",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2116,
+          "kind": "func",
+          "name": "failIfRequested",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2122,
+          "kind": "func",
+          "name": "loadPreviousProject",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2156,
+          "kind": "func",
+          "name": "makeEncoder",
+          "target": "NovelProjectRepositoryStorage.swift"
+        },
+        {
+          "source_line": 2162,
+          "kind": "func",
+          "name": "makeDecoder",
+          "target": "NovelProjectRepositoryStorage.swift"
+        }
+      ],
+      "targets": [
+        {
+          "path": "NovelProjectRepository.swift",
+          "original_line_ranges": [
+            [
+              1,
+              25
+            ],
+            [
+              51,
+              84
+            ],
+            [
+              89,
+              1252
+            ]
+          ],
+          "responsibility": "single repository actor state, CRUD, commit authorization/install, lifecycle and recovery",
+          "current_lines": 1224,
+          "current_sha256": "c7e18aff525f025c0e6174ded9ca27140b178ddeda6e40e983158aec006b52d2"
+        },
+        {
+          "path": "NovelProjectRepositoryStorage.swift",
+          "original_line_ranges": [
+            [
+              27,
+              50
+            ],
+            [
+              85,
+              88
+            ],
+            [
+              1253,
+              2164
+            ]
+          ],
+          "responsibility": "same actor disk encoding, migration, inventory and index",
+          "current_lines": 945,
+          "current_sha256": "03a44a6ac9a016716cb3cfd97116e8384e0113daf472055116292fce17515a5b"
+        }
+      ],
+      "omitted_delimiters_or_blank_lines": [
+        26,
+        2165
+      ]
+    }
+  ],
+  "symbol_owners": {
+    "NovelProjectDocumentV1": "NovelProjectDocument.swift",
+    "NovelAction": "NovelActions.swift",
+    "NovelCanonicalActionPayload": "NovelActions.swift",
+    "NovelRunRequest": "NovelRunContract.swift",
+    "NovelCanonicalRunPayload": "NovelRunContract.swift",
+    "NovelStructuredOutputDecoder": "NovelStructuredOutput.swift",
+    "StrictJSON": "NovelStrictJSON.swift",
+    "JSONDuplicateKeyValidator": "NovelJSONDuplicateKeyValidator.swift",
+    "NovelFactTransactionReducer": "NovelFactTransactions.swift",
+    "NovelFileProjectRepository": "NovelProjectRepository.swift",
+    "NovelDocumentValidator": "NovelDocumentValidator.swift"
+  },
+  "state_authority": {
+    "document": "NovelProjectDocumentV1 is the sole project authority; Codable encode/decode/defaults remain together in NovelProjectDocument.swift",
+    "mutation": "DefaultNovelCreation remains the actor caller, NovelFactTransactionReducer remains one reducer type, NovelFileProjectRepository remains one actor and one writer",
+    "repository_commit": "commitProject overloads and installValidatedCommit remain together in NovelProjectRepository.swift; authorization claim and installed-primary reconciliation retain original order",
+    "candidate": "candidate does not enter working manuscript before collect/replace/polish transaction commits",
+    "evidence": "receipt, projected-state validation, and commit continue to use the original canonical construction; no second constructor added"
+  },
+  "visibility_changes": [
+    {
+      "file": "NovelStructuredOutputValidation.swift",
+      "symbol": "NovelStructuredOutputValidation",
+      "declaration_lines": [
+        3
+      ],
+      "reason": "decoder calls semantic validation",
+      "cross_file_references": [
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 15
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 34
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 47
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 64
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 98
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 113
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 128
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 136
+        }
+      ]
+    },
+    {
+      "file": "NovelStrictJSON.swift",
+      "symbol": "StrictJSON",
+      "declaration_lines": [
+        4
+      ],
+      "reason": "decoder calls strict JSON parser",
+      "cross_file_references": [
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 9
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 10
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 28
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 29
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 44
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 45
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 61
+        },
+        {
+          "file": "NovelStructuredOutput.swift",
+          "line": 62
+        }
+      ]
+    },
+    {
+      "file": "NovelJSONDuplicateKeyValidator.swift",
+      "symbol": "JSONDuplicateKeyValidator",
+      "declaration_lines": [
+        3
+      ],
+      "reason": "strict parser checks duplicate keys",
+      "cross_file_references": [
+        {
+          "file": "NovelStrictJSON.swift",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentRecordValidation.swift",
+      "symbol": "validateProject",
+      "declaration_lines": [
+        15
+      ],
+      "reason": "single facade invokes exactly this record validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentRecordValidation.swift",
+      "symbol": "validateMaterials",
+      "declaration_lines": [
+        115
+      ],
+      "reason": "single facade invokes exactly this record validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentRecordValidation.swift",
+      "symbol": "validateSessionsAndBranches",
+      "declaration_lines": [
+        196
+      ],
+      "reason": "single facade invokes exactly this record validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentRecordValidation.swift",
+      "symbol": "validateChaptersAndState",
+      "declaration_lines": [
+        415
+      ],
+      "reason": "single facade invokes exactly this record validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentRecordValidation.swift",
+      "symbol": "validateSettingProposals",
+      "declaration_lines": [
+        492
+      ],
+      "reason": "single facade invokes exactly this record validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 28
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentCheckpointValidation.swift",
+      "symbol": "validateCheckpoints",
+      "declaration_lines": [
+        4
+      ],
+      "reason": "single facade invokes exactly this checkpoint validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 30
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentCheckpointValidation.swift",
+      "symbol": "validateCandidates",
+      "declaration_lines": [
+        205
+      ],
+      "reason": "single facade invokes exactly this checkpoint validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 31
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentCheckpointValidation.swift",
+      "symbol": "validateRunsAndPendingOperations",
+      "declaration_lines": [
+        377
+      ],
+      "reason": "single facade invokes exactly this checkpoint validation group",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 32
+        }
+      ]
+    },
+    {
+      "file": "NovelDocumentCheckpointValidation.swift",
+      "symbol": "checkpointIsAncestorOrSelf",
+      "declaration_lines": [
+        636
+      ],
+      "reason": "record validator checks branch lineage",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 267
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 283
+        }
+      ]
+    },
+    {
+      "file": "NovelOperationLedgerValidation.swift",
+      "symbol": "validateOperationLedger",
+      "declaration_lines": [
+        4
+      ],
+      "reason": "single facade invokes ledger validator",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 35
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "matchingPending",
+      "declaration_lines": [
+        977
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 297
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requireUnusedOperation",
+      "declaration_lines": [
+        999
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 20
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 144
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 306
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requireProject",
+      "declaration_lines": [
+        1011
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 10
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 130
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 295
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requireBranch",
+      "declaration_lines": [
+        1020
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 21
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 145
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 307
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 455
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 608
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 954
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requireContext",
+      "declaration_lines": [
+        1030
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 23
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 147
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 309
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requirePending",
+      "declaration_lines": [
+        1062
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 532
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 593
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requirePendingGuards",
+      "declaration_lines": [
+        1075
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 610
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requirePayloadHash",
+      "declaration_lines": [
+        1100
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 11
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 131
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 296
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requireReservedIDs",
+      "declaration_lines": [
+        1106
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 327
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "requireNewFactCompatibilityID",
+      "declaration_lines": [
+        1142
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 66
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 190
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "validateRetry",
+      "declaration_lines": [
+        1155
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 580
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 602
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "validateDurableAttempt",
+      "declaration_lines": [
+        1216
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 599
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "appendLedger",
+      "declaration_lines": [
+        1239,
+        1270
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 718
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 727
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "appendFactReceipts",
+      "declaration_lines": [
+        1300
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 737
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "advanceProjectRevision",
+      "declaration_lines": [
+        1355
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 112
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 277
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 440
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 520
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 753
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "checkpoint",
+      "declaration_lines": [
+        375,
+        810,
+        1363
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 128
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 58
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 258
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 261
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 266
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 272
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 276
+        },
+        {
+          "file": "NovelDocumentRecordValidation.swift",
+          "line": 279
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "stateSnapshot",
+      "declaration_lines": [
+        1373
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 462
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 538
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "stateContext",
+      "declaration_lines": [
+        1383
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 549
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "normalizedRequired",
+      "declaration_lines": [
+        1417
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 58
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 182
+        }
+      ]
+    },
+    {
+      "file": "NovelFactTransactions.swift",
+      "symbol": "validateTransition",
+      "declaration_lines": [
+        1425
+      ],
+      "reason": "manual edit and sync extension calls shared reducer guard or commit helper",
+      "cross_file_references": [
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 77
+        },
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 149
+        },
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 169
+        },
+        {
+          "file": "NovelDocumentValidator.swift",
+          "line": 594
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 113
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 441
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 524
+        },
+        {
+          "file": "NovelManualEditTransactions.swift",
+          "line": 757
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "logger",
+      "declaration_lines": [
+        22
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 71
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 92
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 131
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 152
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 437
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 441
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 516
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "fileManager",
+      "declaration_lines": [
+        61
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 47
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 63
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 68
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 77
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 89
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 98
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 108
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 109
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "failingStages",
+      "declaration_lines": [
+        62
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 897
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "automaticWorkspaceMigration",
+      "declaration_lines": [
+        66
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 425
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "sectionCaches",
+      "declaration_lines": [
+        69
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 37
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 51
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 171
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 225
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 243
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 364
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 366
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 434
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "pointerFingerprints",
+      "declaration_lines": [
+        74
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 58
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 65
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 382
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 399
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 436
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 454
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "workspaceNativeByProject",
+      "declaration_lines": [
+        77
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 415
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 427
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 435
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 453
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 457
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "projectDirectory",
+      "declaration_lines": [
+        854
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 62
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 362
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 385
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 390
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 403
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 408
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 412
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 431
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "isWorkspaceNative",
+      "declaration_lines": [
+        862
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 36
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 170
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 217
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 286
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 343
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 372
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 389
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 448
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "engineStorageDirectory",
+      "declaration_lines": [
+        874
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 45
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 191
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 218
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 290
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 695
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "indexURL",
+      "declaration_lines": [
+        900
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 596
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 609
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 815
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 818
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 837
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 879
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 888
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 890
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "indexManifestURL",
+      "declaration_lines": [
+        904
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 610
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 816
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 819
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 824
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 838
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 880
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 885
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 886
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "primaryURL",
+      "declaration_lines": [
+        909
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 107
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 248
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 263
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 725
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 777
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "previousURL",
+      "declaration_lines": [
+        914
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 111
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 325
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 726
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "packageURL",
+      "declaration_lines": [
+        919
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 52
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 228
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 312
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 362
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 378
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 426
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 449
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 494
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "isReplacementMarked",
+      "declaration_lines": [
+        1142
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 778
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 786
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 796
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "deletionTombstoneProjectIDs",
+      "declaration_lines": [
+        1155
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 615
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 645
+        },
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 847
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepository.swift",
+      "symbol": "finishReplacementBestEffort",
+      "declaration_lines": [
+        1186
+      ],
+      "reason": "disk/index actor extension accesses actor-owned state or lifecycle method",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepositoryStorage.swift",
+          "line": 783
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "writeShardedProject",
+      "declaration_lines": [
+        33
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 190
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 380
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 451
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 691
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "canCommitValidatedTransitionFromCache",
+      "declaration_lines": [
+        165
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 328
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "engineLayoutMatchesCache",
+      "declaration_lines": [
+        186
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 352
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "readInstalledProjectDocument",
+      "declaration_lines": [
+        216
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 151
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 192
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 382
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 385
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 453
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 456
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 692
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "readPreviousProjectDocument",
+      "declaration_lines": [
+        285
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 686
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "pointerFingerprint",
+      "declaration_lines": [
+        471
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 259
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "readData",
+      "declaration_lines": [
+        569
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 1062
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "readIndex",
+      "declaration_lines": [
+        595
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 121
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "loadCachedProjectSummariesIfFresh",
+      "declaration_lines": [
+        608
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 113
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "scanProjectSummaries",
+      "declaration_lines": [
+        752
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 117
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 506
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "writeIndexBestEffort",
+      "declaration_lines": [
+        803
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 118
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "refreshIndexBestEffort",
+      "declaration_lines": [
+        832
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 537
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 540
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "upsertIndexBestEffort",
+      "declaration_lines": [
+        844
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 211
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 270
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 403
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 476
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 696
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "invalidateIndex",
+      "declaration_lines": [
+        884
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 532
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "failIfRequested",
+      "declaration_lines": [
+        896
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 188
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 207
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 376
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 394
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 428
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 442
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 469
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 517
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "loadPreviousProject",
+      "declaration_lines": [
+        902
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 162
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 168
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "makeEncoder",
+      "declaration_lines": [
+        936
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 644
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 788
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 839
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 1151
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "makeDecoder",
+      "declaration_lines": [
+        942
+      ],
+      "reason": "repository CRUD/commit/recovery method calls same-actor disk/index operation",
+      "cross_file_references": [
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 820
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 1011
+        },
+        {
+          "file": "NovelProjectRepository.swift",
+          "line": 1064
+        }
+      ]
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "IndexV1",
+      "declaration_lines": [
+        5
+      ],
+      "reason": "internal readIndex return type consumed by listProjects",
+      "cross_file_references": []
+    },
+    {
+      "file": "NovelProjectRepositoryStorage.swift",
+      "symbol": "IndexManifestV1",
+      "declaration_lines": [
+        12
+      ],
+      "reason": "internal writeIndexBestEffort parameter type",
+      "cross_file_references": []
+    }
+  ],
+  "contracts": {
+    "codable": "All original nonblank lines, including CodingKeys, defaults, enum cases, strings, numbers and schema versions, are present with zero missing/extra after only wrapper, qualifier and visibility normalization.",
+    "action_hash": "NovelAction and NovelCanonicalActionPayload remain together with original ordered cases and JSONEncoder sortedKeys; NovelRunRequest and NovelCanonicalRunPayload remain together.",
+    "structured": "StrictJSON duplicate/unknown-key checks, duplicate-key lexer, semantic validation and error mapping retain original statements.",
+    "validation": "NovelDocumentValidator retains one validate/validateTransition entry, same call order, same issue Set/sort aggregation and validated transition token.",
+    "transaction": "Collection and manual edit/sync methods stay on the same NovelFactTransactionReducer type and retain original document/receipt/ledger/revision statements.",
+    "repository": "One NovelFileProjectRepository actor, same commitProject and installValidatedCommit bodies, same cache/sidecar/index state owners."
+  },
+  "sourceguard_new_owner": {
+    "IOSNovelCreationWiringTests.swift:testProposalAcceptanceEditsTheExactContentWrittenAtomically": "NovelCommands.swift holds title/content command fields; test owner was notified to update source path"
+  },
+  "test_entrypoints": [
+    "NovelCreationModuleTests",
+    "NovelDocumentValidationTests",
+    "NovelCompatibilityLineageTests",
+    "NovelCharacterIdentityCandidateTests",
+    "NovelStructuredOutputTests",
+    "NovelStructuredModelExecutorTests",
+    "NovelFactTransactionLifecycleTests",
+    "NovelCollectionTests",
+    "NovelManualEditSyncTests",
+    "NovelChapterReplacementStateTests",
+    "NovelProjectRepositoryTests",
+    "NovelWorkspaceRepositoryTests",
+    "NovelProjectPackageTests",
+    "IOSNovelCreationWiringTests"
+  ],
+  "local_checks": {
+    "swift_frontend_parse": "passed for all owned Swift files",
+    "structured_output_swift_typecheck": "passed with two /tmp-only stubs for unrelated NovelChapterPlanRecord and NovelCharacterIdentityResolver symbols",
+    "git_diff_check": "passed for tracked owned files",
+    "xcodebuild": "delegated to root, not run here"
+  }
+}

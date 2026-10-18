@@ -223,7 +223,6 @@ final class IOSImageGenerationHistoryStore {
 @MainActor
 final class IOSImageGenerationRepository {
     static let shared = IOSImageGenerationRepository()
-    nonisolated private static let chatImageURLScheme = "amber-image-generation"
     nonisolated private static let codexImageRouterInstructions = """
         You are routing an AmberAgent image request. Use the image_generation tool to create one raster image. Preserve the user's subject, composition, aspect-ratio cues, language, and visual style. When the request references named fiction or IP, avoid wording that asks for an exact copyrighted character, logo, actor likeness, or "fan art of <character> from <franchise>"; create an original inspired depiction with high-level visual cues instead. Do not answer with SVG, HTML, or a text-only fallback.
     """.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -350,46 +349,14 @@ final class IOSImageGenerationRepository {
             return URL(fileURLWithPath: filePath).absoluteString
         }
         var components = URLComponents()
-        components.scheme = chatImageURLScheme
+        components.scheme = ChatGeneratedImageURL.scheme
         components.host = "image-generation"
         components.path = "/" + fileName
         return components.url?.absoluteString ?? URL(fileURLWithPath: filePath).absoluteString
     }
 
     nonisolated static func resolvedImageURL(from raw: String) -> URL? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.hasPrefix("data:") else { return nil }
-
-        if let url = URL(string: trimmed),
-           let scheme = url.scheme?.lowercased() {
-            switch scheme {
-            case chatImageURLScheme:
-                return generatedImageDirectoryURL().appendingPathComponent(url.lastPathComponent)
-            case "file":
-                if FileManager.default.fileExists(atPath: url.path) {
-                    return url
-                }
-                if let repaired = repairedGeneratedImageURL(from: url),
-                   FileManager.default.fileExists(atPath: repaired.path) {
-                    return repaired
-                }
-                return url
-            case "http", "https":
-                return url
-            default:
-                return url
-            }
-        }
-
-        let fileURL = URL(fileURLWithPath: trimmed)
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            return fileURL
-        }
-        if let repaired = repairedGeneratedImageURL(from: fileURL),
-           FileManager.default.fileExists(atPath: repaired.path) {
-            return repaired
-        }
-        return fileURL
+        ChatGeneratedImageURL.resolvedImageURL(from: raw)
     }
 
     nonisolated static func imageData(from raw: String) throws -> Data {
@@ -1194,18 +1161,6 @@ final class IOSImageGenerationRepository {
         return directory
     }
 
-    nonisolated private static func generatedImageDirectoryURL() -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("image-generation", isDirectory: true)
-    }
-
-    nonisolated private static func repairedGeneratedImageURL(from staleURL: URL) -> URL? {
-        guard staleURL.path.contains("/image-generation/") else { return nil }
-        let fileName = staleURL.lastPathComponent
-        guard !fileName.isEmpty else { return nil }
-        return generatedImageDirectoryURL().appendingPathComponent(fileName, isDirectory: false)
-    }
-
     private func responseBodyPreview(_ data: Data) -> String {
         let text = String(data: data, encoding: .utf8) ?? ""
         return String(text.prefix(500))
@@ -1396,7 +1351,7 @@ final class IOSImageGenerationRepository {
             if scheme == "http" || scheme == "https" {
                 return trimmed
             }
-            if scheme == Self.chatImageURLScheme,
+            if scheme == ChatGeneratedImageURL.scheme,
                let resolved = Self.resolvedImageURL(from: trimmed) {
                 return try imageDataURL(from: resolved)
             }

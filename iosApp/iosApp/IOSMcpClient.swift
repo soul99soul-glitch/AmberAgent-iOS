@@ -630,6 +630,8 @@ struct IOSMcpToolOutput {
 @MainActor
 protocol IOSMcpClienting: AnyObject {
     func connect(config: IOSMcpServerConfig) async throws -> Bool
+    // Replace the session without invalidating requests already in the queue.
+    func reconnect(config: IOSMcpServerConfig) async throws -> Bool
     func listTools() async throws -> [IOSMcpTool]
     func callTool(name: String, arguments: [String: Any]) async throws -> String
     func callToolOutput(name: String, arguments: [String: Any]) async throws -> IOSMcpToolOutput
@@ -637,6 +639,11 @@ protocol IOSMcpClienting: AnyObject {
 }
 
 extension IOSMcpClienting {
+    func reconnect(config: IOSMcpServerConfig) async throws -> Bool {
+        disconnect()
+        return try await connect(config: config)
+    }
+
     func callToolOutput(name: String, arguments: [String: Any]) async throws -> IOSMcpToolOutput {
         IOSMcpToolOutput(text: try await callTool(name: name, arguments: arguments))
     }
@@ -663,24 +670,36 @@ final class IOSMcpClient: IOSMcpClienting {
             if self.status == .connected, self.config == config {
                 return true
             }
-            if let previousConfig = self.config {
-                self.transport.disconnect(config: previousConfig)
-            }
-            self.status = .connecting
-            self.config = config
-            self.sessionID = nil
-            _ = try await self.sendWithoutRequestSlot(method: "initialize", params: [
-                "protocolVersion": "2024-11-05",
-                "capabilities": [:],
-                "clientInfo": [
-                    "name": "AmberAgent iOS",
-                    "version": "1.0"
-                ]
-            ])
-            try await self.sendNotificationWithoutRequestSlot(method: "notifications/initialized", params: [:])
-            self.status = .connected
-            return true
+            return try await self.establishConnectionWithoutRequestSlot(config: config)
         }
+    }
+
+    func reconnect(config: IOSMcpServerConfig) async throws -> Bool {
+        // Wait behind existing requests before resetting their session, then
+        // hold the same slot through the complete replacement handshake.
+        try await withRequestSlot {
+            try await self.establishConnectionWithoutRequestSlot(config: config)
+        }
+    }
+
+    private func establishConnectionWithoutRequestSlot(config: IOSMcpServerConfig) async throws -> Bool {
+        if let previousConfig = self.config {
+            transport.disconnect(config: previousConfig)
+        }
+        status = .connecting
+        self.config = config
+        sessionID = nil
+        _ = try await sendWithoutRequestSlot(method: "initialize", params: [
+            "protocolVersion": "2024-11-05",
+            "capabilities": [:],
+            "clientInfo": [
+                "name": "AmberAgent iOS",
+                "version": "1.0"
+            ]
+        ])
+        try await sendNotificationWithoutRequestSlot(method: "notifications/initialized", params: [:])
+        status = .connected
+        return true
     }
 
     func listTools() async throws -> [IOSMcpTool] {

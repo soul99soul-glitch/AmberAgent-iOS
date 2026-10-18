@@ -1,0 +1,14 @@
+{
+  "ai-provider-openai": {
+    "tests": 81,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "shared": {
+    "tests": 53,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

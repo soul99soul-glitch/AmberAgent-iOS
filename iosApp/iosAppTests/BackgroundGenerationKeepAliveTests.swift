@@ -25,6 +25,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         var submitError: Error?
         /// Fail the first N submit attempts, then succeed.
         var remainingSubmitFailures: Int = 0
+        var onSubmitAttemptFinished: (() -> Void)?
         let audio = AudioSpy()
         let location = LocationSpy()
 
@@ -49,6 +50,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
                     events.append("end")
                 },
                 submitTaskRequest: { [self] request in
+                    defer { onSubmitAttemptFinished?() }
                     if remainingSubmitFailures > 0 {
                         remainingSubmitFailures -= 1
                         events.append("submit-fail")
@@ -348,9 +350,23 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         // Always fail: first submit + exactly one scheduled retry.
         spy.submitError = SubmitFailure()
         let keepAlive = spy.makeKeepAlive(systemSubmitRetryDelayNanoseconds: 20_000_000)
+        let retryFinished = expectation(description: "The scheduled submit retry finishes")
+        let unexpectedRetry = expectation(description: "No further submit retries occur")
+        unexpectedRetry.isInverted = true
+        var submitAttempts = 0
+        spy.onSubmitAttemptFinished = {
+            submitAttempts += 1
+            if submitAttempts == 2 {
+                retryFinished.fulfill()
+            } else if submitAttempts == 3 {
+                unexpectedRetry.fulfill()
+            }
+        }
 
         keepAlive.begin("run-1", title: "t", subtitle: "s")
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await fulfillment(of: [retryFinished], timeout: 5)
+        // Observe five retry intervals after the actual retry, even if its task started late.
+        await fulfillment(of: [unexpectedRetry], timeout: 0.1)
 
         XCTAssertTrue(keepAlive.holdsLease("run-1"))
         XCTAssertTrue(spy.submittedRequests.isEmpty)

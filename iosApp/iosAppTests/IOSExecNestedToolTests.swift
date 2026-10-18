@@ -557,7 +557,7 @@ final class IOSExecNestedToolTests: XCTestCase {
         // 按 description 过滤发现工具名，再经 tools[found.name] 走真实嵌套链
         // （同一执行路径：分类 → 执行 → 账本 Started/Finished）。
         let toolCall = execToolCall(input: #"""
-        {"code":"const found = ALL_TOOLS.filter(t => t.description.indexOf('Read text preview') !== -1)[0]; const r = tools[found.name]({path: '/workspace/notes/missing.md'}); ({name: found.name, isObject: typeof r === 'object', hasOk: typeof r === 'object' && 'ok' in r})"}
+        {"code":"const found = ALL_TOOLS.filter(t => t.description.indexOf('Read text from an AmberAgent iOS Workspace file') !== -1)[0]; const r = tools[found.name]({path: '/workspace/notes/missing.md'}); ({name: found.name, isObject: typeof r === 'object', hasOk: typeof r === 'object' && 'ok' in r})"}
         """#)
         let result = await runExecThroughAdapter(
             adapter: adapter,

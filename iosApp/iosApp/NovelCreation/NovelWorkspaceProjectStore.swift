@@ -579,10 +579,9 @@ enum NovelWorkspaceProjectStore {
     }
 
     /// At quiet rest the bulky receipt evidence and completed run records
-    /// are dropped from persistence: transitions only need an unchanged
-    /// prefix, and replay identity lives in appliedOperations, which is
-    /// kept. Running and interrupted runs pin the whole history (they
-    /// back an in-flight receipt or an interrupted-draft candidate).
+    /// are dropped from persistence. Manuscript, session messages, and
+    /// collect/edit replay history remain. Running, interrupted, and failed
+    /// runs pin the whole history so recovery and exact-retry inputs remain.
     /// Pending fact transactions and polish attempts do the same.
     /// Completed-run origin IDs on setting proposals, and historical
     /// `syncManualEdits` ledger rows, stay — the load-time validator
@@ -592,13 +591,11 @@ enum NovelWorkspaceProjectStore {
         guard document.pendingOperations.isEmpty,
               document.polishAttempts.isEmpty
         else { return persistable }
-        // Prune ONLY when every run is completed/failed. Any running or
-        // interrupted run anchors receipts, its startRun ledger entry, or an
-        // interrupted-draft candidate — a partial prune would leave receipts
-        // and ledger rows pointing at runs that no longer exist, which the
-        // load-time validator rejects.
-        let kept = document.activeRuns.filter { $0.status != .completed && $0.status != .failed }
-        guard kept.isEmpty else { return document }
+        // Failed runs retain the same request and receipt chain as interrupted
+        // runs: the session's exact retry is reconstructed from that durable run.
+        guard document.activeRuns.allSatisfy({ $0.status == .completed }) else {
+            return document
+        }
         persistable.activeRuns = []
         persistable.injectionReceipts = []
         persistable.generationReceipts = []

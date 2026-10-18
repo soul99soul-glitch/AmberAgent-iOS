@@ -1,0 +1,696 @@
+{
+  "outputs": {
+    "NovelSessionViewModelTests.swift": {
+      "lines": 407,
+      "sha256": "4b79ebe1e37bc4ef2cfdf2612f338b045721866848d58e1cb44f83ac100237af",
+      "test_methods": 9
+    },
+    "NovelSessionStreamingPerformanceTests.swift": {
+      "lines": 331,
+      "sha256": "8619c0f7d2ba1cb6f680116361ca7052c0519844ee3ea7e548a778de3c46c46b",
+      "test_methods": 4
+    },
+    "NovelSessionTailPresentationTests.swift": {
+      "lines": 1019,
+      "sha256": "cb0917d1428b08ee17d24add8ceb855429ac7434ec84ed4c8a8313c935ca5d59",
+      "test_methods": 23
+    },
+    "NovelSessionRunOwnershipTests.swift": {
+      "lines": 520,
+      "sha256": "807a28ae9443c6584b169f2ba225847dcc73a048ad1e9767f31cae6b08d7a870",
+      "test_methods": 12
+    },
+    "NovelSessionSelectionTests.swift": {
+      "lines": 516,
+      "sha256": "e47942ecdd7a09f9b816dc8b7343f8c6cecaee0bf8a2d40abe41d1a998584a37",
+      "test_methods": 12
+    },
+    "NovelSessionQuickStartTests.swift": {
+      "lines": 548,
+      "sha256": "c7c7df5ceb392d1cf9240a84dd714fc138717363ede44f9e6ec5b16df1669976",
+      "test_methods": 13
+    },
+    "NovelSessionManualSyncTests.swift": {
+      "lines": 1040,
+      "sha256": "46e3a91bf4c06b6363dab50856734433883c0ac2da25d723dde9834b9a476900",
+      "test_methods": 23
+    },
+    "NovelSessionRetryAndPolishTests.swift": {
+      "lines": 461,
+      "sha256": "02a4a1e343fa2780845e5e102de66a47c3f1e199e397cf7dd707295df39fdf2a",
+      "test_methods": 12
+    },
+    "NovelSessionViewModelTestCase.swift": {
+      "lines": 932,
+      "sha256": "7f7aeed7a0934061e2d982e4fd2f654e663491fc41a3b2971293e009f9e1ae09",
+      "test_methods": 0
+    },
+    "NovelSessionReplayTests.swift": {
+      "lines": 389,
+      "sha256": "60f9e9fc5745f59495af18256539dfef38cfff14d1acde2cbc8da2175b2c8f15",
+      "test_methods": 12
+    },
+    "NovelSessionTranscriptProjectionTests.swift": {
+      "lines": 550,
+      "sha256": "06cb4b68473b758761e47258f1320add58b31db77eaa16d539ab7db53a1d25cf",
+      "test_methods": 10
+    },
+    "NovelSessionRowActionTests.swift": {
+      "lines": 1089,
+      "sha256": "e69cb2d8a452977ef270c06212d63551b309cf619836b389aa36acb68e7b66c4",
+      "test_methods": 13
+    },
+    "NovelSessionFollowPolicyTests.swift": {
+      "lines": 563,
+      "sha256": "4d38d023da8841c1537b5b90d53ac97178b69c6787c8f263a33f589786c34685",
+      "test_methods": 18
+    },
+    "NovelSessionReplayTestCase.swift": {
+      "lines": 230,
+      "sha256": "2704b3a905d102419984371ed7bf05218a20e5eaf6ac18a211a2a60437950b8e",
+      "test_methods": 0
+    },
+    "NovelCreationPresentationTests.swift": {
+      "lines": 873,
+      "sha256": "ea119d6675baabb09d5a44abdbbe60b65b46c3cb7b8e4b113c1b4361d5559bd9",
+      "test_methods": 28
+    },
+    "NovelCreationActionPresentationTests.swift": {
+      "lines": 309,
+      "sha256": "2c391ea63ee8b4ff41e568d042ee1a6f15834a3f8b5d2f7f8b515f919c1d33b9",
+      "test_methods": 12
+    },
+    "NovelCreationProjectPresentationTests.swift": {
+      "lines": 421,
+      "sha256": "b4a4aeb5bc8c26c8d09a0b2505783afbd79a606b57de7b058ae9788bc76000de",
+      "test_methods": 11
+    },
+    "NovelCreationViewModelTests.swift": {
+      "lines": 786,
+      "sha256": "ba7ed6d3b8d972ecbbd32d5893478ca85410face780ff757152cca66e927da2e",
+      "test_methods": 27
+    },
+    "NovelCreationWorkspaceMutationTests.swift": {
+      "lines": 373,
+      "sha256": "2e980bef84f21400ed8771a4575389ecbd4f72fab485a276536a8e55348eb9ce",
+      "test_methods": 12
+    },
+    "NovelCreationQuickStartTests.swift": {
+      "lines": 460,
+      "sha256": "e855093a00fb51790b9fb1f266a077a36d27548fb868631b78f357628fdf510b",
+      "test_methods": 8
+    },
+    "NovelCreationSyncAndRecoveryTests.swift": {
+      "lines": 674,
+      "sha256": "03c7e2c58c79bf31e8839c7be52aa632664647cf1961046c865531e08720a9a5",
+      "test_methods": 9
+    },
+    "NovelCreationViewModelTestDoubles.swift": {
+      "lines": 268,
+      "sha256": "0db0204af11e54a51fb24ab8bce5588291205ea7bb3a6e1c922d58dd2c464a90",
+      "test_methods": 0
+    },
+    "NovelManualEditSyncTests.swift": {
+      "lines": 1197,
+      "sha256": "60f854d4a4af0e989d458b9b5cc89728338f960f9640e6093546f0ea1a8488e6",
+      "test_methods": 23
+    },
+    "NovelManualEditSyncTestCase.swift": {
+      "lines": 400,
+      "sha256": "cd6227f7f3d89e7b0c03f90a2c17197c8f118bbd03e0192be91ec7c4e208b13d",
+      "test_methods": 0
+    },
+    "NovelCollaborationModeTests.swift": {
+      "lines": 345,
+      "sha256": "143417fceecc006b426909e6e6741bfa049482402310489429546d59ef06b4d5",
+      "test_methods": 10
+    },
+    "NovelGhostwriteGenerationTests.swift": {
+      "lines": 726,
+      "sha256": "46ee0de251f630397ae0301f93f712a643e1348700e7ddf2c3ac73a502bdf3f4",
+      "test_methods": 13
+    },
+    "NovelGhostwriteInjectionTests.swift": {
+      "lines": 289,
+      "sha256": "9410eaf2047075d44d15c998a58667c64f6ce2bda50dc6aca039cd1daa00465e",
+      "test_methods": 7
+    },
+    "NovelGhostwriteRecoveryTests.swift": {
+      "lines": 769,
+      "sha256": "2c2fb15523bfc1a771df177f868398e144a60d01027cc827fb9d3dbc328acfc6",
+      "test_methods": 19
+    },
+    "NovelChapterPlanProposalTests.swift": {
+      "lines": 264,
+      "sha256": "1c919c3612c84aa084886bc3f75547796bc14509b1d1215e66eea44d70f787e6",
+      "test_methods": 7
+    },
+    "NovelCollaborationModeTestCase.swift": {
+      "lines": 291,
+      "sha256": "34a6fb6699f6dfbc2e9ae863cc5fc34ccc39f650db4d77e152fe7fc68d717ade",
+      "test_methods": 0
+    }
+  },
+  "coverage": {
+    "NovelSessionViewModelTests": {
+      "source_lines": 5713,
+      "covered_original_lines": 5701,
+      "uncovered_nonblank_structural_lines": [
+        1,
+        2,
+        3,
+        4,
+        6,
+        7,
+        4786,
+        4788,
+        5297
+      ],
+      "unexpected_uncovered_nonblank_lines": [],
+      "original_sha256": "1ed16332825b76be18d99871583f412c278dbd6fe9468066d3458be40994a2c9"
+    },
+    "NovelSessionReplayTests": {
+      "source_lines": 2803,
+      "covered_original_lines": 2791,
+      "uncovered_nonblank_structural_lines": [
+        1,
+        2,
+        3,
+        5,
+        2536,
+        2538,
+        2763,
+        2767,
+        2803
+      ],
+      "unexpected_uncovered_nonblank_lines": [],
+      "original_sha256": "f859e3a5bab1b0f5419e05277b587600d36cdc734ecfbf9651ce35d342b02a27"
+    },
+    "NovelCreationPresentationTests": {
+      "source_lines": 1591,
+      "covered_original_lines": 1584,
+      "uncovered_nonblank_structural_lines": [
+        1,
+        2,
+        4,
+        5,
+        1498
+      ],
+      "unexpected_uncovered_nonblank_lines": [],
+      "original_sha256": "70ac41c8b329126f2fa38d84f7c60803b512202c53f28b5e74894f3270a7ba4f"
+    },
+    "NovelCreationViewModelTests": {
+      "source_lines": 2541,
+      "covered_original_lines": 2534,
+      "uncovered_nonblank_structural_lines": [
+        1,
+        2,
+        4,
+        5,
+        2275
+      ],
+      "unexpected_uncovered_nonblank_lines": [],
+      "original_sha256": "df168be7a56263813f342c4eec9387d20311b6c1865cd5229d1112c574f5f2c3"
+    },
+    "NovelManualEditSyncTests": {
+      "source_lines": 1595,
+      "covered_original_lines": 1587,
+      "uncovered_nonblank_structural_lines": [
+        1,
+        2,
+        4,
+        1199,
+        1201,
+        1595
+      ],
+      "unexpected_uncovered_nonblank_lines": [],
+      "original_sha256": "0b29413e406ebda8c7974f27a6e3364e9fbcbe052fde3178b9c018a2fbfde9eb"
+    },
+    "NovelCollaborationModeTests": {
+      "source_lines": 2660,
+      "covered_original_lines": 2653,
+      "uncovered_nonblank_structural_lines": [
+        1,
+        2,
+        4,
+        2642
+      ],
+      "unexpected_uncovered_nonblank_lines": [],
+      "original_sha256": "9d098bcb1d550784d13ad9d486c54b0cfecba7131b8a84d170e710d4e4599796"
+    }
+  },
+  "segments": [
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        8,
+        406
+      ],
+      "destination": "NovelSessionViewModelTests.swift",
+      "sha256": "9a8c2c769d335cc77e6e1ec5dbcdcea2f4aed3c8aec2b6fdd220178eb15259a0",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        407,
+        729
+      ],
+      "destination": "NovelSessionStreamingPerformanceTests.swift",
+      "sha256": "fd7532a24bd5073d45414cfaec09944aa3e9f9dde67be37e0c357b933774a7b3",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        730,
+        1740
+      ],
+      "destination": "NovelSessionTailPresentationTests.swift",
+      "sha256": "f0fbea6b4fbc95eda38ff3499e8d3260543115b8cf0424490bf9a5fb4d01c58a",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        1741,
+        2252
+      ],
+      "destination": "NovelSessionRunOwnershipTests.swift",
+      "sha256": "c1a250aa25eadf434d1ac6911d68c8fc5fb2a7a3b6cf3ec51e6ccd116827daf8",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        2253,
+        2760
+      ],
+      "destination": "NovelSessionSelectionTests.swift",
+      "sha256": "546303a4fde4f07bf2ef9deada4e1384f3d1ab26a5a294a16ff555c8af022cc0",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        2761,
+        3300
+      ],
+      "destination": "NovelSessionQuickStartTests.swift",
+      "sha256": "b2839fb7df41c74f485aa67858e07c4f0e2568004f697c2a5603da6d91405175",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        3301,
+        4332
+      ],
+      "destination": "NovelSessionManualSyncTests.swift",
+      "sha256": "b18721a6979b12eaeb8f1bc82ab9d6e257e739bb540b6825c58368997538bf22",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        4333,
+        4785
+      ],
+      "destination": "NovelSessionRetryAndPolishTests.swift",
+      "sha256": "29e2b0fc6776e74063ba5c9cac5477780d3f9fdf2bc07662f7020c612ca47037",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        4789,
+        5296
+      ],
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "sha256": "c2d277c7d402d3333e331831e745dab8cb2c97ece2df93990575023f949dd60e",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "lines": [
+        5299,
+        5713
+      ],
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "sha256": "11ccf0031aa072d37340a073ad7cc578cd4dda4398ac140aaf2005a3b2bdeb6f",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        6,
+        388
+      ],
+      "destination": "NovelSessionReplayTests.swift",
+      "sha256": "6b18b1bb888222924633264f4b4b63f7b7b994019d8f806396ad95fa3a13ebff",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        389,
+        932
+      ],
+      "destination": "NovelSessionTranscriptProjectionTests.swift",
+      "sha256": "005da86bf09cfcacb79e0056357d6a63923c53daae7e9b9baca720250352188e",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        933,
+        1984
+      ],
+      "destination": "NovelSessionRowActionTests.swift",
+      "sha256": "b7e000da1d569af8624a359e9c4bacf87eff37a0ba169e33bc6c9cce5d338c1d",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        2505,
+        2535
+      ],
+      "destination": "NovelSessionRowActionTests.swift",
+      "sha256": "42cf3cab61d8eca5edf6d4d43c037bb5658cdf34192b9b2f0cf81029da5ebb1d",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        1985,
+        2504
+      ],
+      "destination": "NovelSessionFollowPolicyTests.swift",
+      "sha256": "a00c682e9a404d0afeefdef935479eb6240814322aa673ea059d6319de34f3d2",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        2765,
+        2766
+      ],
+      "destination": "NovelSessionFollowPolicyTests.swift",
+      "sha256": "ad09e882a1e110862cd8a4c421716a8746695015a381c729176f983e6e607a06",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        2768,
+        2802
+      ],
+      "destination": "NovelSessionFollowPolicyTests.swift",
+      "sha256": "08c1241230afa47be69dcf2789b3459ea269a6cd51641793e2ebbcd09ea7fa2a",
+      "transformed": false
+    },
+    {
+      "source": "NovelSessionReplayTests.swift",
+      "lines": [
+        2539,
+        2762
+      ],
+      "destination": "NovelSessionReplayTestCase.swift",
+      "sha256": "5d0b7c70084fffd8e58532dc7daff93b1d89c81d30cba4ef1c2e55a50e6603d7",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationPresentationTests.swift",
+      "lines": [
+        6,
+        872
+      ],
+      "destination": "NovelCreationPresentationTests.swift",
+      "sha256": "3aaf255709a340bb11b034b7b19f49c51da1f103578b37011166bda37de1870b",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationPresentationTests.swift",
+      "lines": [
+        873,
+        1175
+      ],
+      "destination": "NovelCreationActionPresentationTests.swift",
+      "sha256": "36fe2c8db82b19c3c258c0f309205c80c7b73d3e1e7473f4aae021bab8a4a0d6",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationPresentationTests.swift",
+      "lines": [
+        1500,
+        1591
+      ],
+      "destination": "NovelCreationProjectPresentationTests.swift",
+      "sha256": "01c6b744db7563ee2f326c886797de31d26b5cc7fe33d29475f9d628f8103768",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationPresentationTests.swift",
+      "lines": [
+        1176,
+        1497
+      ],
+      "destination": "NovelCreationProjectPresentationTests.swift",
+      "sha256": "9d5ace9ef36ada9a753b2fab70b357ea351895296c64a055a46137d67a94ac0f",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "lines": [
+        6,
+        785
+      ],
+      "destination": "NovelCreationViewModelTests.swift",
+      "sha256": "92c300c5195121aa9be7166ca4b142ca763e67ec69ac70e9c7efc4487939dab7",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "lines": [
+        786,
+        1152
+      ],
+      "destination": "NovelCreationWorkspaceMutationTests.swift",
+      "sha256": "a2f6fb264685a9f4cde6510617a1b5b76dd0c35dcd9c25a678fdb422b8c041b2",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "lines": [
+        1153,
+        1606
+      ],
+      "destination": "NovelCreationQuickStartTests.swift",
+      "sha256": "20d0993d8fad98ccf1945155f51dcb96907552b84a3c4b53f440fa739a696789",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "lines": [
+        1607,
+        2274
+      ],
+      "destination": "NovelCreationSyncAndRecoveryTests.swift",
+      "sha256": "2591e2cd24222f278d9dca1787f343178a3130512637c33d3e05733da24c5d9c",
+      "transformed": false
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "lines": [
+        2277,
+        2541
+      ],
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "sha256": "bc494bfdfc8c211c712efb3f3d34624556130b408596d7ca821146b7ec13e27e",
+      "transformed": false
+    },
+    {
+      "source": "NovelManualEditSyncTests.swift",
+      "lines": [
+        7,
+        1198
+      ],
+      "destination": "NovelManualEditSyncTests.swift",
+      "sha256": "83ba144b10035185f383d4c57057911a8239f6de6771586741624cf761a9198c",
+      "transformed": false
+    },
+    {
+      "source": "NovelManualEditSyncTests.swift",
+      "lines": [
+        5,
+        6
+      ],
+      "destination": "NovelManualEditSyncTestCase.swift",
+      "sha256": "b8708602e049143eb32f2ac02097a645f14c5424a05cdc0ba597ae654762fadf",
+      "transformed": false
+    },
+    {
+      "source": "NovelManualEditSyncTests.swift",
+      "lines": [
+        1202,
+        1594
+      ],
+      "destination": "NovelManualEditSyncTestCase.swift",
+      "sha256": "44d0b8c06092d56779c5c1fe1965abfc6f53e811dfb61886c4e6d740bb7a561b",
+      "transformed": false
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "lines": [
+        5,
+        344
+      ],
+      "destination": "NovelCollaborationModeTests.swift",
+      "sha256": "1267094b2226d3a7baa88be1be1c30e64bc219cfb350b35bcc94fc21a7a064bb",
+      "transformed": false
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "lines": [
+        345,
+        1065
+      ],
+      "destination": "NovelGhostwriteGenerationTests.swift",
+      "sha256": "0a343715bdec7faf83cf555c50f459a955afd984a7a1fa1419819beb720bb91d",
+      "transformed": false
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "lines": [
+        1066,
+        1349
+      ],
+      "destination": "NovelGhostwriteInjectionTests.swift",
+      "sha256": "73a4388e17fd526822bcee6ae31e1582ce1b2206b0ed9c7d00274504a9800309",
+      "transformed": false
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "lines": [
+        2644,
+        2660
+      ],
+      "destination": "NovelGhostwriteRecoveryTests.swift",
+      "sha256": "9fc53022e045694d82473ba5e6b67f53ea8dd172f356be66bb5d3d334bb27477",
+      "transformed": false
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "lines": [
+        1350,
+        2095
+      ],
+      "destination": "NovelGhostwriteRecoveryTests.swift",
+      "sha256": "fb0c8acdbd297cdb63fe58e2c014053c953be8ccdcd26a809d85e44f9fee7d6b",
+      "transformed": false
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "lines": [
+        2096,
+        2354
+      ],
+      "destination": "NovelChapterPlanProposalTests.swift",
+      "sha256": "2220833f54022007f04e18a56a2121611fcee6e1bf4226d88111c877efcc8924",
+      "transformed": false
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "lines": [
+        2356,
+        2641
+      ],
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "sha256": "2e86e14301e7d5b08f5249af05d204cae14c3d07ed16da33681845159209ba73",
+      "transformed": false
+    }
+  ],
+  "adaptations": [
+    {
+      "source": "NovelSessionViewModelTests.swift:4913",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "eventually condition gains @escaping for inherited helper; closure is not stored"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift:4925",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "nested DisplayLinkGapProbe visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionSnapshotFailingCreation visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionAttachBlockingCreation visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionPerformReturnBlockingCreation visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelSessionViewModelTests.swift",
+      "destination": "NovelSessionViewModelTestCase.swift",
+      "change": "NovelSessionFailingRepository visibility private to internal for cross-file fixtures"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "NovelPlanSaveCompletionGate visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "BranchSnapshotBlockingNovelCreation visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "OrderedProjectListNovelCreation visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelCreationViewModelTests.swift",
+      "destination": "NovelCreationViewModelTestDoubles.swift",
+      "change": "SnapshotFailureNovelCreation visibility private to internal for cross-file tests"
+    },
+    {
+      "source": "NovelManualEditSyncTests.swift:5",
+      "destination": "NovelManualEditSyncTestCase.swift",
+      "change": "per-instance now visibility private to internal for inherited fixture"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "makeStartArtifacts visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "assertGhostwriteBatchCompletes visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "makeBatchAdjudicationJSON visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "seedGhostwriteMaterials visibility private to internal for subclass tests"
+    },
+    {
+      "source": "NovelCollaborationModeTests.swift",
+      "destination": "NovelCollaborationModeTestCase.swift",
+      "change": "revise visibility private to internal for subclass tests"
+    }
+  ]
+}

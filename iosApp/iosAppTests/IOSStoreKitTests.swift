@@ -313,7 +313,7 @@ final class IOSStoreKitTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(shell.contains(".task { await storeCoordinator.start() }"))
+        XCTAssertTrue(shell.contains(".task {\n            await storeCoordinator.start()"))
         XCTAssertTrue(shell.contains("Task { await storeCoordinator.refresh() }"))
         XCTAssertTrue(shell.contains("IOSSubscriptionView(store: storeCoordinator)"))
         XCTAssertTrue(shell.contains("store: storeCoordinator"))

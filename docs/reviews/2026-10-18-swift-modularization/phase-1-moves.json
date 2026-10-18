@@ -1,0 +1,54 @@
+{
+  "iosApp/iosApp/PlaceholderViews.swift": [
+    "iosApp/iosApp/PlaceholderViews.swift",
+    "iosApp/iosApp/Home/ConversationSummaryRow.swift",
+    "iosApp/iosApp/Home/HomeConversationIcon.swift",
+    "iosApp/iosApp/Home/HomeContinueCardModel.swift",
+    "iosApp/iosApp/Home/ConversationsView.swift",
+    "iosApp/iosApp/Home/HomeControls.swift",
+    "iosApp/iosApp/Search/SearchView.swift",
+    "iosApp/iosApp/Settings/SettingsHomeView.swift",
+    "iosApp/iosApp/Workspace/WorkspaceDetailViews.swift",
+    "iosApp/iosApp/Workspace/WorkspaceView.swift",
+    "iosApp/iosApp/SharedUI/CapabilityGateLockedView.swift"
+  ],
+  "iosApp/iosApp/MemoryToolApprovalCard.swift": [
+    "iosApp/iosApp/Chat/Presentation/Approvals/WorkspaceToolApprovalCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/ToolOutcomeUnknownCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/SearchToolApprovalCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/IshHandoffToolApprovalCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/ChatAskUserCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/CouncilToolApprovalCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/WebMountToolApprovalCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/RecipeToolApprovalCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/MemoryToolApprovalCard.swift",
+    "iosApp/iosApp/Chat/Presentation/Approvals/McpToolApprovalCard.swift",
+    "iosApp/iosApp/DesignSystem/AmberThemeTryOnBar.swift"
+  ],
+  "iosApp/iosApp/BoardView.swift": [
+    "iosApp/iosApp/Board/BoardHistoryRows.swift",
+    "iosApp/iosApp/Board/BoardView.swift",
+    "iosApp/iosApp/Board/BoardCapabilityViews.swift",
+    "iosApp/iosApp/Board/BoardTopicActions.swift",
+    "iosApp/iosApp/DeepRead/IOSDeepReadWebViews.swift",
+    "iosApp/iosApp/DeepRead/IOSDeepReadTaskDetailView.swift",
+    "iosApp/iosApp/DeepRead/DeepReadReaderComponents.swift"
+  ],
+  "iosApp/iosApp/IOSTerminalRuntime.swift": [
+    "iosApp/iosApp/Infrastructure/Terminal/IOSAgentTerminalJobExecutor.swift",
+    "iosApp/iosApp/Infrastructure/Terminal/IOSRemoteTerminalExecuteExecutor.swift",
+    "iosApp/iosApp/Infrastructure/Terminal/IOSTerminalCommandPolicy.swift",
+    "iosApp/iosApp/Infrastructure/Terminal/IOSTerminalRuntime.swift",
+    "iosApp/iosApp/Infrastructure/Terminal/IOSAmberShellExecuteExecutor.swift",
+    "iosApp/iosApp/Infrastructure/Terminal/IOSTerminalModels.swift",
+    "iosApp/iosApp/AgentRuntime/Tasks/IOSAdvancedTaskModels.swift",
+    "iosApp/iosApp/AgentRuntime/Tasks/IOSAdvancedTaskStore.swift"
+  ],
+  "iosApp/iosApp/IOSRecipeFileStore.swift": [
+    "iosApp/iosApp/AgentRuntime/Recipes/IOSRecipeFileStore.swift",
+    "iosApp/iosApp/AgentRuntime/Plugins/IOSPluginArchiveCodec.swift",
+    "iosApp/iosApp/AgentRuntime/Plugins/IOSPluginDirectoryPolicyStore.swift",
+    "iosApp/iosApp/AgentRuntime/Plugins/IOSPluginHealthStore.swift",
+    "iosApp/iosApp/AgentRuntime/Plugins/IOSPluginFileStore.swift"
+  ]
+}

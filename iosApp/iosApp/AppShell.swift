@@ -1263,7 +1263,7 @@ private extension View {
                 SubAgentRoleView(sharedSettings: sharedSettings, name: name, roleId: roleId)
             case .sandbox:
                 if sharedSettings.isCapabilityGateEnabled(.remoteRuntime) {
-                    RuntimeEnvironmentView(settingsStore: settingsStore, sharedSettings: sharedSettings)
+                    RuntimeEnvironmentView(settingsStore: settingsStore, sharedSettings: sharedSettings, permissionStore: permissionStore)
                 } else {
                     CapabilityGateLockedView(gate: .remoteRuntime)
                 }

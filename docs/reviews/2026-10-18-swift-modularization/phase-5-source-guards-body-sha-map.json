@@ -1,0 +1,60 @@
+{
+  "phase": "Phase5 non-BG source-guard migration",
+  "before_snapshot": "/tmp/amber-phase5-source-guards-before.json",
+  "files": {
+    "IOSSettingsWiringTests.swift": {
+      "before_sha256": "683e0e0e72bdda939741382460e105465d2c088626f8564ba5e852780fe28172",
+      "after_sha256": "68f173c10e213e9398aee370eb7f251254f1e2822e584d052f19af4a84172701"
+    },
+    "PerformanceHygieneTests.swift": {
+      "before_sha256": "a4cfb487ca069cf0f830b21890b86a633936ff301edd7c9e6331c9bfb2b4587d",
+      "after_sha256": "ea77aeb928dceaeb439bff0d2ee0b931c658ffdc74ae5f8b49ec18b820c77679"
+    },
+    "CouncilSourceMaterialsTests.swift": {
+      "before_sha256": "68ccde10f71856c122a977cc2f1989396b34c974c0c393580bec524a81e1ab7d",
+      "after_sha256": "20f7ccebea1e6a8df415011d270ae3de3b96e79beb24a6c1d1c11eb60e8c3886"
+    }
+  },
+  "methods": {
+    "testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground": {
+      "file": "IOSSettingsWiringTests.swift",
+      "before_sha256": "609103c8ac2739fa9d1fe5eefa5049c9caf7fcdc7df2797f4d9442aa7422bc26",
+      "after_sha256": "1a92de71659cb2795e0f0d5af34de5af90ab99e0f7eb7da17a614f6753288cc3",
+      "before_line": 161,
+      "after_line": 161,
+      "change": "Council lease source path -> Council/CouncilChatViewModel.swift; all BG assertions untouched"
+    },
+    "testCouncilSettingsExposeAnExplicitCurrentModelConnectivityProbe": {
+      "file": "IOSSettingsWiringTests.swift",
+      "before_sha256": "e574dc40142889cb8c61bf43ac4bc90db8ff8dfcff539b5f3e8fe5f079ebc77e",
+      "after_sha256": "8c657c5e985482630ab678a03951982bfdcc700684562a8066c35b93fb06b957",
+      "before_line": 841,
+      "after_line": 841,
+      "change": "live Council settings sheet source path -> Council/CouncilRoomSheets.swift; old settings assertions retained"
+    },
+    "testHomeResumeContextDoesNotLoadFullArchive": {
+      "file": "PerformanceHygieneTests.swift",
+      "before_sha256": "384927914acf35ae113fd8edf26fb8d780a7412f89af0636188623b68702425c",
+      "after_sha256": "ecb121d364506e614114dd471e4c5610368f2a11b08fc97313b8403315bb6cab",
+      "before_line": 79,
+      "after_line": 79,
+      "change": "bounded homeResumeContext source -> Council/CouncilChatViewModel.swift; exists/load assertions retained"
+    },
+    "testFinalTopicPromptIncludesUploadedMaterialsSection": {
+      "file": "CouncilSourceMaterialsTests.swift",
+      "before_sha256": "8b5908166c1641bd8018ef68d49da4d2e03827cd09c8330b771af6e4b9266670",
+      "after_sha256": "d2381d99872e2a8894c0d0e5e8e60614c77f28dde577f09ae7f284d5124ce686",
+      "before_line": 102,
+      "after_line": 102,
+      "change": "request fields -> CouncilRoomRunTypes.swift; topic prompt -> CouncilRoomPlanning.swift; runner forwarding stays CouncilRunner.swift"
+    },
+    "testCouncilComposerWiresAttachmentEntryAndSendPipeline": {
+      "file": "CouncilSourceMaterialsTests.swift",
+      "before_sha256": "2b01ba6ea8d5662c5adf73028718024ebdf3abdcce202f6055ebdc3ad3654c47",
+      "after_sha256": "160764023452599a8d26aa0d390b0360644e590b6c1f44dcfe94b9f4905a5f1f",
+      "before_line": 120,
+      "after_line": 128,
+      "change": "UI controls remain CouncilChatRuntimeView.swift; material preparation and send state -> CouncilChatViewModel.swift; two added owner-connection assertions"
+    }
+  }
+}

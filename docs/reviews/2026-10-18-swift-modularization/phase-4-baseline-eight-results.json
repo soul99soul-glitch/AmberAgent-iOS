@@ -1,0 +1,142 @@
+{
+  "total": 8,
+  "failed": 8,
+  "tests": [
+    {
+      "identifier": "NovelBatchPolishTests/testBatchPolishAdoptsAllCompatibleChapters()",
+      "result": "Failed",
+      "duration": "0.39s",
+      "issues": [
+        {
+          "text": "XCTAssertEqual failed: (\"1\") is not equal to (\"3\")",
+          "line": 178
+        },
+        {
+          "text": "XCTAssertEqual failed: (\"2\") is not equal to (\"0\")",
+          "line": 180
+        },
+        {
+          "text": "XCTAssertFalse failed",
+          "line": 182
+        },
+        {
+          "text": "XCTAssertEqual failed: (\"1\") is not equal to (\"3\")",
+          "line": 185
+        },
+        {
+          "text": "XCTAssertTrue failed",
+          "line": 187
+        },
+        {
+          "text": "XCTAssertTrue failed",
+          "line": 187
+        }
+      ]
+    },
+    {
+      "identifier": "NovelBatchPolishTests/testBatchPolishCancellationStopsBeforeNextChapter()",
+      "result": "Failed",
+      "duration": "0.13s",
+      "issues": [
+        {
+          "text": "XCTAssertEqual failed: (\"1\") is not equal to (\"2\") - 第 2、3 章都应标为未处理，实际结果：[\"adopted\", \"failed\", \"cancelled\"]",
+          "line": 284
+        }
+      ]
+    },
+    {
+      "identifier": "NovelBatchPolishTests/testBatchPolishRecordsGenerationFailureAndContinues()",
+      "result": "Failed",
+      "duration": "0.066s",
+      "issues": [
+        {
+          "text": "XCTAssertEqual failed: (\"1\") is not equal to (\"2\")",
+          "line": 249
+        },
+        {
+          "text": "XCTAssertEqual failed: (\"2\") is not equal to (\"1\")",
+          "line": 250
+        }
+      ]
+    },
+    {
+      "identifier": "NovelBatchPolishTests/testBatchPolishSkipsIncompatibleChapterAndContinues()",
+      "result": "Failed",
+      "duration": "0.062s",
+      "issues": [
+        {
+          "text": "XCTAssertEqual failed: (\"1\") is not equal to (\"2\")",
+          "line": 207
+        },
+        {
+          "text": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+          "line": 208
+        },
+        {
+          "text": "XCTAssertEqual failed: (\"2\") is not equal to (\"0\")",
+          "line": 209
+        },
+        {
+          "text": "XCTAssertEqual failed: (\"Optional(iosApp.NovelBatchPolishChapterResult.Outcome.failed)\") is not equal to (\"Optional(iosApp.NovelBatchPolishChapterResult.Outcome.skippedDrift)\")",
+          "line": 210
+        },
+        {
+          "text": "XCTAssertTrue failed",
+          "line": 223
+        }
+      ]
+    },
+    {
+      "identifier": "NovelChapterReplacementStateTests/testReplacingChapterKeepsEarlierFactsWhenCollectionsSkippedSync()",
+      "result": "Failed",
+      "duration": "0.022s",
+      "issues": [
+        {
+          "text": "failed: caught error: \"branchRequiresSync(a8472198-e1ae-4177-9bb9-dd1afb3d43d9)\"",
+          "line": 408
+        }
+      ]
+    },
+    {
+      "identifier": "NovelCreationModuleTests/testDegradedCommitFailureReconcilesCachedProjectToReadOnlyPrevious()",
+      "result": "Failed",
+      "duration": "0.07s",
+      "issues": [
+        {
+          "text": "failed - Expected expression to throw.",
+          "line": 402
+        },
+        {
+          "text": "XCTAssertEqual failed: (\"3\") is not equal to (\"1\")",
+          "line": 409
+        },
+        {
+          "text": "failed - Expected the previous project in degraded read-only mode",
+          "line": 411
+        }
+      ]
+    },
+    {
+      "identifier": "NovelProjectLifecycleOperationTests/testCorruptPendingAndCompletedFileReceiptsFailClosedWithoutDeletingEvidence()",
+      "result": "Failed",
+      "duration": "0.053s",
+      "issues": [
+        {
+          "text": "failed: caught error: \"Error Domain=NSCocoaErrorDomain Code=260 \"未能打开文件“1c509a01-2953-4bcc-8f55-5f28e9ef565e.json”，因为它不存在。\" UserInfo={NSFilePath=/Users/arquiel/Library/Developer/CoreSimulator/Devices/F3D5299E-EEA6-4098-BF61-AB1C516933C0/data/Containers/Data/Application/F66CCD50-1504-4684-9648-AC690BD18A6C/tmp/NovelCreationTests-753E56CC-66BB-4A25-8419-79377BBE0F1A/projects/1c509a01-2953-4bcc-8f55-5f28e9ef565e.json, NSURL=file:///Users/arquiel/Library/Developer/CoreSimulator/Devices/F3D5299E-EEA6-4098-BF61-AB1C516933C0/data/Containers/Data/Application/F66CCD50-1504-4684-9648-AC690BD18A6C/tmp/NovelCreationTests-753E56CC-66BB-4A25-8419-79377BBE0F1A/projects/1c509a01-2953-4bcc-8f55-5f28e9ef565e.json, NSUnderlyingError=0x1334acc30 {Error Domain=NSPOSIXErrorDomain Code=2 \"No such file or directory\"}}\"",
+          "line": 684
+        }
+      ]
+    },
+    {
+      "identifier": "NovelProjectLifecycleOperationTests/testExplicitPreviousRestoreBecomesWritableAndReplaysAcrossRestart()",
+      "result": "Failed",
+      "duration": "0.028s",
+      "issues": [
+        {
+          "text": "failed - Expected the previous copy to be read-only before confirmation.",
+          "line": 124
+        }
+      ]
+    }
+  ]
+}

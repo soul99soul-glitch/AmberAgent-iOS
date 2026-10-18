@@ -1,155 +1,5 @@
 import Foundation
 @preconcurrency import Shared
-
-struct NovelLiveModelCatalog: @unchecked Sendable {
-    let currentModel: Model?
-    let providers: [ProviderSetting]
-}
-
-struct NovelGrokIsolationOptions: Equatable, Sendable {
-    let disableSearch: Bool
-    let disableMemory: Bool
-
-    static let novel = NovelGrokIsolationOptions(
-        disableSearch: true,
-        disableMemory: true
-    )
-
-    static let discussion = NovelGrokIsolationOptions(
-        disableSearch: false,
-        disableMemory: true
-    )
-
-    static func forPurpose(
-        _ purpose: NovelModelPurpose,
-        searchEnabled: Bool
-    ) -> NovelGrokIsolationOptions {
-        purpose == .discussion && searchEnabled ? .discussion : .novel
-    }
-}
-
-struct NovelLiveTransportRequest: @unchecked Sendable {
-    let providerSetting: ProviderSetting
-    let messages: [UIMessage]
-    let parameters: TextGenerationParams
-    let grokIsolation: NovelGrokIsolationOptions?
-    /// Discussion-only: owning project + current branch for the novel project
-    /// write tools. Nil for every other purpose — zero impact on non-discussion
-    /// transports.
-    let novelProjectContext: NovelProjectToolRunContext?
-
-    init(
-        providerSetting: ProviderSetting,
-        messages: [UIMessage],
-        parameters: TextGenerationParams,
-        grokIsolation: NovelGrokIsolationOptions?,
-        novelProjectContext: NovelProjectToolRunContext? = nil
-    ) {
-        self.providerSetting = providerSetting
-        self.messages = messages
-        self.parameters = parameters
-        self.grokIsolation = grokIsolation
-        self.novelProjectContext = novelProjectContext
-    }
-}
-
-struct NovelLiveTransportCallbacks: @unchecked Sendable {
-    let onChunk: @Sendable (MessageChunk) -> Void
-    let onCheckpoint: @Sendable (NovelResponsesResumeCursor) -> Void
-    let onAskUser: @Sendable (NovelAskUserPrompt, String) -> Void
-    let onComplete: @Sendable () -> Void
-    let onFailure: @Sendable (NovelModelFailure) -> Void
-    let onDisconnected: @Sendable (NovelModelFailure) -> Void
-
-    init(
-        onChunk: @escaping @Sendable (MessageChunk) -> Void,
-        onCheckpoint: @escaping @Sendable (NovelResponsesResumeCursor) -> Void = { _ in },
-        onAskUser: @escaping @Sendable (NovelAskUserPrompt, String) -> Void,
-        onComplete: @escaping @Sendable () -> Void,
-        onFailure: @escaping @Sendable (NovelModelFailure) -> Void,
-        onDisconnected: @escaping @Sendable (NovelModelFailure) -> Void = { _ in }
-    ) {
-        self.onChunk = onChunk
-        self.onCheckpoint = onCheckpoint
-        self.onAskUser = onAskUser
-        self.onComplete = onComplete
-        self.onFailure = onFailure
-        self.onDisconnected = onDisconnected
-    }
-}
-
-struct NovelLiveCancellationHandle: @unchecked Sendable {
-    private let action: @Sendable () -> Void
-    private let remoteAction: @Sendable () -> Void
-
-    init(
-        _ action: @escaping @Sendable () -> Void,
-        remoteAction: @escaping @Sendable () -> Void = {}
-    ) {
-        self.action = action
-        self.remoteAction = remoteAction
-    }
-
-    func cancel() {
-        action()
-    }
-
-    func cancelRemote() {
-        remoteAction()
-    }
-}
-
-typealias NovelLiveTransport = @Sendable (
-    NovelLiveTransportRequest,
-    NovelLiveTransportCallbacks
-) -> NovelLiveCancellationHandle?
-
-typealias NovelDurableResumeTransport = @Sendable (
-    NovelModelResumeRequest,
-    ProviderSetting,
-    [CustomHeader],
-    NovelLiveTransportCallbacks
-) -> NovelLiveCancellationHandle?
-
-struct NovelLiveCodexHooks: @unchecked Sendable {
-    let isCodex: @Sendable (ProviderSetting) -> Bool
-    let resolve: @Sendable (ProviderSetting) async throws -> ProviderSetting
-    let augment: @Sendable (TextGenerationParams, ProviderSetting) -> TextGenerationParams
-    let diagnose: @Sendable (ProviderSetting, ProviderSetting, TextGenerationParams) -> Void
-
-    static let production = NovelLiveCodexHooks(
-        isCodex: { IOSCodexProviderResolver.isCodexProvider($0) },
-        resolve: {
-            try await IOSGrokWebProviderResolver.resolved(
-                try await IOSCodexProviderResolver.resolved($0)
-            )
-        },
-        augment: { params, provider in
-            IOSGrokWebProviderResolver.augmentParamsForGrok(
-                IOSCodexProviderResolver.augmentParamsForCodex(params, provider: provider),
-                provider: provider
-            )
-        },
-        diagnose: {
-            IOSCodexProviderResolver.writeRequestDiagnostic(
-                originalProvider: $0,
-                resolvedProvider: $1,
-                params: $2
-            )
-        }
-    )
-
-    static let passthrough = NovelLiveCodexHooks(
-        isCodex: { _ in false },
-        resolve: { $0 },
-        augment: { parameters, _ in parameters },
-        diagnose: { _, _, _ in }
-    )
-}
-
-/// The production bridge from the Novel domain request to the existing provider
-/// runtimes. It owns only transport state; prompts, persistence, and terminal
-/// project mutations remain in the Novel module.
 actor NovelLiveModelAdapter: NovelDurableModelRunning {
     private struct Route: @unchecked Sendable {
         let provider: ProviderSetting
@@ -1067,290 +917,7 @@ private extension NovelLiveModelAdapter {
 }
 
 extension NovelLiveModelAdapter {
-    /// Accumulates assistant text across the tool engine's multi-step loop.
-    /// Each `streamStep` re-accumulates its own text from empty (see
-    /// `IOSAgentToolEngine.StreamStepState`), so without this, a later step's
-    /// `replacementChunk` (a full-replace signal) would erase any visible text
-    /// the model produced in an earlier step before invoking a tool.
-    /// `@unchecked Sendable` + `NSLock`: `onAssistantTurnStarted` fires from
-    /// the `@MainActor` engine loop, but `onAssistantText` fires from whatever
-    /// thread the KMP streaming bridge calls back on (not guaranteed MainActor).
-    private final class DiscussionStepTextAccumulator: @unchecked Sendable {
-        private let lock = NSLock()
-        private var committedSteps: [String] = []
-        private var currentStep = ""
-
-        func startNewTurn() {
-            lock.lock()
-            defer { lock.unlock() }
-            if !currentStep.isEmpty {
-                committedSteps.append(currentStep)
-            }
-            currentStep = ""
-        }
-
-        func update(currentStep text: String) -> String {
-            lock.lock()
-            defer { lock.unlock() }
-            currentStep = text
-            return (committedSteps + [currentStep])
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n\n")
-        }
-    }
-
-    static func discussionSearchTransport(
-        using provider: any IOSAgentTextProvider,
-        executors: @escaping @MainActor @Sendable (NovelProjectToolRunContext?) -> [String: any IOSToolExecutor]
-    ) -> NovelLiveTransport {
-        { request, callbacks in
-            let task = Task { @MainActor in
-                // One automatic retry only when the first attempt dies before any
-                // assistant text (typical NSURLError -1005 on the opening request).
-                // Never retry after tools/partial text — that would double-write.
-                final class VisibleTextFlag: @unchecked Sendable {
-                    private let lock = NSLock()
-                    private var value = false
-                    func mark() {
-                        lock.lock(); value = true; lock.unlock()
-                    }
-                    func reset() {
-                        lock.lock(); value = false; lock.unlock()
-                    }
-                    var isSet: Bool {
-                        lock.lock(); defer { lock.unlock() }
-                        return value
-                    }
-                }
-                var result: IOSAgentToolEngineResult!
-                let producedVisibleText = VisibleTextFlag()
-                var executorMap: [String: any IOSToolExecutor] = [:]
-                for attempt in 0..<2 {
-                    executorMap = executors(request.novelProjectContext)
-                    let engine = IOSAgentToolEngine(
-                        provider: provider,
-                        executors: executorMap,
-                        configuration: .init(maxSteps: 16, honorApprovalPause: true)
-                    )
-                    let stepText = DiscussionStepTextAccumulator()
-                    let stepReasoning = DiscussionStepTextAccumulator()
-                    producedVisibleText.reset()
-                    result = await engine.run(
-                        providerSetting: request.providerSetting,
-                        messages: request.messages,
-                        params: request.parameters,
-                        onAssistantTurnStarted: {
-                            stepText.startNewTurn()
-                            stepReasoning.startNewTurn()
-                        },
-                        onAssistantText: { text in
-                            producedVisibleText.mark()
-                            callbacks.onChunk(replacementChunk(stepText.update(currentStep: text)))
-                        },
-                        onAssistantReasoning: { text in
-                            callbacks.onChunk(reasoningDeltaChunk(stepReasoning.update(currentStep: text)))
-                        }
-                    )
-                    guard !Task.isCancelled else { return }
-                    if attempt == 0,
-                       !producedVisibleText.isSet,
-                       let failureMessage = result.providerFailureMessage,
-                       NovelPresentation.looksLikeTransportFailure(failureMessage) {
-                        continue
-                    }
-                    break
-                }
-                if let failureMessage = result.providerFailureMessage {
-                    callbacks.onFailure(failure(
-                        code: "discussion_provider_failed",
-                        message: failureMessage,
-                        isRetryable: true
-                    ))
-                    return
-                }
-                if result.hitStepLimit {
-                    callbacks.onFailure(failure(
-                        code: "discussion_tool_step_limit",
-                        message: "讨论时连续搜索次数过多，请缩小问题后重试。",
-                        isRetryable: true
-                    ))
-                    return
-                }
-                // I-5:守护停止不得伪装成正常完成——引擎因重复相同调用而停止时,
-                // 与 hitStepLimit 同样按可重试失败呈现,而不是落进下面的完成分支。
-                if result.guardStopped {
-                    callbacks.onFailure(failure(
-                        code: "discussion_tool_loop_guard",
-                        message: "讨论时模型反复执行相同搜索，已停止。请换个问法后重试。",
-                        isRetryable: true
-                    ))
-                    return
-                }
-                if let approval = result.pendingApproval,
-                   approval.toolName == "ask_user" {
-                    do {
-                        let prompt = try decodeAskUserPrompt(approval.arguments)
-                        callbacks.onAskUser(prompt, joinedAssistantText(in: result.messages))
-                    } catch {
-                        callbacks.onFailure(failure(
-                            code: "discussion_ask_user_invalid",
-                            message: "模型提出的问题格式无法读取，请重试。",
-                            isRetryable: true
-                        ))
-                    }
-                    return
-                }
-                if let approval = result.pendingApproval,
-                   approval.toolName == "novel_revise_chapter" {
-                    guard let projectExecutor = executorMap["novel_revise_chapter"]
-                            as? IOSNovelProjectToolExecutor else {
-                        callbacks.onFailure(failure(
-                            code: "discussion_chapter_revision_unavailable",
-                            message: "当前讨论无法准备改正文审批，请重试。",
-                            isRetryable: true
-                        ))
-                        return
-                    }
-                    switch await projectExecutor.revisionApprovalPrompt(from: approval.arguments) {
-                    case .success(let prompt):
-                        callbacks.onAskUser(prompt, joinedAssistantText(in: result.messages))
-                    case .failure(let issue):
-                        callbacks.onFailure(failure(
-                            code: "discussion_chapter_revision_invalid",
-                            message: issue.message,
-                            isRetryable: true
-                        ))
-                    }
-                    return
-                }
-                if let approval = result.pendingApproval,
-                   approval.toolName == "novel_workspace_write" {
-                    guard let projectExecutor = executorMap["novel_workspace_write"]
-                            as? IOSNovelProjectToolExecutor else {
-                        callbacks.onFailure(failure(
-                            code: "discussion_workspace_write_unavailable",
-                            message: "当前讨论无法准备工作区写入审批，请重试。",
-                            isRetryable: true
-                        ))
-                        return
-                    }
-                    switch await projectExecutor.workspaceWriteApprovalPrompt(from: approval.arguments) {
-                    case .success(let prompt):
-                        callbacks.onAskUser(prompt, joinedAssistantText(in: result.messages))
-                    case .failure(let issue):
-                        callbacks.onFailure(failure(
-                            code: "discussion_workspace_write_invalid",
-                            message: issue.message,
-                            isRetryable: true
-                        ))
-                    }
-                    return
-                }
-                if let approval = result.pendingApproval,
-                   approval.toolName == "novel_revert_recent_chapters" {
-                    guard let projectExecutor = executorMap["novel_revert_recent_chapters"]
-                            as? IOSNovelProjectToolExecutor else {
-                        callbacks.onFailure(failure(
-                            code: "discussion_manuscript_revert_unavailable",
-                            message: "当前讨论无法准备回退章节审批，请重试。",
-                            isRetryable: true
-                        ))
-                        return
-                    }
-                    switch await projectExecutor.revertApprovalPrompt(from: approval.arguments) {
-                    case .success(let prompt):
-                        callbacks.onAskUser(prompt, joinedAssistantText(in: result.messages))
-                    case .failure(let issue):
-                        callbacks.onFailure(failure(
-                            code: "discussion_manuscript_revert_invalid",
-                            message: issue.message,
-                            isRetryable: true
-                        ))
-                    }
-                    return
-                }
-                if let approval = result.pendingApproval,
-                   approval.toolName == "novel_delete_chapters" {
-                    guard let projectExecutor = executorMap["novel_delete_chapters"]
-                            as? IOSNovelProjectToolExecutor else {
-                        callbacks.onFailure(failure(
-                            code: "discussion_manuscript_delete_unavailable",
-                            message: "当前讨论无法准备抽章审批，请重试。",
-                            isRetryable: true
-                        ))
-                        return
-                    }
-                    switch await projectExecutor.deleteApprovalPrompt(from: approval.arguments) {
-                    case .success(let prompt):
-                        callbacks.onAskUser(prompt, joinedAssistantText(in: result.messages))
-                    case .failure(let issue):
-                        callbacks.onFailure(failure(
-                            code: "discussion_manuscript_delete_invalid",
-                            message: issue.message,
-                            isRetryable: true
-                        ))
-                    }
-                    return
-                }
-                if let approval = result.pendingApproval,
-                   approval.toolName == "novel_prepare_ghostwrite" {
-                    guard let projectExecutor = executorMap["novel_prepare_ghostwrite"]
-                            as? IOSNovelProjectToolExecutor else {
-                        callbacks.onFailure(failure(
-                            code: "discussion_ghostwrite_plan_unavailable",
-                            message: "当前讨论无法准备代笔审批，请重试。",
-                            isRetryable: true
-                        ))
-                        return
-                    }
-                    switch await projectExecutor.ghostwritePlanApprovalPrompt(from: approval.arguments) {
-                    case .success(let prompt):
-                        callbacks.onAskUser(prompt, joinedAssistantText(in: result.messages))
-                    case .failure(let issue):
-                        callbacks.onFailure(failure(
-                            code: "discussion_ghostwrite_plan_invalid",
-                            message: issue.message,
-                            isRetryable: true
-                        ))
-                    }
-                    return
-                }
-                if result.pendingApproval != nil {
-                    callbacks.onFailure(failure(
-                        code: "discussion_tool_approval_required",
-                        message: "当前搜索需要额外确认，请检查搜索服务设置后重试。",
-                        isRetryable: true
-                    ))
-                    return
-                }
-                let finalText = joinedAssistantText(in: result.messages)
-                guard !finalText.isEmpty else {
-                    callbacks.onFailure(failure(
-                        code: "discussion_empty_response",
-                        message: "模型完成了搜索，但没有返回讨论内容，请重试。",
-                        isRetryable: true
-                    ))
-                    return
-                }
-                // 讨论过程中已经把思考和正文流出去了。循环结束后再整包重放思考，
-                // 会在正文已经可见之后把思考卡重新打开，看起来像「写完了还在想」。
-                // 只有正文从未出现时，才在终态补一次思考（先思考后正文）。
-                let finalReasoning = joinedAssistantReasoning(in: result.messages)
-                if !finalReasoning.isEmpty, !producedVisibleText.isSet {
-                    callbacks.onChunk(reasoningDeltaChunk(finalReasoning))
-                }
-                callbacks.onChunk(replacementChunk(finalText))
-                callbacks.onComplete()
-            }
-            return NovelLiveCancellationHandle {
-                task.cancel()
-            }
-        }
-    }
-}
-
-private extension NovelLiveModelAdapter {
-    static func makeMessages(_ messages: [NovelModelMessage]) -> [UIMessage] {
+    private static func makeMessages(_ messages: [NovelModelMessage]) -> [UIMessage] {
         messages.map { message in
             let role: MessageRole
             switch message.role {
@@ -1372,7 +939,7 @@ private extension NovelLiveModelAdapter {
         }
     }
 
-    static func makeParameters(
+    private static func makeParameters(
         _ source: NovelModelParameters,
         model: Model,
         includeSearchTools: Bool = false,
@@ -1444,7 +1011,7 @@ private extension NovelLiveModelAdapter {
         )
     }
 
-    static func sanitizedCustomBodies(_ bodies: [CustomBody]) -> [CustomBody] {
+    private static func sanitizedCustomBodies(_ bodies: [CustomBody]) -> [CustomBody] {
         let reservedKeys: Set<String> = [
             "conversation", "functioncall", "functions", "input", "instructions",
             "memory", "messages", "model", "paralleltoolcalls", "previousresponseid",
@@ -1464,7 +1031,7 @@ private extension NovelLiveModelAdapter {
         }
     }
 
-    static func reasoningLevel(_ source: NovelModelReasoningLevel) -> ReasoningLevel {
+    private static func reasoningLevel(_ source: NovelModelReasoningLevel) -> ReasoningLevel {
         switch source {
         case .off: .off
         case .automatic: .auto_
@@ -1476,7 +1043,7 @@ private extension NovelLiveModelAdapter {
         }
     }
 
-    static func events(from chunk: MessageChunk) -> [NovelModelEvent] {
+    private static func events(from chunk: MessageChunk) -> [NovelModelEvent] {
         var events: [NovelModelEvent] = []
         for choice in chunk.choices {
             if let delta = choice.delta {
@@ -1491,7 +1058,7 @@ private extension NovelLiveModelAdapter {
             } else if let message = choice.message {
                 let reasoning = reasoningText(in: message)
                 if !reasoning.isEmpty {
-                    events.append(.reasoningDelta(reasoning))
+                    events.append(.reasoningReplacement(reasoning))
                 }
                 let text = text(in: message)
                 if !text.isEmpty {
@@ -1510,7 +1077,7 @@ private extension NovelLiveModelAdapter {
         return events
     }
 
-    static func frameEvents(from chunks: [MessageChunk]) -> [NovelModelFrameEvent] {
+    private static func frameEvents(from chunks: [MessageChunk]) -> [NovelModelFrameEvent] {
         chunks.flatMap { chunk in
             var events: [NovelModelFrameEvent] = []
             for choice in chunk.choices {
@@ -1526,7 +1093,7 @@ private extension NovelLiveModelAdapter {
                 } else if let message = choice.message {
                     let reasoning = reasoningText(in: message)
                     if !reasoning.isEmpty {
-                        events.append(.reasoningDelta(reasoning))
+                        events.append(.reasoningReplacement(reasoning))
                     }
                     let text = text(in: message)
                     if !text.isEmpty {
@@ -1546,7 +1113,7 @@ private extension NovelLiveModelAdapter {
         }
     }
 
-    static func outputLimitFailure(in chunk: MessageChunk) -> NovelModelFailure? {
+    private static func outputLimitFailure(in chunk: MessageChunk) -> NovelModelFailure? {
         let reasons = Set(chunk.choices.compactMap { $0.finishReason?.lowercased() })
         guard !reasons.isDisjoint(with: ["length", "max_tokens", "max_output_tokens"]) else {
             return nil
@@ -1558,17 +1125,17 @@ private extension NovelLiveModelAdapter {
         )
     }
 
-    static func text(in message: UIMessage) -> String {
+    private static func text(in message: UIMessage) -> String {
         message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
     }
 
     /// Joined reasoning/thinking text from message parts. Presentation-only;
     /// callers must never fold this into manuscript `partialContent`.
-    static func reasoningText(in message: UIMessage) -> String {
+    private static func reasoningText(in message: UIMessage) -> String {
         message.parts.compactMap { ($0 as? UIMessagePart.Reasoning)?.reasoning }.joined()
     }
 
-    static func hasReasoningActivity(in message: UIMessage) -> Bool {
+    private static func hasReasoningActivity(in message: UIMessage) -> Bool {
         !reasoningText(in: message).isEmpty
     }
 
@@ -1588,11 +1155,11 @@ private extension NovelLiveModelAdapter {
             .joined(separator: "\n\n")
     }
 
-    static func reasoningDeltaChunk(_ text: String) -> MessageChunk {
+    static func reasoningReplacementChunk(_ text: String) -> MessageChunk {
         let createdAt = KotlinInstant.companion.fromEpochMilliseconds(
             epochMilliseconds: Int64(Date().timeIntervalSince1970 * 1000)
         )
-        let delta = UIMessage(
+        let message = UIMessage(
             id: KotlinUuid.companion.random(),
             role: MessageRole.assistant,
             parts: [UIMessagePart.Reasoning(
@@ -1613,8 +1180,8 @@ private extension NovelLiveModelAdapter {
             model: "",
             choices: [UIMessageChoice(
                 index: 0,
-                delta: delta,
-                message: nil,
+                delta: nil,
+                message: message,
                 finishReason: nil
             )],
             usage: nil
@@ -1644,7 +1211,7 @@ private extension NovelLiveModelAdapter {
         )
     }
 
-    static func nowLocalDateTime() -> Kotlinx_datetimeLocalDateTime {
+    private static func nowLocalDateTime() -> Kotlinx_datetimeLocalDateTime {
         let now = Date()
         let calendar = Calendar.current
         return Kotlinx_datetimeLocalDateTime(
@@ -1658,12 +1225,12 @@ private extension NovelLiveModelAdapter {
         )
     }
 
-    static func sameStableID(_ lhs: String, _ rhs: String) -> Bool {
+    private static func sameStableID(_ lhs: String, _ rhs: String) -> Bool {
         lhs.trimmingCharacters(in: .whitespacesAndNewlines)
             .caseInsensitiveCompare(rhs.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
     }
 
-    static func ownerProvider(
+    private static func ownerProvider(
         for model: Model,
         providers: [ProviderSetting]
     ) -> ProviderSetting? {
@@ -1674,7 +1241,7 @@ private extension NovelLiveModelAdapter {
         }
     }
 
-    static func configurationCode(_ issue: ChatConfigurationIssue) -> String {
+    private static func configurationCode(_ issue: ChatConfigurationIssue) -> String {
         switch issue {
         case .missingAPIKey: "configuration_missing_api_key"
         case .invalidBaseURL: "configuration_invalid_base_url"

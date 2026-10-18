@@ -1079,7 +1079,8 @@ extension NovelReducer {
             createdAt: now,
             settingProposalIDs: state.settingProposalIDs,
             characterIdentityClarifications: state.characterIdentityClarifications + [record],
-            recentWrittenHighlights: state.recentWrittenHighlights
+            recentWrittenHighlights: state.recentWrittenHighlights,
+            chapterPlots: state.chapterPlots
         )
         let checkpoint = NovelBranchCheckpointRecord(
             id: command.checkpointID,

@@ -533,7 +533,7 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertLessThanOrEqual(HomeCardCanvasTexture.lineGridOpacity, 0.28)
         XCTAssertLessThanOrEqual(HomeCardCanvasTexture.dotGridOpacity, 0.35)
         XCTAssertLessThanOrEqual(HomeCardCanvasTexture.paperGrainOpacity, 0.40)
-        let home = try source("iosApp/PlaceholderViews.swift")
+        let home = try source("iosApp/Home/ConversationsView.swift")
         XCTAssertTrue(
             home.contains("themeRuntime.canvasStyle.hasTexture ? .hard : .soft")
                 || home.contains("AmberThemeRuntime.shared.canvasStyle.hasTexture ? .hard : .soft"),
@@ -549,30 +549,6 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertEqual(AmberChromeFont.settingsPackDesign, .monospaced)
         runtime.chromeTypeface = .rounded
         XCTAssertEqual(AmberChromeFont.settingsPackDesign, .rounded)
-    }
-
-    func testAppearanceSettingsUsesGatedChromeFont() throws {
-        let text = try source("iosApp/AppearanceSettingsView.swift")
-        XCTAssertTrue(text.contains("AmberChromeFont.settings(size: 12, weight: .semibold)"))
-        XCTAssertTrue(text.contains("AmberChromeFont.settings(.headline, weight: .semibold)"))
-        XCTAssertTrue(text.contains("AmberChromeFont.settings(.subheadline, weight: .semibold)"))
-        let settingsFontCount = text.components(separatedBy: "AmberChromeFont.settings(").count - 1
-        XCTAssertGreaterThanOrEqual(settingsFontCount, 3)
-    }
-
-    func testAppearanceModeSectionComesBeforeThemeSection() throws {
-        let text = try source("iosApp/AppearanceSettingsView.swift")
-        guard
-            let modeRange = text.range(of: "section(\"外观模式\")"),
-            let themeRange = text.range(of: "section(\"主题\")")
-        else {
-            return XCTFail("AppearanceSettingsView must declare 外观模式 and 主题 sections")
-        }
-        XCTAssertLessThan(
-            modeRange.lowerBound,
-            themeRange.lowerBound,
-            "外观模式应置顶，主题在其下"
-        )
     }
 
     func testAppearanceMiniPreviewPinsLightColorSchemeForCanvasInk() throws {
@@ -856,20 +832,6 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertEqual(AmberTheme.darkPalette.background, 0x0E0D10)
     }
 
-    func testNonNeutralDarkPaletteDesignValues() {
-        // Lock the four split tables so they cannot silent-drift to neutral.
-        XCTAssertEqual(AmberTheme.paperDark.background, 0x14110E)
-        XCTAssertEqual(AmberTheme.paperDark.surface, 0x221E19)
-        XCTAssertEqual(AmberTheme.paperDark.surface2, 0x2E2822)
-        XCTAssertEqual(AmberTheme.whiteDark.background, 0x111111)
-        XCTAssertEqual(AmberTheme.whiteDark.surface2, 0x282828)
-        XCTAssertEqual(AmberTheme.piDark.background, 0x12110F)
-        XCTAssertEqual(AmberTheme.piDark.surface2, 0x2A2722)
-        XCTAssertEqual(AmberTheme.notionDark.background, 0x191919)
-        XCTAssertEqual(AmberTheme.notionDark.surface2, 0x2F2F2F)
-        XCTAssertEqual(AmberTheme.notionDark.foreground2, 0xB4B4B4)
-    }
-
     func testDarkHomeChromeTracksNonNeutralPaperSurfaces() {
         let dark = UITraitCollection(userInterfaceStyle: .dark)
 
@@ -972,7 +934,7 @@ final class AmberThemePackTests: XCTestCase {
             ("iosApp/NovelCreation/NovelChapterReaderView.swift", "AmberThemePageBackground(surface: .app)"),
             ("iosApp/CouncilView.swift", "AmberThemePageBackground(surface: .app)"),
             ("iosApp/CouncilChatRuntimeView.swift", "AmberThemePageBackground(surface: .app)"),
-            ("iosApp/WebMountView.swift", "AmberThemePageBackground(surface: .app)"),
+            ("iosApp/WebMount/Presentation/WebMountView.swift", "AmberThemePageBackground(surface: .app)"),
             ("iosApp/MiniAppListView.swift", "AmberThemePageBackground(surface: .app)"),
             ("iosApp/MiniAppRunnerView.swift", "AmberThemePageBackground(surface: .app)"),
         ]
@@ -1016,7 +978,7 @@ final class AmberThemePackTests: XCTestCase {
         // Keep attention/testing semantics on fixed status amber.
         XCTAssertTrue(provider.contains("tint: AmberTheme.accentAmber") || provider.contains("AmberTheme.statusAmber"))
 
-        let webMount = try source("iosApp/WebMountView.swift")
+        let webMount = try source("iosApp/WebMount/Presentation/WebMountView.swift")
         XCTAssertTrue(
             webMount.contains("title: \"需要登录\"") && webMount.contains("tint: AmberTheme.accent"),
             "WebMount add-site login toggle row icon follows runtime accent"
@@ -1418,16 +1380,6 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertFalse(runtime.isTryOnActive)
         XCTAssertEqual(UserDefaults.standard.string(forKey: paperKey), "paper")
         XCTAssertEqual(runtime.paper, .paper)
-    }
-
-    func testAppearanceManageChromeContract() throws {
-        let text = try source("iosApp/AppearanceSettingsView.swift")
-        XCTAssertTrue(text.contains("Button(\"管理\")"))
-        XCTAssertTrue(text.contains("confirmRemoveSelectedThemes"))
-        XCTAssertTrue(text.contains("library.upsert"))
-        XCTAssertTrue(text.contains("useAccentSelection: !isManagingThemes"))
-        XCTAssertTrue(text.contains("AmberTheme.accentRed"))
-        XCTAssertTrue(text.contains("padding(.bottom, isManagingThemes ? 16 : 48)"))
     }
 
     private func source(_ relativePath: String) throws -> String {

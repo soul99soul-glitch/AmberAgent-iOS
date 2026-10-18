@@ -72,6 +72,7 @@ struct ChatReasoningCard: View {
     var finishedSeconds: Double? = nil
     var levelLabel: String? = nil
     var autoCloseThinking: Bool = true
+    var autoExpandThinking: Bool = true
     @State private var isExpanded: Bool
     @State private var userToggled = false
     /// Reduce Motion 下的自动收起跳过动画（collection 终态即刻重测，动画会错相位）。
@@ -100,7 +101,8 @@ struct ChatReasoningCard: View {
         startedAt: Date? = nil,
         finishedSeconds: Double? = nil,
         levelLabel: String? = nil,
-        autoCloseThinking: Bool = true
+        autoCloseThinking: Bool = true,
+        autoExpandThinking: Bool = true
     ) {
         self.bodyText = bodyText
         self.isThinking = isThinking
@@ -108,11 +110,10 @@ struct ChatReasoningCard: View {
         self.finishedSeconds = finishedSeconds
         self.levelLabel = levelLabel
         self.autoCloseThinking = autoCloseThinking
-        // Streaming reasoning should be visible: it reassures the user that the agent is working.
-        // The body gets a fixed live height below, so visibility does not fight chat scrolling.
+        self.autoExpandThinking = autoExpandThinking
         let hasInitialBodyText = Self.hasVisibleText(bodyText)
         self.hasBodyText = hasInitialBodyText
-        self._isExpanded = State(initialValue: hasInitialBodyText && (isThinking ? true : !autoCloseThinking))
+        self._isExpanded = State(initialValue: hasInitialBodyText && autoExpandThinking && (isThinking || !autoCloseThinking))
     }
 
     /// 推理正文是否含可见字符。
@@ -349,7 +350,7 @@ struct ChatReasoningCard: View {
             value: showsBody
         )
         .onChange(of: hasBodyText) { _, newValue in
-            guard isThinking, !userToggled else { return }
+            guard autoExpandThinking, isThinking, !userToggled else { return }
             if newValue {
                 setExpanded(true, duration: 0.28)
             }
@@ -359,7 +360,7 @@ struct ChatReasoningCard: View {
             if nowThinking {
                 suppressesShowsBodyAnimation = false
                 cancelPendingCollapse()
-                setExpanded(hasBodyText, duration: 0.28)
+                setExpanded(autoExpandThinking && hasBodyText, duration: 0.28)
             } else if autoCloseThinking {
                 if reduceMotion {
                     // Reduce Motion：跳过动画，单次 layout 直接落到最终高度。
@@ -369,6 +370,12 @@ struct ChatReasoningCard: View {
                     collapseSoftlyAtTerminal()
                 }
             }
+        }
+        .onChange(of: autoExpandThinking) { _, enabled in
+            guard !userToggled else { return }
+            cancelPendingCollapse()
+            suppressesShowsBodyAnimation = false
+            setExpanded(enabled && hasBodyText && (isThinking || !autoCloseThinking), duration: 0.28)
         }
     }
 
@@ -930,7 +937,6 @@ struct ChatEmptyState: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 34)
         .padding(.top, 104)
-        .padding(.bottom, 180)
     }
 
     private static func randomPrompt() -> String {
@@ -988,6 +994,8 @@ private struct AmberEmptyStateMark: View {
             }
             .frame(width: 76, height: 76)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("chat-empty-state-mark")
     }
 
     private func orbitDot(progress: Double) -> some View {

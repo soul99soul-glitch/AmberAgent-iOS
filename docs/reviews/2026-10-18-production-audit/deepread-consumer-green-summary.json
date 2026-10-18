@@ -1,0 +1,49 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "B3C3F24B-7D39-4695-86BB-588EEC6469A4",
+        "deviceName" : "Amber Audit 20261018",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 109,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "DeepRead · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1792287237.809,
+  "passedTests" : 109,
+  "result" : "Passed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1792287185.014,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - DeepRead",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "32% of duration",
+      "text" : "1 longest test run with outlier durations exceeding 0.10s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 109
+}

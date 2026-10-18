@@ -136,16 +136,20 @@ final class NovelChapterReplacementStateTests: XCTestCase {
         )
 
         // 连收两章都不同步 —— 自动同步失败、离线、连续收录都会走到这里。
-        let two = try collectNewChapter(
-            title: "Chapter Two",
-            content: "Ivo crossed the bridge.",
+        let two = Chapter(id: NovelChapterID(), title: "Chapter Two", content: "Ivo crossed the bridge.")
+        try collectFixtureCandidate(
+            content: two.content,
+            target: .createNextChapter(chapterID: two.id, title: two.title),
             in: &document
         )
-        let three = try collectNewChapter(
-            title: "Chapter Three",
-            content: "Ivo died at the gate.",
+        XCTAssertEqual(document.branches[0].syncStatus, .needsSync)
+        let three = Chapter(id: NovelChapterID(), title: "Chapter Three", content: "Ivo died at the gate.")
+        try collectFixtureCandidate(
+            content: three.content,
+            target: .createNextChapter(chapterID: three.id, title: three.title),
             in: &document
         )
+        XCTAssertEqual(document.branches[0].syncStatus, .needsSync)
         let laterEventIDs = try synchronizeMany(
             summary: "Mara guards the gate. Ivo crossed the bridge. Ivo died at the gate.",
             facts: [
@@ -155,10 +159,18 @@ final class NovelChapterReplacementStateTests: XCTestCase {
             in: &document
         )
         let secondEventID = laterEventIDs[0]
+        let deathEventID = laterEventIDs[1]
 
-        try replaceChapter(three, with: "Ivo escaped alive through the gate.", in: &document)
+        let thirdVersionID = try XCTUnwrap(document.branches[0].workingChapterSelections
+            .first { $0.chapterID == three.id }?.versionID)
+        try collectFixtureCandidate(
+            content: "Ivo escaped alive through the gate.",
+            target: .replaceChapter(three.id),
+            sourceChapterVersionID: thirdVersionID,
+            in: &document
+        )
 
-        let (_, input) = try beginSynchronization(in: &document)
+        let (pendingID, input) = try beginSynchronization(in: &document)
 
         XCTAssertTrue(
             input.baseStateSnapshot.eventIDs.contains(firstEventID),
@@ -169,6 +181,31 @@ final class NovelChapterReplacementStateTests: XCTestCase {
                 input.chapters.contains { $0.chapterID == two.id },
             "第二章既不在重建基线状态里,也不在待重抽的正文里 —— 它的事实无法恢复。"
         )
+        XCTAssertFalse(input.baseStateSnapshot.eventIDs.contains(deathEventID))
+
+        var facts: [(id: String, evidence: String)] = []
+        if !input.baseStateSnapshot.eventIDs.contains(secondEventID) {
+            facts.append(("event-two-restored", "Ivo crossed the bridge."))
+        }
+        facts.append(("event-three-escape", "Ivo escaped alive through the gate."))
+        let committed = try finishSynchronization(
+            pendingID: pendingID,
+            rebuild: rebuild(
+                summary: "Mara guards the gate. Ivo crossed the bridge. Ivo escaped alive.",
+                facts: facts
+            ),
+            in: &document
+        )
+        let headAfter = try headSnapshot(in: committed)
+        let eventSummaries = committed.events
+            .filter { headAfter.eventIDs.contains($0.id) }
+            .map(\.summary)
+        XCTAssertTrue(headAfter.eventIDs.contains(firstEventID))
+        XCTAssertTrue(eventSummaries.contains("Ivo crossed the bridge."))
+        XCTAssertTrue(eventSummaries.contains("Ivo escaped alive through the gate."))
+        XCTAssertFalse(headAfter.eventIDs.contains(deathEventID))
+        XCTAssertFalse(headAfter.summary.contains("died"))
+        XCTAssertEqual(committed.branches[0].syncStatus, .synchronized)
     }
 
     // MARK: - 活路径脚手架
@@ -218,6 +255,56 @@ final class NovelChapterReplacementStateTests: XCTestCase {
             candidate: candidate,
             target: .replaceChapter(chapter.id)
         )
+        document = try NovelFactTransactionReducer.commitCollectionWithoutStateSync(
+            command,
+            payloadSHA256: command.canonicalPayloadSHA256(),
+            in: document,
+            now: tick()
+        ).document
+    }
+
+    /// A persisted candidate fixture lets this test collect successive chapters while needsSync.
+    /// Collection still validates the fresh branch head and, for replacement, the source version.
+    private func collectFixtureCandidate(
+        content: String,
+        target: NovelCollectionTarget,
+        sourceChapterVersionID: NovelChapterVersionID? = nil,
+        in document: inout NovelProjectDocumentV1
+    ) throws {
+        let branch = document.branches[0]
+        let sessionIndex = try XCTUnwrap(document.sessions.firstIndex { $0.id == branch.sessionID })
+        let candidateID = NovelCandidateID()
+        let messageID = NovelMessageID()
+        let message = NovelSessionMessageRecord(
+            id: messageID,
+            sequence: (document.sessions[sessionIndex].messages.last?.sequence ?? -1) + 1,
+            role: .assistant,
+            mode: .writeProse,
+            kind: .proseCandidate,
+            content: content,
+            createdAt: tick(),
+            runID: nil,
+            candidateID: candidateID
+        )
+        document.sessions[sessionIndex].messages.append(message)
+        document.sessions[sessionIndex].revision += 1
+        let candidate = NovelCandidateRecord(
+            id: candidateID,
+            kind: .prose,
+            branchID: branch.id,
+            sessionID: branch.sessionID,
+            sourceMessageID: messageID,
+            baseCheckpointID: branch.headCheckpointID,
+            baseHeadRevision: branch.headRevision,
+            status: .available,
+            content: content,
+            sourceChapterVersionID: sourceChapterVersionID,
+            collectedCheckpointID: nil,
+            createdAt: tick()
+        )
+        document.candidates.append(candidate)
+        try NovelDocumentValidator.validate(document)
+        let command = collectCommand(document: document, candidate: candidate, target: target)
         document = try NovelFactTransactionReducer.commitCollectionWithoutStateSync(
             command,
             payloadSHA256: command.canonicalPayloadSHA256(),

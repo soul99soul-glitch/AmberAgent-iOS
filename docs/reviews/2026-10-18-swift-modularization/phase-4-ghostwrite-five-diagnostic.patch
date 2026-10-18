@@ -1,0 +1,37 @@
+--- a/iosApp/iosAppTests/NovelCollaborationModeTestCase.swift
++++ b/iosApp/iosAppTests/NovelCollaborationModeTestCase.swift
+@@ -133,11 +133,33 @@
+             try await Task.sleep(for: .milliseconds(100))
+         }
+ 
+         let progress = try XCTUnwrap(session.ghostwriteProgress)
+         XCTAssertFalse(session.isGhostwriting)
+-        XCTAssertEqual(progress.phase, .waitingUser)
++        var failureMessage = ""
++        if progress.phase != .waitingUser {
++            let detailMessage = progress.detailMessage
++            let pauseReason = progress.pauseReason
++            let operationErrorMessage = session.operationErrorMessage
++            let terminalAwaitingRefresh = session.terminalAwaitingRefresh
++            let workspaceIsPerforming = workspace.isPerforming
++            let sessionActiveRunID = session.activeRunID
++            let branchActiveRunID = workspace.branchSnapshot?.branch.activeRunID
++            let runStatuses = workspace.projectSnapshot?.activeRuns
++                .filter { $0.branchID == branchID }
++                .map { "\($0.id):\($0.status)" } ?? []
++            let requestCount = await adapter.requests.count
++            failureMessage = "detail=\(String(describing: detailMessage)); "
++                + "pauseReason=\(String(describing: pauseReason)); "
++                + "operationError=\(String(describing: operationErrorMessage)); "
++                + "terminalAwaitingRefresh=\(terminalAwaitingRefresh); "
++                + "workspaceIsPerforming=\(workspaceIsPerforming); "
++                + "sessionActiveRunID=\(String(describing: sessionActiveRunID)); "
++                + "branchActiveRunID=\(String(describing: branchActiveRunID)); "
++                + "runStatuses=\(runStatuses); requestCount=\(requestCount)"
++        }
++        XCTAssertEqual(progress.phase, .waitingUser, failureMessage)
+         XCTAssertEqual(progress.pauseReason, .batchCompleted)
+         XCTAssertEqual(progress.completedChapterCount, targetChapterCount)
+ 
+         let project = try XCTUnwrap(workspace.projectSnapshot)
+         let branch = try XCTUnwrap(

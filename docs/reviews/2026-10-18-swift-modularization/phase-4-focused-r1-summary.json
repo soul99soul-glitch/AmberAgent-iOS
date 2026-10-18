@@ -1,0 +1,72 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 3,
+      "passedTests" : 16,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 3,
+  "finishTime" : 1792267000.898,
+  "passedTests" : 16,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1792266872.602,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTUnwrap failed: expected non-nil value of type \"NSObject\" - Missing button 公开密信内容，并请守卫逐项核对其中涉及的时间、人物和地点。. Accessible labels: none (23 UIKit views)",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 14,
+      "testIdentifierString" : "NovelModularizationLayoutTests/testAskUserCardKeepsOptionsAndConfirmationReachable()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelModularizationLayoutTests/testAskUserCardKeepsOptionsAndConfirmationReachable",
+      "testName" : "testAskUserCardKeepsOptionsAndConfirmationReachable()"
+    },
+    {
+      "failureText" : "XCTUnwrap failed: expected non-nil value of type \"NSObject\" - Missing button 收录. Accessible labels: none (131 UIKit views)",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 15,
+      "testIdentifierString" : "NovelModularizationLayoutTests/testCollectionSheetKeepsEditorAndSubmitReachable()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelModularizationLayoutTests/testCollectionSheetKeepsEditorAndSubmitReachable",
+      "testName" : "testCollectionSheetKeepsEditorAndSubmitReachable()"
+    },
+    {
+      "failureText" : "XCTUnwrap failed: expected non-nil value of type \"NSObject\" - Missing button 作为新章收录. Accessible labels: none (6 UIKit views)",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 16,
+      "testIdentifierString" : "NovelModularizationLayoutTests/testLongCandidateKeepsCollectionActionReachable()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelModularizationLayoutTests/testLongCandidateKeepsCollectionActionReachable",
+      "testName" : "testLongCandidateKeepsCollectionActionReachable()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "27% of duration",
+      "text" : "1 longest test run with outlier durations exceeding 2.54s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 19
+}

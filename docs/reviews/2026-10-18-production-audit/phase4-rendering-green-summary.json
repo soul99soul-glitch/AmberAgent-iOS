@@ -1,0 +1,117 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "B3C3F24B-7D39-4695-86BB-588EEC6469A4",
+        "deviceName" : "Amber Audit 20261018",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 8,
+      "passedTests" : 503,
+      "skippedTests" : 1,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 8,
+  "finishTime" : 1792286282.288,
+  "passedTests" : 503,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 1,
+  "startTime" : 1792286110.377,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertEqual failed: (\"4\") is not equal to (\"2\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 489,
+      "testIdentifierString" : "NovelWorkspaceRepositoryTests/testCaseInsensitiveBranchSlugsKeepSeparateBodiesAndAdoptFork()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelWorkspaceRepositoryTests/testCaseInsensitiveBranchSlugsKeepSeparateBodiesAndAdoptFork",
+      "testName" : "testCaseInsensitiveBranchSlugsKeepSeparateBodiesAndAdoptFork()"
+    },
+    {
+      "failureText" : "failed: caught error: \"invalidDocument([\"Chapter manuscript-delete 6d3f4210-82f6-4476-97cb-f9108a0062d5 has invalid outcome data.\"])\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 208,
+      "testIdentifierString" : "NovelDomainIntegrityRegressionTests/testDeletingChapterFromParentKeepsForkManuscriptVisible()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelDomainIntegrityRegressionTests/testDeletingChapterFromParentKeepsForkManuscriptVisible",
+      "testName" : "testDeletingChapterFromParentKeepsForkManuscriptVisible()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"4\") is not equal to (\"2\") - tree reprinted from engine",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 496,
+      "testIdentifierString" : "NovelWorkspaceRepositoryTests/testEngineAheadOfTreeReprintsInsteadOfAdopting()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelWorkspaceRepositoryTests/testEngineAheadOfTreeReprintsInsteadOfAdopting",
+      "testName" : "testEngineAheadOfTreeReprintsInsteadOfAdopting()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"6\") is not equal to (\"3\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 500,
+      "testIdentifierString" : "NovelWorkspaceRepositoryTests/testLegacyProjectMigratesSealingPackageAndPreservingTree()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelWorkspaceRepositoryTests/testLegacyProjectMigratesSealingPackageAndPreservingTree",
+      "testName" : "testLegacyProjectMigratesSealingPackageAndPreservingTree()"
+    },
+    {
+      "failureText" : "failed: caught error: \"invalidDocument([\"Chapter manuscript-delete 45b23eb1-7920-4373-a684-dbc35382e91c has invalid outcome data.\"])\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 371,
+      "testIdentifierString" : "NovelManualEditSyncTests/testManualSyncAllowsMiddleDeleteViaDeleteFromManuscript()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelManualEditSyncTests/testManualSyncAllowsMiddleDeleteViaDeleteFromManuscript",
+      "testName" : "testManualSyncAllowsMiddleDeleteViaDeleteFromManuscript()"
+    },
+    {
+      "failureText" : "failed: caught error: \"invalidDocument([\"Chapter manuscript-delete c5119e92-edba-4417-97c2-d4dbdb32082b has invalid outcome data.\"])\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 372,
+      "testIdentifierString" : "NovelManualEditSyncTests/testManualSyncAllowsTrailingDeleteViaDeleteFromManuscript()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelManualEditSyncTests/testManualSyncAllowsTrailingDeleteViaDeleteFromManuscript",
+      "testName" : "testManualSyncAllowsTrailingDeleteViaDeleteFromManuscript()"
+    },
+    {
+      "failureText" : "failed: caught error: \"invalidDocument([\"Chapter manuscript-delete cbcd4250-34e2-4bfc-a6c9-45eef162ed2c has invalid outcome data.\"])\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 211,
+      "testIdentifierString" : "NovelDomainIntegrityRegressionTests/testStructuralManualSyncPreservesCompatibleBaseChapterPlots()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelDomainIntegrityRegressionTests/testStructuralManualSyncPreservesCompatibleBaseChapterPlots",
+      "testName" : "testStructuralManualSyncPreservesCompatibleBaseChapterPlots()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"4\") is not equal to (\"2\") - both chapters must be in the head tree",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 508,
+      "testIdentifierString" : "NovelWorkspaceRepositoryTests/testWorkspaceCommitAppendsRealTreeCommitAndUndoIsPointerMove()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/NovelWorkspaceRepositoryTests/testWorkspaceCommitAppendsRealTreeCommitAndUndoIsPointerMove",
+      "testName" : "testWorkspaceCommitAppendsRealTreeCommitAndUndoIsPointerMove()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "12% of failures",
+      "text" : "2 runs of 1 test failed with XCTAssertEqual failed: (\"4\") is not equal to (\"2\")"
+    },
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "37% of duration",
+      "text" : "7 longest test runs with outlier durations exceeding 4.14s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 512
+}

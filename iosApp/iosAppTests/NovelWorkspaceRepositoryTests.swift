@@ -55,6 +55,12 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
         return result
     }
 
+    private func isManuscriptChapterPath(_ path: String) -> Bool {
+        let components = path.split(separator: "/")
+        return components.count == 4 && components[0] == "branches"
+            && components[2] == "chapters" && components[3].hasSuffix(".md")
+    }
+
     private func chapterFiles(
         in project: URL,
         branchSlugContains: String = ""
@@ -68,9 +74,9 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
         ) {
             for case let url as URL in enumerator {
                 let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
+                let relativePath = String(url.path.dropFirst(chaptersRoot.path.count + 1))
                 guard values?.isRegularFile == true,
-                      url.path.contains("/chapters/"),
-                      url.path.hasSuffix(".md") else { continue }
+                      isManuscriptChapterPath(relativePath) else { continue }
                 urls.append(url)
             }
         }
@@ -373,9 +379,13 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
             now: NovelBranchTestFixtures.timestamp(for: forked, offset: 1)
         ).document
         let files = try NovelWorkspaceBackup.export(edited)
-        XCTAssertEqual(files.filter { $0.path.contains("/chapters/") }.count, 2)
+        XCTAssertEqual(files.filter { isManuscriptChapterPath($0.path) }.count, 2)
         XCTAssertTrue(files.contains { $0.path.hasPrefix("branches/Main2/chapters/") })
         XCTAssertTrue(files.contains { $0.path.hasPrefix("branches/main2-2/chapters/") })
+        let plotFiles = files.filter { $0.path.contains("/plot/chapters/") }
+        XCTAssertEqual(plotFiles.count, 2)
+        XCTAssertTrue(plotFiles.contains { $0.path.hasPrefix("branches/Main2/plot/chapters/") })
+        XCTAssertTrue(plotFiles.contains { $0.path.hasPrefix("branches/main2-2/plot/chapters/") })
         let repository = NovelFileProjectRepository(rootDirectory: root)
         _ = try await repository.createProject(edited, workspaceNative: true)
         let project = projectDirectory(root, edited.project.id)
@@ -465,7 +475,7 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
         let commit = try XCTUnwrap(store.commits.first)
         XCTAssertTrue(
             commit.files.keys.contains {
-                $0.hasPrefix("branches/") && $0.contains("/chapters/") && $0.hasSuffix(".md")
+                isManuscriptChapterPath($0)
             },
             "commit tree must carry real chapter paths, got: \(commit.files.keys.sorted())"
         )
@@ -527,7 +537,7 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
         XCTAssertEqual(head.id, twoChapters.branches[0].headCheckpointID.description)
         XCTAssertEqual(head.parentID, document.branches[0].headCheckpointID.description)
         let chapterPaths = head.files.keys.filter {
-            $0.contains("/chapters/") && $0.hasSuffix(".md")
+            isManuscriptChapterPath($0)
         }
         XCTAssertEqual(chapterPaths.count, 2, "both chapters must be in the head tree")
 
@@ -563,7 +573,7 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
         let headFiles = try XCTUnwrap(store.headCommit).files
         let removedPath = try XCTUnwrap(
             head.files.keys
-                .filter { $0.contains("/chapters/") }
+                .filter { isManuscriptChapterPath($0) }
                 .first { headFiles[$0] == nil }
         )
         let removedHash = try XCTUnwrap(head.files[removedPath])

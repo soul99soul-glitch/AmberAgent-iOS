@@ -722,15 +722,13 @@ final class IOSJevWebMountLoopService {
             PlannedAction(kind: .scroll, elementId: nil, value: nil, snapshotRevision: observation.revision, snapshotId: observation.snapshotId)
         ]
         let allowed = input.allowedActions.intersection(actionWhitelist)
+        // Observation has no option values. Leave selection to the parent
+        // model's wm_select/wm_click path instead of proposing a valueless action.
         for element in observation.elements {
             // 控件角色契约：动作语义来自快照中已验证的控件类型，不凭按钮文案推断。
             let role = element.role.lowercased()
             if allowed.contains(ActionKind.clickNav.rawValue), role == "link" {
                 candidates.append(PlannedAction(kind: .clickNav, elementId: element.id, value: nil, snapshotRevision: observation.revision, snapshotId: observation.snapshotId))
-            }
-            if allowed.contains(ActionKind.select.rawValue),
-               ["combobox", "listbox", "checkbox", "radio"].contains(role) {
-                candidates.append(PlannedAction(kind: .select, elementId: element.id, value: nil, snapshotRevision: observation.revision, snapshotId: observation.snapshotId))
             }
             if allowed.contains(ActionKind.typeDraft.rawValue), role == "textbox" {
                 // 缺草稿值 → 该类动作不作为候选（交回主模型补值）。

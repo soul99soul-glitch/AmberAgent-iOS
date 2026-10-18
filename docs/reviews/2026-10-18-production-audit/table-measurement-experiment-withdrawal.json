@@ -1,0 +1,5 @@
+{
+  "restoredSha256": "4a5902ac98f925b8c3e77ba9b4e35e481fed8d2809e767f840568362f99ac0ca",
+  "reason": "After experiment p95 97.04ms failed original 40ms gate; no justified benefit. Exact original bytes restored with before/after hash guards.",
+  "source": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/vendor/SwiftStreamingMarkdown/Sources/MarkdownText/UI/TableView.swift"
+}

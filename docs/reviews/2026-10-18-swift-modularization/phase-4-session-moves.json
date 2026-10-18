@@ -1,0 +1,3698 @@
+{
+  "baseline": "/tmp/amber-phase4-source-baseline/files",
+  "scope": "Only NovelSessionViewModel.swift, NovelSessionPresentation.swift, and their new Session owner files",
+  "files": [
+    {
+      "file": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          494,
+          744
+        ],
+        [
+          1261,
+          1566
+        ],
+        [
+          3199,
+          3207
+        ],
+        [
+          3210,
+          3232
+        ]
+      ],
+      "responsibility": "single @Observable session identity, selected state, binding, and composer intent",
+      "lines": 595,
+      "sha256": "e2e56fbeb230215f59a3c5f0a24253d482a6113dbd66267b8afc07ea1de09bce",
+      "symbols": [
+        {
+          "name": "mode",
+          "kind": "var",
+          "line": 8
+        },
+        {
+          "name": "granularity",
+          "kind": "var",
+          "line": 9
+        },
+        {
+          "name": "binding",
+          "kind": "var",
+          "line": 10
+        },
+        {
+          "name": "transientTail",
+          "kind": "var",
+          "line": 11
+        },
+        {
+          "name": "transientTailChromeState",
+          "kind": "var",
+          "line": 22
+        },
+        {
+          "name": "sessionStartingRunID",
+          "kind": "var",
+          "line": 24
+        },
+        {
+          "name": "isPerformingAction",
+          "kind": "var",
+          "line": 25
+        },
+        {
+          "name": "stoppingRunID",
+          "kind": "var",
+          "line": 26
+        },
+        {
+          "name": "retryingRunID",
+          "kind": "var",
+          "line": 27
+        },
+        {
+          "name": "cloningCandidateID",
+          "kind": "var",
+          "line": 28
+        },
+        {
+          "name": "undoingCheckpointID",
+          "kind": "var",
+          "line": 29
+        },
+        {
+          "name": "adoptingPolishCandidateID",
+          "kind": "var",
+          "line": 31
+        },
+        {
+          "name": "operationErrorMessage",
+          "kind": "var",
+          "line": 32
+        },
+        {
+          "name": "refreshErrorMessage",
+          "kind": "var",
+          "line": 33
+        },
+        {
+          "name": "lastFailure",
+          "kind": "var",
+          "line": 34
+        },
+        {
+          "name": "polishRetryTransactionID",
+          "kind": "var",
+          "line": 35
+        },
+        {
+          "name": "batchPolishProgressStorage",
+          "kind": "var",
+          "line": 36
+        },
+        {
+          "name": "batchPolishProgress",
+          "kind": "var",
+          "line": 38
+        },
+        {
+          "name": "terminalAwaitingRefresh",
+          "kind": "var",
+          "line": 58
+        },
+        {
+          "name": "answeringAskUserMessageID",
+          "kind": "var",
+          "line": 60
+        },
+        {
+          "name": "locallyResolvedAskUser",
+          "kind": "var",
+          "line": 63
+        },
+        {
+          "name": "localAskUserRevision",
+          "kind": "var",
+          "line": 66
+        },
+        {
+          "name": "ghostwriteProgressStorage",
+          "kind": "var",
+          "line": 78
+        },
+        {
+          "name": "ghostwriteTargetChapterCount",
+          "kind": "var",
+          "line": 80
+        },
+        {
+          "name": "projectionRevision",
+          "kind": "var",
+          "line": 97
+        },
+        {
+          "name": "loadStage",
+          "kind": "var",
+          "line": 113
+        },
+        {
+          "name": "presentationFlushDelayNanos",
+          "kind": "let",
+          "line": 152
+        },
+        {
+          "name": "setTailPresentationSuspended",
+          "kind": "func",
+          "line": 156
+        },
+        {
+          "name": "setComposerIntent",
+          "kind": "func",
+          "line": 201
+        },
+        {
+          "name": "reconcileComposerIntent",
+          "kind": "func",
+          "line": 212
+        },
+        {
+          "name": "applyComposerPreference",
+          "kind": "func",
+          "line": 221
+        },
+        {
+          "name": "applyComposerIntent",
+          "kind": "func",
+          "line": 248
+        },
+        {
+          "name": "currentChapterVersions",
+          "kind": "var",
+          "line": 256
+        },
+        {
+          "name": "hasPolishableChapters",
+          "kind": "var",
+          "line": 264
+        },
+        {
+          "name": "availableProseCandidates",
+          "kind": "var",
+          "line": 274
+        },
+        {
+          "name": "availablePolishCandidates",
+          "kind": "var",
+          "line": 278
+        },
+        {
+          "name": "branchPendingOperations",
+          "kind": "var",
+          "line": 282
+        },
+        {
+          "name": "retryableBranchPendingOperations",
+          "kind": "var",
+          "line": 287
+        },
+        {
+          "name": "branchPolishTransactions",
+          "kind": "var",
+          "line": 291
+        },
+        {
+          "name": "unresolvedBranchPolishTransactions",
+          "kind": "var",
+          "line": 296
+        },
+        {
+          "name": "access",
+          "kind": "var",
+          "line": 302
+        },
+        {
+          "name": "needsSync",
+          "kind": "var",
+          "line": 307
+        },
+        {
+          "name": "activeRunID",
+          "kind": "var",
+          "line": 311
+        },
+        {
+          "name": "isStarting",
+          "kind": "var",
+          "line": 326
+        },
+        {
+          "name": "isRunning",
+          "kind": "var",
+          "line": 330
+        },
+        {
+          "name": "isStreaming",
+          "kind": "var",
+          "line": 334
+        },
+        {
+          "name": "isBusy",
+          "kind": "var",
+          "line": 342
+        },
+        {
+          "name": "isStopping",
+          "kind": "var",
+          "line": 350
+        },
+        {
+          "name": "isRetryingLastTerminal",
+          "kind": "var",
+          "line": 352
+        },
+        {
+          "name": "isBatchPolishing",
+          "kind": "var",
+          "line": 359
+        },
+        {
+          "name": "batchPolishBlocker",
+          "kind": "var",
+          "line": 365
+        },
+        {
+          "name": "canStartBatchPolish",
+          "kind": "var",
+          "line": 377
+        },
+        {
+          "name": "composerSendKind",
+          "kind": "var",
+          "line": 382
+        },
+        {
+          "name": "canSend",
+          "kind": "var",
+          "line": 386
+        },
+        {
+          "name": "canStop",
+          "kind": "var",
+          "line": 390
+        },
+        {
+          "name": "canRetryLastTerminal",
+          "kind": "var",
+          "line": 394
+        },
+        {
+          "name": "canRetryPendingTerminal",
+          "kind": "var",
+          "line": 408
+        },
+        {
+          "name": "errorMessage",
+          "kind": "var",
+          "line": 413
+        },
+        {
+          "name": "hasRefreshError",
+          "kind": "var",
+          "line": 417
+        },
+        {
+          "name": "bindToCurrentSelection",
+          "kind": "func",
+          "line": 421
+        },
+        {
+          "name": "refresh",
+          "kind": "func",
+          "line": 507
+        },
+        {
+          "name": "detachConsumer",
+          "kind": "func",
+          "line": 520
+        },
+        {
+          "name": "clearConsumer",
+          "kind": "func",
+          "line": 525
+        },
+        {
+          "name": "clearError",
+          "kind": "func",
+          "line": 535
+        },
+        {
+          "name": "send",
+          "kind": "func",
+          "line": 542
+        },
+        {
+          "name": "syncManualEdits",
+          "kind": "func",
+          "line": 562
+        },
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 573
+        },
+        {
+          "name": "activeRunKind",
+          "kind": "var",
+          "line": 578
+        },
+        {
+          "name": "activeRunGranularity",
+          "kind": "var",
+          "line": 581
+        },
+        {
+          "name": "isTerminalPresenting",
+          "kind": "var",
+          "line": 590
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/NovelSessionPresentation.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionPresentation.swift",
+      "oldLineRanges": [
+        [
+          1,
+          1
+        ],
+        [
+          752,
+          1192
+        ],
+        [
+          1365,
+          1679
+        ]
+      ],
+      "responsibility": "pure durable and transient row projection and discussion archive folding",
+      "lines": 760,
+      "sha256": "991d9307ce3829cc3558875af80b7cfabe064fb132026b5fb717d382de5a5735",
+      "symbols": [
+        {
+          "name": "NovelSessionPresentation",
+          "kind": "enum",
+          "line": 3
+        },
+        {
+          "name": "project",
+          "kind": "func",
+          "line": 4
+        },
+        {
+          "name": "prepareDurable",
+          "kind": "func",
+          "line": 9
+        },
+        {
+          "name": "project",
+          "kind": "func",
+          "line": 17
+        },
+        {
+          "name": "applyingTransientTail",
+          "kind": "func",
+          "line": 95
+        },
+        {
+          "name": "blockingDurableActionsForLiveTail",
+          "kind": "func",
+          "line": 126
+        },
+        {
+          "name": "updatingTransientTail",
+          "kind": "func",
+          "line": 196
+        },
+        {
+          "name": "durableDisplayContent",
+          "kind": "func",
+          "line": 264
+        },
+        {
+          "name": "NovelSessionPresentation",
+          "kind": "extension",
+          "line": 285
+        },
+        {
+          "name": "startingUserRow",
+          "kind": "func",
+          "line": 286
+        },
+        {
+          "name": "NovelSessionPresentation",
+          "kind": "extension",
+          "line": 323
+        },
+        {
+          "name": "foldingArchivedDiscussionRows",
+          "kind": "func",
+          "line": 324
+        },
+        {
+          "name": "remainsVisibleWhileArchiveCollapsed",
+          "kind": "func",
+          "line": 392
+        },
+        {
+          "name": "archiveRow",
+          "kind": "func",
+          "line": 397
+        },
+        {
+          "name": "NovelSessionPresentation",
+          "kind": "extension",
+          "line": 445
+        },
+        {
+          "name": "runOrder",
+          "kind": "func",
+          "line": 446
+        },
+        {
+          "name": "interruptedWithoutOutputRow",
+          "kind": "func",
+          "line": 451
+        },
+        {
+          "name": "durableRow",
+          "kind": "func",
+          "line": 474
+        },
+        {
+          "name": "transientRow",
+          "kind": "func",
+          "line": 559
+        },
+        {
+          "name": "durableAskUser",
+          "kind": "func",
+          "line": 645
+        },
+        {
+          "name": "presentedContent",
+          "kind": "func",
+          "line": 659
+        },
+        {
+          "name": "presentedCandidate",
+          "kind": "func",
+          "line": 680
+        },
+        {
+          "name": "candidateOrder",
+          "kind": "func",
+          "line": 704
+        },
+        {
+          "name": "candidatePresentation",
+          "kind": "func",
+          "line": 712
+        },
+        {
+          "name": "committedChange",
+          "kind": "func",
+          "line": 726
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionActionAvailability.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionPresentation.swift",
+      "oldLineRanges": [
+        [
+          1680,
+          2237
+        ]
+      ],
+      "responsibility": "candidate action availability, retry blockers, and stable row digests",
+      "lines": 561,
+      "sha256": "1ce3856438fbfaa413fa9e1652fbd2389eff56c71a08c4845322b240ffc7e546",
+      "symbols": [
+        {
+          "name": "NovelSessionPresentation",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "actions",
+          "kind": "func",
+          "line": 4
+        },
+        {
+          "name": "candidateActions",
+          "kind": "func",
+          "line": 45
+        },
+        {
+          "name": "undoRemovesCandidateCheckpoint",
+          "kind": "func",
+          "line": 176
+        },
+        {
+          "name": "retryBlocker",
+          "kind": "func",
+          "line": 198
+        },
+        {
+          "name": "transientRetryBlocker",
+          "kind": "func",
+          "line": 247
+        },
+        {
+          "name": "transientCollectionBlocker",
+          "kind": "func",
+          "line": 285
+        },
+        {
+          "name": "candidateMutationBlocker",
+          "kind": "func",
+          "line": 313
+        },
+        {
+          "name": "baseMutationBlocker",
+          "kind": "func",
+          "line": 367
+        },
+        {
+          "name": "manualRewriteBlocker",
+          "kind": "func",
+          "line": 397
+        },
+        {
+          "name": "staleBlocker",
+          "kind": "func",
+          "line": 411
+        },
+        {
+          "name": "polishTransactionSourceBlocker",
+          "kind": "func",
+          "line": 421
+        },
+        {
+          "name": "forkBlocker",
+          "kind": "func",
+          "line": 432
+        },
+        {
+          "name": "undoBlocker",
+          "kind": "func",
+          "line": 439
+        },
+        {
+          "name": "availability",
+          "kind": "func",
+          "line": 458
+        },
+        {
+          "name": "digest",
+          "kind": "func",
+          "line": 465
+        },
+        {
+          "name": "transientRunStatus",
+          "kind": "func",
+          "line": 505
+        },
+        {
+          "name": "phaseToken",
+          "kind": "func",
+          "line": 518
+        },
+        {
+          "name": "actionToken",
+          "kind": "func",
+          "line": 532
+        },
+        {
+          "name": "settingProposalRouteToken",
+          "kind": "func",
+          "line": 553
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionApprovals.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          1567,
+          2050
+        ]
+      ],
+      "responsibility": "ask_user approvals and character identity intents",
+      "lines": 488,
+      "sha256": "a59d738f9539bce84bbe41d01c9307a3cea095bab95dd5951cfd261b9e3169ac",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "answerAskUser",
+          "kind": "func",
+          "line": 5
+        },
+        {
+          "name": "isApprovedApproval",
+          "kind": "func",
+          "line": 56
+        },
+        {
+          "name": "resolveAskUser",
+          "kind": "func",
+          "line": 67
+        },
+        {
+          "name": "applyGhostwritePlanApproval",
+          "kind": "func",
+          "line": 191
+        },
+        {
+          "name": "applyChapterRevision",
+          "kind": "func",
+          "line": 282
+        },
+        {
+          "name": "applyManuscriptRevert",
+          "kind": "func",
+          "line": 331
+        },
+        {
+          "name": "applyManuscriptDelete",
+          "kind": "func",
+          "line": 347
+        },
+        {
+          "name": "associateCharacterAlias",
+          "kind": "func",
+          "line": 380
+        },
+        {
+          "name": "ignoreCharacterIdentityMention",
+          "kind": "func",
+          "line": 414
+        },
+        {
+          "name": "clarifyCharacterIdentityMention",
+          "kind": "func",
+          "line": 422
+        },
+        {
+          "name": "startCharacterProposal",
+          "kind": "func",
+          "line": 450
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionBatchPolish.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          2768,
+          3175
+        ]
+      ],
+      "responsibility": "serial batch polish generation and adoption",
+      "lines": 412,
+      "sha256": "bb911eecce0b10235f19e1d42dc677086a6ede93c7816ae2eabbbd6d9e591a96",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "startBatchPolish",
+          "kind": "func",
+          "line": 12
+        },
+        {
+          "name": "cancelBatchPolish",
+          "kind": "func",
+          "line": 43
+        },
+        {
+          "name": "cancelBatchPolishForBindingChange",
+          "kind": "func",
+          "line": 49
+        },
+        {
+          "name": "clearBatchPolish",
+          "kind": "func",
+          "line": 67
+        },
+        {
+          "name": "retryFailedBatchPolish",
+          "kind": "func",
+          "line": 75
+        },
+        {
+          "name": "runBatchPolish",
+          "kind": "func",
+          "line": 85
+        },
+        {
+          "name": "polishOneChapter",
+          "kind": "func",
+          "line": 168
+        },
+        {
+          "name": "awaitPolishCandidate",
+          "kind": "func",
+          "line": 261
+        },
+        {
+          "name": "unhandledBatchResults",
+          "kind": "func",
+          "line": 304
+        },
+        {
+          "name": "mutateBatchProgress",
+          "kind": "func",
+          "line": 322
+        },
+        {
+          "name": "stopOwnedBatchPolishRun",
+          "kind": "func",
+          "line": 332
+        },
+        {
+          "name": "reconcileBatchPolishResult",
+          "kind": "func",
+          "line": 353
+        },
+        {
+          "name": "batchPolishTitle",
+          "kind": "func",
+          "line": 382
+        },
+        {
+          "name": "batchPolishDiagnostic",
+          "kind": "func",
+          "line": 397
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionBottomFollowPolicy.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionPresentation.swift",
+      "oldLineRanges": [
+        [
+          2239,
+          2468
+        ]
+      ],
+      "responsibility": "existing bottom follow reducer and commands",
+      "lines": 232,
+      "sha256": "978604f65a34a76c1baf328c8d8b77d6739b941c4e74bed394bd6cf5904a4ab8",
+      "symbols": [
+        {
+          "name": "NovelSessionBottomFollowMode",
+          "kind": "enum",
+          "line": 3
+        },
+        {
+          "name": "NovelSessionBottomFollowState",
+          "kind": "struct",
+          "line": 10
+        },
+        {
+          "name": "mode",
+          "kind": "var",
+          "line": 11
+        },
+        {
+          "name": "showsBottomButton",
+          "kind": "var",
+          "line": 12
+        },
+        {
+          "name": "nextSettleToken",
+          "kind": "var",
+          "line": 13
+        },
+        {
+          "name": "NovelSessionBottomFollowEvent",
+          "kind": "enum",
+          "line": 16
+        },
+        {
+          "name": "NovelSessionBottomFollowCommand",
+          "kind": "enum",
+          "line": 33
+        },
+        {
+          "name": "NovelSessionBottomFollowTransition",
+          "kind": "struct",
+          "line": 43
+        },
+        {
+          "name": "state",
+          "kind": "let",
+          "line": 44
+        },
+        {
+          "name": "commands",
+          "kind": "let",
+          "line": 45
+        },
+        {
+          "name": "NovelSessionBottomFollowPolicy",
+          "kind": "enum",
+          "line": 48
+        },
+        {
+          "name": "terminalQuietDelay",
+          "kind": "let",
+          "line": 49
+        },
+        {
+          "name": "reduce",
+          "kind": "func",
+          "line": 51
+        },
+        {
+          "name": "NovelSessionBottomFollowPolicy",
+          "kind": "extension",
+          "line": 182
+        },
+        {
+          "name": "handleDisabledMeasuredGrowth",
+          "kind": "func",
+          "line": 183
+        },
+        {
+          "name": "scheduleTerminalSettle",
+          "kind": "func",
+          "line": 201
+        },
+        {
+          "name": "setBottomButton",
+          "kind": "func",
+          "line": 223
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionCandidateActions.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          2215,
+          2767
+        ],
+        [
+          3176,
+          3198
+        ]
+      ],
+      "responsibility": "candidate collection, archive, fork, polish transaction, and manual rewrite intents",
+      "lines": 581,
+      "sha256": "629c7bc5f29f5db82848c7d1c8e0b7c6b221b46404f0eab16d7d6b35510cbb0a",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "candidate",
+          "kind": "func",
+          "line": 4
+        },
+        {
+          "name": "collectionGranularity",
+          "kind": "func",
+          "line": 11
+        },
+        {
+          "name": "paragraphs",
+          "kind": "func",
+          "line": 39
+        },
+        {
+          "name": "collectCandidate",
+          "kind": "func",
+          "line": 45
+        },
+        {
+          "name": "distillDiscussionArchive",
+          "kind": "func",
+          "line": 148
+        },
+        {
+          "name": "confirmDiscussionArchive",
+          "kind": "func",
+          "line": 174
+        },
+        {
+          "name": "cloneCollectedProse",
+          "kind": "func",
+          "line": 210
+        },
+        {
+          "name": "undoCommittedChange",
+          "kind": "func",
+          "line": 242
+        },
+        {
+          "name": "forkFromCheckpoint",
+          "kind": "func",
+          "line": 297
+        },
+        {
+          "name": "retryPending",
+          "kind": "func",
+          "line": 320
+        },
+        {
+          "name": "startWholeChapterPolish",
+          "kind": "func",
+          "line": 341
+        },
+        {
+          "name": "startWholeChapterRegeneration",
+          "kind": "func",
+          "line": 368
+        },
+        {
+          "name": "regenerationTargetChapterID",
+          "kind": "func",
+          "line": 389
+        },
+        {
+          "name": "adoptPolishCandidate",
+          "kind": "func",
+          "line": 396
+        },
+        {
+          "name": "retryPolishTransaction",
+          "kind": "func",
+          "line": 418
+        },
+        {
+          "name": "startPolishRetry",
+          "kind": "func",
+          "line": 458
+        },
+        {
+          "name": "cancelPolishRetry",
+          "kind": "func",
+          "line": 479
+        },
+        {
+          "name": "polishTransactionSourceBlocker",
+          "kind": "func",
+          "line": 483
+        },
+        {
+          "name": "abandonPolishTransaction",
+          "kind": "func",
+          "line": 506
+        },
+        {
+          "name": "abandonPolishTransactions",
+          "kind": "func",
+          "line": 543
+        },
+        {
+          "name": "convertPolishCandidateToManualRewrite",
+          "kind": "func",
+          "line": 559
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionGhostwriteBatch.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          4815,
+          5417
+        ]
+      ],
+      "responsibility": "ghostwrite batch controls, readiness, and outer chapter loop",
+      "lines": 607,
+      "sha256": "220b4cec68454f3bc88400fe6e950bd75b2c760c81c7afceb69cdb52372c22ad",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "ghostwriteProgress",
+          "kind": "var",
+          "line": 4
+        },
+        {
+          "name": "isGhostwriting",
+          "kind": "var",
+          "line": 11
+        },
+        {
+          "name": "canCancelGhostwriteBatch",
+          "kind": "var",
+          "line": 19
+        },
+        {
+          "name": "canResumeGhostwriteWithoutPlan",
+          "kind": "var",
+          "line": 25
+        },
+        {
+          "name": "ghostwriteReadinessIssue",
+          "kind": "var",
+          "line": 32
+        },
+        {
+          "name": "canStartGhostwriteChapter",
+          "kind": "var",
+          "line": 65
+        },
+        {
+          "name": "ghostwriteContinueBlockerMessage",
+          "kind": "var",
+          "line": 85
+        },
+        {
+          "name": "ghostwriteBlocker",
+          "kind": "var",
+          "line": 96
+        },
+        {
+          "name": "startGhostwriteChapter",
+          "kind": "func",
+          "line": 123
+        },
+        {
+          "name": "pauseGhostwrite",
+          "kind": "func",
+          "line": 288
+        },
+        {
+          "name": "cancelGhostwriteBatch",
+          "kind": "func",
+          "line": 303
+        },
+        {
+          "name": "continueGhostwriteChapter",
+          "kind": "func",
+          "line": 330
+        },
+        {
+          "name": "startGhostwriteRevision",
+          "kind": "func",
+          "line": 337
+        },
+        {
+          "name": "cancelGhostwriteForBindingChange",
+          "kind": "func",
+          "line": 389
+        },
+        {
+          "name": "mergeGhostwriteDetail",
+          "kind": "func",
+          "line": 421
+        },
+        {
+          "name": "runGhostwriteBatch",
+          "kind": "func",
+          "line": 428
+        },
+        {
+          "name": "ghostwriteCancellationPauseReason",
+          "kind": "func",
+          "line": 566
+        },
+        {
+          "name": "ghostwriteRunInterruptionReason",
+          "kind": "func",
+          "line": 595
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionGhostwriteChapter.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          5418,
+          6163
+        ]
+      ],
+      "responsibility": "single chapter generation, review, collect, and sync",
+      "lines": 750,
+      "sha256": "0a26687c7ffcf2fab2543b0be66ab61acc094cfcae6e491c6efd502651d24ce8",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "runOneGhostwriteChapter",
+          "kind": "func",
+          "line": 6
+        },
+        {
+          "name": "registerGhostwriteQualityFailure",
+          "kind": "func",
+          "line": 225
+        },
+        {
+          "name": "settlePendingGhostwriteSyncCredit",
+          "kind": "func",
+          "line": 289
+        },
+        {
+          "name": "proposeNextGhostwritePlan",
+          "kind": "func",
+          "line": 314
+        },
+        {
+          "name": "finishGhostwriteBatch",
+          "kind": "func",
+          "line": 401
+        },
+        {
+          "name": "stopOwnedGhostwriteRun",
+          "kind": "func",
+          "line": 433
+        },
+        {
+          "name": "canReuseGhostwriteCandidate",
+          "kind": "func",
+          "line": 454
+        },
+        {
+          "name": "obtainGhostwriteCandidate",
+          "kind": "func",
+          "line": 487
+        },
+        {
+          "name": "requireWorktreeDraft",
+          "kind": "func",
+          "line": 589
+        },
+        {
+          "name": "awaitGhostwriteCandidate",
+          "kind": "func",
+          "line": 602
+        },
+        {
+          "name": "awaitGhostwriteStateSync",
+          "kind": "func",
+          "line": 640
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionGhostwriteRecovery.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          6164,
+          6492
+        ]
+      ],
+      "responsibility": "ghostwrite pause, background lease, sidecar progress, and resume",
+      "lines": 334,
+      "sha256": "7534bcf2121d71f60acadc353fa29e379587f994140710ca7593a53dc1259253",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 4
+        },
+        {
+          "name": "pauseGhostwritePipeline",
+          "kind": "func",
+          "line": 5
+        },
+        {
+          "name": "ghostwriteRecentHighlightCount",
+          "kind": "func",
+          "line": 36
+        },
+        {
+          "name": "mutateGhostwriteProgress",
+          "kind": "func",
+          "line": 51
+        },
+        {
+          "name": "beginGhostwriteBackgroundLease",
+          "kind": "func",
+          "line": 66
+        },
+        {
+          "name": "advanceGhostwriteBackgroundProgress",
+          "kind": "func",
+          "line": 106
+        },
+        {
+          "name": "expireGhostwriteBackgroundLease",
+          "kind": "func",
+          "line": 122
+        },
+        {
+          "name": "resumeGhostwriteAfterBackgroundInterruptionIfNeeded",
+          "kind": "func",
+          "line": 194
+        },
+        {
+          "name": "withGhostwriteInfraRetry",
+          "kind": "func",
+          "line": 224
+        },
+        {
+          "name": "restoreGhostwriteProgressIfNeeded",
+          "kind": "func",
+          "line": 238
+        },
+        {
+          "name": "reconcileCommittedGhostwriteChapter",
+          "kind": "func",
+          "line": 274
+        },
+        {
+          "name": "persistGhostwriteProgress",
+          "kind": "func",
+          "line": 324
+        },
+        {
+          "name": "clearPersistedGhostwriteProgress",
+          "kind": "func",
+          "line": 328
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionPresentationModels.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionPresentation.swift",
+      "oldLineRanges": [
+        [
+          3,
+          751
+        ]
+      ],
+      "responsibility": "presentation row, action, tail, list, window, and projection input value types",
+      "lines": 751,
+      "sha256": "d5ece95441c1e3b437a24478173f22d60f4445772481bdf26348a3fee3381a53",
+      "symbols": [
+        {
+          "name": "NovelSessionContextRing",
+          "kind": "enum",
+          "line": 3
+        },
+        {
+          "name": "snapshot",
+          "kind": "func",
+          "line": 6
+        },
+        {
+          "name": "NovelSessionComposerPolicy",
+          "kind": "enum",
+          "line": 33
+        },
+        {
+          "name": "canSubmit",
+          "kind": "func",
+          "line": 34
+        },
+        {
+          "name": "askUserBlocker",
+          "kind": "func",
+          "line": 38
+        },
+        {
+          "name": "polishTransactionBlocker",
+          "kind": "func",
+          "line": 49
+        },
+        {
+          "name": "showsGenerationStatus",
+          "kind": "func",
+          "line": 62
+        },
+        {
+          "name": "runtimeActionBlocker",
+          "kind": "func",
+          "line": 78
+        },
+        {
+          "name": "NovelSessionTransientTailPhase",
+          "kind": "enum",
+          "line": 89
+        },
+        {
+          "name": "NovelSessionTransientTail",
+          "kind": "struct",
+          "line": 98
+        },
+        {
+          "name": "branchID",
+          "kind": "let",
+          "line": 99
+        },
+        {
+          "name": "sessionID",
+          "kind": "let",
+          "line": 100
+        },
+        {
+          "name": "runID",
+          "kind": "let",
+          "line": 101
+        },
+        {
+          "name": "userMessageID",
+          "kind": "let",
+          "line": 102
+        },
+        {
+          "name": "startingUserContent",
+          "kind": "let",
+          "line": 103
+        },
+        {
+          "name": "messageID",
+          "kind": "let",
+          "line": 104
+        },
+        {
+          "name": "candidateID",
+          "kind": "let",
+          "line": 105
+        },
+        {
+          "name": "mode",
+          "kind": "let",
+          "line": 106
+        },
+        {
+          "name": "granularity",
+          "kind": "let",
+          "line": 107
+        },
+        {
+          "name": "kind",
+          "kind": "let",
+          "line": 108
+        },
+        {
+          "name": "content",
+          "kind": "let",
+          "line": 109
+        },
+        {
+          "name": "reasoningContent",
+          "kind": "let",
+          "line": 111
+        },
+        {
+          "name": "isReasoningLive",
+          "kind": "let",
+          "line": 112
+        },
+        {
+          "name": "renderRevision",
+          "kind": "let",
+          "line": 115
+        },
+        {
+          "name": "startedAt",
+          "kind": "let",
+          "line": 116
+        },
+        {
+          "name": "phase",
+          "kind": "let",
+          "line": 117
+        },
+        {
+          "name": "lagAllowance",
+          "kind": "let",
+          "line": 121
+        },
+        {
+          "name": "askUser",
+          "kind": "let",
+          "line": 124
+        },
+        {
+          "name": "updating",
+          "kind": "func",
+          "line": 161
+        },
+        {
+          "name": "updating",
+          "kind": "func",
+          "line": 192
+        },
+        {
+          "name": "updatingReasoning",
+          "kind": "func",
+          "line": 205
+        },
+        {
+          "name": "NovelSettingProposalRoute",
+          "kind": "enum",
+          "line": 259
+        },
+        {
+          "name": "NovelSessionRowAction",
+          "kind": "enum",
+          "line": 275
+        },
+        {
+          "name": "NovelSessionActionBlocker",
+          "kind": "enum",
+          "line": 293
+        },
+        {
+          "name": "NovelSessionRowActionAvailability",
+          "kind": "struct",
+          "line": 310
+        },
+        {
+          "name": "action",
+          "kind": "let",
+          "line": 311
+        },
+        {
+          "name": "blocker",
+          "kind": "let",
+          "line": 312
+        },
+        {
+          "name": "isEnabled",
+          "kind": "var",
+          "line": 314
+        },
+        {
+          "name": "NovelSessionCandidatePresentation",
+          "kind": "struct",
+          "line": 317
+        },
+        {
+          "name": "id",
+          "kind": "let",
+          "line": 318
+        },
+        {
+          "name": "kind",
+          "kind": "let",
+          "line": 319
+        },
+        {
+          "name": "status",
+          "kind": "let",
+          "line": 320
+        },
+        {
+          "name": "sourceChapterVersionID",
+          "kind": "let",
+          "line": 321
+        },
+        {
+          "name": "pendingStatus",
+          "kind": "let",
+          "line": 322
+        },
+        {
+          "name": "polishTransactionStatus",
+          "kind": "let",
+          "line": 323
+        },
+        {
+          "name": "NovelSessionCommittedChangeSummary",
+          "kind": "struct",
+          "line": 326
+        },
+        {
+          "name": "checkpointID",
+          "kind": "let",
+          "line": 327
+        },
+        {
+          "name": "stateSnapshotID",
+          "kind": "let",
+          "line": 328
+        },
+        {
+          "name": "stateSummary",
+          "kind": "let",
+          "line": 329
+        },
+        {
+          "name": "eventSummaries",
+          "kind": "let",
+          "line": 330
+        },
+        {
+          "name": "branchSyncStatus",
+          "kind": "let",
+          "line": 348
+        },
+        {
+          "name": "NovelAskUserPresentation",
+          "kind": "struct",
+          "line": 351
+        },
+        {
+          "name": "prompt",
+          "kind": "let",
+          "line": 352
+        },
+        {
+          "name": "response",
+          "kind": "let",
+          "line": 353
+        },
+        {
+          "name": "isAnswered",
+          "kind": "var",
+          "line": 355
+        },
+        {
+          "name": "NovelDiscussionArchivePresentation",
+          "kind": "struct",
+          "line": 358
+        },
+        {
+          "name": "id",
+          "kind": "let",
+          "line": 359
+        },
+        {
+          "name": "title",
+          "kind": "let",
+          "line": 360
+        },
+        {
+          "name": "summary",
+          "kind": "let",
+          "line": 361
+        },
+        {
+          "name": "messageCount",
+          "kind": "let",
+          "line": 362
+        },
+        {
+          "name": "revealedRowCount",
+          "kind": "let",
+          "line": 363
+        },
+        {
+          "name": "isExpanded",
+          "kind": "let",
+          "line": 364
+        },
+        {
+          "name": "NovelSessionRowDigest",
+          "kind": "struct",
+          "line": 367
+        },
+        {
+          "name": "layout",
+          "kind": "let",
+          "line": 369
+        },
+        {
+          "name": "presentation",
+          "kind": "let",
+          "line": 371
+        },
+        {
+          "name": "NovelSessionRowModel",
+          "kind": "struct",
+          "line": 374
+        },
+        {
+          "name": "id",
+          "kind": "let",
+          "line": 375
+        },
+        {
+          "name": "sequence",
+          "kind": "let",
+          "line": 376
+        },
+        {
+          "name": "role",
+          "kind": "let",
+          "line": 377
+        },
+        {
+          "name": "mode",
+          "kind": "let",
+          "line": 378
+        },
+        {
+          "name": "granularity",
+          "kind": "let",
+          "line": 379
+        },
+        {
+          "name": "kind",
+          "kind": "let",
+          "line": 380
+        },
+        {
+          "name": "content",
+          "kind": "let",
+          "line": 381
+        },
+        {
+          "name": "reasoningContent",
+          "kind": "let",
+          "line": 383
+        },
+        {
+          "name": "isReasoningLive",
+          "kind": "let",
+          "line": 384
+        },
+        {
+          "name": "createdAt",
+          "kind": "let",
+          "line": 385
+        },
+        {
+          "name": "runID",
+          "kind": "let",
+          "line": 386
+        },
+        {
+          "name": "runStatus",
+          "kind": "let",
+          "line": 387
+        },
+        {
+          "name": "candidate",
+          "kind": "let",
+          "line": 388
+        },
+        {
+          "name": "committedChange",
+          "kind": "let",
+          "line": 389
+        },
+        {
+          "name": "askUser",
+          "kind": "let",
+          "line": 390
+        },
+        {
+          "name": "archive",
+          "kind": "let",
+          "line": 391
+        },
+        {
+          "name": "transientPhase",
+          "kind": "let",
+          "line": 392
+        },
+        {
+          "name": "actions",
+          "kind": "let",
+          "line": 393
+        },
+        {
+          "name": "digest",
+          "kind": "let",
+          "line": 394
+        },
+        {
+          "name": "lagAllowance",
+          "kind": "let",
+          "line": 397
+        },
+        {
+          "name": "isTransient",
+          "kind": "var",
+          "line": 399
+        },
+        {
+          "name": "isStreaming",
+          "kind": "var",
+          "line": 401
+        },
+        {
+          "name": "NovelSessionRowLocation",
+          "kind": "enum",
+          "line": 453
+        },
+        {
+          "name": "NovelSessionListModel",
+          "kind": "struct",
+          "line": 458
+        },
+        {
+          "name": "sessionID",
+          "kind": "let",
+          "line": 459
+        },
+        {
+          "name": "historicalRows",
+          "kind": "let",
+          "line": 460
+        },
+        {
+          "name": "activeRunRows",
+          "kind": "let",
+          "line": 461
+        },
+        {
+          "name": "activeTailID",
+          "kind": "let",
+          "line": 462
+        },
+        {
+          "name": "activeTailIndex",
+          "kind": "let",
+          "line": 464
+        },
+        {
+          "name": "rowOrder",
+          "kind": "let",
+          "line": 465
+        },
+        {
+          "name": "rows",
+          "kind": "var",
+          "line": 469
+        },
+        {
+          "name": "rowCount",
+          "kind": "var",
+          "line": 480
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "line": 481
+        },
+        {
+          "name": "lastRowDigest",
+          "kind": "var",
+          "line": 482
+        },
+        {
+          "name": "activeTailRow",
+          "kind": "var",
+          "line": 489
+        },
+        {
+          "name": "replacingActiveTail",
+          "kind": "func",
+          "line": 549
+        },
+        {
+          "name": "NovelSessionLoadStage",
+          "kind": "enum",
+          "line": 566
+        },
+        {
+          "name": "NovelSessionHistoryWindowPolicy",
+          "kind": "enum",
+          "line": 581
+        },
+        {
+          "name": "coldOpenLimit",
+          "kind": "let",
+          "line": 583
+        },
+        {
+          "name": "initialLimit",
+          "kind": "let",
+          "line": 585
+        },
+        {
+          "name": "pageSize",
+          "kind": "let",
+          "line": 587
+        },
+        {
+          "name": "startIndex",
+          "kind": "func",
+          "line": 589
+        },
+        {
+          "name": "expandedLimit",
+          "kind": "func",
+          "line": 593
+        },
+        {
+          "name": "limitAfterColdOpenSettles",
+          "kind": "func",
+          "line": 598
+        },
+        {
+          "name": "limitAfterRowsAppended",
+          "kind": "func",
+          "line": 609
+        },
+        {
+          "name": "limitAfterArchiveExpansion",
+          "kind": "func",
+          "line": 619
+        },
+        {
+          "name": "limitAfterActiveRunReturnsToHistory",
+          "kind": "func",
+          "line": 629
+        },
+        {
+          "name": "NovelSessionProjectionInput",
+          "kind": "struct",
+          "line": 641
+        },
+        {
+          "name": "branch",
+          "kind": "let",
+          "line": 642
+        },
+        {
+          "name": "session",
+          "kind": "let",
+          "line": 643
+        },
+        {
+          "name": "candidates",
+          "kind": "let",
+          "line": 644
+        },
+        {
+          "name": "runs",
+          "kind": "let",
+          "line": 645
+        },
+        {
+          "name": "pendingOperations",
+          "kind": "let",
+          "line": 646
+        },
+        {
+          "name": "polishTransactions",
+          "kind": "let",
+          "line": 647
+        },
+        {
+          "name": "discardedChapterVersionIDs",
+          "kind": "let",
+          "line": 648
+        },
+        {
+          "name": "checkpoints",
+          "kind": "let",
+          "line": 649
+        },
+        {
+          "name": "stateSnapshots",
+          "kind": "let",
+          "line": 650
+        },
+        {
+          "name": "events",
+          "kind": "let",
+          "line": 651
+        },
+        {
+          "name": "settingProposals",
+          "kind": "let",
+          "line": 652
+        },
+        {
+          "name": "collaborationMode",
+          "kind": "let",
+          "line": 653
+        },
+        {
+          "name": "hasConfirmedChapterPlan",
+          "kind": "let",
+          "line": 654
+        },
+        {
+          "name": "access",
+          "kind": "let",
+          "line": 655
+        },
+        {
+          "name": "expandedArchiveIDs",
+          "kind": "let",
+          "line": 656
+        },
+        {
+          "name": "transientTail",
+          "kind": "let",
+          "line": 657
+        },
+        {
+          "name": "hasLiveTail",
+          "kind": "let",
+          "line": 658
+        },
+        {
+          "name": "hasLiveTail",
+          "kind": "func",
+          "line": 660
+        },
+        {
+          "name": "NovelSessionPreparedProjection",
+          "kind": "struct",
+          "line": 747
+        },
+        {
+          "name": "model",
+          "kind": "let",
+          "line": 748
+        },
+        {
+          "name": "index",
+          "kind": "let",
+          "line": 749
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionPresentationPacer.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          77,
+          375
+        ]
+      ],
+      "responsibility": "pure FIFO presentation buffer and cursor pacing",
+      "lines": 301,
+      "sha256": "47bd747f2a7b3a86c53ce438fe349b730c8db7da733ddb4837fc298b23184f22",
+      "symbols": [
+        {
+          "name": "NovelSessionPresentationBuffer",
+          "kind": "struct",
+          "line": 3
+        },
+        {
+          "name": "runID",
+          "kind": "let",
+          "line": 4
+        },
+        {
+          "name": "messageID",
+          "kind": "let",
+          "line": 5
+        },
+        {
+          "name": "bindingToken",
+          "kind": "let",
+          "line": 6
+        },
+        {
+          "name": "cursor",
+          "kind": "var",
+          "line": 7
+        },
+        {
+          "name": "targetContent",
+          "kind": "var",
+          "line": 9
+        },
+        {
+          "name": "targetCharacterCount",
+          "kind": "var",
+          "line": 10
+        },
+        {
+          "name": "displayedCharacterCount",
+          "kind": "var",
+          "line": 11
+        },
+        {
+          "name": "matches",
+          "kind": "func",
+          "line": 43
+        },
+        {
+          "name": "NovelSessionPresentationPacer",
+          "kind": "enum",
+          "line": 60
+        },
+        {
+          "name": "Mode",
+          "kind": "enum",
+          "line": 61
+        },
+        {
+          "name": "minimumTextAdvance",
+          "kind": "var",
+          "line": 66
+        },
+        {
+          "name": "maximumTextAdvance",
+          "kind": "var",
+          "line": 67
+        },
+        {
+          "name": "preferredDrainTicks",
+          "kind": "var",
+          "line": 68
+        },
+        {
+          "name": "Step",
+          "kind": "struct",
+          "line": 70
+        },
+        {
+          "name": "Cursor",
+          "kind": "struct",
+          "line": 78
+        },
+        {
+          "name": "textAdvance",
+          "kind": "func",
+          "line": 211
+        },
+        {
+          "name": "terminalDrainAdvance",
+          "kind": "func",
+          "line": 215
+        },
+        {
+          "name": "terminalDrainDelayNanos",
+          "kind": "func",
+          "line": 219
+        },
+        {
+          "name": "presentationContent",
+          "kind": "func",
+          "line": 225
+        },
+        {
+          "name": "step",
+          "kind": "func",
+          "line": 234
+        },
+        {
+          "name": "terminalPacingBase",
+          "kind": "func",
+          "line": 272
+        },
+        {
+          "name": "terminalStep",
+          "kind": "func",
+          "line": 282
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionProjectionIndex.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionPresentation.swift",
+      "oldLineRanges": [
+        [
+          1194,
+          1363
+        ]
+      ],
+      "responsibility": "one prepared index for candidate, run, checkpoint, and gate lookups",
+      "lines": 172,
+      "sha256": "6f237748090e786a1bcc4d3ed0b0884318df48a43736f5ab3a4a7c87453c099d",
+      "symbols": [
+        {
+          "name": "NovelSessionCollectedCheckpointKey",
+          "kind": "struct",
+          "line": 3
+        },
+        {
+          "name": "checkpointID",
+          "kind": "let",
+          "line": 4
+        },
+        {
+          "name": "candidateID",
+          "kind": "let",
+          "line": 5
+        },
+        {
+          "name": "NovelSessionProjectionIndex",
+          "kind": "struct",
+          "line": 8
+        },
+        {
+          "name": "candidatesBySourceMessageID",
+          "kind": "let",
+          "line": 9
+        },
+        {
+          "name": "messageByID",
+          "kind": "let",
+          "line": 10
+        },
+        {
+          "name": "pendingCandidateIDs",
+          "kind": "let",
+          "line": 11
+        },
+        {
+          "name": "polishCandidateIDs",
+          "kind": "let",
+          "line": 12
+        },
+        {
+          "name": "pendingByCandidateID",
+          "kind": "let",
+          "line": 13
+        },
+        {
+          "name": "polishByCandidateID",
+          "kind": "let",
+          "line": 14
+        },
+        {
+          "name": "runByID",
+          "kind": "let",
+          "line": 15
+        },
+        {
+          "name": "unresolvedQuickStartProposalByRunID",
+          "kind": "let",
+          "line": 16
+        },
+        {
+          "name": "collectedCheckpointByKey",
+          "kind": "let",
+          "line": 17
+        },
+        {
+          "name": "checkpointByID",
+          "kind": "let",
+          "line": 18
+        },
+        {
+          "name": "stateByID",
+          "kind": "let",
+          "line": 19
+        },
+        {
+          "name": "eventByID",
+          "kind": "let",
+          "line": 20
+        },
+        {
+          "name": "askUserResponseByPromptMessageID",
+          "kind": "let",
+          "line": 21
+        },
+        {
+          "name": "workingChapterVersionIDs",
+          "kind": "let",
+          "line": 22
+        },
+        {
+          "name": "runningRunIDs",
+          "kind": "let",
+          "line": 23
+        },
+        {
+          "name": "branchPendingOperationIDs",
+          "kind": "let",
+          "line": 24
+        },
+        {
+          "name": "branchManualSyncPendingOperationIDs",
+          "kind": "let",
+          "line": 25
+        },
+        {
+          "name": "branchProseBlockingPendingOperationIDs",
+          "kind": "let",
+          "line": 26
+        },
+        {
+          "name": "branchBlockingPolishTransactionIDs",
+          "kind": "let",
+          "line": 27
+        },
+        {
+          "name": "discardedChapterVersionIDs",
+          "kind": "let",
+          "line": 28
+        },
+        {
+          "name": "hasRunningRun",
+          "kind": "func",
+          "line": 147
+        },
+        {
+          "name": "pendingOperationBlocker",
+          "kind": "func",
+          "line": 151
+        },
+        {
+          "name": "hasBlockingPolishTransaction",
+          "kind": "func",
+          "line": 167
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionProjectionStore.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          376,
+          493
+        ],
+        [
+          745,
+          1260
+        ]
+      ],
+      "responsibility": "session projection cache, identity chrome, revision based installation",
+      "lines": 639,
+      "sha256": "59df95c73b78257a39597a7cd27ecf288fe919c5efc1981e1d00c009fa592a56",
+      "symbols": [
+        {
+          "name": "NovelSessionProjectionTailKey",
+          "kind": "struct",
+          "line": 3
+        },
+        {
+          "name": "branchID",
+          "kind": "let",
+          "line": 4
+        },
+        {
+          "name": "sessionID",
+          "kind": "let",
+          "line": 5
+        },
+        {
+          "name": "runID",
+          "kind": "let",
+          "line": 6
+        },
+        {
+          "name": "userMessageID",
+          "kind": "let",
+          "line": 7
+        },
+        {
+          "name": "messageID",
+          "kind": "let",
+          "line": 8
+        },
+        {
+          "name": "candidateID",
+          "kind": "let",
+          "line": 9
+        },
+        {
+          "name": "mode",
+          "kind": "let",
+          "line": 10
+        },
+        {
+          "name": "granularity",
+          "kind": "let",
+          "line": 11
+        },
+        {
+          "name": "kind",
+          "kind": "let",
+          "line": 12
+        },
+        {
+          "name": "startedAt",
+          "kind": "let",
+          "line": 13
+        },
+        {
+          "name": "NovelSessionProjectionCacheKey",
+          "kind": "struct",
+          "line": 29
+        },
+        {
+          "name": "projectID",
+          "kind": "let",
+          "line": 30
+        },
+        {
+          "name": "projectRevision",
+          "kind": "let",
+          "line": 31
+        },
+        {
+          "name": "configRevision",
+          "kind": "let",
+          "line": 32
+        },
+        {
+          "name": "projectAccess",
+          "kind": "let",
+          "line": 33
+        },
+        {
+          "name": "branchID",
+          "kind": "let",
+          "line": 34
+        },
+        {
+          "name": "branchHeadRevision",
+          "kind": "let",
+          "line": 35
+        },
+        {
+          "name": "branchWorkingRevision",
+          "kind": "let",
+          "line": 36
+        },
+        {
+          "name": "branchSyncStatus",
+          "kind": "let",
+          "line": 37
+        },
+        {
+          "name": "branchLifecycle",
+          "kind": "let",
+          "line": 38
+        },
+        {
+          "name": "activeRunID",
+          "kind": "let",
+          "line": 39
+        },
+        {
+          "name": "sessionID",
+          "kind": "let",
+          "line": 40
+        },
+        {
+          "name": "sessionRevision",
+          "kind": "let",
+          "line": 41
+        },
+        {
+          "name": "expandedArchiveIDs",
+          "kind": "let",
+          "line": 42
+        },
+        {
+          "name": "hasLiveTail",
+          "kind": "let",
+          "line": 43
+        },
+        {
+          "name": "NovelSessionProjectionCacheEntry",
+          "kind": "struct",
+          "line": 72
+        },
+        {
+          "name": "key",
+          "kind": "let",
+          "line": 73
+        },
+        {
+          "name": "durableProjection",
+          "kind": "let",
+          "line": 74
+        },
+        {
+          "name": "model",
+          "kind": "let",
+          "line": 75
+        },
+        {
+          "name": "tailKey",
+          "kind": "let",
+          "line": 76
+        },
+        {
+          "name": "tailStartingUserContent",
+          "kind": "let",
+          "line": 77
+        },
+        {
+          "name": "tailRenderRevision",
+          "kind": "let",
+          "line": 78
+        },
+        {
+          "name": "localAskUserRevision",
+          "kind": "let",
+          "line": 79
+        },
+        {
+          "name": "NovelSessionTailChromeState",
+          "kind": "struct",
+          "line": 82
+        },
+        {
+          "name": "runID",
+          "kind": "let",
+          "line": 83
+        },
+        {
+          "name": "phase",
+          "kind": "let",
+          "line": 84
+        },
+        {
+          "name": "supportsReasoning",
+          "kind": "let",
+          "line": 85
+        },
+        {
+          "name": "NovelCharacterIdentityMentionsCacheKey",
+          "kind": "struct",
+          "line": 96
+        },
+        {
+          "name": "projectRevision",
+          "kind": "let",
+          "line": 97
+        },
+        {
+          "name": "configRevision",
+          "kind": "let",
+          "line": 98
+        },
+        {
+          "name": "branchID",
+          "kind": "let",
+          "line": 99
+        },
+        {
+          "name": "stateSnapshotID",
+          "kind": "let",
+          "line": 100
+        },
+        {
+          "name": "unresolvedNames",
+          "kind": "let",
+          "line": 101
+        },
+        {
+          "name": "NovelCharacterIdentityMentionsCacheEntry",
+          "kind": "struct",
+          "line": 104
+        },
+        {
+          "name": "key",
+          "kind": "let",
+          "line": 105
+        },
+        {
+          "name": "value",
+          "kind": "let",
+          "line": 106
+        },
+        {
+          "name": "NovelCharacterIdentityCardFacts",
+          "kind": "struct",
+          "line": 109
+        },
+        {
+          "name": "mention",
+          "kind": "let",
+          "line": 110
+        },
+        {
+          "name": "recommended",
+          "kind": "let",
+          "line": 111
+        },
+        {
+          "name": "activeProposal",
+          "kind": "let",
+          "line": 112
+        },
+        {
+          "name": "relatedProposalCount",
+          "kind": "let",
+          "line": 113
+        },
+        {
+          "name": "NovelCharacterIdentityCardsCacheEntry",
+          "kind": "struct",
+          "line": 116
+        },
+        {
+          "name": "key",
+          "kind": "let",
+          "line": 117
+        },
+        {
+          "name": "value",
+          "kind": "let",
+          "line": 118
+        },
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 122
+        },
+        {
+          "name": "durableMessages",
+          "kind": "var",
+          "line": 123
+        },
+        {
+          "name": "hasArchivableDiscussion",
+          "kind": "var",
+          "line": 128
+        },
+        {
+          "name": "latestContextReceipt",
+          "kind": "var",
+          "line": 150
+        },
+        {
+          "name": "pendingCharacterIdentityMentions",
+          "kind": "var",
+          "line": 168
+        },
+        {
+          "name": "resolvedPendingCharacterIdentityMentions",
+          "kind": "var",
+          "line": 175
+        },
+        {
+          "name": "maxVisibleCharacterIdentityCards",
+          "kind": "let",
+          "line": 241
+        },
+        {
+          "name": "maxInlineCharacterIdentityChoices",
+          "kind": "let",
+          "line": 243
+        },
+        {
+          "name": "characterIdentityChoices",
+          "kind": "var",
+          "line": 247
+        },
+        {
+          "name": "resolvedCharacterIdentityChoices",
+          "kind": "var",
+          "line": 252
+        },
+        {
+          "name": "characterIdentityCardFacts",
+          "kind": "var",
+          "line": 281
+        },
+        {
+          "name": "recommendedCharacterIdentityChoice",
+          "kind": "func",
+          "line": 313
+        },
+        {
+          "name": "advanceLoadStage",
+          "kind": "func",
+          "line": 337
+        },
+        {
+          "name": "activeCharacterProposal",
+          "kind": "func",
+          "line": 360
+        },
+        {
+          "name": "relatedCharacterProposalCount",
+          "kind": "func",
+          "line": 374
+        },
+        {
+          "name": "projectedListModel",
+          "kind": "func",
+          "line": 387
+        },
+        {
+          "name": "overlayLocalAskUserAnswers",
+          "kind": "func",
+          "line": 474
+        },
+        {
+          "name": "warmProjectionCache",
+          "kind": "func",
+          "line": 522
+        },
+        {
+          "name": "cancelProjectionBuild",
+          "kind": "func",
+          "line": 558
+        },
+        {
+          "name": "scheduleProjectionCache",
+          "kind": "func",
+          "line": 565
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionRunLifecycle.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          2051,
+          2214
+        ],
+        [
+          3235,
+          3974
+        ],
+        [
+          4571,
+          4809
+        ]
+      ],
+      "responsibility": "run start, attach, consume, stop, retry, durable refresh, and binding reset",
+      "lines": 1149,
+      "sha256": "10ca90f4a8a102d60a0a78a52e02395bbc5d437358a27db5a1dbda3fb8651a5e",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "stop",
+          "kind": "func",
+          "line": 4
+        },
+        {
+          "name": "interruptForRouteExit",
+          "kind": "func",
+          "line": 9
+        },
+        {
+          "name": "interruptForBackground",
+          "kind": "func",
+          "line": 22
+        },
+        {
+          "name": "retryLastTerminal",
+          "kind": "func",
+          "line": 61
+        },
+        {
+          "name": "retryGeneration",
+          "kind": "func",
+          "line": 70
+        },
+        {
+          "name": "retryPendingTerminal",
+          "kind": "func",
+          "line": 150
+        },
+        {
+          "name": "isRevisionMismatch",
+          "kind": "func",
+          "line": 169
+        },
+        {
+          "name": "snapshotMatchesBinding",
+          "kind": "var",
+          "line": 179
+        },
+        {
+          "name": "activeRun",
+          "kind": "var",
+          "line": 188
+        },
+        {
+          "name": "boundQuickStartStartingRun",
+          "kind": "var",
+          "line": 195
+        },
+        {
+          "name": "isEligibleForExactRetry",
+          "kind": "func",
+          "line": 203
+        },
+        {
+          "name": "candidates",
+          "kind": "func",
+          "line": 227
+        },
+        {
+          "name": "canStart",
+          "kind": "func",
+          "line": 234
+        },
+        {
+          "name": "startBlockerMessage",
+          "kind": "func",
+          "line": 242
+        },
+        {
+          "name": "start",
+          "kind": "func",
+          "line": 330
+        },
+        {
+          "name": "consume",
+          "kind": "func",
+          "line": 473
+        },
+        {
+          "name": "consume",
+          "kind": "func",
+          "line": 489
+        },
+        {
+          "name": "attach",
+          "kind": "func",
+          "line": 617
+        },
+        {
+          "name": "draft",
+          "kind": "func",
+          "line": 680
+        },
+        {
+          "name": "request",
+          "kind": "func",
+          "line": 709
+        },
+        {
+          "name": "refreshDurable",
+          "kind": "func",
+          "line": 746
+        },
+        {
+          "name": "hydrateTerminalState",
+          "kind": "func",
+          "line": 814
+        },
+        {
+          "name": "updateTerminalState",
+          "kind": "func",
+          "line": 843
+        },
+        {
+          "name": "applyPolishAdoption",
+          "kind": "func",
+          "line": 853
+        },
+        {
+          "name": "perform",
+          "kind": "func",
+          "line": 858
+        },
+        {
+          "name": "beginAction",
+          "kind": "func",
+          "line": 873
+        },
+        {
+          "name": "endAction",
+          "kind": "func",
+          "line": 883
+        },
+        {
+          "name": "mutationContext",
+          "kind": "func",
+          "line": 891
+        },
+        {
+          "name": "interruptBoundRun",
+          "kind": "func",
+          "line": 910
+        },
+        {
+          "name": "finishStoppedRunPresentation",
+          "kind": "func",
+          "line": 1040
+        },
+        {
+          "name": "pausePresentationForStop",
+          "kind": "func",
+          "line": 1071
+        },
+        {
+          "name": "resumePresentationAfterFailedStop",
+          "kind": "func",
+          "line": 1079
+        },
+        {
+          "name": "releaseSessionStartOwnership",
+          "kind": "func",
+          "line": 1108
+        },
+        {
+          "name": "resetBinding",
+          "kind": "func",
+          "line": 1115
+        },
+        {
+          "name": "cancelPolishRetryForBindingChange",
+          "kind": "func",
+          "line": 1136
+        },
+        {
+          "name": "describe",
+          "kind": "func",
+          "line": 1146
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionRunTypes.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          5,
+          76
+        ]
+      ],
+      "responsibility": "binding, run draft, and batch progress value contracts",
+      "lines": 74,
+      "sha256": "de784e80b4ec14363e8b5e5015efe6505889c75230f3fbde9a6a98cf14ea37f5",
+      "symbols": [
+        {
+          "name": "NovelSessionBinding",
+          "kind": "struct",
+          "line": 3
+        },
+        {
+          "name": "projectID",
+          "kind": "let",
+          "line": 4
+        },
+        {
+          "name": "branchID",
+          "kind": "let",
+          "line": 5
+        },
+        {
+          "name": "NovelCharacterIdentityMention",
+          "kind": "struct",
+          "line": 8
+        },
+        {
+          "name": "name",
+          "kind": "let",
+          "line": 9
+        },
+        {
+          "name": "id",
+          "kind": "var",
+          "line": 10
+        },
+        {
+          "name": "NovelBatchPolishChapterResult",
+          "kind": "struct",
+          "line": 14
+        },
+        {
+          "name": "Outcome",
+          "kind": "enum",
+          "line": 15
+        },
+        {
+          "name": "chapterID",
+          "kind": "let",
+          "line": 26
+        },
+        {
+          "name": "title",
+          "kind": "let",
+          "line": 27
+        },
+        {
+          "name": "outcome",
+          "kind": "var",
+          "line": 28
+        },
+        {
+          "name": "message",
+          "kind": "var",
+          "line": 29
+        },
+        {
+          "name": "NovelBatchPolishProgress",
+          "kind": "struct",
+          "line": 34
+        },
+        {
+          "name": "Phase",
+          "kind": "enum",
+          "line": 35
+        },
+        {
+          "name": "binding",
+          "kind": "let",
+          "line": 41
+        },
+        {
+          "name": "total",
+          "kind": "let",
+          "line": 42
+        },
+        {
+          "name": "completed",
+          "kind": "var",
+          "line": 43
+        },
+        {
+          "name": "currentTitle",
+          "kind": "var",
+          "line": 44
+        },
+        {
+          "name": "phase",
+          "kind": "var",
+          "line": 45
+        },
+        {
+          "name": "results",
+          "kind": "var",
+          "line": 46
+        },
+        {
+          "name": "startedAt",
+          "kind": "let",
+          "line": 47
+        },
+        {
+          "name": "adoptedCount",
+          "kind": "var",
+          "line": 49
+        },
+        {
+          "name": "skippedCount",
+          "kind": "var",
+          "line": 50
+        },
+        {
+          "name": "failedCount",
+          "kind": "var",
+          "line": 51
+        },
+        {
+          "name": "cancelledCount",
+          "kind": "var",
+          "line": 52
+        },
+        {
+          "name": "NovelSessionRunDraft",
+          "kind": "struct",
+          "line": 55
+        },
+        {
+          "name": "kind",
+          "kind": "let",
+          "line": 56
+        },
+        {
+          "name": "mode",
+          "kind": "let",
+          "line": 57
+        },
+        {
+          "name": "granularity",
+          "kind": "let",
+          "line": 58
+        },
+        {
+          "name": "userText",
+          "kind": "let",
+          "line": 59
+        },
+        {
+          "name": "sourceChapterVersionID",
+          "kind": "let",
+          "line": 60
+        },
+        {
+          "name": "askUserResponse",
+          "kind": "let",
+          "line": 61
+        },
+        {
+          "name": "injectionOverrides",
+          "kind": "let",
+          "line": 62
+        },
+        {
+          "name": "inputBudgetTokens",
+          "kind": "let",
+          "line": 63
+        },
+        {
+          "name": "contextualCharacterMention",
+          "kind": "var",
+          "line": 64
+        },
+        {
+          "name": "ghostwritePlanID",
+          "kind": "var",
+          "line": 65
+        },
+        {
+          "name": "suppressRecentSessionMessages",
+          "kind": "var",
+          "line": 67
+        }
+      ]
+    },
+    {
+      "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionStreamingPresentation.swift",
+      "movedFrom": "iosApp/iosApp/NovelCreation/NovelSessionViewModel.swift",
+      "oldLineRanges": [
+        [
+          3975,
+          4570
+        ]
+      ],
+      "responsibility": "reasoning/text pacing, structured preview, terminal partial drain and tail retirement",
+      "lines": 600,
+      "sha256": "720dc07e66337c6157e87ede8a5163d8d8187dd4e6fc98f28ecbeeb724583e95",
+      "symbols": [
+        {
+          "name": "NovelSessionViewModel",
+          "kind": "extension",
+          "line": 3
+        },
+        {
+          "name": "applyReasoningPresentation",
+          "kind": "func",
+          "line": 4
+        },
+        {
+          "name": "markReasoningFinishedIfNeeded",
+          "kind": "func",
+          "line": 27
+        },
+        {
+          "name": "scheduleReasoningFlush",
+          "kind": "func",
+          "line": 38
+        },
+        {
+          "name": "flushPendingReasoning",
+          "kind": "func",
+          "line": 56
+        },
+        {
+          "name": "enqueuePresentationDelta",
+          "kind": "func",
+          "line": 100
+        },
+        {
+          "name": "enqueuePresentationReplacement",
+          "kind": "func",
+          "line": 119
+        },
+        {
+          "name": "normalizePresentationBufferIfNeeded",
+          "kind": "func",
+          "line": 138
+        },
+        {
+          "name": "preparePresentationBuffer",
+          "kind": "func",
+          "line": 149
+        },
+        {
+          "name": "schedulePresentationFlush",
+          "kind": "func",
+          "line": 167
+        },
+        {
+          "name": "flushPendingPresentation",
+          "kind": "func",
+          "line": 189
+        },
+        {
+          "name": "publishQuickStartStreamingPhaseIfNeeded",
+          "kind": "func",
+          "line": 236
+        },
+        {
+          "name": "appendQuickStartStructuredDelta",
+          "kind": "func",
+          "line": 248
+        },
+        {
+          "name": "replaceQuickStartStructuredContent",
+          "kind": "func",
+          "line": 261
+        },
+        {
+          "name": "appendCharacterProposalStructuredDelta",
+          "kind": "func",
+          "line": 273
+        },
+        {
+          "name": "replaceCharacterProposalStructuredContent",
+          "kind": "func",
+          "line": 284
+        },
+        {
+          "name": "scheduleStructuredPresentationFlush",
+          "kind": "func",
+          "line": 295
+        },
+        {
+          "name": "publishDirtyStructuredPresentation",
+          "kind": "func",
+          "line": 300
+        },
+        {
+          "name": "publishTerminalPresentation",
+          "kind": "func",
+          "line": 326
+        },
+        {
+          "name": "cancelPendingPresentation",
+          "kind": "func",
+          "line": 433
+        },
+        {
+          "name": "installTail",
+          "kind": "func",
+          "line": 443
+        },
+        {
+          "name": "updateTail",
+          "kind": "func",
+          "line": 480
+        },
+        {
+          "name": "attachAskUserIfNeeded",
+          "kind": "func",
+          "line": 495
+        },
+        {
+          "name": "adoptDurableRunRecord",
+          "kind": "func",
+          "line": 511
+        },
+        {
+          "name": "clearTransientTail",
+          "kind": "func",
+          "line": 526
+        },
+        {
+          "name": "clearTransientTailAfterDurableProjection",
+          "kind": "func",
+          "line": 541
+        },
+        {
+          "name": "retireTerminalTransientTail",
+          "kind": "func",
+          "line": 573
+        },
+        {
+          "name": "isActiveTailPhase",
+          "kind": "func",
+          "line": 593
+        }
+      ]
+    }
+  ],
+  "ownership": {
+    "observableIdentity": "NovelSessionViewModel instance remains the only owner of bindingToken, consumer and attachment IDs, transientTail, presentationBuffer and flush tasks, terminalAwaitingRefresh, mutation gate, batch and ghostwrite task/progress. Workflow extensions mutate that same instance; no duplicate store or state machine was added.",
+    "durableAuthority": "NovelCreationViewModel delegates domain mutations to the existing DefaultNovelCreation actor, reducer, and repository; Session projection never writes the document.",
+    "runBoundary": "projectID and branchID in binding, sessionID in transient tail, runID plus bindingToken in consumer/pacer/terminal, unchanged checks at each callback.",
+    "presentationBoundary": "One NovelSessionPresentationBuffer cursor, one 48 ms FIFO flush, then terminal partial drain before durable refresh/tail retirement.",
+    "bottomFollow": "NovelSessionBottomFollowPolicy reducer moved intact; no new scroll owner."
+  },
+  "visibility": {
+    "vmStoredFieldsExposedOnlyForCrossFileExtensions": [
+      {
+        "symbol": "binding",
+        "original": "private(set) var binding: NovelSessionBinding?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "transientTail",
+        "original": "private(set) var transientTail: NovelSessionTransientTail? {",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "sessionStartingRunID",
+        "original": "private(set) var sessionStartingRunID: NovelRunID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "isPerformingAction",
+        "original": "private(set) var isPerformingAction = false",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "stoppingRunID",
+        "original": "private(set) var stoppingRunID: NovelRunID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "retryingRunID",
+        "original": "private(set) var retryingRunID: NovelRunID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "cloningCandidateID",
+        "original": "private(set) var cloningCandidateID: NovelCandidateID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "undoingCheckpointID",
+        "original": "private(set) var undoingCheckpointID: NovelCheckpointID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "adoptingPolishCandidateID",
+        "original": "private(set) var adoptingPolishCandidateID: NovelCandidateID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "operationErrorMessage",
+        "original": "private(set) var operationErrorMessage: String?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "refreshErrorMessage",
+        "original": "private(set) var refreshErrorMessage: String?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "lastFailure",
+        "original": "private(set) var lastFailure: NovelFailure?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "polishRetryTransactionID",
+        "original": "private(set) var polishRetryTransactionID: NovelPendingOperationID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "batchPolishProgressStorage",
+        "original": "private var batchPolishProgressStorage: NovelBatchPolishProgress?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "workspace",
+        "original": "@ObservationIgnored private let workspace: NovelCreationViewModel",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "consumerTask",
+        "original": "@ObservationIgnored private var consumerTask: Task<Void, Never>?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "consumerID",
+        "original": "@ObservationIgnored private var consumerID: UUID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "attachAttemptID",
+        "original": "@ObservationIgnored private var attachAttemptID: UUID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "attachingRunID",
+        "original": "@ObservationIgnored private var attachingRunID: NovelRunID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "attachingBindingToken",
+        "original": "@ObservationIgnored private var attachingBindingToken: UUID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "consumerAttachmentDesired",
+        "original": "@ObservationIgnored private var consumerAttachmentDesired = true",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "bindingToken",
+        "original": "@ObservationIgnored private var bindingToken = UUID()",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "currentRunDraft",
+        "original": "@ObservationIgnored private var currentRunDraft: NovelSessionRunDraft?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "lastRetryDraft",
+        "original": "@ObservationIgnored private var lastRetryDraft: NovelSessionRunDraft?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "lastRetryRunID",
+        "original": "@ObservationIgnored private var lastRetryRunID: NovelRunID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "lastStartFailure",
+        "original": "@ObservationIgnored private var lastStartFailure: Error?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "transientRunRecord",
+        "original": "@ObservationIgnored private var transientRunRecord: NovelActiveRunRecord?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "terminalAwaitingRefresh",
+        "original": "private var terminalAwaitingRefresh = false",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "cancelledStartRunIDs",
+        "original": "@ObservationIgnored private var cancelledStartRunIDs: Set<NovelRunID> = []",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "answeringAskUserMessageID",
+        "original": "private(set) var answeringAskUserMessageID: NovelMessageID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "locallyResolvedAskUser",
+        "original": "private var locallyResolvedAskUser: [NovelMessageID: NovelAskUserResponse] = [:] {",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "localAskUserRevision",
+        "original": "private var localAskUserRevision: UInt64 = 0",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "sessionActionOwnerID",
+        "original": "@ObservationIgnored private var sessionActionOwnerID: UUID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "polishRetryTask",
+        "original": "@ObservationIgnored private var polishRetryTask: Task<Void, Never>?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "polishRetryTaskBinding",
+        "original": "@ObservationIgnored private var polishRetryTaskBinding: NovelSessionBinding?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "batchPolishTask",
+        "original": "@ObservationIgnored private var batchPolishTask: Task<Void, Never>?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "batchPolishTaskBinding",
+        "original": "@ObservationIgnored private var batchPolishTaskBinding: NovelSessionBinding?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "batchPolishOwnedRunID",
+        "original": "@ObservationIgnored private var batchPolishOwnedRunID: NovelRunID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "batchPolishCancellationReason",
+        "original": "@ObservationIgnored private var batchPolishCancellationReason: NovelRunInterruptionReason = .user",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "isBatchStartingRun",
+        "original": "@ObservationIgnored private var isBatchStartingRun = false",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "ghostwriteProgressStorage",
+        "original": "private var ghostwriteProgressStorage: NovelGhostwriteProgress?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "ghostwriteBackgroundLeaseOwnerID",
+        "original": "@ObservationIgnored private var ghostwriteBackgroundLeaseOwnerID: UUID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "ghostwriteBackgroundExpirationOwnerID",
+        "original": "@ObservationIgnored private var ghostwriteBackgroundExpirationOwnerID: UUID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "projectionCache",
+        "original": "@ObservationIgnored private var projectionCache: NovelSessionProjectionCacheEntry?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "projectionBuildTask",
+        "original": "@ObservationIgnored private var projectionBuildTask: Task<Bool, Never>?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "projectionBuildKey",
+        "original": "@ObservationIgnored private var projectionBuildKey: NovelSessionProjectionCacheKey?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "projectionBuildID",
+        "original": "@ObservationIgnored private var projectionBuildID: UUID?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "projectionExpandedArchiveIDs",
+        "original": "@ObservationIgnored private var projectionExpandedArchiveIDs: Set<NovelMessageID> = []",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "projectionRevision",
+        "original": "private var projectionRevision: UInt64 = 0",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "pendingCharacterIdentityMentionsCache",
+        "original": "@ObservationIgnored private var pendingCharacterIdentityMentionsCache:",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "characterIdentityCardsCache",
+        "original": "@ObservationIgnored private var characterIdentityCardsCache:",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "characterIdentityChoicesCache",
+        "original": "@ObservationIgnored private var characterIdentityChoicesCache:",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "latestContextReceiptCache",
+        "original": "@ObservationIgnored private var latestContextReceiptCache:",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "archivableDiscussionCache",
+        "original": "@ObservationIgnored private var archivableDiscussionCache:",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "loadStage",
+        "original": "private(set) var loadStage: NovelSessionLoadStage = .idle",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "fullProjectionBuildCountForTesting",
+        "original": "@ObservationIgnored private(set) var fullProjectionBuildCountForTesting = 0",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "presentationBuffer",
+        "original": "@ObservationIgnored private var presentationBuffer: NovelSessionPresentationBuffer?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "quickStartStructuredContent",
+        "original": "@ObservationIgnored private var quickStartStructuredContent: String?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "characterProposalStructuredContent",
+        "original": "@ObservationIgnored private var characterProposalStructuredContent: String?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "quickStartStructuredPresentationDirty",
+        "original": "@ObservationIgnored private var quickStartStructuredPresentationDirty = false",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "characterProposalStructuredPresentationDirty",
+        "original": "@ObservationIgnored private var characterProposalStructuredPresentationDirty = false",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "presentationFlushTask",
+        "original": "@ObservationIgnored private var presentationFlushTask: Task<Void, Never>?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "reasoningFlushTask",
+        "original": "@ObservationIgnored private var reasoningFlushTask: Task<Void, Never>?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "reasoningFlushToken",
+        "original": "@ObservationIgnored private var reasoningFlushToken = UUID()",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "pendingReasoningText",
+        "original": "@ObservationIgnored private var pendingReasoningText: String?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "isTailPresentationSuspended",
+        "original": "@ObservationIgnored private var isTailPresentationSuspended = false",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "reasoningClosedAfterVisibleOutput",
+        "original": "@ObservationIgnored private var reasoningClosedAfterVisibleOutput = false",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "terminalTailRetirementTask",
+        "original": "@ObservationIgnored private var terminalTailRetirementTask: Task<Void, Never>?",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "terminalQuietDelay",
+        "original": "@ObservationIgnored private let terminalQuietDelay: TimeInterval",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "batchPolishSettleGrace",
+        "original": "@ObservationIgnored private let batchPolishSettleGrace: TimeInterval",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "batchPolishCandidateTimeout",
+        "original": "@ObservationIgnored private let batchPolishCandidateTimeout: TimeInterval",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      },
+      {
+        "symbol": "presentationFlushDelayNanos",
+        "original": "private static let presentationFlushDelayNanos: UInt64 = 48_000_000",
+        "reason": "The sole Observable session instance remains the state owner; a cohesive workflow extension in another file reads or mutates this exact state."
+      }
+    ],
+    "otherExactChanges": [
+      {
+        "symbol": "NovelSessionViewModel.clearConsumer",
+        "reason": "run lifecycle extension detaches the same consumer"
+      },
+      {
+        "symbol": "NovelSessionViewModel.presentationFlushDelayNanos",
+        "reason": "streaming presentation extension uses the existing 48 ms clock"
+      },
+      {
+        "symbol": "NovelSessionProjectionCacheKey/Entry and identity cache key/entry",
+        "reason": "the VM stores a single cache while its projection owner installs it"
+      },
+      {
+        "symbol": "NovelSessionProjectionIndex and checkpoint key",
+        "reason": "prepared projection and action availability share one prebuilt index"
+      },
+      {
+        "symbol": "NovelSessionPreparedProjection.index",
+        "reason": "the pure projection implementation reuses the prebuilt index across files"
+      },
+      {
+        "symbol": "NovelSessionProjectionStore.warmProjectionCache/cancelProjectionBuild",
+        "reason": "session binding and run lifecycle trigger one cache build/cancel"
+      },
+      {
+        "symbol": "NovelSessionBatchPolish.cancelBatchPolishForBindingChange/reconcileBatchPolishResult",
+        "reason": "binding reset and candidate intent settle the same batch"
+      },
+      {
+        "symbol": "NovelSessionGhostwriteBatch.mergeGhostwriteDetail",
+        "reason": "recovery path keeps the existing detail merge"
+      },
+      {
+        "symbol": "NovelSessionGhostwriteChapter cross-file helpers",
+        "reason": "outer batch controls chapter execution, collection, and sync through one VM"
+      },
+      {
+        "symbol": "NovelSessionGhostwriteRecovery cross-file helpers",
+        "reason": "batch and run lifecycle invoke the existing lease, recovery, and progress methods"
+      },
+      {
+        "symbol": "NovelSessionStreamingPresentation cross-file helpers",
+        "reason": "run consumer and session view use the same FIFO and terminal tail"
+      },
+      {
+        "symbol": "NovelSessionPresentation cross-file helpers",
+        "reason": "durable projector and action availability share row/digest projection"
+      }
+    ],
+    "note": "No blanket private replacement: private members with same-file use stay private; private(set) remains where other files only read."
+  },
+  "textContractCheck": {
+    "quotedSourceLinesMultisetEqual": true,
+    "nonCommentNumericTokenMultisetEqual": true,
+    "sourceRangesTakenVerbatimExceptVisibilityAndWrappers": true,
+    "normalizedSourceLineMultisetEqual": true,
+    "normalization": "Ignores imports, blank lines, extension/class closing wrappers, one moved MARK comment, and access modifiers only; all remaining lines have equal multiplicity."
+  },
+  "verification": {
+    "swiftFrontendParse": "passed",
+    "trackedOriginalGitDiffCheck": "passed",
+    "newFileTrailingWhitespaceCheck": "passed",
+    "allFilesAtMost1500": true,
+    "xcodebuild": "not run by worker per Root ownership"
+  },
+  "suggestedTestSelectors": [
+    "NovelSessionViewModelTests",
+    "NovelSessionReplayTests",
+    "NovelGenerationLifecycleTests",
+    "NovelBatchPolishTests",
+    "NovelCollaborationModeTests",
+    "NovelCreationPresentationTests",
+    "IOSNovelCreationWiringTests",
+    "IOSSettingsWiringTests"
+  ],
+  "sourceGuards": [
+    {
+      "test": "NovelSessionReplayTests.swift:2520",
+      "old": "NovelSessionViewModel.swift: private var polishRetryTask",
+      "new": "NovelSessionViewModel.swift: @ObservationIgnored var polishRetryTask: Task<Void, Never>? (single VM owner; visibility narrowed to cross-file workflow access)",
+      "action": "Root should update the exact ownership assertion to this declaration; the old private string will fail. Preserve the assertion that the View has no polish retry task and invokes VM intents."
+    },
+    {
+      "test": "IOSSettingsWiringTests.swift:162",
+      "old": "NovelSessionViewModel.swift: beginGhostwriteBackgroundLease",
+      "new": "Session/NovelSessionGhostwriteRecovery.swift: beginGhostwriteBackgroundLease",
+      "action": "Root should point this specific source guard to new owner and keep its exact assertion."
+    },
+    {
+      "test": "IOSNovelCreationWiringTests.swift:629",
+      "old": "NovelSessionViewModel.swift: workspace.effectiveAliases(for: choice.material)",
+      "new": "Session/NovelSessionProjectionStore.swift: workspace.effectiveAliases(for: choice.material)",
+      "action": "Root should point this specific source guard to new owner and keep its exact assertion."
+    }
+  ]
+}

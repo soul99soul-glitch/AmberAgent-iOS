@@ -1,0 +1,1395 @@
+{
+  "iosAppTests/IOSJevWebMountLoopTests/testActionCallBindsSessionSnapshotAndTarget": {
+    "assertionCalls": 6,
+    "methodSHA256": "82c6c8538623b72720f3e3545418352b147698e24a8cb3313d22cb239264fe99",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testActionCallBindsSessionSnapshotAndTarget",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testActionResultMappingRejectsSwallowedFailures": {
+    "assertionCalls": 12,
+    "methodSHA256": "7a120a629e04aaabfaae0b2021ea1c6a447824977312482cc0008a5e057ad620",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testActionResultMappingRejectsSwallowedFailures",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testActiveExecutesWhitelistedActionAndChecksCompletion": {
+    "assertionCalls": 6,
+    "methodSHA256": "eabb14d48b3b2701f27ec0942cc297243b257d6796e3ae38ee83560da2f19920",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testActiveExecutesWhitelistedActionAndChecksCompletion",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testAutoScrollCapReturnsToJevOnLivePage": {
+    "assertionCalls": 5,
+    "methodSHA256": "a16538f7788151f9964af3e30427c7bf5970fe5ac9192aedcc6ae209a836b90c",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testAutoScrollCapReturnsToJevOnLivePage",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testAutoScrollChainsWithoutExtraJevCalls": {
+    "assertionCalls": 6,
+    "methodSHA256": "6de0aa3b1f3fb987ae4c76cf973146739310fc41333cd7655d3f2007e61971bd",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testAutoScrollChainsWithoutExtraJevCalls",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testAutoScrollStallReturnsToJevWithHint": {
+    "assertionCalls": 8,
+    "methodSHA256": "33196fe36117a06e4b891d8684310358e7f8c3655c0f9eea507117e724f63afb",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testAutoScrollStallReturnsToJevWithHint",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testCandidatesCarryObservationSnapshotId": {
+    "assertionCalls": 2,
+    "methodSHA256": "dba4bfb9e907e93313b815130ab2f33cd19f0960d222c0cf7383f7055e686ca7",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testCandidatesCarryObservationSnapshotId",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testChoiceCriteriaCarryNonNullDescriptions": {
+    "assertionCalls": 7,
+    "methodSHA256": "b8d91237fce5c68f2a7ff3144cecfdcfa5bb3966a4c0c67823c2d37a78a636a0",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testChoiceCriteriaCarryNonNullDescriptions",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testCompletionCheckRequiresMarkerInURLOrElementLabel": {
+    "assertionCalls": 4,
+    "methodSHA256": "c75417e797796df52361b94335debc6397b1bc0d13c0f4c093ed64227d8c2421",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testCompletionCheckRequiresMarkerInURLOrElementLabel",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testCompletionMatchesPageTitle": {
+    "assertionCalls": 2,
+    "methodSHA256": "bf6139a57ad52268afe5f75d85c3160533a24e4a3a482726beeaa1f23948ea4f",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testCompletionMatchesPageTitle",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testConfidenceFloorComesFromPolicy": {
+    "assertionCalls": 3,
+    "methodSHA256": "f2837ca470bd2072ab22d312d5e7d6d99a9e945ff38728587e6e3934b1247414",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testConfidenceFloorComesFromPolicy",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionCapHandsBack": {
+    "assertionCalls": 3,
+    "methodSHA256": "dc3f24f05c912deeaae85c9b099505e21737e8a4b97f0aa1c59a3931b8af65b4",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testDecisionCapHandsBack",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayAmbiguousDuplicateLabelsMisses": {
+    "assertionCalls": 2,
+    "methodSHA256": "1c33ca2248179c0fb781b5a33774bde99a3cdb013e1b1f3c5b20a5bfbdca3cde",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayAmbiguousDuplicateLabelsMisses",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayDoesNotCacheUnverifiedUnknownOutcome": {
+    "assertionCalls": 3,
+    "methodSHA256": "c37d9514daeb67b74ef87b93a684c57d121a1c2e0fef0dd54767af20d3ce791d",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayDoesNotCacheUnverifiedUnknownOutcome",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayMaterializesCurrentElementRef": {
+    "assertionCalls": 2,
+    "methodSHA256": "6d75fce9dfd045ca6ed405ea787a791f6622048508ff1114a49b7ebb2d50c44f",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayMaterializesCurrentElementRef",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayMissesWhenPageSignatureChanged": {
+    "assertionCalls": 2,
+    "methodSHA256": "8144bd37425ac351569c52230ca3541eef045467e797dfbb2227633bdf6bc8eb",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayMissesWhenPageSignatureChanged",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplaySkipsJevOnIdenticalPageState": {
+    "assertionCalls": 6,
+    "methodSHA256": "bce4d65fe105a9eb1f14331207d20a1c5502b655167c5f2b7ca88f051915a0d3",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplaySkipsJevOnIdenticalPageState",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayStaysDryRunUnderShadow": {
+    "assertionCalls": 5,
+    "methodSHA256": "9582624c28f679a7b842a20bf93d06000bd7f537ec2ff6fbe4a2fb9cfd4fff6f",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayStaysDryRunUnderShadow",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayStoreEvictsOldest": {
+    "assertionCalls": 3,
+    "methodSHA256": "53305e68aeb730c0685aee8518e1000132edd133d063d159cb08412c7fcc59ce",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplayStoreEvictsOldest",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplaySuppressesRepeatOfStatefulAction": {
+    "assertionCalls": 3,
+    "methodSHA256": "664c11ab4d30c586eb5e038325afeec4502acd9a72622f051333bd8d8c13aca7",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDecisionReplaySuppressesRepeatOfStatefulAction",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDeniedActionNeedsUserAction": {
+    "assertionCalls": 1,
+    "methodSHA256": "d6ad1fe581d6d874762d27b4fc22def02011e05ca370fb88e0ede2b6efd170d0",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testDeniedActionNeedsUserAction",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDocumentNavigationInvalidatesCache": {
+    "assertionCalls": 1,
+    "methodSHA256": "9e7eadc47ea98d32c366f785409637d140d3d53090da44969cead5537cac39f0",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDocumentNavigationInvalidatesCache",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testDomMutationFallsBackToFullObserve": {
+    "assertionCalls": 4,
+    "methodSHA256": "ced7e98e2ea2afed1d549028f0d6e17e43e237489823dcd44e5c18ee4d9fc0e7",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testDomMutationFallsBackToFullObserve",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testExecutedHistoryReachesDecisionState": {
+    "assertionCalls": 5,
+    "methodSHA256": "32159d0e1b9f643e44a29023f46c6b50aea8659f61c66fe2bb84840fb226098c",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testExecutedHistoryReachesDecisionState",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testFailedCallReasonSurfacedInHandback": {
+    "assertionCalls": 2,
+    "methodSHA256": "d19edd9726ea99bf9b52d23fc4e6379d44d79d526842ca1cee4c3c505057cc0b",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testFailedCallReasonSurfacedInHandback",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testHandbackChoiceDoesNotExecuteAndItsReasonReachesToolResult": {
+    "assertionCalls": 14,
+    "methodSHA256": "2c33ff7367240b261d8fd4db1006ea64cee38953027986d3cb53b53dc4de9f11",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testHandbackChoiceDoesNotExecuteAndItsReasonReachesToolResult",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testLoopInputParsingNarrowsWhitelistAndRequiresCoreFields": {
+    "assertionCalls": 6,
+    "methodSHA256": "d0b3ea9ca0972c600e0a56bb8ba4647f0dbbde17e89da2f7fcb6077e5ba3ae70",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testLoopInputParsingNarrowsWhitelistAndRequiresCoreFields",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testLowConfidenceChoiceHandsBack": {
+    "assertionCalls": 3,
+    "methodSHA256": "5fb9f88acccd84e2677c2903a6f812a857a75933b2f618a431472d54722a6c25",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testLowConfidenceChoiceHandsBack",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testLowConfidenceChoiceNeverExecutes": {
+    "assertionCalls": 3,
+    "methodSHA256": "b64af6cd022ab08ec612ce5e5ef045135f7a5c3f972356bf718fe6648cb7cee5",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testLowConfidenceChoiceNeverExecutes",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testMidRunDowngradeDisarmsAutoScroll": {
+    "assertionCalls": 3,
+    "methodSHA256": "3ecd504063e6a27731c5fba8b2f6429ab0e31f00385f0d6c862612d2ae586950",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testMidRunDowngradeDisarmsAutoScroll",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testMidRunDowngradeToShadowStopsExecuting": {
+    "assertionCalls": 3,
+    "methodSHA256": "79d9d5bf9306d9cfdb2d957dd0017e17b7969c795e7b70ac25c3e07448585a17",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testMidRunDowngradeToShadowStopsExecuting",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testMissingDraftValueExcludesTypeDraftCandidates": {
+    "assertionCalls": 2,
+    "methodSHA256": "a41ea338f8a3c9df87976a576a944e721846052926225c2bb8e251ea367d6304",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testMissingDraftValueExcludesTypeDraftCandidates",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testMissingInjectionAnswerDoesNotBlock": {
+    "assertionCalls": 2,
+    "methodSHA256": "89c1a392f0ac8e8f5b087208d0bbeec7cdf8cc1ce1d602d82950a5b491c16557",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testMissingInjectionAnswerDoesNotBlock",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testNoProgressTriggersHandback": {
+    "assertionCalls": 2,
+    "methodSHA256": "3446a9386709f0cb64d2f0dfd33ada9d1ee0079d910f23dc8bba4827c7b3ac95",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testNoProgressTriggersHandback",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testObservationMappingFromObservePayload": {
+    "assertionCalls": 9,
+    "methodSHA256": "d9769c16c8b64137665ced037fd52372bdd8071318da386e12dfbc90e09f8ff3",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testObservationMappingFromObservePayload",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testObservationMappingFromStateProbePayload": {
+    "assertionCalls": 7,
+    "methodSHA256": "b5d0b7c2a9bc1f0ae5868586dc2b45e1522892380d9fbbff4ea52f555e5403b7",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testObservationMappingFromStateProbePayload",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testObservationParsesScrollPosition": {
+    "assertionCalls": 3,
+    "methodSHA256": "6196c3b75485a3e4b63aacae0780d17f95162297ada49f72e1824986b5ef64a7",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testObservationParsesScrollPosition",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testOffModeHandbackWithZeroNetwork": {
+    "assertionCalls": 3,
+    "methodSHA256": "3f4236fd9718cd416014dd2a5de240f0a1c58bc8e3df4791973535f49d409236",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testOffModeHandbackWithZeroNetwork",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testOutcomeOutputShapeMatchesWebMountUnknownContract": {
+    "assertionCalls": 8,
+    "methodSHA256": "1f72837cdca5c387114bf00451569924e12f851c0e1082a9d25bfde8a2b2f0d6",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testOutcomeOutputShapeMatchesWebMountUnknownContract",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testOutputTextIncludesEffectiveMode": {
+    "assertionCalls": 3,
+    "methodSHA256": "654469f0f35c62792e4334ecf5a8957f949e5aaeb80af080d43aa7a5e1d35581",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testOutputTextIncludesEffectiveMode",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testPageInjectionHitHandbacksWithoutExecuting": {
+    "assertionCalls": 3,
+    "methodSHA256": "fead43cda129047494316135f1cff6a3e9734cdae736cff34f3d6fad26989fd9",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testPageInjectionHitHandbacksWithoutExecuting",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testPermanentDecisionFailureHandbacksImmediately": {
+    "assertionCalls": 4,
+    "methodSHA256": "5c85714278f17107ddd6221929169c205f37095da486f2fa000392ecfc28205a",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testPermanentDecisionFailureHandbacksImmediately",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testPersistentTransientsTripCooldownThenHandback": {
+    "assertionCalls": 5,
+    "methodSHA256": "152a1ee930c9b1739e351addde3f2ddf935d83230530381277ddc90877e2aa10",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testPersistentTransientsTripCooldownThenHandback",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testProbeMissStreakDisablesProbing": {
+    "assertionCalls": 2,
+    "methodSHA256": "c91f11c6acfa214f393f0d09dbc7cd3f42f73edd4ac2bb76dd7c8799fbd5f8c4",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testProbeMissStreakDisablesProbing",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testProbeNilFallsBackToFullObserve": {
+    "assertionCalls": 1,
+    "methodSHA256": "b11dff6e5cbb7b706e862e3778b28d5ad886d4ca507b8bf5fb42804708c3238e",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testProbeNilFallsBackToFullObserve",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testProbeReusesElementTableWhenDomUnchanged": {
+    "assertionCalls": 4,
+    "methodSHA256": "eb3a4ce65b8ae43a426c2c298444e08590775ac70547720773127e522f54cb37",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testProbeReusesElementTableWhenDomUnchanged",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testRepeatedSameDestinationClickHandsBack": {
+    "assertionCalls": 3,
+    "methodSHA256": "04b6d59641ce4887b217ea0d0d0e3bf0209e655f88ebfc7c369f317b2c72dc98",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testRepeatedSameDestinationClickHandsBack",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testScopeNotAllowedHandback": {
+    "assertionCalls": 2,
+    "methodSHA256": "051becf24c1f5fcbe2d06215293281723f345b8772022c64158ad7344d4d1483",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testScopeNotAllowedHandback",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testScrollAndSubmitReadonlySearchPayloads": {
+    "assertionCalls": 11,
+    "methodSHA256": "e6b40ce450f6508a1137521edd42b625d114bc322ed02030b7309ba4dc1513f8",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testScrollAndSubmitReadonlySearchPayloads",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testScrollRevealingNewElementsResetsProgress": {
+    "assertionCalls": 2,
+    "methodSHA256": "2b887c10e7e2f280a11902d975b37b6280ead2c773d20cc79db39ac43043827e",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testScrollRevealingNewElementsResetsProgress",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testScrollStallCountsNoProgressDespiteRevisionBump": {
+    "assertionCalls": 3,
+    "methodSHA256": "3e43bea08d309d7fa6f091d2af187e63c6e3af181287646d542197b9a1742795",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testScrollStallCountsNoProgressDespiteRevisionBump",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testShadowInjectionHitDoesNotTruncateDryRun": {
+    "assertionCalls": 4,
+    "methodSHA256": "082a38968a6a954d1608de483755be6af8416bbaa040e573ab14e8c49e749afb",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testShadowInjectionHitDoesNotTruncateDryRun",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testShadowProducesTrajectoryWithoutExecuting": {
+    "assertionCalls": 6,
+    "methodSHA256": "867b3a7d37f4d16aebc6d687ca978ac5d44973dcb4ae3acebc4f43e0195d6f0e",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testShadowProducesTrajectoryWithoutExecuting",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testSkippedReasonSurfacedInHandback": {
+    "assertionCalls": 3,
+    "methodSHA256": "2025d2d1ec60eb0499e0c0ca9e1bff4b8e32aab30f071c629adaad443ecd4d6f",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testSkippedReasonSurfacedInHandback",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testStaleDisarmsAutoScrollAndReDecides": {
+    "assertionCalls": 4,
+    "methodSHA256": "bc41b1f1e33079893722d659aa4db28f924716c0d9d757a3a51b298c759f578b",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testStaleDisarmsAutoScrollAndReDecides",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testStallHintAndScrollPositionReachDecisionState": {
+    "assertionCalls": 5,
+    "methodSHA256": "acbb61dd37aa6549ca6c76660c02989333d2a2a4d6f93644a7cca64eb785d2fe",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testStallHintAndScrollPositionReachDecisionState",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testStateIncludesAllElementsWithBoundedActionCandidates": {
+    "assertionCalls": 8,
+    "methodSHA256": "7d3a3873fb8c6b5fb1be443e95df3d62c3109468d318502d1ac6e31a557afa26",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testStateIncludesAllElementsWithBoundedActionCandidates",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testTransientDecisionFailureStallsThenRetries": {
+    "assertionCalls": 4,
+    "methodSHA256": "09512bd3ffce8f93202943951465ee54e32e0b610c375f1f0813bc6d3191d871",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testTransientDecisionFailureStallsThenRetries",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testUnknownExecutorResultNeverReplays": {
+    "assertionCalls": 3,
+    "methodSHA256": "2b9ed28eb7410c68d26245163d79430bdf1fe34372130e43d9c04f7e3e923ac6",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testUnknownExecutorResultNeverReplays",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testViewportScrollInvalidatesElementReuse": {
+    "assertionCalls": 2,
+    "methodSHA256": "be9440f2362331e07fafbc50f0e6a1b1ca76bf5612f8bb3286bebf0e98052f33",
+    "newIdentifier": "iosAppTests/IOSJevWebMountLoopTests/testViewportScrollInvalidatesElementReuse",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSJevWebMountLoopTests/testWhitelistExcludesSendPublishDeletePayActions": {
+    "assertionCalls": 5,
+    "methodSHA256": "569590aaf15bc9686c1fd4296257b89b8c8811966a92c44ed2a8b465311f5e25",
+    "newIdentifier": "iosAppTests/IOSJevWebMountContractTests/testWhitelistExcludesSendPublishDeletePayActions",
+    "newPath": "iosApp/iosAppTests/IOSJevWebMountContractTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSJevWebMountLoopTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testAmberShellLsReadsTheWorkspaceRoot": {
+    "assertionCalls": 3,
+    "methodSHA256": "512033c224ddf6c93e22fbdf67d6044477db64e2c65714ec89f4c4bb1674f770",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testAmberShellLsReadsTheWorkspaceRoot",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testAmberShellPipelineUsesInjectedStdinAndWorkspace": {
+    "assertionCalls": 4,
+    "methodSHA256": "3681e350af13ebc5b34ad5e4f9b9314f4b8c10759fba423b1da266c9d249bb14",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testAmberShellPipelineUsesInjectedStdinAndWorkspace",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testAmberShellRejectsInvalidTimeoutValues": {
+    "assertionCalls": 2,
+    "methodSHA256": "30c9dc1c1ceb267cc2ade1ac163f2b99ebd7aa103dff4db3c2ef9b0d868491f3",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testAmberShellRejectsInvalidTimeoutValues",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testAmberShellRequiresApprovalAndHighRiskAutoApproveRunsPwd": {
+    "assertionCalls": 18,
+    "methodSHA256": "ac483cd2033ccc71f8b22597f6af10f1013c15a3da6f725049833f29eaaea09a",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testAmberShellRequiresApprovalAndHighRiskAutoApproveRunsPwd",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testAmberShellStdinUTF8BoundaryMatchesApprovalAndExecution": {
+    "assertionCalls": 8,
+    "methodSHA256": "000297fb72730bab355c51afa37f425d38221eb388b608365b3712cc7a5b7c5c",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testAmberShellStdinUTF8BoundaryMatchesApprovalAndExecution",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testAskEveryTimeRequiresForegroundUserAction": {
+    "assertionCalls": 2,
+    "methodSHA256": "d7d22a31ecfc8c8bedf5ffa98e482c6aad50ecbcf3287d5ec24feb48c53e42a8",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testAskEveryTimeRequiresForegroundUserAction",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testEmbeddedIshExecuteAvailabilityMatchesBuildTarget": {
+    "assertionCalls": 4,
+    "methodSHA256": "87a6743001b7cb50ac286770f20d2fd78f0ce220893ca7c556883cfb6f1f0f9c",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testEmbeddedIshExecuteAvailabilityMatchesBuildTarget",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testExecutionPolicySnapshotFreezesMemoryDecisionAndHasStableDigest": {
+    "assertionCalls": 8,
+    "methodSHA256": "46087dee2be0162280c14c6e11ad9118f729c3837675f47f7c3021f96cc1fcd5",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testExecutionPolicySnapshotFreezesMemoryDecisionAndHasStableDigest",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testExecutionRequestDigestsSeparateScopeFromPayload": {
+    "assertionCalls": 4,
+    "methodSHA256": "ebd557560d7baa80e12a9ca99c186375e7b56041217f69cdaf9a8ad29f1a6154",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testExecutionRequestDigestsSeparateScopeFromPayload",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testFilePickIsDeniedBecauseItIsUIOnly": {
+    "assertionCalls": 2,
+    "methodSHA256": "d98c8e0954dd101e2761db5dd73b70440cdfb8c91544959f15f6865a97872111",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testFilePickIsDeniedBecauseItIsUIOnly",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testFileReadWithoutGrantNeedsUserAction": {
+    "assertionCalls": 1,
+    "methodSHA256": "3e7026e8c896de352c80a9bed7f6e66ef142f45c0b09b1c055e186acc450dc7a",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testFileReadWithoutGrantNeedsUserAction",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testIshHandoffRequiresApprovalAndHighRiskAutoApprovePreparesClipboard": {
+    "assertionCalls": 20,
+    "methodSHA256": "d1c8901ffb895724eefc62ba8896a3265f795f464420cb2ccde2f03dbe6fe5d5",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testIshHandoffRequiresApprovalAndHighRiskAutoApprovePreparesClipboard",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testMemoryToolWritePolicyRequiresForegroundAndRespectsDisabled": {
+    "assertionCalls": 7,
+    "methodSHA256": "9024620826fb0e9c19ebac97a58d33b902029c6eb5e910eb2a1d290bb8828cf5",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testMemoryToolWritePolicyRequiresForegroundAndRespectsDisabled",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testPermissionsStatusIncludesAdvancedExecutionApprovals": {
+    "assertionCalls": 8,
+    "methodSHA256": "79319c91f1c37d9ce635e45b2183c1ad397b2f95dcf8c4b2a59c8c19ef08c0f0",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testPermissionsStatusIncludesAdvancedExecutionApprovals",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testPermissionsStatusReturnsIOSSnapshot": {
+    "assertionCalls": 5,
+    "methodSHA256": "256567fbfc365432d4eb3011e576074bbe2eb3686b4f18913a015b50cabebc7a",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testPermissionsStatusReturnsIOSSnapshot",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testRemoteTerminalApprovalPreviewUsesRemoteModeAndBoundedCommand": {
+    "assertionCalls": 10,
+    "methodSHA256": "705c582fdc19d6276bf5e91566a7a29b7f4f5f8dc96e4ecf46dd46c240938fcd",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testRemoteTerminalApprovalPreviewUsesRemoteModeAndBoundedCommand",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testRemovingAndReaddingSameHostDoesNotExposePriorSiteMemory": {
+    "assertionCalls": 8,
+    "methodSHA256": "82984f6a9a697f55fbfcd58a85b733f07268f65d69e0e35f32ff7fbdf0ccbcc0",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testRemovingAndReaddingSameHostDoesNotExposePriorSiteMemory",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testScopeToolOrPayloadMismatchCannotSucceed": {
+    "assertionCalls": 1,
+    "methodSHA256": "687d8e5ff0de2e729f1ae79d2fcf0b1690b1da003f9c6984d6787be08c536c22",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testScopeToolOrPayloadMismatchCannotSucceed",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSelectedFileReadUsesFrozenExecutionPolicy": {
+    "assertionCalls": 3,
+    "methodSHA256": "f732697cb2a82a6b89978bec4f912823060f6ec3ec3bc1fe3a9a5fd78334d203",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testSelectedFileReadUsesFrozenExecutionPolicy",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryActionLocatorSurvivesLocalRead": {
+    "assertionCalls": 8,
+    "methodSHA256": "88d690a32002f591a37f4a78fcb989974f05913f10ad5bdef07bcfddfa330d24",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryActionLocatorSurvivesLocalRead",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryApprovalBaselineIsStableUntilStoredMemoryChanges": {
+    "assertionCalls": 5,
+    "methodSHA256": "8ae96a9405b193141ce42a58a809b1c41ae8ca117df64c770acea6ecd7282b77",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryApprovalBaselineIsStableUntilStoredMemoryChanges",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryApprovalWriteNextOpenSanitizationAndDeletion": {
+    "assertionCalls": 24,
+    "methodSHA256": "e37cac3b3bfb774f6df11755dc2c56ec21d1107de658759beb8c9e24883f7605",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryApprovalWriteNextOpenSanitizationAndDeletion",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryAutoApprovalHonorsDisabledPolicyAndValidatesWholeBatch": {
+    "assertionCalls": 7,
+    "methodSHA256": "086a7590e9c143916160bfc58e342b9a9f362b20353b4d2638b7499162dcd847",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryAutoApprovalHonorsDisabledPolicyAndValidatesWholeBatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryCapabilityAutoApprovalIsReviewedByJevInForegroundAndBackground": {
+    "assertionCalls": 8,
+    "methodSHA256": "d424b7f50e71e4edfac8687e5dbe3f2fb0ce158159b811843c68d935b2e927d9",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryCapabilityAutoApprovalIsReviewedByJevInForegroundAndBackground",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryConsecutiveApprovalsAddUpdateDeleteAndRejectRealConflict": {
+    "assertionCalls": 23,
+    "methodSHA256": "9670c583b8161d9ff4421069af82a63ecc4335b9858b2980b22666b2edfe083b",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryConsecutiveApprovalsAddUpdateDeleteAndRejectRealConflict",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryDeletionAndClearPersist": {
+    "assertionCalls": 4,
+    "methodSHA256": "cb8bea25b56060ad0fdb03082bf31c028d0d15a824a36d9aed8ee9bfca8feb2e",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryDeletionAndClearPersist",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryForWWWHostIsIncludedOnFirstOpen": {
+    "assertionCalls": 4,
+    "methodSHA256": "949d992eeb43724b9174a928df3aba396a0c8688508348d7d62ab6a94fbc3f45",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryForWWWHostIsIncludedOnFirstOpen",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryHighRiskAutoApprovalAppliesBatchWithoutForegroundCard": {
+    "assertionCalls": 3,
+    "methodSHA256": "b5b41fbc1837ee77eefbc1d563092e9037ae78ceb843d36dac85306d8d865545",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryHighRiskAutoApprovalAppliesBatchWithoutForegroundCard",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryHostLimitRejectsProposal": {
+    "assertionCalls": 2,
+    "methodSHA256": "80f9cdecc3c5480693859f1323a5fb4c2560482b4568658a187f7c3967fcddc6",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryHostLimitRejectsProposal",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testSiteMemoryJevReviewEligibilityUsesCapabilityPolicyAndRunSnapshot": {
+    "assertionCalls": 2,
+    "methodSHA256": "e4ca8a7f9c1ce75483c8721c84024973ace2dc7dcd47bea21ac43970551a76c3",
+    "newIdentifier": "iosAppTests/IOSWebMountSiteMemoryTests/testSiteMemoryJevReviewEligibilityUsesCapabilityPolicyAndRunSnapshot",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSiteMemoryTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testTerminalJobReadUsesEmbeddedCapabilityForEmbeddedRecord": {
+    "assertionCalls": 5,
+    "methodSHA256": "4f07a8428e5d6819d67a6a0cc94774461971ecee8f2ee2e4a2c873f10ba2eeb3",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testTerminalJobReadUsesEmbeddedCapabilityForEmbeddedRecord",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testUnknownPlannedAndBlockedToolsAreDenied": {
+    "assertionCalls": 1,
+    "methodSHA256": "575c0c465a47e30a7bddf4a7c7d82cf20aa7fe536c15dc89e22a5eed95eeb67c",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testUnknownPlannedAndBlockedToolsAreDenied",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testValidGrantReturnsPreviewOnlyOnce": {
+    "assertionCalls": 4,
+    "methodSHA256": "d46455e3e4c879d4d9324db57dd95a3e198e4d46fc608e77c78d1f3038a432b8",
+    "newIdentifier": "iosAppTests/IOSLocalToolExecutorTests/testValidGrantReturnsPreviewOnlyOnce",
+    "newPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActAbortsRemainingStepsOnNavigation": {
+    "assertionCalls": 7,
+    "methodSHA256": "4c481a7ff854e0de667f6029ea6f581212a0a2403c6c02d326f55d70d0c19a4e",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActAbortsRemainingStepsOnNavigation",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActContractGates": {
+    "assertionCalls": 10,
+    "methodSHA256": "bb5191fed9d33fb75826b205c97653dcc32d46ab8e4e654d0b665c3b95b02235",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActContractGates",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActFindFeedsTargetlessClick": {
+    "assertionCalls": 4,
+    "methodSHA256": "f3add3b2ca75d704e88923ad8fa37427db8d8f22699f6f37f793fb742840391d",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActFindFeedsTargetlessClick",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActFindNotFoundAbortsBatch": {
+    "assertionCalls": 3,
+    "methodSHA256": "fdcc1ba7b9c8f9bf994b51d7eb7084f01928f49aadb1ec0f6fd5f88b64afc16c",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActFindNotFoundAbortsBatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActHumanHandoffCompletesViaWhitelist": {
+    "assertionCalls": 8,
+    "methodSHA256": "48418690cfa4c1c095b6fb9def08461c728ede1b05201374479f2357bf99f137",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActHumanHandoffCompletesViaWhitelist",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActPinsResolvedSessionForUserCalls": {
+    "assertionCalls": 3,
+    "methodSHA256": "a6549c7d736f127e05513299557b46acb83967a3bad9bab5bf5866615ea81b79",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActPinsResolvedSessionForUserCalls",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActPropagatesUserActionGate": {
+    "assertionCalls": 12,
+    "methodSHA256": "115267c9fb3307ed4ef043835ec71e044ac129cffd64088943d10a934c3fa1e3",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActPropagatesUserActionGate",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActRunsStepsSeriallyWithFreshSnapshots": {
+    "assertionCalls": 6,
+    "methodSHA256": "f144ee11b91d2cc9989f1e45a32ebe9f71e050483f2c7d6f549c16190e1bb8a9",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActRunsStepsSeriallyWithFreshSnapshots",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActUnknownStepSurfacesInterruptedOutcome": {
+    "assertionCalls": 5,
+    "methodSHA256": "d68ed23212ff0dec8278d973f0c798f783eb54db7b8edc36f3b433340a285f97",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActUnknownStepSurfacesInterruptedOutcome",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActVerifiedNavigationStillReportsMayHaveApplied": {
+    "assertionCalls": 3,
+    "methodSHA256": "282b1416b6c3c593cc00789d657e34ecf445a726f9ce0be73e3b0f40ae02bf05",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActVerifiedNavigationStillReportsMayHaveApplied",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountActWaitGetsBaselineFromEpoch": {
+    "assertionCalls": 3,
+    "methodSHA256": "99b9acb0678c52ca30e0ddc3b97533ebd4a9fac344ab47d4283a64850d1344f4",
+    "newIdentifier": "iosAppTests/IOSWebMountActTests/testWebMountActWaitGetsBaselineFromEpoch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountActTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountAgentMutationBecomesUnknownWhenControlChangesInFlight": {
+    "assertionCalls": 5,
+    "methodSHA256": "ba838cd2523e26b453f1daafbd60de655edb88cd6d28789f437c8aa34b654bcb",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountAgentMutationBecomesUnknownWhenControlChangesInFlight",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountAgentMutationRequiresSemanticTargetAndBoundsInput": {
+    "assertionCalls": 7,
+    "methodSHA256": "e12df3709265b13b3b81819656db38e3fc257972c0bda918bd5b975d327d52b0",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountAgentMutationRequiresSemanticTargetAndBoundsInput",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountAgentNavigationBecomesUnknownWhenControlChangesInFlight": {
+    "assertionCalls": 5,
+    "methodSHA256": "824746f9a3fb4be1570f6c8cc661b54a31c154b14c954c045949c9572cad9337",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountAgentNavigationBecomesUnknownWhenControlChangesInFlight",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountAgentSessionBindingDoesNotStealVisibleTabAndHonorsUserControl": {
+    "assertionCalls": 21,
+    "methodSHA256": "416eefdf017348f028a699a653fb6cb4a8b56720bb1313ae8e132292ded1e915",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountAgentSessionBindingDoesNotStealVisibleTabAndHonorsUserControl",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountCardWindowKeepsFifthNextTurnAndExpiresOnSixthWhileTouchRefreshesActivity": {
+    "assertionCalls": 12,
+    "methodSHA256": "5ff8cc7854a3dbda7c491a24e14b91177cbf9b1103b29938da0460cfbe9eeb42",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountCardWindowKeepsFifthNextTurnAndExpiresOnSixthWhileTouchRefreshesActivity",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountContentHandoffRedactsAndBuildsChatAndBoardPayloads": {
+    "assertionCalls": 6,
+    "methodSHA256": "4ea8d912b67c4702b9d4a90e29c2968ebb6a1ae715d109aeffcca62863e41d6a",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountContentHandoffRedactsAndBuildsChatAndBoardPayloads",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountDNSFailuresAreDistinctFromPrivateHostLiterals": {
+    "assertionCalls": 6,
+    "methodSHA256": "0efdcbc141d234c433f32526e19e1b8f9d46fc3aa6ac60419d144b02ae1e1de4",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountDNSFailuresAreDistinctFromPrivateHostLiterals",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountDecorativeSVGClickIsRejectedWithoutInterruptingInput": {
+    "assertionCalls": 33,
+    "methodSHA256": "c5f522af2e9c4481c61a8d2323246d24f7b19024426eb0bca7b47d06a932e479",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountDecorativeSVGClickIsRejectedWithoutInterruptingInput",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountDisabledStationStillAllowsExplicitForegroundUserOpen": {
+    "assertionCalls": 5,
+    "methodSHA256": "ec3b56624b8cacad1f0aa76dc2e93bc25ffa3aa9a3764f206a8a7f9a3d671eca",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountDisabledStationStillAllowsExplicitForegroundUserOpen",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountExecutorAllowsToolsAfterForegroundApproval": {
+    "assertionCalls": 2,
+    "methodSHA256": "4cc5a2786277acd6f8e398e61bc977eb9a01f540ddb5c1c3dcb0382715559686",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountExecutorAllowsToolsAfterForegroundApproval",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountExecutorRequiresApprovalAndClearRequiresUserAction": {
+    "assertionCalls": 8,
+    "methodSHA256": "d3ddfa0d555ad9b634ada98399ce1a61fe826c191daf3b12555c2410232492ef",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountExecutorRequiresApprovalAndClearRequiresUserAction",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountExecutorRespectsDisabledPermissionPolicy": {
+    "assertionCalls": 3,
+    "methodSHA256": "91639b003594c77c777d494dcde79d0542af5251aaabfc13650c5050e33ec5f0",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountExecutorRespectsDisabledPermissionPolicy",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountFragmentNavigationFinishesWithoutReloadingDocument": {
+    "assertionCalls": 10,
+    "methodSHA256": "0439abdde200b5ae1d632faa74112a75b051682e0c1c59a7a0c52a4955b5f205",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountFragmentNavigationFinishesWithoutReloadingDocument",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountFrameIsolationAndParentOcclusion": {
+    "assertionCalls": 20,
+    "methodSHA256": "743498762d7c09b662cb6232219020c1ff2f03edd92944c549b81362334a2b56",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountFrameIsolationAndParentOcclusion",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountGetDeniesHtmlAndSensitiveValueSelectors": {
+    "assertionCalls": 3,
+    "methodSHA256": "ce9459ca6adb0c8ae7870b65cfd325473612a16577c71f71d04082c9426b16ec",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountGetDeniesHtmlAndSensitiveValueSelectors",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountHighRiskApprovalPreservesRegisteredHostPolicyWithProxyDNS": {
+    "assertionCalls": 2,
+    "methodSHA256": "ff0a0260382f66e2b2d62db9c916035501bd08e74d3ca2867d8edccf7b527abf",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountHighRiskApprovalPreservesRegisteredHostPolicyWithProxyDNS",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountHighRiskAutoApprovalCoversExplicitApprovalActions": {
+    "assertionCalls": 16,
+    "methodSHA256": "c296f2ff1f42fa709dbb5687a6320f543de8be8542e0476265bde03bbf3cb604",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountHighRiskAutoApprovalCoversExplicitApprovalActions",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountHighRiskAutoApproveOpensUnlistedHostAndOffRestoresAllowlist": {
+    "assertionCalls": 14,
+    "methodSHA256": "8b3c3ec59fc17d7a9905ee85ecffe0b7f8a5ccceee239d4d9b5768d57e2f1bb6",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountHighRiskAutoApproveOpensUnlistedHostAndOffRestoresAllowlist",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountHumanAddressEntryAllowsPublicLoginWithoutEnablingAgentStation": {
+    "assertionCalls": 11,
+    "methodSHA256": "90d48229c7044d65de15803a3a11791c693d861e2738d266d2cc89417cc00cb5",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountHumanAddressEntryAllowsPublicLoginWithoutEnablingAgentStation",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountInteractionAcceptsDeclaredArgumentAliases": {
+    "assertionCalls": 25,
+    "methodSHA256": "34dc63af103630018c0064ff84b5d255625110ed7cd4c7317205cdc8ca3a79e0",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountInteractionAcceptsDeclaredArgumentAliases",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountObserveSnapshotAndScreenshotAreRedacted": {
+    "assertionCalls": 16,
+    "methodSHA256": "fae0f632b42801e6da65a4f296a6a6b6426becab93adb35c9ff6736acba10f9d",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountObserveSnapshotAndScreenshotAreRedacted",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountOpenAndExtractUseMockRuntimeAndRedactURLs": {
+    "assertionCalls": 8,
+    "methodSHA256": "3ecfb801c7fac48c07d3057da73df3bed329f942376545ce14c2ba01a33a10ef",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountOpenAndExtractUseMockRuntimeAndRedactURLs",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountOpenRequiresRegisteredEnabledStation": {
+    "assertionCalls": 4,
+    "methodSHA256": "b4756e93051c55e52ef4d6c55cafeca749e846e7524ab7f9bb63883bd7315655",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountOpenRequiresRegisteredEnabledStation",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountOpenTimeoutReportsOutcomeUnknown": {
+    "assertionCalls": 5,
+    "methodSHA256": "992e2e8f482d7fa48bf745f7872455dce0cddcbb588164e7bdad535dd8f959cd",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountOpenTimeoutReportsOutcomeUnknown",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountPostconditionVerificationBecomesUnknownWhenControlChangesInFlight": {
+    "assertionCalls": 6,
+    "methodSHA256": "30607e0799b2a6c9cfaf19045de37075c7e3d2363954a65b1cf769c08300082c",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountPostconditionVerificationBecomesUnknownWhenControlChangesInFlight",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountPreexistingPostconditionCannotVerifyMutation": {
+    "assertionCalls": 7,
+    "methodSHA256": "15f2db7988df406f05cc7a2bab621e022e053e2f32733520dcba6052472c0b7b",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountPreexistingPostconditionCannotVerifyMutation",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountReclaimedAgentSessionKeepsReopenEntryAndCardState": {
+    "assertionCalls": 16,
+    "methodSHA256": "4baef85b547e28a21b8b0702a4e14ae7bb2c6a7b6a614b445f1bfb8a8c37849d",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountReclaimedAgentSessionKeepsReopenEntryAndCardState",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountRedactionRemovesSensitiveValuesAndURLQuery": {
+    "assertionCalls": 13,
+    "methodSHA256": "b7295c4aab69dde6bc37c88a4bd3d16d5af4c5f9eb3376cc8fbe2f4e30872fae",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountRedactionRemovesSensitiveValuesAndURLQuery",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountRedactionScrubsSensitivePlainStrings": {
+    "assertionCalls": 10,
+    "methodSHA256": "3874c5565bcae5225ff55f759abf1f4d77719e33958fb30d71c87eefc47c343d",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountRedactionScrubsSensitivePlainStrings",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountRegistryAddRemoveRestore": {
+    "assertionCalls": 6,
+    "methodSHA256": "47d03818a36ffc17cfe6cc19af32373a33fc992cc4c8e0c5bbe983230ea93748",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountRegistryAddRemoveRestore",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountRegistryRestoresSeedsWhenPersistedPayloadIsUnreadable": {
+    "assertionCalls": 2,
+    "methodSHA256": "3cb4ecbf0c05fc9eb28fd554590012fa1b935cb407016a46ed1f472c81f8832b",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountRegistryRestoresSeedsWhenPersistedPayloadIsUnreadable",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountRegistrySeedsAndPersists": {
+    "assertionCalls": 2,
+    "methodSHA256": "2d0df1185632b061210670db96ce65b9fec42b0632f068f96d2a248942f5748a",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountRegistrySeedsAndPersists",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountSameOriginFrameReadActAndReload": {
+    "assertionCalls": 23,
+    "methodSHA256": "b1ef909cb5ae7111ec9f27ac1e034a49c2cae696b60546d974da4a2305d3a569",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountSameOriginFrameReadActAndReload",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountScreenshotArtifactsExpireAndDeleteWithSession": {
+    "assertionCalls": 5,
+    "methodSHA256": "92d06baa65d1daddf61c4938ef7a3a843eae948bc705e460b1b318e64503b940",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountScreenshotArtifactsExpireAndDeleteWithSession",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountSessionStoreDecodesLegacyV1MetadataWithDefaults": {
+    "assertionCalls": 7,
+    "methodSHA256": "1278d83dd83eafbc5025948fd508eb289906bf0b1d4ebef9740342fc94ed3612",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountSessionStoreDecodesLegacyV1MetadataWithDefaults",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountSessionTTLAndPersistentMetadataRestoreFreshRuntimeOnly": {
+    "assertionCalls": 19,
+    "methodSHA256": "556a4093956453bfb7dae1763f3e51f51d61af32ae948f66ff62e91756d95c1a",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountSessionTTLAndPersistentMetadataRestoreFreshRuntimeOnly",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountSettingsDefaults": {
+    "assertionCalls": 4,
+    "methodSHA256": "132335544bad73ff63dc0facf9fdcb581c2d06a1af2ea76db1d33f49d0a952e2",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountSettingsDefaults",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountSiteAddRemoveSyncsAllowlistAndDoesNotClearCookies": {
+    "assertionCalls": 14,
+    "methodSHA256": "e7318de86d0a4475236a6128567ee4506dffa7020ad1966f0688dc72766fdf81",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountSiteAddRemoveSyncsAllowlistAndDoesNotClearCookies",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountSiteIDAndDirectURLUseSameRegisteredHostPolicy": {
+    "assertionCalls": 5,
+    "methodSHA256": "3530f9940d72abe501ffac27c3df31d006e3f68cd54bba65e6275cac89030e5b",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountSiteIDAndDirectURLUseSameRegisteredHostPolicy",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountStationsUsesRegistryAndRedactedCookieSummary": {
+    "assertionCalls": 17,
+    "methodSHA256": "08fac8a5da131f1084b3ddfc69354ff4d9fa1f812ba1972e2f572876931369ac",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountStationsUsesRegistryAndRedactedCookieSummary",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountTabLifecycleAndClosedSessionFailure": {
+    "assertionCalls": 11,
+    "methodSHA256": "c25a6208db6d61861f13153614004d1d3358c3e54dd69fc327014ba4b3e2b8dd",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountTabLifecycleAndClosedSessionFailure",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountToolCatalogAndUnsupportedResult": {
+    "assertionCalls": 21,
+    "methodSHA256": "6aa5fd3f89f6d07d0c210b443bec22ae8b376e76883cf38232f9e2a08c796072",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountToolCatalogAndUnsupportedResult",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountURLPolicyRejectsSchemeAndHostOutsideAllowlist": {
+    "assertionCalls": 9,
+    "methodSHA256": "f491db7785caaef25f5c42581d7625780bf01bc513b7d0cf9fa82f1763b82442",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountURLPolicyRejectsSchemeAndHostOutsideAllowlist",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountUnlistedHumanNavigationDoesNotCreateSyntheticStationBinding": {
+    "assertionCalls": 3,
+    "methodSHA256": "5361b0cb202907dfa569910b809b71253705a39819c6158f5c7d74123ca355e0",
+    "newIdentifier": "iosAppTests/IOSWebMountRegistryPolicyTests/testWebMountUnlistedHumanNavigationDoesNotCreateSyntheticStationBinding",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRegistryPolicyTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountVisualReadMarksResultsStaleAndReportsMissingReader": {
+    "assertionCalls": 7,
+    "methodSHA256": "f5bce0027805da0961a71b926dff1dc0436bb82e562339b301ce5a5244240416",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountVisualReadMarksResultsStaleAndReportsMissingReader",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountVisualReadRequiresApprovalAndUsesRealCapture": {
+    "assertionCalls": 18,
+    "methodSHA256": "e5ac9f0ed13528c886fd89952c9b132274d340aea8e73477b78fd3ae7dedce10",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountVisualReadRequiresApprovalAndUsesRealCapture",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountVisualReadReturnsSafeRequestDiagnostics": {
+    "assertionCalls": 11,
+    "methodSHA256": "a5354d811d85ae04f9ce884ef8baacf782d9429ce3c75348c5442de2d4d26f4d",
+    "newIdentifier": "iosAppTests/IOSWebMountVisualApprovalTests/testWebMountVisualReadReturnsSafeRequestDiagnostics",
+    "newPath": "iosApp/iosAppTests/IOSWebMountVisualApprovalTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountWKRuntimeReportsDeniedSubframeDiagnosticsAndResets": {
+    "assertionCalls": 21,
+    "methodSHA256": "4aaf17cd8f05dcaa3e8b9e8e1be0dad2a1508cedb2a540db81e864ba4b18991f",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountWKRuntimeReportsDeniedSubframeDiagnosticsAndResets",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountWKRuntimeStableRefsKeysFindWaitAndStaleSnapshot": {
+    "assertionCalls": 105,
+    "methodSHA256": "f1aaab49dea45b09bda813c453ca1cfb06e80ed0bf45f91a7f34787c001bb5fc",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountWKRuntimeStableRefsKeysFindWaitAndStaleSnapshot",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountWKRuntimeStartsWithScreenViewportForDetachedAgentSession": {
+    "assertionCalls": 9,
+    "methodSHA256": "4c8c1e68598a1ed12ab8bf41f1307255467a37b958f99b2f96dd15b5aefdd8bb",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountWKRuntimeStartsWithScreenViewportForDetachedAgentSession",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountWatchRouteRequiresExactLocalRegisteredSession": {
+    "assertionCalls": 8,
+    "methodSHA256": "5ab1b03032663da44f4010bb08eaf1d15925848f5a28f3445c05b7b3d4003a38",
+    "newIdentifier": "iosAppTests/IOSWebMountSessionToolTests/testWebMountWatchRouteRequiresExactLocalRegisteredSession",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSessionToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWebMountWebContentTerminationFinishesPendingLoad": {
+    "assertionCalls": 5,
+    "methodSHA256": "75bd6d1fc00590f638988eb4f760695a80505fa245ad1d12a7d13d71e7bcf1d2",
+    "newIdentifier": "iosAppTests/IOSWebMountWKRuntimeTests/testWebMountWebContentTerminationFinishesPendingLoad",
+    "newPath": "iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWithoutAutoApproveSnapshotRestoresWorkspaceWriteApproval": {
+    "assertionCalls": 2,
+    "methodSHA256": "647b0f12870eaca01561d2c70dc583e9352148736946795b81af1a54702e5ee5",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testWithoutAutoApproveSnapshotRestoresWorkspaceWriteApproval",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWorkspaceArtifactReadAndDeleteUseApproval": {
+    "assertionCalls": 7,
+    "methodSHA256": "30c14a16686e0635533f359018aeddf484e0ef4027d66163187a16c1e485571a",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testWorkspaceArtifactReadAndDeleteUseApproval",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWorkspaceReadRequiresApprovalAndReturnsImportedText": {
+    "assertionCalls": 5,
+    "methodSHA256": "85a74489adbd9bdb1d7d04f7b471c365a8a071e7113967980aa87a099ba315e9",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testWorkspaceReadRequiresApprovalAndReturnsImportedText",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSLocalToolExecutorTests/testWorkspaceWriteRequiresApprovalAndRejectsTraversal": {
+    "assertionCalls": 7,
+    "methodSHA256": "e8dd9749e698ebfb00b301cb58d17af23537a79fc7f0e359a5073c09e9612f90",
+    "newIdentifier": "iosAppTests/IOSWorkspaceTerminalToolTests/testWorkspaceWriteRequiresApprovalAndRejectsTraversal",
+    "newPath": "iosApp/iosAppTests/IOSWorkspaceTerminalToolTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSLocalToolExecutorTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testConfiguredDisabledBrowserToolIsRejectedBeforeDispatch": {
+    "assertionCalls": 4,
+    "methodSHA256": "af2898231d09a8242ecf766f55848796e4323f3921e731405245c1c2cc3b9498",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testConfiguredDisabledBrowserToolIsRejectedBeforeDispatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testDesktopCreationRequestBindsEnabledAnonymousSite": {
+    "assertionCalls": 6,
+    "methodSHA256": "1065723775d6adb16a455f12e123593d0c7ea9c57f4f747bc292110e86af0eeb",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testDesktopCreationRequestBindsEnabledAnonymousSite",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testDesktopCreationViewVisualEvidence": {
+    "assertionCalls": 7,
+    "methodSHA256": "ca7f81f0e8e937d6cc90fcae1ad115f4a35dc9d14b11d70fe7bd461c7bbc5ad5",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopVisualTests/testDesktopCreationViewVisualEvidence",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopVisualTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testDesktopFindRejectsLocatorWithoutCallingRemoteTool": {
+    "assertionCalls": 2,
+    "methodSHA256": "d57c814218447c0f42076939aed03f110972c0afc1a808446b01a9f128e3d437",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testDesktopFindRejectsLocatorWithoutCallingRemoteTool",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testDesktopHighConsequenceRequiresSnapshotBoundApprovalBeforeDispatch": {
+    "assertionCalls": 7,
+    "methodSHA256": "72cb9c43b9c48721169cbd089c1da4ce2f60c0010530a274674e5d882b3a8129",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testDesktopHighConsequenceRequiresSnapshotBoundApprovalBeforeDispatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testMutatingRpcAndSessionErrorsAreUnknownOnlyAfterDispatch": {
+    "assertionCalls": 18,
+    "methodSHA256": "106e70fda7f7eb0f8dc85c2cfe350ba29d9e84ad5067cd679bd798509f15d672",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testMutatingRpcAndSessionErrorsAreUnknownOnlyAfterDispatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testPlaywrightMappingsBlockRawBrowserCoordinateAndSensitiveDispatch": {
+    "assertionCalls": 19,
+    "methodSHA256": "7889188c3ab2a162aeb25018ac78d1c5e7f18f5b71ac3b43d3e19d1129d4f476",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testPlaywrightMappingsBlockRawBrowserCoordinateAndSensitiveDispatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteAgentMutationRejectsRawSelectorBeforeDispatch": {
+    "assertionCalls": 4,
+    "methodSHA256": "e518aad82bfaf4402d1d11bdfa3f853c331b9ddd482a2d87b0f8d9146211a2b5",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteAgentMutationRejectsRawSelectorBeforeDispatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteDoubleClickIsRejectedWithoutGatewaySupport": {
+    "assertionCalls": 4,
+    "methodSHA256": "7154c2b0efd5846ef0f4b251c922c35945c8c8f44426af9f0bb61ae715722f99",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteDoubleClickIsRejectedWithoutGatewaySupport",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteDoubleClickMapsClickCountWhenGatewayAdvertisesClickCount": {
+    "assertionCalls": 5,
+    "methodSHA256": "6c2e9d278069add1af03e71318de652dc7b0a08316a7742be02fef81719a565b",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteDoubleClickMapsClickCountWhenGatewayAdvertisesClickCount",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteDoubleClickMapsDoubleClickWhenGatewayAdvertisesDoubleClick": {
+    "assertionCalls": 5,
+    "methodSHA256": "d7c0a1f3629eebc9a9c0f30d7acbd3a4e61b7e56b2ead482dc30ce201fe2a40d",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteDoubleClickMapsDoubleClickWhenGatewayAdvertisesDoubleClick",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteGetRequiresVisibleSemanticSnapshot": {
+    "assertionCalls": 15,
+    "methodSHA256": "897cb9d7277914ea6e8c223cf7d668242eaaea7d2a5349aa853d015a16720011",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteGetRequiresVisibleSemanticSnapshot",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteInteractionsRequireFocusedOrCompleteSemanticTargets": {
+    "assertionCalls": 14,
+    "methodSHA256": "195ba658b71d00e9eaf93106a9bc5c279a64ed58c4b0bbf17f6d247d24f496bb",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteInteractionsRequireFocusedOrCompleteSemanticTargets",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationBecomesUnknownWhenUserTakesControlInFlight": {
+    "assertionCalls": 6,
+    "methodSHA256": "465ad74b3d8784ce564a03a0f7df423dc9af919256ad5af81a5c311d1adc3545",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteMutationBecomesUnknownWhenUserTakesControlInFlight",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationDoesNotDispatchWhenPreconditionProbeIsUnstructured": {
+    "assertionCalls": 5,
+    "methodSHA256": "745aec8ac78f50abe7a427722b1bcb2f4fa447c72acf9c37f192c20d1d4a6798",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteMutationDoesNotDispatchWhenPreconditionProbeIsUnstructured",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationDoesNotDispatchWhenRunReleasesOwnershipDuringSnapshot": {
+    "assertionCalls": 0,
+    "methodSHA256": "a92d17ac6f884271238d471bcd30861e418188c70cd7c62b5a7b2c58eaed30cd",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteMutationDoesNotDispatchWhenRunReleasesOwnershipDuringSnapshot",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationDoesNotDispatchWhenUserTakesControlDuringSnapshot": {
+    "assertionCalls": 0,
+    "methodSHA256": "830e3e64ddcdf432755d16cdb66693ddec14511c56c181c233c1c554b0d258e4",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteMutationDoesNotDispatchWhenUserTakesControlDuringSnapshot",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationRechecksOwnershipAfterURLValidation": {
+    "assertionCalls": 6,
+    "methodSHA256": "6bc0e1dd956df5cf9e568226652a5f0e18baed7fa46c1f202501a47e0d3da05b",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteMutationRechecksOwnershipAfterURLValidation",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationRefreshRejectsNewlyDisabledTargetBeforeDispatch": {
+    "assertionCalls": 5,
+    "methodSHA256": "88e841fc18f59b52b41786c632bff09128db15a39752ad20e47eb94518300405",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testRemoteMutationRefreshRejectsNewlyDisabledTargetBeforeDispatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationRejectsReusedRefWhenFreshSnapshotIdentityChanges": {
+    "assertionCalls": 4,
+    "methodSHA256": "8dc80c7f98b7e6b03cf7b4b3479707665476a792a7aea8fcd5b256fb51565578",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testRemoteMutationRejectsReusedRefWhenFreshSnapshotIdentityChanges",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationRejectsSameRefOnDifferentDocument": {
+    "assertionCalls": 3,
+    "methodSHA256": "39f8de870c96f14bae0e924a0089f04c5fa799109d9fa5c1843deff7ca1c677b",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testRemoteMutationRejectsSameRefOnDifferentDocument",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationRejectsSelectorSmuggledAsSemanticTarget": {
+    "assertionCalls": 3,
+    "methodSHA256": "c6e2e277ae1db9935993eec7a7a7346ad0f96947ce5027593a0999ba17ce3a6c",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testRemoteMutationRejectsSelectorSmuggledAsSemanticTarget",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationUsesBoundedPostconditionAndReturnsVerifiedReceipt": {
+    "assertionCalls": 12,
+    "methodSHA256": "689fec9817e0b823b21f2c75abfb4f0b4e3ce8022ccde505868c265dd2000b74",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteMutationUsesBoundedPostconditionAndReturnsVerifiedReceipt",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteMutationUsesFreshStateToProveURLWhenActionOmitsIt": {
+    "assertionCalls": 5,
+    "methodSHA256": "aa3c32f70bd1dbfb54f7aee46a36a116ca17a9ae82d24ae120d99ecbc9dffd07",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteMutationUsesFreshStateToProveURLWhenActionOmitsIt",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteNavigationCurrentURLIsTypedAndNestedURLIsNotTrusted": {
+    "assertionCalls": 6,
+    "methodSHA256": "0ec1fb4aacd64edcf06dbe662cc5c0b4f1ce805a05e76150ff9c5de8dc2f905f",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testRemoteNavigationCurrentURLIsTypedAndNestedURLIsNotTrusted",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteOpenRechecksAgentOwnershipAfterHostResolution": {
+    "assertionCalls": 5,
+    "methodSHA256": "b14640d1cb794a2b5f66dea8bb0248670bea09266ba40d0ae10710c839858a7f",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteOpenRechecksAgentOwnershipAfterHostResolution",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteTabMetadataKeepsLocalCurrentAndClosingRemoteDisconnectsOnlyRemote": {
+    "assertionCalls": 32,
+    "methodSHA256": "7677d66dacebc73eb5fbf923a8d98fce2791ceca2ab39685fe756b18a762e7ca",
+    "newIdentifier": "iosAppTests/IOSWebMountRemoteSessionTests/testRemoteTabMetadataKeepsLocalCurrentAndClosingRemoteDisconnectsOnlyRemote",
+    "newPath": "iosApp/iosAppTests/IOSWebMountRemoteSessionTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteTypedUnknownMutationIsPreservedAndRequiresReopen": {
+    "assertionCalls": 7,
+    "methodSHA256": "682e231d478a316e999cbd460dfa5d5bfa5cae40f18b49fd3c400de188d6190c",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testRemoteTypedUnknownMutationIsPreservedAndRequiresReopen",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteWaitDefaultsToDomStableAndMapsExplicitFlag": {
+    "assertionCalls": 4,
+    "methodSHA256": "069fc31721a9d38ee90a46d999f490a2fa1574032eb7e33d7e005955431aa5b1",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testRemoteWaitDefaultsToDomStableAndMapsExplicitFlag",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testSelectorOnlyGatewayIsUnavailableForAgentTargetMapping": {
+    "assertionCalls": 4,
+    "methodSHA256": "1698cdadaa6885c5d758eeef1a275ce5bd5331510bd3195b1b569db488dca036",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testSelectorOnlyGatewayIsUnavailableForAgentTargetMapping",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testStaleSnapshotRejectsMutatingCallWithoutDispatch": {
+    "assertionCalls": 5,
+    "methodSHA256": "ae3ce649902d641c082d999b9039a204685237745c79942191a287a334c32b31",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testStaleSnapshotRejectsMutatingCallWithoutDispatch",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testStockPlaywrightObserveExposesVisibleSemanticTargetsForGet": {
+    "assertionCalls": 7,
+    "methodSHA256": "815e7569819804a1353990181a1c25dff51c71a1a44f7245c16af099ec0b1556",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testStockPlaywrightObserveExposesVisibleSemanticTargetsForGet",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testStockPlaywrightTextPageStateProvidesTrustedURLAndSemanticRefs": {
+    "assertionCalls": 9,
+    "methodSHA256": "3d05baf1df2ac425906c90f4d19dc2a50f47ef98be3e9d71c8060e98e5428ec4",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testStockPlaywrightTextPageStateProvidesTrustedURLAndSemanticRefs",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testStreamableHTTPSConnectsListsToolsAndPreservesOpenProvenance": {
+    "assertionCalls": 13,
+    "methodSHA256": "3e15e2b85cc82f82c27a9def6dab615bbc2a94a099f52bddbb99ab26afb918ef",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testStreamableHTTPSConnectsListsToolsAndPreservesOpenProvenance",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testStructuredWaitRequiresExplicitMatchAndMapsBoundedTimeout": {
+    "assertionCalls": 4,
+    "methodSHA256": "b97eb2ffe7ac08e2f050e747f55eba563437b209c2121c208c45ee332728c7bd",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testStructuredWaitRequiresExplicitMatchAndMapsBoundedTimeout",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testTargetWinsWhenSelectorIsEmptyOrEquivalentAndConflictsAreRejected": {
+    "assertionCalls": 11,
+    "methodSHA256": "88d42dfc824af651ed3087f476129ff17992bc7ffa7eb2793af1f9e4b5fc376a",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testTargetWinsWhenSelectorIsEmptyOrEquivalentAndConflictsAreRejected",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testUnsupportedMappingsDoNotReuseSnapshotOrSelectorForAnotherTool": {
+    "assertionCalls": 9,
+    "methodSHA256": "2bcb30b8f5cc232525db7e64bb23d86afa8ca0820d6bd97f76eaf0f750f86004",
+    "newIdentifier": "iosAppTests/IOSWebMountSemanticTargetTests/testUnsupportedMappingsDoNotReuseSnapshotOrSelectorForAnotherTool",
+    "newPath": "iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  },
+  "iosAppTests/IOSWebMountDesktopBackendTests/testVersionedStructuredObserveNormalizesSemanticContract": {
+    "assertionCalls": 13,
+    "methodSHA256": "5a2c29252b586bee4879e7761a95bfaf05c704accf3e6c0633155ec4e836cc67",
+    "newIdentifier": "iosAppTests/IOSWebMountDesktopBackendTests/testVersionedStructuredObserveNormalizesSemanticContract",
+    "newPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift",
+    "oldPath": "iosApp/iosAppTests/IOSWebMountDesktopBackendTests.swift"
+  }
+}

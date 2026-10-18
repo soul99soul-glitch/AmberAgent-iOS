@@ -125,6 +125,8 @@ enum NovelModelFrameEvent: Equatable, Sendable {
     case activity
     /// Provider reasoning/thinking text for UI only. Never manuscript.
     case reasoningDelta(String)
+    /// Full presentation snapshot, including revisions to already streamed thinking.
+    case reasoningReplacement(String)
     case textDelta(String)
     case textReplacement(String)
     case usage(NovelModelUsage)
@@ -154,6 +156,8 @@ enum NovelModelEvent: Equatable, Sendable {
     /// Provider reasoning/thinking text for UI only. Must never enter
     /// `partialContent`, candidates, collect, or structured JSON sources.
     case reasoningDelta(String)
+    /// Full presentation snapshot, including revisions to already streamed thinking.
+    case reasoningReplacement(String)
     case textDelta(String)
     case textReplacement(String)
     case usage(NovelModelUsage)

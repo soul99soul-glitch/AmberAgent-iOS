@@ -1,0 +1,12 @@
+{
+  "path": "iosApp/vendor/SwiftStreamingMarkdown/Package.resolved",
+  "action": "restored-build-only-pruning",
+  "beforeSHA256": "09aa4bb929ed43caa11612ded25d62bd02f258c170dc5f288ac20c7bff711e82",
+  "sha256": "897e3291769528073e3ec4e93a99a32209b7ed26c16f91155d5e304a468e9439",
+  "restoredUnusedPins": [
+    "ish-arm64-pkg",
+    "swift-asn1",
+    "swift-crypto",
+    "swift-nio-ssh"
+  ]
+}

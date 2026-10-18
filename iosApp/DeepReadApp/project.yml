@@ -36,6 +36,8 @@ targets:
       - path: ../iosApp/PackedAstReader.swift
       - path: ../iosApp/IOSAppLanguage.swift
       - path: ../iosApp/IOSSearchExecutor.swift
+      - path: ../iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
+      - path: ../iosApp/Search/IOSSearchHTTPTransport.swift
       - path: ../iosApp/IOSToolOutputLimits.swift
       - path: ../iosApp/IOSCredentialRedactor.swift
       - path: ../iosApp/IOSFreeSearchAggregator.swift

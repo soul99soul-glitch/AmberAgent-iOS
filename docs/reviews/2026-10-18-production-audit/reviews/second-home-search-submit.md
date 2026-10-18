@@ -1,0 +1,13 @@
+# Home Search keyboard submit 二次复核
+
+结论：**accepted / P2真实问题**，非by design；未改源码、测试、项目或设备，未构建/跑测试。
+
+Root/平台agent在最终与旧App普通界面各复现非空Home输入经真实keyboard Search进入空Global Search。平台明确确认提交前AX为TextField TARGET，且Home标题过滤只剩AUDIT SEARCH TARGET、ORIGINAL/新对话隐藏；故SwiftUI searchQuery已更新，排除仅UITextField marked text未进入State。平台正在保存该过程独立AX/截图，具体路径以其证据记录为准。
+
+源码契约：ConversationsView.swift:410 onSubmit明确使用searchQuery作为Route.search.initialQuery。:141–146失焦触发collapseSearch，:469先清searchQuery。Search目的地只接收Route值，因此Home在提交事件前丢弃query足以解释空Global；非有意“键盘搜索只打开空搜索页”。不声称已通过单步追踪确认UIKit/SwiftUI各callback的精确执行时间。
+
+推荐采用Root提出的无新增状态方案：collapseSearch只折叠/失焦、保留提交草稿；collapsed时filteredSummaries直接返回全列表；expandSearch开始新搜索先清草稿；onSubmit先局部capture query，再collapse及navigate。与“非空失焦保持展开”的替代方案相比，能保留原来Cancel/点外收起外观、下次展开空输入，无隐藏过滤。
+
+必须同步核对HomeEmptyCard title（当前仅以searchQuery.isEmpty选择“还没有会话/没有匹配”）：collapsed保留非空草稿且库为空时应仍显示“还没有会话”，需把isSearchExpanded纳入这个用户可见判断。当前其余query读取只在filter、TextField和submit，无需新owner或延迟兜底。
+
+验证：复用真实UI链Home输入TARGET→确认本地标题过滤→点击实际keyboard Search→Global输入仍TARGET且正确结果；Cancel/点外后Home恢复全列表，再次展开空输入；空库collapsed文案正确。现有HomeDesignContractTests没有submit行为断言；若需要可持续UI测试，扩既有SwiftModularizationNavigationUITests的Home普通App入口，不再使用已经确认不可枚举SwiftUI AX的inprocess设施，也不以源码字符串断言充当事件回归。

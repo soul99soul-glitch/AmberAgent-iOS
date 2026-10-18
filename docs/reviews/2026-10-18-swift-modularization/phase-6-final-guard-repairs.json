@@ -1,0 +1,57 @@
+{
+  "phase": "6",
+  "status": "applied_and_frozen_for_root_integration",
+  "scope": [
+    "iosApp/iosAppTests/IOSStoreKitTests.swift:testAppOwnsTransactionListenerAndSharesEntitlementWithConsumers",
+    "iosApp/iosAppTests/IOSMemoryPollutionTests.swift:testBackgroundRunMarksRunConversationNotForeground",
+    "iosApp/iosAppTests/IOSMemoryPollutionTests.swift:PollutionSearchTransport fixture"
+  ],
+  "reference_result": "/tmp/amber-phase6-main-r1.xcresult",
+  "reference_summary": "/tmp/amber-phase6-main-r1-summary.json",
+  "baseline_evidence": [
+    "Both test files matched HEAD byte-for-byte before edit.",
+    "AppShell HEAD already starts storeCoordinator inside a multiline .task and shares it with IOSSubscriptionView and SyncBackupView.",
+    "ChatToolRuntime HEAD already returns filledParts(result.parts) from background search after passing run conversationId to memory pollution marker.",
+    "IOSFreeSearchAggregator HEAD DuckDuckGo parser expects result__a/result__snippet; old fixture supplied result-link/result-snippet."
+  ],
+  "repairs": [
+    {
+      "test_identifier": "iosAppTests/IOSStoreKitTests/testAppOwnsTransactionListenerAndSharesEntitlementWithConsumers()",
+      "file": "iosApp/iosAppTests/IOSStoreKitTests.swift",
+      "file_sha256_before_head": "913ff23269ea92de6c8d275f76698ab06a750935babf66b825fdc26bae6c33dc",
+      "file_sha256_after": "2ffd94e6dc74cc75efa83b1b1627a6342d4129c1802e72fe232367b647dfe7e6",
+      "method_body_sha256_before": "11d559f66b0bbd92f52ff27f451a8958ea141f122fdbba0e105649b6cb117e1e",
+      "method_body_sha256_after": "69c61e848d5196d3064616ddb81160b681d8982c787f1c79e5a2a1a3a8a7d6f3",
+      "assertion_calls_before": 6,
+      "assertion_calls_after": 6
+    },
+    {
+      "test_identifier": "iosAppTests/IOSMemoryPollutionTests/testBackgroundRunMarksRunConversationNotForeground()",
+      "file": "iosApp/iosAppTests/IOSMemoryPollutionTests.swift",
+      "file_sha256_before_head": "8609aeaf0cc937655979419d252da276677d5e800c48fcbfa8a42978a28d9923",
+      "file_sha256_after": "b5332f642e85c566fb7fda96ca0c378ebeeedabe152871cffed20bf1797ea157",
+      "method_body_sha256_before": "124a65c9a7bcd0eaeb2002d15a775a4a10739186d239c256229eebca8b726897",
+      "method_body_sha256_after": "d4343741de5a6c6743357e7bf6f002176a93085d7ce4f253631333d613208687",
+      "assertion_calls_before": 2,
+      "assertion_calls_after": 5
+    }
+  ],
+  "fixture": {
+    "owner": "PollutionSearchTransport",
+    "file": "iosApp/iosAppTests/IOSMemoryPollutionTests.swift",
+    "body_sha256_before": "446ba48af4c3d5e6f7b23c1075768c8a11cac9ea1f5d1624781a84e8844d33e8",
+    "body_sha256_after": "b6d15b7a0fa26ccc29373e8f182731129e3e6c80a648efd1680536a424afd3e6",
+    "change": "Current DuckDuckGo HTML structure with deterministic title and URL; focused test disables Google WebView fallback and resets aggregate cooldown."
+  },
+  "assertion_preservation": [
+    "StoreKit six assertion calls retained; only startup source guard literal updated for actual multiline task.",
+    "Memory run-conversation polluted and foreground clean assertions retained; success now requires filledParts with expected fixture title/URL and no failure payload."
+  ],
+  "verification": {
+    "swift_frontend_parse": "pass",
+    "git_diff_check": "pass",
+    "build": "not_run_by_assignment",
+    "tests": "not_run_by_assignment",
+    "gui": "not_run_by_assignment"
+  }
+}

@@ -331,6 +331,13 @@ enum ChatMemoryContextBuilder {
 struct ChatRuntimeContextBuilder {
     static let memoryCitationMetadataKey = IOSMemoryCitation.recordIdsMetadataKey
 
+    static let mediaCapabilityPrompt = """
+    【聊天图片与视频展示】
+    当前 iOS 聊天原生支持远程 Markdown 图片。用户想看图片时，将搜索或工具实际返回的可用图片直链写成 ![图片说明](图片直链)，让图片直接展示；除非用户明确只要链接，不要只列图片网址。多图逐张使用该语法，并保留对应的 [来源](页面URL)。
+    图片链接必须指向图片资源。Commons 的 File: 页面等来源网页只作来源链接，不要当作图片，也不要猜测或编造图片直链。只有网页链接时继续查找真实图片地址；仍无法获得时说明原因并给来源页。
+    普通聊天图片无需 allowRemoteImages 配置，也不必生成 Smart UI/HTML 画廊。可播放视频直链（mp4/mov/m4v/m3u8）可单独一段使用 [视频说明](视频直链) 展示播放卡片；视频网页链接只作普通链接。遵守用户明确要求的输出格式。
+    """
+
     struct MiniAppTurnContext: Equatable {
         let currentUserIndex: Int
         let requestText: String
@@ -350,6 +357,7 @@ struct ChatRuntimeContextBuilder {
         memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
     ) -> [UIMessage] {
         var prepared = messagesByInjectingSoul(messages)
+        prepared = [PromptTranscript.shared.sectionMessage(name: "chatMedia", text: Self.mediaCapabilityPrompt)] + prepared
         prepared = messagesByInjectingMiniAppInstruction(prepared)
         prepared = messagesByInjectingMcpContext(prepared)
         prepared = messagesByInjectingMemoryContext(prepared, memoryRecallOverride: memoryRecallOverride)

@@ -4,7 +4,7 @@ import QuartzCore
 @preconcurrency import Shared
 @testable import iosApp
 
-/// P6 测量夹具（只测量，不做优化）：把父会话 UI（`NativeChatTimelineView` +
+/// P6 回归夹具：把父会话 UI（`NativeChatTimelineView` +
 /// `ChatSubAgentActivityBar`，二者都挂着真实的 `IOSSubAgentActivityStore` /
 /// `IOSAdvancedTaskStore` 观察链路）挂进带 windowScene 的 UIWindow，并发驱动
 /// N 个走生产入口 `SubAgentRunner.runViaEngine` 的子代理 run。每个 run 用
@@ -14,10 +14,9 @@ import QuartzCore
 /// `ChatSwiftUIStreamReplayTests`（原类型是文件私有，无法跨文件复用，这里按同一
 /// 实现复制一份，不引入新协调层）。
 ///
-/// P6 第二轮：夹具定型为回归测试。每个用例先跑一次预热（丢弃，消除冷启动），
-/// 再跑一次真正测量并对 p95 断言（阈值留足余量，模拟器噪声大；max 只打印不断言）。
-/// 新增覆盖：N=8；~8KB 中英混排+代码块输出且多个子代理在同一时刻附近收尾
-/// （`runConcurrencyLargeOutput`）；真实隔离 Room 库（临时文件路径，非生产库）驱动
+/// 测试先跑一次预热（丢弃，消除冷启动），再测量并对 p95 断言
+/// （阈值留足模拟器噪声余量；max 只打印不断言）。覆盖 N=8、~8KB 中英混排
+/// +代码块输出及多个子代理相近收尾；真实隔离 Room 库（临时文件路径，非生产库）驱动
 /// 的 durable run 链路——`AgentRuntimeDao.listAllRuns` 数百条历史行 + 真实
 /// `ConversationActivityCenter`（`recomputeNotices`）与 `IOSSubAgentActivityStore`
 /// 的 `loadRuns` 注入点都吃同一份数据，测量窗口内两次 `.amberSubAgentRunsDidChange`
@@ -213,66 +212,6 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
         ])
     }
 
-    /// 并发驱动 N 个子代理 run，同时用 DisplayLinkGapProbe 采样父会话 UI 的帧间隔。
-    /// 返回 (samples, p95ms, maxMs, over50msCount)。
-    private func runConcurrency(_ n: Int) async throws -> (Int, Double, Double, Int) {
-        let suite = "SubAgentConcurrencyPerf-tasks-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
-        let activityStore = IOSSubAgentActivityStore(
-            tasks: taskStore, defaults: defaults, launchedAt: Date(), loadRuns: { [] }
-        )
-        activityStore.autoDismissDelay = .never
-        activityStore.start()
-
-        let model = HarnessModel()
-        model.messages = seedConversation()
-        model.currentConversationID = "PARENT-CONVERSATION"
-        let fixture = makeFixture(model: model, activityStore: activityStore)
-        defer { fixture.tearDown() }
-
-        pump(seconds: 0.3) // 初始布局落定
-
-        let probe = DisplayLinkGapProbe()
-        probe.start()
-
-        let providerSetting = makeProviderSetting()
-        let runner = SubAgentRunner(taskStore: taskStore)
-        let longText = String(repeating: "子代理持续输出的正文内容，用于模拟真实流式 token 到达。", count: 40)
-        var tasks: [Task<String, Never>] = []
-        for index in 0..<n {
-            let provider = makeStreamingProvider(totalText: longText, chunkCount: 60, intervalMs: 50)
-            let task = Task { [runner] in
-                await runner.runViaEngine(
-                    objective: "并发压测子代理 #\(index)：核查接口并汇报。",
-                    roleId: "fixer",
-                    providerSetting: providerSetting,
-                    modelId: "test-model",
-                    parentToolExecutors: [:],
-                    sourceConversationId: model.currentConversationID,
-                    provider: provider
-                )
-            }
-            tasks.append(task)
-        }
-
-        pump(seconds: 3.6) // 覆盖单个 run 的 ~3s 流式窗口 + 收尾
-
-        for task in tasks { _ = await task.value }
-        pump(seconds: 0.3) // 终态收尾（activity store 的异步 refresh）
-
-        probe.stop()
-
-        let ms = probe.gaps.dropFirst(2).map { $0 * 1_000 }.sorted()
-        guard !ms.isEmpty else { return (0, 0, 0, 0) }
-        let p95Index = min(ms.count - 1, Int((Double(ms.count) * 0.95).rounded(.up)) - 1)
-        let p95 = ms[max(0, p95Index)]
-        let max = ms.last ?? 0
-        let over50 = ms.filter { $0 > 50 }.count
-        return (ms.count, p95, max, over50)
-    }
-
     // MARK: - 约 8KB 中英混排 + 代码块正文（模拟真实子代理长输出收尾）
 
     /// 循环拼接一个中英混排 + Swift 代码块的单元，直到 UTF-8 字节数达到
@@ -297,66 +236,6 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
             result += unit
         }
         return result
-    }
-
-    /// 与 `runConcurrency(_:)` 同构，仅把正文替换成可配置长度的中英混排 + 代码块
-    /// 文本，覆盖“每个子代理输出约 8KB，且多个子代理在同一时刻附近收尾”。
-    private func runConcurrencyLargeOutput(_ n: Int, outputBytes: Int) async throws -> (Int, Double, Double, Int) {
-        let suite = "SubAgentConcurrencyPerf-tasks-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
-        let activityStore = IOSSubAgentActivityStore(
-            tasks: taskStore, defaults: defaults, launchedAt: Date(), loadRuns: { [] }
-        )
-        activityStore.autoDismissDelay = .never
-        activityStore.start()
-
-        let model = HarnessModel()
-        model.messages = seedConversation()
-        model.currentConversationID = "PARENT-CONVERSATION"
-        let fixture = makeFixture(model: model, activityStore: activityStore)
-        defer { fixture.tearDown() }
-
-        pump(seconds: 0.3)
-
-        let probe = DisplayLinkGapProbe()
-        probe.start()
-
-        let providerSetting = makeProviderSetting()
-        let runner = SubAgentRunner(taskStore: taskStore)
-        let longText = makeMixedLanguageOutput(targetBytes: outputBytes)
-        var tasks: [Task<String, Never>] = []
-        for index in 0..<n {
-            let provider = makeStreamingProvider(totalText: longText, chunkCount: 60, intervalMs: 50)
-            let task = Task { [runner] in
-                await runner.runViaEngine(
-                    objective: "并发压测子代理 #\(index)：核查接口并汇报。",
-                    roleId: "fixer",
-                    providerSetting: providerSetting,
-                    modelId: "test-model",
-                    parentToolExecutors: [:],
-                    sourceConversationId: model.currentConversationID,
-                    provider: provider
-                )
-            }
-            tasks.append(task)
-        }
-
-        pump(seconds: 3.6)
-
-        for task in tasks { _ = await task.value }
-        pump(seconds: 0.3)
-
-        probe.stop()
-
-        let ms = probe.gaps.dropFirst(2).map { $0 * 1_000 }.sorted()
-        guard !ms.isEmpty else { return (0, 0, 0, 0) }
-        let p95Index = min(ms.count - 1, Int((Double(ms.count) * 0.95).rounded(.up)) - 1)
-        let p95 = ms[max(0, p95Index)]
-        let max = ms.last ?? 0
-        let over50 = ms.filter { $0 > 50 }.count
-        return (ms.count, p95, max, over50)
     }
 
     // MARK: - 真实隔离 Room 库驱动的 durable run 链路
@@ -538,51 +417,6 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
     /// 稳定阈值来自实测：纯流式、无工具调用场景下 p95 恒为一帧（约 16.67ms）。
     /// 34ms（约两帧）留足模拟器噪声余量。
     private let framePacingP95ThresholdMs: Double = 34
-
-    /// N 扫描只在手动测量时跑（各约 30s）；常规回归只保留最重组合 `testMeasureConcurrency8LargeOutputDurable300`。
-    private func skipUnlessPerfSample() throws {
-        try XCTSkipIf(ProcessInfo.processInfo.environment["AMBER_PERF_SAMPLE"] == nil, "仅在手动性能测量时运行")
-    }
-
-    func testMeasureConcurrency1() async throws {
-        try skipUnlessPerfSample()
-        _ = try await runConcurrency(1) // 预热：消除冷启动，结果丢弃
-        let (samples, p95, max, over50) = try await runConcurrency(1)
-        print(String(format: "[PERF-SUBAGENT-N1] samples=%d p95=%.2fms max=%.2fms over50ms=%d", samples, p95, max, over50))
-        XCTAssertLessThanOrEqual(p95, framePacingP95ThresholdMs)
-    }
-
-    func testMeasureConcurrency2() async throws {
-        try skipUnlessPerfSample()
-        _ = try await runConcurrency(2)
-        let (samples, p95, max, over50) = try await runConcurrency(2)
-        print(String(format: "[PERF-SUBAGENT-N2] samples=%d p95=%.2fms max=%.2fms over50ms=%d", samples, p95, max, over50))
-        XCTAssertLessThanOrEqual(p95, framePacingP95ThresholdMs)
-    }
-
-    func testMeasureConcurrency4() async throws {
-        try skipUnlessPerfSample()
-        _ = try await runConcurrency(4)
-        let (samples, p95, max, over50) = try await runConcurrency(4)
-        print(String(format: "[PERF-SUBAGENT-N4] samples=%d p95=%.2fms max=%.2fms over50ms=%d", samples, p95, max, over50))
-        XCTAssertLessThanOrEqual(p95, framePacingP95ThresholdMs)
-    }
-
-    func testMeasureConcurrency8() async throws {
-        try skipUnlessPerfSample()
-        _ = try await runConcurrency(8)
-        let (samples, p95, max, over50) = try await runConcurrency(8)
-        print(String(format: "[PERF-SUBAGENT-N8] samples=%d p95=%.2fms max=%.2fms over50ms=%d", samples, p95, max, over50))
-        XCTAssertLessThanOrEqual(p95, framePacingP95ThresholdMs)
-    }
-
-    func testMeasureConcurrency8LargeSynchronizedOutput() async throws {
-        try skipUnlessPerfSample()
-        _ = try await runConcurrencyLargeOutput(8, outputBytes: 8 * 1_024)
-        let (samples, p95, max, over50) = try await runConcurrencyLargeOutput(8, outputBytes: 8 * 1_024)
-        print(String(format: "[PERF-SUBAGENT-N8-8KB] samples=%d p95=%.2fms max=%.2fms over50ms=%d", samples, p95, max, over50))
-        XCTAssertLessThanOrEqual(p95, framePacingP95ThresholdMs)
-    }
 
     func testMeasureConcurrency8LargeOutputDurable300() async throws {
         _ = try await runConcurrencyDurable(8, outputBytes: 8 * 1_024, historicalRunCount: 300)

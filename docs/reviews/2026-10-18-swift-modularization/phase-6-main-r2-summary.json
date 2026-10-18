@@ -1,0 +1,166 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 12,
+      "passedTests" : 5060,
+      "skippedTests" : 17,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 12,
+  "finishTime" : 1792276821.523,
+  "passedTests" : 5060,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Thread running at User-interactive quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSCouncilRoomArchiveStoreTests.swift"
+    },
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Accessing State's value outside of being installed on a View. This will result in a constant Binding of the initial value and will not update.",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSSharedSettingsStoreProvidersWriteBackTests.swift"
+    }
+  ],
+  "skippedTests" : 17,
+  "startTime" : 1792275809.586,
+  "statistics" : [
+    {
+      "subtitle" : "1 test run",
+      "title" : "1 test collected performance metrics"
+    }
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "failed - Rendered task control did not appear: 删除 待删除任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2729,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedDeletePresentsConfirmationWithoutRemovingTask()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedDeletePresentsConfirmationWithoutRemovingTask",
+      "testName" : "testRenderedDeletePresentsConfirmationWithoutRemovingTask()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 保存任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2730,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedEditorSaveUpdatesExistingAction()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedEditorSaveUpdatesExistingAction",
+      "testName" : "testRenderedEditorSaveUpdatesExistingAction()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 保存任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2731,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedEditorValidationLeavesFieldsAndErrorVisible()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedEditorValidationLeavesFieldsAndErrorVisible",
+      "testName" : "testRenderedEditorValidationLeavesFieldsAndErrorVisible()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 运行任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2732,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedInputFailureDoesNotCloseOrSubmit()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedInputFailureDoesNotCloseOrSubmit",
+      "testName" : "testRenderedInputFailureDoesNotCloseOrSubmit()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 运行任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2733,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedInputPreparesLatestGoalOnceWithoutSubmitting()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedInputPreparesLatestGoalOnceWithoutSubmitting",
+      "testName" : "testRenderedInputPreparesLatestGoalOnceWithoutSubmitting()"
+    },
+    {
+      "failureText" : "failed - Rendered element did not appear: 还没有常用任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2734,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedListReloadsAfterRevisionAndRunsPlainTask()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedListReloadsAfterRevisionAndRunsPlainTask",
+      "testName" : "testRenderedListReloadsAfterRevisionAndRunsPlainTask()"
+    },
+    {
+      "failureText" : "failed - Rendered element did not appear: 保存任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2735,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedSearchExampleCannotReplaceNonemptyOrExistingTask()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedSearchExampleCannotReplaceNonemptyOrExistingTask",
+      "testName" : "testRenderedSearchExampleCannotReplaceNonemptyOrExistingTask()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 填入搜索示例",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2736,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedSearchExampleKeepsEnteredTitle()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedSearchExampleKeepsEnteredTitle",
+      "testName" : "testRenderedSearchExampleKeepsEnteredTitle()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 填入搜索示例",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2737,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksTests/testRenderedSearchExamplePersistsAndParameterizedRunConsumesAllSteps()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksTests/testRenderedSearchExamplePersistsAndParameterizedRunConsumesAllSteps",
+      "testName" : "testRenderedSearchExamplePersistsAndParameterizedRunConsumesAllSteps()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 保存任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2740,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksVisualTests/testSaveAndRunValidationFailuresAtNormalAndAccessibilityWidths()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksVisualTests/testSaveAndRunValidationFailuresAtNormalAndAccessibilityWidths",
+      "testName" : "testSaveAndRunValidationFailuresAtNormalAndAccessibilityWidths()"
+    },
+    {
+      "failureText" : "failed - Rendered task control did not appear: 填入搜索示例",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2741,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksVisualTests/testSearchExampleCreationAndLongStepInputAtNormalAndAccessibilityWidths()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksVisualTests/testSearchExampleCreationAndLongStepInputAtNormalAndAccessibilityWidths",
+      "testName" : "testSearchExampleCreationAndLongStepInputAtNormalAndAccessibilityWidths()"
+    },
+    {
+      "failureText" : "failed - Rendered element did not appear: 保存任务",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 2742,
+      "testIdentifierString" : "IOSPhoneControlSavedTasksVisualTests/testValidationErrorsAreVisibleWhenActionsAreActivatedFromBottomOfAccessibilityForm()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSPhoneControlSavedTasksVisualTests/testValidationErrorsAreVisibleWhenActionsAreActivatedFromBottomOfAccessibilityForm",
+      "testName" : "testValidationErrorsAreVisibleWhenActionsAreActivatedFromBottomOfAccessibilityForm()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "100% of failures",
+      "text" : "12 runs of 12 tests failed with failed: caught error: \"InvalidTransition { "
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "25% of failures",
+      "text" : "3 runs of 3 tests failed with failed - Rendered task control did not appear: 填入搜索示例"
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "25% of failures",
+      "text" : "3 runs of 3 tests failed with failed - Rendered task control did not appear: 保存任务"
+    }
+  ],
+  "totalTestCount" : 5089
+}

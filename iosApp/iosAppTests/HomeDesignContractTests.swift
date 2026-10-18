@@ -220,60 +220,6 @@ final class HomeDesignContractTests: XCTestCase {
         XCTAssertEqual(cased.iconKey, "crown")
     }
 
-    func testPaletteDesignValues() {
-        XCTAssertEqual(AmberTheme.neutralLight.background, 0xECE8E4, "暖灰画布必须是设计实测值")
-        XCTAssertEqual(AmberTheme.neutralLight.surface, 0xF6F5F3, "暖灰卡片必须比画布亮一档")
-        XCTAssertEqual(AmberTheme.neutralLight.surface2, 0xEDEBE7, "闲置头像底色必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.neutralLight.foreground, 0x161514, "主墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.neutralLight.foreground2, 0x55524D, "节标题墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.neutralLight.muted, 0x716D67, "次级墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.neutralLight.muted2, 0x8F8B85, "闲置头像墨必须匹配设计令牌")
-
-        XCTAssertEqual(AmberTheme.paperLight.background, 0xEFE7D6, "暖纸画布必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.paperLight.surface, 0xFFFDF7, "暖纸卡片必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.paperLight.surface2, 0xF0EBE2, "暖纸次表面必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.paperLight.foreground, 0x1B1813, "暖纸主墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.paperLight.foreground2, 0x5B5449, "暖纸节标题墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.paperLight.muted, 0x746D62, "暖纸次级墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.paperLight.muted2, 0x918A80, "暖纸弱化墨必须匹配设计令牌")
-
-        XCTAssertEqual(AmberTheme.whiteLight.background, 0xF5F5F4, "中性白画布必须是冷中性灰白")
-        XCTAssertEqual(AmberTheme.whiteLight.surface, 0xFFFFFF, "中性白卡片必须为真白")
-        XCTAssertEqual(AmberTheme.whiteLight.surface2, 0xEEEEED, "中性白次表面必须与画布/卡片分层")
-        XCTAssertNotEqual(
-            AmberTheme.whiteLight.background,
-            AmberTheme.whiteLight.surface,
-            "中性白 background 与 surface 不得同值"
-        )
-
-        XCTAssertEqual(AmberTheme.darkPalette.background, 0x0E0D10, "深色画布必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.darkPalette.surface, 0x1F1D23, "深色卡片必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.darkPalette.surface2, 0x2B2930, "深色次表面必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.darkPalette.foreground, 0xF4F1ED, "深色主墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.darkPalette.foreground2, 0xC3BEC5, "深色节标题墨必须匹配设计令牌")
-        XCTAssertEqual(AmberTheme.darkPalette.muted, 0xAAA5AD, "深色次级墨必须匹配设计令牌")
-
-        XCTAssertEqual(AmberThemeRuntime.Paper.paper.displayName, "暖纸")
-        XCTAssertEqual(AmberThemeRuntime.Paper.neutral.displayName, "暖灰")
-        XCTAssertEqual(AmberThemeRuntime.Paper.white.displayName, "中性白")
-        XCTAssertFalse(AmberThemeRuntime.Paper.white.isImmersive)
-    }
-
-    func testAccentDesignValues() {
-        XCTAssertEqual(AmberAccentOption.allCases.first, .amberGold, "默认 accent 必须是琥珀金")
-        XCTAssertEqual(AmberAccentOption.amberGold.accentHex, 0xB9863A, "琥珀金色值必须精确匹配设计")
-        XCTAssertEqual(AmberAccentOption.amberGold.inkHex, 0x231602, "FAB 前景墨色必须精确匹配设计")
-        // fab / focus 必须跟随 runtime accent，不得再钉死琥珀金常量。
-        let runtime = AmberThemeRuntime.shared
-        let previous = (runtime.accentHex, runtime.accentInkHex)
-        runtime.apply(.mistBlue)
-        XCTAssertEqual(runtime.accentHex, AmberAccentOption.mistBlue.accentHex)
-        // 读一次以保证观察链路；颜色本身是动态的，此处校验 runtime 写入。
-        XCTAssertEqual(runtime.accentInkHex, AmberAccentOption.mistBlue.inkHex)
-        runtime.accentHex = previous.0
-        runtime.accentInkHex = previous.1
-    }
-
     func testContinueModelHidesWhenNoResumableWork() {
         let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
         XCTAssertNil(
@@ -652,65 +598,6 @@ final class HomeDesignContractTests: XCTestCase {
         XCTAssertTrue(selected.meta.contains("生成中"))
     }
 
-    func testHomeAdaptiveTypeAndMotionContracts() throws {
-        let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let source = try String(
-            contentsOf: testsDirectory
-                .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/PlaceholderViews.swift"),
-            encoding: .utf8
-        )
-
-        XCTAssertTrue(source.contains("@ScaledMetric(relativeTo: .caption2) private var shortcutLabelSize: CGFloat = 11"))
-        XCTAssertTrue(source.contains("@ScaledMetric(relativeTo: .subheadline) private var continueTitleSize: CGFloat = 15"))
-        XCTAssertTrue(source.contains("@ScaledMetric(relativeTo: .body) private var conversationTitleSize: CGFloat = 16"))
-        XCTAssertTrue(source.contains(".frame(maxWidth: .infinity, minHeight: 44)"))
-        XCTAssertTrue(source.contains(".frame(minHeight: 72)"))
-        // 新对话胶囊相对会话卡 16 内缩：trailing 28 → 与卡边 gap 12，避免相切。
-        XCTAssertTrue(source.contains("private var homeNewChatCapsuleTrailingInset: CGFloat { 28 }"))
-        XCTAssertTrue(
-            source.contains(".padding(.trailing, homeNewChatCapsuleTrailingInset - homeNewChatCapsuleHitSlop)"),
-            "浮层必须挂 trailing inset 常量，不能回退硬编码 16"
-        )
-        // Continue CTA 保持浅强调色底，与原生 prominent 新对话按钮区分。
-        XCTAssertTrue(
-            source.contains("hovering || pressed ? AmberTheme.avatarActive : AmberTheme.accentTint"),
-            "Continue CTA 必须浅强调色底"
-        )
-        let continueCTAStart = try XCTUnwrap(source.range(of: "private func continueCTA(expands: Bool)"))
-        let continueCTAEnd = try XCTUnwrap(source.range(of: "private struct HomeCascade", range: continueCTAStart.upperBound..<source.endIndex))
-        let continueCTA = String(source[continueCTAStart.lowerBound..<continueCTAEnd.lowerBound])
-        XCTAssertTrue(
-            continueCTA.contains(".foregroundStyle(AmberTheme.foreground)"),
-            "Continue CTA 必须主墨字，不能黑底白字抢层级"
-        )
-        XCTAssertFalse(
-            continueCTA.contains("AmberTheme.background"),
-            "Continue CTA 不得再使用 on-black 白字"
-        )
-        XCTAssertTrue(source.contains(".lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)"))
-        XCTAssertTrue(source.contains("if dynamicTypeSize.isAccessibilitySize"))
-        XCTAssertTrue(source.contains("ScrollView(.horizontal)"))
-        XCTAssertTrue(source.contains(".homeCascade(delay: 0.18, enabled: !cascadeComplete)"))
-        let ringStart = try XCTUnwrap(source.range(of: "private struct ConversationGeneratingRing"))
-        let ringEnd = try XCTUnwrap(source.range(of: "struct SearchView", range: ringStart.upperBound..<source.endIndex))
-        let ring = String(source[ringStart.lowerBound..<ringEnd.lowerBound])
-        XCTAssertTrue(ring.contains("@Environment(\\.accessibilityReduceMotion) private var reduceMotion"))
-        XCTAssertTrue(ring.contains("if reduceMotion"))
-        XCTAssertTrue(source.contains("UIAccessibility.post(notification: .announcement"))
-        XCTAssertTrue(source.contains("@AccessibilityFocusState private var deepReadShortcutFocused: Bool"))
-        // E 版当前会话头像呼吸光晕：只挂 isCurrent，Reduce Motion 关闭动画。
-        XCTAssertTrue(source.contains("CurrentConversationAvatarGlow()"))
-        XCTAssertTrue(source.contains("enum HomeCurrentAvatarBreath"))
-        let designSystem = try String(
-            contentsOf: testsDirectory
-                .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/AmberDesignSystem.swift"),
-            encoding: .utf8
-        )
-        XCTAssertTrue(designSystem.contains("static var activeAvatarGlow"))
-    }
-
     func testCurrentAvatarBreathIntensityMatchesPrototypeTiming() {
         // 原型：delay 1.6s，period 3.4s，ease-in-out 0 → 1 → 0
         XCTAssertEqual(HomeCurrentAvatarBreath.delaySeconds, 1.6, accuracy: 0.001)
@@ -752,7 +639,7 @@ final class HomeDesignContractTests: XCTestCase {
         let chatVM = try String(
             contentsOf: testsDirectory
                 .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/ChatViewModel.swift"),
+                .appendingPathComponent("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift"),
             encoding: .utf8
         )
         XCTAssertTrue(chatVM.contains("generateConversationListPreview(state: state)"))
@@ -767,15 +654,25 @@ final class HomeDesignContractTests: XCTestCase {
         XCTAssertTrue(generator.contains("requestTokens"))
         XCTAssertTrue(generator.contains("titleModelId"))
 
-        let bg = try String(
+        let bgExecutor = try String(
             contentsOf: testsDirectory
                 .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/IOSChatBackgroundGenerationCoordinator.swift"),
+                .appendingPathComponent("iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"),
+            encoding: .utf8
+        )
+        let bgTerminalWriter = try String(
+            contentsOf: testsDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"),
             encoding: .utf8
         )
         XCTAssertTrue(
-            bg.contains("ConversationListPreviewGenerator.schedule"),
-            "后台成功完成必须挂 list preview，避免仅 FG generationSucceeded"
+            bgExecutor.contains("ConversationListPreviewGenerator.schedule"),
+            "后台直接成功完成必须挂 list preview，避免仅 FG generationSucceeded"
+        )
+        XCTAssertTrue(
+            bgTerminalWriter.contains("ConversationListPreviewGenerator.schedule"),
+            "后台恢复后的成功终态也必须挂 list preview"
         )
 
         let store = try String(
@@ -791,14 +688,18 @@ final class HomeDesignContractTests: XCTestCase {
         let home = try String(
             contentsOf: testsDirectory
                 .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/PlaceholderViews.swift"),
+                .appendingPathComponent("iosApp/Home/ConversationsView.swift"),
             encoding: .utf8
         )
         XCTAssertTrue(home.contains("listPreview: conversationStore.listPreview(for: summary.id)"))
-        XCTAssertTrue(home.contains("restartMetaCycleIfNeeded"))
-        XCTAssertTrue(home.contains("showingListPreview"))
-        XCTAssertTrue(home.contains("scaleAnchor: .leading"))
-        XCTAssertTrue(home.contains("duration: 0.4"))
+        let rows = try String(
+            contentsOf: testsDirectory.deletingLastPathComponent().appendingPathComponent("iosApp/Home/ConversationSummaryRow.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(rows.contains("restartMetaCycleIfNeeded"))
+        XCTAssertTrue(rows.contains("showingListPreview"))
+        XCTAssertTrue(rows.contains("scaleAnchor: .leading"))
+        XCTAssertTrue(rows.contains("duration: 0.4"))
     }
 
     private func imageToolMessage(

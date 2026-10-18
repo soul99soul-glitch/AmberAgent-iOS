@@ -161,7 +161,8 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         let result = await runner.act(action, pageAnchorRef: pageAnchorRef, pageAnchorRegion: pageAnchorRegion,
                                 requireUnchangedObservation: requireUnchangedObservation)
         // 文字已落盘：立刻收键盘，后续定位发送控件时不会被键盘/候选栏遮住。
-        if case .type = action, result == .completed {
+        if case .type = action, result == .completed,
+           !Task.isCancelled, controller.canDispatchAction(runID: runID) {
             _ = await runner.act(.dismissKeyboard)
         }
         return result

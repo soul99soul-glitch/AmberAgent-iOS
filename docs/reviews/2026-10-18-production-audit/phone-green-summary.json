@@ -1,0 +1,9 @@
+{
+  "suite": "AmberPhoneControlTests",
+  "tests": 107,
+  "failures": 0,
+  "errors": 0,
+  "sourceLog": "/tmp/amber-audit-20261018-current/phone-green.log",
+  "sourceLogSHA256": "2c35fe2139ea4ffe564d6b34af2ab976b8ced3d342991969392116c31d603011",
+  "evidence": "Executed 107 tests, with 0 failures (0 unexpected) in 0.983 (1.002) seconds"
+}

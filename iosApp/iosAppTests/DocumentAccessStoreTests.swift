@@ -4,6 +4,25 @@ import UIKit
 
 @MainActor
 final class DocumentAccessStoreTests: XCTestCase {
+    func testPptxSlidesAreReadInNumericOrderInsteadOfArchiveOrder() async throws {
+        let archive = makeStoredZip(entries: [1, 10, 2].map { number in
+            ("ppt/slides/slide\(number).xml", Data("<a:p><a:r><a:t>content-\(number)</a:t></a:r></a:p>".utf8))
+        })
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("pptx")
+        try archive.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = await DocumentAccessStore.previewFileForWorkspace(
+            url: url,
+            fileType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            maxReadableBytes: 20 * 1024 * 1024,
+            maxPreviewBytes: Int.max,
+            maxPreviewCharacters: Int.max
+        )
+        let preview = try result.get()
+
+        XCTAssertEqual(preview.preview, "[Slide 1] content-1 [Slide 2] content-2 [Slide 3] content-10")
+    }
+
     func testExpiredGrantIsRejected() async throws {
         let store = DocumentAccessStore()
         let createdAt = Date(timeIntervalSince1970: 100)

@@ -1,0 +1,1199 @@
+{
+  "AgentActivityDeepLinkTests": {
+    "Passed": 9
+  },
+  "AgentActivityPresentationTests": {
+    "Passed": 43
+  },
+  "IOSAlarmKitTests": {
+    "Passed": 9
+  },
+  "AgentLiveActivityControllerPendingStartTests": {
+    "Passed": 23
+  },
+  "IOSAppDeepLinkTests": {
+    "Passed": 5
+  },
+  "AgentRuntimeDaoListAllRunsTests": {
+    "Passed": 1
+  },
+  "IOSLocalNotificationTests": {
+    "Passed": 9
+  },
+  "AmberThemeDesignTests": {
+    "Passed": 5
+  },
+  "IOSPersonalContextPickerTests": {
+    "Passed": 8
+  },
+  "AmberThemePackTests": {
+    "Passed": 63
+  },
+  "IOSShareSupportTests": {
+    "Passed": 18
+  },
+  "BackgroundAudioKeepAliveTests": {
+    "Passed": 6
+  },
+  "IOSWeatherTests": {
+    "Passed": 5
+  },
+  "BackgroundGenerationKeepAliveTests": {
+    "Passed": 43
+  },
+  "IOSWorkoutKitTests": {
+    "Passed": 9
+  },
+  "ChatArtifactActionsTests": {
+    "Passed": 12
+  },
+  "MacGatewayTests": {
+    "Passed": 5
+  },
+  "ChatArtifactAnchorLayoutTests": {
+    "Passed": 1
+  },
+  "ChatArtifactIntegrationTests": {
+    "Passed": 3
+  },
+  "ChatArtifactShelfLayoutTests": {
+    "Passed": 2
+  },
+  "ChatArtifactShelfStateTests": {
+    "Passed": 3
+  },
+  "ChatArtifactTextDiffTests": {
+    "Passed": 5
+  },
+  "ChatComposerVisionContextTests": {
+    "Passed": 28
+  },
+  "ChatContextSnapshotTests": {
+    "Passed": 13
+  },
+  "ChatExternalToolApprovalTests": {
+    "Passed": 11
+  },
+  "ChatImageGenerationReferenceTests": {
+    "Passed": 9
+  },
+  "ChatIslandNavigationTests": {
+    "Passed": 8
+  },
+  "ChatIslandPresentationTests": {
+    "Passed": 26
+  },
+  "ChatMarkdownCJKEmphasisTests": {
+    "Passed": 8
+  },
+  "ChatMarkdownCodeBlockTests": {
+    "Passed": 2
+  },
+  "ChatMarkdownMediaTests": {
+    "Passed": 20
+  },
+  "ChatMarkdownRenderingTests": {
+    "Passed": 39
+  },
+  "ChatMarkdownSourceIntegrityTests": {
+    "Passed": 5
+  },
+  "ChatMediaTests": {
+    "Passed": 14
+  },
+  "ChatMemoryContextToolTests": {
+    "Passed": 17
+  },
+  "ChatMessagePresentationTests": {
+    "Passed": 23
+  },
+  "ChatMessageProjectionTests": {
+    "Passed": 32
+  },
+  "ChatMessageWidthOverflowTests": {
+    "Passed": 7
+  },
+  "ChatNativeTimelineReplayCompletionTests": {
+    "Passed": 10
+  },
+  "ChatNativeTimelineReplayHistoryTests": {
+    "Passed": 10
+  },
+  "ChatNativeTimelineReplayPerformanceTests": {
+    "Passed": 7
+  },
+  "ChatParagraphLeadingInsetProbeTests": {
+    "Passed": 2
+  },
+  "ChatPartSignatureTests": {
+    "Passed": 5
+  },
+  "ChatPhoneToolGroupHeaderLayoutTests": {
+    "Passed": 3
+  },
+  "ChatPhoneToolGroupingTests": {
+    "Passed": 11
+  },
+  "ChatReasoningCardTests": {
+    "Passed": 26
+  },
+  "ChatRecapLayoutTests": {
+    "Passed": 1
+  },
+  "ChatRowContentHashCacheTests": {
+    "Passed": 12
+  },
+  "ChatRowDigestTests": {
+    "Passed": 12
+  },
+  "ChatSendDeferredGenerationTests": {
+    "Passed": 4
+  },
+  "ChatStreamingPerfBaselineTests": {
+    "Passed": 1
+  },
+  "ChatStreamingTableLayoutTests": {
+    "Passed": 2
+  },
+  "ChatStructuralRetypeReplayTests": {
+    "Passed": 2
+  },
+  "ChatSubagentConversationLinkTests": {
+    "Passed": 2
+  },
+  "ChatSwiftUIStreamReplayTests": {
+    "Passed": 10
+  },
+  "ChatToolGlyphMappingTests": {
+    "Passed": 19
+  },
+  "ChatToolTimelineWidthOverflowTests": {
+    "Passed": 20
+  },
+  "ChatTopBarArrivalTests": {
+    "Passed": 7
+  },
+  "ChatTopBarDockTests": {
+    "Passed": 5
+  },
+  "ChatTopBarLayoutTests": {
+    "Passed": 2
+  },
+  "ChatVideoTests": {
+    "Passed": 14
+  },
+  "ChatViewModelConcurrentConversationTests": {
+    "Passed": 4
+  },
+  "ChatViewModelGenerationParamsTests": {
+    "Passed": 29
+  },
+  "ChatViewModelSearchToolDeclarationTests": {
+    "Passed": 3
+  },
+  "ChatViewModelSelectedFileContextTests": {
+    "Passed": 10
+  },
+  "ChatViewportPolicyTests": {
+    "Passed": 4
+  },
+  "ConversationActivityCenterTests": {
+    "Passed": 13
+  },
+  "ConversationArtifactIndexTests": {
+    "Passed": 18
+  },
+  "ConversationRecapTests": {
+    "Passed": 11
+  },
+  "CouncilSourceMaterialsTests": {
+    "Passed": 6
+  },
+  "DeepReadPersistenceRecoveryRegressionTests": {
+    "Passed": 2
+  },
+  "DocumentAccessStoreTests": {
+    "Passed": 37
+  },
+  "HomeDesignContractTests": {
+    "Passed": 15
+  },
+  "IOSAgentToolEngineKernelHookTests": {
+    "Passed": 10
+  },
+  "IOSAgentToolEngineStreamingTests": {
+    "Passed": 13
+  },
+  "IOSAgentToolEngineTests": {
+    "Passed": 18
+  },
+  "IOSAgentToolEngineTransactionTests": {
+    "Passed": 14
+  },
+  "IOSAmberShellTests": {
+    "Passed": 10
+  },
+  "IOSAmberShellWorkspaceStoreTests": {
+    "Passed": 3
+  },
+  "IOSAppLanguageTests": {
+    "Passed": 4
+  },
+  "IOSAppleSignInTests": {
+    "Passed": 10
+  },
+  "IOSBackendServicesTests": {
+    "Passed": 4
+  },
+  "IOSBackgroundCompletionMergeTests": {
+    "Passed": 8
+  },
+  "IOSBackgroundLifecycleLogTests": {
+    "Passed": 3
+  },
+  "IOSBoardPersistenceTests": {
+    "Passed": 30
+  },
+  "IOSCapabilityRegistryTests": {
+    "Passed": 14
+  },
+  "IOSChatBackgroundExecutionTests": {
+    "Passed": 9
+  },
+  "IOSChatBackgroundPhoneActivityTests": {
+    "Passed": 1
+  },
+  "IOSChatBackgroundStaleSweepTests": {
+    "Passed": 9
+  },
+  "IOSChatBackgroundTerminalBoundaryTests": {
+    "Passed": 3
+  },
+  "IOSChatBottomOverlayLayoutTests": {
+    "Passed": 1
+  },
+  "IOSChatDetachedResponseTerminalTests": {
+    "Passed": 10
+  },
+  "IOSChatDurableOwnershipTests": {
+    "Passed": 8
+  },
+  "IOSChatForegroundTerminalBoundaryTests": {
+    "Passed": 2
+  },
+  "IOSChatKernelLoopRoutingTests": {
+    "Passed": 4
+  },
+  "IOSChatKernelRunHostHandoffTests": {
+    "Passed": 15
+  },
+  "IOSChatKernelRunHostPhoneProgressTests": {
+    "Passed": 7
+  },
+  "IOSChatKernelRunHostTests": {
+    "Passed": 15
+  },
+  "IOSCloudKitSyncProviderTests": {
+    "Passed": 5
+  },
+  "IOSCodexModelCatalogTests": {
+    "Passed": 3
+  },
+  "IOSCodexProviderResolverTests": {
+    "Passed": 5
+  },
+  "IOSContextCompactionCoordinatorTests": {
+    "Passed": 18
+  },
+  "IOSConversationArtifactStoreTests": {
+    "Passed": 4
+  },
+  "IOSConversationRecapStoreTests": {
+    "Passed": 8
+  },
+  "IOSConversationStartupTests": {
+    "Passed": 3
+  },
+  "IOSConversationStoreBranchingTests": {
+    "Passed": 18
+  },
+  "IOSConversationStoreConcurrencyTests": {
+    "Passed": 13
+  },
+  "IOSConversationStorePersistenceTests": {
+    "Passed": 11
+  },
+  "IOSConversationStoreTests": {
+    "Passed": 17
+  },
+  "IOSCouncilPlanningAndLiveTests": {
+    "Passed": 27
+  },
+  "IOSCouncilRoomArchiveStoreTests": {
+    "Passed": 18
+  },
+  "IOSCouncilRoomExecutionTests": {
+    "Passed": 17
+  },
+  "IOSCouncilRunnerMechanicsTests": {
+    "Passed": 19
+  },
+  "IOSCouncilRuntimeIntegrationTests": {
+    "Passed": 7
+  },
+  "IOSCouncilRuntimeOwnershipTests": {
+    "Passed": 18
+  },
+  "IOSDeepReadPipelineTests": {
+    "Passed": 40
+  },
+  "IOSDeepReadStructuredRendererTests": {
+    "Passed": 12
+  },
+  "IOSDeepReadTemplateStoreTests": {
+    "Passed": 2
+  },
+  "IOSDurableRunStoreTests": {
+    "Passed": 8
+  },
+  "IOSEmbeddedIshEventLoopTests": {
+    "Passed": 8
+  },
+  "IOSEmbeddedIshJobRuntimeTests": {
+    "Passed": 10
+  },
+  "IOSEmbeddedIshUTF8StreamDecoderTests": {
+    "Passed": 6
+  },
+  "IOSExecNestedToolTests": {
+    "Passed": 7
+  },
+  "IOSForegroundToolExecutorsTests": {
+    "Passed": 7
+  },
+  "IOSFreeSearchAggregatorTests": {
+    "Passed": 14,
+    "Skipped": 1
+  },
+  "IOSGeminiProviderTests": {
+    "Passed": 53
+  },
+  "IOSGenerativeWidgetParserTests": {
+    "Passed": 36
+  },
+  "IOSGenerativeWidgetPayloadDetectorTests": {
+    "Passed": 7
+  },
+  "IOSGenerativeWidgetSanitizerTests": {
+    "Passed": 12
+  },
+  "IOSGrokWebStreamTerminalContractTests": {
+    "Passed": 2
+  },
+  "IOSHealthSummaryTests": {
+    "Passed": 10
+  },
+  "IOSImageGenerationRepositoryTests": {
+    "Passed": 15
+  },
+  "IOSIntelligentUIComponentInteractionTests": {
+    "Passed": 1
+  },
+  "IOSIntelligentUIComponentTests": {
+    "Passed": 13
+  },
+  "IOSIntelligentUIConversationLifecycleTests": {
+    "Passed": 7
+  },
+  "IOSIntelligentUILiveProviderTests": {
+    "Skipped": 2
+  },
+  "IOSIntelligentUINumericBindingTests": {
+    "Passed": 10
+  },
+  "IOSIntelligentUINumericBindingVisualTests": {
+    "Passed": 2
+  },
+  "IOSIntelligentUIProtocolTests": {
+    "Passed": 33
+  },
+  "IOSIntelligentUIRenderingRegressionTests": {
+    "Passed": 3
+  },
+  "IOSIntelligentUIRequestPolicyTests": {
+    "Passed": 11
+  },
+  "IOSIntelligentUIStateStoreTests": {
+    "Passed": 9
+  },
+  "IOSIntelligentUIStreamingPreviewRenderingTests": {
+    "Passed": 2
+  },
+  "IOSIntelligentUIStreamingPreviewTests": {
+    "Passed": 12
+  },
+  "IOSIntelligentUIStudyTests": {
+    "Passed": 12
+  },
+  "IOSIntelligentUIStudyVisualTests": {
+    "Passed": 1
+  },
+  "IOSIntelligentUISubmissionTests": {
+    "Passed": 14
+  },
+  "IOSIntelligentUITerminalTests": {
+    "Passed": 5
+  },
+  "IOSIntelligentUIVisualTests": {
+    "Passed": 2
+  },
+  "IOSInteractivePopGestureTests": {
+    "Passed": 3
+  },
+  "IOSJevApprovalTriageTests": {
+    "Passed": 11
+  },
+  "IOSJevAutoApprovalGateTests": {
+    "Passed": 10
+  },
+  "IOSJevBaselineCorpusTests": {
+    "Passed": 11
+  },
+  "IOSJevCalibrationTests": {
+    "Passed": 7
+  },
+  "IOSJevClientTests": {
+    "Passed": 32
+  },
+  "IOSJevCompletionCheckTests": {
+    "Passed": 11
+  },
+  "IOSJevContextSelectionTests": {
+    "Passed": 38
+  },
+  "IOSJevDecisionCoordinatorTests": {
+    "Passed": 37
+  },
+  "IOSJevInjectionScreeningTests": {
+    "Passed": 8
+  },
+  "IOSJevMemoryRecallTests": {
+    "Passed": 24
+  },
+  "IOSJevMultimodalCoordinatorTests": {
+    "Passed": 7
+  },
+  "IOSJevPhoneControlServiceTests": {
+    "Passed": 40
+  },
+  "IOSJevPhoneImageTests": {
+    "Passed": 6
+  },
+  "IOSJevSettingsTests": {
+    "Passed": 40
+  },
+  "IOSJevSettingsViewLifecycleTests": {
+    "Passed": 1
+  },
+  "IOSJevSubAgentIntentTests": {
+    "Passed": 11
+  },
+  "IOSJevSubAgentModelRoutingTests": {
+    "Passed": 10
+  },
+  "IOSJevToolDiscoveryTests": {
+    "Passed": 18
+  },
+  "IOSJevToolRetentionTests": {
+    "Passed": 10
+  },
+  "IOSJevWebMountContractTests": {
+    "Passed": 27
+  },
+  "IOSJevWebMountLoopTests": {
+    "Passed": 34
+  },
+  "IOSJevWebMountSelectCandidateTests": {
+    "Passed": 3
+  },
+  "IOSJsCellTests": {
+    "Passed": 22
+  },
+  "IOSJsSandboxEngineTests": {
+    "Passed": 45
+  },
+  "IOSLiveProviderSmokeTests": {
+    "Skipped": 1
+  },
+  "IOSLocalToolExecutorTests": {
+    "Passed": 12
+  },
+  "IOSMailboxDeliveryTests": {
+    "Passed": 15
+  },
+  "IOSMcpClientTests": {
+    "Passed": 41
+  },
+  "IOSMcpConfigStoreTests": {
+    "Passed": 10
+  },
+  "IOSMcpExpandedToolTests": {
+    "Passed": 12
+  },
+  "IOSMcpManagerTests": {
+    "Passed": 10
+  },
+  "IOSMemoryCitationTests": {
+    "Passed": 16
+  },
+  "IOSMemoryConsolidationTests": {
+    "Passed": 14
+  },
+  "IOSMemoryExtractionTests": {
+    "Passed": 17
+  },
+  "IOSMemoryLibraryTests": {
+    "Passed": 7
+  },
+  "IOSMemoryMarkdownStoreTests": {
+    "Passed": 5
+  },
+  "IOSMemoryPersistenceTests": {
+    "Passed": 8
+  },
+  "IOSMemoryPollutionTests": {
+    "Passed": 10
+  },
+  "IOSMemoryRecallPolicyTests": {
+    "Passed": 17
+  },
+  "IOSMemoryUsageMarkingTests": {
+    "Passed": 7
+  },
+  "IOSMiniAppBridgeRuntimeTests": {
+    "Passed": 33
+  },
+  "IOSMiniAppChatMessageFactoryTests": {
+    "Passed": 18
+  },
+  "IOSMiniAppDeviceCapabilitiesTests": {
+    "Passed": 10
+  },
+  "IOSMiniAppDocumentLifecycleTests": {
+    "Passed": 2
+  },
+  "IOSMiniAppNumericParametersTests": {
+    "Passed": 1
+  },
+  "IOSMiniAppOutputParserTests": {
+    "Passed": 9
+  },
+  "IOSMiniAppRepositoryTests": {
+    "Passed": 23
+  },
+  "IOSMiniAppSystemSDKTests": {
+    "Passed": 5
+  },
+  "IOSMiniAppThemeBridgeTests": {
+    "Passed": 6
+  },
+  "IOSMiniAppVisualEvidenceTests": {
+    "Passed": 3
+  },
+  "IOSModelCredentialTransactionTests": {
+    "Passed": 4
+  },
+  "IOSNativeGenerationMotionTests": {
+    "Passed": 2,
+    "Skipped": 1
+  },
+  "IOSNovelCreationWiringTests": {
+    "Passed": 47
+  },
+  "IOSNovelProjectToolAssemblyTests": {
+    "Passed": 2
+  },
+  "IOSNovelProjectToolExecutorTests": {
+    "Passed": 35
+  },
+  "IOSOrchestrationListInterruptTerminalTests": {
+    "Passed": 11
+  },
+  "IOSOrchestrationPoolRoutingTests": {
+    "Passed": 6
+  },
+  "IOSOrchestrationScopeViewModelTests": {
+    "Passed": 7
+  },
+  "IOSOrchestrationTerminalOwnershipTests": {
+    "Passed": 6
+  },
+  "IOSOrchestrationToolTests": {
+    "Passed": 12
+  },
+  "IOSP1BackupTests": {
+    "Passed": 9
+  },
+  "IOSP1Batch2Tests": {
+    "Passed": 8
+  },
+  "IOSP1BatchTests": {
+    "Passed": 3
+  },
+  "IOSParityRedLightTests": {
+    "Passed": 61
+  },
+  "IOSPermissionScopeRegressionTests": {
+    "Passed": 3
+  },
+  "IOSPermissionStoreTests": {
+    "Passed": 8
+  },
+  "IOSPermissionsStatusSnapshotTests": {
+    "Passed": 11
+  },
+  "IOSPhoneActionVerificationTests": {
+    "Passed": 8
+  },
+  "IOSPhoneAutomationRequestPolicyTests": {
+    "Passed": 5
+  },
+  "IOSPhoneControlCatalogTests": {
+    "Passed": 8
+  },
+  "IOSPhoneControlControllerTests": {
+    "Passed": 46
+  },
+  "IOSPhoneControlHandoffExecutorTests": {
+    "Passed": 24
+  },
+  "IOSPhoneControlLocalTunnelTests": {
+    "Passed": 20
+  },
+  "IOSPhoneControlSavedTasksTests": {
+    "Passed": 12
+  },
+  "IOSPhoneControlSavedTasksVisualTests": {
+    "Passed": 4
+  },
+  "IOSPhoneControlSelfDiscoveryTests": {
+    "Passed": 4
+  },
+  "IOSPhoneControlServiceInspectionTests": {
+    "Passed": 22
+  },
+  "IOSPhoneControlSettingsVisualTests": {
+    "Passed": 2
+  },
+  "IOSPhoneControlToolExecutorTests": {
+    "Passed": 19
+  },
+  "IOSPhoneFlowTests": {
+    "Passed": 28
+  },
+  "IOSPhoneGoalLoopTests": {
+    "Passed": 77
+  },
+  "IOSPhoneGoalToolIntegrationTests": {
+    "Passed": 18
+  },
+  "IOSPhoneGoalVerificationTests": {
+    "Passed": 20
+  },
+  "IOSPhoneListCollectionTests": {
+    "Passed": 27
+  },
+  "IOSPhoneScreenTextTests": {
+    "Passed": 5
+  },
+  "IOSPhoneScrollSearchTests": {
+    "Passed": 12
+  },
+  "IOSPhoneToolPresentationTests": {
+    "Passed": 13
+  },
+  "IOSPluginCommandTests": {
+    "Passed": 6
+  },
+  "IOSPluginIntegrationTests": {
+    "Passed": 23
+  },
+  "IOSPluginJSONSchemaTests": {
+    "Passed": 5
+  },
+  "IOSProviderConfigToolTests": {
+    "Passed": 20
+  },
+  "IOSRecipeApprovalCheckpointTests": {
+    "Passed": 13
+  },
+  "IOSRecipeHotReloadTests": {
+    "Passed": 6
+  },
+  "IOSRecipeLifecycleTests": {
+    "Passed": 4
+  },
+  "IOSReleaseConfigurationTests": {
+    "Passed": 3
+  },
+  "IOSRunSnapshotTests": {
+    "Passed": 4
+  },
+  "IOSRuntimeStatusToolTests": {
+    "Passed": 11
+  },
+  "IOSSSHBackendIntegrationTests": {
+    "Passed": 2
+  },
+  "IOSSSHCredentialTests": {
+    "Passed": 7
+  },
+  "IOSSSHOutputRedactorTests": {
+    "Passed": 4
+  },
+  "IOSSSHPrivateKeyTests": {
+    "Passed": 7
+  },
+  "IOSSSHProfileTests": {
+    "Passed": 4
+  },
+  "IOSSavedActionIntentResolverTests": {
+    "Passed": 6
+  },
+  "IOSSearchExecutorTests": {
+    "Passed": 46,
+    "Skipped": 1
+  },
+  "IOSSessionReadToolTests": {
+    "Passed": 12
+  },
+  "IOSSettingsWiringTests": {
+    "Passed": 28
+  },
+  "IOSSharedQuickActionsTests": {
+    "Passed": 9
+  },
+  "IOSSharedSettingsStoreCouncilSeatTests": {
+    "Passed": 4
+  },
+  "IOSSharedSettingsStoreProvidersWriteBackTests": {
+    "Passed": 30
+  },
+  "IOSSharedSettingsStoreSkillWriteBackTests": {
+    "Passed": 7
+  },
+  "IOSSharedSettingsStoreSubAgentOverrideTests": {
+    "Passed": 6
+  },
+  "IOSSkillFileStoreTests": {
+    "Passed": 13
+  },
+  "IOSSkillInjectionAndIOErrorTests": {
+    "Passed": 9
+  },
+  "IOSSkillMcpToolsTests": {
+    "Passed": 38
+  },
+  "IOSSteerQueueTests": {
+    "Passed": 18
+  },
+  "IOSStoreKitTests": {
+    "Passed": 15
+  },
+  "IOSSubAgentActivityLayoutTests": {
+    "Passed": 2
+  },
+  "IOSSubAgentActivityStoreTests": {
+    "Passed": 11
+  },
+  "IOSSubAgentEngineRunnerTests": {
+    "Passed": 23
+  },
+  "IOSSubAgentModelPoolTests": {
+    "Passed": 3
+  },
+  "IOSSubAgentOutputTests": {
+    "Passed": 5
+  },
+  "IOSSyncBackupTests": {
+    "Passed": 17
+  },
+  "IOSSystemPermissionCoordinatorTests": {
+    "Passed": 7
+  },
+  "IOSTTSPlayerTests": {
+    "Passed": 3
+  },
+  "IOSTerminalCapabilityContractTests": {
+    "Passed": 2
+  },
+  "IOSTerminalSSHRuntimeTests": {
+    "Passed": 26
+  },
+  "IOSThemePackToolTests": {
+    "Passed": 21
+  },
+  "IOSThreadMessagingTests": {
+    "Passed": 20
+  },
+  "IOSToolArgumentsFailClosedTests": {
+    "Passed": 9
+  },
+  "IOSToolBoundaryTests": {
+    "Passed": 15
+  },
+  "IOSToolImageRequestBudgetTests": {
+    "Passed": 12
+  },
+  "IOSToolLoopGuardTests": {
+    "Passed": 19
+  },
+  "IOSToolRecoveryTests": {
+    "Passed": 34
+  },
+  "IOSToolRuntimeTests": {
+    "Passed": 18
+  },
+  "IOSToolSearchExposureTests": {
+    "Passed": 14
+  },
+  "IOSUIGenerationMotionTests": {
+    "Passed": 11
+  },
+  "IOSWatchActivityRecoveryPerformanceTests": {
+    "Passed": 2
+  },
+  "IOSWatchCompanionServiceTests": {
+    "Passed": 19
+  },
+  "IOSWebMountActTests": {
+    "Passed": 11
+  },
+  "IOSWebMountAutomationContractTests": {
+    "Passed": 20
+  },
+  "IOSWebMountDesktopBackendTests": {
+    "Passed": 13
+  },
+  "IOSWebMountDesktopVisualTests": {
+    "Passed": 1
+  },
+  "IOSWebMountFakeIPTests": {
+    "Passed": 2
+  },
+  "IOSWebMountLiteralDesktopInputTests": {
+    "Passed": 4
+  },
+  "IOSWebMountOutputBudgetTests": {
+    "Passed": 4
+  },
+  "IOSWebMountPersistentSessionRestoreTests": {
+    "Passed": 1
+  },
+  "IOSWebMountPublicDNSTests": {
+    "Passed": 3
+  },
+  "IOSWebMountRegistryPolicyTests": {
+    "Passed": 15
+  },
+  "IOSWebMountReloadDestinationTests": {
+    "Passed": 4
+  },
+  "IOSWebMountRemoteSessionTests": {
+    "Passed": 11
+  },
+  "IOSWebMountRuntimeEvidenceTests": {
+    "Passed": 20
+  },
+  "IOSWebMountSemanticTargetTests": {
+    "Passed": 13
+  },
+  "IOSWebMountSessionToolTests": {
+    "Passed": 15
+  },
+  "IOSWebMountSiteMemoryLayoutTests": {
+    "Passed": 5
+  },
+  "IOSWebMountSiteMemoryTests": {
+    "Passed": 12
+  },
+  "IOSWebMountVisionReaderTests": {
+    "Passed": 15
+  },
+  "IOSWebMountVisualApprovalTests": {
+    "Passed": 13
+  },
+  "IOSWebMountWKRuntimeTests": {
+    "Passed": 9
+  },
+  "IOSWorkspaceTerminalToolTests": {
+    "Passed": 13
+  },
+  "MiniAppHtmlValidatorTests": {
+    "Passed": 6
+  },
+  "NativeTimelineScrollCoreTests": {
+    "Passed": 55
+  },
+  "NovelAmberSettingsPresentationTests": {
+    "Passed": 2
+  },
+  "NovelBatchPolishTests": {
+    "Passed": 10
+  },
+  "NovelBranchLifecycleTests": {
+    "Passed": 7
+  },
+  "NovelChapterPlanProposalTests": {
+    "Passed": 7
+  },
+  "NovelChapterReplacementStateTests": {
+    "Passed": 2
+  },
+  "NovelCharacterIdentityCandidateTests": {
+    "Passed": 12
+  },
+  "NovelCollaborationModeTests": {
+    "Passed": 10
+  },
+  "NovelCollectionTests": {
+    "Passed": 12
+  },
+  "NovelCompatibilityLineageTests": {
+    "Passed": 6
+  },
+  "NovelContinuityAuditTests": {
+    "Passed": 38
+  },
+  "NovelContinuityAuditViewModelTests": {
+    "Passed": 4
+  },
+  "NovelCreationActionPresentationTests": {
+    "Passed": 12
+  },
+  "NovelCreationModuleTests": {
+    "Passed": 14
+  },
+  "NovelCreationPresentationTests": {
+    "Passed": 28
+  },
+  "NovelCreationProjectPresentationTests": {
+    "Passed": 11
+  },
+  "NovelCreationQuickStartTests": {
+    "Passed": 7,
+    "Failed": 1
+  },
+  "NovelCreationSyncAndRecoveryTests": {
+    "Passed": 9
+  },
+  "NovelCreationViewModelTests": {
+    "Passed": 27
+  },
+  "NovelCreationWorkspaceMutationTests": {
+    "Passed": 12
+  },
+  "NovelDocumentValidationTests": {
+    "Passed": 38
+  },
+  "NovelDomainIntegrityRegressionTests": {
+    "Passed": 5
+  },
+  "NovelFactOutputValidationAnchorTests": {
+    "Passed": 7
+  },
+  "NovelFactTransactionLifecycleTests": {
+    "Passed": 39
+  },
+  "NovelForkTests": {
+    "Passed": 7
+  },
+  "NovelGenerationLifecycleTests": {
+    "Passed": 56
+  },
+  "NovelGenerationReducerTests": {
+    "Passed": 36
+  },
+  "NovelGhostwriteGenerationTests": {
+    "Passed": 14
+  },
+  "NovelGhostwriteInjectionTests": {
+    "Passed": 7
+  },
+  "NovelGhostwriteRecoveryTests": {
+    "Passed": 19
+  },
+  "NovelInjectionPlannerTests": {
+    "Passed": 23
+  },
+  "NovelInkSealStampTests": {
+    "Passed": 6
+  },
+  "NovelLiveModelAdapterTests": {
+    "Passed": 33
+  },
+  "NovelManualEditSyncTests": {
+    "Passed": 23
+  },
+  "NovelModelAdapterTests": {
+    "Passed": 7
+  },
+  "NovelModularizationLayoutTests": {
+    "Passed": 3
+  },
+  "NovelPolishIntegrityTests": {
+    "Passed": 16
+  },
+  "NovelPolishTests": {
+    "Passed": 7
+  },
+  "NovelProjectConfigurationTests": {
+    "Passed": 16
+  },
+  "NovelProjectFileDocumentTests": {
+    "Passed": 7
+  },
+  "NovelProjectLifecycleOperationTests": {
+    "Passed": 12
+  },
+  "NovelProjectPackageTests": {
+    "Passed": 18
+  },
+  "NovelProjectRepositoryTests": {
+    "Passed": 28,
+    "Skipped": 1
+  },
+  "NovelPromptCatalogTests": {
+    "Passed": 7
+  },
+  "NovelRecentChapterRevertTests": {
+    "Passed": 5
+  },
+  "NovelReducerTests": {
+    "Passed": 10
+  },
+  "NovelSessionFollowPolicyTests": {
+    "Passed": 18
+  },
+  "NovelSessionManualSyncTests": {
+    "Passed": 23
+  },
+  "NovelSessionQuickStartTests": {
+    "Passed": 13
+  },
+  "NovelSessionReplayTests": {
+    "Passed": 12
+  },
+  "NovelSessionRetryAndPolishTests": {
+    "Passed": 12
+  },
+  "NovelSessionRowActionTests": {
+    "Passed": 13
+  },
+  "NovelSessionRunOwnershipTests": {
+    "Passed": 12
+  },
+  "NovelSessionSelectionTests": {
+    "Passed": 12
+  },
+  "NovelSessionStreamingPerformanceTests": {
+    "Passed": 3
+  },
+  "NovelSessionTailPresentationTests": {
+    "Passed": 23
+  },
+  "NovelSessionTranscriptProjectionTests": {
+    "Passed": 10
+  },
+  "NovelSessionViewModelTests": {
+    "Passed": 9
+  },
+  "NovelStreamIntegrityRegressionTests": {
+    "Passed": 6
+  },
+  "NovelStructuredModelExecutorTests": {
+    "Passed": 17
+  },
+  "NovelStructuredOutputTests": {
+    "Passed": 24
+  },
+  "NovelWorkspaceBackupTests": {
+    "Passed": 7
+  },
+  "NovelWorkspaceContextTests": {
+    "Passed": 3
+  },
+  "NovelWorkspaceContractTests": {
+    "Passed": 12
+  },
+  "NovelWorkspaceLedgerTests": {
+    "Passed": 20,
+    "Skipped": 1
+  },
+  "NovelWorkspaceRepositoryTests": {
+    "Passed": 24
+  },
+  "NovelWorkspaceRetryTests": {
+    "Passed": 1
+  },
+  "ParagraphStreamingAppendTests": {
+    "Passed": 11
+  },
+  "PerformanceHygieneTests": {
+    "Passed": 6
+  },
+  "ProviderCredentialAndHeaderTests": {
+    "Passed": 8
+  },
+  "ProviderRegistryStoreTests": {
+    "Passed": 16
+  },
+  "SubAgentConcurrencyPerfTests": {
+    "Passed": 1
+  },
+  "SwiftModularizationCouncilMiniAppLayoutTests": {
+    "Passed": 3
+  },
+  "SwiftModularizationSettingsLayoutTests": {
+    "Passed": 3
+  },
+  "ThinkingOrbEngineTests": {
+    "Passed": 6
+  },
+  "WatchActivityPresentationTests": {
+    "Passed": 14
+  },
+  "WatchAssistantEntryTests": {
+    "Passed": 6
+  },
+  "WatchColdStartTests": {
+    "Passed": 4
+  },
+  "WatchCompanionFlowTests": {
+    "Passed": 6
+  },
+  "WatchCoordinatorDecisionOwnershipTests": {
+    "Passed": 2
+  },
+  "WatchInboundLifetimeTests": {
+    "Passed": 6
+  },
+  "WatchLocalStoreTests": {
+    "Passed": 8
+  },
+  "WatchNotificationTests": {
+    "Passed": 8
+  },
+  "WatchTaskCoordinatorAgentRuntimeDaoReuseTests": {
+    "Passed": 1
+  },
+  "WatchTaskSnapshotTests": {
+    "Passed": 41
+  },
+  "WatchTaskViewModelStatusTests": {
+    "Passed": 10
+  },
+  "WatchTransportReliabilityTests": {
+    "Passed": 8
+  }
+}

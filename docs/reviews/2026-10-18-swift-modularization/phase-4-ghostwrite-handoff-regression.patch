@@ -1,0 +1,96 @@
+--- a/iosApp/iosAppTests/NovelCollaborationModeTestCase.swift
++++ b/iosApp/iosAppTests/NovelCollaborationModeTestCase.swift
+@@ -45,7 +45,8 @@
+ 
+     @MainActor
+     func assertGhostwriteBatchCompletes(
+-        targetChapterCount: Int
++        targetChapterCount: Int,
++        waitThroughTerminalHandoff: Bool = false
+     ) async throws {
+         var document = try seedGhostwriteMaterials(in: NovelTestFixtures.document())
+         let branchID = try XCTUnwrap(document.branches.first?.id)
+@@ -86,8 +87,12 @@
+         for chapterNumber in 1...targetChapterCount {
+             let token = "batch-\(targetChapterCount)-chapter-\(chapterNumber)-evidence"
+             let candidate = "第\(chapterNumber)章正文：林晚沿着旧墙前行，\(token) 终于在石缝里找到新的线索。"
++                + (waitThroughTerminalHandoff && chapterNumber == 1
++                    ? String(repeating: "沿墙继续追查。", count: 1_200) : "")
+             evidenceTokens.append(token)
+-            scripts.append(NovelModelScript(steps: [.delta(candidate), .complete]))
++            scripts.append(NovelModelScript(steps: waitThroughTerminalHandoff && chapterNumber == 1
++                ? [.pause, .replacement(candidate), .complete]
++                : [.delta(candidate), .complete]))
+             scripts.append(NovelModelScript(steps: [
+                 .delta(try makeBatchAdjudicationJSON(
+                     chapterNumber: chapterNumber,
+@@ -117,11 +122,51 @@
+             modelRunner: adapter
+         ))
+         await workspace.loadProjects(selecting: document.project.id)
+-        let session = NovelSessionViewModel(workspace: workspace)
++        let session = NovelSessionViewModel(
++            workspace: workspace,
++            batchPolishSettleGrace: waitThroughTerminalHandoff ? 0.05 : 5
++        )
+         await session.bindToCurrentSelection()
+ 
+         XCTAssertTrue(session.canStartGhostwriteChapter)
+         XCTAssertTrue(session.startGhostwriteChapter(targetChapterCount: targetChapterCount))
++
++        if waitThroughTerminalHandoff {
++            let requestDeadline = Date().addingTimeInterval(3)
++            var firstRunID: NovelRunID?
++            while Date() < requestDeadline {
++                firstRunID = await adapter.requests.first?.runID
++                if firstRunID != nil { break }
++                try await Task.sleep(for: .milliseconds(5))
++            }
++            let runID = try XCTUnwrap(firstRunID)
++            // This is the original five-second grace boundary, compressed by the
++            // existing Session initializer so the test does not sleep for five seconds.
++            try await Task.sleep(for: .milliseconds(200))
++            let beforeResume = try await repository.loadProject(id: document.project.id).document
++            XCTAssertEqual(beforeResume.activeRuns.first { $0.id == runID }?.status, .running)
++            let requestCountBeforeResume = await adapter.requests.count
++            XCTAssertEqual(requestCountBeforeResume, 1)
++            await adapter.resume(runID: runID)
++
++            let handoffDeadline = Date().addingTimeInterval(3)
++            var sawDurableCandidateDuringDrain = false
++            while Date() < handoffDeadline {
++                let saved = try await repository.loadProject(id: document.project.id).document
++                if saved.candidates.contains(where: {
++                    $0.ghostwritePlanID == initialPlanID && $0.status == .available
++                }), session.terminalAwaitingRefresh,
++                   session.transientTail?.runID == runID {
++                    sawDurableCandidateDuringDrain = true
++                    break
++                }
++                try await Task.sleep(for: .milliseconds(5))
++            }
++            XCTAssertTrue(
++                sawDurableCandidateDuringDrain,
++                "The candidate must persist while the original terminal presentation is still draining."
++            )
++        }
+ 
+         let deadline = Date().addingTimeInterval(30)
+         while Date() < deadline {
+--- a/iosApp/iosAppTests/NovelGhostwriteGenerationTests.swift
++++ b/iosApp/iosAppTests/NovelGhostwriteGenerationTests.swift
+@@ -145,6 +145,14 @@
+         try await assertGhostwriteBatchCompletes(targetChapterCount: 10)
+     }
+ 
++    @MainActor
++    func testGhostwriteBatchWaitsForDurableTerminalHandoffAfterLongGeneration() async throws {
++        try await assertGhostwriteBatchCompletes(
++            targetChapterCount: 2,
++            waitThroughTerminalHandoff: true
++        )
++    }
++
+     func testCollaborationModeCanSwitchBackToCocreation() throws {
+         var document = try seedGhostwriteMaterials(in: try NovelTestFixtures.document())
+         document = try NovelReducer.apply(.setCollaborationMode(NovelSetCollaborationModeCommand(

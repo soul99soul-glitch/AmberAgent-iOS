@@ -191,20 +191,29 @@ final class ChatVideoTests: XCTestCase {
         XCTAssertEqual(ChatVideoDescriptor(id: "a", url: "a", width: 1080, height: 1920).aspectRatio, 0.5625)
     }
 
-    func testVideoCardsFitNarrowWidthAndAccessibilityText() throws {
+    func testVideoCardsFitNarrowWidthAndAccessibilityText() async throws {
         for (name, ratio) in [("landscape", CGSize(width: 1920, height: 1080)), ("portrait", CGSize(width: 1080, height: 1920))] {
-            let video = ChatVideoDescriptor(id: name, url: "https://example.com/video.mp4", title: "可独立播放的视频及完整来源标题",
+            let video = ChatVideoDescriptor(id: name, url: "file:///missing-video-poster-fixture.mp4", title: "可独立播放的视频及完整来源标题",
                                             sourceURL: "https://example.com/article", width: ratio.width, height: ratio.height, duration: 92)
             let host = UIHostingController(rootView: ChatVideoCard(video: video).dynamicTypeSize(.accessibility2).padding(16))
+            host.safeAreaRegions = []
             let size = host.sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude))
             XCTAssertLessThanOrEqual(size.width, 320)
             XCTAssertGreaterThan(size.height, 180)
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: ceil(size.height) + 40))
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive })
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 320, height: ceil(size.height) + 40)
             window.rootViewController = host
             window.makeKeyAndVisible()
             defer { window.isHidden = true; window.rootViewController = nil }
             window.layoutIfNeeded()
-            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { window.layer.render(in: $0.cgContext) }
+            try await Task.sleep(for: .milliseconds(400))
+            XCTAssertEqual(host.sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)).height,
+                           size.height, accuracy: 1)
+            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
             let attachment = XCTAttachment(image: screenshot)
             attachment.name = "video-\(name)-320pt"
             attachment.lifetime = .keepAlways
@@ -213,6 +222,146 @@ final class ChatVideoTests: XCTestCase {
             try screenshot.pngData()?.write(to: path)
             print("MEDIA_SCREENSHOT=\(path.path)")
         }
+    }
+
+    func testVideoPosterPrefersProvidedImageWithoutOpeningVideo() async throws {
+        let poster = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 10)).pngData { context in
+            UIColor.green.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 20, height: 10))
+        }
+        let video = ChatVideoDescriptor(id: "poster", url: "invalid-video-url",
+                                        posterURL: "data:image/png;base64," + poster.base64EncodedString())
+        let image = try await ChatVideoPosterLoader().image(video: video, pixelLimit: 20)
+        XCTAssertEqual(image.size, CGSize(width: 20, height: 10))
+    }
+
+    func testBrokenPosterFallsBackToBoundedVideoFrameAndCachesIt() async throws {
+        let url = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let loader = ChatVideoPosterLoader()
+        let video = ChatVideoDescriptor(id: "fallback", url: url.absoluteString,
+                                        posterURL: "data:image/png;base64,YmFk")
+        let first = try await loader.image(video: video, pixelLimit: 80)
+        XCTAssertLessThanOrEqual(max(first.size.width, first.size.height), 80)
+        XCTAssertGreaterThan(first.size.width, 0)
+        let second = try await loader.image(video: video, pixelLimit: 80)
+        XCTAssertTrue(first === second)
+    }
+
+    func testCancelledVideoPosterDoesNotPublishAnImage() async throws {
+        let url = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let task = Task {
+            try await ChatVideoPosterLoader().image(video: ChatVideoDescriptor(id: "cancel", url: url.absoluteString))
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("已取消的封面请求不能返回成功")
+        } catch is CancellationError { }
+    }
+
+    func testVideoWithoutPosterShowsFrameWithoutChangingCardHeight() async throws {
+        let url = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let video = ChatVideoDescriptor(id: "frame", url: url.absoluteString, title: "没有独立封面的视频")
+        let host = UIHostingController(rootView: ChatVideoCard(video: video).padding(16))
+        host.safeAreaRegions = []
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 500)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let proposal = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        let before = host.sizeThatFits(in: proposal)
+        func snapshot() -> UIImage {
+            UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+        }
+        func redPixels() -> Int {
+            guard let image = snapshot().cgImage else { return 0 }
+            var pixels = [UInt8](repeating: 0, count: 32 * 32 * 4)
+            pixels.withUnsafeMutableBytes { bytes in
+                let context = CGContext(data: bytes.baseAddress, width: 32, height: 32, bitsPerComponent: 8,
+                                        bytesPerRow: 128, space: CGColorSpaceCreateDeviceRGB(),
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.draw(image, in: CGRect(x: 0, y: 0, width: 32, height: 32))
+            }
+            return stride(from: 0, to: pixels.count, by: 4).filter {
+                pixels[$0] > 180 && pixels[$0 + 1] < 80 && pixels[$0 + 2] < 80
+            }.count
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while redPixels() < 20 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertGreaterThan(redPixels(), 20, "没有 posterURL 的真实 MP4 必须显示提取的首帧")
+        XCTAssertEqual(host.sizeThatFits(in: proposal).height, before.height, accuracy: 1)
+        let attachment = XCTAttachment(image: snapshot())
+        attachment.name = "video-generated-poster-320pt"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testVideoPosterPreloadsBeforeEnteringViewportAndStaysDuringPartialVisibility() async throws {
+        let file = try await makeVideo()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let video = ChatVideoDescriptor(id: "prefetch", url: file.absoluteString, title: "预加载封面")
+        let host = UIHostingController(rootView: ScrollView {
+            VStack(spacing: 0) {
+                Color.clear.frame(height: 700)
+                ChatVideoCard(video: video)
+                Color.clear.frame(height: 1200)
+            }
+        })
+        host.safeAreaRegions = []
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 500)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        window.layoutIfNeeded()
+        func scrollView(in view: UIView) -> UIScrollView? {
+            if let scroll = view as? UIScrollView { return scroll }
+            return view.subviews.lazy.compactMap { scrollView(in: $0) }.first
+        }
+        func redSamples() -> Int {
+            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            guard let image = screenshot.cgImage else { return 0 }
+            var pixels = [UInt8](repeating: 0, count: 32 * 32 * 4)
+            pixels.withUnsafeMutableBytes { bytes in
+                let context = CGContext(data: bytes.baseAddress, width: 32, height: 32, bitsPerComponent: 8,
+                                        bytesPerRow: 128, space: CGColorSpaceCreateDeviceRGB(),
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.draw(image, in: CGRect(x: 0, y: 0, width: 32, height: 32))
+            }
+            return stride(from: 0, to: pixels.count, by: 4).filter {
+                pixels[$0] > 180 && pixels[$0 + 1] < 80 && pixels[$0 + 2] < 80
+            }.count
+        }
+        let scroll = try XCTUnwrap(scrollView(in: host.view))
+        try await Task.sleep(for: .seconds(1))
+        try FileManager.default.removeItem(at: file)
+        for offset: CGFloat in [650, 750, 810, 850, 810, 750, 650] {
+            scroll.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertGreaterThan(redSamples(), 5, "封面应提前加载，部分可见时保持原图，offset=\(offset)")
+        }
+        let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: screenshot)
+        attachment.name = "video-poster-viewport-prefetched-and-retained"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func makeVideo() async throws -> URL {
@@ -231,6 +380,14 @@ final class ChatVideoTests: XCTestCase {
         var buffer: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 160, 96, kCVPixelFormatType_32ARGB, nil, &buffer), kCVReturnSuccess)
         let pixelBuffer = try XCTUnwrap(buffer)
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        let context = CGContext(data: CVPixelBufferGetBaseAddress(pixelBuffer), width: 160, height: 96,
+                                bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)!
+        context.setFillColor(UIColor.red.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: 160, height: 96))
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
         for value in 0..<2 {
             while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
             XCTAssertTrue(adaptor.append(pixelBuffer, withPresentationTime: CMTime(value: Int64(value), timescale: 1)))

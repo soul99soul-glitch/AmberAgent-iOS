@@ -1,0 +1,61 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 5073,
+      "skippedTests" : 16,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1792281425.62,
+  "passedTests" : 5073,
+  "result" : "Passed",
+  "runtimeWarnings" : [
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Thread running at User-interactive quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSCouncilRoomArchiveStoreTests.swift"
+    },
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Accessing State's value outside of being installed on a View. This will result in a constant Binding of the initial value and will not update.",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSSharedSettingsStoreProvidersWriteBackTests.swift"
+    }
+  ],
+  "skippedTests" : 16,
+  "startTime" : 1792280402.98,
+  "statistics" : [
+    {
+      "subtitle" : "1 test run",
+      "title" : "1 test collected performance metrics"
+    }
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "47% of duration",
+      "text" : "28 longest test runs with outlier durations exceeding 6.05s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 5089
+}

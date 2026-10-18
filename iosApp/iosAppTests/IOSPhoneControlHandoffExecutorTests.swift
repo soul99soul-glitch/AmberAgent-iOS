@@ -519,6 +519,66 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
         await harness.controller.stop(runID: harness.runID)
     }
 
+    func testTakeoverDuringTypingDoesNotDismissKeyboardAfterReceipt() async throws {
+        let gate = HandoffReplyGate()
+        let paused = expectation(description: "Typing receipt acknowledges human takeover")
+        let harness = try await Harness(postGate: gate, textInput: true, onHandoff: { _, state in
+            if state == .paused { paused.fulfill() }
+        })
+        defer { harness.dispose(); gate.release() }
+        _ = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        let runner = try await harness.session.runner(runID: UUID())
+        let observed = await runner.latestObservation
+        let ref = try XCTUnwrap(observed?.nodes.first { $0.type == "XCUIElementTypeTextField" }?.ref)
+        let execution = PendingExecution()
+        let task = execution.start(executor: harness.executor, name: "phone_act",
+                                   arguments: #"{"action":"type","ref":"\#(ref)","text":"hello"}"#)
+        defer { task.cancel() }
+
+        await fulfillment(of: [gate.started], timeout: 2)
+        try harness.controller.requestHumanTakeover(runID: harness.runID)
+        XCTAssertEqual(harness.controller.handoffState(runID: harness.runID), .pausing)
+        gate.release()
+        await fulfillment(of: [paused], timeout: 2)
+
+        XCTAssertEqual(harness.http.mutationPaths, ["/elements", "/element/FRESH/value"],
+                       "An acknowledged type must not dispatch a second mutation after takeover")
+        XCTAssertEqual(harness.http.sourceCount, 1, "The paused tool must wait before reading again")
+        XCTAssertNil(execution.outcome)
+        try harness.controller.resumeAutomation(runID: harness.runID)
+        await fulfillment(of: [execution.finished], timeout: 2)
+        let receipt = try handback(XCTUnwrap(execution.outcome))
+        let prior = try XCTUnwrap(receipt["prior_tool_receipt"] as? [String: Any])
+        let original = try object(XCTUnwrap(prior["result"] as? String))
+        XCTAssertEqual(original["outcome"] as? String, "completed", "The typed text receipt must be preserved")
+        XCTAssertEqual(receipt["fresh_observation_available"] as? Bool, true)
+        XCTAssertEqual(harness.http.mutationPaths, ["/elements", "/element/FRESH/value"])
+        await harness.controller.stop(runID: harness.runID)
+    }
+
+    func testSuccessfulTypingStillDismissesKeyboardAndReturnsFreshTree() async throws {
+        let harness = try await Harness(textInput: true)
+        defer { harness.dispose() }
+        _ = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+        let runner = try await harness.session.runner(runID: UUID())
+        let observed = await runner.latestObservation
+        let ref = try XCTUnwrap(observed?.nodes.first { $0.type == "XCUIElementTypeTextField" }?.ref)
+
+        let outcome = await harness.executor.execute(name: "phone_act",
+            arguments: #"{"action":"type","ref":"\#(ref)","text":"hello"}"#, isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome,
+              let text = parts.first as? UIMessagePart.Text else {
+            return XCTFail("Typing must retain its receipt and attach a fresh tree")
+        }
+        let receipt = try object(text.text)
+        XCTAssertEqual(receipt["outcome"] as? String, "completed")
+        XCTAssertEqual(receipt["fresh_observation_available"] as? Bool, true)
+        XCTAssertEqual(harness.http.mutationPaths,
+                       ["/elements", "/element/FRESH/value", "/wda/keyboard/dismiss"])
+        XCTAssertEqual(harness.http.sourceCount, 2)
+        await harness.controller.stop(runID: harness.runID)
+    }
+
     func testUnknownMutationReceiptOverridesRequestedPauseWithoutWaitingOrObserving() async throws {
         let gate = HandoffReplyGate()
         var handoffStates: [IOSPhoneControlHandoffState] = []
@@ -752,7 +812,7 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
 
         init(postGate: HandoffReplyGate? = nil, sourceGate: HandoffReplyGate? = nil,
              unknownMutation: Bool = false, firstSourceError: URLError.Code? = nil,
-             listPages: Bool = false, screenshotPNG: Data? = nil,
+             listPages: Bool = false, screenshotPNG: Data? = nil, textInput: Bool = false,
              flowMode: HandoffFlowMode? = nil,
              onHandoff: @escaping @MainActor (String, IOSPhoneControlHandoffState) -> Void = { _, _ in }) async throws {
             let runID = "handoff-\(UUID().uuidString)"
@@ -760,7 +820,8 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             let http = HandoffHTTPFixture(postGate: postGate, sourceGate: sourceGate,
                                           unknownMutation: unknownMutation, firstSourceError: firstSourceError,
-                                          listPages: listPages, screenshotPNG: screenshotPNG, flowMode: flowMode)
+                                          listPages: listPages, screenshotPNG: screenshotPNG, textInput: textInput,
+                                          flowMode: flowMode)
             let session = HandoffSessionStub(fixture: http)
             let key = Curve25519.Signing.PrivateKey()
             let pairing = try PropertyListSerialization.data(fromPropertyList: [
@@ -829,6 +890,7 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
     private let firstSourceError: URLError.Code?
     private let listPages: Bool
     private let screenshotPNG: Data?
+    private let textInput: Bool
     private let flowMode: HandoffFlowMode?
     private let lock = NSLock()
     private var requests: [(String, String)] = []
@@ -839,13 +901,15 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
     var sourceCount: Int { lock.withLock { sources } }
 
     init(postGate: HandoffReplyGate?, sourceGate: HandoffReplyGate?, unknownMutation: Bool,
-         firstSourceError: URLError.Code?, listPages: Bool, screenshotPNG: Data?, flowMode: HandoffFlowMode?) {
+         firstSourceError: URLError.Code?, listPages: Bool, screenshotPNG: Data?, textInput: Bool,
+         flowMode: HandoffFlowMode?) {
         self.postGate = postGate
         self.sourceGate = sourceGate
         self.unknownMutation = unknownMutation
         self.firstSourceError = firstSourceError
         self.listPages = listPages
         self.screenshotPNG = screenshotPNG
+        self.textInput = textInput
         self.flowMode = flowMode
         port = HandoffHTTPProtocol.nextPort()
         HandoffHTTPProtocol.register(self)
@@ -869,7 +933,8 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
             if sourceIndex == 1, let firstSourceError { throw URLError(firstSourceError) }
             if listPages { return (try listSource(index: sourceIndex), nil) }
             if let flowMode { return (try flowSource(mode: flowMode), nil) }
-            let body = #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":402,"height":874},"children":[{"type":"XCUIElementTypeButton","rawIdentifier":"item","label":"screen-\#(sourceIndex)","rect":{"x":20,"y":100,"width":80,"height":44},"children":[]}]}}"#
+            let nodeType = textInput ? "XCUIElementTypeTextField" : "XCUIElementTypeButton"
+            let body = #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":402,"height":874},"children":[{"type":"\#(nodeType)","rawIdentifier":"item","label":"screen-\#(sourceIndex)","rect":{"x":20,"y":100,"width":80,"height":44},"children":[]}]}}"#
             return (body, sourceIndex == 1 ? sourceGate : nil)
         case "/elements":
             XCTAssertEqual(request.httpMethod, "POST")
@@ -896,6 +961,14 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
         case "/wda/apps/activate":
             XCTAssertEqual(request.httpMethod, "POST")
             return (unknownMutation ? #"{"value":{"error":"unknown error","message":"activation receipt lost"}}"# : #"{"value":null}"#, postGate)
+        case "/element/FRESH/value":
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertTrue(textInput)
+            XCTAssertEqual(try requestObject(request)["text"] as? String, "hello")
+            return (#"{"value":null}"#, postGate)
+        case "/wda/keyboard/dismiss":
+            XCTAssertEqual(request.httpMethod, "POST")
+            return (#"{"value":null}"#, nil)
         default:
             XCTFail("Unexpected runner request \(path)")
             throw URLError(.badURL)

@@ -1,0 +1,160 @@
+--- a/iosApp/iosApp/NovelCreation/NovelGenerationLifecycle.swift
++++ b/iosApp/iosApp/NovelCreation/NovelGenerationLifecycle.swift
+@@ -98,6 +98,8 @@
+     var usage: NovelModelUsage?
+     var subscribers: [UUID: AsyncStream<NovelRunEvent>.Continuation]
+     var modelTask: Task<Void, Never>?
++    // The currently authorized local stream; detach revokes it before the adapter closes it.
++    var modelStreamID: UUID?
+     var sidecarSequence: Int64
+     var lastSidecarAt: Date
+     var lastSidecarByteCount: Int
+--- a/iosApp/iosApp/NovelCreation/NovelGenerationStream.swift
++++ b/iosApp/iosApp/NovelCreation/NovelGenerationStream.swift
+@@ -35,6 +35,7 @@
+             usage: nil,
+             subscribers: [:],
+             modelTask: nil,
++            modelStreamID: nil,
+             sidecarSequence: sidecar.sequence,
+             lastSidecarAt: now(),
+             lastSidecarByteCount: sidecar.partialContent.utf8.count,
+@@ -272,6 +273,7 @@
+             usage: nil,
+             subscribers: [subscriberID: pair.continuation],
+             modelTask: nil,
++            modelStreamID: nil,
+             sidecarSequence: 0,
+             lastSidecarAt: now(),
+             lastSidecarByteCount: run.partialContent.utf8.count,
+@@ -289,6 +291,7 @@
+         _ events: AsyncStream<NovelModelEvent>,
+         runID: NovelRunID
+     ) {
++        let streamID = UUID()
+         let task = Task { [weak self] in
+             guard let self else { return }
+             var transportTerminal = false
+@@ -301,15 +304,17 @@
+                     transportTerminal = true
+                     disconnectedFailure = failure
+                 }
+-                await consumeModelEvent(event, runID: runID)
++                await consumeModelEvent(event, runID: runID, streamID: streamID)
+             }
+             await modelStreamEnded(
+                 runID: runID,
++                streamID: streamID,
+                 hadTransportTerminal: transportTerminal
+             )
+             if let disconnectedFailure {
+                 await reconnectAfterTransportDisconnect(
+                     runID: runID,
++                    streamID: streamID,
+                     failure: disconnectedFailure
+                 )
+             }
+@@ -318,6 +323,7 @@
+             task.cancel()
+             return
+         }
++        generationRuntimes[runID]?.modelStreamID = streamID
+         generationRuntimes[runID]?.modelTask?.cancel()
+         generationRuntimes[runID]?.modelTask = task
+     }
+@@ -379,9 +385,11 @@
+ 
+     private func reconnectAfterTransportDisconnect(
+         runID: NovelRunID,
++        streamID: UUID,
+         failure transportFailure: NovelModelFailure
+     ) async {
+         guard var runtime = generationRuntimes[runID],
++              runtime.modelStreamID == streamID,
+               runtime.terminalClaim == nil,
+               runtime.isDetachedForBackground else { return }
+         guard !runtime.didAutoReconnectAfterDisconnect else {
+@@ -570,8 +578,12 @@
+         }
+     }
+ 
+-    func detachResumableRunForBackground(_ runID: NovelRunID) async -> Bool {
++    func detachResumableRunForBackground(
++        _ runID: NovelRunID,
++        streamID expectedStreamID: UUID? = nil
++    ) async -> Bool {
+         guard let runtime = generationRuntimes[runID],
++              expectedStreamID == nil || runtime.modelStreamID == expectedStreamID,
+               runtime.terminalClaim == nil,
+               runtime.responseCursor != nil,
+               let durableRunner = modelRunner as? any NovelDurableModelRunning else {
+@@ -585,10 +597,12 @@
+         // stream. The server response remains alive and is resumed on foreground.
+         guard await flushRecoverySidecar(runID: runID, force: true),
+               var current = generationRuntimes[runID],
++              expectedStreamID == nil || current.modelStreamID == expectedStreamID,
+               current.terminalClaim == nil else {
+             return false
+         }
+         current.isDetachedForBackground = true
++        current.modelStreamID = nil
+         generationRuntimes[runID] = current
+         // Finish the adapter stream first so its AsyncStream terminates as
+         // `.finished`. Cancelling the consumer first would surface as
+@@ -609,8 +623,12 @@
+         return true
+     }
+ 
+-    func consumeModelEvent(_ event: NovelModelEvent, runID: NovelRunID) async {
+-        guard generationRuntimes[runID] != nil,
++    func consumeModelEvent(
++        _ event: NovelModelEvent,
++        runID: NovelRunID,
++        streamID: UUID
++    ) async {
++        guard generationRuntimes[runID]?.modelStreamID == streamID,
+               generationRuntimes[runID]?.terminalClaim == nil else {
+             return
+         }
+@@ -752,7 +770,8 @@
+                 runID: runID,
+                 force: mustPersistFirstCursor
+             )
+-            if didPersistCursor {
++            if didPersistCursor,
++               generationRuntimes[runID]?.modelStreamID == streamID {
+                 let shouldDetachForBackground = await MainActor.run {
+                     guard UIApplication.shared.applicationState == .background else {
+                         return false
+@@ -765,8 +784,12 @@
+                         ghostwriteLeaseID
+                     )
+                 }
+-                if shouldDetachForBackground {
+-                    _ = await detachResumableRunForBackground(runID)
++                if shouldDetachForBackground,
++                   generationRuntimes[runID]?.modelStreamID == streamID {
++                    _ = await detachResumableRunForBackground(
++                        runID,
++                        streamID: streamID
++                    )
+                 }
+             }
+         case .responseDisconnected:
+--- a/iosApp/iosApp/NovelCreation/NovelGenerationTerminal.swift
++++ b/iosApp/iosApp/NovelCreation/NovelGenerationTerminal.swift
+@@ -3,8 +3,13 @@
+ @preconcurrency import Shared
+ 
+ extension DefaultNovelCreation {
+-    func modelStreamEnded(runID: NovelRunID, hadTransportTerminal: Bool) async {
++    func modelStreamEnded(
++        runID: NovelRunID,
++        streamID: UUID,
++        hadTransportTerminal: Bool
++    ) async {
+         guard !hadTransportTerminal,
++              generationRuntimes[runID]?.modelStreamID == streamID,
+               generationRuntimes[runID]?.terminalClaim == nil,
+               generationRuntimes[runID]?.isDetachedForBackground != true else {
+             return

@@ -56,22 +56,11 @@ struct ChatVideoCard: View {
             Button { selected = video } label: {
                 ZStack {
                     AmberTheme.surface2
-                    if let poster = video.posterURL {
-                        ChatMediaImage(url: poster, contentMode: .fill, showsStatus: false)
-                            .allowsHitTesting(false)
-                    }
+                    ChatVideoPoster(video: video).allowsHitTesting(false)
                     Image(systemName: "play.circle.fill")
                         .font(.system(size: 52))
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .black.opacity(0.5))
-                    if let duration = video.durationLabel {
-                        VStack {
-                            Spacer()
-                            HStack { Spacer(); Text(duration).font(.caption.monospacedDigit())
-                                    .padding(5).background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 5)) }
-                        }
-                        .foregroundStyle(.white).padding(10)
-                    }
                 }
                 .modifier(ChatWidthDrivenAspectRatio(aspectRatio: video.aspectRatio))
                 .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge))
@@ -88,6 +77,143 @@ struct ChatVideoCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .fullScreenCover(item: $selected) { video in ChatVideoPlayerScreen(video: video) }
+    }
+}
+
+/// Extract a bounded frame without creating a player or taking over the audio session.
+actor ChatVideoPosterLoader {
+    // Configuration is finished before sharing. AVFoundation supports cancelling
+    // an in-flight generation from another thread; no properties change after this.
+    private struct FrameRequest: @unchecked Sendable {
+        let generator: AVAssetImageGenerator
+    }
+
+    static let shared = ChatVideoPosterLoader()
+    private let cache = NSCache<NSString, UIImage>()
+    private let requests = ChatMediaImageRequests()
+    private let diskCache: ChatMediaThumbnailDiskCache
+
+    init(diskCache: ChatMediaThumbnailDiskCache = .shared) {
+        self.diskCache = diskCache
+        cache.totalCostLimit = 16 * 1024 * 1024
+    }
+
+    func image(video: ChatVideoDescriptor, pixelLimit: Int = 1000) async throws -> UIImage {
+        try Task.checkCancellation()
+        let key = "video:\(video.url):poster:\(video.posterURL ?? ""):\(pixelLimit)"
+        if let cached = cache.object(forKey: key as NSString) { return cached }
+        return try await requests.image(key: key) {
+            try await self.load(video: video, pixelLimit: pixelLimit, key: key)
+        }
+    }
+
+    private func load(video: ChatVideoDescriptor, pixelLimit: Int, key: String) async throws -> UIImage {
+        let persist = ChatMediaURL.external(video.url) != nil
+            && (video.posterURL == nil || ChatMediaURL.external(video.posterURL ?? "") != nil)
+        if persist, let image = await diskCache.image(key: key, pixelLimit: pixelLimit) {
+            try Task.checkCancellation()
+            cache.setObject(image, forKey: key as NSString, cost: image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0)
+            return image
+        }
+        if let poster = video.posterURL, !poster.isEmpty {
+            do {
+                let image = try await ChatMediaImageLoader.shared.image(urlString: poster, pixelLimit: pixelLimit)
+                try Task.checkCancellation()
+                cache.setObject(image, forKey: key as NSString, cost: image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0)
+                if persist { await diskCache.store(image, key: key) }
+                return image
+            } catch {
+                // A missing or expired poster must not leave a playable video blank.
+                try Task.checkCancellation()
+            }
+        }
+        guard let url = video.playbackURL else { throw URLError(.badURL) }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: max(1, pixelLimit), height: max(1, pixelLimit))
+        let request = FrameRequest(generator: generator)
+        let frame = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CGImage, Error>) in
+                request.generator.generateCGImageAsynchronously(for: .zero) { image, _, error in
+                    if let image { continuation.resume(returning: image) }
+                    else { continuation.resume(throwing: error ?? URLError(.cannotDecodeContentData)) }
+                }
+            }
+        } onCancel: {
+            request.generator.cancelAllCGImageGeneration()
+        }
+        try Task.checkCancellation()
+        let image = UIImage(cgImage: frame)
+        cache.setObject(image, forKey: key as NSString, cost: frame.bytesPerRow * frame.height)
+        if persist { await diskCache.store(image, key: key) }
+        return image
+    }
+}
+
+private struct ChatVideoPoster: View {
+    private struct Resource: Equatable {
+        let url: String
+        let posterURL: String?
+    }
+    private struct LoadRequest: Equatable {
+        let video: ChatVideoDescriptor
+        let viewport: ChatMediaViewport
+    }
+
+    let video: ChatVideoDescriptor
+    @State private var loaded: (resource: Resource, image: UIImage)?
+    @State private var failure: Resource?
+    @State private var viewport = ChatMediaViewport.retained
+
+    private var resource: Resource { Resource(url: video.url, posterURL: video.posterURL) }
+    private var image: UIImage? { loaded?.resource == resource ? loaded?.image : nil }
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .overlay(alignment: .bottom) {
+            HStack(alignment: .bottom, spacing: 8) {
+                if failure == resource {
+                    Text("无封面").font(.caption).foregroundStyle(AmberTheme.muted).lineLimit(1)
+                } else if image == nil && viewport == .loading {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer(minLength: 0)
+                if let duration = video.durationLabel {
+                    Text(duration).font(.caption.monospacedDigit()).lineLimit(1).fixedSize()
+                        .foregroundStyle(.white).padding(5)
+                        .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 5))
+                }
+            }
+            .padding(10)
+        }
+        .accessibilityHidden(true)
+        .onGeometryChange(for: ChatMediaViewport?.self) { proxy in
+            ChatMediaViewport.position(size: proxy.size,
+                                      vertical: proxy.bounds(of: .scrollView(axis: .vertical)),
+                                      horizontal: proxy.bounds(of: .scrollView(axis: .horizontal)))
+        } action: { if let position = $0 { viewport = position } }
+        .task(id: LoadRequest(video: video, viewport: viewport)) {
+            if loaded?.resource != resource { loaded = nil }
+            if failure != resource { failure = nil }
+            guard viewport != .distant else { loaded = nil; return }
+            guard viewport == .loading, loaded == nil else { return }
+            failure = nil
+            do {
+                let loaded = try await ChatVideoPosterLoader.shared.image(video: video)
+                try Task.checkCancellation()
+                self.loaded = (resource, loaded)
+            } catch {
+                guard !Task.isCancelled else { return }
+                failure = resource
+            }
+        }
     }
 }
 
@@ -231,11 +357,13 @@ struct ChatVideoPlayerScreen: View {
             } else {
                 ProgressView().tint(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.body.weight(.semibold)).padding(12)
-                    .background(.ultraThinMaterial, in: Circle())
+            if playback.player == nil {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").font(.body.weight(.semibold)).padding(12)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .tint(.white).padding(16).accessibilityLabel("关闭视频")
             }
-            .tint(.white).padding(16).accessibilityLabel("关闭视频")
         }
         .task(id: retry) {
             guard let url = video.playbackURL else { return }

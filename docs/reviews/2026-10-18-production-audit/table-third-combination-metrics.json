@@ -1,0 +1,17 @@
+{
+  "run": "delivery-final-main",
+  "status": "Original performance case passed in completed third whole run; that whole run failed only Novel quick-start fixture, subsequently corrected and targeted class passed 8/8.",
+  "samples": 79,
+  "p95Milliseconds": 34.29,
+  "maximumMilliseconds": 58.94,
+  "over50Milliseconds": 1,
+  "thresholdP95Milliseconds": 40,
+  "thresholdMaximumMilliseconds": 80,
+  "evidence": [
+    "[PERF-HITCH] growingTable samples=79 p95=34.29ms max=58.94ms over50ms=1",
+    "Test Case '-[iosAppTests.ChatNativeTimelineReplayPerformanceTests testPerfGrowingTableStreamingKeepsDisplayLinkResponsive]' passed (3.639 seconds)."
+  ],
+  "fullRunSummary": "main-integration-third-summary.json",
+  "performanceTestSha256": "ee02c871f87bf8fdac78489f3240cec34dcca8523a743ec1ff2bcd26bef7839e",
+  "tableSourceSha256": "4a5902ac98f925b8c3e77ba9b4e35e481fed8d2809e767f840568362f99ac0ca"
+}

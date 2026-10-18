@@ -78,7 +78,7 @@ final class MiniAppBridge: NSObject, WKScriptMessageHandler {
             trustedDocumentGeneration &+= 1
             eventSubscriptionGenerations.removeAll()
             sensorSubscriptionGenerations.removeAll()
-            runtime.cancelPendingRequests()
+            runtime.invalidateDocument()
             return
         }
         guard isTrustedMainDocument != trusted else { return }

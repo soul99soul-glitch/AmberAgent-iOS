@@ -1,0 +1,767 @@
+{
+  "count": 126,
+  "outcomes": {
+    "Passed": 125,
+    "Skipped": 1
+  },
+  "missing": [],
+  "duplicates": [],
+  "rows": [
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilRuntimeOwnershipAndBackgroundLeaseLifecycleAreWired",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilProductionStreamerKeepsFIFOAndProviderRouting",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilPresentationSessionCoalescesSnapshotsUntilFlushWindow",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilPresentationSessionTerminalFlushIsExactAndCancelsDelayedFlush",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testFlushAndClosePublishesFinalTextWhenDrainAlreadyClosed",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilPresentationSessionPacesBurstAcrossBeats",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilTerminalDrainDeceleratesGracefulTailAndTightensAllowance",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilCompletionDrainCommitsContinuousDisplacementAndPinsDriver",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilPacingWiringCarriesAllowanceToDriverCommit",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilRunnerCarriesDrainAllowanceIntoCompletionEvents",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilGeneratedTextSnapshotDoesNotExposeInputBeforeAssistantOutput",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilMarkdownPresentationMarksOnlyModelOutputAsStreamed",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilMeasuredGrowthFollowRequiresActiveUnpausedFollowing",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilMeasuredGrowthFollowSkipsWhenAlreadyPinnedToBottom",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilViewportShrinkReanchorsOnlyWhileFollowing",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilViewportShrinkSkipsWhenAlreadyPinnedToBottom",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testFollowPauseDoesNotFreezeCouncilMarkdown",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilPendingLabelsStayOutOfMarkdownBody",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRunnerMechanicsTests/testCouncilUserDragResumesFollowWithinNearBottomThreshold",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testChatCouncilToolUsesPersistedRoomModelsWhenArgumentsDoNotOverrideThem",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilApprovalFollowsGlobalAutoApproveSwitches",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testChatCouncilToolPublishesLiveTranscriptForToolCall",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testChatCouncilLiveTranscriptClosesSpeakingMessageWhenSynthesisThrows",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilSheetShowsFailureReasonUnlessTranscriptAlreadyHasOne",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilTranscriptSplitsIntoPrepareRoundAndSummaryTabs",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilLiveRegistryRejectsModelFromAnotherTask",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilLiveRegistryNotifiesObserversWhenModelRegisters",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilLiveStreamingUpdatesDoNotInvalidateTranscriptList",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilLiveCoalescesStreamingBodyButAppliesTerminalStateImmediately",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilConnectivityTesterShowsUnsupportedConfiguredModelFallback",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testCouncilConnectivityTimeoutCancelsTheBlockedProbe",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testRoomSettingsPersistHostLimitsAndSeatPayload",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testPlannedSeatsFromJSONPrefersDistinctAvailableModels",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testPlannedSeatsFromJSONFallsBackToEmptyWhenInsufficientOrInvalid",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testPlannedSeatsFromJSONSkipsLeadingBraceNoiseToFindSeats",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testDynamicSeatPlanParseFailureSurfacesFallbackDivider",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testDynamicSeatPlanRetriesOnceAfterFailure",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSanitizeSeatOutputStripsFencedPseudoWebSearchBlock",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSanitizeSeatOutputStripsBarePseudoWebSearchLines",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSanitizeSeatOutputKeepsNormalProseMentioningSearch",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSanitizeSeatOutputKeepsEnglishQueryLineWithoutPseudoSearchContext",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSanitizeSeatOutputKeepsQueryLineAfterContextReset",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSeatWebSearchRunsPerSeatResearchAndInjectsSummary",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSeatWebSearchOffSkipsPerSeatResearch",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSeatWebSearchRespectsUnavailableConsent",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilPlanningAndLiveTests/testSearchResearcherStopsAfterCancellationInsteadOfContinuingQueries",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testDynamicSeatsProbeAssignedModelsAndReplaceUnreachableOnes",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testDynamicSeatsCarryAndUseCrossProviderRoutes",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testFreshFreeChatAndDebateUseConfiguredDefaultRounds",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerFreeChatPersistsTaskApprovalAndOrderedMessages",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerTimeoutMeasuresLackOfOutputInsteadOfTotalGenerationTime",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerSeatFailureCompletesWithFailedSeat",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerTreatsEmptySeatOutputAsThatSeatFailure",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerFailsWhenFinalTopicIsEmpty",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerFailsWhenFinalSynthesisIsEmpty",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerAllowsLegitimateOutputBeginningWithError",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testCouncilProviderResolutionPreservesCredentialIdentity",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerPassesTheConfiguredModelInsteadOfSynthesizingOne",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerPreservesExactPartialSeatTailWhenStreamFails",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRoomRunnerShowsFailureReasonWhenFailedSeatHasNoGeneratedTail",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testCancelledRunCannotCancelImmediateReplacementRun",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testExplicitContinuationCancelRemainsCancelledInTaskLedger",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRoomExecutionTests/testRunnerKeepsPersistedTerminalStatusAvailableAfterRunReturns",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testLateDurableStartFailureCannotReleaseReplacementDiscussion",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testLateDurableCompletionCannotReleaseReplacementDiscussion",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testViewModelCancelClosesStreamingTailAndRejectsOldRunEventsAfterRestart",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testViewModelCancelArchivesFailedSeatStatus",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testDetachedCouncilRuntimeFinishesWithoutCancellingTheOwner",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testSubmittedCouncilInputIsPersistedBeforeRunnerTaskStarts",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testConfigurationErrorMessageSurfacesWhenChatModelMissing",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testMembersSeatFooterFollowsDynamicSeatGeneration",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testGuestBubbleUsesThemeSurfaceToken",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testSpeakingPartialTailIsCheckpointedByTheExistingThrottle",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testSecondSendContinuesCurrentCouncilAsFollowUpRound",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testFailedFollowUpKeepsCompletedCouncilEligibleForAnotherRound",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testHomeResumeContextRestoresEveryRecoverableContinuationStatus",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testHomeResumeContextRejectsUndecodableArchive",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testHomeResumeContextRejectsMismatchedArchiveIdentity",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testHomeResumeProjectionInvalidatesWhenFirstCouncilStarts",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testFollowUpRestoresEvictedTaskWithTheSameIdentity",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeOwnershipTests/testMidRunCheckpointsThrottleToOffMainThreadWrites",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testTimeProfilerLongCouncilStreamSample",
+      "results": [
+        "Skipped"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testViewModelDoesNotResearchWhenWebSearchIsDisabled",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testChatCouncilToolWaitsForPermissionBeforeStartingRun",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testCouncilToolFailureWithoutReasonStillRendersAsFailure",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testOpeningArchiveCheckpointsActiveCouncilTailBeforeReplacingRoom",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testStartingFreshRoomCheckpointsActiveCouncilTailBeforeClearingRoom",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testRoomRunnerMissingAPIKeyFailsBeforeStreaming",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSCouncilRuntimeIntegrationTests/testStartupRecoveryOnlyInterruptsRunningCouncilTasks",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testSavingNewMessagesRefreshesConversationAndSummaryUpdateTime",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testFailedVisibilityReadDoesNotExposeChildrenOrSelectANewConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testRegisteredSubagentIsExcludedFromVisibleSummariesButRetainedInAllSummaries",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testBootstrapDoesNotSelectPersistedSubagentAsCurrentConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testRefreshingSubagentVisibilityHidesAnExistingSummary",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testImportConversationDocumentsUsesStorageOwnedBatchImport",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testImportInvalidatesPreImportBaselineEvenWhenSequenceIsZero",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testImportDrainsInFlightSnapshotWriteBeforeReloadingCurrentConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testStartNewConversationReusesCurrentEmptyConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testStartNewConversationReusesMostRecentEmptyConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testSelectingMissingConversationFailsWithoutChangingCurrentConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testConditionalSelectionDoesNotCommitAfterItsOwnerBecomesStale",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testConditionalNewConversationDoesNotCommitAfterItsOwnerBecomesStale",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testImageGenerationResumeScanUsesPersistedCrossConversationOwner",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testSaveMessagesToExplicitConversationDoesNotOverwriteCurrentConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testConversationSwitchedRevisionOnlyBumpsOnRealSwitch",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreTests/testBranchAndDeleteOperationsDoNotBumpSwitchRevision",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testScreenshotDataURLsLiveInBlobsAndBackupsStaySelfContained",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testSendMessagePersistsAcrossStoreRestart",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testSelectedFileContextPersistsAcrossStoreRestart",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testCurrentConversationCanBecomeDeepReadSourceAndReceiveResult",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testBackgroundCompletionBumpsDirectedSignalWithoutTouchingSwitchRevision",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testBackgroundToolCompletionPatchesExistingToolCallAndPreservesForegroundMessages",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testBackgroundSaveReportsFailureAfterConversationWasDeleted",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testDeleteFailureDoesNotCommitOwnerCleanupOrSwitchConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testPendingBackgroundContentConversationIdsSurvivesSameTickMultiConversationLanding",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testConsumeBackgroundContentNotificationOnlyRemovesSpecifiedConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStorePersistenceTests/testForegroundSaveDoesNotPopulatePendingBackgroundContentConversationIds",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testDeleteTombstonePreventsInFlightForegroundSaveFromResurrectingConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testInFlightSaveDoesNotOverwriteConcurrentRenameTitle",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testGeneratedTitleDoesNotOverwriteAUserRename",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testGeneratedTitleReplacesItsUnchangedBaseline",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testDeleteTombstonePreventsInFlightBackgroundCompletionFromResurrectingConversation",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testStaleSnapshotWriteBaselineDoesNotOverwriteNewerForegroundSave",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testBackgroundCompletionWriteBaselineDoesNotOverwriteForegroundMessage",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testBackgroundMessageReplacementPreservesConcurrentMessages",
+      "results": [
+        "Passed"
+      ]
+    },
+    {
+      "id": "IOSConversationStoreConcurrencyTests/testBackgroundCompletionRetriesAfterForegroundWriteAndKeepsResult",
+      "results": [
+        "Passed"
+      ]
+    }
+  ]
+}

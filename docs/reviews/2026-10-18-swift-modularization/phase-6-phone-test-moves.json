@@ -1,0 +1,2058 @@
+{
+  "schemaVersion": 1,
+  "phase": 6,
+  "mappings": [
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSigningMatchesPinnedRunnerKnownAnswer",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSigningMatchesPinnedRunnerKnownAnswer",
+      "oldBodySHA256": "6544497d8266cb1ca138b26bb7848fa55ef8a3effa20c66cb3688a2ca7feec14",
+      "newBodySHA256": "6544497d8266cb1ca138b26bb7848fa55ef8a3effa20c66cb3688a2ca7feec14"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSignatureCoversExactlyEncodedQueryAndSortedBody",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSignatureCoversExactlyEncodedQueryAndSortedBody",
+      "oldBodySHA256": "f93f0d4f8a053153ac1ef8afa427334817654f61386efed9cb12f1a22a3e7a15",
+      "newBodySHA256": "f93f0d4f8a053153ac1ef8afa427334817654f61386efed9cb12f1a22a3e7a15"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testTreeObservationDoesNotTakeScreenshotAndRefsAreLocal",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testTreeObservationDoesNotTakeScreenshotAndRefsAreLocal",
+      "oldBodySHA256": "70562474fb7648e77d5a44f5cc0eb1d81463645cd933a8d4f974e05bbb1f1a76",
+      "newBodySHA256": "70562474fb7648e77d5a44f5cc0eb1d81463645cd933a8d4f974e05bbb1f1a76"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testCoveredPageNodesGetNoRefAndStayOutOfTheModelTree",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testCoveredPageNodesGetNoRefAndStayOutOfTheModelTree",
+      "oldBodySHA256": "8f6f31b379d4cac72f9a0a238001438f37b1cef1517fb3c781b391a79b3d0f43",
+      "newBodySHA256": "8f6f31b379d4cac72f9a0a238001438f37b1cef1517fb3c781b391a79b3d0f43"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testInterceptedClickIsUnsentWithItsRunnerCode",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testInterceptedClickIsUnsentWithItsRunnerCode",
+      "oldBodySHA256": "741e8026587e33cbf4a62f894dc106b9f26a89758fef116d038464a37c9d13bb",
+      "newBodySHA256": "741e8026587e33cbf4a62f894dc106b9f26a89758fef116d038464a37c9d13bb"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testFreshUniqueLookupPrecedesOneMutationAndConsumesRef",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testFreshUniqueLookupPrecedesOneMutationAndConsumesRef",
+      "oldBodySHA256": "39626a9fb9a9e96750768404c64b6d73a2738ebd5acec02a3cc614e11d5a8912",
+      "newBodySHA256": "39626a9fb9a9e96750768404c64b6d73a2738ebd5acec02a3cc614e11d5a8912"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testObservedMultilineLabelsProduceExactRunnerPredicates",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testObservedMultilineLabelsProduceExactRunnerPredicates",
+      "oldBodySHA256": "97b8bb4f1dbbb02c34600e92b003ee159bb83dd0f19184f8f2bfbb72ce2e1144",
+      "newBodySHA256": "97b8bb4f1dbbb02c34600e92b003ee159bb83dd0f19184f8f2bfbb72ce2e1144"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testElementLongPressUsesFreshLookupAndBoundedSecondsThenConsumesReference",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testElementLongPressUsesFreshLookupAndBoundedSecondsThenConsumesReference",
+      "oldBodySHA256": "0334de4601ded3c2c741f597f61f77c6fd3a3581afd9596ffbb008243f0f2126",
+      "newBodySHA256": "0334de4601ded3c2c741f597f61f77c6fd3a3581afd9596ffbb008243f0f2126"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testLongPressRejectsInvalidDurationStaleReferenceAndDisabledTargetsWithoutLookup",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testLongPressRejectsInvalidDurationStaleReferenceAndDisabledTargetsWithoutLookup",
+      "oldBodySHA256": "d02266b4166a3f4b84bd1f2f090e842f12a28fc56d27a31c83134a4de830450f",
+      "newBodySHA256": "d02266b4166a3f4b84bd1f2f090e842f12a28fc56d27a31c83134a4de830450f"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualLongPressUsesCurrentScreenshotGeometryAndW3CHold",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualLongPressUsesCurrentScreenshotGeometryAndW3CHold",
+      "oldBodySHA256": "fb747feb3799583e199b5596c3e5da2034c1fa9a984ae883768c8f67d2bed73c",
+      "newBodySHA256": "fb747feb3799583e199b5596c3e5da2034c1fa9a984ae883768c8f67d2bed73c"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualLongPressRejectsMissingEvidenceInvalidPointsAndRotationWithoutSending",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualLongPressRejectsMissingEvidenceInvalidPointsAndRotationWithoutSending",
+      "oldBodySHA256": "67125662de939725fb5dc8de1a46b382be71d7d0d37035cca96f0418df1b3a9d",
+      "newBodySHA256": "67125662de939725fb5dc8de1a46b382be71d7d0d37035cca96f0418df1b3a9d"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualLongPressDowngradedToTapIsUnknownAndCannotReplay",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualLongPressDowngradedToTapIsUnknownAndCannotReplay",
+      "oldBodySHA256": "bbcbe58e0a8d283a4247b2876dd4c58dfe4f5f459f4f733183f4172fa66a12d5",
+      "newBodySHA256": "bbcbe58e0a8d283a4247b2876dd4c58dfe4f5f459f4f733183f4172fa66a12d5"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testLongPressResponseLossBlocksAnotherGestureAfterFreshObservation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testLongPressResponseLossBlocksAnotherGestureAfterFreshObservation",
+      "oldBodySHA256": "365f750231785869a74f6bb447d20b021464046a2aac51867c8ccc11fd1543d8",
+      "newBodySHA256": "365f750231785869a74f6bb447d20b021464046a2aac51867c8ccc11fd1543d8"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testCompactTextFoldsOnlyEmptyContainersAndKeepsLocalReferencesAndExceptionalState",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testCompactTextFoldsOnlyEmptyContainersAndKeepsLocalReferencesAndExceptionalState",
+      "oldBodySHA256": "1160ead641a543f67b7039e7b3f5dcb313cbcf408a1545d8616c91a10c4c28e7",
+      "newBodySHA256": "1160ead641a543f67b7039e7b3f5dcb313cbcf408a1545d8616c91a10c4c28e7"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapUsesLatestObservedContextAndExactNameWithoutIndependentAlertRead",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAlertTapUsesLatestObservedContextAndExactNameWithoutIndependentAlertRead",
+      "oldBodySHA256": "0c185c4161d70fbad428df8a73fcbb2f03c62f64d2d7fd95837efe9f3d8f2b20",
+      "newBodySHA256": "0c185c4161d70fbad428df8a73fcbb2f03c62f64d2d7fd95837efe9f3d8f2b20"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOrdinaryAndExplicitAlertTapSendIdenticalGuardedRequest",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testOrdinaryAndExplicitAlertTapSendIdenticalGuardedRequest",
+      "oldBodySHA256": "c41d76b8172c01e059fa05d6078f955031e07eca99c36dc6a0716bf4a822d3ed",
+      "newBodySHA256": "c41d76b8172c01e059fa05d6078f955031e07eca99c36dc6a0716bf4a822d3ed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOrdinaryAlertTapOldArtifactOrMissingContextIsUnsentAndLongPressIsUnsupported",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testOrdinaryAlertTapOldArtifactOrMissingContextIsUnsentAndLongPressIsUnsupported",
+      "oldBodySHA256": "65ad44aa9ca51027474baca8cc354091ed6cef24c2dcbe35086f020ec3e90a07",
+      "newBodySHA256": "65ad44aa9ca51027474baca8cc354091ed6cef24c2dcbe35086f020ec3e90a07"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapCannotBypassPageAnchorOrUnchangedObservationGuardAfterRouting",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAlertTapCannotBypassPageAnchorOrUnchangedObservationGuardAfterRouting",
+      "oldBodySHA256": "883117ae52a05afabab840b32b89f765869484bf8032e2f3436061b4f04270fd",
+      "newBodySHA256": "883117ae52a05afabab840b32b89f765869484bf8032e2f3436061b4f04270fd"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUnnamedAlertButtonCannotBypassContextWithOrdinaryTapOrLongPress",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testUnnamedAlertButtonCannotBypassContextWithOrdinaryTapOrLongPress",
+      "oldBodySHA256": "3f1841f7b9292850a916821654c865d103784cee95a96e0cfa3f352ad0d68d96",
+      "newBodySHA256": "3f1841f7b9292850a916821654c865d103784cee95a96e0cfa3f352ad0d68d96"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOrdinaryAlertTapChangedContextRefusalAndLostReplyCannotBypassGuard",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testOrdinaryAlertTapChangedContextRefusalAndLostReplyCannotBypassGuard",
+      "oldBodySHA256": "fd7a8d3a7726b25abd6deff8d009e723abdb41607b57e78a6b2260d4255cf327",
+      "newBodySHA256": "fd7a8d3a7726b25abd6deff8d009e723abdb41607b57e78a6b2260d4255cf327"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testEveryObservedAlertSubtreeRoutesOrdinaryTapThroughItsOwnContext",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testEveryObservedAlertSubtreeRoutesOrdinaryTapThroughItsOwnContext",
+      "oldBodySHA256": "abc8016580eb519e038d985af4b164171e2e5dda79997948d1ead8519b3b314d",
+      "newBodySHA256": "abc8016580eb519e038d985af4b164171e2e5dda79997948d1ead8519b3b314d"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertDescriptionPreservesNameAndValueFallbacksWithoutChangingNativeLabels",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAlertDescriptionPreservesNameAndValueFallbacksWithoutChangingNativeLabels",
+      "oldBodySHA256": "c61a2be9b373d718dadd9c4832ce9be8300e649dd84c66cf6fc30f0632eefbf2",
+      "newBodySHA256": "c61a2be9b373d718dadd9c4832ce9be8300e649dd84c66cf6fc30f0632eefbf2"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapRejectsOldRunnerDuplicateNamesAndNonAlertTargetsWithoutRequest",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAlertTapRejectsOldRunnerDuplicateNamesAndNonAlertTargetsWithoutRequest",
+      "oldBodySHA256": "ba218deba77db08cfe51a4341a954ca4e40532c04f3c65e6954ce02bb5d179db",
+      "newBodySHA256": "ba218deba77db08cfe51a4341a954ca4e40532c04f3c65e6954ce02bb5d179db"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapRejectsOldObservationAndSpringBoardForegroundWithoutExpandingScope",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAlertTapRejectsOldObservationAndSpringBoardForegroundWithoutExpandingScope",
+      "oldBodySHA256": "3c1c87fc419a72607cae369f7bae6df4a4e299e66baeef8eadbc81bcf3e2d7d0",
+      "newBodySHA256": "3c1c87fc419a72607cae369f7bae6df4a4e299e66baeef8eadbc81bcf3e2d7d0"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testChangedAlertGuardRefusalIsUnsentButLostReplyLocksFurtherActions",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testChangedAlertGuardRefusalIsUnsentButLostReplyLocksFurtherActions",
+      "oldBodySHA256": "b624232f4a235474ce8fadc99e45d7547dde495a758f6ae0b7cf8bd7a80f7d06",
+      "newBodySHA256": "b624232f4a235474ce8fadc99e45d7547dde495a758f6ae0b7cf8bd7a80f7d06"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWiderObservationReachesComposerAfterTruncatedHistoryAndTypesOnce",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testWiderObservationReachesComposerAfterTruncatedHistoryAndTypesOnce",
+      "oldBodySHA256": "106c9329de08ce0c91e9c090e4e86e9c02dfca4cd78825bcfe793017b45dbfe8",
+      "newBodySHA256": "106c9329de08ce0c91e9c090e4e86e9c02dfca4cd78825bcfe793017b45dbfe8"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearResolvesFreshInputAndConsumesReference",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testClearResolvesFreshInputAndConsumesReference",
+      "oldBodySHA256": "1868957a328d2c777b9a98cc431c9e21ae0dffd4d2755691f67a6a52c61b8675",
+      "newBodySHA256": "1868957a328d2c777b9a98cc431c9e21ae0dffd4d2755691f67a6a52c61b8675"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testTypeKeepsAppendSemanticsAndSecureSupportWithoutImplicitClear",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testTypeKeepsAppendSemanticsAndSecureSupportWithoutImplicitClear",
+      "oldBodySHA256": "89da8d58e2a314aedeb1700d640b2bd71d7d77c282ff8658d96b9d598ff2b499",
+      "newBodySHA256": "89da8d58e2a314aedeb1700d640b2bd71d7d77c282ff8658d96b9d598ff2b499"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearRejectsReferenceFromPreviousObservationWithoutRequest",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testClearRejectsReferenceFromPreviousObservationWithoutRequest",
+      "oldBodySHA256": "214007609739e8a8b1e261c0eed3eaa2f809922d1c5eb89b17a76fa276e06cd2",
+      "newBodySHA256": "214007609739e8a8b1e261c0eed3eaa2f809922d1c5eb89b17a76fa276e06cd2"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearRejectsSecureNonInputAndDisabledNodesBeforeLookup",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testClearRejectsSecureNonInputAndDisabledNodesBeforeLookup",
+      "oldBodySHA256": "05e67d5d6fdb15fee44ae00d6e0ef9c28fa0d9c9d06bfc8f37c3a7fef52887e6",
+      "newBodySHA256": "05e67d5d6fdb15fee44ae00d6e0ef9c28fa0d9c9d06bfc8f37c3a7fef52887e6"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearRequiresUniqueFreshTargetAndConsumesRefOnLookupRefusal",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testClearRequiresUniqueFreshTargetAndConsumesRefOnLookupRefusal",
+      "oldBodySHA256": "22f07f0701b0d67a0db0bd72618a23470f787416ddb08f25956d00ed522af464",
+      "newBodySHA256": "22f07f0701b0d67a0db0bd72618a23470f787416ddb08f25956d00ed522af464"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUncertainClearBlocksReplayEvenAfterFreshObservation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testUncertainClearBlocksReplayEvenAfterFreshObservation",
+      "oldBodySHA256": "0724df3facb476effd7195cdfe4981401d54942e2106c7556dff974824747859",
+      "newBodySHA256": "0724df3facb476effd7195cdfe4981401d54942e2106c7556dff974824747859"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRunnerDroppedClearRemainsUnsentAndAllowsFreshAction",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testRunnerDroppedClearRemainsUnsentAndAllowsFreshAction",
+      "oldBodySHA256": "3a27af006c537112d266c4e33a8f73e027c0aa461ccb2aa5165ee040c144332e",
+      "newBodySHA256": "3a27af006c537112d266c4e33a8f73e027c0aa461ccb2aa5165ee040c144332e"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testNewObservationInvalidatesPreviousRefs",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testNewObservationInvalidatesPreviousRefs",
+      "oldBodySHA256": "8f16c7c00071460e58f48f90226a7b3977dfa10f6124d76e37083beae0fcd374",
+      "newBodySHA256": "8f16c7c00071460e58f48f90226a7b3977dfa10f6124d76e37083beae0fcd374"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAppSwitchBeforeActionRejectsWithoutLookupOrMutation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAppSwitchBeforeActionRejectsWithoutLookupOrMutation",
+      "oldBodySHA256": "ec044f00796ce6e8bd79814f22d6f1f747f7824954c0397a2c9c8de61aef8380",
+      "newBodySHA256": "ec044f00796ce6e8bd79814f22d6f1f747f7824954c0397a2c9c8de61aef8380"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAmbiguousFreshLookupNeverClicks",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAmbiguousFreshLookupNeverClicks",
+      "oldBodySHA256": "8553bad50e5f5e2e47dcf4179096ee4475d25793d2bafef69854f63ef510ef1e",
+      "newBodySHA256": "8553bad50e5f5e2e47dcf4179096ee4475d25793d2bafef69854f63ef510ef1e"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorStopsSameTargetAfterPageChanges",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testPageAnchorStopsSameTargetAfterPageChanges",
+      "oldBodySHA256": "7ec28403771eb41573027c777e59fd0f8ad2d334401f42ac8a8b9b79538610c4",
+      "newBodySHA256": "7ec28403771eb41573027c777e59fd0f8ad2d334401f42ac8a8b9b79538610c4"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorUsesTextIdentityWithoutEnabledOrFrame",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testPageAnchorUsesTextIdentityWithoutEnabledOrFrame",
+      "oldBodySHA256": "7e1b156b37ddcb08004a10d1c6efb71e516c1708e673499f6337d7129a5bd12b",
+      "newBodySHA256": "7e1b156b37ddcb08004a10d1c6efb71e516c1708e673499f6337d7129a5bd12b"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRequireUnchangedObservationStopsSameTargetAfterTextChanges",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testRequireUnchangedObservationStopsSameTargetAfterTextChanges",
+      "oldBodySHA256": "5a1851b824199024788f976da777fd6db6367a4a414afe06c731ab9d6fd3178f",
+      "newBodySHA256": "5a1851b824199024788f976da777fd6db6367a4a414afe06c731ab9d6fd3178f"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRequireUnchangedObservationIgnoresTargetFrameAnimation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testRequireUnchangedObservationIgnoresTargetFrameAnimation",
+      "oldBodySHA256": "59ce1124421cec7f663f6bd705093ec64d225f40231f38c63c0ac1a5d4d47409",
+      "newBodySHA256": "59ce1124421cec7f663f6bd705093ec64d225f40231f38c63c0ac1a5d4d47409"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorRegionConstrainsAnchorCenter",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testPageAnchorRegionConstrainsAnchorCenter",
+      "oldBodySHA256": "25720a5828c8e7c273a46015860b803dbd4d6e7a37cacc9116725bd0390195ea",
+      "newBodySHA256": "25720a5828c8e7c273a46015860b803dbd4d6e7a37cacc9116725bd0390195ea"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorRegionRejectsNonPositiveOrNonFiniteSize",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testPageAnchorRegionRejectsNonPositiveOrNonFiniteSize",
+      "oldBodySHA256": "4d356adc7966ea33fdc344801dae67966c3948c77b41c08ba8d1c8e0bf70b51d",
+      "newBodySHA256": "4d356adc7966ea33fdc344801dae67966c3948c77b41c08ba8d1c8e0bf70b51d"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testMultiplePageAnchorsStopBeforeMutation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testMultiplePageAnchorsStopBeforeMutation",
+      "oldBodySHA256": "858ea5191f903c035693c4fabc4214f89b9397d3660dc154c64aafc9c8066030",
+      "newBodySHA256": "858ea5191f903c035693c4fabc4214f89b9397d3660dc154c64aafc9c8066030"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStoppingWhilePageAnchorLookupIsInFlightDoesNotMutate",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testStoppingWhilePageAnchorLookupIsInFlightDoesNotMutate",
+      "oldBodySHA256": "148c8851e69319d4004181701e55791e8ec3c48a6efb903389ba27733fa43d30",
+      "newBodySHA256": "148c8851e69319d4004181701e55791e8ec3c48a6efb903389ba27733fa43d30"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorRefFromPreviousObservationIsStaleWithoutRequests",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testPageAnchorRefFromPreviousObservationIsStaleWithoutRequests",
+      "oldBodySHA256": "7771032dec40a16380d097f50a05b668b504427a0e01c5e6feb9d9c34061ff6c",
+      "newBodySHA256": "7771032dec40a16380d097f50a05b668b504427a0e01c5e6feb9d9c34061ff6c"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorIsInvalidForVisualAndLifecycleActions",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testPageAnchorIsInvalidForVisualAndLifecycleActions",
+      "oldBodySHA256": "345973befdf044d22be592d77368d538a3e183dff03a78e8d999d2eda8702314",
+      "newBodySHA256": "345973befdf044d22be592d77368d538a3e183dff03a78e8d999d2eda8702314"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testResponseLossMakesOutcomeUnknownAndNeverRetries",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testResponseLossMakesOutcomeUnknownAndNeverRetries",
+      "oldBodySHA256": "fda7873abc37f926e4e83716f84b3efa8348ce76b2af4d5253459b9b4180ee92",
+      "newBodySHA256": "fda7873abc37f926e4e83716f84b3efa8348ce76b2af4d5253459b9b4180ee92"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testMutationCancellationIsUnknownAndDoesNotReplay",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testMutationCancellationIsUnknownAndDoesNotReplay",
+      "oldBodySHA256": "c7f052d896fd9d2418e117afecfed5cdba937a6c5a757588efa4c101f548f096",
+      "newBodySHA256": "c7f052d896fd9d2418e117afecfed5cdba937a6c5a757588efa4c101f548f096"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testHTTP200WithWebDriverErrorIsNotSuccess",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testHTTP200WithWebDriverErrorIsNotSuccess",
+      "oldBodySHA256": "b39b6ee4d9ba4d998e636e68308da9f3db8fd7c6a4a45c0dd91fc2c241193c7a",
+      "newBodySHA256": "b39b6ee4d9ba4d998e636e68308da9f3db8fd7c6a4a45c0dd91fc2c241193c7a"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testDroppedAndAuthenticationRefusalsAreUnsent",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testDroppedAndAuthenticationRefusalsAreUnsent",
+      "oldBodySHA256": "10b569734b2632220aeb6135d0c86e31a544603953fac9be031d4a42844e5d6c",
+      "newBodySHA256": "10b569734b2632220aeb6135d0c86e31a544603953fac9be031d4a42844e5d6c"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testDroppedStaleClickAllowsReplanningOnlyAfterFreshObservation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testDroppedStaleClickAllowsReplanningOnlyAfterFreshObservation",
+      "oldBodySHA256": "f0339353b6f4e2183a6c2e287dc0ab0947923357e5953d82b8811960fc35b0f8",
+      "newBodySHA256": "f0339353b6f4e2183a6c2e287dc0ab0947923357e5953d82b8811960fc35b0f8"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStaleElementAfterMutationDispatchDoesNotPromiseNoSideEffect",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testStaleElementAfterMutationDispatchDoesNotPromiseNoSideEffect",
+      "oldBodySHA256": "611efd27398b0448aa0fcbdae49a7af6a7e8b4c915fabf0de79db7d548299592",
+      "newBodySHA256": "611efd27398b0448aa0fcbdae49a7af6a7e8b4c915fabf0de79db7d548299592"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStopBlocksActionsAndObservations",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testStopBlocksActionsAndObservations",
+      "oldBodySHA256": "51561de98d4c8e1a17b9ff7a5ccae06698b8699cccede020e22c48bae7f8e274",
+      "newBodySHA256": "51561de98d4c8e1a17b9ff7a5ccae06698b8699cccede020e22c48bae7f8e274"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRefusedStartDoesNotReusePreviousOperationDiagnostics",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testRefusedStartDoesNotReusePreviousOperationDiagnostics",
+      "oldBodySHA256": "3e9972af628333b80c49985afb31fbf0a2ee92c30d64892e9c231966c8c976a5",
+      "newBodySHA256": "3e9972af628333b80c49985afb31fbf0a2ee92c30d64892e9c231966c8c976a5"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testShutdownSignsOneShortRequestAndStopsWorkBeforeReply",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testShutdownSignsOneShortRequestAndStopsWorkBeforeReply",
+      "oldBodySHA256": "7fd5802d0d9237103a7d3aac866582f0c5d40937ef7098b9a07e7c96886594b5",
+      "newBodySHA256": "7fd5802d0d9237103a7d3aac866582f0c5d40937ef7098b9a07e7c96886594b5"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testShutdownRejectsMissingFalseOrWronglyTypedConfirmation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testShutdownRejectsMissingFalseOrWronglyTypedConfirmation",
+      "oldBodySHA256": "3c8b327aaca9782bb4cca24448390c051dee7b7a741e0fb372066d1f7aa99e87",
+      "newBodySHA256": "3c8b327aaca9782bb4cca24448390c051dee7b7a741e0fb372066d1f7aa99e87"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testShutdownPropagatesRefusalAndTransportFailureWithoutRetry",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testShutdownPropagatesRefusalAndTransportFailureWithoutRetry",
+      "oldBodySHA256": "a62449b3edfb1b7a3fbe6b2f78e5f83f5ca97191c8c0eee83ead7e08cab4787d",
+      "newBodySHA256": "a62449b3edfb1b7a3fbe6b2f78e5f83f5ca97191c8c0eee83ead7e08cab4787d"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRequestTimeoutOverridePreservesNormalRequestDefaults",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testRequestTimeoutOverridePreservesNormalRequestDefaults",
+      "oldBodySHA256": "1bddffb543a5d61d548c29eb00369aa6900e15acddceac7942360e43edb1f9d2",
+      "newBodySHA256": "1bddffb543a5d61d548c29eb00369aa6900e15acddceac7942360e43edb1f9d2"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilitySignsRequestAndInvalidatesObservation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testWaitForStabilitySignsRequestAndInvalidatesObservation",
+      "oldBodySHA256": "429e138e31caea81be84270c7397e009fcfdc6f901ffb57a35570b3624c4d573",
+      "newBodySHA256": "429e138e31caea81be84270c7397e009fcfdc6f901ffb57a35570b3624c4d573"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilityPreservesUnstableAndBlankFlags",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testWaitForStabilityPreservesUnstableAndBlankFlags",
+      "oldBodySHA256": "9b03563fca3434c0a8bfe03aec43fb89163dbef8c8dbe14a74bc5b6a3c6cd695",
+      "newBodySHA256": "9b03563fca3434c0a8bfe03aec43fb89163dbef8c8dbe14a74bc5b6a3c6cd695"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilityRejectsForegroundChangeAndDoesNotKeepSnapshot",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testWaitForStabilityRejectsForegroundChangeAndDoesNotKeepSnapshot",
+      "oldBodySHA256": "72ab3e01cf1efcf9d02f8171a07ba77c72dc471eba9d8657014b503a2d17d7df",
+      "newBodySHA256": "72ab3e01cf1efcf9d02f8171a07ba77c72dc471eba9d8657014b503a2d17d7df"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilityPropagatesRunnerErrorWithoutRetryOrSnapshot",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testWaitForStabilityPropagatesRunnerErrorWithoutRetryOrSnapshot",
+      "oldBodySHA256": "3954cb4d22b1c9d9d132f6615e68008f5ca87f9170a42db69e794f72f2d35881",
+      "newBodySHA256": "3954cb4d22b1c9d9d132f6615e68008f5ca87f9170a42db69e794f72f2d35881"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStopDuringWaitForStabilityPreventsPublishingAndReleasesLock",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testStopDuringWaitForStabilityPreventsPublishingAndReleasesLock",
+      "oldBodySHA256": "a9027194ae1bcfd580134c58ba529ded34383dd98d7ad23b1b0699583ac90122",
+      "newBodySHA256": "a9027194ae1bcfd580134c58ba529ded34383dd98d7ad23b1b0699583ac90122"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStopDuringElementLookupPreventsMutation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testStopDuringElementLookupPreventsMutation",
+      "oldBodySHA256": "8f2c7da22b005bc59ec42c66281cd32d45a385199d0daa967eab711351b9d113",
+      "newBodySHA256": "8f2c7da22b005bc59ec42c66281cd32d45a385199d0daa967eab711351b9d113"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testConcurrentActionCannotOvertakeInFlightMutation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testConcurrentActionCannotOvertakeInFlightMutation",
+      "oldBodySHA256": "9578e116ef3e74294d5120fe89a81712679c50602c69e5b1257131cef7d3019b",
+      "newBodySHA256": "9578e116ef3e74294d5120fe89a81712679c50602c69e5b1257131cef7d3019b"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVerifiedApplicationCanBeAddedToLiveScopeButStopCannotBeUndone",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVerifiedApplicationCanBeAddedToLiveScopeButStopCannotBeUndone",
+      "oldBodySHA256": "e8f32d7ec57d739941b598e3104f9278fc683fef9626c8e06e4cfd56ba04b624",
+      "newBodySHA256": "e8f32d7ec57d739941b598e3104f9278fc683fef9626c8e06e4cfd56ba04b624"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUnknownActionOutcomeRejectsApplicationAdditionWithoutReplay",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testUnknownActionOutcomeRejectsApplicationAdditionWithoutReplay",
+      "oldBodySHA256": "4d839d6cc776df9543548d37296d4a01f4279a973c8bbd605d2fecf61aaeba3f",
+      "newBodySHA256": "4d839d6cc776df9543548d37296d4a01f4279a973c8bbd605d2fecf61aaeba3f"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testApplicationAdditionCannotRaceInFlightMutation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientOwnershipTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testApplicationAdditionCannotRaceInFlightMutation",
+      "oldBodySHA256": "039a5bcdb9e0a6c42c39407783dbbfbd83df8dccbf6703ef7207786bddc3a8b9",
+      "newBodySHA256": "039a5bcdb9e0a6c42c39407783dbbfbd83df8dccbf6703ef7207786bddc3a8b9"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOutOfScopeObservationDoesNotReadTree",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testOutOfScopeObservationDoesNotReadTree",
+      "oldBodySHA256": "e72f614f8ceb1a3e790b58f26af90dbb0fd0b10fb8ece7cdbc5c6a179d0c8abe",
+      "newBodySHA256": "e72f614f8ceb1a3e790b58f26af90dbb0fd0b10fb8ece7cdbc5c6a179d0c8abe"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotDecodesBase64OnlyWhenExplicitlyRequested",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testScreenshotDecodesBase64OnlyWhenExplicitlyRequested",
+      "oldBodySHA256": "b0048f3c1d8b68c7abf7df9cf2d3955d6a4e6866361b800db61f81758a07dca5",
+      "newBodySHA256": "b0048f3c1d8b68c7abf7df9cf2d3955d6a4e6866361b800db61f81758a07dca5"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testFailedScreenshotInvalidatesPreviouslyObservedTargets",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testFailedScreenshotInvalidatesPreviouslyObservedTargets",
+      "oldBodySHA256": "c6547f20c5ed42c4885e629e673d0eebe47a438ca7baf1daea449165bbc2668e",
+      "newBodySHA256": "c6547f20c5ed42c4885e629e673d0eebe47a438ca7baf1daea449165bbc2668e"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testLatestObservationInvalidatesOnFailedObserveAndStop",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testLatestObservationInvalidatesOnFailedObserveAndStop",
+      "oldBodySHA256": "d7200cb7866249c5a0c7b9eacd04b1b5dc0e46f916e4c198a4ced2dce364b163",
+      "newBodySHA256": "d7200cb7866249c5a0c7b9eacd04b1b5dc0e46f916e4c198a4ced2dce364b163"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSuccessfulScreenshotPreservesItsExactTreeObservation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSuccessfulScreenshotPreservesItsExactTreeObservation",
+      "oldBodySHA256": "a408b45efa354af932592ac5d9f732659094b2a983f524530a52aa808b4995e9",
+      "newBodySHA256": "a408b45efa354af932592ac5d9f732659094b2a983f524530a52aa808b4995e9"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testObservationCanCollectActualScreenSizeWithoutUsingRootBoundsOrTakingScreenshot",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testObservationCanCollectActualScreenSizeWithoutUsingRootBoundsOrTakingScreenshot",
+      "oldBodySHA256": "23f9908512e15ff21017cc0ecd7af79e7fd863c26492b19518cee213e0a8bf24",
+      "newBodySHA256": "23f9908512e15ff21017cc0ecd7af79e7fd863c26492b19518cee213e0a8bf24"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettledObservationUsesOneExtraRequestAndKeepsStabilitySeparateFromContent",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSettledObservationUsesOneExtraRequestAndKeepsStabilitySeparateFromContent",
+      "oldBodySHA256": "cbad2516235a37f806ed41cd368a2a550b9a7f056dd65535184dc0422fd11281",
+      "newBodySHA256": "cbad2516235a37f806ed41cd368a2a550b9a7f056dd65535184dc0422fd11281"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUnstableObservationStillReadsFreshTreeWithoutRetryingOrChangingActionResult",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testUnstableObservationStillReadsFreshTreeWithoutRetryingOrChangingActionResult",
+      "oldBodySHA256": "d844a668a5c4e62768869e7946402487e657d9678943ee3f5de332c028be0cdc",
+      "newBodySHA256": "d844a668a5c4e62768869e7946402487e657d9678943ee3f5de332c028be0cdc"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testInvalidSettleBudgetRejectsWithoutReadingAndInvalidatesOldReferences",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testInvalidSettleBudgetRejectsWithoutReadingAndInvalidatesOldReferences",
+      "oldBodySHA256": "ae845b2bf7812c0ee5906cc94fbe5550d93fab02ba8732a1a5c9b6ae0e9cee21",
+      "newBodySHA256": "ae845b2bf7812c0ee5906cc94fbe5550d93fab02ba8732a1a5c9b6ae0e9cee21"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettleStopAndConcurrentOperationDoNotReadSourceOrOvertakeWait",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSettleStopAndConcurrentOperationDoNotReadSourceOrOvertakeWait",
+      "oldBodySHA256": "5cd041bfa3ab48d187b997c9763706a60a65b606e9461288881558b3165bf029",
+      "newBodySHA256": "5cd041bfa3ab48d187b997c9763706a60a65b606e9461288881558b3165bf029"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testCancellationDuringSettlePreventsSourceAndKeepsClientReusable",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testCancellationDuringSettlePreventsSourceAndKeepsClientReusable",
+      "oldBodySHA256": "896ece990d35823526f2a9c62832ed701bbfe07ab4925477af1aedd62839039e",
+      "newBodySHA256": "896ece990d35823526f2a9c62832ed701bbfe07ab4925477af1aedd62839039e"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettledObservationRejectsOutOfScopeAndChangedForeground",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSettledObservationRejectsOutOfScopeAndChangedForeground",
+      "oldBodySHA256": "2ce1d1df1c9a8c656ca603a20e57b0e24dbee9371a8fc13f0e7083eacce83e8c",
+      "newBodySHA256": "2ce1d1df1c9a8c656ca603a20e57b0e24dbee9371a8fc13f0e7083eacce83e8c"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettleReadCannotClearUnknownActionOutcome",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSettleReadCannotClearUnknownActionOutcome",
+      "oldBodySHA256": "75f48ba32a87aa18e862d7f0ab22715f5d7ae814f63b81f4e743431967231601",
+      "newBodySHA256": "75f48ba32a87aa18e862d7f0ab22715f5d7ae814f63b81f4e743431967231601"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testMalformedOrFailedSettleDoesNotFallBackToTreeOrRetainReferences",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testMalformedOrFailedSettleDoesNotFallBackToTreeOrRetainReferences",
+      "oldBodySHA256": "c08226ada2feb8532a97c97635498c71a319ecc4528832e558e91f9189feac29",
+      "newBodySHA256": "c08226ada2feb8532a97c97635498c71a319ecc4528832e558e91f9189feac29"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenSizeFailureCannotPublishFreshObservationOrKeepOldSnapshot",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientObservationTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testScreenSizeFailureCannotPublishFreshObservationOrKeepOldSnapshot",
+      "oldBodySHA256": "d8ad88d239ccdc107b73cfda9c36397d6266cb7e3a294ed5bc40c48cd51384c8",
+      "newBodySHA256": "d8ad88d239ccdc107b73cfda9c36397d6266cb7e3a294ed5bc40c48cd51384c8"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotRejectsRotationAfterBoundedTreeWithoutRelabelingOldNodes",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testScreenshotRejectsRotationAfterBoundedTreeWithoutRelabelingOldNodes",
+      "oldBodySHA256": "8a66588cb2877fb3754c3d9d1fc264fbb79af1c9abae05565c700d8e88b2cfc7",
+      "newBodySHA256": "8a66588cb2877fb3754c3d9d1fc264fbb79af1c9abae05565c700d8e88b2cfc7"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapUsesFullScreenPointsForUntargetablePopupAndConsumesEvidence",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapUsesFullScreenPointsForUntargetablePopupAndConsumesEvidence",
+      "oldBodySHA256": "5b141148f7117e0b2687e6e082fd41e99004413c833016a8f3f46963e88a23fe",
+      "newBodySHA256": "5b141148f7117e0b2687e6e082fd41e99004413c833016a8f3f46963e88a23fe"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeUsesFullScreenPointsAndConsumesScreenshotEvidence",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualSwipeUsesFullScreenPointsAndConsumesScreenshotEvidence",
+      "oldBodySHA256": "ce1fba38627c649596136bdbeafbdd263d4a6219c592e16e26f442123eca99d3",
+      "newBodySHA256": "ce1fba38627c649596136bdbeafbdd263d4a6219c592e16e26f442123eca99d3"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsMissingOrStaleScreenshotWithoutSending",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualSwipeRejectsMissingOrStaleScreenshotWithoutSending",
+      "oldBodySHA256": "a108caa7526287b8ba4ecffb7deed75382b824dd330aaf174859178e6e2c7d89",
+      "newBodySHA256": "a108caa7526287b8ba4ecffb7deed75382b824dd330aaf174859178e6e2c7d89"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsInvalidOrIdenticalEndpointsWithoutSending",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualSwipeRejectsInvalidOrIdenticalEndpointsWithoutSending",
+      "oldBodySHA256": "bf946a2d9cc66102a000406ce90ac0d58f4cfed7c855ae4a54ad7060c6cf9db8",
+      "newBodySHA256": "bf946a2d9cc66102a000406ce90ac0d58f4cfed7c855ae4a54ad7060c6cf9db8"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsForegroundChangeBeforeAndAfterGeometryCheck",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualSwipeRejectsForegroundChangeBeforeAndAfterGeometryCheck",
+      "oldBodySHA256": "5ad15b1dbb8dab471bfc9135946571ed1e6d941d1b4bd47f7aec855625d3890e",
+      "newBodySHA256": "5ad15b1dbb8dab471bfc9135946571ed1e6d941d1b4bd47f7aec855625d3890e"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsRotationBeforeSending",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualSwipeRejectsRotationBeforeSending",
+      "oldBodySHA256": "a781fe2350fb678818e35c52dcbe04be5bee583af546e6cdc3c8af560820f87b",
+      "newBodySHA256": "a781fe2350fb678818e35c52dcbe04be5bee583af546e6cdc3c8af560820f87b"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeResponseLossBlocksReplayEvenAfterFreshScreenshot",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualSwipeResponseLossBlocksReplayEvenAfterFreshScreenshot",
+      "oldBodySHA256": "9890279a11622f6e5f5e3045db8dbae18038d0ccc8616770ef59f9c196b8197f",
+      "newBodySHA256": "9890279a11622f6e5f5e3045db8dbae18038d0ccc8616770ef59f9c196b8197f"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRequiresScreenshotOfLatestObservation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapRequiresScreenshotOfLatestObservation",
+      "oldBodySHA256": "cf6a449e0e9fb838e46d5f240ddebef1fbf95eaef7b0023e33d1045a5db8f9f8",
+      "newBodySHA256": "cf6a449e0e9fb838e46d5f240ddebef1fbf95eaef7b0023e33d1045a5db8f9f8"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsStaleScreenshotIDAndNewObservationInvalidatesEvidence",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapRejectsStaleScreenshotIDAndNewObservationInvalidatesEvidence",
+      "oldBodySHA256": "7b756a8307ac75b33101df60996278da29197368dbf027fe06698d4e926d7af0",
+      "newBodySHA256": "7b756a8307ac75b33101df60996278da29197368dbf027fe06698d4e926d7af0"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsNonFiniteAndOutOfRangeCoordinatesWithoutSending",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapRejectsNonFiniteAndOutOfRangeCoordinatesWithoutSending",
+      "oldBodySHA256": "8b0670123b9b51042435b3a83b7064e5ad6bb753bb9bda67f51f8901923b1a7e",
+      "newBodySHA256": "8b0670123b9b51042435b3a83b7064e5ad6bb753bb9bda67f51f8901923b1a7e"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapAcceptsScreenOriginAndInteriorFarEdge",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapAcceptsScreenOriginAndInteriorFarEdge",
+      "oldBodySHA256": "da5bc29c8c8f23e4f61327f2a92059ebfd90502b82dfa57864f3caf114ec04a6",
+      "newBodySHA256": "da5bc29c8c8f23e4f61327f2a92059ebfd90502b82dfa57864f3caf114ec04a6"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsChangedForegroundBundleOrProcessBeforeSending",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapRejectsChangedForegroundBundleOrProcessBeforeSending",
+      "oldBodySHA256": "bd378eacfa9d5ca5542e3279f8f5d5e953039c576059bdecf12105cb6d642bdb",
+      "newBodySHA256": "bd378eacfa9d5ca5542e3279f8f5d5e953039c576059bdecf12105cb6d642bdb"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsRotatedScreenBeforeSending",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapRejectsRotatedScreenBeforeSending",
+      "oldBodySHA256": "071bd1594330bee9e1c3955a6de9d881e20ee3a9dc354712727ca6ec7dc9eb33",
+      "newBodySHA256": "071bd1594330bee9e1c3955a6de9d881e20ee3a9dc354712727ca6ec7dc9eb33"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotRejectsForegroundOrOrientationChangeAndInvalidatesTargets",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testScreenshotRejectsForegroundOrOrientationChangeAndInvalidatesTargets",
+      "oldBodySHA256": "47da23b0f4eb6213294dbfbfb7d49a5a5f6daf6bb8cbb65a2555069fb1ec2c8d",
+      "newBodySHA256": "47da23b0f4eb6213294dbfbfb7d49a5a5f6daf6bb8cbb65a2555069fb1ec2c8d"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotRequiresPixelGeometryToMatchScreenPoints",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testScreenshotRequiresPixelGeometryToMatchScreenPoints",
+      "oldBodySHA256": "b400f70d114b3607597da97cea70a7b47c5c965867c166c5652421bfa3680b3b",
+      "newBodySHA256": "b400f70d114b3607597da97cea70a7b47c5c965867c166c5652421bfa3680b3b"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAnotherActionConsumesVisualTapEvidence",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testAnotherActionConsumesVisualTapEvidence",
+      "oldBodySHA256": "becefc9890acf1b95b8121509eb76f8fafcbb635aa23be2633093f6ebd800042",
+      "newBodySHA256": "becefc9890acf1b95b8121509eb76f8fafcbb635aa23be2633093f6ebd800042"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testFailedReplacementScreenshotInvalidatesPreviousVisualEvidence",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testFailedReplacementScreenshotInvalidatesPreviousVisualEvidence",
+      "oldBodySHA256": "137fcde6ceb525c2caf2d8d37e1a3bb8c68b226123b3122c40ea8663c5377a7f",
+      "newBodySHA256": "137fcde6ceb525c2caf2d8d37e1a3bb8c68b226123b3122c40ea8663c5377a7f"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapResponseLossBlocksReplayEvenAfterFreshObservation",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testVisualTapResponseLossBlocksReplayEvenAfterFreshObservation",
+      "oldBodySHA256": "9b64ee53651e21beb5c96a462efe2acfcd308dc1c13cf2e94cbe2232bdfdfa2e",
+      "newBodySHA256": "9b64ee53651e21beb5c96a462efe2acfcd308dc1c13cf2e94cbe2232bdfdfa2e"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStoppingDuringPointPreflightPreventsTap",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientVisualActionTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testStoppingDuringPointPreflightPreventsTap",
+      "oldBodySHA256": "2dfb3c3bb098d6fc334ab1e41ff9857321f51f83efa6b609b5743447c8a603ec",
+      "newBodySHA256": "2dfb3c3bb098d6fc334ab1e41ff9857321f51f83efa6b609b5743447c8a603ec"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSessionTokensAreRandomAndValid",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "PhoneRunnerClientTests",
+      "newMethod": "testSessionTokensAreRandomAndValid",
+      "oldBodySHA256": "ae0408fde7d9448626a7eaee608bff217672932c485eff1ca02e4f7f4bbda333",
+      "newBodySHA256": "ae0408fde7d9448626a7eaee608bff217672932c485eff1ca02e4f7f4bbda333"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOnlySlowRunnerPhasesAreReported",
+      "newFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "newClass": "RunnerPhaseTimingTests",
+      "newMethod": "testOnlySlowRunnerPhasesAreReported",
+      "oldBodySHA256": "1e72f9581c5c72832fe6c63b73789d39b2f2739d922d175775dbbc3668156a96",
+      "newBodySHA256": "1e72f9581c5c72832fe6c63b73789d39b2f2739d922d175775dbbc3668156a96"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testLaunchDiagnosticDecodesTransportStageAndOlderStatus",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testLaunchDiagnosticDecodesTransportStageAndOlderStatus",
+      "oldBodySHA256": "010884d672510bdfdd7f79495b8002d06db43046cbf1dd01a8b57a106a6d32a3",
+      "newBodySHA256": "010884d672510bdfdd7f79495b8002d06db43046cbf1dd01a8b57a106a6d32a3"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testNativeStartupFailureRemainsTypedAfterSessionCleanup",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testNativeStartupFailureRemainsTypedAfterSessionCleanup",
+      "oldBodySHA256": "c2db9328245909c6d9c09cfc511b1403c952be2a00e317124e7e3641b2118e32",
+      "newBodySHA256": "c2db9328245909c6d9c09cfc511b1403c952be2a00e317124e7e3641b2118e32"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testPairingRejectsLockdownAndMismatchedKeysBeforeStorage",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testPairingRejectsLockdownAndMismatchedKeysBeforeStorage",
+      "oldBodySHA256": "e59047bb394553c2c51e393e7ae0b0fe7c90f809c032860f1782dc290fa2e45c",
+      "newBodySHA256": "e59047bb394553c2c51e393e7ae0b0fe7c90f809c032860f1782dc290fa2e45c"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testEnabledSwitchAllowsConsecutiveRunsWithoutReauthorization",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testEnabledSwitchAllowsConsecutiveRunsWithoutReauthorization",
+      "oldBodySHA256": "3696f389fffb51886643307e91821f4aad035ed8b57f1140c751837469718342",
+      "newBodySHA256": "3696f389fffb51886643307e91821f4aad035ed8b57f1140c751837469718342"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testScopeIsFrozenUntilNextRunAndStaleRevocationCannotStopIt",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testScopeIsFrozenUntilNextRunAndStaleRevocationCannotStopIt",
+      "oldBodySHA256": "60013c2559961dd7e4a855816ea7eb669787d144d30f102111c916632b9c4486",
+      "newBodySHA256": "60013c2559961dd7e4a855816ea7eb669787d144d30f102111c916632b9c4486"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testMissingPreparationOrScopeKeepsStatusAvailableButCannotStartControl",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testMissingPreparationOrScopeKeepsStatusAvailableButCannotStartControl",
+      "oldBodySHA256": "d981e9cd9c06eae3fd5ffdc0256876c68fd4c2516a726a0f83781a826d6da351",
+      "newBodySHA256": "d981e9cd9c06eae3fd5ffdc0256876c68fd4c2516a726a0f83781a826d6da351"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testSwitchAndScopePersistButOwnerDoesNotRestoreAndDisableRevokesSynchronously",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testSwitchAndScopePersistButOwnerDoesNotRestoreAndDisableRevokesSynchronously",
+      "oldBodySHA256": "9501fb6291e1b75f1751665c0db2f7e259759cdb3ec5acf1dfd9f8582274fff0",
+      "newBodySHA256": "9501fb6291e1b75f1751665c0db2f7e259759cdb3ec5acf1dfd9f8582274fff0"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testApplicationDiscoveryAddsExactIDToCurrentRunAndPersistsNameWithoutRunner",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testApplicationDiscoveryAddsExactIDToCurrentRunAndPersistsNameWithoutRunner",
+      "oldBodySHA256": "30039aabf81a6d4797facc898a702520969feb04bc2a2f0e90fbd66a30d461d2",
+      "newBodySHA256": "30039aabf81a6d4797facc898a702520969feb04bc2a2f0e90fbd66a30d461d2"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testDiscoveryFailureIsNotEmptySuccessAndInvalidIDCannotExtendScope",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testDiscoveryFailureIsNotEmptySuccessAndInvalidIDCannotExtendScope",
+      "oldBodySHA256": "91daa031dd3de2be9e50d65f19b0565f5c2cda84bdd6531d8180757a533f01fd",
+      "newBodySHA256": "91daa031dd3de2be9e50d65f19b0565f5c2cda84bdd6531d8180757a533f01fd"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testDisableDuringAppQueryJoinsBeforeReleasingRunAndDropsLateCatalog",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testDisableDuringAppQueryJoinsBeforeReleasingRunAndDropsLateCatalog",
+      "oldBodySHA256": "8225a89b7ba578a6d2d68b94ab390884d6d6aeb3dc9ec0b315212caf0be3b25a",
+      "newBodySHA256": "8225a89b7ba578a6d2d68b94ab390884d6d6aeb3dc9ec0b315212caf0be3b25a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testSettingsQueryCancellationBlocksConcurrentRunUntilJoin",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testSettingsQueryCancellationBlocksConcurrentRunUntilJoin",
+      "oldBodySHA256": "4af5b5ca4292a23c22189166577ba508867a8f47231f99ce77d453f4d66e21c5",
+      "newBodySHA256": "4af5b5ca4292a23c22189166577ba508867a8f47231f99ce77d453f4d66e21c5"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testUSBImportSavesBeforeDeletingStagingAndInvalidInputPreservesBoth",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testUSBImportSavesBeforeDeletingStagingAndInvalidInputPreservesBoth",
+      "oldBodySHA256": "755032f18de030af53d85f8382616a0319ae6d5484e1e3ce4d36a98ff3118cae",
+      "newBodySHA256": "755032f18de030af53d85f8382616a0319ae6d5484e1e3ce4d36a98ff3118cae"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testUSBImportRetainsStagingWhenSaveFailsOrMaterialChanges",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testUSBImportRetainsStagingWhenSaveFailsOrMaterialChanges",
+      "oldBodySHA256": "24a341b6c1d4123824b35de9337aa91258b17ed4abfb3557c4250e97ade28057",
+      "newBodySHA256": "24a341b6c1d4123824b35de9337aa91258b17ed4abfb3557c4250e97ade28057"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testConnectionPreparationExcludesCompetingControllerOperations",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testConnectionPreparationExcludesCompetingControllerOperations",
+      "oldBodySHA256": "3ef3670ec39a2e5765ed6d0ee79edb18377b201cb16aec9c8395203978c237aa",
+      "newBodySHA256": "3ef3670ec39a2e5765ed6d0ee79edb18377b201cb16aec9c8395203978c237aa"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testExistingPairingAndInvalidStartupDoNotTouchTunnel",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testExistingPairingAndInvalidStartupDoNotTouchTunnel",
+      "oldBodySHA256": "bad5fccf3dea9bfe62736312ca171cd0785d902691760d14d33e597ad5b37440",
+      "newBodySHA256": "bad5fccf3dea9bfe62736312ca171cd0785d902691760d14d33e597ad5b37440"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testCancellingStartupCancelsTunnelBeforeNativeSessionStarts",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testCancellingStartupCancelsTunnelBeforeNativeSessionStarts",
+      "oldBodySHA256": "ba59201c9052a6760cb2169d60e1f1ebba3f3dd321d735eab1668bd864425a01",
+      "newBodySHA256": "ba59201c9052a6760cb2169d60e1f1ebba3f3dd321d735eab1668bd864425a01"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testApplicationQueryWaitsForNativeResultThenTunnelDisconnectBeforePublishing",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testApplicationQueryWaitsForNativeResultThenTunnelDisconnectBeforePublishing",
+      "oldBodySHA256": "e53557e3e3d6706e7c9d7f4f0c3812a2e3c28bd329c2d20216ffd201694df622",
+      "newBodySHA256": "e53557e3e3d6706e7c9d7f4f0c3812a2e3c28bd329c2d20216ffd201694df622"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testApplicationQueryDisconnectFailureDoesNotPublishSuccessfulCatalog",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testApplicationQueryDisconnectFailureDoesNotPublishSuccessfulCatalog",
+      "oldBodySHA256": "fb43fe999835451ed1ea730e614c38ef53e98a8bc3ec4f550d242dc6e87c6743",
+      "newBodySHA256": "fb43fe999835451ed1ea730e614c38ef53e98a8bc3ec4f550d242dc6e87c6743"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testQueryFailureSurvivesAdditionalTunnelCleanupFailure",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testQueryFailureSurvivesAdditionalTunnelCleanupFailure",
+      "oldBodySHA256": "8fa747fdf1798d302f6914d1c1c1100fb9b02d7e41ee1e8f8de47787d8d08c45",
+      "newBodySHA256": "8fa747fdf1798d302f6914d1c1c1100fb9b02d7e41ee1e8f8de47787d8d08c45"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testStopReceiptPreservesCancelledQueryCleanupFailureAcrossNextClaim",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testStopReceiptPreservesCancelledQueryCleanupFailureAcrossNextClaim",
+      "oldBodySHA256": "b821db4afd595e98b6dd76d2a85030c31de260019c9d1f312f54ef5f4b0448e6",
+      "newBodySHA256": "b821db4afd595e98b6dd76d2a85030c31de260019c9d1f312f54ef5f4b0448e6"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testStartupFailureDoesNotBecomeCleanupFailureWhenTunnelDisconnected",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testStartupFailureDoesNotBecomeCleanupFailureWhenTunnelDisconnected",
+      "oldBodySHA256": "0b654fdb7107902f6c00f9723d6d1e4d46e67a694ed92b578db599ddeeace492",
+      "newBodySHA256": "0b654fdb7107902f6c00f9723d6d1e4d46e67a694ed92b578db599ddeeace492"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testLaterQuerySuccessfulDisconnectClearsPendingCleanupFailureInSameRun",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testLaterQuerySuccessfulDisconnectClearsPendingCleanupFailureInSameRun",
+      "oldBodySHA256": "3b6f3872ed124fabd2aea4f2e154dde99fee0b1f9c178d14a5cf48bd843da2f5",
+      "newBodySHA256": "3b6f3872ed124fabd2aea4f2e154dde99fee0b1f9c178d14a5cf48bd843da2f5"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testControlTeardownSuccessfulDisconnectSupersedesPriorQueryCleanupFailure",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testControlTeardownSuccessfulDisconnectSupersedesPriorQueryCleanupFailure",
+      "oldBodySHA256": "1a151d6d9060d750a93a3b16967da93322f100ea9ac442ec3baca1a7a71f064d",
+      "newBodySHA256": "1a151d6d9060d750a93a3b16967da93322f100ea9ac442ec3baca1a7a71f064d"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testReadinessStartsOneSessionReadsFreshUIAndClosesWithoutPersistingSelfScope",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testReadinessStartsOneSessionReadsFreshUIAndClosesWithoutPersistingSelfScope",
+      "oldBodySHA256": "780068661a0844360b00a9596f752e546156de7ed9ce6a2e43166f0c0b542b85",
+      "newBodySHA256": "780068661a0844360b00a9596f752e546156de7ed9ce6a2e43166f0c0b542b85"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testReadinessMissingPairingFailsConfigurationWithoutConnecting",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testReadinessMissingPairingFailsConfigurationWithoutConnecting",
+      "oldBodySHA256": "b6e8133d2129c961e8549670f52a6ebbb7d04f011fc1625222892f079e8acdb3",
+      "newBodySHA256": "b6e8133d2129c961e8549670f52a6ebbb7d04f011fc1625222892f079e8acdb3"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testReadinessTunnelFailureReportsConnectionStageAndCleansOwner",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testReadinessTunnelFailureReportsConnectionStageAndCleansOwner",
+      "oldBodySHA256": "80a7ba0b607b7f02795a5cff40fd963b5ef7053602d2cac2866e6a544985f05a",
+      "newBodySHA256": "80a7ba0b607b7f02795a5cff40fd963b5ef7053602d2cac2866e6a544985f05a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testReadinessRunnerFailureDoesNotClaimConnectionOrDDIVerified",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testReadinessRunnerFailureDoesNotClaimConnectionOrDDIVerified",
+      "oldBodySHA256": "1afb4476555e42c4a1593742dcfae9709f9e0cc33d9803c70d21057df9a997cb",
+      "newBodySHA256": "1afb4476555e42c4a1593742dcfae9709f9e0cc33d9803c70d21057df9a997cb"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testReadinessObservationFailurePreservesVerifiedConnectionAndCloses",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testReadinessObservationFailurePreservesVerifiedConnectionAndCloses",
+      "oldBodySHA256": "de70650db31b10fa1552934da19ed5a104286717758f9b28ef54c5c1f1f4a4e1",
+      "newBodySHA256": "de70650db31b10fa1552934da19ed5a104286717758f9b28ef54c5c1f1f4a4e1"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testReadinessSuccessfulObservationRetainsFailedCleanup",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testReadinessSuccessfulObservationRetainsFailedCleanup",
+      "oldBodySHA256": "d24c95ff73929e371c60c41c48e5136942426d4539a5729069c81d631a84d457",
+      "newBodySHA256": "d24c95ff73929e371c60c41c48e5136942426d4539a5729069c81d631a84d457"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testDisableDuringReadinessCancelsAndJoinsBeforeAnotherOwnerCanStart",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testDisableDuringReadinessCancelsAndJoinsBeforeAnotherOwnerCanStart",
+      "oldBodySHA256": "28437b5786893c3d515e3624184e56350aed39e161ee2ae95a798077237f0d6b",
+      "newBodySHA256": "28437b5786893c3d515e3624184e56350aed39e161ee2ae95a798077237f0d6b"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testSettingsOwnerCancellationStopsOnlyItsReadinessCheck",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlReadinessTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testSettingsOwnerCancellationStopsOnlyItsReadinessCheck",
+      "oldBodySHA256": "e2221bb362a6576056835a1b819cd6a1a64738e35699c400869c698b6251fed8",
+      "newBodySHA256": "e2221bb362a6576056835a1b819cd6a1a64738e35699c400869c698b6251fed8"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffWithNoToolPausesImmediatelyAndRetainsPendingFreshReadAcrossResume",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffWithNoToolPausesImmediatelyAndRetainsPendingFreshReadAcrossResume",
+      "oldBodySHA256": "3c4d786da5bc1f2137e75279420a24608d8296b15e316afd05dc6198bc2a98b9",
+      "newBodySHA256": "3c4d786da5bc1f2137e75279420a24608d8296b15e316afd05dc6198bc2a98b9"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffWaitsForInFlightReceiptAndKeepsReadySessionUntilFreshReadConsumed",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffWaitsForInFlightReceiptAndKeepsReadySessionUntilFreshReadConsumed",
+      "oldBodySHA256": "c57648f9948d6695a632c2ce03a01eb04077ea44640fc9ec6d88d5f7216a7d91",
+      "newBodySHA256": "c57648f9948d6695a632c2ce03a01eb04077ea44640fc9ec6d88d5f7216a7d91"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffSecondPauseRejectsEarlierFreshReadGeneration",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffSecondPauseRejectsEarlierFreshReadGeneration",
+      "oldBodySHA256": "f36c6c4a7fc39b3b669252ba3ef343a3ab37f7b6a11605c385277f78ac3fa11c",
+      "newBodySHA256": "f36c6c4a7fc39b3b669252ba3ef343a3ab37f7b6a11605c385277f78ac3fa11c"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testLateResumeObservationFailureCannotChangeNewGenerationOrOwner",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testLateResumeObservationFailureCannotChangeNewGenerationOrOwner",
+      "oldBodySHA256": "50c9086c196849f0215d36514af60623855bdf35f55c8b83a19e7f3801d9bd36",
+      "newBodySHA256": "50c9086c196849f0215d36514af60623855bdf35f55c8b83a19e7f3801d9bd36"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffCancelledWaiterIsReleasedWithoutStoppingOwner",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffCancelledWaiterIsReleasedWithoutStoppingOwner",
+      "oldBodySHA256": "9a8482d95fb13e36710f385423a74f8e81d950a3ac997738804c162d3444e1ba",
+      "newBodySHA256": "9a8482d95fb13e36710f385423a74f8e81d950a3ac997738804c162d3444e1ba"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffStopReleasesWaiterAndOldLeaseCannotAffectReusedRunID",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffStopReleasesWaiterAndOldLeaseCannotAffectReusedRunID",
+      "oldBodySHA256": "f2b9c22ca56780a2d9f8e249ff57a671bb8c65616be371eabdca62288d7bd6b5",
+      "newBodySHA256": "f2b9c22ca56780a2d9f8e249ff57a671bb8c65616be371eabdca62288d7bd6b5"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffDisableReleasesWaiterAndDoesNotRestoreOwner",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffDisableReleasesWaiterAndDoesNotRestoreOwner",
+      "oldBodySHA256": "30faabbbf37c849636c617c41ab37e5137efb63d69ecea01057d3a4bad89cf30",
+      "newBodySHA256": "30faabbbf37c849636c617c41ab37e5137efb63d69ecea01057d3a4bad89cf30"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffUnknownPreventsWaitResumeAndFreshObservationBeforeEngineTeardown",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffUnknownPreventsWaitResumeAndFreshObservationBeforeEngineTeardown",
+      "oldBodySHA256": "9fae1687914bf67d4e130875d1bbde0c98da1246748b12baecb9b4d22d3435a7",
+      "newBodySHA256": "9fae1687914bf67d4e130875d1bbde0c98da1246748b12baecb9b4d22d3435a7"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testHandoffIsUnavailableToReadinessOwner",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testHandoffIsUnavailableToReadinessOwner",
+      "oldBodySHA256": "e07ebbe326405ae23e6333631cbb29d939da2cc78d0f5b9428b8aebda4bd2d90",
+      "newBodySHA256": "e07ebbe326405ae23e6333631cbb29d939da2cc78d0f5b9428b8aebda4bd2d90"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testExternalConnectionModePersistsAndNeverPreparesAmberVPN",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testExternalConnectionModePersistsAndNeverPreparesAmberVPN",
+      "oldBodySHA256": "cffd3d85126c52fab7d6e33e86c078bf076823e27af5928c27dab75ad9e6a950",
+      "newBodySHA256": "cffd3d85126c52fab7d6e33e86c078bf076823e27af5928c27dab75ad9e6a950"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testReturningFromExternalModeRefreshesExistingEmbeddedPreparation",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testReturningFromExternalModeRefreshesExistingEmbeddedPreparation",
+      "oldBodySHA256": "a13cf073cb8fe36d2effe2a491305399dde33f32f73555838c2a40e1930e5933",
+      "newBodySHA256": "a13cf073cb8fe36d2effe2a491305399dde33f32f73555838c2a40e1930e5933"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testExternalReadinessUsesRealRunnerReadAndCleansUpWithoutTouchingVPN",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testExternalReadinessUsesRealRunnerReadAndCleansUpWithoutTouchingVPN",
+      "oldBodySHA256": "a8e2961609da132544f7270384b63e563e1a7b71fdd6feb013dde8df39ea87cb",
+      "newBodySHA256": "a8e2961609da132544f7270384b63e563e1a7b71fdd6feb013dde8df39ea87cb"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testExternalStartupFailureAndCancellationLeaveVPNUntouched",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testExternalStartupFailureAndCancellationLeaveVPNUntouched",
+      "oldBodySHA256": "a59a7970e041c3f45607dcc2312670cb634463be801d0df6fdefbbb01f5d93f6",
+      "newBodySHA256": "a59a7970e041c3f45607dcc2312670cb634463be801d0df6fdefbbb01f5d93f6"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testExternalApplicationQuerySuccessFailureAndCancellationNeverManageVPN",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testExternalApplicationQuerySuccessFailureAndCancellationNeverManageVPN",
+      "oldBodySHA256": "a84e8d191193bdad3ea38dfc8c740018ee924dc56bf5aef92b60cb9d2459c658",
+      "newBodySHA256": "a84e8d191193bdad3ea38dfc8c740018ee924dc56bf5aef92b60cb9d2459c658"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "oldMethod": "testExternalFirstPairingSuccessFailureAndCancellationNeverManageVPN",
+      "newFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+      "newClass": "IOSPhoneControlControllerTests",
+      "newMethod": "testExternalFirstPairingSuccessFailureAndCancellationNeverManageVPN",
+      "oldBodySHA256": "075d938213023f6dff76ab870cf2e3bce6a9a25d502651d4e8efd6e620458ade",
+      "newBodySHA256": "075d938213023f6dff76ab870cf2e3bce6a9a25d502651d4e8efd6e620458ade"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testVisibleDisabledCompletionBeforeDispatchDependsOnGoalMode",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testVisibleDisabledCompletionBeforeDispatchDependsOnGoalMode",
+      "oldBodySHA256": "9c5717bcd86ec700882e3fa96f12461a343823875df8dd06af9f5c541d8de3df",
+      "newBodySHA256": "9c5717bcd86ec700882e3fa96f12461a343823875df8dd06af9f5c541d8de3df"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testNavigationAndTypingResolveFreshReferencesAndVerifyFinalBudgetedAction",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testNavigationAndTypingResolveFreshReferencesAndVerifyFinalBudgetedAction",
+      "oldBodySHA256": "c35e9c22c30c6d261ecfcff4e9c348e6b489c85d0ccbe16addf91aea7b5b0f8e",
+      "newBodySHA256": "c35e9c22c30c6d261ecfcff4e9c348e6b489c85d0ccbe16addf91aea7b5b0f8e"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLegacyUsesFreshReferencesAfterRotationWhileLiveKeepsItsGeometryBoundary",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLegacyUsesFreshReferencesAfterRotationWhileLiveKeepsItsGeometryBoundary",
+      "oldBodySHA256": "00196e4e7860dc5fcf2612421deba59015d331b67e7e75fd661466ee79e49c6d",
+      "newBodySHA256": "00196e4e7860dc5fcf2612421deba59015d331b67e7e75fd661466ee79e49c6d"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testCompletedReceiptWithUnchangedScreenCannotBecomeSuccessOrRepeatTap",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testCompletedReceiptWithUnchangedScreenCannotBecomeSuccessOrRepeatTap",
+      "oldBodySHA256": "2b3c4423876b94e9ad98d8a81f3aae9344890990579e7f07964f9361ed529f3a",
+      "newBodySHA256": "2b3c4423876b94e9ad98d8a81f3aae9344890990579e7f07964f9361ed529f3a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testAcknowledgedActionUsesSettledReadWithoutRepeatingObservationOrMutation",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testAcknowledgedActionUsesSettledReadWithoutRepeatingObservationOrMutation",
+      "oldBodySHA256": "1a46c52487505ccbf406564174647166752b24b2c5ce1a69080adf335adf0ad6",
+      "newBodySHA256": "1a46c52487505ccbf406564174647166752b24b2c5ce1a69080adf335adf0ad6"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testFreshIntermediateAlternativesStillRequireTheNextDecision",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testFreshIntermediateAlternativesStillRequireTheNextDecision",
+      "oldBodySHA256": "b7e844d45f9e27c942e68b40486295f08ddd13e6aa2ab4d894c215e48abc7ca2",
+      "newBodySHA256": "b7e844d45f9e27c942e68b40486295f08ddd13e6aa2ab4d894c215e48abc7ca2"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testIncompleteAmbiguousDisabledOrUnboundedTargetsNeverActWithoutDecision",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testIncompleteAmbiguousDisabledOrUnboundedTargetsNeverActWithoutDecision",
+      "oldBodySHA256": "55ce25fb0c2a100e2930bea28ed105c67c125987921a00f992f808c4038c3943",
+      "newBodySHA256": "55ce25fb0c2a100e2930bea28ed105c67c125987921a00f992f808c4038c3943"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testTypingNeverAppendsToNonemptyOrSecureField",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testTypingNeverAppendsToNonemptyOrSecureField",
+      "oldBodySHA256": "ce551ed6558ba2cb1820575d861ecafd4207192279f4cfa9d6ebce3c025c2597",
+      "newBodySHA256": "ce551ed6558ba2cb1820575d861ecafd4207192279f4cfa9d6ebce3c025c2597"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testShadowNeverActsOrWaitsEvenIfDecisionRequestsIt",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testShadowNeverActsOrWaitsEvenIfDecisionRequestsIt",
+      "oldBodySHA256": "6e7eaaf73b3199910be5c5deb4aae4c37725e0816c2b651e681db959c1fb2619",
+      "newBodySHA256": "6e7eaaf73b3199910be5c5deb4aae4c37725e0816c2b651e681db959c1fb2619"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testUnknownReceiptEndsLoopWithoutPostActionObservationOrReplay",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testUnknownReceiptEndsLoopWithoutPostActionObservationOrReplay",
+      "oldBodySHA256": "de1eeee944ace34671220328e267b9d49faf41c7d113e9486e8183b4f80da14a",
+      "newBodySHA256": "de1eeee944ace34671220328e267b9d49faf41c7d113e9486e8183b4f80da14a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testOwnerRevocationDuringDecisionPreventsDispatch",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testOwnerRevocationDuringDecisionPreventsDispatch",
+      "oldBodySHA256": "e754f4084f1c3d72292f0d74d5ea380c9dd0d6546e34a3d39029788c2bd2e08b",
+      "newBodySHA256": "e754f4084f1c3d72292f0d74d5ea380c9dd0d6546e34a3d39029788c2bd2e08b"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testCancellationDuringDecisionPreventsDispatch",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testCancellationDuringDecisionPreventsDispatch",
+      "oldBodySHA256": "16abc617087e7db505d95b65a58a0ba356e26483c977ba90d1c85abc76f6dcf8",
+      "newBodySHA256": "16abc617087e7db505d95b65a58a0ba356e26483c977ba90d1c85abc76f6dcf8"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testModeChangeDuringDecisionPreventsDispatch",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testModeChangeDuringDecisionPreventsDispatch",
+      "oldBodySHA256": "196d096df0065eb73784b1bed87d406991fb133ee6a3f76428563e0824be1603",
+      "newBodySHA256": "196d096df0065eb73784b1bed87d406991fb133ee6a3f76428563e0824be1603"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testConfigurationRevisionChangeDuringActionActivityPreventsDispatchDespiteActiveMode",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testConfigurationRevisionChangeDuringActionActivityPreventsDispatchDespiteActiveMode",
+      "oldBodySHA256": "2b8b497db6c4ff8533c89e691c24e81a5a16939cd2bfc4e537c43f1f17866f85",
+      "newBodySHA256": "2b8b497db6c4ff8533c89e691c24e81a5a16939cd2bfc4e537c43f1f17866f85"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testOwnerRevocationAfterReceiptPreservesExecutedStepWithoutFurtherObservation",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testOwnerRevocationAfterReceiptPreservesExecutedStepWithoutFurtherObservation",
+      "oldBodySHA256": "ca8280d75aeb59fe5eb99c8ff815080dc66d9839f92118a89f325c8c35dc64a3",
+      "newBodySHA256": "ca8280d75aeb59fe5eb99c8ff815080dc66d9839f92118a89f325c8c35dc64a3"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testFinalAllowedActionStillReceivesEffectVerification",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testFinalAllowedActionStillReceivesEffectVerification",
+      "oldBodySHA256": "d4b2a398e0305f3d3a137fc54292c880e077837bd7fd93924eb878064e5bbf21",
+      "newBodySHA256": "d4b2a398e0305f3d3a137fc54292c880e077837bd7fd93924eb878064e5bbf21"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testDecisionFailureHandsBackWithoutAnyAction",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testDecisionFailureHandsBackWithoutAnyAction",
+      "oldBodySHA256": "5829925063d4211a379645cfe120b47e9500c40c0728069a21a185e4dea977dc",
+      "newBodySHA256": "5829925063d4211a379645cfe120b47e9500c40c0728069a21a185e4dea977dc"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testRepeatedWaitOnAnUnchangedScreenHandsBackAfterBoundedRefreshes",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testRepeatedWaitOnAnUnchangedScreenHandsBackAfterBoundedRefreshes",
+      "oldBodySHA256": "b0664a87f6fea45d122eb27c617a41d5c30e0e09f6050b75e8af5d6451292fe9",
+      "newBodySHA256": "b0664a87f6fea45d122eb27c617a41d5c30e0e09f6050b75e8af5d6451292fe9"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testReadonlyWaitContributesToWaitAndTotalMetrics",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testReadonlyWaitContributesToWaitAndTotalMetrics",
+      "oldBodySHA256": "674a25e22adadc619ebcb3e3aa2c2012966281bbd22bcec57f9609a228792df0",
+      "newBodySHA256": "674a25e22adadc619ebcb3e3aa2c2012966281bbd22bcec57f9609a228792df0"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testProcessRestartDuringReadonlyWaitDoesNotDispatchIntoNewProcess",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testProcessRestartDuringReadonlyWaitDoesNotDispatchIntoNewProcess",
+      "oldBodySHA256": "09c8a35df3bdb0b1053c848c3e7c3d9e1dfaca1deafe0aa30bebb6ae693616aa",
+      "newBodySHA256": "09c8a35df3bdb0b1053c848c3e7c3d9e1dfaca1deafe0aa30bebb6ae693616aa"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testConfigurationRevisionChangeDuringReadonlyWaitEndsInvocationDespiteActiveMode",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testConfigurationRevisionChangeDuringReadonlyWaitEndsInvocationDespiteActiveMode",
+      "oldBodySHA256": "f09d78c985a34a200008c7c4587b4d55fe26608f395700f9ecd33d00ca0e6b98",
+      "newBodySHA256": "f09d78c985a34a200008c7c4587b4d55fe26608f395700f9ecd33d00ca0e6b98"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testCandidateDiagnosticsDistinguishExcludedTargetsAndNeverActLocallyOffPlan",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testCandidateDiagnosticsDistinguishExcludedTargetsAndNeverActLocallyOffPlan",
+      "oldBodySHA256": "320f81cf3bee15374fef09aa7c5ec1337ad1243ed3e0a2b4cd791de68d1a9ca4",
+      "newBodySHA256": "320f81cf3bee15374fef09aa7c5ec1337ad1243ed3e0a2b4cd791de68d1a9ca4"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testTapResolvesButtonWhenItsLabelAlsoMatchesStaticTextChild",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testTapResolvesButtonWhenItsLabelAlsoMatchesStaticTextChild",
+      "oldBodySHA256": "3255694a369cfa0f4a41ec47547265ce787f6caffef90da5fa3a9f12e4738f68",
+      "newBodySHA256": "3255694a369cfa0f4a41ec47547265ce787f6caffef90da5fa3a9f12e4738f68"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testTwoMatchingButtonsWithTheSameLabelGoToJevNeverToTheFirstMatch",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testTwoMatchingButtonsWithTheSameLabelGoToJevNeverToTheFirstMatch",
+      "oldBodySHA256": "f676f06ee8685dd886d601ee776218d410d14c827919f3b1042eaf7e008bcc53",
+      "newBodySHA256": "f676f06ee8685dd886d601ee776218d410d14c827919f3b1042eaf7e008bcc53"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testTapAcceptsExplicitStaticTextAndOtherTypes",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testTapAcceptsExplicitStaticTextAndOtherTypes",
+      "oldBodySHA256": "e477d13067f457cad7372f424d530bd5b2ade0df8b90d05a3058b96843380b6b",
+      "newBodySHA256": "e477d13067f457cad7372f424d530bd5b2ade0df8b90d05a3058b96843380b6b"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testTapAcceptsNamedStaticTextAndOtherWithoutExplicitType",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testTapAcceptsNamedStaticTextAndOtherWithoutExplicitType",
+      "oldBodySHA256": "779485a89130a13ff3e8acc1d55c2bd9c77a4074ce0e88dfb228a037dc849317",
+      "newBodySHA256": "779485a89130a13ff3e8acc1d55c2bd9c77a4074ce0e88dfb228a037dc849317"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveCandidatesFollowNewPagesAndMovedWordBlocks",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveCandidatesFollowNewPagesAndMovedWordBlocks",
+      "oldBodySHA256": "c17982537b03c06d66afbbe6eb753d1dd4f2c26168ff00a40bdf6646a6d530aa",
+      "newBodySHA256": "c17982537b03c06d66afbbe6eb753d1dd4f2c26168ff00a40bdf6646a6d530aa"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveKeepsSameNameControlsAtDifferentPositionsAsSeparateChoices",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveKeepsSameNameControlsAtDifferentPositionsAsSeparateChoices",
+      "oldBodySHA256": "79c416d94bf117b50a1926f8e99e15f0678f104d66ee34f05fc314c1505f1837",
+      "newBodySHA256": "79c416d94bf117b50a1926f8e99e15f0678f104d66ee34f05fc314c1505f1837"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveDropsOnlyAContainedSameLabelTextChild",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveDropsOnlyAContainedSameLabelTextChild",
+      "oldBodySHA256": "35413416a661aec2cf6163134760e5c772c9229fefc67dbe75773d86b2631829",
+      "newBodySHA256": "35413416a661aec2cf6163134760e5c772c9229fefc67dbe75773d86b2631829"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveStopsOnUnchangedScreenWithoutRemoteAdviceOrReplay",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveStopsOnUnchangedScreenWithoutRemoteAdviceOrReplay",
+      "oldBodySHA256": "4319dd4329e302b0e5bc2c31a82e6d19c9f10e85a70ffefa6b471baad5c00bc6",
+      "newBodySHA256": "4319dd4329e302b0e5bc2c31a82e6d19c9f10e85a70ffefa6b471baad5c00bc6"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveTruncatedTreeNeverActsWithoutJevDecision",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveTruncatedTreeNeverActsWithoutJevDecision",
+      "oldBodySHA256": "2b4ff028d58ba393a8ac4a524cbefb2ff2b5a1dbb9cd5e04eb4e1805441fbc8d",
+      "newBodySHA256": "2b4ff028d58ba393a8ac4a524cbefb2ff2b5a1dbb9cd5e04eb4e1805441fbc8d"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLegacyAlertHandbackAndWaitBudgetDoNotAdvertiseUnderlyingCandidates",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLegacyAlertHandbackAndWaitBudgetDoNotAdvertiseUnderlyingCandidates",
+      "oldBodySHA256": "7ebf2123428a82cf0d6532657ea5627908d28a0e20d5d78e31f1440a88bee025",
+      "newBodySHA256": "7ebf2123428a82cf0d6532657ea5627908d28a0e20d5d78e31f1440a88bee025"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveHandsBackWhenAnAlertCoversThePage",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveHandsBackWhenAnAlertCoversThePage",
+      "oldBodySHA256": "473d28fc8ba6180a32e39cbe6e4738671dfe75da1eb5d7a3f201d0ea74d371f5",
+      "newBodySHA256": "473d28fc8ba6180a32e39cbe6e4738671dfe75da1eb5d7a3f201d0ea74d371f5"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveMayWaitForAnAlertToClearWithoutClickingUnderlyingPage",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveMayWaitForAnAlertToClearWithoutClickingUnderlyingPage",
+      "oldBodySHA256": "156d5c1e0d3bb543165eb8b0f90bb8a64ac926d0f90ad4f9fe8cd787cadb09a3",
+      "newBodySHA256": "156d5c1e0d3bb543165eb8b0f90bb8a64ac926d0f90ad4f9fe8cd787cadb09a3"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveCannotCompleteBehindAnAlertBeforeOrAfterClick",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveCannotCompleteBehindAnAlertBeforeOrAfterClick",
+      "oldBodySHA256": "465a75dfa26b0c7c073c23b6a9f76d48407ba2823a35fafc6f2c7cb823078ae1",
+      "newBodySHA256": "465a75dfa26b0c7c073c23b6a9f76d48407ba2823a35fafc6f2c7cb823078ae1"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveShadowChoosesOnceWithoutDispatching",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveShadowChoosesOnceWithoutDispatching",
+      "oldBodySHA256": "3b78ce04fcd1064a0e600b4fe9dad15a915abd005945d3bde5aad11d8152fb07",
+      "newBodySHA256": "3b78ce04fcd1064a0e600b4fe9dad15a915abd005945d3bde5aad11d8152fb07"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveUnknownStopsWithoutPostActionObservation",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveUnknownStopsWithoutPostActionObservation",
+      "oldBodySHA256": "5620aebf8ea6db81585992ff9d672f10cee9e49a788b52f85326a5c55509e3a6",
+      "newBodySHA256": "5620aebf8ea6db81585992ff9d672f10cee9e49a788b52f85326a5c55509e3a6"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testInputDiagnosticsKeepNonemptyUnreadableAndSecureFieldsDistinct",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testInputDiagnosticsKeepNonemptyUnreadableAndSecureFieldsDistinct",
+      "oldBodySHA256": "b6cbd8e00bb4a719809029bfc76e14a4b0730bdb1dfc2cf925e1f8c11accbb7a",
+      "newBodySHA256": "b6cbd8e00bb4a719809029bfc76e14a4b0730bdb1dfc2cf925e1f8c11accbb7a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testExhaustedActionsReportAlreadyExecutedWithoutRepeating",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testExhaustedActionsReportAlreadyExecutedWithoutRepeating",
+      "oldBodySHA256": "a06f018af5b4ffaa8e71018db421c7eca0e88fec735340329b565ee99f2c803d",
+      "newBodySHA256": "a06f018af5b4ffaa8e71018db421c7eca0e88fec735340329b565ee99f2c803d"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testModeOffAndTimeBudgetReturnStableReasonsAndAccurateServiceCounts",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testModeOffAndTimeBudgetReturnStableReasonsAndAccurateServiceCounts",
+      "oldBodySHA256": "6eb94ec7a7cff24558e87b2aca30f784e9e43744a0a9407775b438080b9a4ac5",
+      "newBodySHA256": "6eb94ec7a7cff24558e87b2aca30f784e9e43744a0a9407775b438080b9a4ac5"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testStepBudgetDiffersFromExhaustedCandidateList",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testStepBudgetDiffersFromExhaustedCandidateList",
+      "oldBodySHA256": "0c2659423a8ba1bb38eb9664f7de3d83e59128a64dfc5cf85d0702d2567abcd7",
+      "newBodySHA256": "0c2659423a8ba1bb38eb9664f7de3d83e59128a64dfc5cf85d0702d2567abcd7"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testFailedObservationStillContributesMeasuredTimeWithoutServiceCalls",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testFailedObservationStillContributesMeasuredTimeWithoutServiceCalls",
+      "oldBodySHA256": "99b5e06c1a81e1dd0946daff4f87c772704756371483f567c018b2ed70a0d321",
+      "newBodySHA256": "99b5e06c1a81e1dd0946daff4f87c772704756371483f567c018b2ed70a0d321"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testDiagnosticAndMetricJSONUsesStableKeysWithoutUIContent",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testDiagnosticAndMetricJSONUsesStableKeysWithoutUIContent",
+      "oldBodySHA256": "d77552160c8a0a4d11dccc3277016e0af1602474a43ea928da5d7a39a427e480",
+      "newBodySHA256": "d77552160c8a0a4d11dccc3277016e0af1602474a43ea928da5d7a39a427e480"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceReusesEachNewObservationAndRemovesRedundantDecisions",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceReusesEachNewObservationAndRemovesRedundantDecisions",
+      "oldBodySHA256": "bba63c0f7d273996d502e93e699bc40714df7555e41ccabcec30d176338b3a83",
+      "newBodySHA256": "bba63c0f7d273996d502e93e699bc40714df7555e41ccabcec30d176338b3a83"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceAnchorCollapsesItsTextChildButKeepsSiblingAndCrossBranchAmbiguity",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceAnchorCollapsesItsTextChildButKeepsSiblingAndCrossBranchAmbiguity",
+      "oldBodySHA256": "1e37cc9a76889c0fd677c21c9ebd5e3578a36ec09981f0ae08d7b634b6491efb",
+      "newBodySHA256": "1e37cc9a76889c0fd677c21c9ebd5e3578a36ec09981f0ae08d7b634b6491efb"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceUsesJevToSelectAmongCurrentStepAlternatives",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceUsesJevToSelectAmongCurrentStepAlternatives",
+      "oldBodySHA256": "6916333c297408cdd32a50a3af1fcc04e59c1358bd72890b9113d76b9dfc58b1",
+      "newBodySHA256": "6916333c297408cdd32a50a3af1fcc04e59c1358bd72890b9113d76b9dfc58b1"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceLeavesThePlanWhenQuestionChangesEvenIfNextButtonStillExists",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceLeavesThePlanWhenQuestionChangesEvenIfNextButtonStillExists",
+      "oldBodySHA256": "6b36f07b9505857b0a74f4fe0ef7401a27b691c6530c6481b45bfc6c2cde5aa3",
+      "newBodySHA256": "6b36f07b9505857b0a74f4fe0ef7401a27b691c6530c6481b45bfc6c2cde5aa3"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceOffPlanScreenCompletesOnlyOnFreshCompletionEvidence",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceOffPlanScreenCompletesOnlyOnFreshCompletionEvidence",
+      "oldBodySHA256": "3ef030107b487c193b6e6f5a4c046dac34dbd0dca55df388441fb2fcdb231074",
+      "newBodySHA256": "3ef030107b487c193b6e6f5a4c046dac34dbd0dca55df388441fb2fcdb231074"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceShadowObservesOneDecisionWithoutWaitingOrDispatching",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceShadowObservesOneDecisionWithoutWaitingOrDispatching",
+      "oldBodySHA256": "7c91f4bf0b468b80f89b3ea6396ef2d7012d2b7918b8aeb7c2b549aaec49cc08",
+      "newBodySHA256": "7c91f4bf0b468b80f89b3ea6396ef2d7012d2b7918b8aeb7c2b549aaec49cc08"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceOffersAmbiguousTargetsToJevAndInactiveModesNeverClick",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceOffersAmbiguousTargetsToJevAndInactiveModesNeverClick",
+      "oldBodySHA256": "86915a6b3738c4c512bf947d8dd931858073a72ab7ba4fcd8e54c346859606e5",
+      "newBodySHA256": "86915a6b3738c4c512bf947d8dd931858073a72ab7ba4fcd8e54c346859606e5"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceLeavesThePlanWhenQuestionTextChangesUnderTheSameIdentifier",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceLeavesThePlanWhenQuestionTextChangesUnderTheSameIdentifier",
+      "oldBodySHA256": "c979f470c8d96923ee586b3da6850dc104ce557f66581284c91973c310a1ece6",
+      "newBodySHA256": "c979f470c8d96923ee586b3da6850dc104ce557f66581284c91973c310a1ece6"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceCannotUseJevContinueToOverrideUnmetStepExpectation",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceCannotUseJevContinueToOverrideUnmetStepExpectation",
+      "oldBodySHA256": "fbecbed9d8880d2edeeca533217bb7c6c7a077ef82387f09314d2b223818219f",
+      "newBodySHA256": "fbecbed9d8880d2edeeca533217bb7c6c7a077ef82387f09314d2b223818219f"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceJevWaitRefreshesEvidenceWithoutReplayingAction",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceJevWaitRefreshesEvidenceWithoutReplayingAction",
+      "oldBodySHA256": "1ee326ba956d825e0f0c1f4d1c747d03339d33980048639f9547232211c1e5f2",
+      "newBodySHA256": "1ee326ba956d825e0f0c1f4d1c747d03339d33980048639f9547232211c1e5f2"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceUnexpectedAlertNeverClicksUnderlyingControls",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceUnexpectedAlertNeverClicksUnderlyingControls",
+      "oldBodySHA256": "09860dcaeca227fbe5a44d2c72dff094737a0060403b9011bf5ad08fa50c02b9",
+      "newBodySHA256": "09860dcaeca227fbe5a44d2c72dff094737a0060403b9011bf5ad08fa50c02b9"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceUnknownPreservesReceiptAndStopsWithoutReadingOrSettling",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceUnknownPreservesReceiptAndStopsWithoutReadingOrSettling",
+      "oldBodySHA256": "6999c5f6e67eb34e1ff5508eb7eaacf2171ffa65ca871f861cc9c2463cf55fe0",
+      "newBodySHA256": "6999c5f6e67eb34e1ff5508eb7eaacf2171ffa65ca871f861cc9c2463cf55fe0"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceStopsAfterReceiptWhenOwnerOrConfigurationChanges",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceStopsAfterReceiptWhenOwnerOrConfigurationChanges",
+      "oldBodySHA256": "7150ed990fac9c13bb907c4522bcf60aaccc3b3c313deb5d8b1b4173791e052a",
+      "newBodySHA256": "7150ed990fac9c13bb907c4522bcf60aaccc3b3c313deb5d8b1b4173791e052a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceUnstableOrBlankScreenDoesNotBecomeBusinessSuccess",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceUnstableOrBlankScreenDoesNotBecomeBusinessSuccess",
+      "oldBodySHA256": "b055fbe2b1bfe4f88520cb7830460a2e704edc392f379ce3649f5d684dc261ee",
+      "newBodySHA256": "b055fbe2b1bfe4f88520cb7830460a2e704edc392f379ce3649f5d684dc261ee"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceWaitFailurePreservesDispatchedSteps",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceWaitFailurePreservesDispatchedSteps",
+      "oldBodySHA256": "044a8ba1d5ef5cb6814c9f68ec74930574ef99b6059f756bff21df430e8913d1",
+      "newBodySHA256": "044a8ba1d5ef5cb6814c9f68ec74930574ef99b6059f756bff21df430e8913d1"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testListedDuplicateLabelIsOfferedPerMatchWithContextAndJevPicks",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testListedDuplicateLabelIsOfferedPerMatchWithContextAndJevPicks",
+      "oldBodySHA256": "ccb3e93b7e751fcb2e3800abf6b650e1c2d967a8cc9d1b2f64e1a96549923844",
+      "newBodySHA256": "ccb3e93b7e751fcb2e3800abf6b650e1c2d967a8cc9d1b2f64e1a96549923844"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testListedAndSequenceFinalCommitsAreWithheldBeforeSelection",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testListedAndSequenceFinalCommitsAreWithheldBeforeSelection",
+      "oldBodySHA256": "46168123dce9cb14fed6ff214449fcdc620f63e428b15144bacacaf4a3e7c479",
+      "newBodySHA256": "46168123dce9cb14fed6ff214449fcdc620f63e428b15144bacacaf4a3e7c479"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceDuplicateLabelUsesJevInsteadOfAmbiguityHandback",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceDuplicateLabelUsesJevInsteadOfAmbiguityHandback",
+      "oldBodySHA256": "d7bc3222b9b5ae61dfd158428636c37247bf7b25546d2c4f7bf9e0583b25de9a",
+      "newBodySHA256": "d7bc3222b9b5ae61dfd158428636c37247bf7b25546d2c4f7bf9e0583b25de9a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLowConfidenceSelectionIsRereadAndRetriedBeforeHandingBack",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLowConfidenceSelectionIsRereadAndRetriedBeforeHandingBack",
+      "oldBodySHA256": "e78c986d3f81dc0badd2541e07ee6bf26222de868ea5b896ea6ee53b9589b2d6",
+      "newBodySHA256": "e78c986d3f81dc0badd2541e07ee6bf26222de868ea5b896ea6ee53b9589b2d6"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testExplicitJevHandbackIsNotRetried",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testExplicitJevHandbackIsNotRetried",
+      "oldBodySHA256": "59c9cc6728bb4ea0da0bebf85ccfff436cf2018b797184ad84245767d5f86a38",
+      "newBodySHA256": "59c9cc6728bb4ea0da0bebf85ccfff436cf2018b797184ad84245767d5f86a38"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveCandidatesFilterDedupeDescribeAndCap",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveCandidatesFilterDedupeDescribeAndCap",
+      "oldBodySHA256": "fac0ba44a5733b5e228f1d96d319c7b14f9426b86835f5b4df6834386f188649",
+      "newBodySHA256": "fac0ba44a5733b5e228f1d96d319c7b14f9426b86835f5b4df6834386f188649"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testFinalCommitsAreWithheldFromLiveCandidates",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testFinalCommitsAreWithheldFromLiveCandidates",
+      "oldBodySHA256": "e96183230909cb99c6022a1805ae678437c000893788448c5d05900ad34b966a",
+      "newBodySHA256": "e96183230909cb99c6022a1805ae678437c000893788448c5d05900ad34b966a"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveHandsBackFinalCommitWithoutTappingAndNeverTapsAloneNextToOne",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveHandsBackFinalCommitWithoutTappingAndNeverTapsAloneNextToOne",
+      "oldBodySHA256": "38e58bb258319c4a895f9de1ba68b80ac79acfe7167afaac544c92372cb4683f",
+      "newBodySHA256": "38e58bb258319c4a895f9de1ba68b80ac79acfe7167afaac544c92372cb4683f"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testAlertButtonsBecomeCandidatesButPermissionPromptsAreNeverAnswered",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testAlertButtonsBecomeCandidatesButPermissionPromptsAreNeverAnswered",
+      "oldBodySHA256": "d6e9f210aeaddeb8d80887bfd7185d03b2eebf40a66e30d674f7b45e717d7f98",
+      "newBodySHA256": "d6e9f210aeaddeb8d80887bfd7185d03b2eebf40a66e30d674f7b45e717d7f98"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLiveRecoversFromIneffectiveTapByChoosingAnotherControl",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLiveRecoversFromIneffectiveTapByChoosingAnotherControl",
+      "oldBodySHA256": "800ea84f4b84b329e373664d215abc31e6d048c4d31177457e16da026edf4608",
+      "newBodySHA256": "800ea84f4b84b329e373664d215abc31e6d048c4d31177457e16da026edf4608"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequencePageChangeContinuesTowardGoalWithFreshCandidates",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequencePageChangeContinuesTowardGoalWithFreshCandidates",
+      "oldBodySHA256": "6755b6295cb73b7fe9a192dbff6746da7059526dec94182f1852d3db6c57bb4b",
+      "newBodySHA256": "6755b6295cb73b7fe9a192dbff6746da7059526dec94182f1852d3db6c57bb4b"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testBudgetsAllowLongerGoalRuns",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testBudgetsAllowLongerGoalRuns",
+      "oldBodySHA256": "3b0fc9eb82164aab54639a4d78f12b41bc782140f94e74da36503bcbdd9ff254",
+      "newBodySHA256": "3b0fc9eb82164aab54639a4d78f12b41bc782140f94e74da36503bcbdd9ff254"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testTimeBudgetIsOneHundredEightySeconds",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testTimeBudgetIsOneHundredEightySeconds",
+      "oldBodySHA256": "d90fa50fbdbdb985f0b0beddbbea8f4919257d20d71415b5d8441a4fdaf154e2",
+      "newBodySHA256": "d90fa50fbdbdb985f0b0beddbbea8f4919257d20d71415b5d8441a4fdaf154e2"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testMessageListRowsAndNotificationTextAreNeverWithheld",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testMessageListRowsAndNotificationTextAreNeverWithheld",
+      "oldBodySHA256": "6acb7f79f265dde207f8258354289ab6cc62f6ae23c5cb62ff7d5d9e63bf9925",
+      "newBodySHA256": "6acb7f79f265dde207f8258354289ab6cc62f6ae23c5cb62ff7d5d9e63bf9925"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testGenuineCommitButtonsAreWithheld",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testGenuineCommitButtonsAreWithheld",
+      "oldBodySHA256": "5069206dfa635e01a0de579e2f114b2cd71a7e97f1fc4eb5b4696acabeabe744",
+      "newBodySHA256": "5069206dfa635e01a0de579e2f114b2cd71a7e97f1fc4eb5b4696acabeabe744"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testJevFailureIsReportedAsJevFailureNotFinalCommit",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testJevFailureIsReportedAsJevFailureNotFinalCommit",
+      "oldBodySHA256": "c760b8a5554f470ad19cd234c35d2ee4f4b816a4e593793c763a44db1759c6ec",
+      "newBodySHA256": "c760b8a5554f470ad19cd234c35d2ee4f4b816a4e593793c763a44db1759c6ec"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testLateDecisionUsesFreshCandidatesAndReportsFailureWhenRecoveryExhausts",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testLateDecisionUsesFreshCandidatesAndReportsFailureWhenRecoveryExhausts",
+      "oldBodySHA256": "f4f867238778780094f8a9911148d15a54156928b25147db1559321b1ddbe7e2",
+      "newBodySHA256": "f4f867238778780094f8a9911148d15a54156928b25147db1559321b1ddbe7e2"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testSequenceJevFailureHandsBackWithoutContinuingLive",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testSequenceJevFailureHandsBackWithoutContinuingLive",
+      "oldBodySHA256": "1925cd5c779ba7b763fdd141329f74cdca4479412ed9ef3c0f43633425c07041",
+      "newBodySHA256": "1925cd5c779ba7b763fdd141329f74cdca4479412ed9ef3c0f43633425c07041"
+    },
+    {
+      "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+      "oldMethod": "testCandidatesCarryTheirNodeIndexToJev",
+      "newFile": "iosApp/iosAppTests/IOSPhoneGoalLoopRecoveryTests.swift",
+      "newClass": "IOSPhoneGoalLoopTests",
+      "newMethod": "testCandidatesCarryTheirNodeIndexToJev",
+      "oldBodySHA256": "3a9aa68629934d713effa8760908350e22c01449158553c66797cb93dfc6cd76",
+      "newBodySHA256": "3a9aa68629934d713effa8760908350e22c01449158553c66797cb93dfc6cd76"
+    }
+  ]
+}

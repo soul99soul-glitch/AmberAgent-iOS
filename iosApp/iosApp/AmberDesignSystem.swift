@@ -877,6 +877,7 @@ enum IOSDisplayPreferenceKeys {
     static let fontScale = "app.amber.ios.display.fontScale"
     static let chatFont = "app.amber.ios.display.chatFont"
     static let agentName = "app.amber.ios.display.agentName"
+    static let autoExpandThinking = "app.amber.ios.display.autoExpandThinking"
     static let followGeneration = "app.amber.ios.display.followGeneration"
     static let activityIslandEdgeGlow = "app.amber.ios.display.activityIslandEdgeGlow"
     static let completionHaptic = "app.amber.ios.display.completionHaptic"

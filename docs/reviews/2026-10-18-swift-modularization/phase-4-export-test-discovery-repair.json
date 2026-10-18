@@ -1,0 +1,38 @@
+{
+  "sourceFile": "iosApp/iosAppTests/NovelProjectPackageTests.swift",
+  "baselineHEAD": "b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+  "before": {
+    "declarationScope": "private actor CountingNovelProjectRepository: NovelProjectPersisting",
+    "line": 927,
+    "identifier": "CountingNovelProjectRepository/testExportSkipsDiscardedChapters()",
+    "xctestDiscoverable": false
+  },
+  "after": {
+    "declarationScope": "extension NovelProjectPackageTests (inherits NovelPolishTestCase: XCTestCase)",
+    "line": 859,
+    "identifier": "NovelProjectPackageTests/testExportSkipsDiscardedChapters()",
+    "xctestDiscoverableByDeclaration": true
+  },
+  "methodBodySHA256Before": "dbf9fbfe2f69b0c0708f6aee6e8ab7941707d436a34d3beed780e3efd8f2a374",
+  "methodBodySHA256After": "dbf9fbfe2f69b0c0708f6aee6e8ab7941707d436a34d3beed780e3efd8f2a374",
+  "commentAndMethodSHA256Before": "93c957cec0704fd0734505ec567b384f3b99565bac7c7499ed796db43f7418ed",
+  "commentAndMethodSHA256After": "93c957cec0704fd0734505ec567b384f3b99565bac7c7499ed796db43f7418ed",
+  "methodBodyPreserved": true,
+  "commentAndMethodPreserved": true,
+  "actorFixturePrefixPreserved": true,
+  "actorFixturePrefixSHA256": "bd2f4088e635b4efe9f949fca87c296ab4e272b96839080461995e8ccbb10359",
+  "declarationCountBefore": 1,
+  "declarationCountAfter": 1,
+  "evidence": [
+    "NovelProjectPackageTests extends NovelPolishTestCase; NovelPolishTestSupport.swift declares NovelPolishTestCase: XCTestCase",
+    "Before, the test-named method belonged to CountingNovelProjectRepository actor and had no XCTestCase invocation path",
+    "After, a nonprivate extension of NovelProjectPackageTests owns the same test method; the actor retains its repository fixture methods",
+    "Runtime test discovery/execution is delegated to Root xcresult integration"
+  ],
+  "checks": {
+    "swiftFrontendParse": "passed",
+    "gitDiffCheck": "passed",
+    "physicalLineCount": 984,
+    "xcodebuild": "not run by worker"
+  }
+}

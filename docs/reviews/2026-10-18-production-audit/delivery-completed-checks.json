@@ -1,0 +1,20 @@
+{
+  "identity": {
+    "root": "/Users/arquiel/Downloads/AI/amberagent-ios",
+    "branch": "codex/swift-modularization-1500",
+    "head": "b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce"
+  },
+  "sourceFiles": 1608,
+  "changedSinceDeliveryFreeze": [
+    "iosApp/iosAppTests/NovelCreationQuickStartTests.swift"
+  ],
+  "productionChangesSinceDeliveryFreeze": [],
+  "addedSources": [],
+  "missingSources": [],
+  "recordedConcurrentPaths": 19,
+  "preservedConcurrentPaths": 19,
+  "concurrentDifferences": {},
+  "baselineFiles": 3488,
+  "changedFromBaselineCount": 103,
+  "missingFromBaselineCount": 7
+}

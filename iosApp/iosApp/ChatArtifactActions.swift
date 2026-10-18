@@ -79,7 +79,7 @@ enum ChatArtifactActions {
         let images = index.images.filter { isSelected(selectionID(for: $0), selectedIDs) }
         if !images.isEmpty {
             sections.append("## 图片\n\n" + images.map { image in
-                let caption = inlineText(image.prompt?.nilIfBlank ?? "生成图片")
+                let caption = inlineText(image.prompt?.nilIfBlank ?? "图片")
                 // 本地文件与 data URL 离开 App 后不可用，只保留可公开访问的地址。
                 if let url = URL(string: image.url), ["http", "https"].contains(url.scheme?.lowercased()) {
                     return "- 第 \(image.source.turn) 轮：\(caption)\n\n  ![\(caption)](<\(image.url)>)"

@@ -1,0 +1,390 @@
+{
+  "phase": "Phase4 UI",
+  "baseline_directory": "/tmp/amber-phase4-source-baseline",
+  "original_files": {
+    "NovelSessionView.swift": {
+      "sha256": "7812d7318f09d8dafbbe7f99e99e7d63d84b544fef5a059f7ef9252343c940fa",
+      "physical_lines": 2788
+    },
+    "NovelSessionSheets.swift": {
+      "sha256": "8069b392a341ca13db8a25f1893363aa9f9b70e70d0813cabb179d9a1f6bc0a8",
+      "physical_lines": 3301
+    },
+    "NovelSessionBubble.swift": {
+      "sha256": "e92edf6ce658b4e7e3bf9cb83520348561a94cc561411596bd9d06c93e3768c6",
+      "physical_lines": 1721
+    }
+  },
+  "files": [
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionView.swift",
+      "sha256": "47a19caf068bfc4532d81ec2af7d5cbb6c9f4d28b3512d884015f32b8384e3fb",
+      "physical_lines": 1472,
+      "responsibility": "Session route, composer intent, Native Timeline follow/row identity",
+      "complete_types": [
+        "NovelGhostwriteRevisionRequest",
+        "NovelComposerIntent",
+        "NovelComposerIntentPreference",
+        "NovelSessionBottomProximityPolicy",
+        "NovelSessionStreamingTailFreezePolicy",
+        "NovelSessionStreamingTailVisibilityOwnership",
+        "NovelSessionScrollGeometryPolicy",
+        "NovelSessionView"
+      ],
+      "state_owner": "NovelSessionView retains ScrollPosition, followState, NativeTimelineScrollDriver, streamed row IDs, bindingTaskID, composer input and sheet presentation state",
+      "necessary_visibility": [
+        "NovelGhostwriteRevisionRequest: private -> internal, referenced by NovelSessionChrome binding"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionTranscriptComponents.swift",
+      "sha256": "f8f5aacc029d0bebc7b2ba66d7147c3d06e1a21080b455c4b14cc96b633543dd",
+      "physical_lines": 207,
+      "responsibility": "Transcript signal, row projection, archive card and visibility modifier",
+      "complete_types": [
+        "NovelPendingCommittedUndo",
+        "NovelSessionListSignal",
+        "NovelSessionTranscriptScope",
+        "NovelSessionScrollGeometrySignal",
+        "NovelSessionRowView",
+        "NovelSessionStreamingTailVisibilityModifier",
+        "NovelDiscussionArchiveCard"
+      ],
+      "state_owner": "No new state; receives rows, signal and callbacks from NovelSessionView",
+      "necessary_visibility": [
+        "NovelPendingCommittedUndo, NovelSessionListSignal, NovelSessionTranscriptScope, NovelSessionScrollGeometrySignal, NovelSessionRowView, NovelSessionStreamingTailVisibilityModifier, NovelDiscussionArchiveCard: private -> internal for original session view"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionComposerView.swift",
+      "sha256": "83308b52412f9bc5b40a9dbfc1b5df907a1537e42a9f6956580c7c93c9e466fe",
+      "physical_lines": 210,
+      "responsibility": "Composer dock and context/meta controls",
+      "complete_types": [
+        "NovelSessionComposerMetaValues",
+        "NovelSessionComposerDock",
+        "NovelSessionComposerMetaControls"
+      ],
+      "state_owner": "Input text, focus flag, height and context panel remain bindings owned by NovelSessionView/workspace",
+      "necessary_visibility": [
+        "NovelSessionComposerMetaValues and NovelSessionComposerDock: private -> internal for original session view"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionIdentityCardsView.swift",
+      "sha256": "ee78d1f486e3ce3c47a59a8aff6e02a14d5882d16fe92a19793f1184343d0632",
+      "physical_lines": 349,
+      "responsibility": "Character identity question and proposal cards",
+      "complete_types": [
+        "NovelSessionIdentityCardsView",
+        "NovelCharacterIdentityQuestionCard"
+      ],
+      "state_owner": "Each question card retains local IME bank and edit state under its row identity",
+      "necessary_visibility": [
+        "NovelSessionIdentityCardsView: private -> internal for original session view"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionChrome.swift",
+      "sha256": "2e56621759f97b3eb4624278668b9f362d7c748213eb17aa22a58dad488d2fbe",
+      "physical_lines": 573,
+      "responsibility": "Composer synchronization, recovery, error, quick-start and ghostwrite status chrome",
+      "complete_types": [
+        "NovelSessionChrome",
+        "NovelSessionQuickStartRecovery"
+      ],
+      "state_owner": "Recovery abandon IDs/task and revision request are bindings to NovelSessionView; no new domain or scroll state",
+      "necessary_visibility": [
+        "NovelSessionChrome and NovelSessionQuickStartRecovery: internal for original session view"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionBubble.swift",
+      "sha256": "4860d2f20cc3dbd6fc2c8077fd67f326686a255acc9ec0e161119e67d476f6c8",
+      "physical_lines": 394,
+      "responsibility": "Role bubble, thinking, status and candidate presentation",
+      "complete_types": [
+        "NovelSessionBubble"
+      ],
+      "state_owner": "Per-row data is passed by NovelSessionRowView; existing autoExpandThinking AppStorage remains in this file",
+      "necessary_visibility": []
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionLongTextView.swift",
+      "sha256": "db5fc6fc698c35a849e4ae987b44ed1ade066cf75220d43e5d33835d994f1732",
+      "physical_lines": 240,
+      "responsibility": "Windowed markdown and full-text pagination",
+      "complete_types": [
+        "NovelSessionWindowedMarkdown",
+        "NovelSessionFullTextPagination",
+        "NovelSessionFullTextSheet"
+      ],
+      "state_owner": "Pagination page state stays inside full-text sheet",
+      "necessary_visibility": [
+        "NovelSessionWindowedMarkdown: private -> internal for NovelSessionBubble"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionActionButtons.swift",
+      "sha256": "e087c0206b1ff15709108dc159692a816982cdffb7dad165b5ce8342e0107eba",
+      "physical_lines": 198,
+      "responsibility": "Row action controls and blocker labels",
+      "complete_types": [
+        "NovelSessionActionButtons",
+        "NovelSessionRowAction",
+        "NovelSessionActionBlocker"
+      ],
+      "state_owner": "Abandon confirmation remains local to action-buttons view",
+      "necessary_visibility": [
+        "NovelSessionActionButtons: private -> internal for NovelSessionBubble",
+        "NovelSessionRowAction extension: private -> internal so bubble can read requiresMutation"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionApprovalCards.swift",
+      "sha256": "369063876a3a91a9ab8657d595b4fbf6b67883842e002f9cdcd0f8f0f256e313",
+      "physical_lines": 904,
+      "responsibility": "Ask-user and five approval card UIs with shared morph",
+      "complete_types": [
+        "NovelAskUserCard",
+        "NovelApprovalCollapseEdge",
+        "NovelApprovalCollapseModifier",
+        "NovelApprovalMorphModifier",
+        "View",
+        "NovelGhostwritePlanCard",
+        "NovelChapterRevisionCard",
+        "NovelWorkspacePlotCard",
+        "NovelManuscriptRevertCard",
+        "NovelManuscriptDeleteCard"
+      ],
+      "state_owner": "Each editable approval card retains its own input/selection/IME state under stable row identity",
+      "necessary_visibility": [
+        "NovelAskUserCard: private -> internal for NovelSessionBubble",
+        "novelSessionLocalizedNumber: private -> internal, uniquely named shared number formatter for approval cards and full-text reader"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionSheets.swift",
+      "sha256": "742c3a44733d049e3c984055a88afd4471e6d307a0a3ab3a6f27e22a716daf60",
+      "physical_lines": 1432,
+      "responsibility": "Writing context sheet, plan/arc save and preview transaction",
+      "complete_types": [
+        "NovelWritingContextSheet"
+      ],
+      "state_owner": "Original sheet retains selected tab, material choices, budget, preview signature, field bank, dirty revisions, draft owner, save task and dismissal commit",
+      "necessary_visibility": []
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelDiscussionArchiveSheets.swift",
+      "sha256": "f77fa2632dccf77a6f51d098f79ace72e0ea55c1d6672351b4ac15a4f7887d93",
+      "physical_lines": 385,
+      "responsibility": "Archive offer and archive preparation/edit/submit transaction",
+      "complete_types": [
+        "NovelSessionChapterOption",
+        "NovelSessionSheetSubmissionResult",
+        "NovelDiscussionArchivePreparationResult",
+        "NovelDiscussionArchiveEditingSnapshot",
+        "NovelDiscussionArchiveOfferSheet",
+        "NovelDiscussionArchiveSheet"
+      ],
+      "state_owner": "Archive sheet retains draft, decision selection, IME bank and preparation/submission tasks",
+      "necessary_visibility": []
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelCollectCandidateSheet.swift",
+      "sha256": "266394684a2074fc56e4d9ba69ece3b535da460cd385aa4512b77d72b86d1715",
+      "physical_lines": 494,
+      "responsibility": "Candidate collection editing and target choice",
+      "complete_types": [
+        "NovelCollectCandidateSheet",
+        "NovelCollectionTargetChoice"
+      ],
+      "state_owner": "Collect sheet retains edited text, selected paragraphs, target choice, IME bank and submission result",
+      "necessary_visibility": []
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelSessionForkSheet.swift",
+      "sha256": "be19f1afd49feef6c8a89ca7afe5ad1f67330c00cccc3d30677d087486a733e9",
+      "physical_lines": 112,
+      "responsibility": "Fork checkpoint naming transaction",
+      "complete_types": [
+        "NovelSessionForkSheet"
+      ],
+      "state_owner": "Fork sheet retains name, IME bank and submit status",
+      "necessary_visibility": []
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelWritingContextFields.swift",
+      "sha256": "10aba6cf3e94124e4f4aca007f44c2d2b7e328616a23d68095827bbb1be5b887",
+      "physical_lines": 183,
+      "responsibility": "Writing context local field state, IME field rows and readiness cache",
+      "complete_types": [
+        "NovelWritingContextFieldState",
+        "NovelGhostwriteReadinessIssuesCache",
+        "NovelWritingContextFieldRow",
+        "NovelWritingContextPlacementFieldRow"
+      ],
+      "state_owner": "Original writing-context sheet owns the @State field object; this file defines one field bank, dirty flags and edit revisions",
+      "necessary_visibility": [
+        "NovelWritingContextFieldState, NovelGhostwriteReadinessIssuesCache, NovelWritingContextFieldRow, NovelWritingContextPlacementFieldRow: private -> internal for original sheet"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelWritingInjectionContextViews.swift",
+      "sha256": "da9303d6765539b8973248de5dfdc4047fc5de4e39c56de91009622bd7eec553",
+      "physical_lines": 386,
+      "responsibility": "Injection overview, material choices, preview UI and pure selection calculations",
+      "complete_types": [
+        "NovelWritingInjectionOverview",
+        "NovelWritingMaterialChoicesView",
+        "NovelWritingContextPreviewView",
+        "NovelWritingContextTab",
+        "NovelWritingMaterialChoice",
+        "NovelWritingContextRoute",
+        "NovelWritingMaterialCategory",
+        "NovelWritingInjectionSelection"
+      ],
+      "state_owner": "All choice/budget edits use sheet bindings; preview signature and async preview task remain sheet-owned",
+      "necessary_visibility": [
+        "Context tab/route/material choice/category and extracted views: internal for original sheet",
+        "NovelWritingInjectionSelection: @MainActor restores View actor isolation for workspace-backed preview identity reads"
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelGhostwriteProgressBoard.swift",
+      "sha256": "614108b1143ebea15ae8f5c31b9951f19d70b95952fc3f14b70df65672892b6c",
+      "physical_lines": 91,
+      "responsibility": "Read-only ghostwrite progress section",
+      "complete_types": [
+        "NovelGhostwriteProgressBoard"
+      ],
+      "state_owner": "No mutable state; receives progress and labels as values",
+      "necessary_visibility": []
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelGhostwriteRevisionSheet.swift",
+      "sha256": "a19e5fd64aed21df394f7fd8fa6b39a69d816b6bf05f2baeca2f1cd863ebe20b",
+      "physical_lines": 268,
+      "responsibility": "Ghostwrite revision brief/strategy selection transaction",
+      "complete_types": [
+        "NovelGhostwriteRevisionStrategy",
+        "NovelGhostwriteRevisionSheet"
+      ],
+      "state_owner": "Revision sheet retains brief, strategy, IME bank and start error",
+      "necessary_visibility": []
+    },
+    {
+      "path": "iosApp/iosApp/NovelCreation/NovelManualRewriteCandidateSheet.swift",
+      "sha256": "df73ed8bb0829b1efef011497fbff1e0d383e311d3d8b22e5e7aaada3e2825f9",
+      "physical_lines": 73,
+      "responsibility": "Manual rewrite candidate submission sheet",
+      "complete_types": [
+        "NovelManualRewriteCandidateSheet"
+      ],
+      "state_owner": "Manual rewrite sheet retains submit/error state",
+      "necessary_visibility": []
+    }
+  ],
+  "sourceguard_new_paths": [
+    {
+      "prior_source": "NovelSessionView.swift",
+      "new_source": "NovelSessionView.swift",
+      "contract": "Native scroll/follow, row .id, bindingTaskID, composer committedText and send"
+    },
+    {
+      "prior_source": "NovelSessionView.swift",
+      "new_source": "NovelSessionChrome.swift",
+      "contract": "Polish retry/stop, state-sync and ghostwrite/quick-start recovery chrome"
+    },
+    {
+      "prior_source": "NovelSessionView.swift",
+      "new_source": "NovelSessionTranscriptComponents.swift",
+      "contract": "Equatable row, projection signal, archive and tail visibility"
+    },
+    {
+      "prior_source": "NovelSessionView.swift",
+      "new_source": "NovelSessionComposerView.swift",
+      "contract": "Composer meta controls, model/context menu and archive entry"
+    },
+    {
+      "prior_source": "NovelSessionView.swift",
+      "new_source": "NovelSessionIdentityCardsView.swift",
+      "contract": "Character identity IME bank and answer card"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelDiscussionArchiveSheets.swift",
+      "contract": "Archive preparation, retry, dirty dismissal and fitted offer"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelCollectCandidateSheet.swift",
+      "contract": "Collect target, edited text, IME commit and no stale snapshot overwrite"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelSessionForkSheet.swift",
+      "contract": "Fork naming sheet"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelSessionSheets.swift",
+      "contract": "Writing-context owner, toolbar commit, plan/arc dirty and persistence"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelWritingContextFields.swift",
+      "contract": "IME field bank and dirty/edit revision state"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelWritingInjectionContextViews.swift",
+      "contract": "Context materials, budget, preview navigation and effective material revision"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelGhostwriteProgressBoard.swift",
+      "contract": "Read-only ghostwrite board labels"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelGhostwriteRevisionSheet.swift",
+      "contract": "Revision brief and strategy IME commit"
+    },
+    {
+      "prior_source": "NovelSessionSheets.swift",
+      "new_source": "NovelManualRewriteCandidateSheet.swift",
+      "contract": "Manual rewrite candidate submit"
+    },
+    {
+      "prior_source": "NovelSessionBubble.swift",
+      "new_source": "NovelSessionBubble.swift",
+      "contract": "Assistant markdown call, streaming flags and user autoExpandThinking WIP"
+    },
+    {
+      "prior_source": "NovelSessionBubble.swift",
+      "new_source": "NovelSessionLongTextView.swift",
+      "contract": "Windowed markdown, async pagination and full-text sheet"
+    },
+    {
+      "prior_source": "NovelSessionBubble.swift",
+      "new_source": "NovelSessionActionButtons.swift",
+      "contract": "Retry/stop/abandon button and 44pt action hit areas"
+    },
+    {
+      "prior_source": "NovelSessionBubble.swift",
+      "new_source": "NovelSessionApprovalCards.swift",
+      "contract": "Ask-user IME commit and approval card morph"
+    }
+  ],
+  "sourceguard_test_files": [
+    "iosApp/iosAppTests/IOSNovelCreationWiringTests.swift",
+    "iosApp/iosAppTests/NovelSessionReplayTests.swift"
+  ],
+  "verification": {
+    "swift_frontend_parse": "passed all 18 files",
+    "git_diff_check": "passed original 3 tracked files",
+    "new_files_whitespace_and_line_gate": "passed all 18 files",
+    "xcodebuild": "not run; Root owns build and UI acceptance"
+  }
+}

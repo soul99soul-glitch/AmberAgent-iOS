@@ -107,10 +107,18 @@ final class CouncilSourceMaterialsTests: XCTestCase {
             contentsOf: iosRoot.appendingPathComponent("iosApp/CouncilRunner.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(runner.contains("var sourceMaterials: String? = nil"))
-        XCTAssertTrue(runner.contains("var researchObjective: String? = nil"))
-        XCTAssertTrue(runner.contains("用户上传材料（文件解析 / 图片视觉识别结果）"))
-        XCTAssertTrue(runner.contains("若用户上传了材料，最终议题必须紧扣材料中的事实与争议点"))
+        let runTypes = try! String(
+            contentsOf: iosRoot.appendingPathComponent("iosApp/Council/CouncilRoomRunTypes.swift"),
+            encoding: .utf8
+        )
+        let planning = try! String(
+            contentsOf: iosRoot.appendingPathComponent("iosApp/Council/CouncilRoomPlanning.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(runTypes.contains("var sourceMaterials: String? = nil"))
+        XCTAssertTrue(runTypes.contains("var researchObjective: String? = nil"))
+        XCTAssertTrue(planning.contains("用户上传材料（文件解析 / 图片视觉识别结果）"))
+        XCTAssertTrue(planning.contains("若用户上传了材料，最终议题必须紧扣材料中的事实与争议点"))
         XCTAssertTrue(
             runner.contains("sourceMaterials: request.sourceMaterials"),
             "Seat plan must receive materials hint from the same request."
@@ -124,6 +132,10 @@ final class CouncilSourceMaterialsTests: XCTestCase {
             contentsOf: iosRoot.appendingPathComponent("iosApp/CouncilChatRuntimeView.swift"),
             encoding: .utf8
         )
+        let viewModel = try! String(
+            contentsOf: iosRoot.appendingPathComponent("iosApp/Council/CouncilChatViewModel.swift"),
+            encoding: .utf8
+        )
         let composer = try! String(
             contentsOf: iosRoot.appendingPathComponent("iosApp/ChatComposerViews.swift"),
             encoding: .utf8
@@ -132,13 +144,19 @@ final class CouncilSourceMaterialsTests: XCTestCase {
             contentsOf: iosRoot.appendingPathComponent("iosApp/ChatView.swift"),
             encoding: .utf8
         )
+        let chatComposer = try! String(
+            contentsOf: iosRoot.appendingPathComponent("iosApp/Chat/Composer/ChatViewComposer.swift"),
+            encoding: .utf8
+        )
         XCTAssertTrue(runtime.contains("pendingFiles"))
         XCTAssertTrue(runtime.contains("pendingImages"))
         XCTAssertTrue(runtime.contains("attachPickedFile"))
-        XCTAssertTrue(runtime.contains("visionRecognizer.recognize"))
-        XCTAssertTrue(runtime.contains("sourceMaterials: sourceMaterials"))
-        XCTAssertTrue(runtime.contains("researchObjective: researchObjective"))
+        XCTAssertTrue(viewModel.contains("func attachPickedFile(url: URL)"))
+        XCTAssertTrue(viewModel.contains("visionRecognizer.recognize"))
+        XCTAssertTrue(viewModel.contains("sourceMaterials: sourceMaterials"))
+        XCTAssertTrue(viewModel.contains("researchObjective: researchObjective"))
         XCTAssertTrue(runtime.contains("canAttachMaterials"))
+        XCTAssertTrue(viewModel.contains("var canAttachMaterials: Bool"))
         // Design controls shared with standard Chat (not a private council fork).
         XCTAssertTrue(runtime.contains("ComposerAttachmentGlassPanel"))
         XCTAssertTrue(runtime.contains("ComposerAttachToggleButton"))
@@ -146,14 +164,14 @@ final class CouncilSourceMaterialsTests: XCTestCase {
         XCTAssertTrue(runtime.contains("ComposerPendingFileCard"))
         XCTAssertTrue(composer.contains("struct ComposerAttachmentGlassPanel"))
         XCTAssertTrue(chat.contains("ComposerAttachmentGlassPanel"))
-        XCTAssertTrue(chat.contains("ComposerAttachToggleButton"))
+        XCTAssertTrue(chatComposer.contains("ComposerAttachToggleButton"))
         // Cancel / archive ownership gate (review C1/M1): generation token + isReplay guard.
-        XCTAssertTrue(runtime.contains("materialsPrepGeneration"))
-        XCTAssertTrue(runtime.contains("invalidateMaterialsPreparation"))
-        XCTAssertTrue(runtime.contains("finishMaterialsPreparation(ifGeneration:"))
-        XCTAssertTrue(runtime.contains("guard !isReplay, !text.isEmpty, !isRunning, activeDiscussionID == nil"))
+        XCTAssertTrue(viewModel.contains("materialsPrepGeneration"))
+        XCTAssertTrue(viewModel.contains("invalidateMaterialsPreparation"))
+        XCTAssertTrue(viewModel.contains("finishMaterialsPreparation(ifGeneration:"))
+        XCTAssertTrue(viewModel.contains("guard !isReplay, !text.isEmpty, !isRunning, activeDiscussionID == nil"))
         XCTAssertTrue(
-            runtime.contains("invalidateMaterialsPreparation(showCancelledMessage: false)"),
+            viewModel.contains("invalidateMaterialsPreparation(showCancelledMessage: false)"),
             "openArchive / resetRoom must invalidate materials prep so late vision cannot start a run."
         )
     }

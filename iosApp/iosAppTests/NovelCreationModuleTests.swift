@@ -387,8 +387,11 @@ final class NovelCreationModuleTests: XCTestCase {
         let module = DefaultNovelCreation(repository: repository)
         let cached = try await projectSnapshot(module, id: first.project.id)
         XCTAssertEqual(cached.project.revision, 2)
-        let primary = root.appendingPathComponent("projects", isDirectory: true)
-            .appendingPathComponent("\(first.project.id.description).json")
+        let package = NovelProjectShardedStorage.packageDirectory(
+            projectDirectory: root.appendingPathComponent("projects", isDirectory: true),
+            projectID: first.project.id
+        )
+        let primary = NovelProjectShardedStorage.layoutURL(in: package)
         try Data("corrupt".utf8).write(to: primary, options: [.atomic])
         let mutation = NovelAction.renameProject(NovelRenameProjectCommand(
             context: NovelTestFixtures.context(

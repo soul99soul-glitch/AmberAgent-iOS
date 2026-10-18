@@ -1,0 +1,65 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "B3C3F24B-7D39-4695-86BB-588EEC6469A4",
+        "deviceName" : "Amber Audit 20261018",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 1,
+      "passedTests" : 5135,
+      "skippedTests" : 8,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 1,
+  "finishTime" : 1792294343.502,
+  "passedTests" : 5135,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Thread running at User-interactive quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSCouncilRoomArchiveStoreTests.swift"
+    },
+    {
+      "issueType" : "Runtime Warning",
+      "message" : "Accessing State's value outside of being installed on a View. This will result in a constant Binding of the initial value and will not update.",
+      "sourceURL" : "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSSharedSettingsStoreProvidersWriteBackTests.swift"
+    }
+  ],
+  "skippedTests" : 8,
+  "startTime" : 1792293404.895,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertEqual failed: (\"1\") is not equal to (\"2\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 184,
+      "testIdentifierString" : "BackgroundGenerationKeepAliveTests/testSubmitFailureRetryDoesNotLoopForever()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/BackgroundGenerationKeepAliveTests/testSubmitFailureRetryDoesNotLoopForever",
+      "testName" : "testSubmitFailureRetryDoesNotLoopForever()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "51% of duration",
+      "text" : "50 longest test runs with outlier durations exceeding 3.88s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 5144
+}

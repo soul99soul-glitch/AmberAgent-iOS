@@ -80,7 +80,10 @@ struct ChatArtifactShelfPanel: View {
         .padding(.bottom, artifactItemCount == 0 || isSelecting ? contentPadding : 0)
         .accessibilityIdentifier("chat-artifact-shelf")
         .fullScreenCover(item: $selectedImage) { image in
-            ChatGeneratedImagePreview(urlString: image.url, image: nil)
+            ChatMediaGalleryPreview(
+                items: artifacts.images.map { ChatMediaItem(id: $0.id, url: $0.url, title: $0.prompt ?? "") },
+                initialID: image.id
+            )
         }
         .sheet(item: $selectedDetail) { detail in
             ChatArtifactDetailSheet(detail: detail)
@@ -614,7 +617,7 @@ private struct ChatArtifactMediaTile: View {
     }
 
     private var title: String {
-        image.prompt?.nilIfBlank ?? "生成图片"
+        image.prompt?.nilIfBlank ?? "图片"
     }
 }
 
@@ -630,7 +633,7 @@ private struct ChatArtifactImageShareButton: View {
                 ShareLink(item: url) { label }
             } else if let image {
                 let sharedImage = Image(uiImage: image)
-                ShareLink(item: sharedImage, preview: SharePreview("生成的图片", image: sharedImage)) { label }
+                ShareLink(item: sharedImage, preview: SharePreview("图片", image: sharedImage)) { label }
             } else {
                 label.hidden()
             }
@@ -656,44 +659,31 @@ private struct ChatArtifactImageShareButton: View {
 
 private struct ChatArtifactImageThumbnail: View {
     let urlString: String
-    @State private var dataImageState: ChatDataImageLoadState = .loading
-
-    private var isDataURL: Bool { urlString.hasPrefix("data:") }
-    private var url: URL? { IOSImageGenerationRepository.resolvedImageURL(from: urlString) }
+    @State private var image: UIImage?
+    @State private var failed = false
 
     var body: some View {
         Group {
-            if isDataURL {
-                switch dataImageState {
-                case .success(let image):
-                    Image(uiImage: image).resizable().scaledToFill()
-                case .loading:
-                    ProgressView().tint(AmberTheme.accent)
-                case .failure:
-                    imagePlaceholder
-                }
-            } else if let url {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .empty:
-                        ProgressView().tint(AmberTheme.accent)
-                    case .failure:
-                        imagePlaceholder
-                    @unknown default:
-                        imagePlaceholder
-                    }
-                }
-            } else {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else if failed {
                 imagePlaceholder
+            } else {
+                ProgressView().tint(AmberTheme.accent)
             }
         }
         .frame(width: 112, height: 72)
         .background(AmberTheme.surface)
         .task(id: urlString) {
-            guard isDataURL else { return }
-            dataImageState = await ChatDataImageLoadState.resolve(urlString: urlString)
+            image = nil
+            failed = false
+            do {
+                let loaded = try await ChatMediaImageLoader.shared.image(urlString: urlString, pixelLimit: 1000)
+                try Task.checkCancellation()
+                image = loaded
+            } catch {
+                if !Task.isCancelled { failed = true }
+            }
         }
     }
 

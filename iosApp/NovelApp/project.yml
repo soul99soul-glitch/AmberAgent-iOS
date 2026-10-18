@@ -41,8 +41,20 @@ targets:
       - path: ../iosApp/BackgroundGenerationKeepAlive.swift
       - path: ../iosApp/BackgroundLocationKeepAlive.swift
       - path: ../iosApp/ChatArtifactPinAction.swift
-      - path: ../iosApp/ChatAssistantMarkdownView.swift
+      - path: ../iosApp/Chat/Rendering/Markdown/ChatAssistantMarkdownView.swift
+      - path: ../iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownTypography.swift
+      - path: ../iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlocks.swift
+      - path: ../iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlockParser.swift
+      - path: ../iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownDetection.swift
+      - path: ../iosApp/Chat/Rendering/Markdown/ChatStableStreamingMarkdown.swift
+      - path: ../iosApp/Chat/Media/ChatDataImageLoadState.swift
+      - path: ../iosApp/Chat/Media/ChatWidthDrivenAspectRatio.swift
+      - path: ../iosApp/Chat/Media/ChatGeneratedImageURL.swift
+      - path: ../iosApp/ChatMarkdownMedia.swift
+      - path: ../iosApp/ChatMediaView.swift
+      - path: ../iosApp/ChatVideoView.swift
       - path: ../iosApp/ChatContextSnapshot.swift
+      - path: ../iosApp/ChatIntelligentUISupport.swift
       - path: ../iosApp/ChatKoboyoIcons.swift
       - path: ../iosApp/ChatMessageEnvironment.swift
       - path: ../iosApp/ChatMessageListSupport.swift
@@ -61,6 +73,12 @@ targets:
       - path: ../iosApp/HomePhosphorIcons.swift
       - path: ../iosApp/IOSAgentRunLedgerTypes.swift
       - path: ../iosApp/IOSAgentToolEngine.swift
+      - path: ../iosApp/AgentRuntime/ToolEngine/IOSAgentToolContracts.swift
+      - path: ../iosApp/AgentRuntime/ToolEngine/IOSAgentProviderAdapter.swift
+      - path: ../iosApp/AgentRuntime/ToolEngine/IOSAgentProviderStep.swift
+      - path: ../iosApp/AgentRuntime/ToolEngine/IOSAgentToolBatchExecutor.swift
+      - path: ../iosApp/PhoneControl/IOSPhoneAutomationRequestPolicy.swift
+      - path: ../iosApp/PhoneControl/IOSPhoneControlToolCatalog.swift
       - path: ../iosApp/IOSAntigravityOAuthClient.swift
       - path: ../iosApp/IOSAppLanguage.swift
       - path: ../iosApp/IOSBackgroundLifecycleLog.swift
@@ -77,8 +95,19 @@ targets:
       - path: ../iosApp/IOSGeminiProvider.swift
       - path: ../iosApp/IOSGenerativeWidgetCard.swift
       - path: ../iosApp/IOSGenerativeWidgetParser.swift
+      - path: ../iosApp/GenerativeUI/IOSVChartSpecValidator.swift
+      - path: ../iosApp/GenerativeUI/IOSGuizangHtmlDeckValidator.swift
       - path: ../iosApp/IOSGenerativeWidgetRenderer.swift
       - path: ../iosApp/IOSGenerativeWidgetSanitizer.swift
+      - path: ../iosApp/IOSIntelligentUIProtocol.swift
+      - path: ../iosApp/IOSIntelligentUIStreamingPreview.swift
+      - path: ../iosApp/IOSIntelligentUIStreamingPreviewView.swift
+      - path: ../iosApp/IOSIntelligentUIComponents.swift
+      - path: ../iosApp/IOSIntelligentUIComponentView.swift
+      - path: ../iosApp/IOSIntelligentUIStudy.swift
+      - path: ../iosApp/IOSIntelligentUIStudyView.swift
+      - path: ../iosApp/IOSIntelligentUICard.swift
+      - path: ../iosApp/IOSIntelligentUIStateStore.swift
       - path: ../iosApp/IOSUIGenerationMotion.swift
       - path: ../iosApp/IOSNativeGenerationMotion.swift
       - path: ../iosApp/generative-libs/ui-generation.js
@@ -97,6 +126,8 @@ targets:
       - path: ../iosApp/IOSProviderConfigToolCatalog.swift
       - path: ../iosApp/IOSProviderRequestHeaders.swift
       - path: ../iosApp/IOSSearchExecutor.swift
+      - path: ../iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
+      - path: ../iosApp/Search/IOSSearchHTTPTransport.swift
       - path: ../iosApp/IOSSearchToolDispatch.swift
       - path: ../iosApp/IOSSettingsSnapshotSource.swift
       - path: ../iosApp/IOSShareSupport.swift
@@ -213,6 +244,7 @@ targets:
       - path: ../iosAppTests/NovelCreationPresentationTests.swift
       - path: ../iosAppTests/NovelCreationViewModelTests.swift
       - path: ../iosAppTests/NovelDocumentValidationTests.swift
+      - path: ../iosAppTests/NovelDomainIntegrityRegressionTests.swift
       - path: ../iosAppTests/NovelFactOutputValidationAnchorTests.swift
       - path: ../iosAppTests/NovelFactTransactionLifecycleTests.swift
       - path: ../iosAppTests/NovelForkTests.swift
@@ -244,6 +276,42 @@ targets:
       - path: ../iosAppTests/NovelWorkspaceContractTests.swift
       - path: ../iosAppTests/NovelWorkspaceLedgerTests.swift
       - path: ../iosAppTests/NovelWorkspaceRepositoryTests.swift
+      - path: ../iosAppTests/IOSNovelProjectToolAssemblyTests.swift
+      - path: ../iosAppTests/NovelChapterPlanProposalTests.swift
+      - path: ../iosAppTests/NovelCollaborationModeTestCase.swift
+      - path: ../iosAppTests/NovelContinuityAuditViewModelTests.swift
+      - path: ../iosAppTests/NovelCreationActionPresentationTests.swift
+      - path: ../iosAppTests/NovelCreationProjectPresentationTests.swift
+      - path: ../iosAppTests/NovelCreationQuickStartTests.swift
+      - path: ../iosAppTests/NovelCreationSyncAndRecoveryTests.swift
+      - path: ../iosAppTests/NovelCreationViewModelTestDoubles.swift
+      - path: ../iosAppTests/NovelCreationViewModelTestCase.swift
+      - path: ../iosAppTests/NovelCreationWorkspaceMutationTests.swift
+      - path: ../iosAppTests/NovelFactTransactionLifecycleTestSupport.swift
+      - path: ../iosAppTests/NovelFactTransactionRetryTests.swift
+      - path: ../iosAppTests/NovelGenerationLifecycleTestSupport.swift
+      - path: ../iosAppTests/NovelGenerationRecoveryTests.swift
+      - path: ../iosAppTests/NovelGenerationReducerTestSupport.swift
+      - path: ../iosAppTests/NovelGhostwriteGenerationTests.swift
+      - path: ../iosAppTests/NovelGhostwriteInjectionTests.swift
+      - path: ../iosAppTests/NovelGhostwriteRecoveryTests.swift
+      - path: ../iosAppTests/NovelLiveModelAdapterTestSupport.swift
+      - path: ../iosAppTests/NovelManualEditSyncTestCase.swift
+      - path: ../iosAppTests/NovelModularizationLayoutTests.swift
+      - path: ../iosAppTests/NovelSessionFollowPolicyTests.swift
+      - path: ../iosAppTests/NovelSessionManualSyncTests.swift
+      - path: ../iosAppTests/NovelSessionQuickStartTests.swift
+      - path: ../iosAppTests/NovelSessionReplayTestCase.swift
+      - path: ../iosAppTests/NovelSessionRetryAndPolishTests.swift
+      - path: ../iosAppTests/NovelSessionRowActionTests.swift
+      - path: ../iosAppTests/NovelSessionRunOwnershipTests.swift
+      - path: ../iosAppTests/NovelSessionSelectionTests.swift
+      - path: ../iosAppTests/NovelSessionStreamingPerformanceTests.swift
+      - path: ../iosAppTests/NovelSessionTailPresentationTests.swift
+      - path: ../iosAppTests/NovelSessionTranscriptProjectionTests.swift
+      - path: ../iosAppTests/NovelSessionViewModelTestCase.swift
+      - path: ../iosAppTests/NovelStreamIntegrityRegressionTests.swift
+      - path: ../iosAppTests/NovelWorkspaceRetryTests.swift
     dependencies:
       - target: Novel
     settings:

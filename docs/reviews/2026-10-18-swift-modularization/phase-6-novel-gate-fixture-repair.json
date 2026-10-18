@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "phase": 6,
+  "kind": "postMigrationTestFixtureRepair",
+  "problem": "Full Main r3 suspended indefinitely while a test waited for a gated project inventory request that could be suppressed by another run's global protected lease.",
+  "historicalMigrationMap": "docs/reviews/2026-10-18-swift-modularization/phase-4-session-test-identifiers.json",
+  "mapping": {
+    "oldFile": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+    "oldClass": "NovelCreationViewModelTests",
+    "oldMethod": "testForegroundCancelsGatedInventoryBeforeOldCycleCanInterruptLaterProject",
+    "newFile": "iosApp/iosAppTests/NovelCreationViewModelTests.swift",
+    "newClass": "NovelCreationViewModelTests",
+    "newMethod": "testForegroundCancelsGatedInventoryBeforeOldCycleCanInterruptLaterProject",
+    "oldBodySHA256": "2285e2e6b36eff56296f6a206ce719383f79437ce8b1cad9f98befe0e58838d9",
+    "newBodySHA256": "38aca54b1cbddc1b63d74ba0ecbd1968f6e10a82ce383c37d9b140d924d1e838"
+  },
+  "methodChanges": [
+    "Use Date.distantFuture because this case tests foreground cancellation rather than deadline expiry.",
+    "Inject hasProtectedGenerationLease false so the test's synthetic lifecycle cycle is isolated from other runs' global leases at both enterBackground and expire.",
+    "Require the injected expiration handler with XCTUnwrap before invoking it.",
+    "Replace this case's unbounded request waiter with the existing bounded eventually helper; enter foreground and release the gate before asserting that the request occurred."
+  ],
+  "unchangedContract": [
+    "XCTest class and selector identity",
+    "MainActor isolation",
+    "Foreground cancellation and original empty background-interruption assertion",
+    "Production protected-lease guards",
+    "Other test's gate waiter behavior"
+  ],
+  "helperAccess": {
+    "file": "iosApp/iosAppTests/NovelCreationViewModelTestDoubles.swift",
+    "type": "SnapshotFailureNovelCreation",
+    "property": "didRequestGatedProjectListSnapshot",
+    "oldAccess": "private var",
+    "newAccess": "private(set) var",
+    "reason": "Allow only an actor-isolated read of the existing gate-request flag by the bounded test assertion; mutation remains private to the double."
+  },
+  "verification": {
+    "swiftParse": "passed",
+    "diffCheck": "passed",
+    "focused": {
+      "result": "passed",
+      "total": 75,
+      "passed": 75,
+      "failed": 0,
+      "skipped": 0,
+      "summary": "/tmp/amber-phase6-main-savedtasks-r13-summary.json",
+      "tests": "/tmp/amber-phase6-main-savedtasks-r13-tests.json"
+    },
+    "fullNovelR2": {
+      "result": "passed",
+      "total": 1048,
+      "passed": 1045,
+      "failed": 0,
+      "skipped": 3,
+      "summary": "/tmp/amber-phase6-novel-r2-summary.json",
+      "tests": "/tmp/amber-phase6-novel-r2-tests.json"
+    },
+    "mainR5": {
+      "actualTestCases": 0,
+      "result": "test daemon not ready during bootstrap; Root-controlled stop and retained-data simulator reboot",
+      "diagnosis": "/tmp/amber-phase6-main-r5-bootstrap-diagnosis.json",
+      "resultKitCode12": "post-stop result-bundle write issue, not the bootstrap cause"
+    },
+    "fullMainR6": {
+      "result": "passed",
+      "total": 5089,
+      "passed": 5073,
+      "failed": 0,
+      "skipped": 16,
+      "repairedTest": "passed",
+      "summary": "/tmp/amber-phase6-main-r6-summary.json",
+      "tests": "/tmp/amber-phase6-main-r6-tests.json"
+    }
+  },
+  "diagnosis": "/tmp/amber-phase6-main-r3-novel-hang-diagnosis.md"
+}

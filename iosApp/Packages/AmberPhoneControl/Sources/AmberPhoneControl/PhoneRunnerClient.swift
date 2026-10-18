@@ -293,6 +293,7 @@ public actor PhoneRunnerClient {
                 try checkScope(try await activeApp())
                 path = "/wda/homescreen"
             case .dismissKeyboard:
+                try checkScope(try await activeApp())
                 path = "/wda/keyboard/dismiss"
             case .tapAlert(let ref):
                 guard let observed, let node = observed.references[ref],

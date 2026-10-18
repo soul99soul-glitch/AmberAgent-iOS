@@ -424,7 +424,6 @@ final class IOSMcpManager {
                 server: server,
                 client: client
             )
-            client.disconnect()
             self.statusByServer[server.name] = .reconnecting
             do {
                 try self.validateSessionRecoveryOwnership(
@@ -433,7 +432,7 @@ final class IOSMcpManager {
                     server: server,
                     client: client
                 )
-                _ = try await client.connect(config: server)
+                _ = try await client.reconnect(config: server)
                 try self.validateSessionRecoveryOwnership(
                     id: recoveryID,
                     generation: generation,

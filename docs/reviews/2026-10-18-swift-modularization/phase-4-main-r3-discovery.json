@@ -1,0 +1,26 @@
+{
+  "source_result": "/tmp/amber-phase4-main-r3.xcresult",
+  "original_expected": 1024,
+  "original_nonunique": [],
+  "original_result_counts": {
+    "Passed": 1020,
+    "Failed": 1,
+    "Skipped": 3
+  },
+  "new_layout_result_counts": {
+    "NovelModularizationLayoutTests/testAskUserCardRendersAtTopAndBottomOfViewport()": "Passed",
+    "NovelModularizationLayoutTests/testCollectionSheetRendersEditablePreviewWithinViewport()": "Failed",
+    "NovelModularizationLayoutTests/testLongCandidateRendersWithinNarrowScrollViewport()": "Passed"
+  },
+  "previously_hidden_export_executed": [
+    {
+      "duration": "0.00071s",
+      "durationInSeconds": 0.0007131099700927734,
+      "name": "testExportSkipsDiscardedChapters()",
+      "nodeIdentifier": "NovelProjectPackageTests/testExportSkipsDiscardedChapters()",
+      "nodeIdentifierURL": "test://com.apple.xcode/AmberAgent/iosAppTests/NovelProjectPackageTests/testExportSkipsDiscardedChapters",
+      "nodeType": "Test Case",
+      "result": "Passed"
+    }
+  ]
+}

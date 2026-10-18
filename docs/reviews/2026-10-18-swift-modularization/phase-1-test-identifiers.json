@@ -1,0 +1,476 @@
+{
+  "sourceFile": "iosApp/iosAppTests/IOSRecipeIntegrationTests.swift",
+  "originalClass": "IOSRecipeIntegrationTests",
+  "testCount": 45,
+  "mappings": [
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPrimitiveCatalogMatchesExecutableRecipeRoutes",
+      "newIdentifier": "iosAppTests/IOSRecipeLifecycleTests/testPrimitiveCatalogMatchesExecutableRecipeRoutes",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeLifecycleTests",
+      "testMethod": "testPrimitiveCatalogMatchesExecutableRecipeRoutes",
+      "newFile": "iosApp/iosAppTests/IOSRecipeLifecycleTests.swift",
+      "oldTestMethod": "testPrimitiveCatalogMatchesExecutableRecipeRoutes",
+      "newTestMethod": "testPrimitiveCatalogMatchesExecutableRecipeRoutes"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testMalformedRecipeReportsFieldInValidationAndImportWithoutWrites",
+      "newIdentifier": "iosAppTests/IOSRecipeLifecycleTests/testMalformedRecipeReportsFieldInValidationAndImportWithoutWrites",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeLifecycleTests",
+      "testMethod": "testMalformedRecipeReportsFieldInValidationAndImportWithoutWrites",
+      "newFile": "iosApp/iosAppTests/IOSRecipeLifecycleTests.swift",
+      "oldTestMethod": "testMalformedRecipeReportsFieldInValidationAndImportWithoutWrites",
+      "newTestMethod": "testMalformedRecipeReportsFieldInValidationAndImportWithoutWrites"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRecipeLifecycleSeparatesInstalledPackagesFromEnabledCatalog",
+      "newIdentifier": "iosAppTests/IOSRecipeLifecycleTests/testRecipeLifecycleSeparatesInstalledPackagesFromEnabledCatalog",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeLifecycleTests",
+      "testMethod": "testRecipeLifecycleSeparatesInstalledPackagesFromEnabledCatalog",
+      "newFile": "iosApp/iosAppTests/IOSRecipeLifecycleTests.swift",
+      "oldTestMethod": "testRecipeLifecycleSeparatesInstalledPackagesFromEnabledCatalog",
+      "newTestMethod": "testRecipeLifecycleSeparatesInstalledPackagesFromEnabledCatalog"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRecipeLifecycleToolsAreDeclaredWithExpectedRisk",
+      "newIdentifier": "iosAppTests/IOSRecipeLifecycleTests/testRecipeLifecycleToolsAreDeclaredWithExpectedRisk",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeLifecycleTests",
+      "testMethod": "testRecipeLifecycleToolsAreDeclaredWithExpectedRisk",
+      "newFile": "iosApp/iosAppTests/IOSRecipeLifecycleTests.swift",
+      "oldTestMethod": "testRecipeLifecycleToolsAreDeclaredWithExpectedRisk",
+      "newTestMethod": "testRecipeLifecycleToolsAreDeclaredWithExpectedRisk"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginPackageRegistersMultipleToolsOnlyAfterExplicitEnable",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginPackageRegistersMultipleToolsOnlyAfterExplicitEnable",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginPackageRegistersMultipleToolsOnlyAfterExplicitEnable",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginPackageRegistersMultipleToolsOnlyAfterExplicitEnable",
+      "newTestMethod": "testPluginPackageRegistersMultipleToolsOnlyAfterExplicitEnable"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginCapabilityBrokerRejectsUndeclaredPathDomainAndWebAction",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginCapabilityBrokerRejectsUndeclaredPathDomainAndWebAction",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginCapabilityBrokerRejectsUndeclaredPathDomainAndWebAction",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginCapabilityBrokerRejectsUndeclaredPathDomainAndWebAction",
+      "newTestMethod": "testPluginCapabilityBrokerRejectsUndeclaredPathDomainAndWebAction"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginCapabilityBrokerFailsClosedForObjectIdsAndHostlessNetwork",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginCapabilityBrokerFailsClosedForObjectIdsAndHostlessNetwork",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginCapabilityBrokerFailsClosedForObjectIdsAndHostlessNetwork",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginCapabilityBrokerFailsClosedForObjectIdsAndHostlessNetwork",
+      "newTestMethod": "testPluginCapabilityBrokerFailsClosedForObjectIdsAndHostlessNetwork"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPublicPluginRejectsPrivilegedPrimitivesAmbiguousIdsAndHiddenFiles",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPublicPluginRejectsPrivilegedPrimitivesAmbiguousIdsAndHiddenFiles",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPublicPluginRejectsPrivilegedPrimitivesAmbiguousIdsAndHiddenFiles",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPublicPluginRejectsPrivilegedPrimitivesAmbiguousIdsAndHiddenFiles",
+      "newTestMethod": "testPublicPluginRejectsPrivilegedPrimitivesAmbiguousIdsAndHiddenFiles"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginInvalidPathIsZeroWriteAndPermissionExpansionDisablesUpdate",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginInvalidPathIsZeroWriteAndPermissionExpansionDisablesUpdate",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginInvalidPathIsZeroWriteAndPermissionExpansionDisablesUpdate",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginInvalidPathIsZeroWriteAndPermissionExpansionDisablesUpdate",
+      "newTestMethod": "testPluginInvalidPathIsZeroWriteAndPermissionExpansionDisablesUpdate"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginManagementToolsAreDeclared",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginManagementToolsAreDeclared",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginManagementToolsAreDeclared",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginManagementToolsAreDeclared",
+      "newTestMethod": "testPluginManagementToolsAreDeclared"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testAgentAuthoredPluginCanTestApproveActivateAndCallAfterReload",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testAgentAuthoredPluginCanTestApproveActivateAndCallAfterReload",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testAgentAuthoredPluginCanTestApproveActivateAndCallAfterReload",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testAgentAuthoredPluginCanTestApproveActivateAndCallAfterReload",
+      "newTestMethod": "testAgentAuthoredPluginCanTestApproveActivateAndCallAfterReload"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testCandidateCommandApprovalExecutesPinnedScriptAndInputWithoutInstalling",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testCandidateCommandApprovalExecutesPinnedScriptAndInputWithoutInstalling",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testCandidateCommandApprovalExecutesPinnedScriptAndInputWithoutInstalling",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testCandidateCommandApprovalExecutesPinnedScriptAndInputWithoutInstalling",
+      "newTestMethod": "testCandidateCommandApprovalExecutesPinnedScriptAndInputWithoutInstalling"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginRecognizesAmberShellUnknownOutcomeInFinishedMessages",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginRecognizesAmberShellUnknownOutcomeInFinishedMessages",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginRecognizesAmberShellUnknownOutcomeInFinishedMessages",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginRecognizesAmberShellUnknownOutcomeInFinishedMessages",
+      "newTestMethod": "testPluginRecognizesAmberShellUnknownOutcomeInFinishedMessages"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testCommandNonZeroExitsAutomaticallyQuarantinePlugin",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testCommandNonZeroExitsAutomaticallyQuarantinePlugin",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testCommandNonZeroExitsAutomaticallyQuarantinePlugin",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testCommandNonZeroExitsAutomaticallyQuarantinePlugin",
+      "newTestMethod": "testCommandNonZeroExitsAutomaticallyQuarantinePlugin"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginHealthQuarantinesAfterThreeFailuresAndKeepsBoundedDiagnostics",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginHealthQuarantinesAfterThreeFailuresAndKeepsBoundedDiagnostics",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginHealthQuarantinesAfterThreeFailuresAndKeepsBoundedDiagnostics",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginHealthQuarantinesAfterThreeFailuresAndKeepsBoundedDiagnostics",
+      "newTestMethod": "testPluginHealthQuarantinesAfterThreeFailuresAndKeepsBoundedDiagnostics"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginHealthRemainsQuarantinedInProcessWhenJournalWriteFails",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginHealthRemainsQuarantinedInProcessWhenJournalWriteFails",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginHealthRemainsQuarantinedInProcessWhenJournalWriteFails",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginHealthRemainsQuarantinedInProcessWhenJournalWriteFails",
+      "newTestMethod": "testPluginHealthRemainsQuarantinedInProcessWhenJournalWriteFails"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginQuarantineRemovesCatalogUntilExplicitRestore",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginQuarantineRemovesCatalogUntilExplicitRestore",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginQuarantineRemovesCatalogUntilExplicitRestore",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginQuarantineRemovesCatalogUntilExplicitRestore",
+      "newTestMethod": "testPluginQuarantineRemovesCatalogUntilExplicitRestore"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginBackgroundWhitelistRequiresExplicitReadOnlyDeclarativeOrRemoteHandler",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginBackgroundWhitelistRequiresExplicitReadOnlyDeclarativeOrRemoteHandler",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginBackgroundWhitelistRequiresExplicitReadOnlyDeclarativeOrRemoteHandler",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginBackgroundWhitelistRequiresExplicitReadOnlyDeclarativeOrRemoteHandler",
+      "newTestMethod": "testPluginBackgroundWhitelistRequiresExplicitReadOnlyDeclarativeOrRemoteHandler"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginDirectoryMetadataRejectsInsecureLinksAndInvalidAge",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginDirectoryMetadataRejectsInsecureLinksAndInvalidAge",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginDirectoryMetadataRejectsInsecureLinksAndInvalidAge",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginDirectoryMetadataRejectsInsecureLinksAndInvalidAge",
+      "newTestMethod": "testPluginDirectoryMetadataRejectsInsecureLinksAndInvalidAge"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginDirectoryPolicyPersistsBoundedLocalBlockAndReportIntent",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginDirectoryPolicyPersistsBoundedLocalBlockAndReportIntent",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginDirectoryPolicyPersistsBoundedLocalBlockAndReportIntent",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginDirectoryPolicyPersistsBoundedLocalBlockAndReportIntent",
+      "newTestMethod": "testPluginDirectoryPolicyPersistsBoundedLocalBlockAndReportIntent"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRestrictedJavaScriptPluginExecutesPinnedSourceAndValidatesOutput",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testRestrictedJavaScriptPluginExecutesPinnedSourceAndValidatesOutput",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testRestrictedJavaScriptPluginExecutesPinnedSourceAndValidatesOutput",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testRestrictedJavaScriptPluginExecutesPinnedSourceAndValidatesOutput",
+      "newTestMethod": "testRestrictedJavaScriptPluginExecutesPinnedSourceAndValidatesOutput"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRuntimeOutputSchemaFailuresAutomaticallyQuarantinePlugin",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testRuntimeOutputSchemaFailuresAutomaticallyQuarantinePlugin",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testRuntimeOutputSchemaFailuresAutomaticallyQuarantinePlugin",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testRuntimeOutputSchemaFailuresAutomaticallyQuarantinePlugin",
+      "newTestMethod": "testRuntimeOutputSchemaFailuresAutomaticallyQuarantinePlugin"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRestrictedJavaScriptPluginApprovalDenialClosesWithToolResult",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testRestrictedJavaScriptPluginApprovalDenialClosesWithToolResult",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testRestrictedJavaScriptPluginApprovalDenialClosesWithToolResult",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testRestrictedJavaScriptPluginApprovalDenialClosesWithToolResult",
+      "newTestMethod": "testRestrictedJavaScriptPluginApprovalDenialClosesWithToolResult"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRestrictedJavaScriptPluginCannotCatchCapabilityDenialAndReportSuccess",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testRestrictedJavaScriptPluginCannotCatchCapabilityDenialAndReportSuccess",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testRestrictedJavaScriptPluginCannotCatchCapabilityDenialAndReportSuccess",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testRestrictedJavaScriptPluginCannotCatchCapabilityDenialAndReportSuccess",
+      "newTestMethod": "testRestrictedJavaScriptPluginCannotCatchCapabilityDenialAndReportSuccess"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testPluginRemoteDefinitionsAreFixedAndCapabilityScoped",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testPluginRemoteDefinitionsAreFixedAndCapabilityScoped",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testPluginRemoteDefinitionsAreFixedAndCapabilityScoped",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testPluginRemoteDefinitionsAreFixedAndCapabilityScoped",
+      "newTestMethod": "testPluginRemoteDefinitionsAreFixedAndCapabilityScoped"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testSignedAmberPluginRejectsTamperingAndTrustDowngradeDisables",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testSignedAmberPluginRejectsTamperingAndTrustDowngradeDisables",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testSignedAmberPluginRejectsTamperingAndTrustDowngradeDisables",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testSignedAmberPluginRejectsTamperingAndTrustDowngradeDisables",
+      "newTestMethod": "testSignedAmberPluginRejectsTamperingAndTrustDowngradeDisables"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testAmberPluginArchiveRejectsPathTraversalBeforeWriting",
+      "newIdentifier": "iosAppTests/IOSPluginIntegrationTests/testAmberPluginArchiveRejectsPathTraversalBeforeWriting",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSPluginIntegrationTests",
+      "testMethod": "testAmberPluginArchiveRejectsPathTraversalBeforeWriting",
+      "newFile": "iosApp/iosAppTests/IOSPluginIntegrationTests.swift",
+      "oldTestMethod": "testAmberPluginArchiveRejectsPathTraversalBeforeWriting",
+      "newTestMethod": "testAmberPluginArchiveRejectsPathTraversalBeforeWriting"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testHotReloadCanarySearchPromoteCallResultRoundByRound",
+      "newIdentifier": "iosAppTests/IOSRecipeHotReloadTests/testHotReloadCanarySearchPromoteCallResultRoundByRound",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeHotReloadTests",
+      "testMethod": "testHotReloadCanarySearchPromoteCallResultRoundByRound",
+      "newFile": "iosApp/iosAppTests/IOSRecipeHotReloadTests.swift",
+      "oldTestMethod": "testHotReloadCanarySearchPromoteCallResultRoundByRound",
+      "newTestMethod": "testHotReloadCanarySearchPromoteCallResultRoundByRound"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testForegroundAdapterPublishesApprovedRecipeImportOnNextModelRound",
+      "newIdentifier": "iosAppTests/IOSRecipeHotReloadTests/testForegroundAdapterPublishesApprovedRecipeImportOnNextModelRound",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeHotReloadTests",
+      "testMethod": "testForegroundAdapterPublishesApprovedRecipeImportOnNextModelRound",
+      "newFile": "iosApp/iosAppTests/IOSRecipeHotReloadTests.swift",
+      "oldTestMethod": "testForegroundAdapterPublishesApprovedRecipeImportOnNextModelRound",
+      "newTestMethod": "testForegroundAdapterPublishesApprovedRecipeImportOnNextModelRound"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testLeasePinningV1CallCompletesWithPinnedManifestDespiteV2Promotion",
+      "newIdentifier": "iosAppTests/IOSRecipeHotReloadTests/testLeasePinningV1CallCompletesWithPinnedManifestDespiteV2Promotion",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeHotReloadTests",
+      "testMethod": "testLeasePinningV1CallCompletesWithPinnedManifestDespiteV2Promotion",
+      "newFile": "iosApp/iosAppTests/IOSRecipeHotReloadTests.swift",
+      "oldTestMethod": "testLeasePinningV1CallCompletesWithPinnedManifestDespiteV2Promotion",
+      "newTestMethod": "testLeasePinningV1CallCompletesWithPinnedManifestDespiteV2Promotion"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testStaleCandidateFailsClosedZeroWriteOnRecipeImportApproval",
+      "newIdentifier": "iosAppTests/IOSRecipeHotReloadTests/testStaleCandidateFailsClosedZeroWriteOnRecipeImportApproval",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeHotReloadTests",
+      "testMethod": "testStaleCandidateFailsClosedZeroWriteOnRecipeImportApproval",
+      "newFile": "iosApp/iosAppTests/IOSRecipeHotReloadTests.swift",
+      "oldTestMethod": "testStaleCandidateFailsClosedZeroWriteOnRecipeImportApproval",
+      "newTestMethod": "testStaleCandidateFailsClosedZeroWriteOnRecipeImportApproval"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testStaleBaseFailsClosedOnRecipeImportApproval",
+      "newIdentifier": "iosAppTests/IOSRecipeHotReloadTests/testStaleBaseFailsClosedOnRecipeImportApproval",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeHotReloadTests",
+      "testMethod": "testStaleBaseFailsClosedOnRecipeImportApproval",
+      "newFile": "iosApp/iosAppTests/IOSRecipeHotReloadTests.swift",
+      "oldTestMethod": "testStaleBaseFailsClosedOnRecipeImportApproval",
+      "newTestMethod": "testStaleBaseFailsClosedOnRecipeImportApproval"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRollbackNextRoundSeesPreviousAndInFlightCallNotReplaced",
+      "newIdentifier": "iosAppTests/IOSRecipeHotReloadTests/testRollbackNextRoundSeesPreviousAndInFlightCallNotReplaced",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeHotReloadTests",
+      "testMethod": "testRollbackNextRoundSeesPreviousAndInFlightCallNotReplaced",
+      "newFile": "iosApp/iosAppTests/IOSRecipeHotReloadTests.swift",
+      "oldTestMethod": "testRollbackNextRoundSeesPreviousAndInFlightCallNotReplaced",
+      "newTestMethod": "testRollbackNextRoundSeesPreviousAndInFlightCallNotReplaced"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testCheckpointSaveReportsFailureBeforeApprovalCanPause",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testCheckpointSaveReportsFailureBeforeApprovalCanPause",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testCheckpointSaveReportsFailureBeforeApprovalCanPause",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testCheckpointSaveReportsFailureBeforeApprovalCanPause",
+      "newTestMethod": "testCheckpointSaveReportsFailureBeforeApprovalCanPause"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRecipeStepTerminalFailurePropagatesDurabilityFailure",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testRecipeStepTerminalFailurePropagatesDurabilityFailure",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testRecipeStepTerminalFailurePropagatesDurabilityFailure",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testRecipeStepTerminalFailurePropagatesDurabilityFailure",
+      "newTestMethod": "testRecipeStepTerminalFailurePropagatesDurabilityFailure"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRecipePrimitiveFailureTerminalFailurePropagatesDurabilityFailure",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testRecipePrimitiveFailureTerminalFailurePropagatesDurabilityFailure",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testRecipePrimitiveFailureTerminalFailurePropagatesDurabilityFailure",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testRecipePrimitiveFailureTerminalFailurePropagatesDurabilityFailure",
+      "newTestMethod": "testRecipePrimitiveFailureTerminalFailurePropagatesDurabilityFailure"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testMutationStepDeniedStopsRecipeWithStructuredErrorAndLedgerDenial",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testMutationStepDeniedStopsRecipeWithStructuredErrorAndLedgerDenial",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testMutationStepDeniedStopsRecipeWithStructuredErrorAndLedgerDenial",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testMutationStepDeniedStopsRecipeWithStructuredErrorAndLedgerDenial",
+      "newTestMethod": "testMutationStepDeniedStopsRecipeWithStructuredErrorAndLedgerDenial"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testAutoHighRiskWebMountRecipePreflightsPayAndSubmitBeforeDispatch",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testAutoHighRiskWebMountRecipeExecutesSnapshotBoundPayAndSubmit",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "newTestMethod": "testAutoHighRiskWebMountRecipeExecutesSnapshotBoundPayAndSubmit",
+      "behaviorChange": "Updated outdated expectation: snapshot-bound wm: target under high-risk auto approval completes without manual preflight.",
+      "oldTestMethod": "testAutoHighRiskWebMountRecipePreflightsPayAndSubmitBeforeDispatch",
+      "testMethod": "testAutoHighRiskWebMountRecipePreflightsPayAndSubmitBeforeDispatch"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testTwoMutationStepsPauseTwiceThenCompleteWithCleanCheckpointAndAttribution",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testTwoMutationStepsPauseTwiceThenCompleteWithCleanCheckpointAndAttribution",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testTwoMutationStepsPauseTwiceThenCompleteWithCleanCheckpointAndAttribution",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testTwoMutationStepsPauseTwiceThenCompleteWithCleanCheckpointAndAttribution",
+      "newTestMethod": "testTwoMutationStepsPauseTwiceThenCompleteWithCleanCheckpointAndAttribution"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testApplePrivateReadAndWriteRecipeStepsAlwaysPauseForApproval",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testApplePrivateReadAndWriteRecipeStepsAlwaysPauseForApproval",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testApplePrivateReadAndWriteRecipeStepsAlwaysPauseForApproval",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testApplePrivateReadAndWriteRecipeStepsAlwaysPauseForApproval",
+      "newTestMethod": "testApplePrivateReadAndWriteRecipeStepsAlwaysPauseForApproval"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testDisabledApplePrimitiveFailureIsNotReportedAsRecipeSuccess",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testDisabledApplePrimitiveFailureIsNotReportedAsRecipeSuccess",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testDisabledApplePrimitiveFailureIsNotReportedAsRecipeSuccess",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testDisabledApplePrimitiveFailureIsNotReportedAsRecipeSuccess",
+      "newTestMethod": "testDisabledApplePrimitiveFailureIsNotReportedAsRecipeSuccess"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testRecipeImportApprovalAppliesAndPublishesToRegistry",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testRecipeImportApprovalAppliesAndPublishesToRegistry",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testRecipeImportApprovalAppliesAndPublishesToRegistry",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testRecipeImportApprovalAppliesAndPublishesToRegistry",
+      "newTestMethod": "testRecipeImportApprovalAppliesAndPublishesToRegistry"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testStaleSnapshotCallFailsClosedWithStructuredError",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testStaleSnapshotCallFailsClosedWithStructuredError",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testStaleSnapshotCallFailsClosedWithStructuredError",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testStaleSnapshotCallFailsClosedWithStructuredError",
+      "newTestMethod": "testStaleSnapshotCallFailsClosedWithStructuredError"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testInFlightRecipeCallClassifiesSideEffectAndBackgroundHasNoRecipeExecutor",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testInFlightRecipeCallClassifiesSideEffectAndBackgroundHasNoRecipeExecutor",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testInFlightRecipeCallClassifiesSideEffectAndBackgroundHasNoRecipeExecutor",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testInFlightRecipeCallClassifiesSideEffectAndBackgroundHasNoRecipeExecutor",
+      "newTestMethod": "testInFlightRecipeCallClassifiesSideEffectAndBackgroundHasNoRecipeExecutor"
+    },
+    {
+      "oldIdentifier": "iosAppTests/IOSRecipeIntegrationTests/testWorkspaceStepFailureInsideRecipeIsHonestStepFailureNotFalseGreen",
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testWorkspaceStepFailureInsideRecipeIsHonestStepFailureNotFalseGreen",
+      "oldClass": "IOSRecipeIntegrationTests",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "testMethod": "testWorkspaceStepFailureInsideRecipeIsHonestStepFailureNotFalseGreen",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "oldTestMethod": "testWorkspaceStepFailureInsideRecipeIsHonestStepFailureNotFalseGreen",
+      "newTestMethod": "testWorkspaceStepFailureInsideRecipeIsHonestStepFailureNotFalseGreen"
+    }
+  ],
+  "originalTestCount": 45,
+  "currentTestCount": 46,
+  "addedTests": [
+    {
+      "newIdentifier": "iosAppTests/IOSRecipeApprovalCheckpointTests/testWebMountRecipeRequiresPayAndSubmitApprovalUnderAskEveryTimePolicy",
+      "newClass": "IOSRecipeApprovalCheckpointTests",
+      "newTestMethod": "testWebMountRecipeRequiresPayAndSubmitApprovalUnderAskEveryTimePolicy",
+      "newFile": "iosApp/iosAppTests/IOSRecipeApprovalCheckpointTests.swift",
+      "purpose": "Normal askEveryTime policy preflights payment/submission and pauses before dispatch."
+    }
+  ],
+  "updatedExistingTests": [
+    "testAutoHighRiskWebMountRecipeExecutesSnapshotBoundPayAndSubmit",
+    "testDisabledApplePrimitiveFailureIsNotReportedAsRecipeSuccess",
+    "testStaleSnapshotCallFailsClosedWithStructuredError",
+    "testTwoMutationStepsPauseTwiceThenCompleteWithCleanCheckpointAndAttribution",
+    "testHotReloadCanarySearchPromoteCallResultRoundByRound"
+  ]
+}

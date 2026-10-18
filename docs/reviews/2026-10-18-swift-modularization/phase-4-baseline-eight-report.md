@@ -1,0 +1,24 @@
+# Pre-Phase-4 Novel eight-test reproduction
+
+- Source HEAD: `b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce`.
+- Consumer: `/tmp/amber-phase4-original-repro/iosApp/NovelApp/AmberNovel.xcodeproj`, scheme `Novel`, target `NovelTests`.
+- Source proof: `source-proof.json` and `external-source-sha256.json`. The target contains 78 original NovelCreation Swift files, including all 16 full pre-Phase-4 snapshot files; 46 test files, including the 13 frozen test snapshots (12 large files plus IOSNovelCreationWiringTests); and 23 unchanged HEAD NovelApp files. The four files containing the eight selected tests came from HEAD and are byte-identical to the unmodified main-repository copies at assembly time. No new Phase-4 Novel production or split test files were included.
+- Temporary project YAML changed only the Gradle pre-build invocation into an existence check for the already built simulator `Shared.framework`; the framework binary SHA-256 is `d9091900fa5c2ffe6f39dcc82f55b391023122db36c564d7d5a70a580b2123f4`.
+- Command: `run-eight-baseline-tests.sh`. The script uses the booted iPhone 17 Pro simulator, serial testing, and an isolated DerivedData path.
+- Result: `xcodebuild` exit 65; 8 selected test methods discovered, 8 failed, 0 passed, 0 skipped. `baseline-eight-results.json` holds all failure messages and source lines; `baseline-eight-tests-tree.json` and `baseline-eight-summary.json` are the extracted xcresult data. Full result bundle: `eight-baseline-20261018-034452.xcresult`; CLI log: `run-eight-baseline.log`; action log: `baseline-eight-action-log.json`.
+- Xcode launched `simctl diagnose` after the test host exited and did not finish its diagnostic collection. Only that task-owned diagnostic child was sent `TERM` to let xcodebuild finalize the result bundle. The test process had already completed all eight methods before this signal, as shown by the action log and final xcresult.
+
+## Observed failures and initial cause
+
+| Test method | Pre-Phase-4 failure | Source-level interpretation |
+| --- | --- | --- |
+| `NovelBatchPolishTests/testBatchPolishAdoptsAllCompatibleChapters` | Adopted 1 rather than 3; 2 failures rather than 0 | After adopting chapter 1, later starts hit `NovelWorkspaceLedger.unresolvedPlotGateMessage`; action log says `wsPerform=true`. |
+| `NovelBatchPolishTests/testBatchPolishCancellationStopsBeforeNextChapter` | Cancelled count 1 rather than 2; outcomes `[adopted, failed, cancelled]` | Chapter 2 had already failed the same start gate before cancellation; the test expected it to remain pending. |
+| `NovelBatchPolishTests/testBatchPolishRecordsGenerationFailureAndContinues` | Adopted 1 rather than 2; failed 2 rather than 1 | Later starts hit the same gate, so the scripted provider failure is not the only failed chapter. |
+| `NovelBatchPolishTests/testBatchPolishSkipsIncompatibleChapterAndContinues` | Adopted 1 rather than 2; skipped 0 rather than 1; failed 2 rather than 0 | Chapter 2 never reaches drift assessment because the later start is gated. |
+| `NovelChapterReplacementStateTests/testReplacingChapterKeepsEarlierFactsWhenCollectionsSkippedSync` | `branchRequiresSync(...)` at the test's `NovelInjectionPlanner.plan` call | The fixture collects two chapters without synchronization, then tries `.wholeChapterRegeneration`. The original planner requires a synchronized branch for that prompt kind, so the test cannot reach the replacement claim. |
+| `NovelCreationModuleTests/testDegradedCommitFailureReconcilesCachedProjectToReadOnlyPrevious` | Expected mutation to throw, but it succeeded; revision becomes 3 rather than 1 | The test corrupts `projects/<id>.json`, while the original repository writes the sharded `projects/<id>/layout.json` and `previous-layout.json`. The active project remains valid and writable. |
+| `NovelProjectLifecycleOperationTests/testCorruptPendingAndCompletedFileReceiptsFailClosedWithoutDeletingEvidence` | NSCocoaErrorDomain 260 reading missing `projects/<id>.json` | Same stale monofile path; the test fails before evaluating the corrupt receipt contract. |
+| `NovelProjectLifecycleOperationTests/testExplicitPreviousRestoreBecomesWritableAndReplaysAcrossRestart` | Expected degraded read-only previous copy, but got normal access | Same stale monofile corruption; it does not damage the active sharded layout. |
+
+The four batch failures expose an existing production interaction: the batch loop attempts later chapters after the first adoption, while the workspace stale-plot gate blocks those starts. Whether batch should wait for automatic reconciliation or stop and report that gate is a separate behavior decision. The other four tests have unreachable or outdated setup relative to existing production storage and `needsSync` guards. All eight failed in original Novel production code, so the failures alone do not show a Phase-4 extraction regression.

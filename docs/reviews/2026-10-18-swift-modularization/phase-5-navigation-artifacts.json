@@ -1,0 +1,392 @@
+[
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-manual-editor-ax-tree_0_5A8E5784-19B1-42A8-8991-473FBD4EB1A1.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/97780EBF-A43E-44BF-9BFB-81253EBDA947.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-manual-editor_0_9265FB9C-5DAB-4917-8F12-039401FD0398.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/F2E6EBC1-850C-4AEE-987C-41F6F3122309.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-models-ax-tree_0_2446453F-0107-4D1B-B62F-683B58DA298A.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/25AB5600-F2DC-4095-B908-FB9F0F25691F.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-models_0_7158C337-BB44-4DA9-854B-0934942F3732.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/F9BB9FBE-4052-495C-9B7D-7D0D1488E3A4.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-config-ax-tree_0_159E48A1-2BF7-4EE4-9969-60CAD3C711FC.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/FEE5B1E3-8B01-4723-B5EF-C688B11100CE.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-config_0_A7440AD1-21E0-4474-9A1A-B9FB1018485E.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/2153A3AA-55B0-4D61-8513-5BC789388C75.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-list-ax-tree_0_5D4ECA5C-2554-431E-B7EC-A995E6EA4299.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/C9FD9E8B-0DE9-4EF7-ADC1-D0A893724C72.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-list_0_03BD4270-9A16-4B82-B822-5E542247EEC2.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/38FF97AF-D983-4E3D-B5EA-DFDDE193DBE6.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-settings-ax-tree_0_D318D509-EFB8-48EF-B5B5-BCCA2A25273E.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/1BA4F870-1862-4BED-94BE-5228EEC5FF26.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-settings_0_FF3DB916-9275-41F1-A8E3-810567AC03A1.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/9EDB16EC-7B42-4AB5-BF42-CB473189613E.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-home-ax-tree_0_EBF607C3-3E68-4737-A382-70238E5AF3FB.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/03959931-8333-4727-AB86-6DC8BF21BEEA.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testProviderConfigurationModelsAndManualEditorNavigation()",
+    "name": "page-provider-home_0_73653E2A-ABF0-4D66-96A8-55BFA8133673.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/BA10C0D3-13A5-4327-998E-F2B28BF93767.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "App UI hierarchy for app.amber_0_879A8211-7C22-4FCA-A7EF-6B2B1285813D.ios",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/B6E5A69B-D2F7-4FF0-9BE0-C576ED6B4F56.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "UI Snapshot 2026-10-18 at 05.32.29 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/6C77D43C-CE14-42F1-82EE-39558A865914"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_999C7CEF-6792-4955-972A-A2FC95A7BA29.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/83823ECB-6133-4321-AA06-B3AD7F1492C3.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_2345720F-47AC-457F-84CE-7BA0A53C20FB.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/064B37B9-9F0D-4B62-B086-249A36AD031A.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_26AC00EF-7359-4DDF-A2FC-C1A961ED771F.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/7DEF1072-498A-4C8F-AC11-870B496EF706.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_2DDFD36F-7446-4D67-9528-06CA1F714269.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/DC9BDE9E-0E3F-4A88-ABF4-832696F7C92C.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_FFB489A3-9F40-4CB4-A928-5E7B320472BA.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/EBF97260-8989-471A-8BB5-323107B08419.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_D950A068-F763-471C-B16B-FBD51247F5D9.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/DC61AE26-A05B-4773-8B8F-93E4D9A6849A.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_5AAB053A-3C8B-4490-B3B8-4D8FDA99B6B3.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/2DF7458B-8ACF-455A-BBBE-DD639674FFFC.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_F3866919-1B84-413C-A02E-C6BD40B59E1E.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/EA95E0A8-DFB9-45B0-820F-32B265967FEF.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_FEBAE8CB-53E0-432E-A1EC-FB2B10D07588.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/715BBC0D-F5BE-4D1E-B6F6-6855249340BC.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Debug description for `ScrollView (First Match)`_0_278ACB6D-4864-4B25-B846-9054C088B746.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/B014E4B2-81B7-4008-9C53-05C634CA834B.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "UI Snapshot 2026-10-18 at 05.32.18 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/FFA68D2C-882B-44DF-BBEF-6323F8F56CC8"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Synthesized Event 2026-10-18 at 05.32.19 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/4FAC1EF4-01F9-402F-98EE-B498844B96CE"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-overview-ax-tree_0_44053F42-7CB1-4C67-8692-8B7F3391A004.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/34B5551F-C98E-44E6-9965-1531B05B53D0.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-overview_0_81A86058-BA95-449F-B593-7400D3DBFE26.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/CA0EB899-06E6-4E4A-8C31-F33D1D5143FB.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "UI Snapshot 2026-10-18 at 05.32.17 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/AB05DB50-C8CB-4F69-88DE-85423F5DFCD1"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Synthesized Event 2026-10-18 at 05.32.17 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/435BA5EE-2969-4324-938D-C8DA69FF2CAE"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-settings-ax-tree_0_FFC32485-B94E-42A5-95D7-86EC2F4D00E6.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/82135AF1-14B0-43ED-8B2D-ED52E890D602.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-settings_0_86AB74F6-80E0-4462-BA79-81E3491C1F1E.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/0A3B4EFE-1604-41B5-AC55-304561CDE730.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "UI Snapshot 2026-10-18 at 05.32.15 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/1F672C6A-835B-4F90-9145-86717777F007"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Synthesized Event 2026-10-18 at 05.32.15 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/061FC2F6-34F6-4400-940C-3DBC024FE7FB"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-settings-ax-tree_0_F19F617C-4E36-4D55-AEE3-FED25792A370.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/EF15C767-678F-4615-923A-77E2D9C8D11B.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-settings_0_58959F2C-2CEA-47E8-B449-2B1C899F6BF0.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/5B6A7783-A3CE-4386-B306-946CAAC8D9C8.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "UI Snapshot 2026-10-18 at 05.32.11 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/09DE8612-6D9D-4559-A408-CEB0E762507C"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Synthesized Event 2026-10-18 at 05.32.12 \u4e0a\u5348",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/8C6BDF98-A120-483A-B086-F3D29E8DEFB3"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-home-ax-tree_0_A996BE51-449B-4352-B9B8-04A2A6AA8806.txt",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/1B282EBE-B23E-4DB7-8BAB-8240D348A01A.txt"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-home_0_6EE7DCEA-0CD2-41FA-AFB6-A65DC7ACEF91.png",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/893A283D-3CC0-4C0A-83C5-CC41C282FBBB.png"
+  },
+  {
+    "run": 2,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "Screen Recording 2026-10-18 at 05.32.03 \u4e0a\u5348.mp4",
+    "path": "/tmp/amber-phase5-navigation-r2-attachments/2805A51B-FB42-4CDC-8E0F-67EF49C12CB1.mp4"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-council-settings-ax-tree_0_A12E4E79-2AF4-46A9-A2BC-25888CB38407.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/EE91755F-325C-47A5-9439-0E5FB6512FD8.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-council-settings_0_399E5A94-73CD-4F61-BF4F-618CB0B69854.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/DB384400-4A26-41CC-BD07-1F856233AD6C.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-council-members-ax-tree_0_58373AF6-773C-4037-B13E-891ADB64A3DE.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/A4F40C70-C721-4F61-9515-7975EBFC91F4.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-council-members_0_AA710E58-97C2-4265-88F8-6427C57EF9D9.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/DA2CB99E-2B5E-4820-8AFA-3153A8BE4BF2.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-council-room-ax-tree_0_1CAE97A2-00D4-46FD-9948-921A568DDEA0.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/D06AACEC-5EA4-4ADA-880A-24ACB4982802.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-council-room_0_00422CB5-5C0F-4C03-90B7-972493632E56.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/54084784-20B0-4442-B221-56A7D0B8E5B4.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-miniapp-settings-ax-tree_0_270F03B0-5AE3-4055-90C7-82DBE9A02E41.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/BB6D8A0E-687E-4563-9F1E-EA0827E95BB7.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-miniapp-settings_0_4AA12ED1-CDEE-4A39-9EA7-195962312ECF.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/DB611750-4915-4D9D-8C15-9B40FC0F0114.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-miniapp-list-ax-tree_0_2A972C06-76FE-49D6-89C0-98384B4BDBC1.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/3823E403-250E-4DAB-9859-541F4991DF24.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-miniapp-list_0_E52053AD-F491-4CB0-8789-5B9504E6BB24.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/2F3DF169-F930-4127-8201-5CD2EF21D1E5.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-ssh-probe-control-ax-tree_0_B79FB63C-AB42-4580-95EF-1086BD201AD9.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/DF4F02D9-1AA6-4CEE-91B3-EA86995F2CA7.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-ssh-probe-control_0_2F78B122-72A5-48CE-B85F-6DF5E366A41C.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/80A91375-A7D7-4FF9-9606-68A3680D88FE.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-ssh-fingerprint-idle-ax-tree_0_4A842FBB-A782-4CEA-9882-45BA3542E80D.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/3185EB20-CA09-4800-B216-9E1D519878A9.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-ssh-fingerprint-idle_0_96DFC20A-20A3-4529-A80C-0C8B93989A8E.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/8E059734-0559-4853-A3FA-0CEE8378CFD9.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-ssh-profile-top-ax-tree_0_5E41E0FB-B898-4A02-8E78-B2B61CEFCBB7.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/EA1017FE-9F75-49C5-B72C-5C18B84AC29B.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-ssh-profile-top_0_915D43FC-479C-4570-B4AE-CAA56D003138.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/CC52B139-94B6-4C9C-898E-D330D4BBC098.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-overview-ax-tree_0_31347448-D4B0-44A9-80F8-C890E72881F3.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/13D98FBC-879A-4A30-B326-D71A32263782.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-overview_0_6B4FDC02-F2C2-4D0E-A24B-78AF164B6B4A.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/0D573AA8-EA5C-4673-A0F4-196535892727.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-settings-ax-tree_0_67EB42C5-2F5F-40CE-B7C7-ABAFAE8D26BB.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/55B6FF76-B872-4F9A-9117-D384CF09A6C1.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-runtime-settings_0_4B2EBAED-DC80-4A70-8B54-5095080E809F.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/F48839B1-051A-45E2-BAD7-F63A9003A371.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-settings-ax-tree_0_C2683383-7BDA-4DD8-8823-2603A671DE46.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/899F6B2E-B01E-40BC-933B-4BCDD248A31A.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-settings_0_9A82205F-62F6-41B1-A2A8-A4556D333DD2.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/BAE0AB7A-7E9B-4D0C-97C1-852578BC0C4D.png"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-home-ax-tree_0_FD4F9683-5B2C-4FCA-9DDD-6F9AE10514C0.txt",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/42436739-C51B-439E-9A6D-0D264CD98BD2.txt"
+  },
+  {
+    "run": 3,
+    "test": "SwiftModularizationNavigationUITests/testRuntimeCouncilAndMiniAppLocalNavigation()",
+    "name": "page-local-pages-home_0_F89FEC05-E970-41D2-918E-67C3A0DA0427.png",
+    "path": "/tmp/amber-phase5-navigation-r3-attachments/DA082401-6EF4-4C21-B354-23930E3594D8.png"
+  }
+]

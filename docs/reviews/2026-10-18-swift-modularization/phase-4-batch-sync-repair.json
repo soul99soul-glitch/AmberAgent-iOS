@@ -1,0 +1,42 @@
+{
+  "scope": "Phase 4 Generation owner narrow Batch stale-plot race repair",
+  "baselineEvidence": {
+    "originalRepro": "/tmp/amber-phase4-original-repro/baseline-eight-results.json",
+    "originalOutcome": "8/8 isolated original cases failed; four Batch tests were among them",
+    "actionLog": "/tmp/amber-phase4-original-repro/baseline-eight-action-log.json",
+    "observedBatchFailure": "After first-chapter adoption, next polish start saw unresolved later-chapter plot gate while workspace operation lock was held by automatic stale-plot acceptance."
+  },
+  "bugTimeline": [
+    "Polish adoption commits a middle chapter and marks later chapter plot records stale.",
+    "The adoption action refreshes the workspace snapshot while holding its operation lock; snapshot publication schedules the existing stalePlotAutoSyncTask.",
+    "On action completion, releaseOperation schedules again if an earlier task exited while isPerforming was true. The surviving task calls the existing acceptStalePlot and holds the same workspace operation lock until its repository mutation and snapshot refresh finish.",
+    "The Batch loop formerly refreshed durable state and started the next chapter without awaiting that task, so startBlockerMessage could see unresolved plot state and/or workspace busy."
+  ],
+  "change": {
+    "file": "iosApp/iosApp/NovelCreation/Session/NovelSessionBatchPolish.swift",
+    "oldSHA256": "bb911eecce0b10235f19e1d42dc677086a6ede93c7816ae2eabbbd6d9e591a96",
+    "newSHA256": "275e1788ec7b7d1fe142254690488580159615f5fc8fa5969b50a09002d27c32",
+    "oldLines": 412,
+    "newLines": 430,
+    "workspaceFileChanged": false,
+    "waitPosition": "Immediately after per-chapter refreshDurable and before current title/progress mutation and polishOneChapter.",
+    "taskOwner": "NovelCreationViewModel.stalePlotAutoSyncTask remains the only automatic acceptance task; Batch only awaits its value.",
+    "identity": "Capture bindingToken once for this Batch run; use expected binding/token for refresh and verify both plus workspace selected project and branch immediately before and after waiting.",
+    "cancellation": "Check cancellation before refresh, after refresh, and after waiting. Cancellation during Task<Void,Never>.value waits for the existing plot mutation to settle, then enters the existing CancellationError batch closure before another run can start.",
+    "failure": "No retry or direct accept was added. If the existing task fails or stale plot remains, the existing polish start gate and error/result behavior remain authoritative.",
+    "visibility": "No visibility change or new workspace interface; the task handle was already module-visible after Phase 4 split."
+  },
+  "verification": {
+    "swiftParse": "swiftc -frontend -parse iosApp/iosApp/NovelCreation/Session/NovelSessionBatchPolish.swift: passed",
+    "diffCheck": "git diff --no-index --check against the exact pre-edit file: passed",
+    "diffReview": "One bounded code-simplifier pass; no further changes justified.",
+    "buildAndTests": "Not run here per Root instruction",
+    "recommendedExistingTests": [
+      "NovelBatchPolishTests/testBatchPolishAdoptsAllCompatibleChapters",
+      "NovelBatchPolishTests/testBatchPolishSkipsIncompatibleChapterAndContinues",
+      "NovelBatchPolishTests/testBatchPolishRecordsGenerationFailureAndContinues",
+      "NovelBatchPolishTests/testBatchPolishCancellationStopsBeforeNextChapter",
+      "NovelBatchPolishTests/testBatchPolishStopDuringDriftAssessmentSettlesAsCancelled"
+    ]
+  }
+}

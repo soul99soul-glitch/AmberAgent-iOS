@@ -93,6 +93,49 @@ final class IOSPermissionStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.policy(for: capability), .disabled)
     }
 
+    func testUnavailableBuildPreservesSavedIshPolicyWithoutMakingItExecutable() throws {
+        let defaults = isolatedDefaults()
+        let storageKey = "test.permissionPolicies.buildSwitch"
+        let supported = embeddedIshCapability(status: .supported)
+        let unsupported = embeddedIshCapability(status: .unsupported)
+        let unrelated = try XCTUnwrap(IOSCapabilityRegistry.capabilities.first { $0.id == "ios.local.ambershell" })
+        defaults.set([supported.id: IOSAgentPermissionPolicy.askEveryTime.rawValue], forKey: storageKey)
+
+        let unavailableBuild = IOSPermissionStore(
+            capabilities: [unsupported, unrelated],
+            userDefaults: defaults,
+            storageKey: storageKey,
+            taskStore: nil
+        )
+        XCTAssertEqual(unavailableBuild.policy(for: unsupported), .disabled)
+        // Saving an unrelated setting must not replace a temporarily unavailable runtime's choice.
+        unavailableBuild.setPolicy(.disabled, for: unrelated)
+        XCTAssertEqual(defaults.dictionary(forKey: storageKey)?[supported.id] as? String, "askEveryTime")
+
+        let availableBuild = IOSPermissionStore(
+            capabilities: [supported, unrelated],
+            userDefaults: defaults,
+            storageKey: storageKey,
+            taskStore: nil
+        )
+        XCTAssertEqual(availableBuild.policy(for: supported), .askEveryTime)
+        availableBuild.setPolicy(.disabled, for: supported)
+        let unavailableAgain = IOSPermissionStore(
+            capabilities: [unsupported, unrelated],
+            userDefaults: defaults,
+            storageKey: storageKey,
+            taskStore: nil
+        )
+        unavailableAgain.setPolicy(.askEveryTime, for: unrelated)
+        let availableAgain = IOSPermissionStore(
+            capabilities: [supported, unrelated],
+            userDefaults: defaults,
+            storageKey: storageKey,
+            taskStore: nil
+        )
+        XCTAssertEqual(availableAgain.policy(for: supported), .disabled)
+    }
+
     func testApprovalRecordsPersistAndRedactSensitiveValues() throws {
         let defaults = isolatedDefaults()
         let store = IOSPermissionStore(userDefaults: defaults, taskStore: nil)
@@ -137,5 +180,19 @@ final class IOSPermissionStoreTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private func embeddedIshCapability(status: IOSCapabilityStatus) -> IOSPlatformCapability {
+        IOSPlatformCapability(
+            id: "ios.embedded.ish_runtime", title: "Embedded iSH", summary: "Build-dependent runtime",
+            domain: .networkAndConnectivity, status: status, risk: .high,
+            requestKind: status == .supported ? .foregroundSession : .unsupported,
+            requestEntryPoint: "ios_ish_execute", uiActionNames: [],
+            modelToolNames: status == .supported ? ["ios_ish_execute"] : [],
+            blockedToolNames: [], unavailableReason: nil, requiredInfoPlistKeys: [],
+            requiredEntitlements: [], requiredBackgroundModes: [], requiredExtensionTargets: [],
+            defaultEnabled: true, canOpenSettings: false,
+            gate: IOSPlatformToolGate(requiresFreshUserPresence: true, allowRunScopedReuse: false, allowGlobalAutoApproval: false)
+        )
     }
 }

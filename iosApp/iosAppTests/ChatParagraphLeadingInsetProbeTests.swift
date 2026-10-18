@@ -25,7 +25,6 @@ import Shared
 final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
 
     private static let screenSize = CGSize(width: 402, height: 874)
-    private static let pngDir = "/private/tmp/amber-cjk-probe"
     /// 生产 timeline 的 VStack 水平 padding（NativeChatTimelineView body）。
     private static let timelineInset: CGFloat = 16
 
@@ -173,24 +172,17 @@ final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
         return view.convert(CGPoint(x: minX, y: 0), to: window).x
     }
 
-    private func dumpPNG(window: UIWindow, host: UIHostingController<Harness>, name: String) {
-        do {
-            try FileManager.default.createDirectory(
-                atPath: Self.pngDir,
-                withIntermediateDirectories: true
-            )
-        } catch {}
+    private func attachScreenshot(window: UIWindow, name: String) {
         window.layoutIfNeeded()
         pump(0.15)
         let renderer = UIGraphicsImageRenderer(size: window.frame.size)
         let image = renderer.image { context in
             window.layer.render(in: context.cgContext)
         }
-        let pngPath = "\(Self.pngDir)/\(name).png"
-        if let data = image.pngData() {
-            try? data.write(to: URL(fileURLWithPath: pngPath), options: [.atomic])
-            print("PROBE[PNG]: wrote \(pngPath) (\(data.count) bytes)")
-        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     // MARK: - 契约：长 CJK 段落文本左缘不被吃
@@ -267,7 +259,7 @@ final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
             print("PROBE[table-then-cjk]: frame=\(frame) container=\(view.textContainer.size.width)")
         }
         print("PROBE[table-then-cjk summary]: frameMinX=\(frameMinX) frameMaxX=\(frameMaxX) inkMinX=\(inkMinX)")
-        dumpPNG(window: window, host: fixture.host, name: "cjk-after-table")
+        attachScreenshot(window: window, name: "cjk-after-table")
 
         let expectedLeading = Self.timelineInset
         let expectedTrailing = Self.screenSize.width - Self.timelineInset
@@ -368,7 +360,7 @@ final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
         }
         print("PROBE[summary]: count=\(paragraphs.count) frameMinX=\(frameMinX) frameMaxX=\(frameMaxX) inkMinX=\(inkMinX)")
 
-        dumpPNG(window: window, host: fixture.host, name: "cjk-native-timeline")
+        attachScreenshot(window: window, name: "cjk-native-timeline")
 
         let expectedLeading = Self.timelineInset
         let expectedTrailing = Self.screenSize.width - Self.timelineInset

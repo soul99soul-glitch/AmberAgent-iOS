@@ -1,0 +1,2439 @@
+{
+  "schemaVersion": 1,
+  "phase": 6,
+  "kind": "main_plus_phone_preflight_not_final_consumer_gate",
+  "inputs": {
+    "mainTree": "/tmp/amber-phase6-main-r1-tests.json",
+    "mainTreeSHA256": "a3d1d798226e949b6b0df8a9d2b1b523748db9374398275abc4c186f895b7c96",
+    "mainSummary": "/tmp/amber-phase6-main-r1-summary.json",
+    "mainSummarySHA256": "ba20d36341911ff4b2f6fae32531b83ba3057f6ea78b30f3c459b38c08016800",
+    "phoneLog": "/tmp/amber-phase6-phone-r1.log",
+    "phoneLogSHA256": "a16191a3fb64313968dfbceece34cfd52ab1df6c12874d1f1e55384805dafac0",
+    "staticMapReport": "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-static.json",
+    "auditor": "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-audit.py",
+    "auditorSHA256": "ef73d78aa772d0e0f65631a0cfe2d3b180692b0b20f78ef55b786d2b712b128f"
+  },
+  "mainSummary": {
+    "total": 5089,
+    "passed": 5057,
+    "failed": 15,
+    "skipped": 17,
+    "result": "Failed"
+  },
+  "mainTree": {
+    "uniqueIDs": 5089,
+    "events": 5089,
+    "statusCounts": {
+      "Passed": 5057,
+      "Skipped": 17,
+      "Failed": 15
+    },
+    "duplicateIDs": []
+  },
+  "mappedMainByPhase": {
+    "p1": {
+      "expected": 45,
+      "missing": 0,
+      "statuses": {
+        "Passed": 45
+      }
+    },
+    "p2": {
+      "expected": 199,
+      "missing": 0,
+      "statuses": {
+        "Passed": 199
+      }
+    },
+    "p3_engine": {
+      "expected": 118,
+      "missing": 0,
+      "statuses": {
+        "Passed": 118
+      }
+    },
+    "p3_render": {
+      "expected": 209,
+      "missing": 0,
+      "statuses": {
+        "Passed": 208,
+        "Skipped": 1
+      }
+    },
+    "p4_domain": {
+      "expected": 241,
+      "missing": 0,
+      "statuses": {
+        "Passed": 241
+      }
+    },
+    "p4_session_final": {
+      "expected": 347,
+      "missing": 0,
+      "statuses": {
+        "Passed": 346,
+        "Skipped": 1
+      }
+    },
+    "p4_actor_discovery_repair": {
+      "expected": 1,
+      "missing": 0,
+      "statuses": {
+        "Passed": 1
+      }
+    },
+    "p5": {
+      "expected": 126,
+      "missing": 0,
+      "statuses": {
+        "Passed": 125,
+        "Skipped": 1
+      }
+    },
+    "p6": {
+      "expected": 222,
+      "missing": 0,
+      "statuses": {
+        "Passed": 222
+      }
+    }
+  },
+  "mappedMainTotals": {
+    "expected": 1508,
+    "missing": 0,
+    "statuses": {
+      "Passed": 1505,
+      "Skipped": 3
+    }
+  },
+  "p6Main": {
+    "expected": 222,
+    "missing": 0,
+    "statuses": {
+      "Passed": 222
+    },
+    "cases": [
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testRouterPathGoBackRemovesOnlyTheTopRoute",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testRouterPathGoBackRemovesOnlyTheTopRoute",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testToolBudgetExhaustionInjectsWrapUpPromptAndKeepsConversation",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testToolBudgetExhaustionInjectsWrapUpPromptAndKeepsConversation",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_deepread_claudeSelected_constructsClaudeSetting",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_deepread_claudeSelected_constructsClaudeSetting",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_deepread_allStagesThrow_statusFailed",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_deepread_allStagesThrow_statusFailed",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_deepread_stageEmpty_notMarkedReady",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_deepread_stageEmpty_notMarkedReady",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_deepread_retry_allStagesThrow_returnsFailed",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_deepread_retry_allStagesThrow_returnsFailed",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_deepread_retry_success_returnsCompleted",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_deepread_retry_success_returnsCompleted",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_deepread_searchFailure_isSourceFailure",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_deepread_searchFailure_isSourceFailure",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_council_claudeSelected_constructsClaudeSetting",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_council_claudeSelected_constructsClaudeSetting",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_settings_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_settings_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_backup_default_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_backup_default_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_recovery_killMidStream_runInterruptedOrResumed",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_recovery_killMidStream_runInterruptedOrResumed",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_recovery_preservesDurablyOwnedBackgroundRun",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_recovery_preservesDurablyOwnedBackgroundRun",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_recovery_pendingApprovalCarriesExactToolOwnerBeforeInterruptingRun",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_recovery_pendingApprovalCarriesExactToolOwnerBeforeInterruptingRun",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_searchProviderApiKey_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_searchProviderApiKey_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_searchProviderApiKey_rehydratedFromKeychainOnReloadAndRepersist",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_searchProviderApiKey_rehydratedFromKeychainOnReloadAndRepersist",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_ttsEngineApiKey_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_ttsEngineApiKey_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_mcpServerHeaders_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_mcpServerHeaders_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_modelCustomHeaders_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_modelCustomHeaders_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_assistantCustomHeaders_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_assistantCustomHeaders_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_assistantCustomBodies_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_assistantCustomBodies_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_customBodyTokenLimits_remainNumericWithoutCredentialRefs",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_customBodyTokenLimits_remainNumericWithoutCredentialRefs",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_customBodyJSONCredentials_preserveTypesAndCleanupRefs",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_customBodyJSONCredentials_preserveTypesAndCleanupRefs",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_customBodyAndHeaderStringCredentials_preserveLegacyRawValues",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_customBodyAndHeaderStringCredentials_preserveLegacyRawValues",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_customBodyCanonicalAuthAliases_remainMaskedAndRoundTrip",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_customBodyCanonicalAuthAliases_remainMaskedAndRoundTrip",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_customBodyPreviouslyOverMaskedOptions_restoreLegacyStringsAndRetainRefs",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_customBodyPreviouslyOverMaskedOptions_restoreLegacyStringsAndRetainRefs",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_customHeaderNamedAccessToken_encode_containsNoCredential",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_customHeaderNamedAccessToken_encode_containsNoCredential",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_twoSameNamedSensitiveHeaders_keepDistinctValuesAcrossRoundTrip",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_twoSameNamedSensitiveHeaders_keepDistinctValuesAcrossRoundTrip",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_subagentStandalone_secureStore_noIndependentCredentialLanding",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_subagentStandalone_secureStore_noIndependentCredentialLanding",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_subagentChat_secureStore_noIndependentCredentialLanding",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_subagentChat_secureStore_noIndependentCredentialLanding",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_council_secureStore_noIndependentCredentialLanding",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_council_secureStore_noIndependentCredentialLanding",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_providerApiKey_rehydratedFromKeychainOnReload",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_providerApiKey_rehydratedFromKeychainOnReload",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_credentialPathsIdentifyArrayItemsWithIndexSuffix",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_credentialPathsIdentifyArrayItemsWithIndexSuffix",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_removeProviderDeletesTypedAndGenericCredentialRefs",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_removeProviderDeletesTypedAndGenericCredentialRefs",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_removeCustomModelReusesProviderCredentialCleanup",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_removeCustomModelReusesProviderCredentialCleanup",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_removeModelDeletesOnlyItsGenericCredentialRefs",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_removeModelDeletesOnlyItsGenericCredentialRefs",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_removeTtsProviderDeletesItsGenericCredentialRefs",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_removeTtsProviderDeletesItsGenericCredentialRefs",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_providerApiKey_plaintextMigrationRedactsDefaultsImmediately",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_providerApiKey_plaintextMigrationRedactsDefaultsImmediately",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_releaseSensitiveLogsAreDebugGuarded",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_releaseSensitiveLogsAreDebugGuarded",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "test_iPadMultipleScenesDisabledUntilMultiWindowCoordinatorExists",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "test_iPadMultipleScenesDisabledUntilMultiWindowCoordinatorExists",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundExpirationFailureMergesPartialAndFailureIntoSingleAssistantMessage",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundExpirationFailureMergesPartialAndFailureIntoSingleAssistantMessage",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundExpirationAtomicallyOwnsTheTerminalPath",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundExpirationAtomicallyOwnsTheTerminalPath",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundTerminalReservationStopsRunningPresentations",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundTerminalReservationStopsRunningPresentations",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundCancellationCancelsTheInstalledOperationTask",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundCancellationCancelsTheInstalledOperationTask",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundCancellationCannotPreemptCompletionAfterSavingStarts",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundCancellationCannotPreemptCompletionAfterSavingStarts",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundExpirationPreemptsReservedTerminalAndOwnsFinalization",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundExpirationPreemptsReservedTerminalAndOwnsFinalization",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundGuardStoppedMapsToSharedFailedStatusDuringExpirationSave",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundGuardStoppedMapsToSharedFailedStatusDuringExpirationSave",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundRetryRequiresACommittedPureChatFailure",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundRetryRequiresACommittedPureChatFailure",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundSystemTaskCompletionCanOnlyBeClaimedOnce",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundSystemTaskCompletionCanOnlyBeClaimedOnce",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundProviderExposesRealStreamingCallbacks",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundProviderExposesRealStreamingCallbacks",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundProviderFailureKeepsCompletedSuffixAndCurrentPartial",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundProviderFailureKeepsCompletedSuffixAndCurrentPartial",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundCompletionReconcilesPreExecutedPrefixToolOutputsIntoDisplayMessages",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundCompletionReconcilesPreExecutedPrefixToolOutputsIntoDisplayMessages",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundSuccessBuildsWatchSummaryFromLastAssistantText",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundSuccessBuildsWatchSummaryFromLastAssistantText",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundResumeRehydratesRuntimeHeadersFromCurrentSettingsModelAndAssistant",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundResumeRehydratesRuntimeHeadersFromCurrentSettingsModelAndAssistant",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundCoordinatorRetainsPayloadAfterTerminalSaveFailureForColdStartRecovery",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundCoordinatorRetainsPayloadAfterTerminalSaveFailureForColdStartRecovery",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testTerminalDrainLagAllowanceDecaysContinuously",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testTerminalDrainLagAllowanceDecaysContinuously",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testForegroundCompletionRecognizesOutputLimitFinishReasons",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testForegroundCompletionRecognizesOutputLimitFinishReasons",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testBackgroundCompletionUsesTypedEngineTerminalSignals",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testBackgroundCompletionUsesTypedEngineTerminalSignals",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testForegroundStreamEventSinkRetainsQueuedChunksUntilClaimed",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testForegroundStreamEventSinkRetainsQueuedChunksUntilClaimed",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testForegroundStreamEventSinkDoesNotHandoffPastQueuedTerminal",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testForegroundStreamEventSinkDoesNotHandoffPastQueuedTerminal",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSParityRedLightTests.swift",
+        "oldMethod": "testForegroundStreamEventSinkClaimsOnlyFIFOHeadAndCompactsLargeBacklog",
+        "target": "iosAppTests",
+        "class": "IOSParityRedLightTests",
+        "method": "testForegroundStreamEventSinkClaimsOnlyFIFOHeadAndCompactsLargeBacklog",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testLaunchDiagnosticDecodesTransportStageAndOlderStatus",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testLaunchDiagnosticDecodesTransportStageAndOlderStatus",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testNativeStartupFailureRemainsTypedAfterSessionCleanup",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testNativeStartupFailureRemainsTypedAfterSessionCleanup",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testPairingRejectsLockdownAndMismatchedKeysBeforeStorage",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testPairingRejectsLockdownAndMismatchedKeysBeforeStorage",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testEnabledSwitchAllowsConsecutiveRunsWithoutReauthorization",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testEnabledSwitchAllowsConsecutiveRunsWithoutReauthorization",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testScopeIsFrozenUntilNextRunAndStaleRevocationCannotStopIt",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testScopeIsFrozenUntilNextRunAndStaleRevocationCannotStopIt",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testMissingPreparationOrScopeKeepsStatusAvailableButCannotStartControl",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testMissingPreparationOrScopeKeepsStatusAvailableButCannotStartControl",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testSwitchAndScopePersistButOwnerDoesNotRestoreAndDisableRevokesSynchronously",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testSwitchAndScopePersistButOwnerDoesNotRestoreAndDisableRevokesSynchronously",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testApplicationDiscoveryAddsExactIDToCurrentRunAndPersistsNameWithoutRunner",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testApplicationDiscoveryAddsExactIDToCurrentRunAndPersistsNameWithoutRunner",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testDiscoveryFailureIsNotEmptySuccessAndInvalidIDCannotExtendScope",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testDiscoveryFailureIsNotEmptySuccessAndInvalidIDCannotExtendScope",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testDisableDuringAppQueryJoinsBeforeReleasingRunAndDropsLateCatalog",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testDisableDuringAppQueryJoinsBeforeReleasingRunAndDropsLateCatalog",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testSettingsQueryCancellationBlocksConcurrentRunUntilJoin",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testSettingsQueryCancellationBlocksConcurrentRunUntilJoin",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testUSBImportSavesBeforeDeletingStagingAndInvalidInputPreservesBoth",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testUSBImportSavesBeforeDeletingStagingAndInvalidInputPreservesBoth",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testUSBImportRetainsStagingWhenSaveFailsOrMaterialChanges",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testUSBImportRetainsStagingWhenSaveFailsOrMaterialChanges",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testConnectionPreparationExcludesCompetingControllerOperations",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testConnectionPreparationExcludesCompetingControllerOperations",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testExistingPairingAndInvalidStartupDoNotTouchTunnel",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testExistingPairingAndInvalidStartupDoNotTouchTunnel",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testCancellingStartupCancelsTunnelBeforeNativeSessionStarts",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testCancellingStartupCancelsTunnelBeforeNativeSessionStarts",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testApplicationQueryWaitsForNativeResultThenTunnelDisconnectBeforePublishing",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testApplicationQueryWaitsForNativeResultThenTunnelDisconnectBeforePublishing",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testApplicationQueryDisconnectFailureDoesNotPublishSuccessfulCatalog",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testApplicationQueryDisconnectFailureDoesNotPublishSuccessfulCatalog",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testQueryFailureSurvivesAdditionalTunnelCleanupFailure",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testQueryFailureSurvivesAdditionalTunnelCleanupFailure",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testStopReceiptPreservesCancelledQueryCleanupFailureAcrossNextClaim",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testStopReceiptPreservesCancelledQueryCleanupFailureAcrossNextClaim",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testStartupFailureDoesNotBecomeCleanupFailureWhenTunnelDisconnected",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testStartupFailureDoesNotBecomeCleanupFailureWhenTunnelDisconnected",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testLaterQuerySuccessfulDisconnectClearsPendingCleanupFailureInSameRun",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testLaterQuerySuccessfulDisconnectClearsPendingCleanupFailureInSameRun",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testControlTeardownSuccessfulDisconnectSupersedesPriorQueryCleanupFailure",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testControlTeardownSuccessfulDisconnectSupersedesPriorQueryCleanupFailure",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testReadinessStartsOneSessionReadsFreshUIAndClosesWithoutPersistingSelfScope",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testReadinessStartsOneSessionReadsFreshUIAndClosesWithoutPersistingSelfScope",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testReadinessMissingPairingFailsConfigurationWithoutConnecting",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testReadinessMissingPairingFailsConfigurationWithoutConnecting",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testReadinessTunnelFailureReportsConnectionStageAndCleansOwner",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testReadinessTunnelFailureReportsConnectionStageAndCleansOwner",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testReadinessRunnerFailureDoesNotClaimConnectionOrDDIVerified",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testReadinessRunnerFailureDoesNotClaimConnectionOrDDIVerified",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testReadinessObservationFailurePreservesVerifiedConnectionAndCloses",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testReadinessObservationFailurePreservesVerifiedConnectionAndCloses",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testReadinessSuccessfulObservationRetainsFailedCleanup",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testReadinessSuccessfulObservationRetainsFailedCleanup",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testDisableDuringReadinessCancelsAndJoinsBeforeAnotherOwnerCanStart",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testDisableDuringReadinessCancelsAndJoinsBeforeAnotherOwnerCanStart",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testSettingsOwnerCancellationStopsOnlyItsReadinessCheck",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testSettingsOwnerCancellationStopsOnlyItsReadinessCheck",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffWithNoToolPausesImmediatelyAndRetainsPendingFreshReadAcrossResume",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffWithNoToolPausesImmediatelyAndRetainsPendingFreshReadAcrossResume",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffWaitsForInFlightReceiptAndKeepsReadySessionUntilFreshReadConsumed",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffWaitsForInFlightReceiptAndKeepsReadySessionUntilFreshReadConsumed",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffSecondPauseRejectsEarlierFreshReadGeneration",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffSecondPauseRejectsEarlierFreshReadGeneration",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testLateResumeObservationFailureCannotChangeNewGenerationOrOwner",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testLateResumeObservationFailureCannotChangeNewGenerationOrOwner",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffCancelledWaiterIsReleasedWithoutStoppingOwner",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffCancelledWaiterIsReleasedWithoutStoppingOwner",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffStopReleasesWaiterAndOldLeaseCannotAffectReusedRunID",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffStopReleasesWaiterAndOldLeaseCannotAffectReusedRunID",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffDisableReleasesWaiterAndDoesNotRestoreOwner",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffDisableReleasesWaiterAndDoesNotRestoreOwner",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffUnknownPreventsWaitResumeAndFreshObservationBeforeEngineTeardown",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffUnknownPreventsWaitResumeAndFreshObservationBeforeEngineTeardown",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testHandoffIsUnavailableToReadinessOwner",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testHandoffIsUnavailableToReadinessOwner",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testExternalConnectionModePersistsAndNeverPreparesAmberVPN",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testExternalConnectionModePersistsAndNeverPreparesAmberVPN",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testReturningFromExternalModeRefreshesExistingEmbeddedPreparation",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testReturningFromExternalModeRefreshesExistingEmbeddedPreparation",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testExternalReadinessUsesRealRunnerReadAndCleansUpWithoutTouchingVPN",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testExternalReadinessUsesRealRunnerReadAndCleansUpWithoutTouchingVPN",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testExternalStartupFailureAndCancellationLeaveVPNUntouched",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testExternalStartupFailureAndCancellationLeaveVPNUntouched",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testExternalApplicationQuerySuccessFailureAndCancellationNeverManageVPN",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testExternalApplicationQuerySuccessFailureAndCancellationNeverManageVPN",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneControlControllerTests.swift",
+        "oldMethod": "testExternalFirstPairingSuccessFailureAndCancellationNeverManageVPN",
+        "target": "iosAppTests",
+        "class": "IOSPhoneControlControllerTests",
+        "method": "testExternalFirstPairingSuccessFailureAndCancellationNeverManageVPN",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testVisibleDisabledCompletionBeforeDispatchDependsOnGoalMode",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testVisibleDisabledCompletionBeforeDispatchDependsOnGoalMode",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testNavigationAndTypingResolveFreshReferencesAndVerifyFinalBudgetedAction",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testNavigationAndTypingResolveFreshReferencesAndVerifyFinalBudgetedAction",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLegacyUsesFreshReferencesAfterRotationWhileLiveKeepsItsGeometryBoundary",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLegacyUsesFreshReferencesAfterRotationWhileLiveKeepsItsGeometryBoundary",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testCompletedReceiptWithUnchangedScreenCannotBecomeSuccessOrRepeatTap",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testCompletedReceiptWithUnchangedScreenCannotBecomeSuccessOrRepeatTap",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testAcknowledgedActionUsesSettledReadWithoutRepeatingObservationOrMutation",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testAcknowledgedActionUsesSettledReadWithoutRepeatingObservationOrMutation",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testFreshIntermediateAlternativesStillRequireTheNextDecision",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testFreshIntermediateAlternativesStillRequireTheNextDecision",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testIncompleteAmbiguousDisabledOrUnboundedTargetsNeverActWithoutDecision",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testIncompleteAmbiguousDisabledOrUnboundedTargetsNeverActWithoutDecision",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testTypingNeverAppendsToNonemptyOrSecureField",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testTypingNeverAppendsToNonemptyOrSecureField",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testShadowNeverActsOrWaitsEvenIfDecisionRequestsIt",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testShadowNeverActsOrWaitsEvenIfDecisionRequestsIt",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testUnknownReceiptEndsLoopWithoutPostActionObservationOrReplay",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testUnknownReceiptEndsLoopWithoutPostActionObservationOrReplay",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testOwnerRevocationDuringDecisionPreventsDispatch",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testOwnerRevocationDuringDecisionPreventsDispatch",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testCancellationDuringDecisionPreventsDispatch",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testCancellationDuringDecisionPreventsDispatch",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testModeChangeDuringDecisionPreventsDispatch",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testModeChangeDuringDecisionPreventsDispatch",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testConfigurationRevisionChangeDuringActionActivityPreventsDispatchDespiteActiveMode",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testConfigurationRevisionChangeDuringActionActivityPreventsDispatchDespiteActiveMode",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testOwnerRevocationAfterReceiptPreservesExecutedStepWithoutFurtherObservation",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testOwnerRevocationAfterReceiptPreservesExecutedStepWithoutFurtherObservation",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testFinalAllowedActionStillReceivesEffectVerification",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testFinalAllowedActionStillReceivesEffectVerification",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testDecisionFailureHandsBackWithoutAnyAction",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testDecisionFailureHandsBackWithoutAnyAction",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testRepeatedWaitOnAnUnchangedScreenHandsBackAfterBoundedRefreshes",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testRepeatedWaitOnAnUnchangedScreenHandsBackAfterBoundedRefreshes",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testReadonlyWaitContributesToWaitAndTotalMetrics",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testReadonlyWaitContributesToWaitAndTotalMetrics",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testProcessRestartDuringReadonlyWaitDoesNotDispatchIntoNewProcess",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testProcessRestartDuringReadonlyWaitDoesNotDispatchIntoNewProcess",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testConfigurationRevisionChangeDuringReadonlyWaitEndsInvocationDespiteActiveMode",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testConfigurationRevisionChangeDuringReadonlyWaitEndsInvocationDespiteActiveMode",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testCandidateDiagnosticsDistinguishExcludedTargetsAndNeverActLocallyOffPlan",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testCandidateDiagnosticsDistinguishExcludedTargetsAndNeverActLocallyOffPlan",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testTapResolvesButtonWhenItsLabelAlsoMatchesStaticTextChild",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testTapResolvesButtonWhenItsLabelAlsoMatchesStaticTextChild",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testTwoMatchingButtonsWithTheSameLabelGoToJevNeverToTheFirstMatch",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testTwoMatchingButtonsWithTheSameLabelGoToJevNeverToTheFirstMatch",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testTapAcceptsExplicitStaticTextAndOtherTypes",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testTapAcceptsExplicitStaticTextAndOtherTypes",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testTapAcceptsNamedStaticTextAndOtherWithoutExplicitType",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testTapAcceptsNamedStaticTextAndOtherWithoutExplicitType",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveCandidatesFollowNewPagesAndMovedWordBlocks",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveCandidatesFollowNewPagesAndMovedWordBlocks",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveKeepsSameNameControlsAtDifferentPositionsAsSeparateChoices",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveKeepsSameNameControlsAtDifferentPositionsAsSeparateChoices",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveDropsOnlyAContainedSameLabelTextChild",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveDropsOnlyAContainedSameLabelTextChild",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveStopsOnUnchangedScreenWithoutRemoteAdviceOrReplay",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveStopsOnUnchangedScreenWithoutRemoteAdviceOrReplay",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveTruncatedTreeNeverActsWithoutJevDecision",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveTruncatedTreeNeverActsWithoutJevDecision",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLegacyAlertHandbackAndWaitBudgetDoNotAdvertiseUnderlyingCandidates",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLegacyAlertHandbackAndWaitBudgetDoNotAdvertiseUnderlyingCandidates",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveHandsBackWhenAnAlertCoversThePage",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveHandsBackWhenAnAlertCoversThePage",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveMayWaitForAnAlertToClearWithoutClickingUnderlyingPage",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveMayWaitForAnAlertToClearWithoutClickingUnderlyingPage",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveCannotCompleteBehindAnAlertBeforeOrAfterClick",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveCannotCompleteBehindAnAlertBeforeOrAfterClick",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveShadowChoosesOnceWithoutDispatching",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveShadowChoosesOnceWithoutDispatching",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveUnknownStopsWithoutPostActionObservation",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveUnknownStopsWithoutPostActionObservation",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testInputDiagnosticsKeepNonemptyUnreadableAndSecureFieldsDistinct",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testInputDiagnosticsKeepNonemptyUnreadableAndSecureFieldsDistinct",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testExhaustedActionsReportAlreadyExecutedWithoutRepeating",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testExhaustedActionsReportAlreadyExecutedWithoutRepeating",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testModeOffAndTimeBudgetReturnStableReasonsAndAccurateServiceCounts",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testModeOffAndTimeBudgetReturnStableReasonsAndAccurateServiceCounts",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testStepBudgetDiffersFromExhaustedCandidateList",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testStepBudgetDiffersFromExhaustedCandidateList",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testFailedObservationStillContributesMeasuredTimeWithoutServiceCalls",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testFailedObservationStillContributesMeasuredTimeWithoutServiceCalls",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testDiagnosticAndMetricJSONUsesStableKeysWithoutUIContent",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testDiagnosticAndMetricJSONUsesStableKeysWithoutUIContent",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceReusesEachNewObservationAndRemovesRedundantDecisions",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceReusesEachNewObservationAndRemovesRedundantDecisions",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceAnchorCollapsesItsTextChildButKeepsSiblingAndCrossBranchAmbiguity",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceAnchorCollapsesItsTextChildButKeepsSiblingAndCrossBranchAmbiguity",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceUsesJevToSelectAmongCurrentStepAlternatives",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceUsesJevToSelectAmongCurrentStepAlternatives",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceLeavesThePlanWhenQuestionChangesEvenIfNextButtonStillExists",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceLeavesThePlanWhenQuestionChangesEvenIfNextButtonStillExists",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceOffPlanScreenCompletesOnlyOnFreshCompletionEvidence",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceOffPlanScreenCompletesOnlyOnFreshCompletionEvidence",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceShadowObservesOneDecisionWithoutWaitingOrDispatching",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceShadowObservesOneDecisionWithoutWaitingOrDispatching",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceOffersAmbiguousTargetsToJevAndInactiveModesNeverClick",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceOffersAmbiguousTargetsToJevAndInactiveModesNeverClick",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceLeavesThePlanWhenQuestionTextChangesUnderTheSameIdentifier",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceLeavesThePlanWhenQuestionTextChangesUnderTheSameIdentifier",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceCannotUseJevContinueToOverrideUnmetStepExpectation",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceCannotUseJevContinueToOverrideUnmetStepExpectation",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceJevWaitRefreshesEvidenceWithoutReplayingAction",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceJevWaitRefreshesEvidenceWithoutReplayingAction",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceUnexpectedAlertNeverClicksUnderlyingControls",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceUnexpectedAlertNeverClicksUnderlyingControls",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceUnknownPreservesReceiptAndStopsWithoutReadingOrSettling",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceUnknownPreservesReceiptAndStopsWithoutReadingOrSettling",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceStopsAfterReceiptWhenOwnerOrConfigurationChanges",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceStopsAfterReceiptWhenOwnerOrConfigurationChanges",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceUnstableOrBlankScreenDoesNotBecomeBusinessSuccess",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceUnstableOrBlankScreenDoesNotBecomeBusinessSuccess",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceWaitFailurePreservesDispatchedSteps",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceWaitFailurePreservesDispatchedSteps",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testListedDuplicateLabelIsOfferedPerMatchWithContextAndJevPicks",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testListedDuplicateLabelIsOfferedPerMatchWithContextAndJevPicks",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testListedAndSequenceFinalCommitsAreWithheldBeforeSelection",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testListedAndSequenceFinalCommitsAreWithheldBeforeSelection",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceDuplicateLabelUsesJevInsteadOfAmbiguityHandback",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceDuplicateLabelUsesJevInsteadOfAmbiguityHandback",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLowConfidenceSelectionIsRereadAndRetriedBeforeHandingBack",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLowConfidenceSelectionIsRereadAndRetriedBeforeHandingBack",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testExplicitJevHandbackIsNotRetried",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testExplicitJevHandbackIsNotRetried",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveCandidatesFilterDedupeDescribeAndCap",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveCandidatesFilterDedupeDescribeAndCap",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testFinalCommitsAreWithheldFromLiveCandidates",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testFinalCommitsAreWithheldFromLiveCandidates",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveHandsBackFinalCommitWithoutTappingAndNeverTapsAloneNextToOne",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveHandsBackFinalCommitWithoutTappingAndNeverTapsAloneNextToOne",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testAlertButtonsBecomeCandidatesButPermissionPromptsAreNeverAnswered",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testAlertButtonsBecomeCandidatesButPermissionPromptsAreNeverAnswered",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLiveRecoversFromIneffectiveTapByChoosingAnotherControl",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLiveRecoversFromIneffectiveTapByChoosingAnotherControl",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequencePageChangeContinuesTowardGoalWithFreshCandidates",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequencePageChangeContinuesTowardGoalWithFreshCandidates",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testBudgetsAllowLongerGoalRuns",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testBudgetsAllowLongerGoalRuns",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testTimeBudgetIsOneHundredEightySeconds",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testTimeBudgetIsOneHundredEightySeconds",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testMessageListRowsAndNotificationTextAreNeverWithheld",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testMessageListRowsAndNotificationTextAreNeverWithheld",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testGenuineCommitButtonsAreWithheld",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testGenuineCommitButtonsAreWithheld",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testJevFailureIsReportedAsJevFailureNotFinalCommit",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testJevFailureIsReportedAsJevFailureNotFinalCommit",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testLateDecisionUsesFreshCandidatesAndReportsFailureWhenRecoveryExhausts",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testLateDecisionUsesFreshCandidatesAndReportsFailureWhenRecoveryExhausts",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testSequenceJevFailureHandsBackWithoutContinuingLive",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testSequenceJevFailureHandsBackWithoutContinuingLive",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift",
+        "oldMethod": "testCandidatesCarryTheirNodeIndexToJev",
+        "target": "iosAppTests",
+        "class": "IOSPhoneGoalLoopTests",
+        "method": "testCandidatesCarryTheirNodeIndexToJev",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testInstallBuiltinSkillsSeedsSkillCreatorAndEnablesIt",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testInstallBuiltinSkillsSeedsSkillCreatorAndEnablesIt",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testAmberUIDesignSeedParsesAsBuiltinSkill",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testAmberUIDesignSeedParsesAsBuiltinSkill",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testOptionalAmberUIDesignSeedCanBeDeletedAndRestored",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testOptionalAmberUIDesignSeedCanBeDeletedAndRestored",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testOptionalVisualSvgSeedIsDeletableAndRestorable",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testOptionalVisualSvgSeedIsDeletableAndRestorable",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillImportPreservesDisabledOptionalSeedEnableState",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillImportPreservesDisabledOptionalSeedEnableState",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testInstallBuiltinSkillsRemovesDeprecatedMeetingAndDocumentSeeds",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testInstallBuiltinSkillsRemovesDeprecatedMeetingAndDocumentSeeds",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillPackageImportCanIterateSkillCreatorAndRestoreFactoryBackup",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillPackageImportCanIterateSkillCreatorAndRestoreFactoryBackup",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testInstallRefreshesUnmodifiedLegacyEnglishSkillCreator",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testInstallRefreshesUnmodifiedLegacyEnglishSkillCreator",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testInstallRefreshesUnmodifiedLegacyChineseSkillCreatorV21",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testInstallRefreshesUnmodifiedLegacyChineseSkillCreatorV21",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testInstallRefreshesUnmodifiedLegacyVisualSvgV101",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testInstallRefreshesUnmodifiedLegacyVisualSvgV101",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillImportSingleSkillMarkdownMergesExistingSiblings",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillImportSingleSkillMarkdownMergesExistingSiblings",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testInstallPreservesAgentIteratedSkillCreator",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testInstallPreservesAgentIteratedSkillCreator",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillImportFromWorkspaceAndUseSkill",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillImportFromWorkspaceAndUseSkill",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillImportPreviewApproveApplyRollbackRestoresCompletePackageAndEnableState",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillImportPreviewApproveApplyRollbackRestoresCompletePackageAndEnableState",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillImportHighRiskAutoApproveAppliesWithoutCard",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillImportHighRiskAutoApproveAppliesWithoutCard",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testBackgroundSkillImportAppliesWhenHighRiskAutoApproveEnabled",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testBackgroundSkillImportAppliesWhenHighRiskAutoApproveEnabled",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillImportRejectsStaleBaseOrCandidateWithoutMutation",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillImportRejectsStaleBaseOrCandidateWithoutMutation",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSoulImportPrepareApplyStaleAndRollback",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSoulImportPrepareApplyStaleAndRollback",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpImportFromSkillPersistsServer",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpImportFromSkillPersistsServer",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillMcpParserUsesSharedTransportContractAndFailsClosed",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillMcpParserUsesSharedTransportContractAndFailsClosed",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpImportApplyDoesNotConnectWhenNetworkDisabled",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpImportApplyDoesNotConnectWhenNetworkDisabled",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testChatDeclaresSkillAndMcpManagementTools",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testChatDeclaresSkillAndMcpManagementTools",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testChatOmitsNetworkMcpToolsWhenCapabilityIsDisabled",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testChatOmitsNetworkMcpToolsWhenCapabilityIsDisabled",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpToolSchemaIsPersistedAndReloaded",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpToolSchemaIsPersistedAndReloaded",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpToolLegacyPersistedDataWithoutSchemaStillLoads",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpToolLegacyPersistedDataWithoutSchemaStillLoads",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpDescribeToolReturnsDescriptionAndSchema",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpDescribeToolReturnsDescriptionAndSchema",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpDescribeToolReturnsStructuredErrorForIncompletePersistedSchema",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpDescribeToolReturnsStructuredErrorForIncompletePersistedSchema",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpDescribeToolErrorsListValidValues",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpDescribeToolErrorsListValidValues",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpCatalogInjectionHasNoCountCapAndInlinesSmallServerSchemas",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpCatalogInjectionHasNoCountCapAndInlinesSmallServerSchemas",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpCatalogInjectionTruncatesUnderCharBudgetWithHint",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpCatalogInjectionTruncatesUnderCharBudgetWithHint",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpCatalogInjectionRemainsAvailableWhenLegacyGateIsDisabled",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpCatalogInjectionRemainsAvailableWhenLegacyGateIsDisabled",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillEnableRejectsMissingSkill",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillEnableRejectsMissingSkill",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testUseSkillWorksWhenFrontmatterNameDiffersFromDirName",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testUseSkillWorksWhenFrontmatterNameDiffersFromDirName",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testUseSkillDoesNotExposeMcpConfigOrOversizedFiles",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testUseSkillDoesNotExposeMcpConfigOrOversizedFiles",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpTestTargetsOneServerAndRedactsURLSecrets",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpTestTargetsOneServerAndRedactsURLSecrets",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testSkillImportRootSingleFileAlsoCollectsSiblingMcpJSON",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testSkillImportRootSingleFileAlsoCollectsSiblingMcpJSON",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testMcpImportFromSkillSkipsExistingServer",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testMcpImportFromSkillSkipsExistingServer",
+        "results": [
+          "Passed"
+        ]
+      },
+      {
+        "oldFile": "iosApp/iosAppTests/IOSSkillMcpToolsTests.swift",
+        "oldMethod": "testOralSkillCreatePhraseUnlocksWorkspaceWrite",
+        "target": "iosAppTests",
+        "class": "IOSSkillMcpToolsTests",
+        "method": "testOralSkillCreatePhraseUnlocksWorkspaceWrite",
+        "results": [
+          "Passed"
+        ]
+      }
+    ]
+  },
+  "p6Phone": {
+    "expected": 105,
+    "observed": 105,
+    "missing": 0,
+    "statuses": {
+      "Passed": 105
+    },
+    "report": "phase-6-coverage-phone.json"
+  },
+  "mainFailedIDs": [
+    {
+      "target": "iosAppTests",
+      "class": "IOSMemoryPollutionTests",
+      "method": "testBackgroundRunMarksRunConversationNotForeground",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedDeletePresentsConfirmationWithoutRemovingTask",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedEditorSaveUpdatesExistingAction",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedEditorValidationLeavesFieldsAndErrorVisible",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedInputFailureDoesNotCloseOrSubmit",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedInputPreparesLatestGoalOnceWithoutSubmitting",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedListReloadsAfterRevisionAndRunsPlainTask",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedSearchExampleCannotReplaceNonemptyOrExistingTask",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedSearchExampleKeepsEnteredTitle",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksTests",
+      "method": "testRenderedSearchExamplePersistsAndParameterizedRunConsumesAllSteps",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksVisualTests",
+      "method": "testSaveAndRunValidationFailuresAtNormalAndAccessibilityWidths",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksVisualTests",
+      "method": "testSearchExampleCreationAndLongStepInputAtNormalAndAccessibilityWidths",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSPhoneControlSavedTasksVisualTests",
+      "method": "testValidationErrorsAreVisibleWhenActionsAreActivatedFromBottomOfAccessibilityForm",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSStoreKitTests",
+      "method": "testAppOwnsTransactionListenerAndSharesEntitlementWithConsumers",
+      "mappedOriginal": false
+    },
+    {
+      "target": "iosAppTests",
+      "class": "IOSWebMountSiteMemoryLayoutTests",
+      "method": "testProductionChatApprovalWithAttachmentActivityAndPinnedArtifact",
+      "mappedOriginal": false
+    }
+  ]
+}

@@ -1,0 +1,2421 @@
+{
+  "phase": "3-chat-session-composer",
+  "source_baseline": {
+    "iosApp/iosApp/ChatViewModel.swift": {
+      "path": "/tmp/amber-phase3-source-baseline/files/iosApp/iosApp/ChatViewModel.swift",
+      "sha256": "f1c075bc17f9eece8b1fa5eae2d59cc2b3328a379fac0d88803a7bb93761e4ed",
+      "lines": 5293
+    },
+    "iosApp/iosApp/ChatView.swift": {
+      "path": "/tmp/amber-phase3-source-baseline/files/iosApp/iosApp/ChatView.swift",
+      "sha256": "fefedcb8934308ef2c87a49bd000589713b6e18aa82d4e0bd28eb93e1ee6e067",
+      "lines": 2390
+    }
+  },
+  "files": [
+    {
+      "path": "iosApp/iosApp/ChatViewModel.swift",
+      "lines": 1182,
+      "responsibility": "VM observable facade, original identity and injected dependencies",
+      "baseline_source_ranges": []
+    },
+    {
+      "path": "iosApp/iosApp/ChatView.swift",
+      "lines": 989,
+      "responsibility": "Chat screen composition, Native timeline host, stable SwiftUI identities",
+      "baseline_source_ranges": []
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationRunState.swift",
+      "lines": 80,
+      "responsibility": "one observable state per conversation",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 11,
+          "end": 87
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationRunRegistry.swift",
+      "lines": 50,
+      "responsibility": "conversation-to-run/host identity registry and active-run retention",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 88,
+          "end": 96
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 938,
+          "end": 964
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+      "lines": 540,
+      "responsibility": "kernel host and generation bindings, run activity and ledger",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 10,
+          "end": 10
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 1236,
+          "end": 1532
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 4600,
+          "end": 4828
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationRecovery.swift",
+      "lines": 430,
+      "responsibility": "message reload, compact boundaries and pending outcome reconciliation",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 1534,
+          "end": 1959
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+      "lines": 62,
+      "responsibility": "VM persistence entry points with explicit run state",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 1960,
+          "end": 2002
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistenceCommit.swift",
+      "lines": 67,
+      "responsibility": "snapshot save, CAS baseline and regeneration variant commit",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 1996,
+          "end": 2053
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+      "lines": 930,
+      "responsibility": "send, approval, edit, regenerate, cancel and conversation mutations",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 2054,
+          "end": 2490
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 3692,
+          "end": 4183
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+      "lines": 338,
+      "responsibility": "per-run steer and mailbox workflow, yielded-child wake",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 2491,
+          "end": 2829
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Session/ChatConversationInboxIO.swift",
+      "lines": 56,
+      "responsibility": "steer sidecar and Room mailbox I/O, activity events",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 2550,
+          "end": 2563
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 2690,
+          "end": 2820
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+      "lines": 44,
+      "responsibility": "async file and vision request identity, task cancellation, bounded OCR cache",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 350,
+          "end": 357
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 1005,
+          "end": 1017
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 3590,
+          "end": 3627
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+      "lines": 559,
+      "responsibility": "selected file and image send context, OCR guard and result application",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 2856,
+          "end": 3102
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 3368,
+          "end": 3691
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+      "lines": 296,
+      "responsibility": "completion haptic, suggestions, title and list preview generation",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 3102,
+          "end": 3367
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+      "lines": 699,
+      "responsibility": "provider and tool exposure request preparation, image upload context",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 2830,
+          "end": 2851
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 4185,
+          "end": 4402
+        },
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 4837,
+          "end": 5291
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/ChatMiniAppOutputCommitter.swift",
+      "lines": 207,
+      "responsibility": "MiniApp output transaction",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "start": 4403,
+          "end": 4599
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Presentation/ChatScreenValues.swift",
+      "lines": 170,
+      "responsibility": "Chat screen value types and dedicated subviews",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 1,
+          "end": 170
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+      "lines": 40,
+      "responsibility": "composer, attachment picker and browser local UI state",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 171,
+          "end": 240
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+      "lines": 129,
+      "responsibility": "WebMount card/desktop presentation",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 941,
+          "end": 1061
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+      "lines": 113,
+      "responsibility": "recap and artifact actions",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 1203,
+          "end": 1305
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+      "lines": 139,
+      "responsibility": "summary, shelf and island signals",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 1434,
+          "end": 1562
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift",
+      "lines": 173,
+      "responsibility": "file, photo and camera picker import",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 741,
+          "end": 876
+        },
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 1062,
+          "end": 1083
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+      "lines": 537,
+      "responsibility": "composer layout, model controls and send action",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 1614,
+          "end": 1646
+        },
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 1829,
+          "end": 2307
+        }
+      ]
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Composer/ChatComposerApprovalCards.swift",
+      "lines": 200,
+      "responsibility": "pending approval card viewport as a dedicated SwiftUI child",
+      "baseline_source_ranges": [
+        {
+          "path": "iosApp/iosApp/ChatView.swift",
+          "start": 1647,
+          "end": 1827
+        }
+      ]
+    }
+  ],
+  "state_authority": {
+    "observable_facade": "ChatViewModel remains the single App-held @Observable identity; messages, inputText, isLoading and approval facades project currentRun.state.",
+    "per_conversation": "ChatConversationRunRegistry owns one ChatConversationRun per conversation key; each run owns one ChatConversationRunState and optional ChatKernelRunHost.",
+    "async_attachment": "ChatAttachmentOperationOwner owns selected-file request token, vision request/conversation tokens, task and bounded OCR cache; visible attachment data remains on ChatViewModel and current run as before.",
+    "suggestion_request": "ChatSuggestionRequestOwner owns one cancellable visible-composer suggestion token/task.",
+    "mailbox": "ChatConversationRunState owns in-memory steer queue and child wait; ChatConversationInboxIO owns injected sidecar/mailbox/event transports.",
+    "persistence": "ChatConversationPersistence.commit owns snapshot/CAS/variant transaction against IOSConversationStore; VM only selects target run and triggers branch signal.",
+    "view_local": "ChatView retains one @State ChatViewModel, input controller, artifact pin handler, summary, viewport/shelf, Namespace and focused presentation; three @State value groups own composer/picker/browser local fields.",
+    "ledger_logger": "File-private chatLedgerLogger now sits beside its only use in ChatRunComposition.swift."
+  },
+  "consumer_guards": {
+    "phone_include_tools": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift:246",
+    "resume_yielded_child": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift:246",
+    "completion_haptic": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift:65",
+    "tool_availability": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift:246",
+    "generate_conversation_list_preview": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift:190",
+    "composer_send": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift:364 -> iosApp/iosApp/Chat/Session/ChatConversationMutations.swift:13",
+    "native_timeline_host": "iosApp/iosApp/ChatView.swift:864",
+    "artifact_containers": "iosApp/iosApp/ChatView.swift:667 and iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift:59",
+    "stable_summary": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift:24",
+    "async_attachment_original_conversation": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift:9 and iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift:184"
+  },
+  "visibility": {
+    "existing_facade": "All declarations that were non-private in the pre-edit source retain their external name/signature; ChatViewModel observable wrappers project per-conversation run state.",
+    "concrete_owner_narrow_interface": [
+      "ChatConversationRunRegistry.current/run/host/retainActive",
+      "ChatConversationInboxIO.persistQueue/loadQueue/removeQueue/pendingResults/drainPending/events/signal",
+      "ChatConversationPersistence.commit",
+      "ChatAttachmentOperationOwner request tokens/cache operations",
+      "ChatSuggestionRequestOwner.begin/invalidate/finish",
+      "ChatComposerApprovalCards typed properties and Binding inputs"
+    ],
+    "changed_from_private": [
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1009",
+        "symbol": "func host",
+        "new": {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "line": 954
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/ChatViewModel.swift",
+            "line": 954
+          },
+          {
+            "path": "iosApp/iosApp/ChatViewModel.swift",
+            "line": 958
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationRunRegistry.swift",
+            "line": 36
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationRunRegistry.swift",
+            "line": 40
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1013",
+        "symbol": "func host",
+        "new": {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "line": 954
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/ChatViewModel.swift",
+            "line": 954
+          },
+          {
+            "path": "iosApp/iosApp/ChatViewModel.swift",
+            "line": 958
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationRunRegistry.swift",
+            "line": 36
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationRunRegistry.swift",
+            "line": 40
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1039",
+        "symbol": "var pendingAssistantRegeneration",
+        "new": {
+          "path": "iosApp/iosApp/ChatViewModel.swift",
+          "line": 983
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/ChatViewModel.swift",
+            "line": 983
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationRunState.swift",
+            "line": 37
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1235",
+        "symbol": "func makeKernelRunHost",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+          "line": 13
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1264",
+        "symbol": "func makeGenerationBindings",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+          "line": 42
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1616",
+        "symbol": "func refreshContextCompactBoundaries",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationRecovery.swift",
+          "line": 86
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1960",
+        "symbol": "func persistMessages",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+          "line": 10
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 10
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 15
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 28
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1965",
+        "symbol": "func persistMessages",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+          "line": 10
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 10
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 15
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 28
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1978",
+        "symbol": "func persistMessages",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+          "line": 10
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 10
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 15
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+            "line": 28
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1995",
+        "symbol": "func persistMessagesSnapshot",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationPersistence.swift",
+          "line": 45
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2154",
+        "symbol": "func refreshIntelligentUIReceipts",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 109
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2384",
+        "symbol": "func appendUserMessage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 339
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2542",
+        "symbol": "func drainSteerQueue",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 56
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 56
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 61
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2581",
+        "symbol": "func handleSteerQueueAtRunTerminal",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 95
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 95
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 100
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2640",
+        "symbol": "func restoreSteerQueueLeftoverToComposer",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 154
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 154
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 159
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2702",
+        "symbol": "func checkCompletionClaim",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 209
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2711",
+        "symbol": "func observeYieldedChildResults",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 218
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2785",
+        "symbol": "func drainMailbox",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 287
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 287
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+            "line": 292
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2830",
+        "symbol": "func imageEditToolInput",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 171
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2855",
+        "symbol": "func startVisionFallbackAndSend",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 13
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2894",
+        "symbol": "func cancelVisionRecognitionForConversationChange",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 52
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2935",
+        "symbol": "func shouldApplyVisionRecognitionResult",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 93
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2953",
+        "symbol": "func applyVisionRecognitionFailure",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 111
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2974",
+        "symbol": "func isCurrentConversation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 132
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2996",
+        "symbol": "func clearVisionRecognitionPendingPrompt",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 154
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3013",
+        "symbol": "func rejectVisionRecognitionMutationIfNeeded",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 171
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3026",
+        "symbol": "func performVisionRecognition",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 184
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3107",
+        "symbol": "func onGenerationCompleted",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 40
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3202",
+        "symbol": "func makeAuxiliaryTextGenerationParams",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 135
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3301",
+        "symbol": "func beginSuggestionRequest",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 234
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3308",
+        "symbol": "func invalidateSuggestionRequest",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 238
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3314",
+        "symbol": "func applySuggestions",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 242
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3385",
+        "symbol": "func makeUserMessage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 278
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3597",
+        "symbol": "func cachedVisionRecognitionText",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+          "line": 18
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+            "line": 18
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+            "line": 484
+          }
+        ],
+        "category": "concrete_owner_narrow_interface"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3605",
+        "symbol": "func cacheVisionRecognitionTexts",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+          "line": 26
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+            "line": 26
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+            "line": 488
+          }
+        ],
+        "category": "concrete_owner_narrow_interface"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3619",
+        "symbol": "func visionRecognitionCacheKey",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+          "line": 39
+        },
+        "all_same_name_locations": null,
+        "category": "concrete_owner_narrow_interface"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3683",
+        "symbol": "func modelSupportsImageInput",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 550
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3929",
+        "symbol": "func regenerateImmediately",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 675
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4184",
+        "symbol": "func generateResponse",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 10
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4236",
+        "symbol": "func messagesByInjectingRuntimeContext",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 53
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4277",
+        "symbol": "func memoryRecordIdsForRuntimeContext",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 94
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4292",
+        "symbol": "func memoryRecallResultForRun",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 109
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4306",
+        "symbol": "func prepareJevMemoryRecallSelection",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 123
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4319",
+        "symbol": "func recordMemoryUsage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationRunState.swift",
+          "line": 61
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Session/ChatConversationRunState.swift",
+            "line": 61
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+            "line": 136
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4330",
+        "symbol": "func isLocalGenerationError",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 147
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4338",
+        "symbol": "func isRegeneratedAnswerCandidate",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 155
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4345",
+        "symbol": "func isOutputLimitNotice",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 162
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4354",
+        "symbol": "func prepareImageAttachments",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 193
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4686",
+        "symbol": "func startLiveActivity",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+          "line": 397
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4736",
+        "symbol": "func recordRun",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+          "line": 447
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4836",
+        "symbol": "func makeProviderSetting",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 243
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4861",
+        "symbol": "func makeTextGenerationParams",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 268
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5247",
+        "symbol": "var isMiniAppRuntimeEnabled",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 654
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:181",
+        "symbol": "var activeComposerPanel",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 6
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:183",
+        "symbol": "var isModelSheetPresented",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 7
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:184",
+        "symbol": "var isImportingSelectedFile",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 22
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:185",
+        "symbol": "var isAttachExpanded",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 8
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:186",
+        "symbol": "var isCameraPresented",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 23
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:187",
+        "symbol": "var cameraPickerConversationId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 24
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:188",
+        "symbol": "var imageAttachmentTask",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 25
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:189",
+        "symbol": "var isPhotoPickerPresented",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 26
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:190",
+        "symbol": "var showWebMountDesktopBackends",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 35
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:191",
+        "symbol": "var focusedRemoteWebMountSessionId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 36
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:192",
+        "symbol": "var collapsedWebMountSessionId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 37
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:193",
+        "symbol": "var expandedWebMountSessionId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 38
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:194",
+        "symbol": "var photoPickerItems",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 27
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:198",
+        "symbol": "var fileImporterConversationId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 28
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:199",
+        "symbol": "var isProcessingSelectedFile",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 29
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:200",
+        "symbol": "var photoPickerConversationId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 30
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:201",
+        "symbol": "var isInputFocused",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 9
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:210",
+        "symbol": "var gateHighlightRequest",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 10
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+            "line": 10
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Composer/ChatComposerApprovalCards.swift",
+            "line": 14
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:213",
+        "symbol": "var composerInputHeight",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 11
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:214",
+        "symbol": "var approvalContainerHeight",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 12
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:215",
+        "symbol": "var composerAuxiliaryHeight",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 13
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:216",
+        "symbol": "var subAgentActivityBarHeight",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 14
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:217",
+        "symbol": "var siteMemoryApprovalMinimumHeights",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 15
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+            "line": 15
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Composer/ChatComposerApprovalCards.swift",
+            "line": 15
+          }
+        ],
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:218",
+        "symbol": "var collapsedSiteMemoryComposerRequestId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 16
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:219",
+        "symbol": "var isSubAgentBarVisible",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenLocalState.swift",
+          "line": 17
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:738",
+        "symbol": "func handleSelectedFileImport",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift",
+          "line": 9
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:798",
+        "symbol": "func presentFileImporter",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift",
+          "line": 69
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:816",
+        "symbol": "func presentPhotosPicker",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift",
+          "line": 87
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:821",
+        "symbol": "func presentCamera",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift",
+          "line": 92
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:833",
+        "symbol": "func handlePhotoPickerSelection",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift",
+          "line": 104
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:983",
+        "symbol": "var displayedWebMountSession",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 50
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:989",
+        "symbol": "var compactWebMountSession",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 56
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:996",
+        "symbol": "func webMountSessionIsCompact",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 63
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1001",
+        "symbol": "func browserTaskTitleCandidate",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 68
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1009",
+        "symbol": "var scrollToBottomBottomPadding",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 76
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1018",
+        "symbol": "func webMountSessionAction",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 85
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1029",
+        "symbol": "func openWebMountSession",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 96
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1062",
+        "symbol": "func handleCameraImageSelection",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewAttachmentImport.swift",
+          "line": 151
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1202",
+        "symbol": "var currentRecap",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 9
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1208",
+        "symbol": "func requestRecap",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 15
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1222",
+        "symbol": "func locateRecapNode",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 29
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1235",
+        "symbol": "func fillRecapNextStep",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 42
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1252",
+        "symbol": "func updateArtifactShelf",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 59
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1261",
+        "symbol": "func pinArtifactSnippet",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 68
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1274",
+        "symbol": "func continueFromArtifact",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 81
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1292",
+        "symbol": "func exportConversation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 99
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1300",
+        "symbol": "func showArtifactError",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 107
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1433",
+        "symbol": "func refreshArtifactShelf",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 9
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1448",
+        "symbol": "func refreshChatListSummary",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 24
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1499",
+        "symbol": "func syncIslandPresentation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 75
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1532",
+        "symbol": "var conversationTitleForIsland",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 108
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1546",
+        "symbol": "func compactIslandText",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 122
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1550",
+        "symbol": "func islandTint",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 126
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1616",
+        "symbol": "var collapsesComposerForSiteMemoryApproval",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 11
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1621",
+        "symbol": "func collapseSiteMemoryComposerIfNeeded",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 16
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1631",
+        "symbol": "var siteMemoryApprovalLayoutSignal",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 26
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1828",
+        "symbol": "var inputBar",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 54
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2071",
+        "symbol": "var browserTaskTransition",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 297
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2083",
+        "symbol": "var browserTaskVisibilityAnimation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 309
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2154",
+        "symbol": "var configurationIssue",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 380
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2197",
+        "symbol": "var hasPendingComposerGate",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 423
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2252",
+        "symbol": "var composerCurrentModelSelection",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 478
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2275",
+        "symbol": "var composerReasoningLabel",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 501
+        },
+        "all_same_name_locations": null,
+        "category": "same_VM_or_View_cross_file_extension"
+      }
+    ],
+    "preserved_private_in_new_owner": [
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:64",
+        "symbol": "var lastMemoryUsageRunId",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationRunState.swift",
+          "line": 57
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:65",
+        "symbol": "var lastMarkedMemoryIds",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationRunState.swift",
+          "line": 58
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:327",
+        "symbol": "let steerQueueStore",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInboxIO.swift",
+          "line": 8
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:330",
+        "symbol": "let mailboxStore",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInboxIO.swift",
+          "line": 9
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1249",
+        "symbol": "func makeGenerationDependencies",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+          "line": 27
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:1622",
+        "symbol": "func messagesByTerminatingStaleSearches",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationRecovery.swift",
+          "line": 92
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2128",
+        "symbol": "func intelligentUIContinuation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 83
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2423",
+        "symbol": "func sendUserMessage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 378
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2468",
+        "symbol": "func startDeferredGeneration",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 415
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2481",
+        "symbol": "func startDeferredGenerationNow",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 428
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2592",
+        "symbol": "func sendNextSteerQueueEntry",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 111
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2739",
+        "symbol": "func resumeYieldedRunIfReady",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 246
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2790",
+        "symbol": "func appendMailboxEnvelopes",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 297
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2820",
+        "symbol": "func persistSteerQueue",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 327
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2824",
+        "symbol": "func ensureSteerQueueLoaded",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationInbox.swift",
+          "line": 331
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2927",
+        "symbol": "func clearVisionRecognitionOperation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 85
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:2981",
+        "symbol": "func visionRecognitionFailureMessage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 139
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3002",
+        "symbol": "func currentConversationContainsMessage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 160
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3149",
+        "symbol": "func resolveAuxModel",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 82
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3154",
+        "symbol": "func auxConversationText",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 87
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3168",
+        "symbol": "func auxLocaleName",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 101
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3173",
+        "symbol": "func runAuxModel",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 106
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3219",
+        "symbol": "func generateConversationTitle",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 152
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3257",
+        "symbol": "func generateConversationListPreview",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 190
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3274",
+        "symbol": "func generateChatSuggestions",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift",
+          "line": 207
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3368",
+        "symbol": "func makeImageOnlyUserMessage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerAttachments.swift",
+          "line": 261
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3593",
+        "symbol": "var visionRecognitionTexts",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+          "line": 14
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3594",
+        "symbol": "var visionRecognitionTextKeys",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+          "line": 15
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:3595",
+        "symbol": "let maxVisionRecognitionCacheEntries",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatAttachmentOperationOwner.swift",
+          "line": 16
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4083",
+        "symbol": "func applyPersistedBranchIfCurrent",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 829
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4178",
+        "symbol": "func regenerateDigestSeed",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatConversationMutations.swift",
+          "line": 924
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4411",
+        "symbol": "func applyMiniAppOutputIfPresent",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatMiniAppOutputCommitter.swift",
+          "line": 18
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4810",
+        "symbol": "func markRunAwaitingPermission",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+          "line": 521
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4819",
+        "symbol": "func resumeRunAfterPermission",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Session/ChatRunComposition.swift",
+          "line": 530
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:4847",
+        "symbol": "func recentToolsForExposure",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 254
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5104",
+        "symbol": "func workspaceToolNamesForCurrentTurn",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 511
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5108",
+        "symbol": "func ishToolNamesForCurrentTurn",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 515
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5242",
+        "symbol": "func truncatedError",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 649
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5251",
+        "symbol": "var isWebMountRuntimeEnabled",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 658
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5255",
+        "symbol": "func isSlice3ToolEnabled",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 662
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5277",
+        "symbol": "func isCapabilityPolicyEnabled",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 684
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatViewModel.swift:5282",
+        "symbol": "func enabledModelToolNames",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift",
+          "line": 689
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:70",
+        "symbol": "var text",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenValues.swift",
+          "line": 70
+        },
+        "all_same_name_locations": [
+          {
+            "path": "iosApp/iosApp/Chat/Presentation/ChatScreenValues.swift",
+            "line": 70
+          },
+          {
+            "path": "iosApp/iosApp/Chat/Presentation/ChatScreenValues.swift",
+            "line": 120
+          }
+        ]
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:113",
+        "symbol": "var trimmedText",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatScreenValues.swift",
+          "line": 113
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:232",
+        "symbol": "var reduceMotion",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatComposerApprovalCards.swift",
+          "line": 16
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:942",
+        "symbol": "var activeWebMountSession",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 9
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1013",
+        "symbol": "func webMountSessionIsOpenable",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewWebMountPresentation.swift",
+          "line": 80
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1246",
+        "symbol": "func showRecapError",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewArtifactPresentation.swift",
+          "line": 53
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1474",
+        "symbol": "func activeToolStepForIsland",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 50
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1486",
+        "symbol": "func failedToolStepForIsland",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 62
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1524",
+        "symbol": "func lastAssistantHasOpenReasoning",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Presentation/ChatViewScreenSignals.swift",
+          "line": 100
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1637",
+        "symbol": "var siteMemoryApprovalMaximumHeight",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 32
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:1646",
+        "symbol": "var pendingUserGateCards",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 41
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2087",
+        "symbol": "var ishApprovalTransition",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 313
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2099",
+        "symbol": "var webMountApprovalTransition",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 325
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2107",
+        "symbol": "var webMountApprovalVisibilityAnimation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 333
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2114",
+        "symbol": "var ishApprovalVisibilityAnimation",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 340
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2122",
+        "symbol": "var sendEnabled",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 348
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2126",
+        "symbol": "func sendEnabled",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 352
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2131",
+        "symbol": "func sendComposerMessage",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 357
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2141",
+        "symbol": "func openComposerModelSheet",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 367
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2159",
+        "symbol": "var inputPlaceholder",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 385
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2185",
+        "symbol": "var hasPendingToolApproval",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 411
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2201",
+        "symbol": "var isCurrentConversationRunActive",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 427
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2209",
+        "symbol": "var isComposerStopMode",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 435
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2229",
+        "symbol": "var hasComposerSendableContent",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 455
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2235",
+        "symbol": "var showsComposerMeta",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 461
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2242",
+        "symbol": "var composerModelLabel",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 468
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2247",
+        "symbol": "var composerCurrentModelID",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 473
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2257",
+        "symbol": "var selectedReasoningOption",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 483
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2262",
+        "symbol": "var availableReasoningOptions",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 488
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2270",
+        "symbol": "var reasoningIsAvailable",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 496
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2281",
+        "symbol": "var selectedReasoningBinding",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 507
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2291",
+        "symbol": "var inputFocusBinding",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 517
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2298",
+        "symbol": "var reasoningAccessibilityValue",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 524
+        },
+        "all_same_name_locations": null
+      },
+      {
+        "original": "iosApp/iosApp/ChatView.swift:2307",
+        "symbol": "func toggleComposerPanel",
+        "new": {
+          "path": "iosApp/iosApp/Chat/Composer/ChatViewComposer.swift",
+          "line": 533
+        },
+        "all_same_name_locations": null
+      }
+    ]
+  },
+  "verification": {
+    "swift_frontend_parse": "passed for owned files",
+    "git_diff_check_original_files": "passed",
+    "xcodegen_build_tests": "Root-owned, pending",
+    "baseline_declaration_coverage": {
+      "ChatViewModel": "326 of 326 original 4-space declarations accounted for; three async attachment token fields moved and renamed: visionRecognitionRequestId -> visionRequestId, visionRecognitionConversationId -> visionConversationId, attachRequestId -> selectedFileRequestId",
+      "ChatView": "146 of 146 original 4-space declarations accounted for"
+    },
+    "integration_typecheck_fixes": [
+      "Recovery queueIO captured outside weak-self task; preserves stale revision guard",
+      "imageEditToolInput moved intact from Inbox to Generation request preparation; module-internal for ChatConversationMutations cross-file call",
+      "File-private chatLedgerLogger moved from ChatViewModel.swift to only consumer ChatRunComposition.swift"
+    ],
+    "file_private_scan": "All owned source files scanned: remaining top-level private symbol chatLedgerLogger has zero cross-file references; baseline ChatView top-level private types were moved to ChatScreenValues for cross-file consumers."
+  }
+}

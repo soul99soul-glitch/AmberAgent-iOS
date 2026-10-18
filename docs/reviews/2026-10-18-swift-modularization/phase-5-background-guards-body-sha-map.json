@@ -1,0 +1,84 @@
+{
+  "phase": "Phase5 BG source-guard migration",
+  "before_snapshot": "/tmp/amber-phase5-background-guards-before.json",
+  "files": {
+    "IOSSettingsWiringTests.swift": {
+      "before_sha256": "68f173c10e213e9398aee370eb7f251254f1e2822e584d052f19af4a84172701",
+      "after_sha256": "cef85c48de2318bffbbaad56df8f748a8094a64126d55fc4569719076d2980cb"
+    },
+    "HomeDesignContractTests.swift": {
+      "before_sha256": "aa5510ad953cc116836ff69369692dfa3ace1ddde7ad080004c31000951561ba",
+      "after_sha256": "4a4bb83ba9f3750c77e98ae64408fb6986928a76a31612a3470273a947336d2e"
+    },
+    "IOSParityRedLightTests.swift": {
+      "before_sha256": "6e52eed45092cb8fa1215f2d6cb00b924ecef119f8e92e78b997a184c3a96efd",
+      "after_sha256": "8ac492ad4e65c5c781ca91d08a913514e42478d14ee4b5a2dd555d493fec1dac",
+      "before_lines": 2181,
+      "after_lines": 2211,
+      "line_delta": 30,
+      "line_budget_note": "Temporary Phase5 source-owner guard growth: +30 lines, 2181 -> 2211. Do not weaken assertions or split this Phase6-owned suite here; Root tracks temporary ratchet and Phase6 removes exception for final <=1500 gate."
+    }
+  },
+  "methods": {
+    "testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground": {
+      "file": "IOSSettingsWiringTests.swift",
+      "before_sha256": "1a92de71659cb2795e0f0d5af34de5af90ab99e0f7eb7da17a614f6753288cc3",
+      "after_sha256": "1a92de71659cb2795e0f0d5af34de5af90ab99e0f7eb7da17a614f6753288cc3",
+      "before_line": 161,
+      "after_line": 161,
+      "before_assertion_calls": 20,
+      "after_assertion_calls": 20,
+      "change": "Unchanged: all four BG keep-alive/fallback/dispatch-order strings remain in coordinator, the real owner."
+    },
+    "testBackgroundToolEnginePublishesLiveActivityStagesAtExecutionBoundaries": {
+      "file": "IOSSettingsWiringTests.swift",
+      "before_sha256": "9553dd772f8abb8b60c58f08cea794c8d562edfdc52a36a55d1f0526d652fed1",
+      "after_sha256": "d0c3f5f9dac438eb488183778463788417dce8e5396fd6472d7adbfc25273bdd",
+      "before_line": 398,
+      "after_line": 398,
+      "before_assertion_calls": 14,
+      "after_assertion_calls": 14,
+      "change": "Engine run callback, stream, stage count and expiration slice now read Executor; running-presentation gate remains Coordinator."
+    },
+    "testListPreviewSanitizeAndWiringContracts": {
+      "file": "HomeDesignContractTests.swift",
+      "before_sha256": "5b088808aee6bacc64bcc714997d9c84d78f012480eda3151898676cc1e72f6d",
+      "after_sha256": "6ff5d96343f1f608c546aa527bb31741ce960bb39df9b282df5a44c27bad3a8f",
+      "before_line": 739,
+      "after_line": 739,
+      "before_assertion_calls": 16,
+      "after_assertion_calls": 17,
+      "change": "Direct BG success preview uses Executor; recorded/expired success preview uses TerminalWriter. Separate owner assertions replace one Coordinator assertion."
+    },
+    "testBackgroundCoordinatorRetainsPayloadAfterTerminalSaveFailureForColdStartRecovery": {
+      "file": "IOSParityRedLightTests.swift",
+      "before_sha256": "e069e067199d1ef3638c13610222db493993092c73b7920944b6ce0cb714b726",
+      "after_sha256": "75e9055a820e3b88577e850ff68ce538ffef86c701ab851ea90886e317233408",
+      "before_line": 1820,
+      "after_line": 1820,
+      "before_assertion_calls": 4,
+      "after_assertion_calls": 12,
+      "change": "Corrected preexisting global cross-method false order to bounded Executor save -> recoveryPending status -> recordRun -> finalize -> save-failure guard. TerminalWriter failure helper is bounded; release required, finish and removePayload forbidden.",
+      "before_method_lines": 34,
+      "after_method_lines": 57
+    },
+    "testBackgroundCompletionUsesTypedEngineTerminalSignals": {
+      "file": "IOSParityRedLightTests.swift",
+      "before_sha256": "0fe4cab6ddde02936530df9951ef2fb4d9be304f026405b98b31a972bc1b37b2",
+      "after_sha256": "8ac8c551f323d5c4713e1e2fb53de30acde6f2a3faa8afb79536fae013f099c5",
+      "before_line": 1921,
+      "after_line": 1944,
+      "before_assertion_calls": 10,
+      "after_assertion_calls": 11,
+      "change": "Typed engine result branches read Executor; truncated terminal and failure presentation read TerminalWriter. Negative transcript-text inference checked separately in both owners.",
+      "before_method_lines": 45,
+      "after_method_lines": 52
+    }
+  },
+  "verification": {
+    "swift_parse": "pass",
+    "git_diff_check": "pass",
+    "build": "not run by assignment",
+    "tests": "not run by assignment"
+  }
+}

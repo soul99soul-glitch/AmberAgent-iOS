@@ -1,0 +1,81 @@
+{
+  "module": ":shared",
+  "suites": [
+    {
+      "suite": "IosSettingsMutationsSubAgentTest[jvm]",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "KotlinNativeBridgeThrowsContractTest[jvm]",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "IosToolOutputJsonBridgeTest[jvm]",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "IosChatBackgroundPayloadJsonBridgeTest[jvm]",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "IosSettingsMutationsProviderTest[jvm]",
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "IosMailboxMessageBridgeTest[jvm]",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "MimoProviderMigrationTest[jvm]",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "IosSettingsMutationsMemoryTest[jvm]",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "GeminiWireToolMapperTest[jvm]",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "IosSettingsMutationsIdentityTest[jvm]",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "totals": {
+    "tests": 56,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

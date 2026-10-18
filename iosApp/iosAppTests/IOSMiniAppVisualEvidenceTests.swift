@@ -99,9 +99,15 @@ final class IOSMiniAppVisualEvidenceTests: XCTestCase {
             try? FileManager.default.removeItem(at: root)
         }
         for (name, typeSize) in [("compact", DynamicTypeSize.large), ("accessibility", .accessibility3)] {
-            let runner = MiniAppRunnerView(appId: app.id, repository: repository)
             let size = CGSize(width: 320, height: 780)
-            let host = UIHostingController(rootView: ScrollView { runner.grantsSection(app) }
+            let host = UIHostingController(rootView: ScrollView {
+                MiniAppPermissionGrantsSection(
+                    app: app,
+                    systemCapabilitiesEnabled: UserDefaults.standard.bool(forKey: key),
+                    grants: repository.grants(appId: app.id),
+                    onDecision: { _, _ in }
+                )
+            }
                 .background(AmberTheme.background)
                 .environment(\.dynamicTypeSize, typeSize))
             window.rootViewController = host

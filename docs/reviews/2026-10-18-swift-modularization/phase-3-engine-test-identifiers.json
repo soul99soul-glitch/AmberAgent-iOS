@@ -1,0 +1,1379 @@
+{
+  "description": "Swift parse AST class ownership and exact method source hashes; methods include signature and body through closing brace.",
+  "baseline": "/tmp/amber-phase3-source-baseline/files/iosApp/iosAppTests",
+  "method_count": 118,
+  "classes_by_file": {
+    "IOSAgentToolEngineTestCase.swift": [
+      "IOSAgentToolEngineTestCase"
+    ],
+    "IOSAgentToolEngineTests.swift": [
+      "IOSAgentToolEngineTests"
+    ],
+    "IOSAgentToolEngineStreamingTests.swift": [
+      "IOSAgentToolEngineStreamingTests"
+    ],
+    "IOSAgentToolEngineTransactionTests.swift": [
+      "IOSAgentToolEngineTransactionTests",
+      "RealJsSandboxExecutor"
+    ],
+    "IOSChatKernelRunHostTestCase.swift": [
+      "IOSChatKernelRunHostTestCase"
+    ],
+    "IOSChatKernelRunHostTests.swift": [
+      "IOSChatKernelRunHostTests"
+    ],
+    "IOSChatKernelRunHostPhoneProgressTests.swift": [
+      "IOSChatKernelRunHostPhoneProgressTests",
+      "HostPhonePairingStore",
+      "IOSChatProgressStreamingProvider"
+    ],
+    "IOSChatKernelRunHostHandoffTests.swift": [
+      "IOSChatKernelRunHostHandoffTests"
+    ],
+    "IOSOrchestrationToolTestCase.swift": [
+      "IOSOrchestrationToolTestCase"
+    ],
+    "IOSOrchestrationToolTests.swift": [
+      "IOSOrchestrationToolTests"
+    ],
+    "IOSOrchestrationPoolRoutingTests.swift": [
+      "IOSOrchestrationPoolRoutingTests"
+    ],
+    "IOSOrchestrationListInterruptTerminalTests.swift": [
+      "IOSOrchestrationListInterruptTerminalTests",
+      "IOSToolExecutorBox"
+    ],
+    "IOSOrchestrationScopeViewModelTests.swift": [
+      "IOSOrchestrationScopeViewModelTests"
+    ]
+  },
+  "checks": {
+    "same_method_name_set": true,
+    "same_method_source_sha256": true,
+    "same_assertion_calls": true,
+    "base_classes_have_zero_tests": true,
+    "helper_declarations_audited": 80,
+    "helper_declaration_coverage_report": "/tmp/amber-phase3-engine-helper-audit.json",
+    "helper_missing_or_duplicate_count": 0,
+    "helper_normalized_source_mismatch_count": 0,
+    "extension_declarations_before_after": [
+      0,
+      0
+    ],
+    "host_wait_for_condition_signature_adaptation": "The original private nonescaping helper became inherited in a nonfinal XCTestCase base. iOS Simulator Swift module emit reproduced escaping local function captures non-escaping value for the inherited method; final and extension variants also failed. @escaping on the @MainActor condition parameter passed the same emit, with unchanged polling body and all test method hashes.",
+    "host_wait_for_condition_mre_sources": [
+      "/tmp/amber-host-helper-nonfinal.swift",
+      "/tmp/amber-host-helper-final.swift",
+      "/tmp/amber-host-helper-private.swift",
+      "/tmp/amber-host-helper-escaping.swift",
+      "/tmp/amber-host-helper-extension.swift"
+    ],
+    "host_wait_for_condition_mre_logs": [
+      "/tmp/amber-host-helper-nonfinal.log",
+      "/tmp/amber-host-helper-final.log",
+      "/tmp/amber-host-helper-private.log",
+      "/tmp/amber-host-helper-escaping.log",
+      "/tmp/amber-host-helper-extension.log"
+    ]
+  },
+  "mapping": [
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testLoopExecutesThenTerminatesWhenNoToolCallsRemain",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testLoopExecutesThenTerminatesWhenNoToolCallsRemain",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 696,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 10,
+      "method_sha256": "b0f2f0ee4eb9e845bd8dc1182daaba4b10e69cfd32f32a719c064923a53c7379",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "9e5b4e8e8e90ed91bec93a353cec5de0a6c90c4ec6c7c400df4e62f0d199ee0f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testEveryProviderRoundRecordsPreparedRequestSnapshot",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testEveryProviderRoundRecordsPreparedRequestSnapshot",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 727,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 41,
+      "method_sha256": "b272129d572af73523bce2ee51b7b9e09f52e781dc99467f617ccdbb615ce26e",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "3af9727295061d0b581aab2c04417fa6ebb393cb8b470d4ed8a9c63678d03421"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testRequestSnapshotWriteFailurePreventsProviderInvocation",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testRequestSnapshotWriteFailurePreventsProviderInvocation",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 769,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 83,
+      "method_sha256": "69ff95ce4ffe4bb17e7c90fe47d987dfdb2f7f49259058a77b88c3c3b02f81ad",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "8196784ab57936259bb20f69637626ebaad627efaac9b76688bbf7619dbdf76d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testNativePromptTranscriptAttachesTransitionToAssistantAndReplaysNextRound",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testNativePromptTranscriptAttachesTransitionToAssistantAndReplaysNextRound",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 789,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 103,
+      "method_sha256": "307e7f348e49d4d5825584087af6155224906da4b9adeeb0b08bb82fd0632ab6",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "5e64759cef5ed90762c7d7645ab5b38984dd068025e11c4dde73cebdd4bdb795"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testApprovalToolResultPreservesPromptTranscriptEventOnPureToolAssistant",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testApprovalToolResultPreservesPromptTranscriptEventOnPureToolAssistant",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 823,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 137,
+      "method_sha256": "ec4599efdeb4ed7bd0b3565b6f72c68057dfbd32f13e0964bcf078358fdc5c6b",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "07d1db847fe9c894ccfd146a14408715f8bd09b8de3f877650181e6130e179bb"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testProviderFailureIsExposedWithoutParsingTheTranscript",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testProviderFailureIsExposedWithoutParsingTheTranscript",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 859,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 173,
+      "method_sha256": "96bcfcd85f83e0e8d274dbd1c4d28f4be1e619c344360963d6471d1c2831fb8d",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "ed0d7e50ee3ae9bac6a7243beab05aca0b909b99301d8d5933480cced76d79af"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testToolOutputFilledInPlaceWithExecutorResult",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testToolOutputFilledInPlaceWithExecutorResult",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 873,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 187,
+      "method_sha256": "b245d5d5c74c98cba3f47c9bc0978e78a3698d8e20ddeb5c53d4322109fa916c",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "13a914f67021b1c9c3113a0beb2b76564ce720880f1e4e7ec35794c0e5cb2268"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testForegroundProviderCreateRedactsCanonicalInputAndNextRequest",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testForegroundProviderCreateRedactsCanonicalInputAndNextRequest",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 902,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 216,
+      "method_sha256": "d9724033df92fd96c6554255e9d5d7159faa3af46d6664565b3c89cb64a6b1fc",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "178c93c2fdc327a1fbbfb19727e2d3f3a0d11f472b6daddff9909bb571a76efe"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testMultipleToolCallsInOneTurnAreAllExecutedBeforeNextRound",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testMultipleToolCallsInOneTurnAreAllExecutedBeforeNextRound",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 945,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 259,
+      "method_sha256": "85e3dedbc932293a3ba0382905bd7d59d81c651d12cc47072d011395afb15fe5",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "75d97ec1f3598af562d256ed35894b5c946e71e8a3600cffdad04f8c7cb567a8"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testHitStepLimitWhenModelKeepsEmittingToolCalls",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testHitStepLimitWhenModelKeepsEmittingToolCalls",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 975,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 289,
+      "method_sha256": "eb472d8e6e7227bd092c4e4eca4fce576c2fb18bbcbd77ef99a017724cfdacdc",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "ddb517b674759be2ecbee5a0bc81f41a9e52159b3e9fdc50a52c60d369abbf47"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testApprovalPauseSurfacesPendingApprovalAndStopsLoop",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testApprovalPauseSurfacesPendingApprovalAndStopsLoop",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1000,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 314,
+      "method_sha256": "02ad3a5486c4f5a05bf16d7730e315eccc1e51f2c820df3029ae1c1ee2253373",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "3f4e61136dbc8e6ad22a0d0dd4307a98ac9665c5e5471d148306e471a568f4f6"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testApprovalPausePreservesEarlierOutputsFromSameBatch",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testApprovalPausePreservesEarlierOutputsFromSameBatch",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1024,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 338,
+      "method_sha256": "b333f8b36de5233f6a5483e68ab7561ac6e0263c0d4ab9f526bc7a68ba413dd1",
+      "assertion_count": 6,
+      "assertion_calls_sha256": "2da0defa3899b7718ef3008270aff1e861a294bb703fd8c1ce81629004c791aa"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testDeniedAndFailedToolsProduceHonestOutputNotApproval",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testDeniedAndFailedToolsProduceHonestOutputNotApproval",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1080,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 394,
+      "method_sha256": "e64970667afb1086273eb6deaad16e69cca03a5ef07a7ad11e6f9ff1b8dc5b6c",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "79214b08f2ce244fd3095e1ed1c456cf0c348420a15a648ad6410c0407c9017e"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testUnregisteredToolProducesFailureOutput",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testUnregisteredToolProducesFailureOutput",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1117,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 431,
+      "method_sha256": "117e03060da6f69a6f81ca1b11042ecf22a342e7e2aaac373ba13223d2d73f1b",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "54468a86175d15ece2faef2aee2765d8961f52e2f95b5fab7fdedf907887a41a"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testToolSearchHitIsDeclaredOnNextEngineRoundViaRunBridge",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testToolSearchHitIsDeclaredOnNextEngineRoundViaRunBridge",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1143,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 457,
+      "method_sha256": "a1322d8aba3631412ee02f564a976490ded2d7f8c5ab11d8861e478cec6d5453",
+      "assertion_count": 10,
+      "assertion_calls_sha256": "097d57039dbd65ee71b0734d2a17dadbf9903caef8f35d6608cfb662463ba1fa"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testExposedToolGetsExecutorOnNextRoundViaRebuilder",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testExposedToolGetsExecutorOnNextRoundViaRebuilder",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1216,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 530,
+      "method_sha256": "16e6a9b451b721f332803d4f50019ed5b485afa1faad6f3893a0cdcfdc4467ae",
+      "assertion_count": 11,
+      "assertion_calls_sha256": "3946bac3811a6e0a41a84731d0a9e0f810318e9de344ec8537f303418c02d52d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testImageFailureReasonIgnoresSuccessfulImageOutputJSON",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testImageFailureReasonIgnoresSuccessfulImageOutputJSON",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1301,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 615,
+      "method_sha256": "df833871602489e7db4c5c0e00bc0f462e03b62ce4bc7a629562dd72355c8340",
+      "assertion_count": 1,
+      "assertion_calls_sha256": "1501763bf3ba31bcf0216b7076077bc71c2acd8bdb6625062142cefb614bf33d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testImageFailureReasonKeepsExplicitFailureJSON",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTests/testImageFailureReasonKeepsExplicitFailureJSON",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1313,
+      "new_file": "IOSAgentToolEngineTests.swift",
+      "new_line": 627,
+      "method_sha256": "8031041bccb31260230563871322ae2bf40538cc0124018d23c38e5aee5721a2",
+      "assertion_count": 1,
+      "assertion_calls_sha256": "0d1bacd4e571e2d157217075dbc7d24b3f36568e7e1d150618e58094fa47a668"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingAssistantTextDoesNotSnapshotOnEveryChunk",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingAssistantTextDoesNotSnapshotOnEveryChunk",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1324,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 8,
+      "method_sha256": "2585bc8fcc5b0e01c893b1886e8ec808cdfac7941ea4ae9bfe3126a87a9d6a4c",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "d1afe1dec82026bcb6f65da1d0f7d6b3c33b1a6e0a69e3beae1095b447bc4295"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingAssistantTextPublishesCumulativeTextAndHonorsFinalReplacement",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingAssistantTextPublishesCumulativeTextAndHonorsFinalReplacement",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1347,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 31,
+      "method_sha256": "3e2c4d9a86bcf480d245b4ad727bd8d391dd1f0375a7c3df82decd70303d41e0",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "8196784ab57936259bb20f69637626ebaad627efaac9b76688bbf7619dbdf76d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingAssistantStagePublishesReasoningThenResponse",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingAssistantStagePublishesReasoningThenResponse",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1389,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 73,
+      "method_sha256": "d79148c94c38fd6111bcf3f6786c5131c0b553b151bc526291b7f483f5864ca0",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "8196784ab57936259bb20f69637626ebaad627efaac9b76688bbf7619dbdf76d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingAssistantReasoningCallbackAccumulates",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingAssistantReasoningCallbackAccumulates",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1437,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 121,
+      "method_sha256": "adeac63cf2369d89c17b1b04388ea3a64ffbf1fdba3a1a2e85ff6676c3c423e4",
+      "assertion_count": 1,
+      "assertion_calls_sha256": "0d1bacd4e571e2d157217075dbc7d24b3f36568e7e1d150618e58094fa47a668"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingOutputLimitIsSurfacedAsProviderFailure",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingOutputLimitIsSurfacedAsProviderFailure",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1483,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 167,
+      "method_sha256": "4b0339f7e72dfa4ae19679285c0defe99035ccdc0366a6a2c37faf23671c8b0f",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "75d97ec1f3598af562d256ed35894b5c946e71e8a3600cffdad04f8c7cb567a8"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testCancellingEngineTaskStopsWaitingForStreamingTerminal",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testCancellingEngineTaskStopsWaitingForStreamingTerminal",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1513,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 197,
+      "method_sha256": "97fcb440d3b2468309b39116afcaa0d470d8c4e92004ab83e85f7e50f2320f2b",
+      "assertion_count": 1,
+      "assertion_calls_sha256": "5461b92e50cb4099a02762f49a52de57b6d6025865ca18e1ca43f31d8d0ba0c8"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingErrorPreservesTextReasoningAndUnfinishedToolWithoutExecutingIt",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingErrorPreservesTextReasoningAndUnfinishedToolWithoutExecutingIt",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1555,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 239,
+      "method_sha256": "e1b8d4cc15d8e62e366d7640cf163a721292d82a6a9c95a44057760a5c57f817",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "b43d686e5932d7c60e43609ae288ca36e4c7746715950a73627f0d1df6f6480a"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingCancellationPreservesUnpublishedTailAndIgnoresLateCompletion",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingCancellationPreservesUnpublishedTailAndIgnoresLateCompletion",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1571,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 255,
+      "method_sha256": "eda11cc1c7240651d5a89e3feedb01f6d29468e15d91e3cdb014dd046f9af08f",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "e93e2299d6d1587000577ea7b0bedf1ed1680e6f0cd373ab8aae62045b7aeb75"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testGuardFinalizationStreamErrorPreservesPromptTranscriptAndDisablesTools",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testGuardFinalizationStreamErrorPreservesPromptTranscriptAndDisablesTools",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1593,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 277,
+      "method_sha256": "263f1f2979e92816e7c22a7525da51c8a136667c07dfb9a57db7d64b89854137",
+      "assertion_count": 0,
+      "assertion_calls_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testGuardFinalizationStreamCancelPreservesPromptTranscriptAndDisablesTools",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testGuardFinalizationStreamCancelPreservesPromptTranscriptAndDisablesTools",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1597,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 281,
+      "method_sha256": "37539f6ac0681a3417cb0b327ffbff11a773b8c51669a44540749d53e6c503af",
+      "assertion_count": 0,
+      "assertion_calls_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testStreamingRequestPreparationRunsBeforeDispatch",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testStreamingRequestPreparationRunsBeforeDispatch",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1636,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 320,
+      "method_sha256": "19f27bee1d45679cdbdc97a0e2823bf27409ad795b309ddc9a57cf62b21e354b",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "8196784ab57936259bb20f69637626ebaad627efaac9b76688bbf7619dbdf76d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testGrokWebRouteDoesNotEnterKMPStreamingDispatch",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testGrokWebRouteDoesNotEnterKMPStreamingDispatch",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1650,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 334,
+      "method_sha256": "119582efb298835486cf49151b368737acb48fba11b530e1e5a0a71d22d637c6",
+      "assertion_count": 1,
+      "assertion_calls_sha256": "ab99abe376baa6636bd95234a10229c408a4b31ce9dbc6a89c697913aae0a041"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testGrokWebGenerationUsesNativeGenerator",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineStreamingTests/testGrokWebGenerationUsesNativeGenerator",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1656,
+      "new_file": "IOSAgentToolEngineStreamingTests.swift",
+      "new_line": 340,
+      "method_sha256": "e47f7db675899247a48c7db53d98ffac0259a51d362810793df2adb4bdf7e7f0",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "7c26d92ceb06a7e0202d71f04f78102e1a61d26fbd6df4a9761e389eb0cfbc8d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testPreExistingEmptyOutputToolIsExecutedBeforeStreaming",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testPreExistingEmptyOutputToolIsExecutedBeforeStreaming",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1684,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 17,
+      "method_sha256": "98877dcbccf8ffb7f222ae2bcb137cdd14cea97714e2a8a33884c330196fb06f",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "7cf39ef18d771c4943cad9a10622718287c8c774b154da23fee3842682bce530"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testPreExistingBatchSurfacesSecondApprovalBeforeStreaming",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testPreExistingBatchSurfacesSecondApprovalBeforeStreaming",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1724,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 57,
+      "method_sha256": "203c4111d0a517c45cf2ea32d8a00d9e1bec3e4eb2f1da99ba56b0963ff89ac7",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "49dfbd42bd3bcaa77d55d37cf1486f9a7d6c62edc8418f56107ce1ea48318bfe"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testExecutionCallbacksBracketPreExistingAndFreshToolsInOrder",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testExecutionCallbacksBracketPreExistingAndFreshToolsInOrder",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1776,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 109,
+      "method_sha256": "0789ca1093cfcf4f64eb5a3f3f5ee72e3efcfb798671290ecee1b51c9d0f14d2",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "ae848e5c85b932fe781f1513119db2d725db3008b33c30bfc11a56c7c7d4237e"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testCancellationDuringToolStageCallbackDoesNotStartExecutor",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testCancellationDuringToolStageCallbackDoesNotStartExecutor",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1833,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 166,
+      "method_sha256": "3c39a4a856898df7d8bc0b652e5132e318ebe5b7a011113ddaa053ab5341a04f",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "63ab889c1cfecb97548ecc83e1ac96472150d61dc95eebcb4e3fbb98f19d19d9"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testPreExecutedToolNotReRunIfModelReIssuesIt",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testPreExecutedToolNotReRunIfModelReIssuesIt",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1883,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 216,
+      "method_sha256": "ae510fb526dcdef5023073010f2728b50e8e8aa0b6667197d1d063b5731df70e",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "57ad3af03f94c4a50502604aa13357438d1c5011f1db14916b9bec64c9b82b34"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testFinishedTransactionReplaysStoredResultWithoutCallingExecutor",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testFinishedTransactionReplaysStoredResultWithoutCallingExecutor",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1916,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 249,
+      "method_sha256": "e748107485c37292e912e79364a1b972f7335fca5023a88c752c930d86d49d09",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "19098852307c057099aeee0cb080adc71a5d40fc8362a4d39f8f8e3dfecfab79"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testHumanHandbackSkipsOldBatchAndAllowsNewProviderPlan",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testHumanHandbackSkipsOldBatchAndAllowsNewProviderPlan",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 1958,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 291,
+      "method_sha256": "5ca8577f716e65b52e97be82d55b0f28d882552d2f80200e6f693ff575098eee",
+      "assertion_count": 15,
+      "assertion_calls_sha256": "f1cbab6144850cbbf2e6f5a93cc9cbd0f75aaddf714f1817a0609fdfef00a242"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testDurableHumanHandbackReplayPreservesBatchBarrier",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testDurableHumanHandbackReplayPreservesBatchBarrier",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 2003,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 336,
+      "method_sha256": "fe154fa5ae34aab92ec61d56158ec16efb4e78c4714d9dd122d5bc62c83f47be",
+      "assertion_count": 13,
+      "assertion_calls_sha256": "e15c8945a90212bda6ef967205d0b47f3aa78bd9f13e61323c725a365bc1e44e"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testMalformedHumanHandbackReplayStillSkipsOldBatch",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testMalformedHumanHandbackReplayStillSkipsOldBatch",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 2060,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 393,
+      "method_sha256": "abfcc6d1073bf8ebd4cdd183539e3f460374dce8d652fd7bae99d79d8a365eae",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "025966da3d822be1f9f218c6a877d0a7dcc89727d40ce68ae98ad23a81c418a0"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testCancelledHumanHandbackDoesNotRequestAnotherProviderRound",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testCancelledHumanHandbackDoesNotRequestAnotherProviderRound",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 2081,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 414,
+      "method_sha256": "f379d756bccf06a5a0a6c0aa4778b64d71aeeb65d559673427ff65bf087ab89c",
+      "assertion_count": 6,
+      "assertion_calls_sha256": "525146b8cc3c388f1ce6e336a5bd76bf29e568d482d10103fa6157e100e9bada"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testHumanHandbackTerminalWriteFailureStopsBeforePublishingOrReplanning",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testHumanHandbackTerminalWriteFailureStopsBeforePublishingOrReplanning",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 2114,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 447,
+      "method_sha256": "c5b2ccfbbdc3107b6a698a9b3cb38ce9eb808d09dc780666057c34a4c26027a1",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "b153e33caf3059deaacb7d751335e7674c76562940eb24518cba44841e7f5003"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testCompletedToolEchoIsRemovedWhenSameTurnAlsoContainsTextAndANewTool",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testCompletedToolEchoIsRemovedWhenSameTurnAlsoContainsTextAndANewTool",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 2139,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 472,
+      "method_sha256": "32b8da36a76e2d9b07889bfa20700667ae1434b6a2439513279e73ec7ee0f443",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "ce70d2d539439325a7f1d34c119bbf7a04271a3fddaeea272f3a0d5fac55e42f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testExecToolRunsThroughEngineLoopWithRealSandbox",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testExecToolRunsThroughEngineLoopWithRealSandbox",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 2208,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 541,
+      "method_sha256": "f98970efae886bc8fb81e99e3c238928b61be228780c0294f23b2440d7c4cb17",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "3266c71ca00ca6f73d15c21c4edecb5c385f6f5f303ffd17cb77ef0b55a761c3"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSAgentToolEngineTests/testBackgroundEngineStripsCitationTagsAcrossRoundsAndMarksUsed",
+      "new_identifier": "iosAppTests/IOSAgentToolEngineTransactionTests/testBackgroundEngineStripsCitationTagsAcrossRoundsAndMarksUsed",
+      "old_file": "IOSAgentToolEngineTests.swift",
+      "old_line": 2248,
+      "new_file": "IOSAgentToolEngineTransactionTests.swift",
+      "new_line": 581,
+      "method_sha256": "e6ce32e3bb7d3339228ee2c0a05fcf51bc8080d09ee4b3d68b5eef5ea6a0c1a1",
+      "assertion_count": 14,
+      "assertion_calls_sha256": "0eef318047d56b643ccf33cde89e27fb045f1dca89701b6c145d041cb1fcca91"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testPhoneAutomaticReasoningEligibilityRequiresClaimAndPreservesExplicitLevels",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostPhoneProgressTests/testPhoneAutomaticReasoningEligibilityRequiresClaimAndPreservesExplicitLevels",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 470,
+      "new_file": "IOSChatKernelRunHostPhoneProgressTests.swift",
+      "new_line": 9,
+      "method_sha256": "f231c53594f6d7164cc745423ee927c8ea517f83c273db29e2cb6547d0a8afa8",
+      "assertion_count": 10,
+      "assertion_calls_sha256": "e9e1e474623bbbbe147cfbb345a82a9024d1083da23e2040a6f9c5b24a0280dd"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testPhoneAutomaticReasoningEarlyHandoffKeepsFrozenAutoAfterSettingsChange",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostPhoneProgressTests/testPhoneAutomaticReasoningEarlyHandoffKeepsFrozenAutoAfterSettingsChange",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 517,
+      "new_file": "IOSChatKernelRunHostPhoneProgressTests.swift",
+      "new_line": 56,
+      "method_sha256": "ed26f29ca566aa2abb2216ab96c574818da20d6ee7d60bd64966c19c3ef225ad",
+      "assertion_count": 9,
+      "assertion_calls_sha256": "e6ad7b45e90ba5e13017888e953644bd7738299f682f2987aa2685ec23594ba6"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testPhoneApprovedToolResultAdvancesProgressBeforeNextModelChunk",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostPhoneProgressTests/testPhoneApprovedToolResultAdvancesProgressBeforeNextModelChunk",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 554,
+      "new_file": "IOSChatKernelRunHostPhoneProgressTests.swift",
+      "new_line": 93,
+      "method_sha256": "f64996ea23947f4155e3ca1f7cc2cd2f8c151b974788fbffe11307c3e689e01f",
+      "assertion_count": 12,
+      "assertion_calls_sha256": "5ece44c8fe39190382a44cb16dee0fca1f666a21f2b80a809662061e5f315895"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testPhoneBackgroundProgressAdvancesForModelSnapshotsAndCompletedToolsAcrossRounds",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostPhoneProgressTests/testPhoneBackgroundProgressAdvancesForModelSnapshotsAndCompletedToolsAcrossRounds",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 584,
+      "new_file": "IOSChatKernelRunHostPhoneProgressTests.swift",
+      "new_line": 123,
+      "method_sha256": "5b04930c664b23c0e9c616644e3c8b5036f598fb6a52a181896c4877d832dfd9",
+      "assertion_count": 32,
+      "assertion_calls_sha256": "fb211088d035110e1416ac0f49f83d4ec38a4e12b4e1ab70738ce940a1671927"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testPhoneWorkProgressStopsAfterOwnerRevocationAndCancellation",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostPhoneProgressTests/testPhoneWorkProgressStopsAfterOwnerRevocationAndCancellation",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 666,
+      "new_file": "IOSChatKernelRunHostPhoneProgressTests.swift",
+      "new_line": 205,
+      "method_sha256": "f5afff6912eadf2cc7e6d560bf6fe93b5ab87c1ed0b2d4dc64bcb04794955d32",
+      "assertion_count": 12,
+      "assertion_calls_sha256": "a9edb51ffd0289b5dc982dab2227565a4f97c1b990a904149782a70d0e17f0ac"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testPhoneProgressSurvivesFailedTransferAndStopsAfterSuccessfulTransfer",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostPhoneProgressTests/testPhoneProgressSurvivesFailedTransferAndStopsAfterSuccessfulTransfer",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 696,
+      "new_file": "IOSChatKernelRunHostPhoneProgressTests.swift",
+      "new_line": 235,
+      "method_sha256": "3f60299d8398de4db8da7217c9ccddeea73e2e775ee15c5f0e64c6069b1471a8",
+      "assertion_count": 20,
+      "assertion_calls_sha256": "a3989eb7df411653dde2acfb0fe053d32126173192e4b1d7fd08e523dc97e644"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testOrdinaryChatBackgroundProgressKeepsFourStageBehavior",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostPhoneProgressTests/testOrdinaryChatBackgroundProgressKeepsFourStageBehavior",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 742,
+      "new_file": "IOSChatKernelRunHostPhoneProgressTests.swift",
+      "new_line": 281,
+      "method_sha256": "7c41f9781af3dcc46c6ffb8acfacff888bf126801dc92eb72ffa8b299af5d366",
+      "assertion_count": 16,
+      "assertion_calls_sha256": "155457e1d32c60667aa21d55df49cf2bdc381d8247ba6d8f05584cc08441ca1e"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testForegroundYieldNotifiesBindingsBeforeTerminalSteerHandling",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testForegroundYieldNotifiesBindingsBeforeTerminalSteerHandling",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 784,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 14,
+      "method_sha256": "adbb8f768de4d36b6ab3df6a168899d74917f46ecfaf8c689761721d6a020889",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "e3844fbfee8b42d92d5aa090407f20a18105dc00ccc303e02128b9ce605b2293"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testCompletedRunTerminalSequence",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testCompletedRunTerminalSequence",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 811,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 41,
+      "method_sha256": "297159689648a30021962fac6b69f1d418a5b2f15d504706c7eb69bab91be80d",
+      "assertion_count": 19,
+      "assertion_calls_sha256": "bcd490372803e9675a899164649cb8bf24abecaf8d0d0d783d4e21eb0abd380f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testMemoryRecallComputedForBaselineAndFinalInjectionAndMarkingReusesFinal",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testMemoryRecallComputedForBaselineAndFinalInjectionAndMarkingReusesFinal",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 867,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 97,
+      "method_sha256": "1c46c715e259adb357e2b844a796e15ab2ec3b5487339ef3eb03c1e2506d6aa2",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "b6c80e043a5739ce19dc0fbc9252a24cb91b7052989ffe6325d42286ff1f6b52"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testTerminalCASFailureReleasesLocalOwnerAndSuppressesExternalCompletion",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testTerminalCASFailureReleasesLocalOwnerAndSuppressesExternalCompletion",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 901,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 131,
+      "method_sha256": "fe46b362284258f41d3c632d2c4955d4521e336ef95becc7a69be0e4e96572e6",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "419bcff864d1d1fee0d85457c197a183cf0f6a438dc9ac1d9b1a4ea9dfcfe6e2"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testSearchApprovalPauseThenApprove",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testSearchApprovalPauseThenApprove",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 939,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 169,
+      "method_sha256": "9ca84e307c0fd974eded014e930800e93f915941f96b06fc28fb5694fe2a92d0",
+      "assertion_count": 13,
+      "assertion_calls_sha256": "201ab20e59f9246010c1d91180f6ea3079807e48f2d8a9647fbe4f63766dc1d1"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testSearchApprovalDenyContinuesAndCompletes",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testSearchApprovalDenyContinuesAndCompletes",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 981,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 211,
+      "method_sha256": "5f5eb51706459e190c9b331f909a9d2b83bb28fd9aece5a2493ff4233e46602b",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "d7c42a97a2ac4159e6c686a5f79f549fd3da77801a36373396b277dab2f54da9"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testStaleIshApprovalRequestCannotResolveCurrentPrompt",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testStaleIshApprovalRequestCannotResolveCurrentPrompt",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1011,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 241,
+      "method_sha256": "f8972ee013288f3755b40ee39df8a71f2fc88b0af554a4b360de7faaec459135",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "15bec55c33ae70a7794078ed2cc9b91e8b9527da990650a9a4bd98bce46bb71b"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testIshSessionApprovalPersistsAcrossRunsInSameConversation",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testIshSessionApprovalPersistsAcrossRunsInSameConversation",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1056,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 286,
+      "method_sha256": "2803cfd661f151a9b596d85664f21a9b10c914511720b85ccfacfce097fbb739",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "6293de61633621b12d4828f1f70b9ba03e20f5c19e993cb81a8292f5530bf354"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testIshGlobalApprovalEnablesHighRiskSettingAndBridgesCurrentRun",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testIshGlobalApprovalEnablesHighRiskSettingAndBridgesCurrentRun",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1099,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 329,
+      "method_sha256": "d30749b3bd74d863f5ce1fca64cfd1adc188baa5147332169c7b793d436e7e10",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "3ed517f38ede9d0bdf21e84fcc76e4b3fa8f8fcca6a8f889532d4d41bd08b3a9"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testSearchApprovalTerminalFailureStopsBeforeNextProviderRound",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testSearchApprovalTerminalFailureStopsBeforeNextProviderRound",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1134,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 364,
+      "method_sha256": "0271a6c9767fecba21fbd5d0d8e554cc2c5f2672f9ea48d6ac8449b0f0cecdae",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "877aa30285a57a564baa0624c30fc6382dda87b3674cdbd4ff7e9662e49d1086"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testCancelDuringApprovalWait",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testCancelDuringApprovalWait",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1161,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 391,
+      "method_sha256": "6e4ce9126917933c8e211011d58751be635ba1e839a14461a27d559ed12e65e2",
+      "assertion_count": 13,
+      "assertion_calls_sha256": "a84f3be09168b8ddf0a3ba46dcf323f844a7bae78a94f1debf005d68f674d94c"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testStreamingProvisionalBubbleProjection",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testStreamingProvisionalBubbleProjection",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1206,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 436,
+      "method_sha256": "1c6b0b945dca283ff55cc3f404d3af4e6da242641584efc530c2fd03a07994fa",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "2d23602a847786a9c45f7fca9603be064f9f370fe3ec546a2fc6874840d7a0e2"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testStreamingCitationStrippedAndUsageRecorded",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testStreamingCitationStrippedAndUsageRecorded",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1255,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 485,
+      "method_sha256": "b86947040b5a58a40c8259388d2eab19d56f6fd3d8dd29cf50c42ed876c78c80",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "61f8143599caf3d11077ab9931f025b6eca368fffa88e46907818fcbda164891"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testUploadPrepRunsEveryRound",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testUploadPrepRunsEveryRound",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1316,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 546,
+      "method_sha256": "9022de5d081c753753e5980cecc9e99f096ddf1db49a508f307427edf0c62b25",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "b6c80e043a5739ce19dc0fbc9252a24cb91b7052989ffe6325d42286ff1f6b52"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testAdapterSortsMultiToolBatchAndPreemptsAfterBudget",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostTests/testAdapterSortsMultiToolBatchAndPreemptsAfterBudget",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1345,
+      "new_file": "IOSChatKernelRunHostTests.swift",
+      "new_line": 575,
+      "method_sha256": "4f2ce6991d889a8cf047712de40fe60685211c000be41df4f51c0f07ae42ff0f",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "86d5363258de33c0a46341deb0b5cbb222b7a2578564ead46ea532bc0cc37601"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testAdapterCancelDuringNonCooperativeToolPublishesTerminalBeforeResult",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testAdapterCancelDuringNonCooperativeToolPublishesTerminalBeforeResult",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1431,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 9,
+      "method_sha256": "8664fff6ec2e211e3979afc5af9af7bf303a9298ebeefbd89ba4884a2f72952c",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "a47b4b44d10d0a06fa726af632c4ffa3c15c9a4ec031e47a7ec0f0ef1947b65f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testHostCancelPreservesExactStreamTailInTerminalSnapshot",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testHostCancelPreservesExactStreamTailInTerminalSnapshot",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1474,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 52,
+      "method_sha256": "82a2ee659f3c3575f436659687f268d105881d136a2038aed8ac84fecb247b0a",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "bc9b0fc91e414c0eda1baeb90dd1cbfe0b861125fb024d02ff866e0b047b6a3f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testHandoffRejectsCompletedRunWhileTerminalPersistenceIsInFlight",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testHandoffRejectsCompletedRunWhileTerminalPersistenceIsInFlight",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1494,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 72,
+      "method_sha256": "0600076a9470b792c6960acdac25351fbe8d36153cc5ee6f1a52db5765d4d2ea",
+      "assertion_count": 0,
+      "assertion_calls_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testHandoffRejectsFailedRunWhileTerminalPersistenceIsInFlight",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testHandoffRejectsFailedRunWhileTerminalPersistenceIsInFlight",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1501,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 79,
+      "method_sha256": "6833463556a9ec672347ce4dced1d45f3a2bdb94a8c4362ab1f05c19c884b68b",
+      "assertion_count": 0,
+      "assertion_calls_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testEnabledPhoneControlDoesNotStartNativeOrBlockOrdinaryReply",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testEnabledPhoneControlDoesNotStartNativeOrBlockOrdinaryReply",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1542,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 120,
+      "method_sha256": "aa2db8bbe6c2a62e83537cc392a47e45d07f1edb2366715003bead521ec089b8",
+      "assertion_count": 12,
+      "assertion_calls_sha256": "982c5f867013c42be381c8da02fb86cedb951f3dd2b0a16cbbfe508b61d008a4"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testDisablingUnusedPhoneControlDoesNotCancelOrdinaryProviderRun",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testDisablingUnusedPhoneControlDoesNotCancelOrdinaryProviderRun",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1574,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 152,
+      "method_sha256": "7f7332ec14ca69d11a4474ca027cc3c3e5bd101c33480d5775fb309986af11bd",
+      "assertion_count": 9,
+      "assertion_calls_sha256": "3e8dbf886f02fcf12ab4657182fae9d9fbe2965e922fcaa39f9c6f9b8dd77f02"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testKeepAliveExpirationPreservesPhoneOwnerOnlyWhenHandoffSucceeds",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testKeepAliveExpirationPreservesPhoneOwnerOnlyWhenHandoffSucceeds",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1606,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 184,
+      "method_sha256": "0d6c6382fe4f5f714ab3e2a486cd546f59a9f01095f5a44b929df154ca424517",
+      "assertion_count": 16,
+      "assertion_calls_sha256": "47148ff8b56a37e0a0526a686b335b32f1e763d6cba738e070efb255135c73c9"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testHostHandsPreparedRunToBackgroundOwner",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testHostHandsPreparedRunToBackgroundOwner",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1655,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 233,
+      "method_sha256": "e9fca9421f3e9fce693d1472cf51258fdf87e3fab3347af21f9bd33fd2103c4c",
+      "assertion_count": 6,
+      "assertion_calls_sha256": "758a051dddf376db01f2932af6bad473f9a36ffed9e6c95fb7b0a0b2a1a415af"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testHandoffAllowsInFlightNetworkRead",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testHandoffAllowsInFlightNetworkRead",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1683,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 261,
+      "method_sha256": "597bedd0b561b8726af07f79813adfc4922c6a845b6d7128a5fbb06d51030676",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "47415600a79d909ead494372ffc6117c836176a961891c1499890b05c9600997"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testHandoffRejectsInFlightImageGeneration",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testHandoffRejectsInFlightImageGeneration",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1716,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 294,
+      "method_sha256": "3cc0e01b54351e0c40f9112593d3f7bd97c859fff2b593c24ba368f618f5ce28",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "3f0505ab04a0499a9365dcfbd9a2b73c325194f4bc53df8f5ce6a908b7d9f1b9"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testDirectImageRunFailsClosedWhenLedgerStartCannotPersist",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testDirectImageRunFailsClosedWhenLedgerStartCannotPersist",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1745,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 323,
+      "method_sha256": "01cc48063c33dcdafefd94da9256fa851982249eeb3e3280a6e77cb7735f037d",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "342fd572f96ab1ac6d269e529f017e42cdc958a1b44266ea7c64b9ad53b9a150"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testDirectImageImmediateCancelDoesNotStartRunAfterTerminal",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testDirectImageImmediateCancelDoesNotStartRunAfterTerminal",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1771,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 349,
+      "method_sha256": "3575eed34439c94815bbc4415caeb2922552600a9549ce3c38b06587bd2c2ce5",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "b447629d79bfe65b8aef184828718a576a02c0c53b8834e8b9d6a8282fe012be"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testDirectImagePrepareFailureReconcilesPreparedTransaction",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testDirectImagePrepareFailureReconcilesPreparedTransaction",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1788,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 366,
+      "method_sha256": "272603b90798ffa52f647df40c85612457e0cc5719b40446f986980354f732e7",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "81ca7e0d4ef8f91717802db44c0594a891972b49e3977dc8cdd10a99610da30f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testDirectImageTerminalFailureDoesNotPublishExecutorResult",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testDirectImageTerminalFailureDoesNotPublishExecutorResult",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1812,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 390,
+      "method_sha256": "bd47b89ae69a96dde3d7221992cf2df5b6aa07a1ba9316a4fdd33f3fe5bc2cfd",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "81ca7e0d4ef8f91717802db44c0594a891972b49e3977dc8cdd10a99610da30f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSChatKernelRunHostTests/testDirectImageSystemInterruptionClosesStartedTransactionWithoutWaitingForExecutor",
+      "new_identifier": "iosAppTests/IOSChatKernelRunHostHandoffTests/testDirectImageSystemInterruptionClosesStartedTransactionWithoutWaitingForExecutor",
+      "old_file": "IOSChatKernelRunHostTests.swift",
+      "old_line": 1848,
+      "new_file": "IOSChatKernelRunHostHandoffTests.swift",
+      "new_line": 426,
+      "method_sha256": "198181a4041986ce42e79286d191afe08716c6900a294b3d1d662aded3055b9c",
+      "assertion_count": 6,
+      "assertion_calls_sha256": "7fb7936858ae2116397369de8ae03c0944d4106d5ddd15affc1de890e1c34f2e"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnDoesNotSaveChildOrStartWhenEdgeWriteFails",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnDoesNotSaveChildOrStartWhenEdgeWriteFails",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 294,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 12,
+      "method_sha256": "8ca7a9a22ae61d06e6d09454a8959cec873e7526a227cc22252aca0abb44b10b",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "071a2881db07a6f35c7a3357d35612bf4d6209c18096cfceab7f56a8b931ef3c"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnForkAllWritesEdgeBootstrapsTaskAndStartsBackgroundRun",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnForkAllWritesEdgeBootstrapsTaskAndStartsBackgroundRun",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 320,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 38,
+      "method_sha256": "989179beb9575658196de2e1c1a759d9ed9297e69eb01399079451225df02e69",
+      "assertion_count": 30,
+      "assertion_calls_sha256": "baa91594d2096b0fcd17d937797464d063b189fdda04b0a4bd586861367baa5f"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnHandoffFullToolNamesComeFromBridgeFullCatalog",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnHandoffFullToolNamesComeFromBridgeFullCatalog",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 430,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 148,
+      "method_sha256": "2a6fd98ccc2631bc23b65d250c40f2025404dcb2ec7392e3ea09bca4c5985df4",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "3b5d9879f3f387b6c79202da37901eecb0f273df71ad84d5de13adab1a4c62cd"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnAppliesRoleAssistantIdToChildConversation",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnAppliesRoleAssistantIdToChildConversation",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 472,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 190,
+      "method_sha256": "62ec15e70f61d3685f98d34dd50f820b25a81450df693ad61d76519b8192cffc",
+      "assertion_count": 6,
+      "assertion_calls_sha256": "3331d7aad885eb67baf02f32cd8c64f608a832de47638d8388285e59b1999958"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnRejectsUnknownRoleAssistantIdWithoutStartingRun",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnRejectsUnknownRoleAssistantIdWithoutStartingRun",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 512,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 230,
+      "method_sha256": "1e5795f5d3cdfa9481d0b6ae6b50cade4ee1c083d45670efff1ca388edbc4476",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "b063ac9554a703e6a7e514929cdc8a25255e52052e130ac398a48b0b9bc3da4b"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnForkTurns3KeepsLastThreeUserTurnsInChildConversation",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnForkTurns3KeepsLastThreeUserTurnsInChildConversation",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 559,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 277,
+      "method_sha256": "33b72f2876c9a48e01379c7a273a6c8f80e229e4248cd5587d3d492fbd34ac46",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "00003eed9ff5b87d166d1eadabca7e62ae9abff64e20989bca22b760ebfec306"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnValidatesTaskNameAndUsesStableNamesForConflicts",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnValidatesTaskNameAndUsesStableNamesForConflicts",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 602,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 320,
+      "method_sha256": "03ff4efb7e7a184f6e6520585b84150c2ff71fe5b4fa55e6a8a72bcc7e5ff936",
+      "assertion_count": 9,
+      "assertion_calls_sha256": "4ee926de05fbfcfb6169dec533f2b2c98345d266cb05ab699179f3bb7b021238"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnRejectsDepthThreeChain",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnRejectsDepthThreeChain",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 664,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 382,
+      "method_sha256": "081179a0f5f0cf156a96f6ab563f5cd1e8f64527efb4b517095c4b182031a0ed",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "d7777e126d2c8819f809c34faa603a0e34a68f99ab4cd82381bbf380fa032871"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnAllowsWhenOnlyResidualLedgerRowsExist",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnAllowsWhenOnlyResidualLedgerRowsExist",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 721,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 439,
+      "method_sha256": "1c1fa682eec8fa89d444971377b76fbf2d61616a99ad231590b92845e29938b6",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "e6ffcf9e96e84e5cf7d1d1f90aa4bf35550903562086771d1deccf4c055b03bf"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnRejectsWhenActiveRegistrationsAtCapacity",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnRejectsWhenActiveRegistrationsAtCapacity",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 773,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 491,
+      "method_sha256": "70eb6abbdf6e1cd0ec5179c59d6f36d060df1d770499a954b5c256c79278d93d",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "f37614810985c0e2481f04cf27398b6ed520f4fe57342e3c0b569da1ec5599f8"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testConcurrentSpawnsShareInFlightBootstrapSlot",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testConcurrentSpawnsShareInFlightBootstrapSlot",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 809,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 527,
+      "method_sha256": "709ed48a7381c22130d3865b2e3154a56a7f1365640b1d199d9375aa3c528352",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "72fd3a5ae707d2d5e9793bc287897f8444cc0514266aa1aa6c4f1609e73966e5"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSettingsConcurrencyLimitSupportsTenChildRuns",
+      "new_identifier": "iosAppTests/IOSOrchestrationToolTests/testSettingsConcurrencyLimitSupportsTenChildRuns",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 861,
+      "new_file": "IOSOrchestrationToolTests.swift",
+      "new_line": 579,
+      "method_sha256": "cd803141dd8ba44016410cf7bd0d588d1b2e243a07bcdd650620579c7e722ca8",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "f58efde3cc6272ab49e5b3ae60b5737435be4aa058dda1c66d214fb6f8976c84"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnUsesConfiguredPoolModelsReasoningAndTimeout",
+      "new_identifier": "iosAppTests/IOSOrchestrationPoolRoutingTests/testSpawnUsesConfiguredPoolModelsReasoningAndTimeout",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 901,
+      "new_file": "IOSOrchestrationPoolRoutingTests.swift",
+      "new_line": 10,
+      "method_sha256": "dd80443f5a365c935b4fd4d4217e813e191c8799f6da95076034576e8db2ab66",
+      "assertion_count": 13,
+      "assertion_calls_sha256": "f067c61ff9838e86bb1cb9d74483451f989348a97f0a7efba7cb1ca6c75b56c6"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnBatchesModelRoutingAndRoleIntentInOneRequest",
+      "new_identifier": "iosAppTests/IOSOrchestrationPoolRoutingTests/testSpawnBatchesModelRoutingAndRoleIntentInOneRequest",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 983,
+      "new_file": "IOSOrchestrationPoolRoutingTests.swift",
+      "new_line": 92,
+      "method_sha256": "ff25c6f51b627644b613d165fb42772a5c9b3ac40b473ea964aeb6634897b9b3",
+      "assertion_count": 31,
+      "assertion_calls_sha256": "f5f206487794993e9d57e0ee70bc6f883a77d4c52e8ec28a694229e569779a1d"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testShadowT3DoesNotWaitForNetworkAndRecordsSnapshotMetricsLater",
+      "new_identifier": "iosAppTests/IOSOrchestrationPoolRoutingTests/testShadowT3DoesNotWaitForNetworkAndRecordsSnapshotMetricsLater",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1137,
+      "new_file": "IOSOrchestrationPoolRoutingTests.swift",
+      "new_line": 246,
+      "method_sha256": "890759fe46a891b65264bd070a1d940ab0be998bc3a8621ff2c44ca2dee0a520",
+      "assertion_count": 23,
+      "assertion_calls_sha256": "c479bb975f17f6f6837c8554a47961c3439275b7f239af6a90f162cbf9a8d3f2"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testDeferredShadowT3SkipsWhenSettingsRevisionChangesBeforeDispatch",
+      "new_identifier": "iosAppTests/IOSOrchestrationPoolRoutingTests/testDeferredShadowT3SkipsWhenSettingsRevisionChangesBeforeDispatch",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1274,
+      "new_file": "IOSOrchestrationPoolRoutingTests.swift",
+      "new_line": 383,
+      "method_sha256": "02b773dcf4bc515828bbf6c998c57beaf692223228eb679bf9980b6a5410ad1d",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "435b52c7f2a8ac13974372a927a57fd489f9d42dce2ff64cea0cb51c7f59b5e2"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testModelRoutingChildOutcomeUsesLinkedDurableTerminalAndIsIdempotent",
+      "new_identifier": "iosAppTests/IOSOrchestrationPoolRoutingTests/testModelRoutingChildOutcomeUsesLinkedDurableTerminalAndIsIdempotent",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1343,
+      "new_file": "IOSOrchestrationPoolRoutingTests.swift",
+      "new_line": 452,
+      "method_sha256": "e52fe9d8af3a9e96eb0dac5adc614d54e0b7b5fa2fb2b4a2c2589a64b4461f35",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "00003eed9ff5b87d166d1eadabca7e62ae9abff64e20989bca22b760ebfec306"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testExplicitPoolModelAndReasoningRejectInvalidRequests",
+      "new_identifier": "iosAppTests/IOSOrchestrationPoolRoutingTests/testExplicitPoolModelAndReasoningRejectInvalidRequests",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1435,
+      "new_file": "IOSOrchestrationPoolRoutingTests.swift",
+      "new_line": 544,
+      "method_sha256": "3baebdc292c580fe4b3470aa126e1e84a6adcf230c7c339f54aab843b9a03295",
+      "assertion_count": 8,
+      "assertion_calls_sha256": "ed56a04cf98c2ecc11ff26da3200ca39186b96c4097ea3d0fb637a60598a34e4"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testListAgentsProjectsEdgesAndLatestRunStatus",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testListAgentsProjectsEdgesAndLatestRunStatus",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1511,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 12,
+      "method_sha256": "c98b40d8e404c12ae25ea6f9c199590090ad40b53ae6d998744a74178e1ddd6d",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "e2507fea0910da8af54725775e7941338c2a1ff9ee65f04bedaff3e4fff2f632"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testInterruptBackgroundRunCancelsAndPreservesThread",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testInterruptBackgroundRunCancelsAndPreservesThread",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1591,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 92,
+      "method_sha256": "7d43d1d1f362c3c1ddbc0862748756166d33bf541f8221a590235939dc4e0d33",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "92d896a1f31f41f16a113c77d91eb7cec68dc54d3bd6f3b72ea053ada4e0872e"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testInterruptIdleThreadReturnsIdleWithoutError",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testInterruptIdleThreadReturnsIdleWithoutError",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1627,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 128,
+      "method_sha256": "053c4fe36a1ae8a4e2769b18225582142ef93b51af1a60b44405019b84fcc413",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "34aac9bd1c09ae7858d91e7861a33db62e5eaa6d04527cf1f2343b12f908ccbd"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testInterruptNonDescendantIsRejected",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testInterruptNonDescendantIsRejected",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1657,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 158,
+      "method_sha256": "43bb1367e218edc30084e5837449578f3c52e996cf2e3738c05fcab8fa30ace8",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "34aac9bd1c09ae7858d91e7861a33db62e5eaa6d04527cf1f2343b12f908ccbd"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testInterruptUnknownTargetIsRejected",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testInterruptUnknownTargetIsRejected",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1689,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 190,
+      "method_sha256": "7f9144c6ad08be1300ec04ba27570285e7a9e01d0e7bcdf97dbbb381cd799d95",
+      "assertion_count": 2,
+      "assertion_calls_sha256": "8e151ef79ee926a50ff3e13683515ab8eb307c0b0c5f9571c2fbb32e38df2764"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testFinalAnswerReachesParentMailboxAndFoldsAtParentBoundary",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testFinalAnswerReachesParentMailboxAndFoldsAtParentBoundary",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1712,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 213,
+      "method_sha256": "1ccf44ecd23d8e319cfc0421b3fe4155f4aca933746ec950749bc5d5ce7ae7e5",
+      "assertion_count": 19,
+      "assertion_calls_sha256": "9eff5e26e9c814eff444a023ce205f4a35e8a1cd76d9e0f7f3ee6bd1e1d16a28"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testViewModelBackgroundRuntimeInjectsOrchestrationService",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testViewModelBackgroundRuntimeInjectsOrchestrationService",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1811,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 312,
+      "method_sha256": "4e04c0592f26d407e28df437031e468b02f563c81d065cffa9f86b1b998b0ad0",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "a077684add4e74dffd4f3382b6ebd56ddb043f40ab9686043cf708a72bbf7d1b"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnListInterruptAnchorToRunConversationNotCurrent",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testSpawnListInterruptAnchorToRunConversationNotCurrent",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1867,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 368,
+      "method_sha256": "6558e9ee5e6b7dfcc12570838cf24dbaac8567056ffbda52db6d65b6a9f9da11",
+      "assertion_count": 12,
+      "assertion_calls_sha256": "22352de1a45f48353d3e79d442a6316bd66627614a3b5b3e84d6d3308e14e77a"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testCancelDeliversFinalAnswerToParentAndDoesNotDoubleSend",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testCancelDeliversFinalAnswerToParentAndDoesNotDoubleSend",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 1954,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 455,
+      "method_sha256": "6afb88216483af69f5c1d2cc88efaafa39df10b1ef02fc19005b04d1e5b35e13",
+      "assertion_count": 5,
+      "assertion_calls_sha256": "e8616b578707c1a6f924be4b1be23cde6203513474fe09e3c465c437e4504542"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testSpawnStartFailureReclaimsRunningRow",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testSpawnStartFailureReclaimsRunningRow",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2023,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 524,
+      "method_sha256": "50ed9353da4a0d81828e287652701e671fdd0fae94238be2a409fc4615ff90d2",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "2e6beeed92686c1d83c7be362692af60bb7ed21e36d8eee428cd1fcd33ae20a3"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testEmptyTranscriptTerminalDeliversStructuredEnvelope",
+      "new_identifier": "iosAppTests/IOSOrchestrationListInterruptTerminalTests/testEmptyTranscriptTerminalDeliversStructuredEnvelope",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2057,
+      "new_file": "IOSOrchestrationListInterruptTerminalTests.swift",
+      "new_line": 558,
+      "method_sha256": "6a0e85fc329ea2a02172ca2e7516802fe73d14186dfd558aff2469094f9d8764",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "38f55cc20fe48ca464d0b99e245b6a2c84ee597829dbd7cba68072a374b1bd68"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testChildConversationIsReadOnlyInViewModel",
+      "new_identifier": "iosAppTests/IOSOrchestrationScopeViewModelTests/testChildConversationIsReadOnlyInViewModel",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2159,
+      "new_file": "IOSOrchestrationScopeViewModelTests.swift",
+      "new_line": 14,
+      "method_sha256": "00d57413d5e6faf76c0082a24606aee85a9a0762d3657ee4173e6b3ff25fb114",
+      "assertion_count": 10,
+      "assertion_calls_sha256": "ee943c37f75409e31162ac41bbc05ab87c7945b5d4efc6eef9c017647088e6ba"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testOrchestrationContextPromptInjectedOnlyForLinkedConversations",
+      "new_identifier": "iosAppTests/IOSOrchestrationScopeViewModelTests/testOrchestrationContextPromptInjectedOnlyForLinkedConversations",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2226,
+      "new_file": "IOSOrchestrationScopeViewModelTests.swift",
+      "new_line": 81,
+      "method_sha256": "3ad4419b108446135eed56750c124548ea1bce8eafaaf1457797312572f74992",
+      "assertion_count": 7,
+      "assertion_calls_sha256": "3d1fadc71e77076955f1aa3b34a09cf873b646ec2286c80a3b128d22226fee5b"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testOrchestrationLinksRefreshWithoutConversationSwitch",
+      "new_identifier": "iosAppTests/IOSOrchestrationScopeViewModelTests/testOrchestrationLinksRefreshWithoutConversationSwitch",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2285,
+      "new_file": "IOSOrchestrationScopeViewModelTests.swift",
+      "new_line": 140,
+      "method_sha256": "d15d64373e6b5daeb0c32311cbbe4c5fc1cdee156c6e4f24bcee7cecaf59740d",
+      "assertion_count": 9,
+      "assertion_calls_sha256": "fddcab519291c4d6ec9fe82ff8db7725ac41c4c68a1261bceb1a8b9fa51a7aec"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testChildRunMaxTokenFloorHelper",
+      "new_identifier": "iosAppTests/IOSOrchestrationScopeViewModelTests/testChildRunMaxTokenFloorHelper",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2333,
+      "new_file": "IOSOrchestrationScopeViewModelTests.swift",
+      "new_line": 188,
+      "method_sha256": "fe30bb75a63250f588ad2ba905ec7f72d9ca16cab26c04eb977f0982890bd90f",
+      "assertion_count": 4,
+      "assertion_calls_sha256": "ae848e5c85b932fe781f1513119db2d725db3008b33c30bfc11a56c7c7d4237e"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testDynamicSpawnScopeIsPersistedAndRestoredForFollowup",
+      "new_identifier": "iosAppTests/IOSOrchestrationScopeViewModelTests/testDynamicSpawnScopeIsPersistedAndRestoredForFollowup",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2340,
+      "new_file": "IOSOrchestrationScopeViewModelTests.swift",
+      "new_line": 195,
+      "method_sha256": "0504c00d94536379db2343aa36b67ab590413165de2a79d23d18596619413c00",
+      "assertion_count": 12,
+      "assertion_calls_sha256": "60e1d90dce82d66012ab4455a9522d61b6e28c19c4552f526a354ec870afc4be"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testDynamicDefinitionIsRejectedWhenSwitchIsDisabledButBuiltinRoleWorks",
+      "new_identifier": "iosAppTests/IOSOrchestrationScopeViewModelTests/testDynamicDefinitionIsRejectedWhenSwitchIsDisabledButBuiltinRoleWorks",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2418,
+      "new_file": "IOSOrchestrationScopeViewModelTests.swift",
+      "new_line": 273,
+      "method_sha256": "4fa89799054cf5c364623ee0aa96f4e4c8588105b24218481ade37b5e660a72e",
+      "assertion_count": 12,
+      "assertion_calls_sha256": "f2a114c40f1251689d1e706bce69f74dcc4c565102ddd0a5d8e986fb6939ecc8"
+    },
+    {
+      "old_identifier": "iosAppTests/IOSOrchestrationToolTests/testInheritedConfigurationSuppressesJevRoleSuggestion",
+      "new_identifier": "iosAppTests/IOSOrchestrationScopeViewModelTests/testInheritedConfigurationSuppressesJevRoleSuggestion",
+      "old_file": "IOSOrchestrationToolTests.swift",
+      "old_line": 2488,
+      "new_file": "IOSOrchestrationScopeViewModelTests.swift",
+      "new_line": 343,
+      "method_sha256": "7aebfc1ca211903673b6fd1d2d1b7cabd8c24bd0c107988b21d3d214c1a5177b",
+      "assertion_count": 3,
+      "assertion_calls_sha256": "818570d7831407a150bca3d8da8fb9c1541e92a4a53e57259457858913c237e3"
+    }
+  ]
+}

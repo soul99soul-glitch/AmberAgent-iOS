@@ -1,0 +1,22 @@
+{
+  "exitCode": 0,
+  "elapsedSeconds": 62.28,
+  "log": "/tmp/amber-audit-20261018-current/final-accepted-build.log",
+  "summary": {
+    "devicesAndConfigurations": [],
+    "environmentDescription": "iosApp \u00b7 Built with macOS 27.2",
+    "expectedFailures": 0,
+    "failedTests": 0,
+    "finishTime": 1792293395.835,
+    "passedTests": 0,
+    "result": "unknown",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1792293344.101,
+    "statistics": [],
+    "testFailures": [],
+    "title": "Test - iosApp",
+    "topInsights": [],
+    "totalTestCount": 0
+  }
+}

@@ -1,0 +1,193 @@
+{
+  "phase": "2",
+  "owner": "webmount-tools",
+  "branch": "codex/swift-modularization-1500",
+  "source_map": {
+    "IOSLocalToolExecutor.swift": [
+      {
+        "old_lines": "1-1155",
+        "new_path": "iosApp/iosApp/IOSLocalToolExecutor.swift",
+        "responsibility": "request/output and permission-aware executor"
+      },
+      {
+        "old_lines": "1158-1428;8395-8424",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountModels.swift",
+        "responsibility": "site and memory models, clock, shared collection helper"
+      },
+      {
+        "old_lines": "1429-1676",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountRegistry.swift",
+        "responsibility": "registry and settings"
+      },
+      {
+        "old_lines": "1677-1874",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountURLPolicy.swift",
+        "responsibility": "WebMount host/navigation policy"
+      },
+      {
+        "old_lines": "1875-1979",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountCookieStore.swift",
+        "responsibility": "cookie summaries and data clearing"
+      },
+      {
+        "old_lines": "1980-2063;8401-8417",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountRuntimeContracts.swift",
+        "responsibility": "runtime snapshot/protocol/dialog and snapshot dictionary"
+      },
+      {
+        "old_lines": "2064-3240",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountWKRuntime.swift",
+        "responsibility": "sole WKWebView/navigation/pending-load owner"
+      },
+      {
+        "old_lines": "3241-4289",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountBridgeScripts.swift",
+        "responsibility": "existing injected JS bytes"
+      },
+      {
+        "old_lines": "4290-5149",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountSessionStore.swift",
+        "responsibility": "sole runtime/session/lease/persisted metadata owner"
+      },
+      {
+        "old_lines": "5150-5247",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountScreenshotArtifactStore.swift",
+        "responsibility": "screenshot artifact retention"
+      },
+      {
+        "old_lines": "5248-5302",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountToolCatalog.swift",
+        "responsibility": "tool descriptors"
+      },
+      {
+        "old_lines": "6414-6939;7014-7080;8075-8084",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountDesktopCommands.swift",
+        "responsibility": "remote session/reconnect/dispatch/receipt/URL validation"
+      },
+      {
+        "old_lines": "7081-7268;7956-8023",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountStationCommands.swift",
+        "responsibility": "station/cookie inventory and site-memory operations"
+      },
+      {
+        "old_lines": "7269-7955;8035-8042",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountLocalCommands.swift",
+        "responsibility": "local open/read/action/visual/cookie commands and agent observation"
+      },
+      {
+        "old_lines": "8165-8394",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountRedactor.swift",
+        "responsibility": "credential/URL redaction"
+      },
+      {
+        "old_lines": "5303-6413;6940-7013;8024-8034;8043-8074;8085-8164;8425-8429",
+        "new_path": "iosApp/iosApp/WebMount/IOSWebMountController.swift",
+        "responsibility": "facade, dispatch, binding/policy, tabs, common result helpers and local string helper"
+      }
+    ],
+    "IOSWebMountDesktopBackend.swift": [
+      {
+        "old_lines": "5-181;1954-2003",
+        "new_path": "iosApp/iosApp/WebMount/Desktop/IOSWebMountDesktopModels.swift",
+        "responsibility": "status/capability/endpoint and remote placeholder runtime"
+      },
+      {
+        "old_lines": "182-196;283-303;724-1063;1291-1318",
+        "new_path": "iosApp/iosApp/WebMount/Desktop/IOSWebMountDesktopMapping.swift",
+        "responsibility": "schema-advertised tool mapping and value arguments"
+      },
+      {
+        "old_lines": "197-262;1064-1092;1208-1283;1319-1583;1751-1937",
+        "new_path": "iosApp/iosApp/WebMount/Desktop/IOSWebMountDesktopSemantics.swift",
+        "responsibility": "value semantic identity/safety/normalization"
+      },
+      {
+        "old_lines": "263-282;304-723;1093-1207;1284-1290;1584-1750;1938-1953",
+        "new_path": "iosApp/iosApp/IOSWebMountDesktopBackend.swift",
+        "responsibility": "sole connection/snapshot/status owner, preflight, RPC and receipt"
+      }
+    ],
+    "IOSSearchExecutor.swift": [
+      {
+        "old_lines": "51-269",
+        "new_path": "iosApp/iosApp/Search/IOSSearchHTTPTransport.swift",
+        "responsibility": "HTTP transport, bounded public loader, redirect/cancel/body limit"
+      },
+      {
+        "old_lines": "1255-1346",
+        "new_path": "iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift",
+        "responsibility": "strict public URL/IP/DNS policy"
+      },
+      {
+        "old_lines": "remaining",
+        "new_path": "iosApp/iosApp/IOSSearchExecutor.swift",
+        "responsibility": "search/provider/scrape and old static error-domain forwarders"
+      }
+    ]
+  },
+  "line_counts": {
+    "iosApp/iosApp/IOSLocalToolExecutor.swift": 1152,
+    "iosApp/iosApp/IOSSearchExecutor.swift": 1218,
+    "iosApp/iosApp/IOSWebMountDesktopBackend.swift": 749,
+    "iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift": 105,
+    "iosApp/iosApp/Search/IOSSearchHTTPTransport.swift": 222,
+    "iosApp/iosApp/WebMount/IOSWebMountModels.swift": 294,
+    "iosApp/iosApp/WebMount/IOSWebMountRegistry.swift": 261,
+    "iosApp/iosApp/WebMount/IOSWebMountURLPolicy.swift": 209,
+    "iosApp/iosApp/WebMount/IOSWebMountCookieStore.swift": 116,
+    "iosApp/iosApp/WebMount/IOSWebMountRuntimeContracts.swift": 112,
+    "iosApp/iosApp/WebMount/IOSWebMountWKRuntime.swift": 1188,
+    "iosApp/iosApp/WebMount/IOSWebMountBridgeScripts.swift": 1060,
+    "iosApp/iosApp/WebMount/IOSWebMountSessionStore.swift": 871,
+    "iosApp/iosApp/WebMount/IOSWebMountScreenshotArtifactStore.swift": 109,
+    "iosApp/iosApp/WebMount/IOSWebMountToolCatalog.swift": 66,
+    "iosApp/iosApp/WebMount/IOSWebMountController.swift": 1346,
+    "iosApp/iosApp/WebMount/IOSWebMountLocalCommands.swift": 723,
+    "iosApp/iosApp/WebMount/IOSWebMountDesktopCommands.swift": 629,
+    "iosApp/iosApp/WebMount/IOSWebMountStationCommands.swift": 281,
+    "iosApp/iosApp/WebMount/IOSWebMountRedactor.swift": 241,
+    "iosApp/iosApp/WebMount/Desktop/IOSWebMountDesktopModels.swift": 232,
+    "iosApp/iosApp/WebMount/Desktop/IOSWebMountDesktopMapping.swift": 411,
+    "iosApp/iosApp/WebMount/Desktop/IOSWebMountDesktopSemantics.swift": 630
+  },
+  "public_network_api": {
+    "type": "IOSPublicURLPolicy",
+    "functions": [
+      "allowedPublicHTTPURL(from:) throws -> URL",
+      "publicHostAllowed(_:) -> Bool",
+      "resolveIPAddresses(_:) throws -> [String]"
+    ],
+    "search_compatibility": "IOSSearchExecutor keeps same named static entry points; missingURL, invalidURL, disallowedURL(reason) are mapped back to IOSSearchExecutorError.",
+    "fake_ip": "Strict transport remains strictly public. Verified scrape and WebMount HTTPS Fake-IP exception remain feature-specific and unchanged."
+  },
+  "visibility_changes": [
+    "IOSWebMountRuntimeSnapshot.dictionary and Array.uniqued become module-internal after their callers moved to other files.",
+    "IOSWebMountController exposes only collaborator-used internal members: executeResult, sessionRuntime, touch, agentOwnershipLost, siteFromArgs, boundedFinalObservation, parseObject, localNavigationOwnershipUnknown, webMountPostconditionOptions, webMountStateDiff, webMountRetryAdvice, desktopMutatingToolNames, interactionMutatingToolNames, resolveHost, mcpServerProvider.",
+    "IOSWebMountLocalCommands.pageDrift is internal for facade navigation callbacks; the observation map stays private in LocalCommands.",
+    "Desktop immutable mapping/semantic value types and selected pure functions become module-internal for adapter use; adapter connection/snapshot state stays private.",
+    "IOSWebMountDesktopCommands.desktopErrorCode is module-internal for controller tab creation error mapping; no second implementation was introduced."
+  ],
+  "validation": [
+    "swiftc -frontend -parse on all owned changed Swift files: pass",
+    "swiftc -typecheck IOSPublicURLPolicy.swift: pass",
+    "all owned final Swift files <=1500 physical lines: pass",
+    "git diff --check on three tracked source files: pass",
+    "Original controller and desktop method inventories compared with final files: no missing declarations.",
+    "After integration compile fixes: swiftc -frontend -parse owned Swift files and git diff --check pass."
+  ],
+  "not_run": [
+    "xcodebuild",
+    "XCTest",
+    "simulator or device WebKit/browser acceptance",
+    "live MCP desktop backend or provider acceptance"
+  ],
+  "root_integration": [
+    "Add new Swift paths to all affected target source memberships/project.yml before build.",
+    "Migrate non-owned IOSWebMountPublicDNS, MiniApp, Watch, ChatToolRuntime and verified scrape consumers to IOSPublicURLPolicy as appropriate; preserve strict vs verified routes.",
+    "Run focused WebMount/Search suites and app build; inspect any cross-file typechecking errors."
+  ],
+  "integration_compile_fixes": [
+    "Controller wm_tab_new calls IOSWebMountDesktopCommands.desktopErrorCode directly.",
+    "Desktop adapter sanitizedValue calls IOSWebMountDesktopSemantics.removingURLFields directly."
+  ]
+}

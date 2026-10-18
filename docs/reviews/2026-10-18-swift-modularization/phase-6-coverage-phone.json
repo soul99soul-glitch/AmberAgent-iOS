@@ -1,0 +1,878 @@
+{
+  "schemaVersion": 1,
+  "phase": 6,
+  "gate": "Phone SwiftPM actual XCTest discovery",
+  "log": "/tmp/amber-phase6-phone-r1.log",
+  "logSHA256": "a16191a3fb64313968dfbceece34cfd52ab1df6c12874d1f1e55384805dafac0",
+  "wrapperStatus": {
+    "gate": "phone",
+    "run": "r1",
+    "exitCode": 0,
+    "elapsedSeconds": 4.979716062545776,
+    "log": "/tmp/amber-phase6-phone-r1.log"
+  },
+  "wrapperArgs": [
+    "swift",
+    "test",
+    "--package-path",
+    "iosApp/Packages/AmberPhoneControl"
+  ],
+  "auditor": "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-audit.py",
+  "auditorSHA256": "8797a1475d6987a7b4c85babeb68043aeaf9b4c884795d78df2221f0bf24d7fc",
+  "phoneMap": "docs/reviews/2026-10-18-swift-modularization/phase-6-phone-test-moves.json",
+  "phoneMapSHA256": "fe2b50029aab99a0f8542d97bb1d6f9ca08f969f54b10318cbff2b49933e0876",
+  "strictEventAndSuiteSummaryValidated": true,
+  "expectedMappedOriginalMethods": 105,
+  "observedUniqueCaseIDs": 105,
+  "byClass": {
+    "PhoneRunnerClientTests": 104,
+    "RunnerPhaseTimingTests": 1
+  },
+  "byResult": {
+    "Passed": 105
+  },
+  "missingMappedIDs": [],
+  "unexpectedIDs": [],
+  "cases": [
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertDescriptionPreservesNameAndValueFallbacksWithoutChangingNativeLabels",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAlertDescriptionPreservesNameAndValueFallbacksWithoutChangingNativeLabels",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapCannotBypassPageAnchorOrUnchangedObservationGuardAfterRouting",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAlertTapCannotBypassPageAnchorOrUnchangedObservationGuardAfterRouting",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapRejectsOldObservationAndSpringBoardForegroundWithoutExpandingScope",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAlertTapRejectsOldObservationAndSpringBoardForegroundWithoutExpandingScope",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapRejectsOldRunnerDuplicateNamesAndNonAlertTargetsWithoutRequest",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAlertTapRejectsOldRunnerDuplicateNamesAndNonAlertTargetsWithoutRequest",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAlertTapUsesLatestObservedContextAndExactNameWithoutIndependentAlertRead",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAlertTapUsesLatestObservedContextAndExactNameWithoutIndependentAlertRead",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAmbiguousFreshLookupNeverClicks",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAmbiguousFreshLookupNeverClicks",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAnotherActionConsumesVisualTapEvidence",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAnotherActionConsumesVisualTapEvidence",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testAppSwitchBeforeActionRejectsWithoutLookupOrMutation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testAppSwitchBeforeActionRejectsWithoutLookupOrMutation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testApplicationAdditionCannotRaceInFlightMutation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testApplicationAdditionCannotRaceInFlightMutation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testCancellationDuringSettlePreventsSourceAndKeepsClientReusable",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testCancellationDuringSettlePreventsSourceAndKeepsClientReusable",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testChangedAlertGuardRefusalIsUnsentButLostReplyLocksFurtherActions",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testChangedAlertGuardRefusalIsUnsentButLostReplyLocksFurtherActions",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearRejectsReferenceFromPreviousObservationWithoutRequest",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testClearRejectsReferenceFromPreviousObservationWithoutRequest",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearRejectsSecureNonInputAndDisabledNodesBeforeLookup",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testClearRejectsSecureNonInputAndDisabledNodesBeforeLookup",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearRequiresUniqueFreshTargetAndConsumesRefOnLookupRefusal",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testClearRequiresUniqueFreshTargetAndConsumesRefOnLookupRefusal",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testClearResolvesFreshInputAndConsumesReference",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testClearResolvesFreshInputAndConsumesReference",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testCompactTextFoldsOnlyEmptyContainersAndKeepsLocalReferencesAndExceptionalState",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testCompactTextFoldsOnlyEmptyContainersAndKeepsLocalReferencesAndExceptionalState",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testConcurrentActionCannotOvertakeInFlightMutation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testConcurrentActionCannotOvertakeInFlightMutation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testCoveredPageNodesGetNoRefAndStayOutOfTheModelTree",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testCoveredPageNodesGetNoRefAndStayOutOfTheModelTree",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testDroppedAndAuthenticationRefusalsAreUnsent",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testDroppedAndAuthenticationRefusalsAreUnsent",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testDroppedStaleClickAllowsReplanningOnlyAfterFreshObservation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testDroppedStaleClickAllowsReplanningOnlyAfterFreshObservation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testElementLongPressUsesFreshLookupAndBoundedSecondsThenConsumesReference",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testElementLongPressUsesFreshLookupAndBoundedSecondsThenConsumesReference",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testEveryObservedAlertSubtreeRoutesOrdinaryTapThroughItsOwnContext",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testEveryObservedAlertSubtreeRoutesOrdinaryTapThroughItsOwnContext",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testFailedReplacementScreenshotInvalidatesPreviousVisualEvidence",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testFailedReplacementScreenshotInvalidatesPreviousVisualEvidence",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testFailedScreenshotInvalidatesPreviouslyObservedTargets",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testFailedScreenshotInvalidatesPreviouslyObservedTargets",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testFreshUniqueLookupPrecedesOneMutationAndConsumesRef",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testFreshUniqueLookupPrecedesOneMutationAndConsumesRef",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testHTTP200WithWebDriverErrorIsNotSuccess",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testHTTP200WithWebDriverErrorIsNotSuccess",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testInterceptedClickIsUnsentWithItsRunnerCode",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testInterceptedClickIsUnsentWithItsRunnerCode",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testInvalidSettleBudgetRejectsWithoutReadingAndInvalidatesOldReferences",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testInvalidSettleBudgetRejectsWithoutReadingAndInvalidatesOldReferences",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testLatestObservationInvalidatesOnFailedObserveAndStop",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testLatestObservationInvalidatesOnFailedObserveAndStop",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testLongPressRejectsInvalidDurationStaleReferenceAndDisabledTargetsWithoutLookup",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testLongPressRejectsInvalidDurationStaleReferenceAndDisabledTargetsWithoutLookup",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testLongPressResponseLossBlocksAnotherGestureAfterFreshObservation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testLongPressResponseLossBlocksAnotherGestureAfterFreshObservation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testMalformedOrFailedSettleDoesNotFallBackToTreeOrRetainReferences",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testMalformedOrFailedSettleDoesNotFallBackToTreeOrRetainReferences",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testMultiplePageAnchorsStopBeforeMutation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testMultiplePageAnchorsStopBeforeMutation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testMutationCancellationIsUnknownAndDoesNotReplay",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testMutationCancellationIsUnknownAndDoesNotReplay",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testNewObservationInvalidatesPreviousRefs",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testNewObservationInvalidatesPreviousRefs",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testObservationCanCollectActualScreenSizeWithoutUsingRootBoundsOrTakingScreenshot",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testObservationCanCollectActualScreenSizeWithoutUsingRootBoundsOrTakingScreenshot",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testObservedMultilineLabelsProduceExactRunnerPredicates",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testObservedMultilineLabelsProduceExactRunnerPredicates",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOrdinaryAlertTapChangedContextRefusalAndLostReplyCannotBypassGuard",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testOrdinaryAlertTapChangedContextRefusalAndLostReplyCannotBypassGuard",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOrdinaryAlertTapOldArtifactOrMissingContextIsUnsentAndLongPressIsUnsupported",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testOrdinaryAlertTapOldArtifactOrMissingContextIsUnsentAndLongPressIsUnsupported",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOrdinaryAndExplicitAlertTapSendIdenticalGuardedRequest",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testOrdinaryAndExplicitAlertTapSendIdenticalGuardedRequest",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOutOfScopeObservationDoesNotReadTree",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testOutOfScopeObservationDoesNotReadTree",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorIsInvalidForVisualAndLifecycleActions",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testPageAnchorIsInvalidForVisualAndLifecycleActions",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorRefFromPreviousObservationIsStaleWithoutRequests",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testPageAnchorRefFromPreviousObservationIsStaleWithoutRequests",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorRegionConstrainsAnchorCenter",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testPageAnchorRegionConstrainsAnchorCenter",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorRegionRejectsNonPositiveOrNonFiniteSize",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testPageAnchorRegionRejectsNonPositiveOrNonFiniteSize",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorStopsSameTargetAfterPageChanges",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testPageAnchorStopsSameTargetAfterPageChanges",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testPageAnchorUsesTextIdentityWithoutEnabledOrFrame",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testPageAnchorUsesTextIdentityWithoutEnabledOrFrame",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRefusedStartDoesNotReusePreviousOperationDiagnostics",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testRefusedStartDoesNotReusePreviousOperationDiagnostics",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRequestTimeoutOverridePreservesNormalRequestDefaults",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testRequestTimeoutOverridePreservesNormalRequestDefaults",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRequireUnchangedObservationIgnoresTargetFrameAnimation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testRequireUnchangedObservationIgnoresTargetFrameAnimation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRequireUnchangedObservationStopsSameTargetAfterTextChanges",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testRequireUnchangedObservationStopsSameTargetAfterTextChanges",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testResponseLossMakesOutcomeUnknownAndNeverRetries",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testResponseLossMakesOutcomeUnknownAndNeverRetries",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testRunnerDroppedClearRemainsUnsentAndAllowsFreshAction",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testRunnerDroppedClearRemainsUnsentAndAllowsFreshAction",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenSizeFailureCannotPublishFreshObservationOrKeepOldSnapshot",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testScreenSizeFailureCannotPublishFreshObservationOrKeepOldSnapshot",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotDecodesBase64OnlyWhenExplicitlyRequested",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testScreenshotDecodesBase64OnlyWhenExplicitlyRequested",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotRejectsForegroundOrOrientationChangeAndInvalidatesTargets",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testScreenshotRejectsForegroundOrOrientationChangeAndInvalidatesTargets",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotRejectsRotationAfterBoundedTreeWithoutRelabelingOldNodes",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testScreenshotRejectsRotationAfterBoundedTreeWithoutRelabelingOldNodes",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testScreenshotRequiresPixelGeometryToMatchScreenPoints",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testScreenshotRequiresPixelGeometryToMatchScreenPoints",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSessionTokensAreRandomAndValid",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSessionTokensAreRandomAndValid",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettleReadCannotClearUnknownActionOutcome",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSettleReadCannotClearUnknownActionOutcome",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettleStopAndConcurrentOperationDoNotReadSourceOrOvertakeWait",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSettleStopAndConcurrentOperationDoNotReadSourceOrOvertakeWait",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettledObservationRejectsOutOfScopeAndChangedForeground",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSettledObservationRejectsOutOfScopeAndChangedForeground",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSettledObservationUsesOneExtraRequestAndKeepsStabilitySeparateFromContent",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSettledObservationUsesOneExtraRequestAndKeepsStabilitySeparateFromContent",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testShutdownPropagatesRefusalAndTransportFailureWithoutRetry",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testShutdownPropagatesRefusalAndTransportFailureWithoutRetry",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testShutdownRejectsMissingFalseOrWronglyTypedConfirmation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testShutdownRejectsMissingFalseOrWronglyTypedConfirmation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testShutdownSignsOneShortRequestAndStopsWorkBeforeReply",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testShutdownSignsOneShortRequestAndStopsWorkBeforeReply",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSignatureCoversExactlyEncodedQueryAndSortedBody",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSignatureCoversExactlyEncodedQueryAndSortedBody",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSigningMatchesPinnedRunnerKnownAnswer",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSigningMatchesPinnedRunnerKnownAnswer",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStaleElementAfterMutationDispatchDoesNotPromiseNoSideEffect",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testStaleElementAfterMutationDispatchDoesNotPromiseNoSideEffect",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStopBlocksActionsAndObservations",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testStopBlocksActionsAndObservations",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStopDuringElementLookupPreventsMutation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testStopDuringElementLookupPreventsMutation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStopDuringWaitForStabilityPreventsPublishingAndReleasesLock",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testStopDuringWaitForStabilityPreventsPublishingAndReleasesLock",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStoppingDuringPointPreflightPreventsTap",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testStoppingDuringPointPreflightPreventsTap",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testStoppingWhilePageAnchorLookupIsInFlightDoesNotMutate",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testStoppingWhilePageAnchorLookupIsInFlightDoesNotMutate",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testSuccessfulScreenshotPreservesItsExactTreeObservation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testSuccessfulScreenshotPreservesItsExactTreeObservation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testTreeObservationDoesNotTakeScreenshotAndRefsAreLocal",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testTreeObservationDoesNotTakeScreenshotAndRefsAreLocal",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testTypeKeepsAppendSemanticsAndSecureSupportWithoutImplicitClear",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testTypeKeepsAppendSemanticsAndSecureSupportWithoutImplicitClear",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUncertainClearBlocksReplayEvenAfterFreshObservation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testUncertainClearBlocksReplayEvenAfterFreshObservation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUnknownActionOutcomeRejectsApplicationAdditionWithoutReplay",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testUnknownActionOutcomeRejectsApplicationAdditionWithoutReplay",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUnnamedAlertButtonCannotBypassContextWithOrdinaryTapOrLongPress",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testUnnamedAlertButtonCannotBypassContextWithOrdinaryTapOrLongPress",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testUnstableObservationStillReadsFreshTreeWithoutRetryingOrChangingActionResult",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testUnstableObservationStillReadsFreshTreeWithoutRetryingOrChangingActionResult",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVerifiedApplicationCanBeAddedToLiveScopeButStopCannotBeUndone",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVerifiedApplicationCanBeAddedToLiveScopeButStopCannotBeUndone",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualLongPressDowngradedToTapIsUnknownAndCannotReplay",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualLongPressDowngradedToTapIsUnknownAndCannotReplay",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualLongPressRejectsMissingEvidenceInvalidPointsAndRotationWithoutSending",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualLongPressRejectsMissingEvidenceInvalidPointsAndRotationWithoutSending",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualLongPressUsesCurrentScreenshotGeometryAndW3CHold",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualLongPressUsesCurrentScreenshotGeometryAndW3CHold",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsForegroundChangeBeforeAndAfterGeometryCheck",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualSwipeRejectsForegroundChangeBeforeAndAfterGeometryCheck",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsInvalidOrIdenticalEndpointsWithoutSending",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualSwipeRejectsInvalidOrIdenticalEndpointsWithoutSending",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsMissingOrStaleScreenshotWithoutSending",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualSwipeRejectsMissingOrStaleScreenshotWithoutSending",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeRejectsRotationBeforeSending",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualSwipeRejectsRotationBeforeSending",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeResponseLossBlocksReplayEvenAfterFreshScreenshot",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualSwipeResponseLossBlocksReplayEvenAfterFreshScreenshot",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualSwipeUsesFullScreenPointsAndConsumesScreenshotEvidence",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualSwipeUsesFullScreenPointsAndConsumesScreenshotEvidence",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapAcceptsScreenOriginAndInteriorFarEdge",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapAcceptsScreenOriginAndInteriorFarEdge",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsChangedForegroundBundleOrProcessBeforeSending",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapRejectsChangedForegroundBundleOrProcessBeforeSending",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsNonFiniteAndOutOfRangeCoordinatesWithoutSending",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapRejectsNonFiniteAndOutOfRangeCoordinatesWithoutSending",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsRotatedScreenBeforeSending",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapRejectsRotatedScreenBeforeSending",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRejectsStaleScreenshotIDAndNewObservationInvalidatesEvidence",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapRejectsStaleScreenshotIDAndNewObservationInvalidatesEvidence",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapRequiresScreenshotOfLatestObservation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapRequiresScreenshotOfLatestObservation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapResponseLossBlocksReplayEvenAfterFreshObservation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapResponseLossBlocksReplayEvenAfterFreshObservation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testVisualTapUsesFullScreenPointsForUntargetablePopupAndConsumesEvidence",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testVisualTapUsesFullScreenPointsForUntargetablePopupAndConsumesEvidence",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilityPreservesUnstableAndBlankFlags",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testWaitForStabilityPreservesUnstableAndBlankFlags",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilityPropagatesRunnerErrorWithoutRetryOrSnapshot",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testWaitForStabilityPropagatesRunnerErrorWithoutRetryOrSnapshot",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilityRejectsForegroundChangeAndDoesNotKeepSnapshot",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testWaitForStabilityRejectsForegroundChangeAndDoesNotKeepSnapshot",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWaitForStabilitySignsRequestAndInvalidatesObservation",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testWaitForStabilitySignsRequestAndInvalidatesObservation",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testWiderObservationReachesComposerAfterTruncatedHistoryAndTypesOnce",
+      "target": "AmberPhoneControlTests",
+      "class": "PhoneRunnerClientTests",
+      "method": "testWiderObservationReachesComposerAfterTruncatedHistoryAndTypesOnce",
+      "result": "Passed"
+    },
+    {
+      "oldFile": "iosApp/Packages/AmberPhoneControl/Tests/AmberPhoneControlTests/PhoneRunnerClientTests.swift",
+      "oldMethod": "testOnlySlowRunnerPhasesAreReported",
+      "target": "AmberPhoneControlTests",
+      "class": "RunnerPhaseTimingTests",
+      "method": "testOnlySlowRunnerPhasesAreReported",
+      "result": "Passed"
+    }
+  ]
+}

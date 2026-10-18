@@ -725,7 +725,8 @@ final class IOSMiniAppImageSchemeHandler: NSObject, WKURLSchemeHandler {
       function proxySrcset(value) {
         if (typeof value !== 'string') return value;
         return value.split(',').map(function(candidate) {
-          var match = candidate.trim().match(/^(https:\/\/\S+)(\s+.+)?$/i);
+          candidate = candidate.trim();
+          var match = candidate.match(/^(https:\/\/\S+)(\s+.+)?$/i);
           return match ? proxy(match[1]) + (match[2] || '') : candidate;
         }).join(', ');
       }
@@ -743,16 +744,25 @@ final class IOSMiniAppImageSchemeHandler: NSObject, WKURLSchemeHandler {
         if (lower === 'style') value = proxyCSS(value);
         return originalSetAttribute.call(this, name, value);
       };
+      function rewriteAttribute(element, name, transform) {
+        if (!element.hasAttribute(name)) return;
+        var current = element.getAttribute(name);
+        var rewritten = transform(current);
+        if (rewritten !== current) originalSetAttribute.call(element, name, rewritten);
+      }
       function rewrite(root) {
         if (!root || root.nodeType !== 1) return;
         var elements = [root].concat(Array.prototype.slice.call(root.querySelectorAll ? root.querySelectorAll('img,source,[style],style') : []));
         elements.forEach(function(element) {
           if (element instanceof HTMLImageElement || element instanceof HTMLSourceElement) {
-            if (element.hasAttribute('src')) originalSetAttribute.call(element, 'src', proxy(element.getAttribute('src')));
-            if (element.hasAttribute('srcset')) originalSetAttribute.call(element, 'srcset', proxySrcset(element.getAttribute('srcset')));
+            rewriteAttribute(element, 'src', proxy);
+            rewriteAttribute(element, 'srcset', proxySrcset);
           }
-          if (element.hasAttribute && element.hasAttribute('style')) originalSetAttribute.call(element, 'style', proxyCSS(element.getAttribute('style')));
-          if (element.tagName === 'STYLE' && element.textContent) element.textContent = proxyCSS(element.textContent);
+          rewriteAttribute(element, 'style', proxyCSS);
+          if (element.tagName === 'STYLE' && element.textContent) {
+            var rewritten = proxyCSS(element.textContent);
+            if (rewritten !== element.textContent) element.textContent = rewritten;
+          }
         });
       }
       new MutationObserver(function(records) {

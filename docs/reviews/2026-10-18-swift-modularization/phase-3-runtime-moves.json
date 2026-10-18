@@ -1,0 +1,139 @@
+{
+  "base_source_path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatToolRuntime.swift",
+  "base_source_sha256": "83bd99065a2b03588a5e13ac5ff8242587670e77dd10c17d4a15de8210d728af",
+  "files": [
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/ChatToolRuntime.swift",
+      "lines": 1107,
+      "sha256": "fe6bde78fbe7f42352d9047e8fbd5b5e95498e21f91847fd60b0d2b027e2bc36",
+      "responsibility": "Frozen execution policy, strict argument validation, pending classification, dispatch, foreground/background/novel public interface and owner composition",
+      "owner": "ChatToolRuntime",
+      "interface": "Existing public methods; named execute/take/discard/finish forwarding to concrete owners",
+      "state_owner": "run policy TaskLocal and iSH approval scopes"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatAdvancedToolOperations.swift",
+      "lines": 573,
+      "sha256": "09a5ba5c9e5ad6c0b218eabfd07405cae6ad42c28853edd6c0369fcb513e762d",
+      "responsibility": "Advanced tool/subagent/council dispatch and legacy reservations",
+      "owner": "ChatToolRuntime advanced operation seam",
+      "interface": "dispatchAdvancedToolCall and parent executor helpers",
+      "state_owner": "legacy subagent counts and FIFO/ledger paths remain in Runtime"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatDynamicToolLifecycle.swift",
+      "lines": 526,
+      "sha256": "34cf80269a820fd31d69fb73b9c5ca09e5291b4f877425dc61c610b8038d6048",
+      "responsibility": "Advanced entry, skill/soul/MCP previews and dynamic catalog routing",
+      "owner": "ChatDynamicToolLifecycle",
+      "interface": "ChatToolRuntime executeAdvancedToolCall wrapper and take/discard prepared imports",
+      "state_owner": "skill/soul/MCP candidates keyed by toolCallId; recipe/plugin candidates delegated to their owners"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatJavaScriptTool.swift",
+      "lines": 325,
+      "sha256": "14bb68b4c8ff063d64a638284b20270747e4c5f9a743fed1bc802e11e9c73bc0",
+      "responsibility": "Nested tool whitelist/schemas and session exec/wait lifecycle",
+      "owner": "ChatJavaScriptTool",
+      "interface": "ChatToolRuntime exec/wait and clamp wrappers; class execute/wait owns registry use",
+      "state_owner": "IOSJsCellRegistry remains session/cell source of truth, single-read wait"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatLocalToolOperations.swift",
+      "lines": 530,
+      "sha256": "8456c2a238a6047965ccf505dc612c87d85c97316b89052f1348b36a33c39f14",
+      "responsibility": "Search/workspace/iSH/WebMount/memory/image/MCP adapters and output formatting",
+      "owner": "ChatToolRuntime local operation seam",
+      "interface": "Named dispatch and output helpers called by domain owners",
+      "state_owner": "existing local executors and MCP manager remain authoritative"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatPluginExecution.swift",
+      "lines": 864,
+      "sha256": "c1b0d486e2c69d6a31b808f1474d3096360b2c71b6690b2bb99e795e4dc88c17",
+      "responsibility": "Pinned plugin JS/command/remote invocation, background eligibility, import/invocation finisher, health",
+      "owner": "ChatPluginExecution",
+      "interface": "executePluginToolCall, executeBackgroundPlugin, finishPluginInvocationApproval/Import, take/discard candidate",
+      "state_owner": "prepared plugin maps and pinned descriptor retained through approval"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatRecipeExecution.swift",
+      "lines": 1182,
+      "sha256": "1465cacf8d85e95a8d883b25adc2b03682be4b9f8dffa4641ee5b61d72f7a2a4",
+      "responsibility": "Recipe plan/step advance, approval gate, primitive execution, checkpoint and ledger",
+      "owner": "ChatRecipeExecution",
+      "interface": "executeRecipeToolCall, executeRecipePrimitiveStep, finishRecipeStepApproval/Import, take/discard execution",
+      "state_owner": "prepared recipe maps and checkpoint store; save before stash, clear on finish/deny"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatRuntimeStatusTool.swift",
+      "lines": 166,
+      "sha256": "be4ed8a5133ae62efdbc63f4fc72254cc943a6e753b26295140009803b7c2914",
+      "responsibility": "Runtime status projection and Jev use case mapping",
+      "owner": "ChatRuntimeStatusTool",
+      "interface": "ChatToolRuntime dispatch wrapper; class dispatch reads current runtime status",
+      "state_owner": "read-only projection"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatSessionReadTool.swift",
+      "lines": 457,
+      "sha256": "d5e86edc87019a5c7e3313e80b17e2184eae138a6ee7c0d427618aa9b1a76c85",
+      "responsibility": "Session search/read projections, JSON/page bounds",
+      "owner": "ChatSessionReadTool",
+      "interface": "ChatToolRuntime dispatch wrapper; class dispatch receives one tool call and injected conversation store provider",
+      "state_owner": "conversation store stays optional, no mutable read state"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolApprovalCompletion.swift",
+      "lines": 787,
+      "sha256": "505bbd574aaf4364c2ab6c13c2fe37fcf3ae9d095a9f4c7c5ff042788a42bc5b",
+      "responsibility": "Approval completion, result fill, denial ledger and test seams",
+      "owner": "ChatToolRuntime approval/result boundary",
+      "interface": "Original finishMemory/Search/WebMount/Workspace/Ish/Mcp/Council/Ask and result APIs",
+      "state_owner": "ledger decision record and single tool-result fill"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolExecutorAdapters.swift",
+      "lines": 827,
+      "sha256": "e4c1ce3757308b1cbec79c2746930dd3cc2bd88773c95f24f13a2c3288c15e23",
+      "responsibility": "Foreground/background/Novel registrations and foreground executor bridge",
+      "owner": "ChatToolRuntime executor registration",
+      "interface": "Original foregroundToolExecutors/backgroundToolExecutors/novelDiscussionToolExecutors APIs",
+      "state_owner": "foreground prompt box and frozen catalog/policy snapshot"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolInvocation.swift",
+      "lines": 371,
+      "sha256": "4af11c204c21f16d1028b4007fd4099e83420d9f16a5ff075535460627618b65",
+      "responsibility": "Pending/result/prompt value types, policy TaskLocal and existing executor boxes",
+      "owner": "Value types and existing executor boxes",
+      "interface": "Types shared across concrete runtime files; IOSExecutionPolicyContext shared for original TaskLocal semantics",
+      "state_owner": "prompt box remains lock protected in executor adapters"
+    },
+    {
+      "path": "/Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatWebGoalTool.swift",
+      "lines": 264,
+      "sha256": "87654dc459d17dbca9f13690dbd9b8d8b135c264c93f1e9a241820f066da588d",
+      "responsibility": "Bounded WebMount/Jev goal loop and action mapping",
+      "owner": "ChatToolRuntime web goal operation",
+      "interface": "runJevWebGoalLoopOutput and static result/action helpers",
+      "state_owner": "existing WebMount session/unknown outcome contract"
+    }
+  ],
+  "necessary_visibility": "Only cross-file runtime members used by domain execution/adapter seams were promoted from private; owner candidate maps and checkpoint store remain private. No global private-to-internal replacement.",
+  "preserved_consumers": [
+    "foregroundToolExecutors",
+    "backgroundToolExecutors",
+    "novelDiscussionToolExecutors",
+    "ChatRunKernelAdapter approval take/finish",
+    "ChatKernelRunHost result and outcome checks"
+  ],
+  "verification": [
+    "swiftc -frontend -parse on all 13 files",
+    "git diff --check on ChatToolRuntime.swift",
+    "physical line count <1500 for each changed Runtime file"
+  ],
+  "not_run": [
+    "xcodebuild or XCTest (Root integration owns Xcode project wiring and build)"
+  ]
+}

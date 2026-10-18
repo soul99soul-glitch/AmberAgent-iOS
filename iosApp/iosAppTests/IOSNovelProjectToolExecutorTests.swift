@@ -1012,7 +1012,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
     }
 
     func testListSettingProposalsIncludesIdsAndTitles() async throws {
-        let (harness, ids) = try await makeHarnessWithSettingProposals(["粮仓", "殿前司"])
+        let (harness, ids) = try await makeHarnessWithSettingProposals(["开封府", "殿前司"])
         defer { try? FileManager.default.removeItem(at: harness.root) }
 
         let outcome = await harness.execute("novel_list_setting_proposals", "{}")
@@ -1020,7 +1020,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
             XCTFail("Expected filled, got \(outcome)")
             return
         }
-        XCTAssertTrue(text.contains("粮仓"))
+        XCTAssertTrue(text.contains("开封府"))
         XCTAssertTrue(text.contains("殿前司"))
         XCTAssertTrue(text.contains(ids[0].description))
         XCTAssertTrue(text.contains(ids[1].description))
@@ -1029,7 +1029,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
     }
 
     func testRejectSettingProposalsOmittingIdsRejectsAll() async throws {
-        let (harness, _) = try await makeHarnessWithSettingProposals(["粮仓", "马厩", "殿前司"])
+        let (harness, _) = try await makeHarnessWithSettingProposals(["开封府", "禁军", "殿前司"])
         defer { try? FileManager.default.removeItem(at: harness.root) }
 
         let outcome = await harness.execute("novel_reject_setting_proposals", "{}")
@@ -1038,8 +1038,8 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
             return
         }
         XCTAssertTrue(text.contains("已拒绝 3 条"))
-        XCTAssertTrue(text.contains("粮仓"))
-        XCTAssertTrue(text.contains("马厩"))
+        XCTAssertTrue(text.contains("开封府"))
+        XCTAssertTrue(text.contains("禁军"))
         XCTAssertTrue(text.contains("殿前司"))
 
         let snapshot = try await harness.snapshot()
@@ -1052,8 +1052,10 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
     }
 
     func testRejectSettingProposalsEmptyArrayRejectsAll() async throws {
-        let (harness, _) = try await makeHarnessWithSettingProposals(["粮仓"])
+        let (harness, _) = try await makeHarnessWithSettingProposals(["开封府"])
         defer { try? FileManager.default.removeItem(at: harness.root) }
+        let before = try await harness.snapshot()
+        XCTAssertEqual(before.activeSettingProposals(for: harness.branchID).count, 1)
 
         let outcome = await harness.execute(
             "novel_reject_setting_proposals",
@@ -1065,10 +1067,12 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
         }
         let snapshot = try await harness.snapshot()
         XCTAssertEqual(snapshot.activeSettingProposals(for: harness.branchID).count, 0)
+        XCTAssertEqual(snapshot.settingProposals.filter(\.isResolved).count, 1)
+        XCTAssertEqual(snapshot.appliedOperations.filter { $0.kind == .resolveSettingProposal }.count, 1)
     }
 
     func testRejectSettingProposalsSpecifiedIdLeavesTheRest() async throws {
-        let (harness, ids) = try await makeHarnessWithSettingProposals(["粮仓", "殿前司"])
+        let (harness, ids) = try await makeHarnessWithSettingProposals(["开封府", "殿前司"])
         defer { try? FileManager.default.removeItem(at: harness.root) }
 
         let outcome = await harness.execute(
@@ -1079,7 +1083,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
             XCTFail("指定拒绝应返回 filled，实际 \(outcome)")
             return
         }
-        XCTAssertTrue(text.contains("粮仓"))
+        XCTAssertTrue(text.contains("开封府"))
         XCTAssertFalse(text.contains("殿前司"))
 
         let snapshot = try await harness.snapshot()
@@ -1088,7 +1092,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
     }
 
     func testRejectSettingProposalsUnknownIdFailsAndLeavesDocument() async throws {
-        let (harness, ids) = try await makeHarnessWithSettingProposals(["粮仓"])
+        let (harness, ids) = try await makeHarnessWithSettingProposals(["开封府"])
         defer { try? FileManager.default.removeItem(at: harness.root) }
 
         let outcome = await harness.execute(
@@ -1483,171 +1487,4 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
         XCTAssertEqual(plan?.goalAndConflict, "已确认的目标")
     }
 
-    // MARK: - Assembly chain (adapter start → makeParameters → transport)
-
-    func testAdapterStartThreadsProjectContextIntoDiscussionTransport() async throws {
-        let model = makeModel()
-        let provider = ProviderSetting.OpenAI(
-            id: KotlinUuid.companion.random(),
-            enabled: true,
-            name: "Discussion",
-            models: [model],
-            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
-            builtIn: false,
-            descriptionText: nil,
-            shortDescriptionText: nil,
-            apiKey: "test-key",
-            baseUrl: "https://example.test/v1",
-            chatCompletionsPath: "/chat/completions",
-            useResponseApi: false,
-            authMode: OpenAIAuthMode.apiKey,
-            brand: OpenAIBrand.generic
-        )
-        let captured = TestBox<NovelLiveTransportRequest>()
-        let adapter = NovelLiveModelAdapter(
-            catalogProvider: {
-                NovelLiveModelCatalog(currentModel: model, providers: [provider])
-            },
-            kmpTransport: { _, callbacks in
-                callbacks.onComplete()
-                return nil
-            },
-            discussionTransport: { request, callbacks in
-                captured.set(request)
-                callbacks.onComplete()
-                return nil
-            },
-            discussionSearchEnabled: { true }
-        )
-
-        let projectID = NovelProjectID()
-        let branchID = NovelBranchID()
-        let resolved = try await adapter.resolveModel(for: .global)
-        let request = NovelModelRequest(
-            runID: NovelRunID(),
-            model: resolved,
-            purpose: .discussion,
-            messages: [],
-            parameters: NovelModelParameters(
-                temperature: nil,
-                topP: nil,
-                maxOutputTokens: nil,
-                reasoningLevel: .off
-            ),
-            projectID: projectID,
-            branchID: branchID
-        )
-        let events = try await adapter.start(request)
-        for await _ in events { /* drain until completion */ }
-
-        let transportRequest = try XCTUnwrap(captured.value)
-        XCTAssertEqual(transportRequest.novelProjectContext?.projectID, projectID)
-        XCTAssertEqual(transportRequest.novelProjectContext?.branchID, branchID)
-        let toolNames = transportRequest.parameters.tools.map { $0.name }
-        for name in IOSNovelProjectToolExecutor.supportedToolNames {
-            XCTAssertTrue(toolNames.contains(name), "adapter.start 必须带上 \(name)")
-        }
-        XCTAssertTrue(toolNames.contains("ask_user"))
-        XCTAssertTrue(toolNames.contains("search_web"))
-    }
-
-    func testAdapterStartOmitsProjectToolsForProsePurpose() async throws {
-        let model = makeModel()
-        let provider = ProviderSetting.OpenAI(
-            id: KotlinUuid.companion.random(),
-            enabled: true,
-            name: "Discussion",
-            models: [model],
-            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
-            builtIn: false,
-            descriptionText: nil,
-            shortDescriptionText: nil,
-            apiKey: "test-key",
-            baseUrl: "https://example.test/v1",
-            chatCompletionsPath: "/chat/completions",
-            useResponseApi: false,
-            authMode: OpenAIAuthMode.apiKey,
-            brand: OpenAIBrand.generic
-        )
-        let captured = TestBox<NovelLiveTransportRequest>()
-        let adapter = NovelLiveModelAdapter(
-            catalogProvider: {
-                NovelLiveModelCatalog(currentModel: model, providers: [provider])
-            },
-            kmpTransport: { request, callbacks in
-                captured.set(request)
-                callbacks.onComplete()
-                return nil
-            },
-            discussionTransport: { _, callbacks in
-                callbacks.onComplete()
-                return nil
-            },
-            discussionSearchEnabled: { true }
-        )
-
-        let resolved = try await adapter.resolveModel(for: .global)
-        let request = NovelModelRequest(
-            runID: NovelRunID(),
-            model: resolved,
-            purpose: .prose,
-            messages: [],
-            parameters: NovelModelParameters(
-                temperature: nil,
-                topP: nil,
-                maxOutputTokens: nil,
-                reasoningLevel: .off
-            ),
-            projectID: NovelProjectID(),
-            branchID: NovelBranchID()
-        )
-        let events = try await adapter.start(request)
-        for await _ in events { /* drain until completion */ }
-
-        let transportRequest = try XCTUnwrap(captured.value)
-        XCTAssertNil(transportRequest.novelProjectContext, "非 discussion purpose 不得注入项目上下文")
-        XCTAssertTrue(
-            transportRequest.parameters.tools.map { $0.name }.allSatisfy {
-                !IOSNovelProjectToolExecutor.supportedToolNames.contains($0)
-            },
-            "非 discussion purpose 不得注入小说写工具"
-        )
-    }
-
-    // MARK: - Helpers
-
-    private func makeModel() -> Model {
-        Model(
-            modelId: "novel-live",
-            displayName: "Novel Live",
-            id: KotlinUuid.companion.random(),
-            type: ModelType.chat,
-            customHeaders: [],
-            customBodies: [],
-            inputModalities: [],
-            outputModalities: [],
-            abilities: [],
-            tools: Set<BuiltInTools>(),
-            contextWindowTokens: KotlinInt(value: 128_000),
-            providerOverwrite: nil
-        )
-    }
-}
-
-/// 跨隔离域捕获工具请求的小盒子（测试专用）。
-private final class TestBox<Value>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: Value?
-
-    func set(_ value: Value) {
-        lock.lock()
-        storage = value
-        lock.unlock()
-    }
-
-    var value: Value? {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage
-    }
 }

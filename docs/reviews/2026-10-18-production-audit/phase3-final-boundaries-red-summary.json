@@ -1,0 +1,122 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "B3C3F24B-7D39-4695-86BB-588EEC6469A4",
+        "deviceName" : "Amber Audit 20261018",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 8,
+      "passedTests" : 113,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 8,
+  "finishTime" : 1792287499.75,
+  "passedTests" : 113,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1792287383.966,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[\"a56a0821-5c32-491e-ade3-cc6a88066df2\", \"c6f3b9b9-753a-4767-af94-c2fda30aacd9\", \"37f06e5b-2cbf-41fd-b3ca-701b45bbe37f\"]\") is not equal to (\"[\"a56a0821-5c32-491e-ade3-cc6a88066df2\", \"c6f3b9b9-753a-4767-af94-c2fda30aacd9\"]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 1,
+      "testIdentifierString" : "IOSChatBackgroundTerminalBoundaryTests/testCancellationAfterHandoffDeliversPartialGeneratedBeforeHandoff()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatBackgroundTerminalBoundaryTests/testCancellationAfterHandoffDeliversPartialGeneratedBeforeHandoff",
+      "testName" : "testCancellationAfterHandoffDeliversPartialGeneratedBeforeHandoff()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[UIMessage(id=191aac87-d64b-47c8-af76-fbc4cc425202, role=USER, parts=[Text(text=Create a small app, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:02.805022, finishedAt=null, modelId=null, usage=null, translation=null)]\") is not equal to (\"[UIMessage(id=191aac87-d64b-47c8-af76-fbc4cc425202, role=USER, parts=[Text(text=Create a small app, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:02.805022, finishedAt=null, modelId=null, usage=null, translation=null), UIMessage(id=fe1223fb-391a-4ac9-8b60-e0dda91699f8, role=ASSISTANT, parts=[Text(text=Partial awaiting a later foreground resume, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:02.820293, finishedAt=null, modelId=dccdcb39-88c9-4e0d-b036-e440c30facc9, usage=null, translation=null)]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 10,
+      "testIdentifierString" : "IOSChatDetachedResponseTerminalTests/testLaterResumeWithoutChunksPreservesPublishedPartialForFailure()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDetachedResponseTerminalTests/testLaterResumeWithoutChunksPreservesPublishedPartialForFailure",
+      "testName" : "testLaterResumeWithoutChunksPreservesPublishedPartialForFailure()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed - Search result button appears did not settle",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 120,
+      "testIdentifierString" : "SearchNavigationTests/testRenderedSearchResultOpensTheSelectedConversation()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/SearchNavigationTests/testRenderedSearchResultOpensTheSelectedConversation",
+      "testName" : "testRenderedSearchResultOpensTheSelectedConversation()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[UIMessage(id=8913e199-49ba-424e-b4aa-9fd1296828ee, role=USER, parts=[Text(text=Create a small app, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:02.988612, finishedAt=null, modelId=null, usage=null, translation=null), UIMessage(id=3858e940-ffbb-4eb8-b586-515a1a6b2c73, role=ASSISTANT, parts=[Text(text=AB, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:03.002609, finishedAt=null, modelId=f6c17b8b-cbce-45dd-ba33-76f79c94e982, usage=null, translation=null)]\") is not equal to (\"[UIMessage(id=8913e199-49ba-424e-b4aa-9fd1296828ee, role=USER, parts=[Text(text=Create a small app, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:02.988612, finishedAt=null, modelId=null, usage=null, translation=null), UIMessage(id=9f12af6f-6e0a-4791-9af7-e4fc43ee363a, role=ASSISTANT, parts=[Text(text=ABCDEF, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:03.002544, finishedAt=null, modelId=f6c17b8b-cbce-45dd-ba33-76f79c94e982, usage=null, translation=null)]\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 12,
+      "testIdentifierString" : "IOSChatDetachedResponseTerminalTests/testReplayPublishesAfterCatchingUpAndCompletionUsesCurrentAccumulator()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDetachedResponseTerminalTests/testReplayPublishesAfterCatchingUpAndCompletionUsesCurrentAccumulator",
+      "testName" : "testReplayPublishesAfterCatchingUpAndCompletionUsesCurrentAccumulator()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"2\") is not equal to (\"0\") - Sequence progress must not persist a cursor without its partial messages",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 20,
+      "testIdentifierString" : "IOSChatDurableOwnershipTests/testResponseSequenceProgressKeepsPersistedSnapshotAndCachedRuntimeUntilBoundary()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDurableOwnershipTests/testResponseSequenceProgressKeepsPersistedSnapshotAndCachedRuntimeUntilBoundary",
+      "testName" : "testResponseSequenceProgressKeepsPersistedSnapshotAndCachedRuntimeUntilBoundary()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"[UIMessage(id=7723cc85-4340-4d48-81d1-34a939ea9ebc, role=USER, parts=[Text(text=Create a small app, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:03.082280, finishedAt=null, modelId=null, usage=null, translation=null), UIMessage(id=5f3584d6-2c14-43bf-bc41-8ad5699e479c, role=ASSISTANT, parts=[Text(text=AB, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:03.097138, finishedAt=null, modelId=3a2322cf-8e5f-484e-801f-d3ecf34fece1, usage=null, translation=null)]\") is not equal to (\"[UIMessage(id=7723cc85-4340-4d48-81d1-34a939ea9ebc, role=USER, parts=[Text(text=Create a small app, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:03.082280, finishedAt=null, modelId=null, usage=null, translation=null), UIMessage(id=87101545-f000-4c38-a165-2cea7ffbd7fd, role=ASSISTANT, parts=[Text(text=ABCDEF, metadata=null), Reasoning(reasoning=Reasoning before disconnect, createdAt=1970-01-01T00:00:00Z, finishedAt=null, metadata=null), Tool(toolCallId=replay-tool, toolName=tools_list, input={}, output=[], approvalState=Auto, streamIndex=null, metadata=null)], annotations=[], createdAt=2026-10-18T09:38:03.097086, finishedAt=null, modelId=3a2322cf-8e5f-484e-801f-d3ecf34fece1, usage=null, translation=null)]\") - Replaying a valid earlier event cannot replace a more complete partial",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 13,
+      "testIdentifierString" : "IOSChatDetachedResponseTerminalTests/testShorterReplayPreservesEarlierPartsAndIdentityForFailure()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDetachedResponseTerminalTests/testShorterReplayPreservesEarlierPartsAndIdentityForFailure",
+      "testName" : "testShorterReplayPreservesEarlierPartsAndIdentityForFailure()"
+    },
+    {
+      "failureText" : "XCTUnwrap failed: expected non-nil value of type \"SharedUIMessage\"",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 21,
+      "testIdentifierString" : "IOSChatDurableOwnershipTests/testTransferredResponsePrefixSurvivesNextProviderFailureAndTerminalSave()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDurableOwnershipTests/testTransferredResponsePrefixSurvivesNextProviderFailureAndTerminalSave",
+      "testName" : "testTransferredResponsePrefixSurvivesNextProviderFailureAndTerminalSave()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed - Search result button appears did not settle",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 121,
+      "testIdentifierString" : "SearchNavigationTests/testUnreadableSearchResultKeepsCurrentConversationAndShowsFailure()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/SearchNavigationTests/testUnreadableSearchResultKeepsCurrentConversationAndShowsFailure",
+      "testName" : "testUnreadableSearchResultKeepsCurrentConversationAndShowsFailure()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "25% of failures",
+      "text" : "2 runs of 2 tests failed with failed: caught error: \"InvalidTransition { "
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "25% of failures",
+      "text" : "2 runs of 2 tests failed with XCTUnwrap failed: expected non-nil value of type \"SharedUIMessage\""
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "25% of failures",
+      "text" : "2 runs of 2 tests failed with XCTAssertTrue failed - Search result button appears did not settle"
+    }
+  ],
+  "totalTestCount" : 121
+}

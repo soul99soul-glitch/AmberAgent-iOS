@@ -1,0 +1,16 @@
+{
+  "original_expected_in_standalone": 1022,
+  "main_only_original_ids": [
+    "NovelAmberSettingsPresentationTests/testDisabledOrMismatchedProviderDoesNotPresentItsFixedModelAsAvailable",
+    "NovelAmberSettingsPresentationTests/testModelSelectionResolvesStableOwnerWithoutChangingGlobalChatModel"
+  ],
+  "main_only_evidence": "Both passed in phase4-main-r3.xcresult; standalone Novel intentionally excludes Amber Settings bridge",
+  "missing": [],
+  "duplicates": [],
+  "original_results": {
+    "Passed": 1019,
+    "Skipped": 3
+  },
+  "all_cases": 1048,
+  "xcresult": "/tmp/amber-phase4-novel-tests-r4.xcresult"
+}

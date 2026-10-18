@@ -1,0 +1,19 @@
+{
+  "run": "final-accepted-main",
+  "status": "Original performance case passed in completed second whole run; that whole run failed only KeepAlive fixture.",
+  "samples": 74,
+  "p95Milliseconds": 37.61,
+  "maximumMilliseconds": 73.27,
+  "over50Milliseconds": 2,
+  "thresholdP95Milliseconds": 40,
+  "thresholdMaximumMilliseconds": 80,
+  "tableSourceSha256": "4a5902ac98f925b8c3e77ba9b4e35e481fed8d2809e767f840568362f99ac0ca",
+  "performanceTestSha256": "ee02c871f87bf8fdac78489f3240cec34dcca8523a743ec1ff2bcd26bef7839e",
+  "evidence": [
+    "[PERF-HITCH] growingTable samples=74 p95=37.61ms max=73.27ms over50ms=2",
+    "Test Case '-[iosAppTests.ChatNativeTimelineReplayPerformanceTests testPerfGrowingTableStreamingKeepsDisplayLinkResponsive]' passed (3.633 seconds).",
+    "[PERF-HITCH] growingTable samples=74 p95=37.61ms max=73.27ms over50ms=2",
+    "Test Case '-[iosAppTests.ChatNativeTimelineReplayPerformanceTests testPerfGrowingTableStreamingKeepsDisplayLinkResponsive]' passed (3.633 seconds)."
+  ],
+  "fullRunSummary": "main-integration-second-summary.json"
+}

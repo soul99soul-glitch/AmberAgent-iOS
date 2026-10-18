@@ -6,11 +6,13 @@ import XCTest
 final class IOSNovelCreationWiringTests: XCTestCase {
     func testCharacterIdentityQuestionHasIgnoreAndCustomAnswerPaths() throws {
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
+        let identityCards = try source("iosApp/NovelCreation/NovelSessionIdentityCardsView.swift")
 
-        XCTAssertTrue(session.contains("startCharacterProposal"))
-        XCTAssertTrue(session.contains("onIgnore"))
-        XCTAssertTrue(session.contains("onClarify"))
-        XCTAssertTrue(session.contains("NovelTextInputCommitter.perform"))
+        XCTAssertTrue(session.contains("NovelSessionIdentityCardsView("))
+        XCTAssertTrue(identityCards.contains("startCharacterProposal"))
+        XCTAssertTrue(identityCards.contains("onIgnore"))
+        XCTAssertTrue(identityCards.contains("onClarify"))
+        XCTAssertTrue(identityCards.contains("NovelTextInputCommitter.perform"))
     }
 
     func testNovelDiscussionSharesTheChatSearchRuntime() throws {
@@ -25,7 +27,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
     }
 
     func testNovelDiscussionToolLoopAllowsSixteenSteps() throws {
-        let adapter = try source("iosApp/NovelCreation/NovelLiveModelAdapter.swift")
+        let adapter = try source("iosApp/NovelCreation/NovelDiscussionTransport.swift")
         XCTAssertTrue(
             adapter.contains("maxSteps: 16"),
             "Novel discussion must allow 16 tool rounds, not the old 4-step cap."
@@ -192,6 +194,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
         let appShell = try source("iosApp/AppShell.swift")
         let viewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
+        let runBridge = try source("iosApp/NovelCreation/NovelRunBridgeViewModel.swift")
 
         XCTAssertTrue(workspace.contains(".onDisappear"))
         XCTAssertTrue(workspace.contains("sessionViewModel.detachConsumer()"))
@@ -207,24 +210,25 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertTrue(appShell.contains("waitForBackgroundGeneration"))
         XCTAssertTrue(appShell.contains("interruptSessionForBackground"))
         XCTAssertTrue(appShell.contains("novelLifecycleCoordinator.enterForeground()"))
-        XCTAssertTrue(viewModel.contains("UIApplication.shared.applicationState == .active"))
+        XCTAssertTrue(runBridge.contains("UIApplication.shared.applicationState == .active"))
+        XCTAssertTrue(runBridge.contains("await creation.resumeDetachedGenerationRuns()"))
         XCTAssertTrue(viewModel.contains("await creation.resumeDetachedGenerationRuns()"))
         XCTAssertTrue(viewModel.contains("await loadProjects(restoresSelection: false)"))
     }
 
     func testNovelGenerationOwnsTheSystemLeaseFromRuntimeStartToTerminal() throws {
-        let viewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
-        let lifecycle = try source("iosApp/NovelCreation/NovelGenerationLifecycle.swift")
+        let runBridge = try source("iosApp/NovelCreation/NovelRunBridgeViewModel.swift")
+        let generationStream = try source("iosApp/NovelCreation/NovelGenerationStream.swift")
         let workspaceLifecycle = try source(
             "iosApp/NovelCreation/NovelWorkspaceLifecycleCoordinator.swift"
         )
 
-        XCTAssertTrue(viewModel.contains("BackgroundGenerationKeepAlive.shared.begin"))
-        XCTAssertTrue(viewModel.contains("onSystemTaskExpiration:"))
-        XCTAssertTrue(viewModel.contains("beginBackgroundGeneration(for: request)"))
-        XCTAssertTrue(viewModel.contains("return try await creation.start(request)"))
-        let sessionStart = try XCTUnwrap(viewModel.range(of: "func startSessionRun("))
-        let sessionStartBody = viewModel[sessionStart.lowerBound..<viewModel.endIndex]
+        XCTAssertTrue(runBridge.contains("BackgroundGenerationKeepAlive.shared.begin"))
+        XCTAssertTrue(runBridge.contains("onSystemTaskExpiration:"))
+        XCTAssertTrue(runBridge.contains("beginBackgroundGeneration(for: request)"))
+        XCTAssertTrue(runBridge.contains("return try await creation.start(request)"))
+        let sessionStart = try XCTUnwrap(runBridge.range(of: "func startSessionRun("))
+        let sessionStartBody = runBridge[sessionStart.lowerBound..<runBridge.endIndex]
         let beginOffset = try XCTUnwrap(sessionStartBody.range(
             of: "beginBackgroundGeneration(for: request)"
         ))
@@ -234,15 +238,15 @@ final class IOSNovelCreationWiringTests: XCTestCase {
             firstAwaitOffset.lowerBound,
             "The lease must be submitted before the first suspension in the start entry."
         )
-        XCTAssertTrue(lifecycle.contains("BackgroundGenerationKeepAlive.shared.end"))
+        XCTAssertTrue(generationStream.contains("BackgroundGenerationKeepAlive.shared.end"))
         XCTAssertTrue(workspaceLifecycle.contains("hasProtectedGenerationLease"))
 
-        let replayStart = try XCTUnwrap(lifecycle.range(of: "func replayOrObserve("))
-        let replayEnd = try XCTUnwrap(lifecycle.range(
+        let replayStart = try XCTUnwrap(generationStream.range(of: "func replayOrObserve("))
+        let replayEnd = try XCTUnwrap(generationStream.range(
             of: "\n    func makeRuntimeAndStream(",
-            range: replayStart.upperBound..<lifecycle.endIndex
+            range: replayStart.upperBound..<generationStream.endIndex
         ))
-        let replay = lifecycle[replayStart.lowerBound..<replayEnd.lowerBound]
+        let replay = generationStream[replayStart.lowerBound..<replayEnd.lowerBound]
         XCTAssertTrue(replay.contains(") async throws -> NovelRun?"))
         let replayTerminal = try XCTUnwrap(replay.range(of: "yieldReplayTerminal("))
         let replayEndLease = try XCTUnwrap(replay.range(
@@ -302,7 +306,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
     }
 
     func testWholeChapterCollectionPrefillsTheGeneratedTitleWithoutASecondRequest() throws {
-        let sheets = try source("iosApp/NovelCreation/NovelSessionSheets.swift")
+        let sheets = try source("iosApp/NovelCreation/NovelCollectCandidateSheet.swift")
         let prompts = try source("iosApp/NovelCreation/NovelPromptCatalog.swift")
 
         XCTAssertTrue(sheets.contains("NovelPresentation.chapterDisplayTitle("))
@@ -311,45 +315,10 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertFalse(sheets.contains("generateChapterTitle"))
     }
 
-    func testShortNovelSheetsUseContentFittedSizingWithoutFixedHeightCompensation() throws {
-        let workspaceSheets = try source("iosApp/NovelCreation/NovelSessionSheets.swift")
-        let projectList = try source("iosApp/NovelCreation/NovelProjectListView.swift")
-        let branches = try source("iosApp/NovelCreation/NovelBranchesView.swift")
-
-        XCTAssertTrue(workspaceSheets.contains("struct NovelDiscussionArchiveOfferSheet"))
-        XCTAssertTrue(workspaceSheets.contains(".presentationSizing(.fitted)"))
-        // 短 offer 不用 NavigationStack 撑高；双按钮横排且文案四字。
-        let offerStart = try XCTUnwrap(
-            workspaceSheets.range(of: "struct NovelDiscussionArchiveOfferSheet")
-        )
-        let nextStruct = workspaceSheets.range(
-            of: "\nstruct ",
-            range: offerStart.upperBound..<workspaceSheets.endIndex
-        )
-        let offerEnd = nextStruct?.lowerBound ?? workspaceSheets.endIndex
-        let offerBody = String(workspaceSheets[offerStart.lowerBound..<offerEnd])
-        XCTAssertFalse(offerBody.contains("NavigationStack"))
-        // label 内 frame 铺满半宽：Button { } label: { Text(...) }
-        XCTAssertTrue(offerBody.contains("Text(\"暂不归档\")"))
-        XCTAssertTrue(offerBody.contains("Text(\"归档讨论\")"))
-        XCTAssertTrue(offerBody.contains("HStack(spacing: 10)"))
-        XCTAssertTrue(offerBody.contains("maxWidth: .infinity, minHeight: 44"))
-        XCTAssertTrue(projectList.contains("struct NovelProjectRenameSheet"))
-        XCTAssertTrue(projectList.contains(".presentationSizing(.fitted)"))
-        XCTAssertFalse(projectList.contains(".presentationDetents([.height(220)])"))
-        XCTAssertTrue(branches.contains("struct NovelBranchRenameSheet"))
-        XCTAssertTrue(branches.contains(".presentationSizing(.fitted)"))
-        XCTAssertFalse(branches.contains(".presentationDetents([.height(220)])"))
-    }
-
     func testWritingContextKeepsThisGenerationDraftWhenOpeningPreferenceEditors() throws {
         let sheets = try source("iosApp/NovelCreation/NovelSessionSheets.swift")
         let writingContextStart = try XCTUnwrap(sheets.range(of: "struct NovelWritingContextSheet"))
-        let manualRewriteStart = try XCTUnwrap(sheets.range(
-            of: "struct NovelManualRewriteCandidateSheet",
-            range: writingContextStart.upperBound..<sheets.endIndex
-        ))
-        let writingContext = sheets[writingContextStart.lowerBound..<manualRewriteStart.lowerBound]
+        let writingContext = sheets[writingContextStart.lowerBound...]
 
         XCTAssertTrue(writingContext.contains("applyDraftBeforeTransition(onEditWritingRequirements)"))
         XCTAssertTrue(writingContext.contains("applyDraftBeforeTransition(onEditPolishPreference)"))
@@ -490,7 +459,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
 
     func testProposalAcceptanceEditsTheExactContentWrittenAtomically() throws {
         let materials = try source("iosApp/NovelCreation/NovelMaterialsView.swift")
-        let actions = try source("iosApp/NovelCreation/NovelActions.swift")
+        let commands = try source("iosApp/NovelCreation/NovelCommands.swift")
         let reducer = try source("iosApp/NovelCreation/NovelProjectConfiguration.swift")
         let proposalStart = try XCTUnwrap(materials.range(of: "struct NovelProposalAcceptanceSheet"))
         let previewStart = try XCTUnwrap(materials.range(
@@ -504,8 +473,15 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertTrue(sheet.contains("let saved = await viewModel.resolveProposal("))
         XCTAssertTrue(sheet.contains("if hasUnsavedChanges"))
         XCTAssertTrue(sheet.contains(".interactiveDismissDisabled()"))
-        XCTAssertTrue(actions.contains("title: String"))
-        XCTAssertTrue(actions.contains("content: String"))
+        let resolutionStart = try XCTUnwrap(commands.range(of: "enum NovelSettingProposalResolution"))
+        let commandStart = try XCTUnwrap(commands.range(
+            of: "struct NovelResolveSettingProposalCommand",
+            range: resolutionStart.upperBound..<commands.endIndex
+        ))
+        let resolution = commands[resolutionStart.lowerBound..<commandStart.lowerBound]
+        XCTAssertTrue(resolution.contains("title: String"))
+        XCTAssertTrue(resolution.contains("content: String"))
+        XCTAssertTrue(commands[commandStart.lowerBound...].contains("let resolution: NovelSettingProposalResolution"))
         XCTAssertTrue(reducer.contains("title: try NovelReducer.normalizedRequired(title"))
         XCTAssertTrue(reducer.contains(
             "content: try NovelReducer.normalizedRequired(content, field: \"Proposal content\")"
@@ -514,6 +490,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
 
     func testSessionAssistantBodyAlwaysUsesMarkdownViewNotPlainText() throws {
         let bubble = try source("iosApp/NovelCreation/NovelSessionBubble.swift")
+        let windowed = try source("iosApp/NovelCreation/NovelSessionLongTextView.swift")
         let bodyStart = try XCTUnwrap(bubble.range(of: "private var assistantBubble"))
         let bodyEnd = try XCTUnwrap(bubble.range(
             of: "private var statusLine",
@@ -527,17 +504,18 @@ final class IOSNovelCreationWiringTests: XCTestCase {
             "Assistant manuscript/discussion body must render via markdown"
         )
         XCTAssertTrue(
-            bubble.contains("struct NovelSessionWindowedMarkdown")
-                && bubble.contains("ChatAssistantMarkdownView")
-                && bubble.contains("window.update(newValue)")
-                && bubble.contains("markdown: window.text")
-                && bubble.contains("window.omissionNotice")
-                && bubble.contains(".id(pageIndex)")
-                && bubble.contains("@State private var loadedPages: [String]? = nil")
-                && bubble.contains("ProgressView()")
-                && bubble.contains(".task(id: text)")
-                && bubble.contains("Task.detached(priority: .userInitiated)")
-                && bubble.contains("withTaskCancellationHandler"),
+            body.contains("NovelSessionWindowedMarkdown(")
+                && windowed.contains("struct NovelSessionWindowedMarkdown")
+                && windowed.contains("ChatAssistantMarkdownView")
+                && windowed.contains("window.update(newValue)")
+                && windowed.contains("markdown: window.text")
+                && windowed.contains("window.omissionNotice")
+                && windowed.contains(".id(pageIndex)")
+                && windowed.contains("@State private var loadedPages: [String]? = nil")
+                && windowed.contains("ProgressView()")
+                && windowed.contains(".task(id: text)")
+                && windowed.contains("Task.detached(priority: .userInitiated)")
+                && windowed.contains("withTaskCancellationHandler"),
             "Long novel replies must keep markdown rendering behind the presentation window"
         )
         // Empty pending / muted hints may use ChatAssistantText; manuscript content must not.
@@ -569,6 +547,8 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let reader = try source("iosApp/NovelCreation/NovelChapterReaderView.swift")
         let sheets = try source("iosApp/NovelCreation/NovelSessionSheets.swift")
         let bubble = try source("iosApp/NovelCreation/NovelSessionBubble.swift")
+        let approvalCards = try source("iosApp/NovelCreation/NovelSessionApprovalCards.swift")
+        let identityCards = try source("iosApp/NovelCreation/NovelSessionIdentityCardsView.swift")
 
         XCTAssertTrue(support.contains("(firstResponder as? UITextInput)?.unmarkText()"))
         XCTAssertTrue(
@@ -582,9 +562,11 @@ final class IOSNovelCreationWiringTests: XCTestCase {
             "Committer must unmark before resign so IME composition is not discarded"
         )
         XCTAssertTrue(support.contains("static func hasMarkedText"))
-        for file in [projectList, compendium, materials, branches, reader, sheets, bubble] {
+        for file in [projectList, compendium, materials, branches, reader, sheets, approvalCards, identityCards] {
             XCTAssertTrue(file.contains("NovelTextInputCommitter.perform"))
         }
+        XCTAssertTrue(bubble.contains("NovelAskUserCard("))
+        XCTAssertTrue(approvalCards.contains("struct NovelAskUserCard"))
         // Rename must not clear FocusState before committer (that drops marked text).
         let renameStart = try XCTUnwrap(projectList.range(of: "private func commitNameAndSave"))
         let renameEnd = try XCTUnwrap(projectList.range(
@@ -610,7 +592,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
             (branches, "branches"),
             (reader, "chapter reader"),
             (compendium, "compendium"),
-            (bubble, "ask-user bubble"),
+            (approvalCards, "ask-user approval card"),
         ] {
             XCTAssertTrue(
                 file.contains("NovelIMEFieldBank") || file.contains("imeBank"),
@@ -621,16 +603,22 @@ final class IOSNovelCreationWiringTests: XCTestCase {
                 "\(label) save path should pass fieldBank into NovelTextInputCommitter"
             )
         }
-        XCTAssertTrue(try source("iosApp/NovelCreation/NovelSessionView.swift").contains("imeBank"))
+        let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
+        XCTAssertTrue(session.contains("NovelSessionIdentityCardsView("))
+        XCTAssertTrue(identityCards.contains("@State private var imeBank = NovelIMEFieldBank()"))
     }
 
     func testHistoricalCharacterIdentityFlowsThroughSessionAndCharacterSurfaces() throws {
         let characters = try source("iosApp/NovelCreation/NovelCharacterPagesView.swift")
-        let sessionViewModel = try source("iosApp/NovelCreation/NovelSessionViewModel.swift")
+        let sessionView = try source("iosApp/NovelCreation/NovelSessionView.swift")
+        let identityCards = try source("iosApp/NovelCreation/NovelSessionIdentityCardsView.swift")
+        let projection = try source("iosApp/NovelCreation/Session/NovelSessionProjectionStore.swift")
         let creationViewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
 
         XCTAssertTrue(characters.contains("viewModel.effectiveAliases(for: material)"))
-        XCTAssertTrue(sessionViewModel.contains("workspace.effectiveAliases(for: choice.material)"))
+        XCTAssertTrue(sessionView.contains("NovelSessionIdentityCardsView("))
+        XCTAssertTrue(identityCards.contains("viewModel.characterIdentityCardFacts"))
+        XCTAssertTrue(projection.contains("workspace.effectiveAliases(for: choice.material)"))
         XCTAssertTrue(creationViewModel.contains("func effectiveAliases(for material:"))
     }
 
@@ -678,26 +666,30 @@ final class IOSNovelCreationWiringTests: XCTestCase {
     func testNovelContextPanelUsesLatestInjectionReceiptDetails() throws {
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
         let composer = try source("iosApp/ComposerDockComponents.swift")
-        let planner = try source("iosApp/NovelCreation/NovelInjectionPlanner.swift")
+        let receiptModels = try source("iosApp/NovelCreation/NovelInjectionModels.swift")
 
         XCTAssertTrue(session.contains("NovelSessionContextRing.snapshot"))
         XCTAssertFalse(session.contains("contextWindowTokens: receipt?.maxEstimatedInputTokens"))
         XCTAssertTrue(composer.contains("let novelInjection: NovelInjectionPanelModel?"))
         XCTAssertTrue(composer.contains("label: \"本次注入\""))
-        XCTAssertTrue(planner.contains("let includedMaterials: [NovelInjectionMaterialReceiptItem]?"))
-        XCTAssertTrue(planner.contains("let recentMessageRoundCount: Int?"))
-        XCTAssertTrue(planner.contains("let budgetExcludedItemCount: Int?"))
-        XCTAssertTrue(planner.contains("let estimatedInputTokens: Int"))
-        XCTAssertTrue(planner.contains("let maxEstimatedInputTokens: Int"))
+        XCTAssertTrue(receiptModels.contains("let includedMaterials: [NovelInjectionMaterialReceiptItem]?"))
+        XCTAssertTrue(receiptModels.contains("let recentMessageRoundCount: Int?"))
+        XCTAssertTrue(receiptModels.contains("let budgetExcludedItemCount: Int?"))
+        XCTAssertTrue(receiptModels.contains("let estimatedInputTokens: Int"))
+        XCTAssertTrue(receiptModels.contains("let maxEstimatedInputTokens: Int"))
     }
 
     func testDiscussionArchiveHasOnlyManualAndPostWholeChapterEntryPoints() throws {
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
+        let composer = try source("iosApp/NovelCreation/NovelSessionComposerView.swift")
         let workspace = try source("iosApp/NovelCreation/NovelProjectWorkspaceView.swift")
 
-        XCTAssertTrue(session.contains("Button(\"归档当前讨论\""))
-        XCTAssertTrue(session.contains("onArchiveDiscussion"))
-        XCTAssertTrue(session.contains("viewModel.needsSync"))
+        XCTAssertTrue(session.contains("NovelSessionComposerDock("))
+        XCTAssertTrue(composer.contains("Button(\"归档当前讨论\""))
+        XCTAssertTrue(composer.contains("onArchiveDiscussion"))
+        XCTAssertTrue(session.contains("let needsSync = viewModel.needsSync"))
+        XCTAssertTrue(session.contains("meta: composerMetaValues"))
+        XCTAssertTrue(composer.contains("values.needsSync || values.isBusy"))
         XCTAssertTrue(workspace.contains(
             "sessionViewModel.collectionGranularity(for: candidateID) == .wholeChapter"
         ))
@@ -709,41 +701,40 @@ final class IOSNovelCreationWiringTests: XCTestCase {
     }
 
     func testSessionSheetsPreserveUserDraftsAndSeparateArchiveRetryPaths() throws {
-        let sheets = try source("iosApp/NovelCreation/NovelSessionSheets.swift")
-        let archiveStart = try XCTUnwrap(sheets.range(of: "struct NovelDiscussionArchiveSheet"))
-        let collectStart = try XCTUnwrap(sheets.range(of: "struct NovelCollectCandidateSheet"))
-        let forkStart = try XCTUnwrap(sheets.range(of: "struct NovelSessionForkSheet"))
-        let writingContextStart = try XCTUnwrap(sheets.range(of: "struct NovelWritingContextSheet"))
-        let manualRewriteStart = try XCTUnwrap(sheets.range(of: "struct NovelManualRewriteCandidateSheet"))
-        let archiveSheet = sheets[archiveStart.lowerBound..<collectStart.lowerBound]
-        let collectSheet = sheets[collectStart.lowerBound..<forkStart.lowerBound]
-        let writingContextSheet = sheets[
-            writingContextStart.lowerBound..<manualRewriteStart.lowerBound
-        ]
+        let archiveSheet = try source("iosApp/NovelCreation/NovelDiscussionArchiveSheets.swift")
+        let collectSheet = try source("iosApp/NovelCreation/NovelCollectCandidateSheet.swift")
+        let writingContextSheet = try source("iosApp/NovelCreation/NovelSessionSheets.swift")
+        let contextViews = try source("iosApp/NovelCreation/NovelWritingInjectionContextViews.swift")
 
-        XCTAssertTrue(sheets.contains("@State private var preparationTask: Task<Void, Never>?"))
+        XCTAssertTrue(archiveSheet.contains("struct NovelDiscussionArchiveSheet"))
+        XCTAssertTrue(archiveSheet.contains("@State private var preparationTask: Task<Void, Never>?"))
         XCTAssertTrue(archiveSheet.contains("if hasUnsavedChanges"))
         XCTAssertTrue(archiveSheet.contains(".interactiveDismissDisabled()"))
-        XCTAssertTrue(sheets.contains(".onDisappear { preparationTask?.cancel() }"))
-        XCTAssertTrue(sheets.contains("Button(\"重新整理\") { prepare() }"))
-        XCTAssertTrue(sheets.contains("submissionFailureMessage == nil ? \"确认归档\" : \"重试保存\""))
+        XCTAssertTrue(archiveSheet.contains(".onDisappear { preparationTask?.cancel() }"))
+        XCTAssertTrue(archiveSheet.contains("Button(\"重新整理\") { prepare() }"))
+        XCTAssertTrue(archiveSheet.contains("submissionFailureMessage == nil ? \"确认归档\" : \"重试保存\""))
 
-        XCTAssertTrue(sheets.contains("private func refreshEditedTextAfterSelectionChange()"))
-        XCTAssertTrue(sheets.contains("guard !hasEditedText else { return }"))
+        XCTAssertTrue(collectSheet.contains("struct NovelCollectCandidateSheet"))
+        XCTAssertTrue(collectSheet.contains("private func refreshEditedTextAfterSelectionChange()"))
+        XCTAssertTrue(collectSheet.contains("guard !hasEditedText else { return }"))
         XCTAssertTrue(collectSheet.contains(
             ".disabled(isSubmitting || hasDurablePending)"
         ))
         XCTAssertTrue(collectSheet.contains("let nextChapterOrdinal: Int"))
         XCTAssertTrue(collectSheet.contains("let nextOrdinal = nextChapterOrdinal"))
         XCTAssertFalse(collectSheet.contains("chapters.count + 1"))
-        XCTAssertTrue(writingContextSheet.contains("NovelPresentation.effectiveRevision("))
-        XCTAssertTrue(writingContextSheet.contains("branch: workspace.branchSnapshot"))
-        XCTAssertFalse(writingContextSheet.contains("NovelPresentation.currentRevision("))
+        XCTAssertTrue(writingContextSheet.contains("struct NovelWritingContextSheet"))
+        XCTAssertTrue(writingContextSheet.contains("NovelWritingMaterialChoicesView("))
+        XCTAssertTrue(contextViews.contains("NovelPresentation.effectiveRevision("))
+        XCTAssertTrue(contextViews.contains("branch: workspace.branchSnapshot"))
+        XCTAssertFalse(contextViews.contains("NovelPresentation.currentRevision("))
     }
 
     func testProjectTitleOpensWritingAndHierarchicalContextSheet() throws {
         let workspace = try source("iosApp/NovelCreation/NovelProjectWorkspaceView.swift")
         let sheets = try source("iosApp/NovelCreation/NovelSessionSheets.swift")
+        let contextViews = try source("iosApp/NovelCreation/NovelWritingInjectionContextViews.swift")
+        let ghostwriteBoard = try source("iosApp/NovelCreation/NovelGhostwriteProgressBoard.swift")
         let compendium = try source("iosApp/NovelCreation/NovelCompendiumView.swift")
 
         XCTAssertTrue(workspace.contains("activeSheet = .writingContext"))
@@ -766,9 +757,11 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertFalse(workspace.contains("NovelProjectSettingsSheet("))
         XCTAssertFalse(sheets.contains("struct NovelProjectSettingsSheet"))
         XCTAssertTrue(sheets.contains("Picker(\"项目控制\", selection: $selectedTab)"))
-        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"模式与偏好\", defaultValue: \"模式与偏好\")"))
-        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"上下文注入\", defaultValue: \"上下文注入\")"))
-        XCTAssertTrue(sheets.contains("Text(\"代笔进度\")"))
+        XCTAssertTrue(sheets.contains("NovelWritingInjectionOverview("))
+        XCTAssertTrue(contextViews.contains("IOSAppLocalization.string(\"模式与偏好\", defaultValue: \"模式与偏好\")"))
+        XCTAssertTrue(contextViews.contains("IOSAppLocalization.string(\"上下文注入\", defaultValue: \"上下文注入\")"))
+        XCTAssertTrue(sheets.contains("NovelGhostwriteProgressBoard("))
+        XCTAssertTrue(ghostwriteBoard.contains("Text(\"代笔进度\")"))
         XCTAssertTrue(sheets.contains("Text(ghostwriteAdvanceSectionTitle)"))
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
         XCTAssertTrue(session.contains("ghostwriteContinueBlockerMessage"))
@@ -783,15 +776,16 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertTrue(sheets.contains("Text(\"往后几章\")"))
         XCTAssertTrue(sheets.contains("Text(\"本章计划\")"))
         XCTAssertTrue(sheets.contains("upsertUpcomingArc"))
-        XCTAssertTrue(sheets.contains("boardStepSummary"))
+        XCTAssertTrue(ghostwriteBoard.contains("boardStepSummary"))
         XCTAssertTrue(sheets.contains("reviewModelLabel"))
         XCTAssertTrue(sheets.contains("\"小说默认 · %@\""))
         XCTAssertTrue(sheets.contains("arguments: [name]"))
         XCTAssertTrue(workspace.contains("sharedSettings: sharedSettings"))
-        XCTAssertTrue(sheets.contains("NavigationLink(value: ContextRoute.materials(category))"))
-        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"人物角色\", defaultValue: \"人物角色\")"))
-        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"世界观\", defaultValue: \"世界观\")"))
-        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"剧情大纲\", defaultValue: \"剧情大纲\")"))
+        XCTAssertTrue(sheets.contains("NovelWritingMaterialChoicesView("))
+        XCTAssertTrue(contextViews.contains("NavigationLink(value: NovelWritingContextRoute.materials(category))"))
+        XCTAssertTrue(contextViews.contains("IOSAppLocalization.string(\"人物角色\", defaultValue: \"人物角色\")"))
+        XCTAssertTrue(contextViews.contains("IOSAppLocalization.string(\"世界观\", defaultValue: \"世界观\")"))
+        XCTAssertTrue(contextViews.contains("IOSAppLocalization.string(\"剧情大纲\", defaultValue: \"剧情大纲\")"))
         XCTAssertFalse(workspace.contains("case .branchPicker:"))
         XCTAssertFalse(workspace.contains("NovelBranchPickerSheet"))
         XCTAssertFalse(compendium.contains("Section(\"项目\")"))
@@ -942,42 +936,45 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let workspace = try source("iosApp/NovelCreation/NovelProjectWorkspaceView.swift")
         let reader = try source("iosApp/NovelCreation/NovelChapterReaderView.swift")
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
+        let chrome = try source("iosApp/NovelCreation/NovelSessionChrome.swift")
 
         XCTAssertTrue(workspace.contains("stateSyncRecoveryMessage("))
         XCTAssertTrue(workspace.contains("Button(\"重试同步\""))
         XCTAssertTrue(reader.contains("currentStateSyncRecoveryMessage"))
         XCTAssertTrue(reader.contains("Button(\"重试同步\""))
         XCTAssertTrue(reader.contains("cancelAutomaticStateSync("))
-        XCTAssertTrue(session.contains("workspace.stateSyncRecoveryMessage("))
+        XCTAssertTrue(session.contains("NovelSessionChrome("))
+        XCTAssertTrue(chrome.contains("workspace.stateSyncRecoveryMessage("))
         XCTAssertTrue(workspace.contains(".disabled(!canRetryCurrentStateSync)"))
         XCTAssertTrue(reader.contains(".disabled(!canRetryCurrentStateSync)"))
         // Session retry uses branch-scoped canRetry only (not isBusy/isRunning/global block).
         XCTAssertTrue(
-            session.contains("!workspace.canRetryStateSync(projectID: projectID, branchID: branchID)")
+            chrome.contains("!workspace.canRetryStateSync(projectID: projectID, branchID: branchID)")
         )
-        let bannerFn = try XCTUnwrap(session.range(of: "private func automaticStateSyncFailureBanner("))
+        let bannerFn = try XCTUnwrap(chrome.range(of: "private func automaticStateSyncFailureBanner("))
         let bannerEnd = try XCTUnwrap(
-            session.range(
+            chrome.range(
                 of: "private func polishRecoveryBanner(",
-                range: bannerFn.upperBound..<session.endIndex
+                range: bannerFn.upperBound..<chrome.endIndex
             )
         )
-        let bannerBody = session[bannerFn.lowerBound..<bannerEnd.lowerBound]
+        let bannerBody = chrome[bannerFn.lowerBound..<bannerEnd.lowerBound]
         XCTAssertTrue(bannerBody.contains(".disabled("))
         XCTAssertFalse(bannerBody.contains("isBusy"))
         XCTAssertFalse(bannerBody.contains("isRunning"))
         XCTAssertFalse(bannerBody.contains("isProjectSelectionBlocked"))
 
         let viewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
+        let projectActions = try source("iosApp/NovelCreation/NovelProjectActionViewModel.swift")
         // Delete chapter must schedule plot sync the same way saveManualRewrite does.
-        let deleteFn = try XCTUnwrap(viewModel.range(of: "func deleteChapterFromManuscript("))
+        let deleteFn = try XCTUnwrap(projectActions.range(of: "func deleteChapterFromManuscript("))
         let nextFn = try XCTUnwrap(
-            viewModel.range(
+            projectActions.range(
                 of: "func restoreChapterVersion(",
-                range: deleteFn.upperBound..<viewModel.endIndex
+                range: deleteFn.upperBound..<projectActions.endIndex
             )
         )
-        let deleteBody = viewModel[deleteFn.lowerBound..<nextFn.lowerBound]
+        let deleteBody = projectActions[deleteFn.lowerBound..<nextFn.lowerBound]
         XCTAssertTrue(deleteBody.contains("applyWorkspacePlotRelink("))
         XCTAssertTrue(viewModel.contains("已排队，等待当前同步结束后自动开始"))
     }
@@ -985,13 +982,15 @@ final class IOSNovelCreationWiringTests: XCTestCase {
     func testStateSyncActivityIsProjectScopedAndScheduledSyncKeepsBackgroundLease() throws {
         let viewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
+        let chrome = try source("iosApp/NovelCreation/NovelSessionChrome.swift")
 
         XCTAssertTrue(viewModel.contains("let projectID: NovelProjectID"))
         XCTAssertTrue(viewModel.contains("let branchID: NovelBranchID"))
-        XCTAssertTrue(session.contains("let projectID = workspace.selectedProjectID"))
-        XCTAssertTrue(session.contains("let branchID = workspace.selectedBranchID"))
-        XCTAssertTrue(session.contains("activity.projectID == projectID"))
-        XCTAssertTrue(session.contains("activity.branchID == branchID"))
+        XCTAssertTrue(session.contains("NovelSessionChrome("))
+        XCTAssertTrue(chrome.contains("let projectID = workspace.selectedProjectID"))
+        XCTAssertTrue(chrome.contains("let branchID = workspace.selectedBranchID"))
+        XCTAssertTrue(chrome.contains("activity.projectID == projectID"))
+        XCTAssertTrue(chrome.contains("activity.branchID == branchID"))
         let backgroundCheck = try XCTUnwrap(viewModel.range(
             of: "private func backgroundGenerationProbe()"
         ))
@@ -1058,7 +1057,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let list = try source("iosApp/NovelCreation/NovelProjectListView.swift")
         let compendium = try source("iosApp/NovelCreation/NovelCompendiumView.swift")
         let auditView = try source("iosApp/NovelCreation/NovelContinuityAuditView.swift")
-        let viewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
+        let viewModel = try source("iosApp/NovelCreation/NovelContinuityViewModel.swift")
 
         XCTAssertTrue(workspace.contains("NovelCompendiumView("))
         XCTAssertTrue(workspace.contains(

@@ -1,0 +1,11 @@
+{
+  "expected": 199,
+  "executed_once": 199,
+  "missing": [],
+  "duplicates": {},
+  "nonpassing": [],
+  "result_bundles": [
+    "/tmp/amber-phase2-integration-retry.xcresult",
+    "/tmp/amber-phase2-jev-discovery.xcresult"
+  ]
+}

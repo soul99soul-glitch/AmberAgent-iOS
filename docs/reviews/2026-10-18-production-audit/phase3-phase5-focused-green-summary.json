@@ -1,0 +1,69 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "B3C3F24B-7D39-4695-86BB-588EEC6469A4",
+        "deviceName" : "Amber Audit 20261018",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 2,
+      "passedTests" : 302,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "iosApp · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 2,
+  "finishTime" : 1792288788.454,
+  "passedTests" : 302,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1792288725.686,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertFalse failed",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 70,
+      "testIdentifierString" : "IOSChatBackgroundStaleSweepTests/testColdStartResumeResponseStopsBeforeUnknownLedgerReplay()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatBackgroundStaleSweepTests/testColdStartResumeResponseStopsBeforeUnknownLedgerReplay",
+      "testName" : "testColdStartResumeResponseStopsBeforeUnknownLedgerReplay()"
+    },
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional([8d99cbc9-fffd-4b1a-969d-b802e2b95db2])\") is not equal to (\"Optional([8d99cbc9-fffd-4b1a-969d-b802e2b95db2, 452e853c-ee51-4f95-bdfa-a1e341542794])\")",
+      "targetName" : "iosAppTests",
+      "testIdentifier" : 92,
+      "testIdentifierString" : "IOSChatDurableOwnershipTests/testForegroundHandoffStartsCachedContinuationBeforeNextCheckpoint()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberAgent/iosAppTests/IOSChatDurableOwnershipTests/testForegroundHandoffStartsCachedContinuationBeforeNextCheckpoint",
+      "testName" : "testForegroundHandoffStartsCachedContinuationBeforeNextCheckpoint()"
+    }
+  ],
+  "title" : "Test - iosApp",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "50% of failures",
+      "text" : "2 runs of 1 test failed with XCTAssertEqual failed: (\"Optional([8d99cbc9-fffd-4b1a-969d-b802e2b95db2])\") is not equal to (\"Optional([8d99cbc9-fffd-4b1a-969d-b802e2b95db2, 452e853c-ee51-4f95-bdfa-a1e341542794])\")"
+    },
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "37% of duration",
+      "text" : "7 longest test runs with outlier durations exceeding 1.54s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 304
+}

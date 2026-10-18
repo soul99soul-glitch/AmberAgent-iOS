@@ -1,0 +1,72 @@
+--- task-before/Home/ConversationsView.swift
++++ task-after/Home/ConversationsView.swift
+@@ -44,6 +44,7 @@
+ 
+     /// 本地标题过滤后的会话摘要（summaries 已按 updateAt 倒序/置顶优先）。
+     private var filteredSummaries: [ConversationSummary] {
++        guard isSearchExpanded else { return conversationStore.summaries }
+         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+         guard !trimmed.isEmpty else { return conversationStore.summaries }
+         return conversationStore.summaries.filter { summary in
+@@ -108,7 +109,7 @@
+                     .simultaneousGesture(dismissSearchOutsideTap)
+ 
+                 if visibleSummaries.isEmpty {
+-                    HomeEmptyCard(title: searchQuery.isEmpty ? "还没有会话" : "没有匹配的会话")
++                    HomeEmptyCard(title: isSearchExpanded && !searchQuery.isEmpty ? "没有匹配的会话" : "还没有会话")
+                         .listRowInsets(EdgeInsets())
+                         .listRowBackground(Color.clear)
+                         .listRowSeparator(.hidden)
+@@ -142,7 +143,7 @@
+                 if focused {
+                     searchHadFocus = true
+                 } else if searchHadFocus, isSearchExpanded {
+-                    collapseSearch()
++                    collapseSearch(clearQuery: false)
+                 }
+             }
+ 
+@@ -407,8 +408,12 @@
+                 .submitLabel(.search)
+                 .textInputAutocapitalization(.never)
+                 .autocorrectionDisabled()
+-                .onSubmit { router.navigate(to: .search(initialQuery: searchQuery)) }
+-            Button("取消", action: collapseSearch)
++                .onSubmit {
++                    let submittedQuery = searchQuery
++                    collapseSearch()
++                    router.navigate(to: .search(initialQuery: submittedQuery))
++                }
++            Button("取消") { collapseSearch() }
+                 .font(AmberChromeFont.system(size: 13, weight: .semibold))
+                 .tracking(0.26)
+                 .foregroundStyle(AmberTheme.muted)
+@@ -444,6 +449,7 @@
+     }
+ 
+     private func expandSearch() {
++        searchQuery = ""
+         searchHadFocus = false
+         // skill: hierarchy 变化时 withAnimation，才能触发 glass morph
+         withAnimation(homeSearchMotion) {
+@@ -459,14 +465,18 @@
+     }
+ 
+     private func collapseSearchIfNeeded() {
++        searchQuery = ""
+         guard isSearchExpanded else { return }
+         collapseSearch()
+     }
+ 
+-    private func collapseSearch() {
++    private func collapseSearch(clearQuery: Bool = true) {
+         searchFocusTask?.cancel()
+         searchFocusTask = nil
+-        searchQuery = ""
++        // 失焦可能先于 onSubmit；只有该路径保留草稿供提交读取。
++        if clearQuery {
++            searchQuery = ""
++        }
+         searchFocused = false
+         searchHadFocus = false
+         withAnimation(homeSearchMotion) {

@@ -1,0 +1,391 @@
+{
+  "branch": "codex/swift-modularization-1500",
+  "initial_head": "b98bd6f0f2f82dd9492ff021e53d03bfe26d2dce",
+  "backup": "/tmp/amber-swift-modularization-baseline-20261018-010059",
+  "subagent_model": "gpt-6-sol",
+  "subagent_reasoning_effort": "high",
+  "active_phase": null,
+  "phases": {
+    "0": {
+      "status": "complete",
+      "implemented": [
+        "Swift physical line gate",
+        "migration baseline",
+        "CI lightweight job",
+        "SwiftLint thresholds"
+      ],
+      "independent_review": "passed",
+      "review_document": "docs/reviews/2026-10-18-swift-modularization/phase-0-review.md",
+      "verification": {
+        "python_gate_tests": "4 passed",
+        "migration_gate": "952 files, 80 over 1500, 0 problems",
+        "xcode_baseline": "Passed: 145 passed, 0 failed, 1 skipped; /tmp/amber-swift-modularization-baseline-retry.xcresult"
+      }
+    },
+    "1": {
+      "status": "complete",
+      "independent_review": "passed",
+      "verification": {
+        "migration_gate": "996 files, 74 over 1500, 0 problems",
+        "test_method_inventory": "5368 original methods preserved by mapping; recipe +1, navigation UI +1",
+        "recipe_test_preservation": "45 original test mappings retained, one explicitly renamed; 1 ordinary WebMount approval case added",
+        "baseline_layout": "5 passed; /tmp/amber-phase1-layout-before.xcresult",
+        "integration": "Passed: 364 passed, 0 failed, 1 manual performance skipped; /tmp/amber-phase1-final.xcresult",
+        "baseline_recipe_failures": "5/5 reproduced with original unsplit suite; only obsolete test fixtures/expectations updated; /tmp/amber-phase1-original-recipe-repro2.xcresult",
+        "layout_comparison": "38/38 before/after screenshots same dimensions and pixel identical; 5 layout tests passed",
+        "navigation_ui": "Passed: 1/1; actual home/settings/workspace/board pages and header geometry; /tmp/amber-phase1-navigation.xcresult"
+      },
+      "review_document": "docs/reviews/2026-10-18-swift-modularization/phase-1-review.md"
+    },
+    "2": {
+      "status": "complete",
+      "independent_review": "passed; Novel standalone full build explicitly carried to Phase3 shared-renderer gate",
+      "verification": {
+        "baseline": "Passed: 199 passed, 0 failed, 0 skipped; /tmp/amber-phase2-baseline.xcresult",
+        "migration_gate": "1041 Swift files, 67 over 1500, 0 migration problems",
+        "test_preservation": "199 old-to-new methods, all bodies SHA-identical; compiled discovery pending",
+        "integration": "Passed: 472 passed / 0 failed / 2 existing opt-in live-network skipped; /tmp/amber-phase2-integration-retry.xcresult",
+        "deepread_generic_build": "x86_64 link failed on prebuilt markdown C symbols; retry concrete ARM64 simulator pending",
+        "deepread_arm64_build": "Passed: actual ARM64 simulator target, ONLY_ACTIVE_ARCH=YES, signing disabled; /tmp/amber-phase2-deepread-arm64-retry-build.log",
+        "test_discovery": "199/199 expected identifiers executed once and passed; final Jev Contract27/Loop34 61/61 passed; /tmp/amber-phase2-jev-discovery.xcresult",
+        "navigation_ui": "Passed 1/1; actual WebMount list and header geometry; /tmp/amber-phase2-navigation.xcresult",
+        "visual_evidence": "13 desktop/toolbar/dialog/report PNG, 38 approval/memory PNG, 2 actual WebMount list PNG; independent review draft ready",
+        "phone_boundary": "Passed 118/118 actual 5 classes; background stale-sweep9+phone-activity1 also10/10; result bundles /tmp/amber-phase2-phone-boundary.xcresult and /tmp/amber-phase2-background-owner.xcresult",
+        "novel_build": "Existing source membership gaps found; IntelligentUI and pure Phone policy wiring repaired; full build still missing Markdown media closure. Required full Novel build moved to Phase3 after shared renderer decomposition; /tmp/amber-phase2-novel-boundary-build.log"
+      },
+      "review_document": "docs/reviews/2026-10-18-swift-modularization/phase-2-review.md"
+    },
+    "3": {
+      "status": "complete",
+      "independent_review": "passed: runtime/call-chain and UI visual review, final scroll gate passed",
+      "verification": {
+        "baseline": "431 passed / 3 failed / 1 manual perf skipped; /tmp/amber-phase3-baseline.xcresult",
+        "baseline_failures": "2 replay timing thresholds failed on unchanged baseline; 1 stale Exec fixture description corrected precisely; original timing/assertion thresholds retained.",
+        "baseline_isolated": "Runner started no test cases and was canceled; not evidence of an execution hang or a passed gate.",
+        "baseline_exec_diagnosis": "Confirmed stale fixture: description Read text preview absent from current Tool.kt metadata; JS found undefined and failed in 0.106s; no production or frozen-policy issue. One-string fixture correction planned in Phase3.",
+        "exec_fixture_correction": "Only outdated description substring updated to actual Tool.kt metadata; all later execution assertions retained; awaiting integrated validation",
+        "novel_arm64_build": "Passed: standalone Novel scheme, ARM64 simulator, signing disabled; /tmp/amber-phase3-novel-build.log",
+        "migration_gate": "1150 Swift files, 48 over1500, 0 migration problems; 19 resolved entries removed",
+        "method_preservation": "327 mapped methods; 321 byte-identical method bodies, 6 explicit actual-owner/path source-guard adjustments; /tmp/amber-phase3-source-guard-test-adjustments.json",
+        "main_integration": "r10: 1466 passed / 7 failed / 2 original manual sampling skipped, total1475; phase3 failures are 2 source-owner guards corrected + 1 unchanged40ms table canary to isolate. 4 untouched Novel fixture failures classified for Phase4; /tmp/amber-phase3-integration-r10.xcresult",
+        "helper_preservation": "152/152 non-test helper/type/fixture declarations audited (72 renderer/session + 80 engine/host/orchestration); full SHA maps saved; only necessary visibility and one verified compiler closure-signature adaptation.",
+        "test_discovery": "327/327 migrated expected methods executed once:325 passed /1 canary failed /1 manual sample skipped; no missing/duplicate; /tmp/amber-phase3-test-discovery-check.json",
+        "focused": "Passed 3/3: unchanged40ms table canary + two actual-owner source guards; /tmp/amber-phase3-focused.xcresult",
+        "phase3_scope": "Combined r10 and focused:886 passed /0 unresolved failed /1 original manual sample skipped,887 unique phase3 methods. Four Novel fixture failures remain Phase4 baseline.",
+        "migrated_methods_final": "327 original methods discovered once; combined326 passed /1 manual performance skipped; no omission or duplication",
+        "navigation_ui": "Passed1/1 actual chat keyboard and attachment navigation; confirmed pre-existing empty-state topbar overlap now under precise repair; /tmp/amber-phase3-navigation.xcresult",
+        "ui_repair": "Passed1/1 actual UI: ordinary/keyboard/attachment. Welcome decoration separated from message bottom-follow, no driver/offset changes; /tmp/amber-phase3-navigation-overlay.xcresult. AX candidate remains in debug tree; VoiceOver not accepted.",
+        "scroll_final": "Passed:96 passed/0 failed/1 original manual sample skipped in all six mandatory classes; /tmp/amber-phase3-scroll-overlay.xcresult. Earlier padding-only run95/1/1 preserved as known first-line baseline timing failure, unchanged48pt threshold."
+      },
+      "source_snapshot": "/tmp/amber-phase3-source-baseline",
+      "prepared_workers": {
+        "implement_chat_render": [
+          "ChatCollectionMessageList",
+          "ChatAssistantMarkdownView",
+          "ChatMessageProjection",
+          "ChatToolSupport",
+          "ChatToolTimelineView",
+          "MessageBubbleView"
+        ],
+        "phase3_tool_runtime": [
+          "ChatToolRuntime"
+        ],
+        "phase3_kernel": [
+          "ChatKernelRunHost",
+          "ChatRunKernelAdapter"
+        ],
+        "phase3_session": [
+          "ChatViewModel",
+          "ChatView"
+        ],
+        "phase3_engine_orchestration": [
+          "IOSAgentToolEngine",
+          "IOSThreadOrchestrationToolService"
+        ],
+        "phase1_recipe_tests": [
+          "ChatMessageProjectionTests",
+          "ChatSwiftUIStreamReplayTests",
+          "ChatViewModelSelectedFileContextTests"
+        ],
+        "phase3_engine_tests": [
+          "IOSAgentToolEngineTests",
+          "IOSChatKernelRunHostTests",
+          "IOSOrchestrationToolTests"
+        ]
+      },
+      "required_shared_consumer_gate": "Close Novel standalone shared Markdown/Media dependency graph and pass ARM64 simulator build; readonly dependency explorer phase3_shared_renderer_deps",
+      "review_documents": [
+        "docs/reviews/2026-10-18-swift-modularization/phase-3-runtime-review.md",
+        "docs/reviews/2026-10-18-swift-modularization/phase-3-ui-review.md",
+        "docs/reviews/2026-10-18-swift-modularization/phase-3-review.md"
+      ]
+    },
+    "4": {
+      "status": "complete",
+      "independent_review": "passed: runtime/call-chain and final UI/render/navigation evidence",
+      "source_snapshot": "/tmp/amber-phase4-source-baseline",
+      "preparation": "Phase3 closed; explicit Phase4 GO to six prepared domain/UI/test workers and one isolated layout test worker.",
+      "prepared_workers": {
+        "phase4_session_state": [
+          "NovelSessionViewModel",
+          "NovelSessionPresentation"
+        ],
+        "phase4_generation": [
+          "NovelCreationViewModel",
+          "NovelGenerationLifecycle",
+          "NovelLiveModelAdapter",
+          "NovelInjectionPlanner",
+          "NovelPromptCatalog"
+        ],
+        "phase4_domain": [
+          "NovelDomainModels",
+          "NovelActions",
+          "NovelDocumentValidator",
+          "NovelFactTransactions",
+          "NovelProjectRepository",
+          "NovelStructuredOutput"
+        ],
+        "phase4_ui": [
+          "NovelSessionView",
+          "NovelSessionSheets",
+          "NovelSessionBubble"
+        ],
+        "phase4_session_tests": [
+          "NovelSessionViewModelTests",
+          "NovelSessionReplayTests",
+          "NovelCreationPresentationTests",
+          "NovelCreationViewModelTests",
+          "NovelManualEditSyncTests",
+          "NovelCollaborationModeTests"
+        ],
+        "phase4_domain_tests": [
+          "IOSNovelProjectToolExecutorTests",
+          "NovelContinuityAuditTests",
+          "NovelFactTransactionLifecycleTests",
+          "NovelGenerationLifecycleTests",
+          "NovelGenerationReducerTests",
+          "NovelLiveModelAdapterTests"
+        ],
+        "phase4_layout_tests": [
+          "New NovelModularizationLayoutTests only"
+        ]
+      },
+      "verification": {
+        "baseline": "588 original methods:583 passed /4 failed /1 original manual profile skipped, extracted from r10 result",
+        "baseline_failures": "4 ProjectTool cases use hidden setting proposals 粮仓/马厩, incompatible with existing NovelSettingProposalFilter contract. Production/tests unchanged; CharacterIdentityCandidateTests explicitly require filter. Fixture-only repair planned after Phase4 GO; empty-array rejection false-pass uses same fixture and will be made observable.",
+        "novel_arm64_build": "Passed standalone Novel build r4 after exact actor/private access repairs; /tmp/amber-phase4-novel-build-r4.log",
+        "migration_gate": "1256 Swift,20 over1500,0 migration problems; all28 Phase4 original oversized files resolved",
+        "test_preservation": "588 migrated methods actual-discovered once; declaration/helper audits archived with explicit source/fixture/diagnostic exceptions",
+        "main_integration": "r2:1205 passed/12 failed/4 skipped,total1221; all588 migrated methods discovered once (587 passed/1 original manual skip); /tmp/amber-phase4-main-r2.xcresult",
+        "navigation_ui": "Passed1/1 actual Home->localNovelProject->three sections->two context control segments; seven PNG/AX pairs reviewed; true tab touches center+/-21pt verified selection; /tmp/amber-phase4-navigation-r1.xcresult",
+        "additional_baseline": "8/8 exact old cases reproduced in migration-before standalone Novel tree:4 existing Batch auto-sync race,3 old flat storage path fixtures,1 needsSync fixture; /tmp/amber-phase4-original-repro/eight-baseline-20261018-034452.xcresult",
+        "test_discovery": "All1024 original Novel methods executed once in r3, no missing/duplicate; previously hidden export now executed and passed",
+        "focused_repairs": "Batch sync race, stream identity race and Ghostwrite terminal readiness fixed at original owners; stale fixture/discovery paths repaired; all affected final tests passed",
+        "focused": "19 total:16 passed/3 new hosted AX probe failures; Batch10+fixtures4+newly reachable export+same first-line canary all passed. New probes subsequently changed to honest rendering/geometry.",
+        "main_r3": "1254 total/1247 passed/3 failed/4 skipped; original1024 Novel methods all once (1020 passed/1 late-detach failed/3 skip); failures:original40ms table canary44.72ms, late-detach didResume, new Form lazy editor probe. /tmp/amber-phase4-main-r3.xcresult",
+        "novel_tests": "Final standalone Novel full passed; /tmp/amber-phase4-novel-tests-r4.xcresult",
+        "layout_final": "3/3 render geometry probes passed in stream-red.xcresult;20 final PNG independently reviewed, Collect8 editor+actualbottom closed. No hosted AX/touch/provider claim.",
+        "same_canary_focused": "Original40ms growing-table canary passed in 8-case stream-red run; Mainr3 44.72ms failure history retained with source-equal Phase3 evidence. Not attributed to environment or new Phase4 change.",
+        "stream_owner_red": "New deterministic initial-pull + lease-hop regression failed once only on0!=1 resumeRequests before production patch; /tmp/amber-phase4-stream-red-r2.xcresult",
+        "stream_owner_green": "127/127 passed generation/recovery/disconnect+ghostwrite+Batch+source wiring after smallest stream identity patch; /tmp/amber-phase4-generation-green.xcresult",
+        "novel_tests_r2": "1047 total/1043 passed/1 ghostwriteTen failed/3 original skipped; deterministic stream regression + all layout passed. Failure diagnostic proves Session completed run is still active while next chapter starts; precise consumer join under review. /tmp/amber-phase4-novel-tests-r2.xcresult",
+        "novel_tests_r3": "Passed1044/0/3 original skips,total1047; /tmp/amber-phase4-novel-tests-r3.xcresult; before final no-consumer retry boolean correction",
+        "ghostwrite_final": "64/64 Main passed including new long-generation durable/terminal handoff regression; /tmp/amber-phase4-ghostwrite-handoff-final.xcresult",
+        "novel_tests_final": "Final r4 full1048 total/1045 passed/0 failed/3 original skips; all1022 standalone original IDs exactly once; two Main-only AmberSettings methods passed Mainr3"
+      },
+      "review_document": "docs/reviews/2026-10-18-swift-modularization/phase-4-review.md"
+    },
+    "5": {
+      "status": "complete",
+      "independent_review": "passed: runtime/call-chain, changed hosting screenshots, and actual Provider/Runtime/SSH/MiniApp/Council navigation",
+      "prepared_workers": {
+        "phase5_editors": [
+          "ProviderDetailView",
+          "RuntimeEnvironmentView",
+          "MiniAppRunnerView"
+        ],
+        "phase5_permissions": [
+          "IOSPermissionModels",
+          "IOSSystemPermissionCoordinator",
+          "IOSGenerativeWidgetParser"
+        ],
+        "phase5_storage": [
+          "DocumentAccessStore",
+          "IOSContextCompactionCoordinator",
+          "IOSConversationStore",
+          "IOSSharedSettingsStore"
+        ],
+        "phase5_council": [
+          "CouncilChatRuntimeView",
+          "CouncilRunner"
+        ],
+        "phase5_background": [
+          "Separate GO after stable stores:IOSChatBackgroundGenerationCoordinator"
+        ],
+        "phase5_tests": [
+          "IOSCouncilRunnerMechanicsTests",
+          "IOSConversationStoreTests"
+        ],
+        "phase5_ui_settings": [
+          "New settings layout tests and common fixture"
+        ],
+        "phase5_ui_council_miniapp": [
+          "New council/miniapp/permissions layout tests"
+        ],
+        "phase5_ui_navigation": [
+          "Append actual settings/runtime/Council/MiniApp navigation UI tests"
+        ]
+      },
+      "source_snapshot": "/tmp/amber-phase5-source-baseline",
+      "preparation": "Primary packs GO after Phase4 closure; Background still requires separate GO after stable-store behavior gate",
+      "verification": {
+        "baseline": "Existing Phase4 built product test-without-building:687 total/686 passed/0 failed/1 original manual sample skipped; exact Council89 and Conversation37 each executed once. Three actual SSH runtime classes additionally selected in Phase4 r3 preflight. /tmp/amber-phase5-baseline.xcresult",
+        "ssh_runtime_baseline": "All three actual SSH runtime classes:32/32 passed in Main r3 before Phase5 modification; together with baseline687 gives719 unique preflight cases,718 passed/1 manual sample skipped.",
+        "migration_gate": "1306 Swift,5 test files over1500,0 migration problems. Parity temporary+30 allowed only for stronger actual-owner guards, removal required inPhase6.",
+        "primary": "Historical r1-r5 compile-only access repairs; r6 details retained below; final-r1 is final unchanged BG/store/Native gate.",
+        "novel_consumer_build": "Passed ARM64 build,succeeded/0errors/7 existing warnings; /tmp/amber-phase5-novel-build-r1.xcresult",
+        "primary_r6": "893 actual/889 passed/2 failed/2 original skips. All store/compaction/SharedSettings behavior passed; original migrated126 exactly once125 passed/1manualskip. Failures:new MiniApp layout asserts fit content must scroll, unchanged Native reasoning-collapse28.67pt>25pt.",
+        "background_source": "Coordinator1410+8 responsibility files<=1500;192 original declarations/signatures/bodies exactly mapped; sameMainActor owner accepted by independent review,6readonly setters private(set).",
+        "native_focused_attempt": "test-without-building did not inject XCTest (sample no XCTest images), canceled byRoot; summary1 pseudo iosApp encountered error,0actualmethods. Not evidence of canary pass/fail.",
+        "final_r1": "995 total/993 passed/0 failed/2 original skips; /tmp/amber-phase5-final-r1.xcresult. Includes all70 selectors, full BG lifecycle and mandatory Native canaries. MiniApp isolated AX3 environment evidence still being corrected.",
+        "miniapp_component_final": "184/184 passed,0 warnings; /tmp/amber-phase5-miniapp-final-r3.xcresult. Installed stateless grants component exercises actual AX3; existing visual fixture migrated preserving assertions.",
+        "miniapp_preflight_history": "r1 component build caught old private-helper test call,0 cases; corrected test hosting only. r2 no XCTest injection,0 actual methods, test daemon not ready; canceled, simulator reboot retained data, r3 passed.",
+        "navigation_preflight": "First UI-target compile failed on2 invented lastMatch calls,0 actual methods; exact test-only API correction in progress.",
+        "navigation_final": "Provider1/1 inr2, Runtime/SSH/MiniApp/Council1/1 inr3; actualPNG/AX independently reviewed. r2 misselector same-value save recorded, not zero-write claim."
+      },
+      "go_packs": [
+        "editors",
+        "permissions/parser",
+        "storage/compaction",
+        "council",
+        "two test suites",
+        "two hosting QA packs",
+        "actual navigation QA",
+        "non-BG source guards"
+      ],
+      "background_go": true,
+      "review_document": "docs/reviews/2026-10-18-swift-modularization/phase-5-review.md"
+    },
+    "6": {
+      "status": "complete",
+      "independent_review": "passed: source/runtime/call-chain, actual UI/navigation, final discovery and original WIP independently signed",
+      "prepared_workers": {
+        "phase6_phone_test_prep": [
+          "PhoneRunnerClientTests",
+          "IOSPhoneControlControllerTests",
+          "IOSPhoneGoalLoopTests"
+        ],
+        "phase6_other_test_prep": [
+          "IOSParityRedLightTests",
+          "IOSSkillMcpToolsTests"
+        ]
+      },
+      "verification": {
+        "phone_package_baseline": "Before Phase6 source changes:105/105 passed,0 skips; /tmp/amber-phase6-phone-baseline.log is actual XCTest start/end evidence. Swift6.4 accepted --xunit-output but did not generate XML; final coverage auditor now uses strict paired log events/suite totals.",
+        "strict_first": "1318 Git-visible Swift files,0 over1500,0 problems; migration baseline removed, CI unconditional strict",
+        "phone_package_final": "105/105 passed,0skip; /tmp/amber-phase6-phone-r1.log",
+        "shared_export": "all10 Swift-consumed type families present in Shared.h",
+        "python_gate_tests": "4/4 passed",
+        "main_full_r1": "5089 total/5057 passed/15 failed/17 skipped; all1508 moved Main IDs discovered once (1505pass/3manualskip); allP6Main222 pass.15 failures outside move maps under precise diagnosis, not a passed full gate.",
+        "novel_final": "r2 final after both fixture repairs:1048 total/1045passed0failed/3original skips; /tmp/amber-phase6-novel-r2.xcresult",
+        "main_failure_repairs": "StoreKit guard exact multiline start, Memory background search filledParts + valid isolated DDG fixture, WebMount currentRunState uses existing runRegistry lookup; SavedTasks12 first-AX lookup failures current=HEAD=baseline and diagnostic pending.",
+        "focused_r2": "0 actual XCTest methods; test daemon not ready/no new-session handshake, canceled; simulator reboot retained data. Not a passed or failed method run.",
+        "deepread_final": "109/109 passed,0skip; /tmp/amber-phase6-deepread-r1.xcresult",
+        "gpl_final": "build succeeded,exit0; GPL App and Watch/WatchWidgets/ActivityWidget/PhoneTunnel dependencies; /tmp/amber-phase6-gpl-r1.xcresult",
+        "focused_r3": "14 total/12 passed/2 SavedTasks AX failed; StoreKit+Memory10+WebMount original three failures resolved; no skips. /tmp/amber-phase6-main-focused-r3.xcresult",
+        "coverage_final": "Final r6/r2 require-discovery exit0;5368 original lexical declarations,1612 mappings+1 actor repair,2202 observations found,2198passed4manualskip;zero missing/duplicate/declaration/member gaps",
+        "navigation_final": "6/6 actual navigation passed,0fail/skip; /tmp/amber-phase6-navigation-r1.xcresult",
+        "savedtasks_isolated_r6": "16/16 original tests passed after retained-data simulator reboot + read-only external AX query; test/prod SavedTasks source unchanged; /tmp/amber-phase6-main-savedtasks-r6.xcresult",
+        "main_full_r2": "5089 total/5060 passed/12 SavedTasks first-AX failures/17 original skips; three repaired StoreKit/Memory/WebMount tests all passed in full order. /tmp/amber-phase6-main-r2.xcresult",
+        "savedtasks_window_predecessors": "r8 one Chat+2Saved 3/3; r9 priority13 ChatUI+2Saved129total128pass1skip0fail; r10 sevenIUI+2Saved26/26; r11 remaining7Chat+IUIcontrol+2Saved55/55; r12 threeIOSvisual methods+IUIcontrol+2Saved6/6. All singleforegroundScene402x874,keyrestored; none reproduces full-order AX failure. Temporary window diagnostics remain test-only.",
+        "main_full_r3": "Interrupted exit73 after SavedTasks16/16 and IUI AX control passed. NovelCreationViewModel foreground gate case stalled with overlapping global protected Novel leases; checkedContinuation had no producer. Diagnostic SavedTasks patch removed exactly, original SHA restored. No full-green claim; precise test-only dependency isolation and bounded gate assertion preparing.",
+        "novel_gate_fixture_focused": "75/75 passed,0fail/skip; explicit lease dependency, unrelated deadline removed, existing eventually bounds missing gate; original foreground/empty-interruption asserts retained; /tmp/amber-phase6-main-savedtasks-r13.xcresult",
+        "main_full_r4": "5089 total/5072passed/1BatchPolish fixture failed/16original skips, Saved16 and IUI AX control actualpassed; no diagnostic source. Foreground inventory gate case passed. Original Batch test HEAD-exact waited placeholderRunID before selection start owner released, ignored selection result; precise test admission wait + selected result assertion under independent review.",
+        "main_r5_bootstrap": "0 actual TestSuite/TestCase events; sample onlyXCTTargetBootstrap, noXCTest or iosAppTests images; sim log test daemon not ready. Root controlled interrupt; retained-data simulator reboot, rerun r6. Not a failed or passed testcase run.",
+        "main_final": "r6 complete:5089 total,5073 passed,0 failed,16 pre-existing skipped; /tmp/amber-phase6-main-r6.xcresult",
+        "strict_final": "1318 files,0 over1500,0 problems;maximum1500,tests1490;final inventory all source SHA match",
+        "wip_final": "HEAD/index unchanged;Package.resolved restored exact HEAD bytes;26 exact WIP paths,8 tracked overlaps and1 SwiftLint overlap semantically signed;1 original CSV snapshot gap explicitly retained",
+        "ui_final": "Nav6/6 and final Main SavedTasks16/IUI AX actualPassed;original SavedTests SHA restored;provider/device/system boundaries retained"
+      },
+      "source_snapshot": "/tmp/amber-phase6-source-baseline",
+      "go": true,
+      "test_maps": [
+        "docs/reviews/2026-10-18-swift-modularization/phase-6-phone-test-moves.json",
+        "docs/reviews/2026-10-18-swift-modularization/phase-6-parity-skill-test-moves.json"
+      ],
+      "module_guide": "docs/reviews/2026-10-18-swift-modularization/module-guide.md",
+      "review_documents": [
+        "docs/reviews/2026-10-18-swift-modularization/phase-6-runtime-review.md",
+        "docs/reviews/2026-10-18-swift-modularization/phase-6-ui-review.md",
+        "docs/reviews/2026-10-18-swift-modularization/phase-6-wip-review.md",
+        "docs/reviews/2026-10-18-swift-modularization/phase-6-review.md"
+      ]
+    }
+  },
+  "authorization": {
+    "implement_all_phases": true,
+    "ask_further_questions": false,
+    "commit_push_merge_publish": false,
+    "delete_dead_code": false
+  },
+  "status": "complete",
+  "completed_phase": 6,
+  "completed_at": "2026-10-18T00:00:43.229629+00:00",
+  "history_note": "Earlier verification entries retain phase checkpoints and failure history; final_results and phase6 final verification are authoritative.",
+  "final_results": {
+    "swift": {
+      "files": 1318,
+      "physicalLines": 549292,
+      "over1000": 127,
+      "over1500": 0,
+      "maximum": 1500,
+      "largestFiles": [
+        "iosApp/iosApp/AmberThemePack.swift"
+      ],
+      "byCategory": {
+        "production": {
+          "files": 765,
+          "over1000": 90,
+          "maximum": 1500
+        },
+        "tests": {
+          "files": 447,
+          "over1000": 37,
+          "maximum": 1490
+        },
+        "vendor": {
+          "files": 106,
+          "over1000": 0,
+          "maximum": 928
+        }
+      }
+    },
+    "consumers": {
+      "main": {
+        "result": "Passed",
+        "totalTestCount": 5089,
+        "passedTests": 5073,
+        "failedTests": 0,
+        "skippedTests": 16
+      },
+      "novel": {
+        "result": "Passed",
+        "totalTestCount": 1048,
+        "passedTests": 1045,
+        "failedTests": 0,
+        "skippedTests": 3
+      },
+      "deepread": {
+        "result": "Passed",
+        "totalTestCount": 109,
+        "passedTests": 109,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "phone": "105/105 passed, no skips",
+      "navigation": "6/6 passed, no skips",
+      "gpl_watch_widgets_tunnel": "build exit0"
+    },
+    "review_document": "docs/reviews/2026-10-18-swift-modularization/phase-6-review.md"
+  }
+}

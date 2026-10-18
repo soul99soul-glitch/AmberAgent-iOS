@@ -157,7 +157,7 @@ struct IOSWebMountPublicDNS {
                 guard isAddress(answer.data, recordType: answer.type) else {
                     throw Error.malformedResponse
                 }
-                guard IOSSearchExecutor.publicHostAllowed(answer.data) else {
+                guard IOSPublicURLPolicy.publicHostAllowed(answer.data) else {
                     throw Error.privateOrReservedAddress(answer.data)
                 }
                 if answer.type == recordType, !addresses.contains(answer.data) {

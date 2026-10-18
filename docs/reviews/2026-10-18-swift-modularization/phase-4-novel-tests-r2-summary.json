@@ -1,0 +1,64 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "F3D5299E-EEA6-4098-BF61-AB1C516933C0",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 1,
+      "passedTests" : 1043,
+      "skippedTests" : 3,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Novel · Built with macOS 27.2",
+  "expectedFailures" : 0,
+  "failedTests" : 1,
+  "finishTime" : 1792268532.061,
+  "passedTests" : 1043,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 3,
+  "startTime" : 1792268381.38,
+  "statistics" : [
+    {
+      "subtitle" : "1 test run",
+      "title" : "1 test collected performance metrics"
+    }
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertEqual failed: (\"failed\") is not equal to (\"waitingUser\") - detail=Optional(\"已有生成在进行中。\"); pauseReason=Optional(iosApp.NovelGhostwritePauseReason.infrastructureFailed); operationError=nil; terminalAwaitingRefresh=false; workspaceIsPerforming=false; sessionActiveRunID=Optional(a502b0dc-8fa1-4c93-825c-9b2b4fdb2314); branchActiveRunID=nil; runStatuses=[\"a502b0dc-8fa1-4c93-825c-9b2b4fdb2314:completed\"]; requestCount=2",
+      "targetName" : "NovelTests",
+      "testIdentifier" : 528,
+      "testIdentifierString" : "NovelGhostwriteGenerationTests/testGhostwriteTenChapterBatchUsesOneAdjudicationPerChapter()",
+      "testIdentifierURL" : "test://com.apple.xcode/AmberNovel/NovelTests/NovelGhostwriteGenerationTests/testGhostwriteTenChapterBatchUsesOneAdjudicationPerChapter",
+      "testName" : "testGhostwriteTenChapterBatchUsesOneAdjudicationPerChapter()"
+    }
+  ],
+  "title" : "Test - Novel",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "100% of failures",
+      "text" : "4 runs of 1 test failed with XCTAssertEqual failed: (\"1\") is not equal to (\"10\")"
+    },
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "59% of duration",
+      "text" : "9 longest test runs with outlier durations exceeding 2.79s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 1047
+}

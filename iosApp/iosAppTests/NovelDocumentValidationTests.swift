@@ -230,6 +230,10 @@ final class NovelDocumentValidationTests: XCTestCase {
         )), to: current, now: Date(timeIntervalSince1970: 1_700_000_010)).document
 
         XCTAssertNoThrow(try NovelDocumentValidator.validateTransition(from: current, to: discarded))
+        XCTAssertEqual(discarded.branches[0].workingChapterSelections, branch.workingChapterSelections)
+        XCTAssertEqual(discarded.chapters.first { $0.id == chapterID }?.discardedAt,
+                       Date(timeIntervalSince1970: 1_700_000_010))
+        XCTAssertTrue(try NovelMarkdownExporter.export(discarded, branchID: branch.id).markdown.isEmpty)
 
         let restored = try NovelReducer.apply(.restoreChapter(NovelRestoreChapterCommand(
             context: NovelMutationContext(
@@ -244,6 +248,12 @@ final class NovelDocumentValidationTests: XCTestCase {
         )), to: discarded, now: Date(timeIntervalSince1970: 1_700_000_020)).document
 
         XCTAssertNoThrow(try NovelDocumentValidator.validateTransition(from: discarded, to: restored))
+        XCTAssertEqual(restored.chapters, current.chapters)
+        XCTAssertEqual(restored.branches[0].workingChapterSelections, branch.workingChapterSelections)
+        XCTAssertEqual(
+            try NovelMarkdownExporter.export(restored, branchID: branch.id).markdown,
+            try NovelMarkdownExporter.export(current, branchID: branch.id).markdown
+        )
     }
 
     func testDeleteChapterFromManuscriptRemovesWorkingSelection() throws {
@@ -272,10 +282,19 @@ final class NovelDocumentValidationTests: XCTestCase {
         XCTAssertFalse(nextBranch.workingChapterSelections.contains(where: { $0.chapterID == chapterID }))
         XCTAssertEqual(nextBranch.syncStatus, .needsSync)
         XCTAssertEqual(nextBranch.workingRevision, branch.workingRevision + 1)
-        // Chapter record stays for checkpoint lineage; marked discarded.
-        let chapter = try XCTUnwrap(deleted.chapters.first(where: { $0.id == chapterID }))
-        XCTAssertNotNil(chapter.discardedAt)
+        XCTAssertEqual(deleted.chapters, current.chapters)
         XCTAssertFalse(deleted.chapterVersions.filter { $0.chapterID == chapterID }.isEmpty)
+
+        var globallyDiscarded = deleted
+        let chapterIndex = try XCTUnwrap(globallyDiscarded.chapters.firstIndex { $0.id == chapterID })
+        globallyDiscarded.chapters[chapterIndex].discardedAt = deleted.project.updatedAt
+        // Legacy documents retain the old global marker, but new deletes cannot write it.
+        XCTAssertNoThrow(try NovelDocumentValidator.validate(globallyDiscarded))
+        assertInvalidTransition(
+            from: current,
+            to: globallyDiscarded,
+            containing: "chapter discard-state change has no matching atomic operation"
+        )
     }
 
     func testChapterTransitionRequiresOneLedgerOperationPerStateFlip() throws {

@@ -46,23 +46,144 @@ struct ChatMediaItem: Identifiable, Equatable, Sendable, Decodable {
     }
 }
 
+/// Shares work while retaining cancellation ownership for each visible consumer.
+actor ChatMediaImageRequests {
+    private struct Flight {
+        let id: UUID
+        let task: Task<UIImage, Error>
+        var waiters: Set<UUID>
+    }
+    private var flights: [String: Flight] = [:]
+
+    func image(key: String, load: @escaping @Sendable () async throws -> UIImage) async throws -> UIImage {
+        try Task.checkCancellation()
+        let waiter = UUID()
+        if flights[key] == nil {
+            flights[key] = Flight(id: UUID(), task: Task { try await load() }, waiters: [])
+        }
+        flights[key]!.waiters.insert(waiter)
+        let flight = flights[key]!
+        return try await withTaskCancellationHandler {
+            defer { release(key: key, flightID: flight.id, waiter: waiter) }
+            let image = try await flight.task.value
+            try Task.checkCancellation()
+            return image
+        } onCancel: {
+            Task { await self.release(key: key, flightID: flight.id, waiter: waiter) }
+        }
+    }
+
+    private func release(key: String, flightID: UUID, waiter: UUID) {
+        guard var flight = flights[key], flight.id == flightID,
+              flight.waiters.remove(waiter) != nil else { return }
+        if flight.waiters.isEmpty {
+            flights.removeValue(forKey: key)
+            flight.task.cancel()
+        } else {
+            flights[key] = flight
+        }
+    }
+}
+
+/// Stores display-sized thumbnails, never full videos. Disk work stays off the UI actor.
+actor ChatMediaThumbnailDiskCache {
+    static let shared = ChatMediaThumbnailDiskCache()
+    private let directory: URL
+    private let byteLimit: Int
+    private var storedBytes: Int?
+
+    init(directory: URL = URL.cachesDirectory.appendingPathComponent("chat-media-thumbnails-v1", isDirectory: true),
+         byteLimit: Int = 128 * 1024 * 1024) {
+        self.directory = directory
+        self.byteLimit = byteLimit
+    }
+
+    private func file(for key: String) -> URL {
+        directory.appendingPathComponent(SHA256.hash(data: Data(key.utf8)).description + ".png")
+    }
+
+    func image(key: String, pixelLimit: Int) -> UIImage? {
+        let url = file(for: key)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let image = try? ChatMediaImageLoader.decode(data: data, pixelLimit: pixelLimit) else {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        return image
+    }
+
+    func store(_ image: UIImage, key: String) {
+        guard let data = image.pngData(), data.count <= byteLimit else { return }
+        let manager = FileManager.default
+        do {
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            if storedBytes == nil { storedBytes = try entries().reduce(0) { $0 + $1.size } }
+            let url = file(for: key)
+            let previous = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            try data.write(to: url, options: .atomic)
+            storedBytes = (storedBytes ?? 0) + data.count - previous
+            if (storedBytes ?? 0) > byteLimit {
+                let files = try entries().sorted { $0.date < $1.date }
+                storedBytes = files.reduce(0) { $0 + $1.size }
+                for entry in files where (storedBytes ?? 0) > byteLimit {
+                    try manager.removeItem(at: entry.url)
+                    storedBytes = (storedBytes ?? 0) - entry.size
+                }
+            }
+        } catch {
+            // Optional cache writes must not turn a successfully loaded image into an error.
+            storedBytes = nil
+        }
+    }
+
+    private func entries() throws -> [(url: URL, size: Int, date: Date)] {
+        try FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
+            .compactMap { url in
+                let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
+                guard values.isRegularFile == true else { return nil }
+                return (url, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
+            }
+    }
+}
+
 /// Decode at the requested display size off the main actor. The timeline is eager,
-/// so callers load only within the viewport instead of using onAppear as visibility.
+/// so callers load near the viewport instead of using onAppear as visibility.
 actor ChatMediaImageLoader {
     static let shared = ChatMediaImageLoader()
     private let cache = NSCache<NSString, UIImage>()
+    private let requests = ChatMediaImageRequests()
+    private let diskCache: ChatMediaThumbnailDiskCache
 
-    init() { cache.totalCostLimit = 32 * 1024 * 1024 }
+    init(diskCache: ChatMediaThumbnailDiskCache = .shared) {
+        self.diskCache = diskCache
+        cache.totalCostLimit = 32 * 1024 * 1024
+    }
 
     func image(urlString: String, pixelLimit: Int) async throws -> UIImage {
-        let key = "\(SHA256.hash(data: Data(urlString.utf8)).description):\(pixelLimit)" as NSString
-        if let image = cache.object(forKey: key) { return image }
+        try Task.checkCancellation()
+        let key = "image:\(SHA256.hash(data: Data(urlString.utf8)).description):\(pixelLimit)"
+        if let image = cache.object(forKey: key as NSString) { return image }
+        return try await requests.image(key: key) {
+            try await self.load(urlString: urlString, pixelLimit: pixelLimit, key: key)
+        }
+    }
+
+    private func load(urlString: String, pixelLimit: Int, key: String) async throws -> UIImage {
+        // Local files can be replaced at the same path; they already live on disk.
+        let persist = ChatMediaURL.external(urlString) != nil
+        if persist, let image = await diskCache.image(key: key, pixelLimit: pixelLimit) {
+            try Task.checkCancellation()
+            cache.setObject(image, forKey: key as NSString, cost: image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0)
+            return image
+        }
         let image: UIImage
         if urlString.hasPrefix("data:image/"), let comma = urlString.firstIndex(of: ","),
            let data = Data(base64Encoded: String(urlString[urlString.index(after: comma)...])) {
             image = try Self.decode(data: data, pixelLimit: pixelLimit)
         } else {
-            guard let url = IOSImageGenerationRepository.resolvedImageURL(from: urlString),
+            guard let url = ChatGeneratedImageURL.resolvedImageURL(from: urlString),
                   ["https", "http", "file"].contains(url.scheme?.lowercased() ?? "") else { throw URLError(.badURL) }
             if url.isFileURL {
                 image = try Self.decode(file: url, pixelLimit: pixelLimit)
@@ -77,8 +198,9 @@ actor ChatMediaImageLoader {
         }
         try Task.checkCancellation()
         if let cgImage = image.cgImage {
-            cache.setObject(image, forKey: key, cost: cgImage.bytesPerRow * cgImage.height)
+            cache.setObject(image, forKey: key as NSString, cost: cgImage.bytesPerRow * cgImage.height)
         }
+        if persist { await diskCache.store(image, key: key) }
         return image
     }
 
@@ -107,31 +229,63 @@ actor ChatMediaImageLoader {
     }
 }
 
+/// Preload one viewport ahead and keep decoded media until it is two viewports away.
+/// Bounds are expressed in the media view's coordinates, independently for each scroll axis.
+enum ChatMediaViewport: Equatable {
+    case loading, retained, distant
+
+    static func position(size: CGSize, vertical: CGRect?, horizontal: CGRect?) -> Self? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        var positions: [Self] = []
+        if let vertical {
+            guard vertical.height > 0 else { return nil }
+            positions.append(position(start: vertical.minY, end: vertical.maxY,
+                                      viewportLength: vertical.height, itemLength: size.height))
+        }
+        if let horizontal {
+            guard horizontal.width > 0 else { return nil }
+            positions.append(position(start: horizontal.minX, end: horizontal.maxX,
+                                      viewportLength: horizontal.width, itemLength: size.width))
+        }
+        if positions.contains(.distant) { return .distant }
+        return positions.contains(.retained) ? .retained : .loading
+    }
+
+    private static func position(start: CGFloat, end: CGFloat, viewportLength: CGFloat, itemLength: CGFloat) -> Self {
+        if end + viewportLength < 0 || start - viewportLength > itemLength {
+            return end + 2 * viewportLength < 0 || start - 2 * viewportLength > itemLength ? .distant : .retained
+        }
+        return .loading
+    }
+}
+
 struct ChatMediaImage: View {
-    private struct LoadRequest: Equatable {
+    private struct Resource: Equatable {
         let url: String
-        let visible: Bool
-        let retry: Int
         let pixelLimit: Int
+    }
+    private struct LoadRequest: Equatable {
+        let resource: Resource
+        let viewport: ChatMediaViewport
+        let retry: Int
     }
     let url: String
     var contentMode: ContentMode = .fit
     var pixelLimit = 1000
     var showsStatus = true
-    @State private var image: UIImage?
-    @State private var failed = false
-    @State private var visible = false
+    @State private var loaded: (resource: Resource, image: UIImage)?
+    @State private var failure: Resource?
+    @State private var viewport = ChatMediaViewport.retained
     @State private var retry = 0
 
+    private var resource: Resource { Resource(url: url, pixelLimit: pixelLimit) }
+
     var body: some View {
-        #if DEBUG
-        let _ = print("MEDIA_BODY image=\(image != nil) failed=\(failed) visible=\(visible) bytes=\(url.utf8.count)")
-        #endif
         ZStack {
             AmberTheme.surface2
-            if let image {
-                Image(uiImage: image).resizable().aspectRatio(contentMode: contentMode)
-            } else if failed && showsStatus {
+            if let loaded, loaded.resource == resource {
+                Image(uiImage: loaded.image).resizable().aspectRatio(contentMode: contentMode)
+            } else if failure == resource && showsStatus {
                 Button { retry += 1 } label: {
                     Label("重新加载", systemImage: "arrow.clockwise")
                         .font(.caption).padding(12)
@@ -143,38 +297,24 @@ struct ChatMediaImage: View {
             }
         }
         .clipped()
-        .onGeometryChange(for: Bool.self) { proxy in
-            guard let viewport = proxy.bounds(of: .scrollView(axis: .vertical)) ?? proxy.bounds(of: .scrollView) else { return true }
-            #if DEBUG
-            print("MEDIA_VISIBILITY viewport=\(viewport) imageSize=\(proxy.size) intersects=\(viewport.intersects(CGRect(origin: .zero, size: proxy.size)))")
-            #endif
-            return viewport.intersects(CGRect(origin: .zero, size: proxy.size))
-        } action: {
-            #if DEBUG
-            print("MEDIA_ACTION visible=\($0) bytes=\(url.utf8.count)")
-            #endif
-            visible = $0
-        }
-        .task(id: LoadRequest(url: url, visible: visible, retry: retry, pixelLimit: pixelLimit)) {
-            #if DEBUG
-            print("MEDIA_TASK start visible=\(visible) bytes=\(url.utf8.count) cancelled=\(Task.isCancelled)")
-            #endif
-            guard visible else { image = nil; return }
-            image = nil
-            failed = false
+        .onGeometryChange(for: ChatMediaViewport?.self) { proxy in
+            ChatMediaViewport.position(size: proxy.size,
+                                      vertical: proxy.bounds(of: .scrollView(axis: .vertical)),
+                                      horizontal: proxy.bounds(of: .scrollView(axis: .horizontal)))
+        } action: { if let position = $0 { viewport = position } }
+        .task(id: LoadRequest(resource: resource, viewport: viewport, retry: retry)) {
+            if loaded?.resource != resource { loaded = nil }
+            if failure != resource { failure = nil }
+            guard viewport != .distant else { loaded = nil; return }
+            guard viewport == .loading, loaded == nil else { return }
+            failure = nil
             do {
                 let loaded = try await ChatMediaImageLoader.shared.image(urlString: url, pixelLimit: pixelLimit)
-                #if DEBUG
-                print("MEDIA_TASK loaded size=\(loaded.size) bytes=\(url.utf8.count) cancelled=\(Task.isCancelled)")
-                #endif
                 try Task.checkCancellation()
-                image = loaded
+                self.loaded = (resource, loaded)
             } catch {
-                #if DEBUG
-                print("MEDIA_TASK failure bytes=\(url.utf8.count) cancelled=\(Task.isCancelled) error=\(String(describing: type(of: error)))")
-                #endif
                 guard !Task.isCancelled else { return }
-                failed = true
+                failure = resource
             }
         }
     }
@@ -270,10 +410,15 @@ struct ChatToolMediaGallery: View, @MainActor Equatable {
     }
 }
 
-private struct ChatMediaGalleryPreview: View {
+struct ChatMediaGalleryPreview: View {
     let items: [ChatMediaItem]
     @State private var selectedID: String
-    @State private var preparingShare = false
+    private enum ShareContent {
+        case url(URL)
+        case image(UIImage)
+        case failure
+    }
+    @State private var preparedShare: (url: String, content: ShareContent)?
     @State private var shareFailure: String?
     @Environment(\.dismiss) private var dismiss
 
@@ -301,10 +446,26 @@ private struct ChatMediaGalleryPreview: View {
                         if let source = item.sourceURL, let url = ChatMediaURL.external(source) {
                             Link("来源", destination: url)
                         }
-                        Button("分享图片", systemImage: "square.and.arrow.up") { share(item) }
-                            .disabled(preparingShare)
+                        shareButton(for: item)
                     }
                 }
+            }
+            .task(id: items.first(where: { $0.id == selectedID })?.url) {
+                guard let item = items.first(where: { $0.id == selectedID }) else { return }
+                let content: ShareContent
+                if item.url.hasPrefix("data:") {
+                    if case .success(let image) = await ChatDataImageLoadState.resolve(urlString: item.url) {
+                        content = .image(image)
+                    } else {
+                        content = .failure
+                    }
+                } else if let url = ChatGeneratedImageURL.resolvedImageURL(from: item.url) {
+                    content = .url(url)
+                } else {
+                    content = .failure
+                }
+                guard !Task.isCancelled else { return }
+                preparedShare = (item.url, content)
             }
             .alert("无法分享图片", isPresented: Binding(get: { shareFailure != nil }, set: { if !$0 { shareFailure = nil } })) {
                 Button("好", role: .cancel) { shareFailure = nil }
@@ -312,28 +473,24 @@ private struct ChatMediaGalleryPreview: View {
         }
     }
 
-    private func share(_ item: ChatMediaItem) {
-        guard IOSShareActivity.shared.begin() else {
-            shareFailure = IOSConversationExporter.busyMessage
-            return
-        }
-        preparingShare = true
-        Task { @MainActor in
-            defer { preparingShare = false; IOSShareActivity.shared.end() }
-            let content: Any
-            if item.url.hasPrefix("data:") {
-                guard case .success(let image) = await ChatDataImageLoadState.resolve(urlString: item.url) else {
-                    shareFailure = "图片无法读取，请重新加载后重试。"
-                    return
+    @ViewBuilder
+    private func shareButton(for item: ChatMediaItem) -> some View {
+        if let preparedShare, preparedShare.url == item.url {
+            switch preparedShare.content {
+            case .url(let url):
+                ShareLink(item: url) { Label("分享图片", systemImage: "square.and.arrow.up") }
+            case .image(let image):
+                let sharedImage = Image(uiImage: image)
+                ShareLink(item: sharedImage, preview: SharePreview(item.title.nilIfBlank ?? "图片", image: sharedImage)) {
+                    Label("分享图片", systemImage: "square.and.arrow.up")
                 }
-                content = image
-            } else if let url = IOSImageGenerationRepository.resolvedImageURL(from: item.url) {
-                content = url
-            } else {
-                shareFailure = "图片地址不可用。"
-                return
+            case .failure:
+                Button("分享图片", systemImage: "square.and.arrow.up") {
+                    shareFailure = "图片无法读取，请重新加载后重试。"
+                }
             }
-            if !(await IOSShareSheet.present([content])) { shareFailure = "当前无法弹出分享面板，请稍后重试。" }
+        } else {
+            ProgressView().accessibilityLabel("正在准备图片分享")
         }
     }
 }

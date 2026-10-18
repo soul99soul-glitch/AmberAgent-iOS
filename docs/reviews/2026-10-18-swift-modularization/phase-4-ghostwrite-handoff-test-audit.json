@@ -1,0 +1,9 @@
+{
+  "new_test": "NovelGhostwriteGenerationTests/testGhostwriteBatchWaitsForDurableTerminalHandoffAfterLongGeneration",
+  "existing_helper_change": "assertGhostwriteBatchCompletes optional false-by-default fixture parameter; original scripts/grace/assertions unchanged for old cases. New case uses existing pause/replacement, settleGrace0.05, running0.2s and long candidate. No assertions removed.",
+  "files": {
+    "iosApp/iosAppTests/NovelGhostwriteGenerationTests.swift": "3c3f70fd087a9019395ebd488e54657f1ce7faa15982037a08b96fddd03a968f",
+    "iosApp/iosAppTests/NovelCollaborationModeTestCase.swift": "2e359476395e788778b7e77549b71f48cd5fa290ea27caa7fe1dc5b3e03f9b32"
+  },
+  "result": "64/64 Main passed"
+}

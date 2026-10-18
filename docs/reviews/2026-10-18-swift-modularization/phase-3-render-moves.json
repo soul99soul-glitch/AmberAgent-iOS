@@ -1,0 +1,923 @@
+{
+  "moves": [
+    {
+      "oldPath": "iosApp/iosApp/ChatMessageProjection.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/Projection/ChatMessageAnchors.swift",
+      "oldLineRanges": [
+        [
+          1,
+          193
+        ]
+      ],
+      "physicalLines": 193,
+      "symbols": [
+        "UIMessage",
+        "ChatMessageAnchor",
+        "ChatImageGenerationAnchorTarget",
+        "ChatToolCallAnchorTarget",
+        "ChatImageGenerationResumeState",
+        "ChatImageGenerationResumeContext",
+        "ChatImageGenerationResumeProjection",
+        "ChatImageGenerationResumeConsumption"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatMessageProjection.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/Projection/ChatMessageProjection.swift",
+      "oldLineRanges": [
+        [
+          194,
+          275
+        ],
+        [
+          852,
+          1178
+        ]
+      ],
+      "physicalLines": 412,
+      "symbols": [
+        "ChatMessageRowModel",
+        "ChatTimelineRendererKind",
+        "ChatTimelineEntry",
+        "ChatTimelineMessageEntry",
+        "ChatTimelinePlan",
+        "ChatTimelinePlanner",
+        "ChatMessageProjector",
+        "ChatInsertionAnimationPolicy",
+        "ChatPartSignature"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatMessageProjection.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift",
+      "oldLineRanges": [
+        [
+          276,
+          851
+        ]
+      ],
+      "physicalLines": 579,
+      "symbols": [
+        "NativeTimelineEntryKind",
+        "NativeTimelineEntry",
+        "NativeTimelineProjection",
+        "NativeTimelineVariantInfo",
+        "NativeTimelineProjector"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatMessageProjection.swift",
+      "newPath": "iosApp/iosApp/Chat/PhoneAutomation/ChatPhoneToolGrouping.swift",
+      "oldLineRanges": [
+        [
+          1179,
+          1537
+        ]
+      ],
+      "physicalLines": 362,
+      "symbols": [
+        "ChatPhoneToolGroupAttention",
+        "ChatPhoneToolGroupSummary",
+        "ChatPhoneToolGroupRole",
+        "ChatPhoneToolGrouping"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolSupport.swift",
+      "newPath": "iosApp/iosApp/AgentRuntime/Tools/Output/ChatToolOutputAnalysis.swift",
+      "oldLineRanges": [
+        [
+          1,
+          273
+        ]
+      ],
+      "physicalLines": 273,
+      "symbols": [
+        "ChatToolOutputAnalysis",
+        "ChatToolAnalysisMemo",
+        "ChatToolOutputAnalysisCache",
+        "chatToolOutputAnalysisCache"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolSupport.swift",
+      "newPath": "iosApp/iosApp/AgentRuntime/Tools/Approval/ChatToolApprovalModels.swift",
+      "oldLineRanges": [
+        [
+          274,
+          711
+        ]
+      ],
+      "physicalLines": 438,
+      "symbols": [
+        "MemoryToolApprovalRequest",
+        "WebMountToolApprovalRequest",
+        "WorkspaceToolApprovalRequest",
+        "SearchToolApprovalRequest",
+        "McpSkillImportMutationKind",
+        "McpSkillImportFileChangeKind",
+        "McpSkillImportFileChange",
+        "McpSkillImportPreview",
+        "SoulImportPreview",
+        "McpImportServerPreview",
+        "McpImportPreview",
+        "McpToolApprovalRequest",
+        "ChatAskUserRequest",
+        "CouncilToolApprovalRequest",
+        "IshToolApprovalMode",
+        "IshToolApprovalScope",
+        "IshHandoffToolApprovalRequest"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolSupport.swift",
+      "newPath": "iosApp/iosApp/AgentRuntime/Tools/Approval/ChatToolApprovalRequestBuilder.swift",
+      "oldLineRanges": [
+        [
+          712,
+          1096
+        ]
+      ],
+      "physicalLines": 388,
+      "symbols": [
+        "expandedMcpToolDeclarations",
+        "ChatToolApprovalRequestBuilder"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolSupport.swift",
+      "newPath": "iosApp/iosApp/AgentRuntime/Tools/Output/ChatToolOutputFormatter.swift",
+      "oldLineRanges": [
+        [
+          1097,
+          1781
+        ]
+      ],
+      "physicalLines": 691,
+      "symbols": [
+        "ChatToolOutputFormatter"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolTimelineView.swift",
+      "newPath": "iosApp/iosApp/Chat/Tools/Presentation/ChatToolVisualStyle.swift",
+      "oldLineRanges": [
+        [
+          1,
+          218
+        ]
+      ],
+      "physicalLines": 218,
+      "symbols": [
+        "ChatToolVisualKind",
+        "ChatToolStepState"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolTimelineView.swift",
+      "newPath": "iosApp/iosApp/Chat/Tools/Presentation/ChatSubAgentPresentation.swift",
+      "oldLineRanges": [
+        [
+          219,
+          382
+        ]
+      ],
+      "physicalLines": 168,
+      "symbols": [
+        "ChatSubAgentCapsulePresentation",
+        "ChatSubAgentRunVisualState",
+        "ChatSubAgentPixelAvatar"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolTimelineView.swift",
+      "newPath": "iosApp/iosApp/Chat/Tools/Presentation/ChatPhoneToolPresentation.swift",
+      "oldLineRanges": [
+        [
+          383,
+          524
+        ]
+      ],
+      "physicalLines": 146,
+      "symbols": [
+        "ChatPhoneToolPresentation"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolTimelineView.swift",
+      "newPath": "iosApp/iosApp/Chat/Tools/Presentation/ChatToolStepModel.swift",
+      "oldLineRanges": [
+        [
+          525,
+          1707
+        ]
+      ],
+      "physicalLines": 1187,
+      "symbols": [
+        "ChatToolStepModel"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolTimelineView.swift",
+      "newPath": "iosApp/iosApp/Chat/Tools/Presentation/ChatToolTimelineView.swift",
+      "oldLineRanges": [
+        [
+          1708,
+          2020
+        ]
+      ],
+      "physicalLines": 317,
+      "symbols": [
+        "ChatSubAgentRunStatusLoader",
+        "ChatToolTimeline"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatToolTimelineView.swift",
+      "newPath": "iosApp/iosApp/Chat/Tools/Presentation/ChatPhoneToolGroupHeader.swift",
+      "oldLineRanges": [
+        [
+          2021,
+          2311
+        ]
+      ],
+      "physicalLines": 295,
+      "symbols": [
+        "ChatPhoneToolGroupToggleHandler",
+        "ChatPhoneToolGroupToggleKey",
+        "EnvironmentValues",
+        "ChatPhoneToolGroupHeader"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatAssistantMarkdownView.swift",
+      "newPath": "iosApp/iosApp/Chat/Rendering/Markdown/ChatAssistantMarkdownView.swift",
+      "oldLineRanges": [
+        [
+          1,
+          44
+        ],
+        [
+          63,
+          570
+        ]
+      ],
+      "physicalLines": 552,
+      "symbols": [
+        "ChatMarkdownOpenURLPolicy",
+        "ChatMarkdownRendererSelection",
+        "ChatMarkdownRendererPolicy",
+        "ChatAssistantMarkdownView",
+        "ChatStreamingMarkdownRendererPolicy"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatAssistantMarkdownView.swift",
+      "newPath": "iosApp/iosApp/Chat/Media/ChatDataImageLoadState.swift",
+      "oldLineRanges": [
+        [
+          45,
+          62
+        ]
+      ],
+      "physicalLines": 20,
+      "symbols": [
+        "ChatDataImageLoadState"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatAssistantMarkdownView.swift",
+      "newPath": "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownTypography.swift",
+      "oldLineRanges": [
+        [
+          571,
+          630
+        ],
+        [
+          2280,
+          2289
+        ]
+      ],
+      "physicalLines": 74,
+      "symbols": [
+        "ChatStreamingMarkdownTypography",
+        "ChatStreamingMarkdownTypographyTestSupport",
+        "UIFont"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatAssistantMarkdownView.swift",
+      "newPath": "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlocks.swift",
+      "oldLineRanges": [
+        [
+          631,
+          835
+        ]
+      ],
+      "physicalLines": 209,
+      "symbols": [
+        "ChatStreamingBlockMarkdownView",
+        "ChatStreamingMarkdownBlockListView",
+        "ChatStreamingMarkdownBlockParseKey",
+        "ChatStreamingMarkdownBlockController",
+        "ChatStreamingMarkdownBlock",
+        "ChatStreamingMarkdownTable",
+        "ChatStreamingMarkdownParsedTable"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatAssistantMarkdownView.swift",
+      "newPath": "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlockParser.swift",
+      "oldLineRanges": [
+        [
+          836,
+          1118
+        ],
+        [
+          1281,
+          1409
+        ]
+      ],
+      "physicalLines": 417,
+      "symbols": [
+        "ChatStreamingMarkdownBlockParser",
+        "ChatStreamingMarkdownTableRowCache",
+        "ChatStreamingMarkdownBlockParserTestBlock",
+        "ChatStreamingMarkdownBlockParserTestSupport"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatAssistantMarkdownView.swift",
+      "newPath": "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownDetection.swift",
+      "oldLineRanges": [
+        [
+          1119,
+          1280
+        ],
+        [
+          1410,
+          1448
+        ]
+      ],
+      "physicalLines": 206,
+      "symbols": [
+        "ChatStreamingDetectionBox",
+        "ChatStreamingTableDetectionState",
+        "ChatStreamingMarkdownConfigCacheTestSupport",
+        "ChatStreamingTableDetectionTestSupport"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatAssistantMarkdownView.swift",
+      "newPath": "iosApp/iosApp/Chat/Rendering/Markdown/ChatStableStreamingMarkdown.swift",
+      "oldLineRanges": [
+        [
+          1449,
+          2279
+        ]
+      ],
+      "physicalLines": 835,
+      "symbols": [
+        "ChatStableStreamingMarkdownView",
+        "ChatStableStreamingMarkdownParseKey",
+        "ChatStableStreamingMarkdownController",
+        "ChatStableStreamingMarkdownCacheTestSupport",
+        "ChatStreamingMarkdownThrottleTestSupport",
+        "ChatStableStreamingMarkdownControllerTestSupport"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/ChatTimelinePolicies.swift",
+      "oldLineRanges": [
+        [
+          1,
+          88
+        ],
+        [
+          1858,
+          1894
+        ],
+        [
+          1906,
+          1949
+        ]
+      ],
+      "physicalLines": 169,
+      "symbols": [
+        "ChatListAction",
+        "NativeChatTimelineSessionIdentity",
+        "NativeStaticTimelineViewportPolicy",
+        "NativeTimelineStreamingTailUpdatePolicy",
+        "NativeStaticTimelineRendererMemory",
+        "NativeTimelineMessageAnchorPolicy",
+        "ChatUserMessageInsertionModifier",
+        "ChatSwiftUIStreamingTailVisibilityModifier",
+        "AnyTransition"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/NativeTimelineProjectionCache.swift",
+      "oldLineRanges": [
+        [
+          89,
+          328
+        ]
+      ],
+      "physicalLines": 246,
+      "symbols": [
+        "NativeTimelineProjectionCache"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/NativeChatTimelineView.swift",
+      "oldLineRanges": [
+        [
+          329,
+          1567
+        ],
+        [
+          1568,
+          1630
+        ],
+        [
+          1845,
+          1849
+        ],
+        [
+          1895,
+          1905
+        ],
+        [
+          3322,
+          3328
+        ],
+        [
+          3699,
+          3711
+        ]
+      ],
+      "physicalLines": 1344,
+      "symbols": [
+        "NativeChatTimelineView",
+        "ChatConfigurationNoticeCard",
+        "HistoryRevealAnchor",
+        "View",
+        "ChatListSnapshotBuilder",
+        "ChatSizeChangesPinModifier"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/Regression/ChatSwiftUIViewportPolicies.swift",
+      "oldLineRanges": [
+        [
+          1631,
+          1844
+        ],
+        [
+          1850,
+          1857
+        ]
+      ],
+      "physicalLines": 228,
+      "symbols": [
+        "FollowMode",
+        "ChatSwiftUINearBottomResumePolicy",
+        "ChatSwiftUIExplicitBottomPlan",
+        "ChatSwiftUIExplicitBottomPolicy",
+        "ChatSwiftUIExplicitBottomLiveTailPolicy",
+        "ChatSwiftUIExplicitBottomLayoutPolicy",
+        "ChatSwiftUIConversationAnchorRetryDecision",
+        "ChatSwiftUIConversationAnchorRetryPolicy",
+        "ChatSwiftUIMeasuredGrowthFollowPolicy",
+        "ChatSwiftUIBottomWritePolicy",
+        "ChatSwiftUIGenerationEndSettlePolicy",
+        "ChatSwiftUICleanListRenderPolicy",
+        "ChatSwiftUIScrollGeometry"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/Regression/ChatSwiftUIMessageList.swift",
+      "oldLineRanges": [
+        [
+          1950,
+          3056
+        ]
+      ],
+      "physicalLines": 1113,
+      "symbols": [
+        "ChatSwiftUIListScrollRuntime",
+        "ChatRowSettingSignatures",
+        "ChatSwiftUIMessageList"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/ChatTimelineRows.swift",
+      "oldLineRanges": [
+        [
+          3057,
+          3286
+        ]
+      ],
+      "physicalLines": 236,
+      "symbols": [
+        "ChatSwiftUIMessageBubble",
+        "ChatListMessageRenderModel",
+        "NativeTimelineMessageBubble",
+        "ChatMessageHostedBubble",
+        "ChatLiveTailBubble"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/ChatRenderState.swift",
+      "oldLineRanges": [
+        [
+          3287,
+          3321
+        ],
+        [
+          3329,
+          3455
+        ]
+      ],
+      "physicalLines": 168,
+      "symbols": [
+        "ChatLiveTailModel",
+        "ChatRendererMode",
+        "ChatRenderState",
+        "ChatRenderStateStore"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Tools/Presentation/ChatPhoneToolGroupExpansionStore.swift",
+      "oldLineRanges": [
+        [
+          3456,
+          3480
+        ]
+      ],
+      "physicalLines": 31,
+      "symbols": [
+        "ChatPhoneToolGroupExpansionStore"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/ChatRowContentHashCache.swift",
+      "oldLineRanges": [
+        [
+          3481,
+          3628
+        ]
+      ],
+      "physicalLines": 154,
+      "symbols": [
+        "ChatMessageContentIdentity",
+        "ChatRowContentHashCache"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatCollectionMessageList.swift",
+      "newPath": "iosApp/iosApp/Chat/Timeline/Regression/ChatRowHeightCache.swift",
+      "oldLineRanges": [
+        [
+          3629,
+          3698
+        ]
+      ],
+      "physicalLines": 76,
+      "symbols": [
+        "ChatRowHeightCache"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/MessageBubbleView.swift",
+      "newPath": "iosApp/iosApp/Chat/Message/MessageBubbleView.swift",
+      "oldLineRanges": [
+        [
+          1,
+          740
+        ]
+      ],
+      "physicalLines": 740,
+      "symbols": [
+        "ChatToolPartRow",
+        "MessageBubbleView",
+        "WorkspaceSaveAlert"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/MessageBubbleView.swift",
+      "newPath": "iosApp/iosApp/Chat/Media/GeneratedImages/ChatGeneratedImageGrid.swift",
+      "oldLineRanges": [
+        [
+          741,
+          1013
+        ],
+        [
+          1050,
+          1097
+        ]
+      ],
+      "physicalLines": 325,
+      "symbols": [
+        "ChatGeneratedImageGrid",
+        "ChatGeneratedImageLoadingPlaceholder",
+        "ChatGeneratedImageFailureCard",
+        "ChatGeneratedImageRequestDisplay",
+        "ChatGeneratedImageDotPlaceholder",
+        "ChatGeneratedImageAppearModifier",
+        "ChatGeneratedImageActionLabel"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/MessageBubbleView.swift",
+      "newPath": "iosApp/iosApp/Chat/Media/ChatWidthDrivenAspectRatio.swift",
+      "oldLineRanges": [
+        [
+          1014,
+          1049
+        ]
+      ],
+      "physicalLines": 38,
+      "symbols": [
+        "ChatWidthDrivenAspectRatio",
+        "ChatWidthAspectLayout"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/MessageBubbleView.swift",
+      "newPath": "iosApp/iosApp/Chat/Media/GeneratedImages/ChatGeneratedImageTile.swift",
+      "oldLineRanges": [
+        [
+          1098,
+          1333
+        ],
+        [
+          1545,
+          1641
+        ]
+      ],
+      "physicalLines": 337,
+      "symbols": [
+        "ChatGeneratedImageTile",
+        "ChatGeneratedImagePhotoSaveState",
+        "ChatGeneratedImageSaveAlert",
+        "ChatGeneratedImagePreviewTarget",
+        "ChatGeneratedImageEditTarget",
+        "ChatUserImageTile"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/MessageBubbleView.swift",
+      "newPath": "iosApp/iosApp/Chat/Media/GeneratedImages/ChatGeneratedImagePreview.swift",
+      "oldLineRanges": [
+        [
+          1334,
+          1544
+        ]
+      ],
+      "physicalLines": 215,
+      "symbols": [
+        "ChatGeneratedImagePreview",
+        "ChatGeneratedImageEditSheet"
+      ]
+    },
+    {
+      "oldPath": "iosApp/iosApp/IOSImageGenerationRepository.swift",
+      "newPath": "iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift",
+      "oldLineRanges": [
+        [
+          226,
+          226
+        ],
+        [
+          359,
+          393
+        ],
+        [
+          1197,
+          1207
+        ]
+      ],
+      "physicalLines": 53,
+      "symbols": [
+        "ChatGeneratedImageURL",
+        "scheme",
+        "resolvedImageURL",
+        "generatedImageDirectoryURL",
+        "repairedGeneratedImageURL"
+      ],
+      "note": "Existing repository resolvedImageURL API delegates; scheme and file repair helpers moved. Repo current length 1416"
+    },
+    {
+      "oldPath": "iosApp/iosApp/ChatMediaView.swift",
+      "newPath": "iosApp/iosApp/ChatMediaView.swift",
+      "oldLineRanges": [
+        [
+          186,
+          186
+        ],
+        [
+          462,
+          462
+        ]
+      ],
+      "physicalLines": 517,
+      "symbols": [
+        "ChatGeneratedImageURL.resolvedImageURL"
+      ],
+      "note": "Only two URL resolver call sites changed; original WIP retained."
+    }
+  ],
+  "minimumVisibilityChanges": [
+    {
+      "symbol": "ChatToolOutputAnalysisCache",
+      "from": "private",
+      "to": "internal",
+      "reason": "ChatToolOutputFormatter accesses the shared snapshot cache across files"
+    },
+    {
+      "symbol": "chatToolOutputAnalysisCache",
+      "from": "private",
+      "to": "internal",
+      "reason": "ChatToolOutputFormatter reuses the same singleton across files"
+    },
+    {
+      "symbol": "ChatStreamingMarkdownTypography",
+      "from": "private",
+      "to": "internal",
+      "reason": "Markdown entry builds the typography configuration"
+    },
+    {
+      "symbol": "ChatStreamingBlockMarkdownView",
+      "from": "private",
+      "to": "internal",
+      "reason": "Markdown entry renders the block view"
+    },
+    {
+      "symbol": "ChatStreamingMarkdownBlockController",
+      "from": "private",
+      "to": "internal",
+      "reason": "Existing throttle test support remains with stable controller"
+    },
+    {
+      "symbol": "ChatStreamingMarkdownBlock",
+      "from": "private",
+      "to": "internal",
+      "reason": "Block parser returns blocks to the controller"
+    },
+    {
+      "symbol": "ChatStreamingMarkdownTable",
+      "from": "private",
+      "to": "internal",
+      "reason": "Block parser returns table values"
+    },
+    {
+      "symbol": "ChatStreamingMarkdownParsedTable",
+      "from": "private",
+      "to": "internal",
+      "reason": "Block parser constructs parsed table values"
+    },
+    {
+      "symbol": "ChatStreamingMarkdownBlockParser",
+      "from": "private",
+      "to": "internal",
+      "reason": "Block controller, detection, and stable controller call parser"
+    },
+    {
+      "symbol": "ChatStreamingDetectionBox",
+      "from": "private",
+      "to": "internal",
+      "reason": "Markdown entry uses one detection box"
+    },
+    {
+      "symbol": "ChatStableStreamingMarkdownView",
+      "from": "private",
+      "to": "internal",
+      "reason": "Markdown entry and block list render stable content"
+    },
+    {
+      "symbol": "ChatSwiftUIScrollGeometry",
+      "from": "private",
+      "to": "internal",
+      "reason": "Native and regression timeline share geometry value"
+    },
+    {
+      "symbol": "AnyTransition.chatUserMessageSend",
+      "from": "private extension",
+      "to": "internal extension",
+      "reason": "Native and regression timeline share the same insertion transition"
+    },
+    {
+      "symbol": "ChatSwiftUIMessageBubble",
+      "from": "private",
+      "to": "internal",
+      "reason": "Regression list builds wrapper across files"
+    },
+    {
+      "symbol": "NativeTimelineMessageBubble",
+      "from": "private",
+      "to": "internal",
+      "reason": "Native timeline builds wrapper across files"
+    },
+    {
+      "symbol": "ChatGeneratedImageGrid",
+      "from": "private",
+      "to": "internal",
+      "reason": "MessageBubble renders grid across files"
+    },
+    {
+      "symbol": "ChatGeneratedImageRequestDisplay",
+      "from": "private",
+      "to": "internal",
+      "reason": "Generated image tile and grid share request display"
+    },
+    {
+      "symbol": "ChatGeneratedImageActionLabel",
+      "from": "private",
+      "to": "internal",
+      "reason": "Generated image tile uses shared label"
+    },
+    {
+      "symbol": "ChatGeneratedImageTile",
+      "from": "private",
+      "to": "internal",
+      "reason": "Generated image grid builds tile across files"
+    },
+    {
+      "symbol": "ChatGeneratedImageEditSheet",
+      "from": "private",
+      "to": "internal",
+      "reason": "Generated image tile presents edit sheet across files"
+    },
+    {
+      "symbol": "ChatStreamingTableDetectionState",
+      "from": "private",
+      "to": "internal",
+      "reason": "Markdown entry updates table state through the detection box"
+    },
+    {
+      "symbol": "ChatListMessageRenderModel",
+      "from": "private",
+      "to": "internal",
+      "reason": "Native timeline constructs row model across files"
+    },
+    {
+      "symbol": "ChatGeneratedImageLoadingPlaceholder",
+      "from": "private",
+      "to": "internal",
+      "reason": "MessageBubble renders loading state across files"
+    },
+    {
+      "symbol": "ChatGeneratedImageFailureCard",
+      "from": "private",
+      "to": "internal",
+      "reason": "MessageBubble renders failure state across files"
+    }
+  ],
+  "rootConsumers": {
+    "NovelExplicitSources": [
+      "iosApp/iosApp/Chat/Rendering/Markdown/ChatAssistantMarkdownView.swift",
+      "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownTypography.swift",
+      "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlocks.swift",
+      "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlockParser.swift",
+      "iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownDetection.swift",
+      "iosApp/iosApp/Chat/Rendering/Markdown/ChatStableStreamingMarkdown.swift",
+      "iosApp/iosApp/Chat/Media/ChatDataImageLoadState.swift",
+      "iosApp/iosApp/Chat/Media/ChatWidthDrivenAspectRatio.swift",
+      "iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift",
+      "iosApp/iosApp/ChatMarkdownMedia.swift",
+      "iosApp/iosApp/ChatMediaView.swift",
+      "iosApp/iosApp/ChatVideoView.swift"
+    ],
+    "sourceStringTests": [
+      "iosApp/iosAppTests/ChatMessageProjectionTests.swift",
+      "iosApp/iosAppTests/ChatRowContentHashCacheTests.swift",
+      "iosApp/iosAppTests/IOSGenerativeWidgetPayloadDetectorTests.swift",
+      "iosApp/iosAppTests/IOSSettingsWiringTests.swift",
+      "iosApp/iosAppTests/IOSThemePackToolTests.swift",
+      "iosApp/iosAppTests/PerformanceHygieneTests.swift"
+    ],
+    "xcodegen": "iosApp/project.yml recursively includes iosApp; regenerate PBX project for both app source phases."
+  },
+  "rootConfirmedUIRepair": {
+    "reason": "Observed empty welcome decoration scrolls behind floating header with keyboard and attachments.",
+    "before_snapshot": "/tmp/amber-phase3-chat-misc-before-keyboard-fix.swift",
+    "changes": [
+      "ChatEmptyState removes non-content bottom180 padding; all pre-existing ChatMiscViews WIP otherwise retained except explicit mark AX grouping/id.",
+      "Native empty projection and bottomAnchor remain; empty entry contributes no decoration height; viewport overlay shows welcome with ViewThatFits only when it fits.",
+      "No scroll driver/offset/anchor/state change; overlay ignores hit testing.",
+      "Actual UI navigation asserts welcome geometry in keyboard and attachment states, preserving existing composer/menu checks."
+    ],
+    "verification": "/tmp/amber-phase3-navigation-overlay.xcresult: 1 passed; three actual screenshots reviewed. Attachment welcome still appears in AX debug tree; VoiceOver focus not verified.",
+    "screenshots": "/tmp/amber-phase3-navigation-overlay-attachments/manifest.json"
+  }
+}

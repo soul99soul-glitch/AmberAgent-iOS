@@ -1,0 +1,42 @@
+{
+  "selector": "NovelGenerationLifecycleTests/testOldDetachedStreamEndCannotTerminalizeForegroundResume",
+  "classID": "NovelGenerationLifecycleTests",
+  "testFile": "iosApp/iosAppTests/NovelGenerationRecoveryTests.swift",
+  "supportFile": "iosApp/iosAppTests/NovelGenerationLifecycleTestSupport.swift",
+  "originalLateDetachTestBodySHA256": "c586af03e52276e0ffe1528e640357d7ad777e045ed09e872e5a3aff229788fe",
+  "originalLateDetachTestBodyUnchanged": true,
+  "scriptedAdapter": {
+    "existingDetachDefaultOrderPreserved": "record detached ID; finish initial and resumed streams; optionally block",
+    "newOptInGate": "The new test opts into AsyncStream(unfolding:) for only its initial stream. Actor nextInitialEvent records each pull and parks the second next() in a checked continuation. blockNextDetachBeforeFinishingInitialStream holds that parked old stream through detach; finishInitialStream(runID:) returns nil to the parked pull without emitting an event. The ordinary AsyncStream continuation path is unchanged for all other tests.",
+    "productionAdapterUnchanged": true
+  },
+  "interleaving": [
+    "start durable prose run with opt-in pull-controlled initial model stream and accept first response frame",
+    "wait until actor nextInitialEvent receives and parks the second next() call; installModelStream cannot issue this pull until consumeModelEvent has returned from sidecar and MainActor awaits for frame one",
+    "opt-in block detach before old stream closes",
+    "block MainActor recovered lease hop using existing test pattern",
+    "start foreground resume and observe isDetachedForBackground == false",
+    "directly finish old initial stream, without emitting an event, while foreground resume is suspended in recovered lease hop",
+    "before releasing lease gate, observe old consumer completion or terminal claim/runtime removal",
+    "assert exactly one resume request, resumed delta, and final composed content"
+  ],
+  "currentSourceSHA256": {
+    "test": "924aff54acd5747c6f43774b29f25414303ca349bd9edb0ed48ad68a97e39519",
+    "support": "e4baa897be16080d22fc650a6bc98acbe5e8400f27628c16dc71237180f3625e"
+  },
+  "preEditSHA256": {
+    "test": "57590e417abbe7f4f3b54a4242a5760a6bb9c2e2dbb95a798ff86957994b8c51",
+    "support": "0cf36f53b60028078734e0946ad8778864e10ba27bd9cd7d66db434c0c6ba307"
+  },
+  "lineCounts": {
+    "test": 1462,
+    "support": 690
+  },
+  "verification": "swiftc -frontend -parse passed for both test files; standalone strict-concurrency typecheck passed for AsyncStream(unfolding:onCancel:) actor pattern; original late-detach method body SHA unchanged; production patch remains staged only under /tmp.",
+  "firstRedAttempt": {
+    "result": "7 pass, 1 new-case failure",
+    "evidence": "/tmp/amber-phase4-stream-red-details.json",
+    "finding": "At line 397 oldConsumerSettledOrClaimed was false before gate release; activity event may have required MainActor and did not prove old end at the lease barrier."
+  },
+  "secondRedAttempt": "pending Root focused selector run; pull-barrier corrected test frozen"
+}

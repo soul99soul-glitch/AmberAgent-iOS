@@ -630,6 +630,7 @@ class OpenAIKmpProvider internal constructor(
     private fun parseMessage(jsonObject: JsonObject): UIMessage {
         val role = MessageRole.valueOf(jsonObject.str("role")?.uppercase() ?: "ASSISTANT")
         val content = jsonObject.str("content") ?: ""
+        val refusal = jsonObject.str("refusal") ?: ""
         val reasoning = jsonObject.str("reasoning_content") ?: jsonObject.str("reasoning")
         val hasReasoningContent = jsonObject.containsKey("reasoning_content")
         val toolCalls = jsonObject["tool_calls"]?.arr() ?: emptyList()
@@ -661,6 +662,7 @@ class OpenAIKmpProvider internal constructor(
                     )
                 }
                 if (content.isNotEmpty()) add(UIMessagePart.Text(content))
+                if (refusal.isNotEmpty()) add(UIMessagePart.Text(refusal))
             },
             annotations = parseAnnotations(jsonObject["annotations"]?.arr() ?: emptyList()),
         )
@@ -1265,7 +1267,7 @@ class OpenAIKmpProvider internal constructor(
         val chunkType = jsonObject.str("type") ?: return null
 
         when (chunkType) {
-            "response.output_text.delta" -> {
+            "response.output_text.delta", "response.refusal.delta" -> {
                 return MessageChunk(
                     id = jsonObject.str("item_id") ?: "",
                     model = "",
@@ -1280,7 +1282,7 @@ class OpenAIKmpProvider internal constructor(
                 )
             }
 
-            "response.output_text.done" -> {
+            "response.output_text.done", "response.refusal.done" -> {
                 return MessageChunk(
                     id = jsonObject.str("item_id") ?: "",
                     model = "",
@@ -1288,7 +1290,9 @@ class OpenAIKmpProvider internal constructor(
                         UIMessageChoice(
                             index = 0,
                             delta = null,
-                            message = UIMessage.assistant(jsonObject.str("text") ?: ""),
+                            message = UIMessage.assistant(
+                                jsonObject.str(if (chunkType == "response.refusal.done") "refusal" else "text") ?: "",
+                            ),
                             finishReason = null,
                         ),
                     ),

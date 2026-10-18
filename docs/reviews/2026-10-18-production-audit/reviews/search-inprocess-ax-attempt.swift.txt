@@ -1,0 +1,161 @@
+import SwiftUI
+import UIKit
+import XCTest
+@preconcurrency import Shared
+@testable import iosApp
+
+@MainActor
+final class SearchNavigationTests: XCTestCase {
+    func testRenderedSearchResultOpensTheSelectedConversation() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.close() }
+        let host = try fixture.hostSearch()
+        defer { host.close() }
+        let row = try await waitForButton(containing: fixture.targetTitle, in: host)
+
+        XCTAssertTrue(row.accessibilityActivate())
+        try await waitUntil("Selected conversation routes to chat") { fixture.router.path == [.chat] }
+
+        XCTAssertEqual(fixture.store.currentConversation?.id, fixture.targetID)
+        XCTAssertEqual(fixture.store.currentMessages.last?.toText(), "target message")
+    }
+
+    func testUnreadableSearchResultKeepsCurrentConversationAndShowsFailure() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.close() }
+        let host = try fixture.hostSearch()
+        defer { host.close() }
+        let row = try await waitForButton(containing: fixture.targetTitle, in: host)
+        // The row is an already-published search hit. Its document can become
+        // unavailable before activation; the store intentionally preserves current.
+        try Data("invalid conversation document".utf8).write(to: fixture.targetURL, options: .atomic)
+
+        XCTAssertTrue(row.accessibilityActivate())
+        try await waitUntil("Unreadable conversation reports its load error") { fixture.store.lastUserVisibleError != nil }
+        try await host.settle()
+
+        XCTAssertEqual(fixture.store.currentConversation?.id, fixture.originalID)
+        XCTAssertTrue(fixture.router.path.isEmpty, "A failed target load must not open the previous conversation")
+        try await waitUntil("Search presents its navigation error") {
+            self.accessibilityElements(in: host.window).contains {
+                $0.accessibilityLabel?.contains("该会话暂时无法打开") == true
+            }
+        }
+        let dismissError = try await waitForButton(containing: "好", in: host)
+        XCTAssertTrue(dismissError.accessibilityActivate())
+        _ = try await waitForButton(containing: fixture.targetTitle, in: host)
+    }
+
+    private func waitForButton(containing title: String,
+                               in host: SwiftModularizationHostingFixture) async throws -> NSObject {
+        var found: NSObject?
+        try await waitUntil("Search result button appears", diagnostics: {
+            let image = UIGraphicsImageRenderer(bounds: host.window.bounds).image { _ in
+                host.window.drawHierarchy(in: host.window.bounds, afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "Search host at missing result"
+            attachment.lifetime = .keepAlways
+            self.add(attachment)
+            return self.accessibilityElements(in: host.window).map {
+                "label=\($0.accessibilityLabel ?? "nil") button=\($0.accessibilityTraits.contains(.button)) value=\($0.accessibilityValue ?? "nil")"
+            }.joined(separator: "\n")
+        }) {
+            host.window.layoutIfNeeded()
+            found = self.accessibilityElements(in: host.window).first {
+                $0.accessibilityTraits.contains(.button) && $0.accessibilityLabel?.contains(title) == true
+            }
+            return found != nil
+        }
+        return try XCTUnwrap(found)
+    }
+
+    private func waitUntil(_ stage: String, diagnostics: (() -> String)? = nil,
+                           _ condition: @escaping @MainActor () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        if let diagnostics {
+            let attachment = XCTAttachment(string: diagnostics())
+            attachment.name = stage
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertTrue(condition(), "\(stage) did not settle")
+        guard condition() else { throw NSError(domain: "SearchNavigationTests", code: 1) }
+    }
+
+    private func accessibilityElements(in root: UIView) -> [NSObject] {
+        var result: [NSObject] = []
+        var visited = Set<ObjectIdentifier>()
+        func visit(_ object: NSObject) {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+            if object.isAccessibilityElement { result.append(object) }
+            if let view = object as? UIView { view.subviews.forEach(visit) }
+            if let children = object.accessibilityElements {
+                children.compactMap { $0 as? NSObject }.forEach(visit)
+            } else {
+                let count = object.accessibilityElementCount()
+                if count > 0, count != NSNotFound {
+                    for index in 0..<count {
+                        if let child = object.accessibilityElement(at: index) as? NSObject { visit(child) }
+                    }
+                }
+            }
+        }
+        visit(root)
+        return result
+    }
+
+    @MainActor
+    private final class Fixture {
+        let targetTitle = "导航测试目标"
+        let suite = "SearchNavigationTests.\(UUID().uuidString)"
+        let directory: URL
+        let defaults: UserDefaults
+        let store: IOSConversationStore
+        let viewModel: ChatViewModel
+        let router = RouterPath()
+        let targetID: KotlinUuid
+        let originalID: KotlinUuid
+        var targetURL: URL { directory.appendingPathComponent("\(targetID).json") }
+
+        init() async throws {
+            directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            store = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: { [] })
+            await store.bootstrap()
+            targetID = try XCTUnwrap(store.currentConversation?.id)
+            await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "target message")])
+            await store.renameConversation(id: targetID, title: targetTitle)
+            let created = await store.newConversation()
+            XCTAssertTrue(created)
+            originalID = try XCTUnwrap(store.currentConversation?.id)
+            await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "original message")])
+            let settings = SettingsStore(userDefaults: defaults)
+            let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+            viewModel = ChatViewModel(settingsStore: settings, sharedSettings: sharedSettings)
+            viewModel.conversationStore = store
+            viewModel.reloadFromStore(reason: .conversationSwitch)
+            let hits = await store.searchConversations(query: targetTitle)
+            XCTAssertTrue(hits.contains { $0.conversationId == targetID }, "Fixture must publish a real searchable target")
+        }
+
+        func hostSearch() throws -> SwiftModularizationHostingFixture {
+            try SwiftModularizationHostingFixture(root: NavigationStack {
+                SearchView(initialQuery: targetTitle)
+                    .environment(store)
+                    .environment(viewModel)
+                    .environment(router)
+            }, width: 393, height: 1_200, type: .large)
+        }
+
+        func close() {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+}

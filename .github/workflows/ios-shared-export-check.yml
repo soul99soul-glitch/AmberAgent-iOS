@@ -11,6 +11,10 @@ on:
       - 'gradlew'
       - 'native/**'
       - 'iosApp/**'
+      - '**/*.swift'
+      - '.swiftlint.yml'
+      - 'scripts/check_swift_file_lengths.py'
+      - 'scripts/tests/test_check_swift_file_lengths.py'
       - 'scripts/check_shared_export_reachability.py'
       - '.github/workflows/ios-shared-export-check.yml'
 
@@ -18,6 +22,17 @@ permissions:
   contents: read
 
 jobs:
+  swift-file-length-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test Swift file length checker
+        run: python3 -m unittest discover -s scripts/tests -p 'test_check_swift_file_lengths.py'
+
+      - name: Check Swift file lengths
+        run: python3 scripts/check_swift_file_lengths.py
+
   shared-export-check:
     runs-on: macos-latest
     steps:

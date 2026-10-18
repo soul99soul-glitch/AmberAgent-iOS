@@ -1,12 +1,13 @@
 import Foundation
+import CryptoKit
 import Shared
 
-/// 从当前会话分支的工具结果生成产物架索引，不读取存储或其他分支。
+/// 从当前会话分支的助手正文与工具结果生成产物架索引，不读取存储或其他分支。
 struct ConversationArtifactIndex: Equatable {
     struct Source: Equatable, Hashable, Sendable {
         let messageID: String
         let turn: Int
-        /// 正文里的生成式 UI 与小程序卡片没有工具调用，只定位到消息。
+        /// 正文里的图片、生成式 UI 与小程序卡片没有工具调用，只定位到消息。
         let toolCallID: String?
     }
 
@@ -123,9 +124,15 @@ struct ConversationArtifactIndex: Equatable {
     static func make(
         from messages: [UIMessage],
         widgetSettings: IOSGenerativeWidgetSettings = IOSGenerativeWidgetSettings(),
-        widgetCache: ConversationArtifactWidgetCache? = nil
+        contentCache: ConversationArtifactContentCache? = nil
     ) -> ConversationArtifactIndex {
         var images: [Image] = []
+        var seenImageURLs: Set<String> = []
+        func appendImage(_ item: ChatMediaItem, source: Source, id: String? = nil, prompt: String? = nil) {
+            guard seenImageURLs.insert(item.url).inserted else { return }
+            let stableID = id ?? "media:" + SHA256.hash(data: Data(item.url.utf8)).map { String(format: "%02x", $0) }.joined()
+            images.append(Image(id: stableID, url: item.url, prompt: prompt ?? nonBlank(item.title), source: source))
+        }
         var files: [FileGroup] = []
         var fileIndices: [String: Int] = [:]
         var webPages: [WebPage] = []
@@ -160,8 +167,16 @@ struct ConversationArtifactIndex: Equatable {
                         miniAppIndices[miniApp.appId] = htmlPages.count
                         htmlPages.append(page)
                     }
-                } else if widgetSettings.enabled, let text = part as? UIMessagePart.Text {
-                    let widgets = widgetCache?.widgets(
+                } else if let image = part as? UIMessagePart.Image {
+                    appendImage(.image(image, id: ""), source: messageSource)
+                } else if let text = part as? UIMessagePart.Text {
+                    let media = contentCache?.images(
+                        key: "\(messageID):\(partIndex)", text: text.text,
+                        compute: { markdownImages(in: text.text) }
+                    ) ?? markdownImages(in: text.text)
+                    for image in media { appendImage(image, source: messageSource) }
+                    guard widgetSettings.enabled else { continue }
+                    let widgets = contentCache?.widgets(
                         key: "\(messageID):\(partIndex)", text: text.text, settings: widgetSettings,
                         compute: { openableWidgets(in: text.text, settings: widgetSettings) }
                     ) ?? openableWidgets(in: text.text, settings: widgetSettings)
@@ -183,18 +198,14 @@ struct ConversationArtifactIndex: Equatable {
                     turn: max(turn, 1),
                     toolCallID: tool.toolCallId
                 )
+                let generated = tool.toolName == "generate_image"
+                let prompt = generated ? (inputObject(tool.input)["prompt"] as? String)?.nilIfBlank : nil
+                for (imageIndex, image) in ChatMediaItem.toolImages(tool.output).enumerated() {
+                    appendImage(image, source: source,
+                                id: generated ? "\(messageID):\(tool.toolCallId):image:\(imageIndex)" : nil,
+                                prompt: prompt)
+                }
                 switch tool.toolName {
-                case "generate_image":
-                    let input = inputObject(tool.input)
-                    let prompt = (input["prompt"] as? String)?.nilIfBlank
-                    for (imageIndex, image) in tool.output.compactMap({ $0 as? UIMessagePart.Image }).enumerated() {
-                        images.append(Image(
-                            id: "\(messageID):\(tool.toolCallId):image:\(imageIndex)",
-                            url: image.url,
-                            prompt: prompt,
-                            source: source
-                        ))
-                    }
                 case "workspace_file_write":
                     let input = inputObject(tool.input)
                     let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
@@ -264,8 +275,16 @@ struct ConversationArtifactIndex: Equatable {
             }
         }
 
-        widgetCache?.prune()
+        contentCache?.prune()
         return ConversationArtifactIndex(images: images, files: files, webPages: webPages, htmlPages: htmlPages)
+    }
+
+    private static func markdownImages(in text: String) -> [ChatMediaItem] {
+        guard text.contains("![") else { return [] }
+        return ChatMarkdownMediaParser.parse(text, completedUTF8Count: text.utf8.count).segments.flatMap { segment in
+            if case .images(let images) = segment.kind { return images }
+            return []
+        }
     }
 
     /// 只收录聊天卡片能打开的 widget：净化未通过（气泡里显示为代码块）或缺 spec 的不算产物。
@@ -420,9 +439,22 @@ struct ConversationArtifactIndex: Equatable {
     }
 }
 
-/// 按消息正文缓存解析出的生成式 UI。产物架每次刷新都要重建全会话索引，而 full_html 单次解析校验
-/// 可达数十 ms；已定稿的消息正文不变，命中缓存即可跳过。只在主线程使用。
-final class ConversationArtifactWidgetCache {
+/// 全会话索引刷新时复用未改变正文的 Markdown 图片与生成式 UI 解析结果。只在主线程使用。
+final class ConversationArtifactContentCache {
+    private struct ImageEntry {
+        let text: String
+        let images: [ChatMediaItem]
+    }
+    private var imageEntries: [String: ImageEntry] = [:]
+
+    func images(key: String, text: String, compute: () -> [ChatMediaItem]) -> [ChatMediaItem] {
+        touched.insert(key)
+        if let entry = imageEntries[key], entry.text == text { return entry.images }
+        let images = compute()
+        imageEntries[key] = ImageEntry(text: text, images: images)
+        return images
+    }
+
     private struct Entry {
         let text: String
         let settings: IOSGenerativeWidgetSettings
@@ -450,6 +482,7 @@ final class ConversationArtifactWidgetCache {
     /// 丢弃本轮未访问的条目（已删除的消息、切换后的分支或会话）。
     func prune() {
         entries = entries.filter { touched.contains($0.key) }
+        imageEntries = imageEntries.filter { touched.contains($0.key) }
         touched.removeAll(keepingCapacity: true)
     }
 }

@@ -1,0 +1,107 @@
+{
+  "phase": "Phase3 Engine and Orchestration",
+  "source_baseline": "/tmp/amber-phase3-source-baseline/files",
+  "source_files_changed": [
+    "iosApp/iosApp/IOSAgentToolEngine.swift",
+    "iosApp/iosApp/IOSThreadOrchestrationToolService.swift"
+  ],
+  "files": [
+    {
+      "path": "iosApp/iosApp/IOSAgentToolEngine.swift",
+      "lines": 1015,
+      "responsibility": "Public run facade; only run loop, working transcript, effective params, loop guard, executor registry/rebuilder and guard/citation finalization",
+      "minimal_visibility": "public facade; helper methods private except nowLocalDateTime shared with provider step",
+      "state_ownership": "one engine instance drives one run at a time; no phone-control singleton lookup"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolContracts.swift",
+      "lines": 242,
+      "responsibility": "Tool/provider protocols, immutable outcomes, run result, approval and mailbox projections",
+      "minimal_visibility": "existing public API preserved; no new public API",
+      "state_ownership": "cross-caller value contracts"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderAdapter.swift",
+      "lines": 205,
+      "responsibility": "Existing OpenAI/Claude/Grok/Gemini KMP provider routing and shared provider instances",
+      "minimal_visibility": "existing public adapter API preserved; UncheckedUIMessageBox internal only for provider-step crossing",
+      "state_ownership": "provider transport adapter"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderStep.swift",
+      "lines": 628,
+      "responsibility": "Prepared request and one provider streaming/blocking turn; stream accumulator, lock, one-shot continuation, Kotlin job and cancellation",
+      "minimal_visibility": "internal collaborator and prepared request; StreamStepState private",
+      "state_ownership": "per-step stream/cancellation owner; caller persists request snapshot before dispatch"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolBatchExecutor.swift",
+      "lines": 506,
+      "responsibility": "Pending/pre-existing tool batches, strict argument gate, durable PREPARED/STARTED/terminal, replay, approval barrier, output projection",
+      "minimal_visibility": "internal collaborator; executor/ledger fields private; results exposed only to engine",
+      "state_ownership": "reads current executor table per batch without a second mutable registry"
+    },
+    {
+      "path": "iosApp/iosApp/IOSThreadOrchestrationToolService.swift",
+      "lines": 1291,
+      "responsibility": "Public orchestration dispatch and child spawn/followup/resume coordination, one FIFO followup gate, capacity reservation and durable child launch",
+      "minimal_visibility": "existing app-visible service API; gate, occupancy and launcher private",
+      "state_ownership": "single owner of active-check to enqueue/persist to start for followup and terminal resume"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/Orchestration/IOSOrchestrationConfiguration.swift",
+      "lines": 144,
+      "responsibility": "Persisted child configuration marker, prompt and upload projection",
+      "minimal_visibility": "configuration value internal; codec internal MainActor",
+      "state_ownership": "durable child role/scope decode and request-only context"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/Orchestration/IOSOrchestrationLaunchPolicy.swift",
+      "lines": 379,
+      "responsibility": "Role/skill/tool scope/model/reasoning resolution, shared model-pool reservation and timeout",
+      "minimal_visibility": "internal MainActor collaborator; only resolved launch/error/helpers used across files are internal",
+      "state_ownership": "uses same modelPool reference owned by service"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/Orchestration/IOSOrchestrationJevRouting.swift",
+      "lines": 511,
+      "responsibility": "Jev batch decision, shadow observation and linked model/intent metrics",
+      "minimal_visibility": "internal MainActor collaborator; deferred snapshot remains nested",
+      "state_ownership": "reads same modelPool reference; does not reserve independently"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/Orchestration/IOSOrchestrationControlCommands.swift",
+      "lines": 646,
+      "responsibility": "Non-launching list/interrupt/send/wait/terminal mailbox commands and same-tree target resolution",
+      "minimal_visibility": "internal MainActor collaborator; injected dependencies private",
+      "state_ownership": "terminal FINAL_ANSWER enqueueIfAbsent by runId; send_message remains queue-only"
+    },
+    {
+      "path": "iosApp/iosApp/AgentRuntime/Orchestration/IOSOrchestrationPersistence.swift",
+      "lines": 280,
+      "responsibility": "Room/DAO bridges, Sendable edge/task projections, child naming/topology and durable run record/CAS transition",
+      "minimal_visibility": "internal MainActor namespace; projections cross files, DAO entities stay inside callbacks",
+      "state_ownership": "store/Room remains durable truth; failed start transitions running to failed with CAS"
+    }
+  ],
+  "novel_engine_source_closure": [
+    "iosApp/iosApp/IOSAgentToolEngine.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolContracts.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderAdapter.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderStep.swift",
+    "iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolBatchExecutor.swift"
+  ],
+  "build_ownership": "Root updates explicit YAML and runs xcodebuild; this worker did not edit configuration or tests and did not run xcodebuild.",
+  "local_checks": [
+    "swiftc -frontend -parse on all eleven owned Swift files passed",
+    "git diff --check on the two tracked source files passed",
+    "all eleven owned Swift files are <=1500 lines and have no trailing whitespace",
+    "r6 ControlCommands type-check findings fixed: explicit String? prefix and post-await capacitySnapshot closure",
+    "r7 retained Service recordModelRoutingChildOutcomeIfNeeded entry point delegates to the single JevRouting implementation"
+  ],
+  "pending_validation": [
+    "Root must compile app and Novel consumer with explicit new file membership",
+    "Root/tests worker updates IOSAgentToolEngineStreamingTests source-file assertion to IOSAgentProviderStep.swift",
+    "Run focused engine/orchestration and foreground/background behavior suites after YAML integration"
+  ]
+}

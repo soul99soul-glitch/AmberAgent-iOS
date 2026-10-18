@@ -620,14 +620,15 @@ final class IOSThemePackToolTests: XCTestCase {
     }
 
     func testApprovalCardAndShellUseApplyRevertCopy() throws {
-        let card = try source("iosApp/MemoryToolApprovalCard.swift")
+        let card = try source("iosApp/Chat/Presentation/Approvals/McpToolApprovalCard.swift")
         XCTAssertTrue(card.contains("套用"))
         XCTAssertTrue(card.contains("还原"))
-        XCTAssertTrue(card.contains("struct AmberThemeTryOnBar"))
+        let tryOnBar = try source("iosApp/DesignSystem/AmberThemeTryOnBar.swift")
+        XCTAssertTrue(tryOnBar.contains("struct AmberThemeTryOnBar"))
         XCTAssertTrue(card.contains("arrow.uturn.backward"))
         XCTAssertTrue(card.contains(".chatApprovalHitTarget()"))
         XCTAssertTrue(card.contains(".frame(width: 180, height: 120)"))
-        let support = try source("iosApp/ChatToolSupport.swift")
+        let support = try source("iosApp/AgentRuntime/Tools/Approval/ChatToolApprovalModels.swift")
         XCTAssertTrue(support.contains("swatchpalette"))
         XCTAssertTrue(support.contains("试穿主题"))
         let shell = try source("iosApp/AppShell.swift")

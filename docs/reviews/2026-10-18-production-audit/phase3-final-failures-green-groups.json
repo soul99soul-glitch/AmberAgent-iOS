@@ -1,0 +1,8 @@
+{
+  "IOSChatBackgroundStaleSweepTests": {
+    "Passed": 9
+  },
+  "IOSChatDurableOwnershipTests": {
+    "Passed": 8
+  }
+}

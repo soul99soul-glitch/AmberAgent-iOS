@@ -1,0 +1,402 @@
+[
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testDisabledSystemPermissionRowsAtCompactWidths()",
+    "name": "miniapp-permissions-accessibility_0_EF03F9B5-4EB3-48D7-8805-0830748FB4F7.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/808AB62E-309B-4577-B0AB-FFCB8313F622.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testDisabledSystemPermissionRowsAtCompactWidths()",
+    "name": "miniapp-permissions-compact_0_1A5A24DC-2422-422A-9772-9BBF6C511F35.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D9B87A7A-556D-488B-99CE-F6616F1DAB42.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-english-scrolled_0_08A3C596-668D-4373-B154-36FF09BFBA4F.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/F3DDBA16-D2BD-4CEE-9863-89AC7C9D9A8B.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-english_0_81433180-C12E-4F57-926D-0E09468A052A.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D01A7BFE-A557-4D11-80A9-46E3D8474351.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-regular-scrolled_0_5D0AEE74-9BB6-4A00-A65A-7BBE0842D56C.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/A763C9AF-87B8-4788-ADAA-BA39F173CB67.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-regular_0_528F34D6-D721-4D61-A8A1-05A69355871A.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/0DD32E6C-4EA8-453B-8D33-EADFE1053E6B.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-accessibility-scrolled_0_E5F19832-DF1C-4180-B7B1-E15A075E31BC.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/78076CDF-75D4-46E9-9B4F-605F16A2894B.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-accessibility_0_0AA68C70-394D-427A-9C67-55F46F5B5B82.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D987D32E-B7EE-44C3-8F87-1DAF660D2406.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-compact-scrolled_0_0ADCC34E-3E8F-4319-AEBE-C22989028422.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/98E6797E-41C2-4D5E-BF45-27D00ADBA295.png"
+  },
+  {
+    "test": "IOSMiniAppVisualEvidenceTests/testSettingsAtCompactWidthsAndAccessibilitySizes()",
+    "name": "miniapp-settings-compact_0_658F05C2-8550-45BB-97E5-0F140B9234AC.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/B858A108-CD41-42DA-9EA4-70E9A0DF78FD.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-scrolled-393-ax3_0_1EC30B33-4A77-47F6-A746-92F5843E1AE4.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/B602DCF2-5CBD-4F68-84D4-7DF4305CCDAF.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-top-393-ax3_0_7C3D7E83-A9CB-4770-8409-F07C835A7F60.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/28B897C1-23F8-40F3-9810-8F3F03715B27.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-bottom-393-ax3_0_30500400-A4A2-4287-ABB5-9DAAD994D3F3.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/C61B395F-40E1-41D7-97EC-6093EC3DBF61.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-top-393-ax3_0_5CF5DF15-9480-4390-916B-776C9526ABA7.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/0036E4CB-1552-4B65-BA34-B3FAE18A4357.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-scrolled-320-ax3_0_95127974-B00F-4AE2-A8F3-65DAF2E6F47C.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D91E9BCD-35F5-479A-9107-135F471A7EE5.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-top-320-ax3_0_D12110CE-2163-4FD6-8268-A5F6AF3E3FB3.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/C488FF71-9389-430A-9EA6-9ED573DEBCE8.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-bottom-320-ax3_0_287C1E07-9C46-4939-A35B-34BA2FCFDAFB.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/C9808035-5A7D-43BF-A566-63BC09116BED.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-top-320-ax3_0_D1976291-1791-498F-A61B-EDEF7AF00A54.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/3AC5C68F-CB17-4D37-870F-CA8E25E6A139.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-scrolled-393-large_0_8CC460F8-35A0-4B21-910A-BEE8EC91FE91.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/5779BA26-76F0-46D9-91B0-4C603FEBDB0A.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-top-393-large_0_7254F83A-84AD-4A26-BB3E-4E80B2653C95.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/98CEC544-75AC-451A-B508-B7C3C662C418.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-bottom-393-large_0_31EFBDDF-8BA6-41AA-AC16-32BEEC9AD37F.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/7143570F-9259-4FE9-AE9C-3DD8C41110B9.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-top-393-large_0_BEC8DA85-D9D5-45B9-8E6B-3F4BB159E442.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/79B008D1-DCC5-44C6-98D1-D7FE2C47E591.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-scrolled-320-large_0_28368A68-D027-4459-B5CB-01F56CD466F9.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/EDE8B751-3B86-4E4F-8B9C-FF208C1413B4.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-members-top-320-large_0_91798C11-5A7A-4A75-8385-AD3428572352.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/4A5B8AC5-D7CC-40F5-AF1B-9310D1A31ECD.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-bottom-320-large_0_1ED88104-3727-4676-AF32-50E6799E08C7.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/42221CCB-465B-440A-9207-9A955D5D574B.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testCouncilTranscriptAndMembersAtCompactWidths()",
+    "name": "council-transcript-top-320-large_0_636A2B2C-5F41-4488-9575-4654173C37AB.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/B2455125-294E-4DD7-9FD3-210E3F3B3282.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-scrolled-393-ax3_0_5C745593-87B7-489F-8293-A75DAEE69ACC.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/7D562DA8-64B2-4AB9-82D5-90BF9995A593.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-top-393-ax3_0_530C4F9F-5846-4C41-B4B3-D94E39FB61CA.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/7542E733-5BDE-495D-A8F6-EEB2EE889707.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-scrolled-393-ax3_0_9B93E2F1-AE7C-4E9D-B65A-6AA77B13CBED.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/CFBA78A7-3241-49F3-BECA-80E695B426AD.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-top-393-ax3_0_C9A04096-0BC2-41BA-8F2B-145E38F28DCF.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/235870B1-0A01-459F-BFF1-75629CE7E80A.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-runner-393-ax3_0_732B3DF2-FE10-4FE2-8770-A799EFFB0E1E.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/EB2F6913-481C-4926-B4FA-5174EF3A1DBB.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-scrolled-320-ax3_0_C156F150-0530-41B1-860F-DA901A93D5CA.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/E140780D-7B8B-446F-8878-BCEB85D9FBC2.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-top-320-ax3_0_259DBE4A-816C-43CC-90F2-F50E7DFF8A86.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/02A28643-C8E4-4413-BA69-BA2126836B91.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-scrolled-320-ax3_0_54AE91F4-BAAD-4BCE-9A9E-EFAE13010F36.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/931EE0BD-E839-430C-8329-EBFE3FC85E09.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-top-320-ax3_0_942EE6BE-0911-45DD-B2B8-38FC7F364579.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/06C300EF-528B-4755-B592-C70E4E5E72E2.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-runner-320-ax3_0_448DCF27-4470-4E47-990A-F26F714AAD4C.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/FEFC1CC3-6772-4BAD-BA19-4951330CDEFD.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-scrolled-393-large_0_9098D041-CC8D-47A6-80CD-95C0A9DBADDF.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/08006046-AD3F-439C-A8B7-DA0F9DD81730.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-top-393-large_0_61624AFE-8931-4612-BC66-83C5A8BAAC7F.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/B8886702-C46A-43B2-977F-3FAC8CCBB88F.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-scrolled-393-large_0_AE8F67AD-E328-413E-91FD-1F3A4196D8AC.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/38670067-5045-4D7E-9856-202AF0136A0D.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-top-393-large_0_F3103A8B-D716-4100-897C-B7363988688F.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/F1054206-CAC1-4DED-8691-6B2C8B130AB5.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-runner-393-large_0_922A0BEB-466C-4438-BFCA-74C3FF9C2061.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/5BF2F4F0-84E0-4552-9644-C4E6547D4F7C.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-scrolled-320-large_0_683A205A-8E83-48D7-A2DD-0B7E2B11025D.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/E14A6687-9483-42E3-BC20-810CF10338D0.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-DENY-top-320-large_0_FF1C4586-15DA-425D-A91F-5A2972B76467.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D2C1735C-60AD-44DD-8399-F439C5751ABE.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-scrolled-320-large_0_B5157081-5229-47B7-A6A1-16FDAEECD621.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D1759B9E-6780-46ED-9BD9-04C2D7180D6A.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-grants-ALLOW-top-320-large_0_6DED2979-E238-4C1B-B9E8-D3C9A75A69E8.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/5D77DF3F-8081-42F3-88B0-6C0D60C6F091.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testMiniAppLocalRunnerAndGrantStatesAtCompactWidths()",
+    "name": "miniapp-runner-320-large_0_6ED01E9B-3163-453A-A525-A42038662393.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/3155E445-A3CA-46EB-9934-0E6526A71C92.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-network-393-ax3_0_74C64DE2-CF12-4215-B498-CE0A3DE98BD9.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/CF57EDA1-3159-402C-A259-CCFF64B7DBBC.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-top-393-ax3_0_4BCC854C-4D74-4350-A423-58FEFAE5E263.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/6F6DD121-C510-452C-86CC-13792D64531E.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-network-320-ax3_0_EE2B3396-1E5A-4E0E-94CF-7D46C9AA2E0C.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/4FEF8E01-B520-4A0B-A358-CC6F8C2BD8EC.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-top-320-ax3_0_071BA9F8-2C39-4103-83CF-B7256B3C38CC.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D2DD259A-AA21-42FA-A12B-504F70FE80ED.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-network-393-large_0_F70ECF64-15E1-460B-BC2C-2787F21EBAC1.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/52C1B9BC-68D1-41E0-820F-3F8113D991D4.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-top-393-large_0_F71EB488-B787-47F9-AF54-B6FCE8628BC9.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/68F42473-367D-4DF7-817C-5DF4835A2071.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-network-320-large_0_ACA33388-E44A-472B-A5A6-62926C12CC9F.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/3DF34616-624A-45F8-9559-8B4DA312BBDF.png"
+  },
+  {
+    "test": "SwiftModularizationCouncilMiniAppLayoutTests/testToolPermissionsPageAtCompactWidths()",
+    "name": "tool-permissions-top-320-large_0_A8286DD6-3CF4-400E-A8D0-B88C9B4CC7FC.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/E46380EB-A42E-474B-BDFD-F0E301467C6B.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-models-393-ax3-bottom_0_9F24883B-DEC2-49F3-8C9D-CE7E46A01F00.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/B7B21AC5-5609-474C-B408-50C989C1D9F9.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-models-393-ax3_0_A8783527-BC6E-4EF0-B144-DB61E5351DAE.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/92559079-C7B4-4051-B8F9-A5BECEB4B2CC.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-config-393-ax3_0_E558270C-8360-4D8A-AFDD-4B6D9949E7A4.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/22B3A6E5-E845-4BB3-84EB-9BD5061F5F31.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-models-320-ax3-bottom_0_583830FC-0989-4EDB-B2C7-995605BF4E3B.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/5570EDB4-38C7-4024-9B3A-4AEA418095E9.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-models-320-ax3_0_70DC714A-0B0E-4307-BB3A-EC9C7C79DBF2.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/AA1FE4AC-9B80-4F31-8C04-B9A216D45681.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-config-320-ax3_0_4EDA0DB3-095D-4185-B0EF-EC5133715A10.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/CA5855D2-FC52-4CF9-855F-112061956470.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-models-393-normal_0_2F337FA9-9F65-4A0E-9B3D-2E13213CB16E.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/15263CEA-11A0-40B8-A4A8-79823266796E.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-config-393-normal_0_19A08C62-283B-44E2-86B2-0B82FA3F16A2.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/1128CF88-4C72-4AD9-A47A-DD92A326D83C.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-models-320-normal_0_260EA0B8-1D9F-4F68-BF7D-1293E25F9770.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/ABB2CE65-1FD4-40FE-BAEE-FDD1B6B31117.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderConfigurationAndModelRowsFitPhoneViewports()",
+    "name": "settings-provider-config-320-normal_0_6B3B3E54-99CE-47BB-9993-16B9B3B30CE7.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/29719B7D-6C4A-4FE3-A3FD-822E40954C89.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderModelEditorFieldsFitAndRemainReachable()",
+    "name": "settings-provider-editor-393-ax3-bottom_0_93D6FF62-1599-4DEF-8FAB-3F378F53DD04.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/EE06552E-2620-4879-B1C4-F18ED3C3B67B.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderModelEditorFieldsFitAndRemainReachable()",
+    "name": "settings-provider-editor-393-ax3_0_A7CEC4A1-AD20-4224-BE4B-117929E843FA.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/BB36D8F8-65E8-4910-A6BC-96FE79F1AB0D.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderModelEditorFieldsFitAndRemainReachable()",
+    "name": "settings-provider-editor-320-ax3-bottom_0_73293847-3239-48A8-95A4-35CE66D1E164.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/BB36F6AC-CB47-4D33-888E-BCB9486DA503.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderModelEditorFieldsFitAndRemainReachable()",
+    "name": "settings-provider-editor-320-ax3_0_E0DB74D2-4B01-4B21-B695-0E0313B11609.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/EAF3D5BE-DDA4-4BAB-A42B-A735C61B74FB.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderModelEditorFieldsFitAndRemainReachable()",
+    "name": "settings-provider-editor-393-normal_0_6E62B902-ED84-4992-A159-598F3A035C3E.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/26907145-68B5-446A-A657-259BDA6F5D4F.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testProviderModelEditorFieldsFitAndRemainReachable()",
+    "name": "settings-provider-editor-320-normal_0_4489C301-6427-4634-AF57-FC6A32850087.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/37D8A7E7-1B19-4531-A2B5-2E538D637577.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-host-fingerprint-393-ax3-bottom_0_70E0D6FD-8B4A-4F20-B9AB-F963EA97E625.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/D85728AC-E6A4-4410-B3BD-791D08A27216.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-host-fingerprint-393-ax3_0_336B45C6-DF60-4C01-BD2C-DAA6BE854288.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/23F6879E-4C5C-4A88-A980-2E01E6E8BBBF.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-host-fingerprint-320-ax3-bottom_0_F49D8AED-CF7E-4783-93C3-384FF8E331F9.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/369F7734-D4F4-4D5B-A02A-919830EEE482.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-host-fingerprint-320-ax3_0_0AD657EA-DFF7-40E4-ACBC-75464A67C948.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/7A88001B-D9CA-43FC-9292-8382B50A80E9.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-host-fingerprint-393-normal_0_FA2A4D16-FB12-40EF-BD7E-636E6EFA46F8.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/665E9FB3-D747-470A-AD41-329DC3CD45CC.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-host-fingerprint-320-normal_0_0C2A359B-5A44-465F-B07B-B8FAFBF218C9.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/FB125B48-6F40-40DC-ACE5-19DAE47E1500.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-runtime-overview-393-ax3_0_D0D4B72A-E51D-45D2-8EEC-CC1EAD4E1262.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/93388C77-0A86-4947-89A7-5781B5D10C40.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-runtime-overview-320-ax3_0_E638714E-8C25-4C90-B43F-99CBF4856246.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/CEF5144B-B78F-4EBF-ACC6-838F5DF7F344.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-runtime-overview-393-normal_0_D6E1627A-E8EA-4FF5-8313-A33280C75153.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/26309E83-D2A7-4E86-A548-D3FB1C6B1CAA.png"
+  },
+  {
+    "test": "SwiftModularizationSettingsLayoutTests/testRuntimeOverviewAndPendingFingerprintFitPhoneViewports()",
+    "name": "settings-runtime-overview-320-normal_0_5BC4EF61-D983-4096-BC6D-E140743AC038.png",
+    "path": "/tmp/amber-phase5-miniapp-final-r3-attachments/54D3C320-8018-4EC9-9949-CAD7BB472194.png"
+  }
+]

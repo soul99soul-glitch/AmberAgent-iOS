@@ -1,0 +1,565 @@
+{
+  "source_result": "/tmp/amber-phase5-baseline.xcresult",
+  "discovered_case_count": 687,
+  "class_counts": {
+    "AmberThemePackTests": 67,
+    "ChatViewModelConcurrentConversationTests": 4,
+    "CouncilSourceMaterialsTests": 6,
+    "DocumentAccessStoreTests": 36,
+    "HomeDesignContractTests": 18,
+    "IOSBackgroundCompletionMergeTests": 8,
+    "IOSChatBackgroundExecutionTests": 9,
+    "IOSChatBackgroundPhoneActivityTests": 1,
+    "IOSChatBackgroundStaleSweepTests": 9,
+    "IOSChatKernelRunHostHandoffTests": 15,
+    "IOSCodexModelCatalogTests": 3,
+    "IOSContextCompactionCoordinatorTests": 18,
+    "IOSConversationRecapStoreTests": 8,
+    "IOSConversationStartupTests": 3,
+    "IOSConversationStoreBranchingTests": 18,
+    "IOSConversationStoreTests": 37,
+    "IOSCouncilRoomArchiveStoreTests": 18,
+    "IOSCouncilRunnerMechanicsTests": 89,
+    "IOSGenerativeWidgetParserTests": 36,
+    "IOSGenerativeWidgetPayloadDetectorTests": 7,
+    "IOSGenerativeWidgetSanitizerTests": 12,
+    "IOSMiniAppBridgeRuntimeTests": 33,
+    "IOSMiniAppDeviceCapabilitiesTests": 10,
+    "IOSMiniAppRepositoryTests": 23,
+    "IOSMiniAppSystemSDKTests": 5,
+    "IOSMiniAppThemeBridgeTests": 6,
+    "IOSMiniAppVisualEvidenceTests": 3,
+    "IOSPermissionStoreTests": 8,
+    "IOSPermissionsStatusSnapshotTests": 11,
+    "IOSProviderConfigToolTests": 20,
+    "IOSRuntimeStatusToolTests": 11,
+    "IOSSSHBackendIntegrationTests": 2,
+    "IOSSSHCredentialTests": 7,
+    "IOSSSHOutputRedactorTests": 4,
+    "IOSSSHPrivateKeyTests": 7,
+    "IOSSettingsWiringTests": 31,
+    "IOSSharedSettingsStoreCouncilSeatTests": 4,
+    "IOSSharedSettingsStoreProvidersWriteBackTests": 30,
+    "IOSSharedSettingsStoreSkillWriteBackTests": 7,
+    "IOSSharedSettingsStoreSubAgentOverrideTests": 6,
+    "IOSSystemPermissionCoordinatorTests": 7,
+    "PerformanceHygieneTests": 6,
+    "ProviderCredentialAndHeaderTests": 8,
+    "ProviderRegistryStoreTests": 16
+  },
+  "original_migrated_tests": {
+    "IOSCouncilRunnerMechanicsTests": [
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCancelledRunCannotCancelImmediateReplacementRun()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testChatCouncilLiveTranscriptClosesSpeakingMessageWhenSynthesisThrows()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testChatCouncilToolPublishesLiveTranscriptForToolCall()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testChatCouncilToolUsesPersistedRoomModelsWhenArgumentsDoNotOverrideThem()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testChatCouncilToolWaitsForPermissionBeforeStartingRun()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testConfigurationErrorMessageSurfacesWhenChatModelMissing()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilApprovalFollowsGlobalAutoApproveSwitches()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilCompletionDrainCommitsContinuousDisplacementAndPinsDriver()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilConnectivityTesterShowsUnsupportedConfiguredModelFallback()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilConnectivityTimeoutCancelsTheBlockedProbe()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilGeneratedTextSnapshotDoesNotExposeInputBeforeAssistantOutput()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilLiveCoalescesStreamingBodyButAppliesTerminalStateImmediately()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilLiveRegistryNotifiesObserversWhenModelRegisters()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilLiveRegistryRejectsModelFromAnotherTask()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilLiveStreamingUpdatesDoNotInvalidateTranscriptList()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilMarkdownPresentationMarksOnlyModelOutputAsStreamed()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilMeasuredGrowthFollowRequiresActiveUnpausedFollowing()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilMeasuredGrowthFollowSkipsWhenAlreadyPinnedToBottom()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilPacingWiringCarriesAllowanceToDriverCommit()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilPendingLabelsStayOutOfMarkdownBody()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilPresentationSessionCoalescesSnapshotsUntilFlushWindow()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilPresentationSessionPacesBurstAcrossBeats()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilPresentationSessionTerminalFlushIsExactAndCancelsDelayedFlush()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilProductionStreamerKeepsFIFOAndProviderRouting()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilProviderResolutionPreservesCredentialIdentity()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilRunnerCarriesDrainAllowanceIntoCompletionEvents()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilRuntimeOwnershipAndBackgroundLeaseLifecycleAreWired()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilSheetShowsFailureReasonUnlessTranscriptAlreadyHasOne()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilTerminalDrainDeceleratesGracefulTailAndTightensAllowance()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilToolFailureWithoutReasonStillRendersAsFailure()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilTranscriptSplitsIntoPrepareRoundAndSummaryTabs()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilUserDragResumesFollowWithinNearBottomThreshold()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilViewportShrinkReanchorsOnlyWhileFollowing()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testCouncilViewportShrinkSkipsWhenAlreadyPinnedToBottom()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testDetachedCouncilRuntimeFinishesWithoutCancellingTheOwner()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testDynamicSeatPlanParseFailureSurfacesFallbackDivider()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testDynamicSeatPlanRetriesOnceAfterFailure()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testDynamicSeatsCarryAndUseCrossProviderRoutes()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testDynamicSeatsProbeAssignedModelsAndReplaceUnreachableOnes()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testExplicitContinuationCancelRemainsCancelledInTaskLedger()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testFailedFollowUpKeepsCompletedCouncilEligibleForAnotherRound()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testFlushAndClosePublishesFinalTextWhenDrainAlreadyClosed()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testFollowPauseDoesNotFreezeCouncilMarkdown()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testFollowUpRestoresEvictedTaskWithTheSameIdentity()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testFreshFreeChatAndDebateUseConfiguredDefaultRounds()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testGuestBubbleUsesThemeSurfaceToken()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testHomeResumeContextRejectsMismatchedArchiveIdentity()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testHomeResumeContextRejectsUndecodableArchive()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testHomeResumeContextRestoresEveryRecoverableContinuationStatus()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testHomeResumeProjectionInvalidatesWhenFirstCouncilStarts()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testLateDurableCompletionCannotReleaseReplacementDiscussion()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testLateDurableStartFailureCannotReleaseReplacementDiscussion()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testMembersSeatFooterFollowsDynamicSeatGeneration()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testMidRunCheckpointsThrottleToOffMainThreadWrites()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testOpeningArchiveCheckpointsActiveCouncilTailBeforeReplacingRoom()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testPlannedSeatsFromJSONFallsBackToEmptyWhenInsufficientOrInvalid()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testPlannedSeatsFromJSONPrefersDistinctAvailableModels()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testPlannedSeatsFromJSONSkipsLeadingBraceNoiseToFindSeats()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerAllowsLegitimateOutputBeginningWithError()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerFailsWhenFinalSynthesisIsEmpty()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerFailsWhenFinalTopicIsEmpty()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerFreeChatPersistsTaskApprovalAndOrderedMessages()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerMissingAPIKeyFailsBeforeStreaming()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerPassesTheConfiguredModelInsteadOfSynthesizingOne()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerPreservesExactPartialSeatTailWhenStreamFails()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerSeatFailureCompletesWithFailedSeat()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerShowsFailureReasonWhenFailedSeatHasNoGeneratedTail()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerTimeoutMeasuresLackOfOutputInsteadOfTotalGenerationTime()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomRunnerTreatsEmptySeatOutputAsThatSeatFailure()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRoomSettingsPersistHostLimitsAndSeatPayload()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testRunnerKeepsPersistedTerminalStatusAvailableAfterRunReturns()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSanitizeSeatOutputKeepsEnglishQueryLineWithoutPseudoSearchContext()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSanitizeSeatOutputKeepsNormalProseMentioningSearch()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSanitizeSeatOutputKeepsQueryLineAfterContextReset()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSanitizeSeatOutputStripsBarePseudoWebSearchLines()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSanitizeSeatOutputStripsFencedPseudoWebSearchBlock()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSearchResearcherStopsAfterCancellationInsteadOfContinuingQueries()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSeatWebSearchOffSkipsPerSeatResearch()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSeatWebSearchRespectsUnavailableConsent()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSeatWebSearchRunsPerSeatResearchAndInjectsSummary()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSecondSendContinuesCurrentCouncilAsFollowUpRound()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSpeakingPartialTailIsCheckpointedByTheExistingThrottle()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testStartingFreshRoomCheckpointsActiveCouncilTailBeforeClearingRoom()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testStartupRecoveryOnlyInterruptsRunningCouncilTasks()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testSubmittedCouncilInputIsPersistedBeforeRunnerTaskStarts()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testTimeProfilerLongCouncilStreamSample()",
+        "result": "Skipped"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testViewModelCancelArchivesFailedSeatStatus()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testViewModelCancelClosesStreamingTailAndRejectsOldRunEventsAfterRestart()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSCouncilRunnerMechanicsTests/testViewModelDoesNotResearchWhenWebSearchIsDisabled()",
+        "result": "Passed"
+      }
+    ],
+    "IOSConversationStoreTests": [
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBackgroundCompletionBumpsDirectedSignalWithoutTouchingSwitchRevision()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBackgroundCompletionRetriesAfterForegroundWriteAndKeepsResult()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBackgroundCompletionWriteBaselineDoesNotOverwriteForegroundMessage()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBackgroundMessageReplacementPreservesConcurrentMessages()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBackgroundSaveReportsFailureAfterConversationWasDeleted()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBackgroundToolCompletionPatchesExistingToolCallAndPreservesForegroundMessages()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBootstrapDoesNotSelectPersistedSubagentAsCurrentConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testBranchAndDeleteOperationsDoNotBumpSwitchRevision()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testConditionalNewConversationDoesNotCommitAfterItsOwnerBecomesStale()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testConditionalSelectionDoesNotCommitAfterItsOwnerBecomesStale()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testConsumeBackgroundContentNotificationOnlyRemovesSpecifiedConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testConversationSwitchedRevisionOnlyBumpsOnRealSwitch()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testCurrentConversationCanBecomeDeepReadSourceAndReceiveResult()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testDeleteFailureDoesNotCommitOwnerCleanupOrSwitchConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testDeleteTombstonePreventsInFlightBackgroundCompletionFromResurrectingConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testDeleteTombstonePreventsInFlightForegroundSaveFromResurrectingConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testFailedVisibilityReadDoesNotExposeChildrenOrSelectANewConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testForegroundSaveDoesNotPopulatePendingBackgroundContentConversationIds()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testGeneratedTitleDoesNotOverwriteAUserRename()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testGeneratedTitleReplacesItsUnchangedBaseline()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testImageGenerationResumeScanUsesPersistedCrossConversationOwner()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testImportConversationDocumentsUsesStorageOwnedBatchImport()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testImportDrainsInFlightSnapshotWriteBeforeReloadingCurrentConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testImportInvalidatesPreImportBaselineEvenWhenSequenceIsZero()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testInFlightSaveDoesNotOverwriteConcurrentRenameTitle()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testPendingBackgroundContentConversationIdsSurvivesSameTickMultiConversationLanding()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testRefreshingSubagentVisibilityHidesAnExistingSummary()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testRegisteredSubagentIsExcludedFromVisibleSummariesButRetainedInAllSummaries()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testSaveMessagesToExplicitConversationDoesNotOverwriteCurrentConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testSavingNewMessagesRefreshesConversationAndSummaryUpdateTime()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testScreenshotDataURLsLiveInBlobsAndBackupsStaySelfContained()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testSelectedFileContextPersistsAcrossStoreRestart()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testSelectingMissingConversationFailsWithoutChangingCurrentConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testSendMessagePersistsAcrossStoreRestart()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testStaleSnapshotWriteBaselineDoesNotOverwriteNewerForegroundSave()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testStartNewConversationReusesCurrentEmptyConversation()",
+        "result": "Passed"
+      },
+      {
+        "nodeIdentifier": "IOSConversationStoreTests/testStartNewConversationReusesMostRecentEmptyConversation()",
+        "result": "Passed"
+      }
+    ]
+  },
+  "runtime_preflight_classes_pending": [
+    "IOSSSHProfileTests",
+    "IOSTerminalSSHRuntimeTests",
+    "IOSTerminalCapabilityContractTests"
+  ]
+}

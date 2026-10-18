@@ -489,7 +489,6 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         conversationId: String?,
         prompt: ChatToolApprovalPrompt
     ) {
-        pendingAskUser = nil
         let accepted = publish(
             runId: runId,
             conversationId: conversationId,
@@ -499,7 +498,10 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                 languageCode: resolvedLanguageCode
             )
         )
-        if accepted { currentApprovalPrompt = prompt }
+        if accepted {
+            pendingAskUser = nil
+            currentApprovalPrompt = prompt
+        }
     }
 
     func publishAskUser(
@@ -507,7 +509,6 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         conversationId: String?,
         request: WatchAskUserRequest
     ) {
-        currentApprovalPrompt = nil
         let accepted = publish(
             runId: runId,
             conversationId: conversationId,
@@ -517,7 +518,10 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                 languageCode: resolvedLanguageCode
             )
         )
-        if accepted { pendingAskUser = request }
+        if accepted {
+            currentApprovalPrompt = nil
+            pendingAskUser = request
+        }
     }
 
     /// Projects a durable side-effect result that still needs phone-side

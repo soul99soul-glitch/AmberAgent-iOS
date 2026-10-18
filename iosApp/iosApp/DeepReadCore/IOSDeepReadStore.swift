@@ -3,12 +3,21 @@ import Observation
 
 enum IOSDeepReadStoreError: LocalizedError {
     case persistenceFailed
+    case historyUnavailable
 
     var errorDescription: String? {
-        IOSAppLocalization.string(
-            "深度阅读保存失败，请检查设备存储后重试。",
-            defaultValue: "深度阅读保存失败，请检查设备存储后重试。"
-        )
+        switch self {
+        case .persistenceFailed:
+            IOSAppLocalization.string(
+                "深度阅读保存失败，请检查设备存储后重试。",
+                defaultValue: "深度阅读保存失败，请检查设备存储后重试。"
+            )
+        case .historyUnavailable:
+            IOSAppLocalization.string(
+                "深度阅读历史无法读取，已停止写入以保留原文件。请重新打开应用后重试。",
+                defaultValue: "深度阅读历史无法读取，已停止写入以保留原文件。请重新打开应用后重试。"
+            )
+        }
     }
 }
 
@@ -18,6 +27,7 @@ final class IOSDeepReadStore {
     static let shared = IOSDeepReadStore()
 
     private(set) var tasks: [IOSDeepReadTask]
+    private(set) var loadError: String?
     private(set) var persistenceErrorsByTaskId: [String: String] = [:]
     /// Ephemeral in-memory stage labels for the detail skeleton (not persisted).
     private(set) var progressLabelsByTaskId: [String: String] = [:]
@@ -37,7 +47,12 @@ final class IOSDeepReadStore {
         fileURL = directory.appendingPathComponent("tasks.json", isDirectory: false)
         encoder = JSONEncoder()
         decoder = JSONDecoder()
-        tasks = Self.loadTasks(from: fileURL, decoder: decoder)
+        tasks = []
+        do {
+            tasks = try Self.loadTasks(from: fileURL, decoder: decoder)
+        } catch {
+            loadError = IOSDeepReadStoreError.historyUnavailable.localizedDescription
+        }
     }
 
     func progressLabel(for id: String) -> String? {
@@ -75,6 +90,7 @@ final class IOSDeepReadStore {
         templateId: String = IOSDeepReadTemplate.defaultId,
         now: Int64 = IOSDeepReadClock.currentEpochMs()
     ) throws -> IOSDeepReadTask {
+        guard loadError == nil else { throw IOSDeepReadStoreError.historyUnavailable }
         let validSources = sources.filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !validSources.isEmpty else {
             throw IOSDeepReadSourceNormalizationError.emptySource(.manualText)
@@ -134,7 +150,7 @@ final class IOSDeepReadStore {
     }
 
     @discardableResult
-    func complete(id: String, markdown: String, structuredJSON: String? = nil, missingSections: [String]? = nil, now: Int64 = IOSDeepReadClock.currentEpochMs()) -> Bool {
+    func complete(id: String, markdown: String, structuredJSON: String? = nil, missingSections: [String]? = nil, workspaceSyncFailed: String? = nil, now: Int64 = IOSDeepReadClock.currentEpochMs()) -> Bool {
         clearProgressLabel(id: id)
         return update(id: id) { task in
             task.status = .succeeded
@@ -142,7 +158,7 @@ final class IOSDeepReadStore {
             task.structuredJSON = structuredJSON
             task.missingSections = (missingSections?.isEmpty == false) ? missingSections : nil
             task.failureMessage = nil
-            task.workspaceSyncFailed = nil
+            task.workspaceSyncFailed = workspaceSyncFailed
             task.updatedAt = now
             task.completedAt = now
         }
@@ -276,18 +292,20 @@ final class IOSDeepReadStore {
     }
 
     private func persist(_ proposed: [IOSDeepReadTask]) throws {
+        guard loadError == nil else { throw IOSDeepReadStoreError.historyUnavailable }
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try encoder.encode(proposed.sorted { $0.createdAt < $1.createdAt })
         try data.write(to: fileURL, options: [.atomic])
     }
 
-    private static func loadTasks(from fileURL: URL, decoder: JSONDecoder) -> [IOSDeepReadTask] {
-        guard FileManager.default.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL),
-              let decoded = try? decoder.decode([IOSDeepReadTask].self, from: data) else {
+    private static func loadTasks(from fileURL: URL, decoder: JSONDecoder) throws -> [IOSDeepReadTask] {
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return []
         }
-        return decoded
+        return try decoder.decode([IOSDeepReadTask].self, from: data)
     }
 }
 

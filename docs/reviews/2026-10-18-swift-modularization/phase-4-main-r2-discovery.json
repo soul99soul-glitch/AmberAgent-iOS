@@ -1,0 +1,23 @@
+{
+  "expected_originals": 1024,
+  "actual_originals": 1023,
+  "missing": [
+    "CountingNovelProjectRepository/testExportSkipsDiscardedChapters"
+  ],
+  "duplicate_originals": [],
+  "original_results": {
+    "Passed": 1012,
+    "Failed": 8,
+    "Skipped": 3
+  },
+  "new_layout_methods": {
+    "NovelModularizationLayoutTests/testLongCandidateKeepsCollectionActionReachable": "Failed",
+    "NovelModularizationLayoutTests/testAskUserCardKeepsOptionsAndConfirmationReachable": "Failed",
+    "NovelModularizationLayoutTests/testCollectionSheetKeepsEditorAndSubmitReachable": "Failed"
+  },
+  "migrated_588_results": {
+    "Passed": 587,
+    "Skipped": 1
+  },
+  "missing_classification": "One original func test declaration was inside a private non-XCTest actor. Complete body moved to XCTest scope; do not count as executed until focused verification."
+}

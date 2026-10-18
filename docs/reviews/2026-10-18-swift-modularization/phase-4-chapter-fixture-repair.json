@@ -1,0 +1,47 @@
+{
+  "file": "iosApp/iosAppTests/NovelChapterReplacementStateTests.swift",
+  "testIdentifier": "NovelChapterReplacementStateTests/testReplacingChapterKeepsEarlierFactsWhenCollectionsSkippedSync()",
+  "baselineFailure": "/tmp/amber-phase4-original-repro/baseline-eight-results.json: branchRequiresSync at original line 408",
+  "before": {
+    "startLine": 123,
+    "endLine": 172,
+    "bodySHA256": "6b9201a193263cf28bc57775ed706f02635366a57bfa06f6604ae84ea2495632",
+    "assertionCalls": 2
+  },
+  "after": {
+    "startLine": 123,
+    "endLine": 209,
+    "bodySHA256": "c4d6022f302771ecda3e8854ec1ffbccc89f2fddb66c78c309e879bdba93be0b",
+    "assertionCalls": 12
+  },
+  "otherTestMethods": [
+    {
+      "name": "testReplacingCollectedChapterDropsItsOldFactsFromTheRebuildBaseline",
+      "preserved": true,
+      "sha256": "717dec2a5b36e188300837d13bf79f8116412ed2cf3f49f30265b00e197a630e"
+    }
+  ],
+  "originalAssertionsPreserved": [
+    "firstEventID remains in input.baseStateSnapshot.eventIDs",
+    "secondEventID remains in base state OR Chapter Two remains in rebuild input chapters"
+  ],
+  "newAssertions": [
+    "both Chapter Two and Three without-sync collections set needsSync",
+    "old Chapter Three death event absent from rebuild base and final state",
+    "final state retains first and second chapter facts plus escape event",
+    "final summary omits died and branch is synchronized"
+  ],
+  "candidateBinding": {
+    "fixturePattern": "NovelFactTransactionLifecycleTestSupport.candidateDocument creates a persisted assistant proseCandidate message and an available NovelCandidateRecord with nil runID",
+    "freshHead": "case-only collectFixtureCandidate reads current branch immediately before each collection and binds candidate.baseCheckpointID/baseHeadRevision to that head",
+    "sourceVersion": "replacement passes the selected Chapter Three version as candidate.sourceChapterVersionID; NovelFactTransactions.makeCollectionPending requires it to equal the current selected version",
+    "staleGate": "NovelFactTransactions.makeCollectionPending calls NovelCandidateSemantics.collectionBaseMatches and requires command/context current head; the helper invokes the real commitCollectionWithoutStateSync reducer, preserving independent stale checks for createNextChapter and replacement",
+    "generationGate": "NovelGenerationReducer prose/regenerate needsSync gate remains unchanged; this test uses a document-layer candidate fixture for the two subsequent collections and the replacement"
+  },
+  "checks": {
+    "swiftFrontendParse": "passed",
+    "gitDiffCheck": "passed",
+    "lineCount": 550,
+    "xcodebuild": "not run by worker"
+  }
+}

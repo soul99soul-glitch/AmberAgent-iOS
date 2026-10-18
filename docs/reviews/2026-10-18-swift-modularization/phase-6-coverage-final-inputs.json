@@ -1,0 +1,99 @@
+{
+  "capturedAtUTC": "2026-10-17T23:59:22.386633+00:00",
+  "coverageReport": "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-final.json",
+  "sourceInputFingerprints": "phase-6-coverage-static-inputs.json",
+  "currentMainRun": "r6",
+  "currentNovelRun": "r2",
+  "excludedMainRun": {
+    "run": "r5",
+    "reason": "simulator test bootstrap failed before any actual XCTest cases; excluded from pass/fail and discovery"
+  },
+  "sha256": {
+    "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-final.json": "ba11c0ab2d20d425d619c01f532b13e376a98c42fa70f6b1dd43495f95fc5bd7",
+    "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-audit.py": "ef73d78aa772d0e0f65631a0cfe2d3b180692b0b20f78ef55b786d2b712b128f",
+    "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-baseline-test-inventory.json": "4c8e14bce9d7a0186c936274052dc42923901bf36af3242ae20c08eea8429c40",
+    "docs/reviews/2026-10-18-swift-modularization/phase-6-coverage-static-inputs.json": "a08976632dd37ca22f5791b2fed59587a5e3096dcb37ac33714c850310897a21",
+    "docs/reviews/2026-10-18-swift-modularization/phase-6-novel-gate-fixture-repair.json": "d9cee734b2309374d19f075dca5791cd2c7b926a7dc616f762f1840b4d2f92db",
+    "docs/reviews/2026-10-18-swift-modularization/phase-6-batch-polish-fixture-repair.json": "46d4b92c01f91c5de767002215a5723fc4acf5f8df599c7289f4d23053cf095f",
+    "/tmp/amber-phase6-main-r6-tests.json": "5210b585f41bbf16a00fb8f917cd88aad09b7ee23f91c955f62b3f61142ee343",
+    "/tmp/amber-phase6-main-r6-summary.json": "d9d62b5b202c6164c13dffa4b3de7698ebd6a330541345d953b0fa98141b4c6b",
+    "/tmp/amber-phase6-novel-r2-tests.json": "273f192046c160a51a62ca279cb786afa6778d66c5ad8cd42044d915e84754c1",
+    "/tmp/amber-phase6-novel-r2-summary.json": "1cbc73fb7673c5f8caf3ab2870a49ac51d76405f43d0c7212cde19a3135cf229",
+    "/tmp/amber-phase6-deepread-r1-tests.json": "5420f4a4b9dec23af9d0fb22de91966ac97ccfa94c04bec10a0151ea2879ced7",
+    "/tmp/amber-phase6-deepread-r1-summary.json": "911e7d1dc61fb58e29e7d58874e46b838f8abb175c73f97ecc9313a1201901a0",
+    "/tmp/amber-phase6-phone-r1.log": "a16191a3fb64313968dfbceece34cfd52ab1df6c12874d1f1e55384805dafac0",
+    "/tmp/amber-phase6-phone-r1-status.json": "a0578c673a66489eed443646b9eb21a420a98281d0ff24f47e709d5904a7cde2",
+    "/tmp/amber-phase6-gpl-r1-status.json": "964062270a26e8a3bb52555e9d12c84cd059cb9bb5f0bcc66455a24bd2f51d20",
+    "/tmp/amber-phase6-main-r2-tests.json": "f729d2e305612bdb11e6bb2c53d4f01a023426c7330b0b0f7938908319b098b7",
+    "/tmp/amber-phase6-main-r2-summary.json": "73b82409923d182d5bae40fc19e9b0dabe3335e043d99d8f889798a78058efaf",
+    "/tmp/amber-phase6-main-r4-tests.json": "abdbb910d310e2a12dd8eee52493e24b3c7a312e31a0e2eabac5171659b90226",
+    "/tmp/amber-phase6-main-r4-summary.json": "5277a96af6e54f942c554d3676a590fa3bc3a196fcfc0581a40a9b539b304e76"
+  },
+  "validated": {
+    "main-r6": {
+      "total": 5089,
+      "passed": 5073,
+      "failed": 0,
+      "skipped": 16,
+      "treeMatchesSummary": true
+    },
+    "novel-r2": {
+      "total": 1048,
+      "passed": 1045,
+      "failed": 0,
+      "skipped": 3,
+      "treeMatchesSummary": true
+    },
+    "deepread-r1": {
+      "total": 109,
+      "passed": 109,
+      "failed": 0,
+      "skipped": 0,
+      "treeMatchesSummary": true
+    },
+    "mainR6SkipComparison": {
+      "r6SkipsSubsetOfR2": true,
+      "r2SkipCount": 17,
+      "r6SkipCount": 16,
+      "r2SkippedNowPassed": [
+        "iosAppTests/IOSIntelligentUIComponentInteractionTests/testNativeActionsUpdateOriginDraftAndFreezeReadableSubmission"
+      ],
+      "r6SkippedIDs": [
+        "iosAppTests/ChatNativeTimelineReplayPerformanceTests/testReasoningStreamCostOverTimeSample",
+        "iosAppTests/IOSCouncilRuntimeIntegrationTests/testTimeProfilerLongCouncilStreamSample",
+        "iosAppTests/IOSFreeSearchAggregatorTests/testLiveEachFreeEngineReturnsResultsWhenEnabled",
+        "iosAppTests/IOSIntelligentUILiveProviderTests/testConfiguredProviderChoosesInlineStudyForNaturalMemoryRequest",
+        "iosAppTests/IOSIntelligentUILiveProviderTests/testConfiguredProviderProducesCardAndConsumesUserSelection",
+        "iosAppTests/IOSLiveProviderSmokeTests/testOpenAICompatibleOrdinaryChatWithMemoryContextWhenKeyIsProvided",
+        "iosAppTests/IOSNativeGenerationMotionTests/testSystemReducedMotionShowsContentWithoutReveal",
+        "iosAppTests/IOSSearchExecutorTests/testLivePublicScrapeUsesProductionTransportWhenEnabled",
+        "iosAppTests/NovelProjectRepositoryTests/testDeviceZhaodalaiPackageLoadsAndValidates",
+        "iosAppTests/NovelSessionStreamingPerformanceTests/testTimeProfilerLongProseStreamSample",
+        "iosAppTests/NovelWorkspaceLedgerTests/testApplyRelinkOnDeviceZhaoDaPackage",
+        "iosAppTests/SubAgentConcurrencyPerfTests/testMeasureConcurrency1",
+        "iosAppTests/SubAgentConcurrencyPerfTests/testMeasureConcurrency2",
+        "iosAppTests/SubAgentConcurrencyPerfTests/testMeasureConcurrency4",
+        "iosAppTests/SubAgentConcurrencyPerfTests/testMeasureConcurrency8",
+        "iosAppTests/SubAgentConcurrencyPerfTests/testMeasureConcurrency8LargeSynchronizedOutput"
+      ]
+    },
+    "mappedDiscovery": {
+      "mappedRowsIncludingActorRepair": 1613,
+      "observations": 2202,
+      "byTarget": {
+        "AmberPhoneControlTests": 105,
+        "iosAppTests": 1508,
+        "NovelTests": 589
+      },
+      "byResult": {
+        "Passed": 2198,
+        "Skipped": 4
+      },
+      "phase6ByTargetAndResult": {
+        "AmberPhoneControlTests:Passed": 105,
+        "iosAppTests:Passed": 222
+      }
+    },
+    "staticInputFingerprintDrift": []
+  }
+}

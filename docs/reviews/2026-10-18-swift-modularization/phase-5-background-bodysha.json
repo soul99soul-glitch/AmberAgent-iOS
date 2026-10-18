@@ -1,0 +1,3464 @@
+{
+  "baseline_sha256": "7285a10b9c3fad81e0d0e70132493ac0fbce806f417ea522603a7341b2584bf2",
+  "mapped": [
+    {
+      "before": {
+        "kind": "func",
+        "name": "amberStableMailboxMessageId",
+        "sha256": "88b67726391215d7b0fb5e3a84981ae3dbc6ba5bd13865419da6612a08094630",
+        "signature_sha256": "764fdf978f1d8d0ec80cfab02f7a60ff2c35115928ebafec7d0a1a69940262ae",
+        "line": 15,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "amberStableMailboxMessageId",
+        "sha256": "88b67726391215d7b0fb5e3a84981ae3dbc6ba5bd13865419da6612a08094630",
+        "signature_sha256": "764fdf978f1d8d0ec80cfab02f7a60ff2c35115928ebafec7d0a1a69940262ae",
+        "line": 15,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "amberMailboxMessage",
+        "sha256": "ac23148be958dc7f599edf378c7f13205dcff3f7784a63fc15d5415b276f3e37",
+        "signature_sha256": "f1e6a79d51d8bb06ee2b3af389b62a25446e3aa1ef614553519f254783614c0f",
+        "line": 27,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "amberMailboxMessage",
+        "sha256": "ac23148be958dc7f599edf378c7f13205dcff3f7784a63fc15d5415b276f3e37",
+        "signature_sha256": "f1e6a79d51d8bb06ee2b3af389b62a25446e3aa1ef614553519f254783614c0f",
+        "line": 27,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundRuntimeJob",
+        "sha256": "2baa72116993c36d4213666655e9a63640c7af59c40fe642ffe4eee74c8fa147",
+        "signature_sha256": "432930ae6a8b29092814ee28abc37413541eff55ce37f36f4a38af0e380c0523",
+        "line": 51,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundRuntimeJob",
+        "sha256": "2baa72116993c36d4213666655e9a63640c7af59c40fe642ffe4eee74c8fa147",
+        "signature_sha256": "432930ae6a8b29092814ee28abc37413541eff55ce37f36f4a38af0e380c0523",
+        "line": 51,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundRetryMessages",
+        "sha256": "8541ac138ea2ff166c6c0147517bb297bcba132389dfcd228ba5f57250bee219",
+        "signature_sha256": "fe9fc9d9baa644236083c98cba97ed9baf5784ed3e4a6d941654a4de827f13d3",
+        "line": 84,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundRetryMessages",
+        "sha256": "8541ac138ea2ff166c6c0147517bb297bcba132389dfcd228ba5f57250bee219",
+        "signature_sha256": "fe9fc9d9baa644236083c98cba97ed9baf5784ed3e4a6d941654a4de827f13d3",
+        "line": 84,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundUploadPreparer",
+        "sha256": "88b72836f126b3a1295c8f181b2024304787ec6cfbe984e8c7035d7ef1079d04",
+        "signature_sha256": "dae080b9f4f8d262bdd4915dc85b806fce5ff2fff5a0030f37f219bd91c5cf6e",
+        "line": 92,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundUploadPreparer",
+        "sha256": "88b72836f126b3a1295c8f181b2024304787ec6cfbe984e8c7035d7ef1079d04",
+        "signature_sha256": "dae080b9f4f8d262bdd4915dc85b806fce5ff2fff5a0030f37f219bd91c5cf6e",
+        "line": 92,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "prepare",
+        "sha256": "b1285bacc9478934a8c37b4baffed7fbb84b3841d0ad980f36d67966cdb3bdfd",
+        "signature_sha256": "5ae497e3ecd4e54c4000959e0de61cd086480882f6972ec703523a4a50ae9f21",
+        "line": 96,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "prepare",
+        "sha256": "b1285bacc9478934a8c37b4baffed7fbb84b3841d0ad980f36d67966cdb3bdfd",
+        "signature_sha256": "5ae497e3ecd4e54c4000959e0de61cd086480882f6972ec703523a4a50ae9f21",
+        "line": 96,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundDependencies",
+        "sha256": "7ab0fb8135f9900e24064bcae22888964153dcb75372a0baccc3c755570e474b",
+        "signature_sha256": "c61ba76e8f53b28d56fbd1013208ac4028e4c1a01c0aeadc6040d5f6c225b0d3",
+        "line": 110,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundDependencies",
+        "sha256": "7ab0fb8135f9900e24064bcae22888964153dcb75372a0baccc3c755570e474b",
+        "signature_sha256": "c61ba76e8f53b28d56fbd1013208ac4028e4c1a01c0aeadc6040d5f6c225b0d3",
+        "line": 110,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatHeadlessComposition",
+        "sha256": "a969dd25f441ee6581b8e5277510ebc69ddc8283041a4b4059261124b5bc129a",
+        "signature_sha256": "8d272433572840f73fc80a1ba20b0789aca60c777e31c027968b58f87012efb5",
+        "line": 121,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatHeadlessComposition",
+        "sha256": "a969dd25f441ee6581b8e5277510ebc69ddc8283041a4b4059261124b5bc129a",
+        "signature_sha256": "8d272433572840f73fc80a1ba20b0789aca60c777e31c027968b58f87012efb5",
+        "line": 121,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundHandoff",
+        "sha256": "26e16b03fbaaf7eba81ba197ac06331b9f34912caaad9eeb2c25eb1fdad296bd",
+        "signature_sha256": "9b9b3be4482c922bf566920f59566cafb168b9c1a2247335b9df03cc217a5685",
+        "line": 132,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundHandoff",
+        "sha256": "26e16b03fbaaf7eba81ba197ac06331b9f34912caaad9eeb2c25eb1fdad296bd",
+        "signature_sha256": "9b9b3be4482c922bf566920f59566cafb168b9c1a2247335b9df03cc217a5685",
+        "line": 132,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "enum",
+        "name": "IOSChatBackgroundHandoffMode",
+        "sha256": "6100d63ffb7eb81106bdd6cde4e0c083c54631042878367bb1ff98c5280b6313",
+        "signature_sha256": "42fb5dcb3a9e7015a6bb4082ef6418f95c300ad5e464f2004018eefb04c8fc13",
+        "line": 161,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "enum",
+        "name": "IOSChatBackgroundHandoffMode",
+        "sha256": "6100d63ffb7eb81106bdd6cde4e0c083c54631042878367bb1ff98c5280b6313",
+        "signature_sha256": "42fb5dcb3a9e7015a6bb4082ef6418f95c300ad5e464f2004018eefb04c8fc13",
+        "line": 161,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "class",
+        "name": "IOSChatBackgroundExecution",
+        "sha256": "03a54226e8ad9cffbf2c775134f17aaac25bde1c46c81ea9b35ec9553ec5d916",
+        "signature_sha256": "cce4cc0918c43cb7a37cca7053da6bb77243f9d269253fc820f4e9deb7f6eb80",
+        "line": 170,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "class",
+        "name": "IOSChatBackgroundExecution",
+        "sha256": "03a54226e8ad9cffbf2c775134f17aaac25bde1c46c81ea9b35ec9553ec5d916",
+        "signature_sha256": "cce4cc0918c43cb7a37cca7053da6bb77243f9d269253fc820f4e9deb7f6eb80",
+        "line": 10,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "",
+        "sha256": "fa2ec72761792b514d301c3e6cb480e220ebcca505f0f78a0c962aceb0d59033",
+        "signature_sha256": "a35655a7a84bc1a4f3f365f5fd3341f1a53467988548b336290287230e3af97e",
+        "line": 181,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "",
+        "sha256": "fa2ec72761792b514d301c3e6cb480e220ebcca505f0f78a0c962aceb0d59033",
+        "signature_sha256": "a35655a7a84bc1a4f3f365f5fd3341f1a53467988548b336290287230e3af97e",
+        "line": 21,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "setTaskCompleted",
+        "sha256": "8924aea5a6c1056385598a545770b2f96bc410c086465d74db7c04d1c5795602",
+        "signature_sha256": "977e2c9eefa0c4fb948b3a4798e718591b219b10b41804afb73a08838fdd9c2e",
+        "line": 204,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "setTaskCompleted",
+        "sha256": "8924aea5a6c1056385598a545770b2f96bc410c086465d74db7c04d1c5795602",
+        "signature_sha256": "977e2c9eefa0c4fb948b3a4798e718591b219b10b41804afb73a08838fdd9c2e",
+        "line": 44,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundProvider",
+        "sha256": "ddb562a0c6725b08efb3e7db8b1e262d14462c88a583af0a7f9d70ac89bcf033",
+        "signature_sha256": "195667de487ec5ccfaf8aae50fa0f6c47d00a807ef0368a95fb0793a3af8e2ef",
+        "line": 209,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundProvider",
+        "sha256": "ddb562a0c6725b08efb3e7db8b1e262d14462c88a583af0a7f9d70ac89bcf033",
+        "signature_sha256": "195667de487ec5ccfaf8aae50fa0f6c47d00a807ef0368a95fb0793a3af8e2ef",
+        "line": 167,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "supportsStreaming",
+        "sha256": "9e1d4132263a6a46aeaa9b6174e895f1d13d02774b64b6db08ce13c912c8f992",
+        "signature_sha256": "274c65354afb6c852f771b5ceaa1e30c4da7d69a47ca41a4c80585c1f38a6a89",
+        "line": 213,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "supportsStreaming",
+        "sha256": "9e1d4132263a6a46aeaa9b6174e895f1d13d02774b64b6db08ce13c912c8f992",
+        "signature_sha256": "274c65354afb6c852f771b5ceaa1e30c4da7d69a47ca41a4c80585c1f38a6a89",
+        "line": 171,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "generateText",
+        "sha256": "5c56bd5381a98967f83b2ef4e825da245b37db31522fdfd81e90a28d4e4ff924",
+        "signature_sha256": "e1183936e94ba9d2d87773d1f869c922fc0b04cbde3f68e3762c565f3e740df0",
+        "line": 217,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "generateText",
+        "sha256": "5c56bd5381a98967f83b2ef4e825da245b37db31522fdfd81e90a28d4e4ff924",
+        "signature_sha256": "e1183936e94ba9d2d87773d1f869c922fc0b04cbde3f68e3762c565f3e740df0",
+        "line": 175,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "streamText",
+        "sha256": "e2f00fd3ad657d43ec36d356d00569e9cb575bec75960ea327065828dfe15332",
+        "signature_sha256": "440fcdffbc8736c78ee59bf6ebd3eb76972557fdd80e5c1507cb13147ca5a56e",
+        "line": 243,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "streamText",
+        "sha256": "e2f00fd3ad657d43ec36d356d00569e9cb575bec75960ea327065828dfe15332",
+        "signature_sha256": "440fcdffbc8736c78ee59bf6ebd3eb76972557fdd80e5c1507cb13147ca5a56e",
+        "line": 201,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "class",
+        "name": "IOSChatBackgroundRunState",
+        "sha256": "7ae7c16617dafd112171fb8f42a66bd867a04f30a6c70e6369b1dfd3912c7ef8",
+        "signature_sha256": "c22d96c889f97529c4e5b5baafc8cbf73925f21b0ade9fbdb4f0cfbd9a4acbd8",
+        "line": 279,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "class",
+        "name": "IOSChatBackgroundRunState",
+        "sha256": "7ae7c16617dafd112171fb8f42a66bd867a04f30a6c70e6369b1dfd3912c7ef8",
+        "signature_sha256": "c22d96c889f97529c4e5b5baafc8cbf73925f21b0ade9fbdb4f0cfbd9a4acbd8",
+        "line": 49,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "enum",
+        "name": "TerminalOwner",
+        "sha256": "852de64705dfb78282ecb1c4d21816a89a2c59343495ac4d5320aa2ffbb7af8d",
+        "signature_sha256": "8e106c36e15211e19f0ca65b6fbddd72132764474d0f459194bc5613272dd0b2",
+        "line": 280,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "enum",
+        "name": "TerminalOwner",
+        "sha256": "852de64705dfb78282ecb1c4d21816a89a2c59343495ac4d5320aa2ffbb7af8d",
+        "signature_sha256": "8e106c36e15211e19f0ca65b6fbddd72132764474d0f459194bc5613272dd0b2",
+        "line": 50,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "enum",
+        "name": "ExpirationClaim",
+        "sha256": "708d0972cad902671a22d47930e0de4670458206502204e2c424d8b61c278205",
+        "signature_sha256": "0c42db640917f69d8c719051eb4abbb33754e50dab2466b4bdd840b98e3ff304",
+        "line": 286,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "enum",
+        "name": "ExpirationClaim",
+        "sha256": "708d0972cad902671a22d47930e0de4670458206502204e2c424d8b61c278205",
+        "signature_sha256": "0c42db640917f69d8c719051eb4abbb33754e50dab2466b4bdd840b98e3ff304",
+        "line": 56,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "expireAndReserveTerminal",
+        "sha256": "f48746d111f47139bddf989c235f7179d6243f79ad8d9d76ecafe88bc621aed9",
+        "signature_sha256": "135df9c5ecf686a7b649d4c70c04e2a3631a2a3a43d07a54829b81d7f87f21f2",
+        "line": 317,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "expireAndReserveTerminal",
+        "sha256": "f48746d111f47139bddf989c235f7179d6243f79ad8d9d76ecafe88bc621aed9",
+        "signature_sha256": "135df9c5ecf686a7b649d4c70c04e2a3631a2a3a43d07a54829b81d7f87f21f2",
+        "line": 87,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "waitForExpiredOperationExit",
+        "sha256": "09d274ea9b874e6ea038d71ee3459183eb68e63f006eb6be297fa3d9196c201a",
+        "signature_sha256": "425f9b5bedb1929945146ca3be63a62101df672b6d096614620e1572f9bdeaf3",
+        "line": 339,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "waitForExpiredOperationExit",
+        "sha256": "09d274ea9b874e6ea038d71ee3459183eb68e63f006eb6be297fa3d9196c201a",
+        "signature_sha256": "425f9b5bedb1929945146ca3be63a62101df672b6d096614620e1572f9bdeaf3",
+        "line": 109,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "cancelAndReserveTerminal",
+        "sha256": "4e79e1dd3d53403a9fdb698c0fce49a09cf37bc84d44f69a20d4f003be00f544",
+        "signature_sha256": "135200750a4328acab1438d402d96d3fb6865cfb4d48d912bfb6398aca23af4d",
+        "line": 347,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "cancelAndReserveTerminal",
+        "sha256": "4e79e1dd3d53403a9fdb698c0fce49a09cf37bc84d44f69a20d4f003be00f544",
+        "signature_sha256": "135200750a4328acab1438d402d96d3fb6865cfb4d48d912bfb6398aca23af4d",
+        "line": 117,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "resetGenerationRound",
+        "sha256": "ad4f20019568686a1e0719f7d4b01fd1332dc629b77e00791e27a629547b1aa9",
+        "signature_sha256": "2de9d9f264aad75f57a43a478cb112ccb497d0ca7ec5d96463ea1331102dafbc",
+        "line": 363,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "resetGenerationRound",
+        "sha256": "ad4f20019568686a1e0719f7d4b01fd1332dc629b77e00791e27a629547b1aa9",
+        "signature_sha256": "2de9d9f264aad75f57a43a478cb112ccb497d0ca7ec5d96463ea1331102dafbc",
+        "line": 133,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "claimPhoneContentProgress",
+        "sha256": "eda9e0c601bad659670498dc10b78dc813fcf6fdf3bb250d3506a8a8320946a2",
+        "signature_sha256": "dbcaad57299bb58f874b698c3d0dfc1ae2cd2c498ae6d6c63eb1ed467cc208df",
+        "line": 372,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "claimPhoneContentProgress",
+        "sha256": "eda9e0c601bad659670498dc10b78dc813fcf6fdf3bb250d3506a8a8320946a2",
+        "signature_sha256": "dbcaad57299bb58f874b698c3d0dfc1ae2cd2c498ae6d6c63eb1ed467cc208df",
+        "line": 142,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "claimPhoneToolResultProgress",
+        "sha256": "1bde865f62cf2bb38123f822bc470ec3ce53e77321ff515adb98f852238cbec9",
+        "signature_sha256": "2b6204a67b9f3d556a4b989b3d1ee6f8e3793073a6d882361f1cbf42d1d527e7",
+        "line": 387,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "claimPhoneToolResultProgress",
+        "sha256": "1bde865f62cf2bb38123f822bc470ec3ce53e77321ff515adb98f852238cbec9",
+        "signature_sha256": "2b6204a67b9f3d556a4b989b3d1ee6f8e3793073a6d882361f1cbf42d1d527e7",
+        "line": 157,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "nextPresentationStage",
+        "sha256": "ab940c816e8f07c5c521f19f46c9b25fe0e50c3039deb0b7e6c7c44fede9758d",
+        "signature_sha256": "6ed012d540ef2ae56f3cf5d02b37eb9e0e8d22e403ac3315a6a9482b23399677",
+        "line": 400,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "nextPresentationStage",
+        "sha256": "ab940c816e8f07c5c521f19f46c9b25fe0e50c3039deb0b7e6c7c44fede9758d",
+        "signature_sha256": "6ed012d540ef2ae56f3cf5d02b37eb9e0e8d22e403ac3315a6a9482b23399677",
+        "line": 170,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "shouldPublishPresentationStage",
+        "sha256": "a08d3c8f7f404eb94a03afbcf7791563886d3d5d78a77f984655a124b706b7f7",
+        "signature_sha256": "f912d795593b8bdcceb214d333a9f82383c4d37735818c025c332b02216680ae",
+        "line": 413,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "shouldPublishPresentationStage",
+        "sha256": "a08d3c8f7f404eb94a03afbcf7791563886d3d5d78a77f984655a124b706b7f7",
+        "signature_sha256": "f912d795593b8bdcceb214d333a9f82383c4d37735818c025c332b02216680ae",
+        "line": 183,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "noteVisibleDelta",
+        "sha256": "f0627703208b4841547b4e0a1e08196c8c54a1d6ac41c6735435e95030dfb2c7",
+        "signature_sha256": "7bcb1d95e7d4223e5a6f666eac1da401a5d7261780b4e271c2f8ecb65215ce95",
+        "line": 423,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "noteVisibleDelta",
+        "sha256": "f0627703208b4841547b4e0a1e08196c8c54a1d6ac41c6735435e95030dfb2c7",
+        "signature_sha256": "7bcb1d95e7d4223e5a6f666eac1da401a5d7261780b4e271c2f8ecb65215ce95",
+        "line": 193,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "generationDuration",
+        "sha256": "afd585f4da6a163aed83332ec73d1d3fd47ebe452ea34e3270635c0b33e74a3f",
+        "signature_sha256": "d695c58aedff1d91b65290e521f88b1e9c9614bd99668fe4c94a21f8cd228f8c",
+        "line": 435,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "generationDuration",
+        "sha256": "afd585f4da6a163aed83332ec73d1d3fd47ebe452ea34e3270635c0b33e74a3f",
+        "signature_sha256": "d695c58aedff1d91b65290e521f88b1e9c9614bd99668fe4c94a21f8cd228f8c",
+        "line": 205,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "installOperationTask",
+        "sha256": "4270de31bc71a02a89dd3ae2020b62d8d86f3e73680e240dbbaaca7efe6a7743",
+        "signature_sha256": "b47443b743c6342b7bf4cffbf229ecd28ee920fb3491626c89408816cfd5285a",
+        "line": 441,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "installOperationTask",
+        "sha256": "4270de31bc71a02a89dd3ae2020b62d8d86f3e73680e240dbbaaca7efe6a7743",
+        "signature_sha256": "b47443b743c6342b7bf4cffbf229ecd28ee920fb3491626c89408816cfd5285a",
+        "line": 211,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "clearOperationTask",
+        "sha256": "0e3dfb3d6e8572750afa9f9de9b2996dea6a9e472ec91583ced678706b306347",
+        "signature_sha256": "7b69a1acd42661914b296855077383bbf2a56015e8f101478e50203666a6fb68",
+        "line": 453,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "clearOperationTask",
+        "sha256": "0e3dfb3d6e8572750afa9f9de9b2996dea6a9e472ec91583ced678706b306347",
+        "signature_sha256": "7b69a1acd42661914b296855077383bbf2a56015e8f101478e50203666a6fb68",
+        "line": 223,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "reserveTerminal",
+        "sha256": "77d2534fcfa1063e613fc11fe7607e25c0f6677968a03d5b97dfc3bc3859fca3",
+        "signature_sha256": "4985e691b9fe27be673acd9640250410f0407ca7dc4687a53303cca55e69bb99",
+        "line": 459,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "reserveTerminal",
+        "sha256": "77d2534fcfa1063e613fc11fe7607e25c0f6677968a03d5b97dfc3bc3859fca3",
+        "signature_sha256": "4985e691b9fe27be673acd9640250410f0407ca7dc4687a53303cca55e69bb99",
+        "line": 229,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "finalizeTerminal",
+        "sha256": "f4a13b39237ed9f72dfa3b0838665b3a2fe05a7950ad7d4faa356604383bc2d4",
+        "signature_sha256": "3a62a45b79415047224fdebe6321bb178b78347600a724fb14434e854c8d7700",
+        "line": 468,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "finalizeTerminal",
+        "sha256": "f4a13b39237ed9f72dfa3b0838665b3a2fe05a7950ad7d4faa356604383bc2d4",
+        "signature_sha256": "3a62a45b79415047224fdebe6321bb178b78347600a724fb14434e854c8d7700",
+        "line": 238,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "terminalWasFinalized",
+        "sha256": "7a4fe75de140fe711cc987ebd09bf6e44ddd37548ed345d20528db4eb19d3960",
+        "signature_sha256": "2aacfcfc5a61259048a2a71fe4dfeb7048a2e572197e41b5f93903e27574776b",
+        "line": 476,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "terminalWasFinalized",
+        "sha256": "7a4fe75de140fe711cc987ebd09bf6e44ddd37548ed345d20528db4eb19d3960",
+        "signature_sha256": "2aacfcfc5a61259048a2a71fe4dfeb7048a2e572197e41b5f93903e27574776b",
+        "line": 246,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "terminalIsOwned",
+        "sha256": "9c74d984604bcf2e5ed36ae958cdbe160d9d1ad5dcb91ffb363dc74ec8d393da",
+        "signature_sha256": "8fb73d0c69f05ad5462d4068934a77a8c7cd0eda1fa36ac87502047baa16801d",
+        "line": 482,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "terminalIsOwned",
+        "sha256": "9c74d984604bcf2e5ed36ae958cdbe160d9d1ad5dcb91ffb363dc74ec8d393da",
+        "signature_sha256": "8fb73d0c69f05ad5462d4068934a77a8c7cd0eda1fa36ac87502047baa16801d",
+        "line": 252,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "claimSystemTaskCompletion",
+        "sha256": "af8d96696080121bd10efba2d1e989c7fe828027d933fd7226ffce2e9f952fef",
+        "signature_sha256": "ac029bebbc0fa25d2ad1bd5d9864189c4138767c87242ca200b753302740fb74",
+        "line": 488,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "claimSystemTaskCompletion",
+        "sha256": "af8d96696080121bd10efba2d1e989c7fe828027d933fd7226ffce2e9f952fef",
+        "signature_sha256": "ac029bebbc0fa25d2ad1bd5d9864189c4138767c87242ca200b753302740fb74",
+        "line": 258,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "class",
+        "name": "IOSChatBackgroundAssistantTextSnapshot",
+        "sha256": "0a2fb76d6cbd2c28fa2cfe6ef6ff0482899f04c5f703f4248f343a475afb0248",
+        "signature_sha256": "83f84ecacd456675a20cabe5a02c2321ca05f39287e0542957f7d8c0ec05c460",
+        "line": 497,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "class",
+        "name": "IOSChatBackgroundAssistantTextSnapshot",
+        "sha256": "0a2fb76d6cbd2c28fa2cfe6ef6ff0482899f04c5f703f4248f343a475afb0248",
+        "signature_sha256": "83f84ecacd456675a20cabe5a02c2321ca05f39287e0542957f7d8c0ec05c460",
+        "line": 267,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "replace",
+        "sha256": "096f9519f82f2096f8258d37521145a528181575505f74e0c25892b23d4ade43",
+        "signature_sha256": "4ce8c3155208a7732928949fc764086d6e02a44e99100d080ae62e91c64e74c5",
+        "line": 507,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "replace",
+        "sha256": "096f9519f82f2096f8258d37521145a528181575505f74e0c25892b23d4ade43",
+        "signature_sha256": "4ce8c3155208a7732928949fc764086d6e02a44e99100d080ae62e91c64e74c5",
+        "line": 277,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "class",
+        "name": "IOSChatBackgroundMessagesSnapshot",
+        "sha256": "bb88f6430549d06af5904a7542bb9ae6ea2f14679519bb28d36e556f1feab9a1",
+        "signature_sha256": "33c5a5e670d5ab43fb86b21806c22d96e4b5b799c7195bc9658e14d620f037f4",
+        "line": 514,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "class",
+        "name": "IOSChatBackgroundMessagesSnapshot",
+        "sha256": "bb88f6430549d06af5904a7542bb9ae6ea2f14679519bb28d36e556f1feab9a1",
+        "signature_sha256": "33c5a5e670d5ab43fb86b21806c22d96e4b5b799c7195bc9658e14d620f037f4",
+        "line": 284,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "",
+        "sha256": "5cc81deb01a5bc77562449fd72564524e91e624ba0a441134711f470b4e5ed3a",
+        "signature_sha256": "069c67147dc6ff6c143ec69f27d12537ad7f7c540920d785d540a9df57d01fa5",
+        "line": 518,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "",
+        "sha256": "5cc81deb01a5bc77562449fd72564524e91e624ba0a441134711f470b4e5ed3a",
+        "signature_sha256": "069c67147dc6ff6c143ec69f27d12537ad7f7c540920d785d540a9df57d01fa5",
+        "line": 288,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "replace",
+        "sha256": "7c560b072cf1694c3f40d0b5b7eb603f791612928114177fe8f5a6774d22f444",
+        "signature_sha256": "da59f34b91b9750f2c3f14704e16c84ec9118c27e22ad379e49c18b05f74ab3a",
+        "line": 528,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "replace",
+        "sha256": "7c560b072cf1694c3f40d0b5b7eb603f791612928114177fe8f5a6774d22f444",
+        "signature_sha256": "da59f34b91b9750f2c3f14704e16c84ec9118c27e22ad379e49c18b05f74ab3a",
+        "line": 298,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "class",
+        "name": "IOSChatDurableResponseAccumulator",
+        "sha256": "ba2af6c15f6f17af3de68306985a20367216cf5a93e5b81e4528f7f267ba2de7",
+        "signature_sha256": "42eee108007106235c041c008804be44cc16b1a6db7e48d81ddbffd28589a536",
+        "line": 535,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "class",
+        "name": "IOSChatDurableResponseAccumulator",
+        "sha256": "ba2af6c15f6f17af3de68306985a20367216cf5a93e5b81e4528f7f267ba2de7",
+        "signature_sha256": "42eee108007106235c041c008804be44cc16b1a6db7e48d81ddbffd28589a536",
+        "line": 305,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "",
+        "sha256": "6d7ba3d33d8f3c34447e85190ee1cc4eacf883d3112cf85155d4f63a5438f9df",
+        "signature_sha256": "75be7bd7463b78df05a99b4913a01639019995a448e9c663fe1ea9f5f0a5510c",
+        "line": 541,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "",
+        "sha256": "6d7ba3d33d8f3c34447e85190ee1cc4eacf883d3112cf85155d4f63a5438f9df",
+        "signature_sha256": "75be7bd7463b78df05a99b4913a01639019995a448e9c663fe1ea9f5f0a5510c",
+        "line": 311,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "append",
+        "sha256": "2971b8bca7bfece1f1d37fe3de546e92be62f9a17fca026a26364944eac91f06",
+        "signature_sha256": "0c715b0de81fd5e392d242d8385be12663462a54e1ff4da411cee6c09c3ec3b2",
+        "line": 561,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "append",
+        "sha256": "2971b8bca7bfece1f1d37fe3de546e92be62f9a17fca026a26364944eac91f06",
+        "signature_sha256": "0c715b0de81fd5e392d242d8385be12663462a54e1ff4da411cee6c09c3ec3b2",
+        "line": 331,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "combinedMessages",
+        "sha256": "6fa1c8e57113c71837d01610f3bd75073b2e495a3c393361f2893c827c876ded",
+        "signature_sha256": "ce8130e3292d47e92f2866c2d6f264f502eb1b6764bcad2d1b539445a2596027",
+        "line": 574,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "combinedMessages",
+        "sha256": "6fa1c8e57113c71837d01610f3bd75073b2e495a3c393361f2893c827c876ded",
+        "signature_sha256": "ce8130e3292d47e92f2866c2d6f264f502eb1b6764bcad2d1b539445a2596027",
+        "line": 344,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "class",
+        "name": "IOSChatDurableResumeCompletion",
+        "sha256": "a913fd4752ca8bd877e39ab5cee08a503e335aac8dfa0129ce0deb5884372d6b",
+        "signature_sha256": "152da2321f65bf44ec3910220618a597b5220b31c863127a8ad5d8e618ce3e02",
+        "line": 579,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "class",
+        "name": "IOSChatDurableResumeCompletion",
+        "sha256": "a913fd4752ca8bd877e39ab5cee08a503e335aac8dfa0129ce0deb5884372d6b",
+        "signature_sha256": "152da2321f65bf44ec3910220618a597b5220b31c863127a8ad5d8e618ce3e02",
+        "line": 349,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "enum",
+        "name": "Outcome",
+        "sha256": "135ef653f6677e1c0eb824cc8eb3c42145e97d7a6aed0a2e93d3cf23e542c7a9",
+        "signature_sha256": "bd4c7416501df7d04a9d1db333cf536481c52571e257cd77228a6ddfaca90bf7",
+        "line": 580,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "enum",
+        "name": "Outcome",
+        "sha256": "135ef653f6677e1c0eb824cc8eb3c42145e97d7a6aed0a2e93d3cf23e542c7a9",
+        "signature_sha256": "bd4c7416501df7d04a9d1db333cf536481c52571e257cd77228a6ddfaca90bf7",
+        "line": 350,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "install",
+        "sha256": "3cbabb0edaa6f34f5f49d35a8afbd805fff0a26a66799f3f0616d09e531461fa",
+        "signature_sha256": "04f2b66c2b30c78317fd1a6c6aaaf74c68212ee57e5b2ebfd710a7bc15375f40",
+        "line": 591,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "install",
+        "sha256": "3cbabb0edaa6f34f5f49d35a8afbd805fff0a26a66799f3f0616d09e531461fa",
+        "signature_sha256": "04f2b66c2b30c78317fd1a6c6aaaf74c68212ee57e5b2ebfd710a7bc15375f40",
+        "line": 361,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "resolve",
+        "sha256": "ad7dd7cb79c593f97ac71eaa4850b2602bb6afbf92c8eb282d3dc7b5981d3fac",
+        "signature_sha256": "c2708c1aa17aed125252e592bf9391b2229ade94682af828a362550709a75990",
+        "line": 603,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "resolve",
+        "sha256": "ad7dd7cb79c593f97ac71eaa4850b2602bb6afbf92c8eb282d3dc7b5981d3fac",
+        "signature_sha256": "c2708c1aa17aed125252e592bf9391b2229ade94682af828a362550709a75990",
+        "line": 373,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundJobTerminalEvent",
+        "sha256": "e72ddbb0f54fa26b02858b88f3b39c8ae6e9f63bec622c215419250f51f85900",
+        "signature_sha256": "3ab260bcf3ecbe0f54010e418a8330ac50179992de090b46f5fe5dbe72e71744",
+        "line": 621,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundJobTerminalEvent",
+        "sha256": "e72ddbb0f54fa26b02858b88f3b39c8ae6e9f63bec622c215419250f51f85900",
+        "signature_sha256": "3ab260bcf3ecbe0f54010e418a8330ac50179992de090b46f5fe5dbe72e71744",
+        "line": 237,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundJobStateEvent",
+        "sha256": "e72ddbb0f54fa26b02858b88f3b39c8ae6e9f63bec622c215419250f51f85900",
+        "signature_sha256": "a68e63d391a36178b898b7e6e59a6f6b44ee33a085b1877988ceba854d4bb0f8",
+        "line": 625,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "struct",
+        "name": "IOSChatBackgroundJobStateEvent",
+        "sha256": "e72ddbb0f54fa26b02858b88f3b39c8ae6e9f63bec622c215419250f51f85900",
+        "signature_sha256": "a68e63d391a36178b898b7e6e59a6f6b44ee33a085b1877988ceba854d4bb0f8",
+        "line": 241,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundContracts.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "enum",
+        "name": "RunRecordResult",
+        "sha256": "db649e0144ba306d919a4c071a530d714eca53b46bb19e426b789b0dd7f3d78b",
+        "signature_sha256": "822af5a909b0de438c9d1deadc1ca617cd300889d2a1530c5cb4faa532ab9de1",
+        "line": 659,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "enum",
+        "name": "RunRecordResult",
+        "sha256": "db649e0144ba306d919a4c071a530d714eca53b46bb19e426b789b0dd7f3d78b",
+        "signature_sha256": "822af5a909b0de438c9d1deadc1ca617cd300889d2a1530c5cb4faa532ab9de1",
+        "line": 28,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "",
+        "sha256": "de42a743ce3e9f23672fb45efd587a3da180af153e1b2523f4d73103f5c5b14d",
+        "signature_sha256": "e5b92057004716546c28ff7b19fe8fe72c7ba91e33edddf648eedcd0fc67cb52",
+        "line": 723,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "",
+        "sha256": "de42a743ce3e9f23672fb45efd587a3da180af153e1b2523f4d73103f5c5b14d",
+        "signature_sha256": "e5b92057004716546c28ff7b19fe8fe72c7ba91e33edddf648eedcd0fc67cb52",
+        "line": 94,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "",
+        "sha256": "70eb625aa60de1f3ce564151e92829692baa2288c68427854383ace51da393a2",
+        "signature_sha256": "936dd2afc4648137628a0344a381cf5506b18ac32010e7c0f55381c29a916720",
+        "line": 730,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "",
+        "sha256": "70eb625aa60de1f3ce564151e92829692baa2288c68427854383ace51da393a2",
+        "signature_sha256": "936dd2afc4648137628a0344a381cf5506b18ac32010e7c0f55381c29a916720",
+        "line": 101,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "prepareForApplicationLaunch",
+        "sha256": "dca095da78d25f6833fa86acb17ecad4e3b7b8abb986dfeb0b13bedbb5d7cf9f",
+        "signature_sha256": "d6e8bb61b566780942eaa3f6aa6d7ff1f62b425946e0a7b2a309a5fad678b01b",
+        "line": 740,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "prepareForApplicationLaunch",
+        "sha256": "dca095da78d25f6833fa86acb17ecad4e3b7b8abb986dfeb0b13bedbb5d7cf9f",
+        "signature_sha256": "d6e8bb61b566780942eaa3f6aa6d7ff1f62b425946e0a7b2a309a5fad678b01b",
+        "line": 111,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "restoreKeepAliveTask",
+        "sha256": "1d868ae4e7d726ca3e186217ee0759c07b82675afd75f9f99a3b1eb53d7797a1",
+        "signature_sha256": "c6f2f4fef4aa59cd5dc8eaac8e2d6165d598b8f6a9c67caa2b20eec7022deb22",
+        "line": 758,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "restoreKeepAliveTask",
+        "sha256": "1d868ae4e7d726ca3e186217ee0759c07b82675afd75f9f99a3b1eb53d7797a1",
+        "signature_sha256": "c6f2f4fef4aa59cd5dc8eaac8e2d6165d598b8f6a9c67caa2b20eec7022deb22",
+        "line": 129,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "prepareHeadlessChatViewModelForWatch",
+        "sha256": "8f80841376fa3b99e1bdf6c077a9cfdf737a39c7dc866aeb064ae696fc4e5c05",
+        "signature_sha256": "84247d50402f8491e07901cd843318cbe07d1120062670e28e5165cf8fea95ff",
+        "line": 810,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "prepareHeadlessChatViewModelForWatch",
+        "sha256": "8f80841376fa3b99e1bdf6c077a9cfdf737a39c7dc866aeb064ae696fc4e5c05",
+        "signature_sha256": "84247d50402f8491e07901cd843318cbe07d1120062670e28e5165cf8fea95ff",
+        "line": 181,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "buildHeadlessChatViewModel",
+        "sha256": "c73235a805ef4442ea0bcc95ee9c1aee81ea9b21368e4edb7e46fa0abe7188c0",
+        "signature_sha256": "49fb3022df8225bc79ea0528a190fd8fe505e2e3338a380dc69a0d71c531cdc6",
+        "line": 834,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "buildHeadlessChatViewModel",
+        "sha256": "c73235a805ef4442ea0bcc95ee9c1aee81ea9b21368e4edb7e46fa0abe7188c0",
+        "signature_sha256": "49fb3022df8225bc79ea0528a190fd8fe505e2e3338a380dc69a0d71c531cdc6",
+        "line": 205,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "configure",
+        "sha256": "12534c406e7f36b4f6107d95dc0102b5efc5f5b134bf14ef91a7d52dad14e2c1",
+        "signature_sha256": "74f7f5da3f9192dbd0474cd4e138af31f6f531304d3a11e4bcb43fa09c7cb167",
+        "line": 933,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "configure",
+        "sha256": "12534c406e7f36b4f6107d95dc0102b5efc5f5b134bf14ef91a7d52dad14e2c1",
+        "signature_sha256": "74f7f5da3f9192dbd0474cd4e138af31f6f531304d3a11e4bcb43fa09c7cb167",
+        "line": 304,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "start",
+        "sha256": "17a03370db9d215fcd4b68c85a469537a19c59da822feb00bb471738aef41367",
+        "signature_sha256": "d8ab67eb66c8de5d0513ea53e8b91a344db05ae612733ae078577db8c7270582",
+        "line": 958,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "start",
+        "sha256": "17a03370db9d215fcd4b68c85a469537a19c59da822feb00bb471738aef41367",
+        "signature_sha256": "d8ab67eb66c8de5d0513ea53e8b91a344db05ae612733ae078577db8c7270582",
+        "line": 329,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "startLocalExecution",
+        "sha256": "133e44a0cf377ffee6d700db0bf0ff0e62f75c9e2e22fa3a61ccc55fbaf1a857",
+        "signature_sha256": "a23be23628623830b68d08c7b067b0ba78fb06c659cacfe40e983f965458460e",
+        "line": 1018,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "startLocalExecution",
+        "sha256": "133e44a0cf377ffee6d700db0bf0ff0e62f75c9e2e22fa3a61ccc55fbaf1a857",
+        "signature_sha256": "a23be23628623830b68d08c7b067b0ba78fb06c659cacfe40e983f965458460e",
+        "line": 389,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "checkpointDurableResponse",
+        "sha256": "ed1cd29488d715ea8835d38009c93674bc7bb9e966b6da0ec5b7d77496850460",
+        "signature_sha256": "b8eaa4f3df990f7bfb21299cebc8ee106c317f3809926211496641e48c8ff0a7",
+        "line": 1042,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "checkpointDurableResponse",
+        "sha256": "ed1cd29488d715ea8835d38009c93674bc7bb9e966b6da0ec5b7d77496850460",
+        "signature_sha256": "b8eaa4f3df990f7bfb21299cebc8ee106c317f3809926211496641e48c8ff0a7",
+        "line": 413,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "discardDurableResponse",
+        "sha256": "7698d396a9657074531696676da95c52702d07424ba687945948ebd638f8b79f",
+        "signature_sha256": "c8579ccfb9e1ab5893bb4532ae2abafc3741d24a174e6dfdba013d912ae577a3",
+        "line": 1063,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "discardDurableResponse",
+        "sha256": "7698d396a9657074531696676da95c52702d07424ba687945948ebd638f8b79f",
+        "signature_sha256": "c8579ccfb9e1ab5893bb4532ae2abafc3741d24a174e6dfdba013d912ae577a3",
+        "line": 434,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "resumeDetachedResponsesIfNeeded",
+        "sha256": "3d7e6de07fd40fbc0b8d498693a55292a107d7b3c5bf7d37b04dd4ed574dd8f6",
+        "signature_sha256": "c0c8f84a70dcc440033445ffc5876a4a70397ddefeedeee42a734209baceaa56",
+        "line": 1077,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "resumeDetachedResponsesIfNeeded",
+        "sha256": "3d7e6de07fd40fbc0b8d498693a55292a107d7b3c5bf7d37b04dd4ed574dd8f6",
+        "signature_sha256": "c0c8f84a70dcc440033445ffc5876a4a70397ddefeedeee42a734209baceaa56",
+        "line": 448,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "resumeRecoverableJobsIfNeeded",
+        "sha256": "47490cb4a3768174d6b1b38f599dba2fb1f932c647c5043fea0e1bcf75d5aa00",
+        "signature_sha256": "498446d20cc1252d73223fb57bc0af50a14c35d06447d23ab3a04b78de90d4c7",
+        "line": 1108,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "resumeRecoverableJobsIfNeeded",
+        "sha256": "47490cb4a3768174d6b1b38f599dba2fb1f932c647c5043fea0e1bcf75d5aa00",
+        "signature_sha256": "498446d20cc1252d73223fb57bc0af50a14c35d06447d23ab3a04b78de90d4c7",
+        "line": 479,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "hasActiveJob",
+        "sha256": "5fc5af04530068432b8d4bd71360074959fb7f51041fa3c16044ceebaa1ae9a6",
+        "signature_sha256": "155b7c4f6c63e812b01a26a7dc49ae9cb4e48c13242634715bac1926086aa43a",
+        "line": 1121,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "hasActiveJob",
+        "sha256": "5fc5af04530068432b8d4bd71360074959fb7f51041fa3c16044ceebaa1ae9a6",
+        "signature_sha256": "155b7c4f6c63e812b01a26a7dc49ae9cb4e48c13242634715bac1926086aa43a",
+        "line": 492,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "isWaitingForForegroundResume",
+        "sha256": "0d4b0ed2b25d0270ffe0ca29ad5b860af3eea0dc0bc113bc22bee9c27a96d84f",
+        "signature_sha256": "8b48490a13b7ba80479871da77a6ddffbf5634e92aa9bad53d1e3aa229ba5930",
+        "line": 1125,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "isWaitingForForegroundResume",
+        "sha256": "0d4b0ed2b25d0270ffe0ca29ad5b860af3eea0dc0bc113bc22bee9c27a96d84f",
+        "signature_sha256": "8b48490a13b7ba80479871da77a6ddffbf5634e92aa9bad53d1e3aa229ba5930",
+        "line": 496,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "activeRunId",
+        "sha256": "76f6633419a341b025c846c059585cf891ff58ef977b3579f7d5547b3b6ce898",
+        "signature_sha256": "6a709e5c38f6b86fe53f8870d8676ec12d8573ff8ae0a16741b3385a55e65996",
+        "line": 1158,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "activeRunId",
+        "sha256": "76f6633419a341b025c846c059585cf891ff58ef977b3579f7d5547b3b6ce898",
+        "signature_sha256": "6a709e5c38f6b86fe53f8870d8676ec12d8573ff8ae0a16741b3385a55e65996",
+        "line": 529,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "activeRunId",
+        "sha256": "c519d19bc51bc5ce42f0b839e96757c67de7f17899b673cadef8e31af433044a",
+        "signature_sha256": "785704c92ee484b4f7287e656e282b8e21cbf50ac5cdc9131ee74b6d5289e6b7",
+        "line": 1169,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "activeRunId",
+        "sha256": "c519d19bc51bc5ce42f0b839e96757c67de7f17899b673cadef8e31af433044a",
+        "signature_sha256": "785704c92ee484b4f7287e656e282b8e21cbf50ac5cdc9131ee74b6d5289e6b7",
+        "line": 540,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "subAgentRunStatuses",
+        "sha256": "de2ce7526c7d2ad2e24687a9a28dd541e8148ce58f2fecb1286294b0d40d33c5",
+        "signature_sha256": "88856cd7f51b1c99803fb5fa43aa0efcacfd9c76d1d15a0ce340d0e5ed9098ac",
+        "line": 1183,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "subAgentRunStatuses",
+        "sha256": "de2ce7526c7d2ad2e24687a9a28dd541e8148ce58f2fecb1286294b0d40d33c5",
+        "signature_sha256": "88856cd7f51b1c99803fb5fa43aa0efcacfd9c76d1d15a0ce340d0e5ed9098ac",
+        "line": 554,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "subAgentExecutionState",
+        "sha256": "43d289430fec6f51f27a785ce39c271d36b480217d2ed4efe240a19aceb2d8b3",
+        "signature_sha256": "1873e04758fbd8200adb56aa5b2be4e92a3cd089d7ce336d97dc20109e73311a",
+        "line": 1208,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "subAgentExecutionState",
+        "sha256": "43d289430fec6f51f27a785ce39c271d36b480217d2ed4efe240a19aceb2d8b3",
+        "signature_sha256": "1873e04758fbd8200adb56aa5b2be4e92a3cd089d7ce336d97dc20109e73311a",
+        "line": 579,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "subAgentPublicOutput",
+        "sha256": "1cff1318aa749782dfc5156d312695951014ebc54c46de5f71f8e3cb802c234f",
+        "signature_sha256": "74ac0ee9eb8ac59d7090e910165a33d8e8c5b52db72645a2c9abe10ef13dd399",
+        "line": 1234,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "subAgentPublicOutput",
+        "sha256": "1cff1318aa749782dfc5156d312695951014ebc54c46de5f71f8e3cb802c234f",
+        "signature_sha256": "74ac0ee9eb8ac59d7090e910165a33d8e8c5b52db72645a2c9abe10ef13dd399",
+        "line": 605,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "cancelActiveJob",
+        "sha256": "a38750459b10d88de603daf7c9e1f9f74fcd14da1ca39304f56a73d1a2fe3a98",
+        "signature_sha256": "6392e02788b2dd2859e4157a88143fb709fab316d8cb027f96b7172a33b628a3",
+        "line": 1263,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "cancelActiveJob",
+        "sha256": "a38750459b10d88de603daf7c9e1f9f74fcd14da1ca39304f56a73d1a2fe3a98",
+        "signature_sha256": "6392e02788b2dd2859e4157a88143fb709fab316d8cb027f96b7172a33b628a3",
+        "line": 634,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "cancelJobs",
+        "sha256": "ceb9d093b7859e1544f5582c6bfd4519b4a56dc66012dd94ab3c3575c3e4dbf0",
+        "signature_sha256": "1b473c4cd25009ab8928a66cd960b3b5a16c64d3cd033274e9552b2f30c01126",
+        "line": 1274,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "cancelJobs",
+        "sha256": "ceb9d093b7859e1544f5582c6bfd4519b4a56dc66012dd94ab3c3575c3e4dbf0",
+        "signature_sha256": "1b473c4cd25009ab8928a66cd960b3b5a16c64d3cd033274e9552b2f30c01126",
+        "line": 645,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "cancelJob",
+        "sha256": "8ed4eae1d5aace38e179115559103614382c66aa729504567163454b06e8ae9a",
+        "signature_sha256": "79c346509d114aa1452b1f62c7e8d1fffe277025e7a2224a5fc8b49ea7b0304b",
+        "line": 1282,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "cancelJob",
+        "sha256": "8ed4eae1d5aace38e179115559103614382c66aa729504567163454b06e8ae9a",
+        "signature_sha256": "79c346509d114aa1452b1f62c7e8d1fffe277025e7a2224a5fc8b49ea7b0304b",
+        "line": 653,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "cancelJob",
+        "sha256": "4e42cb3946c02a62820e95c69a7040caa927669743bdc9dc2d747de1d2ec56ba",
+        "signature_sha256": "0cc4ceeeeef064d674499b186a8a29bd0296816621ab6ec0f5a5d34a74c58a38",
+        "line": 1294,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "cancelJob",
+        "sha256": "4e42cb3946c02a62820e95c69a7040caa927669743bdc9dc2d747de1d2ec56ba",
+        "signature_sha256": "0cc4ceeeeef064d674499b186a8a29bd0296816621ab6ec0f5a5d34a74c58a38",
+        "line": 665,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "register",
+        "sha256": "16c373102ebb3fb95938838e62f1021842cb9221b10ca80ca2cc558a51ed5558",
+        "signature_sha256": "82d392820f138ff420075418c61da1f43c5d8f0ec17d93652ad66cb816a382ed",
+        "line": 1424,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "register",
+        "sha256": "16c373102ebb3fb95938838e62f1021842cb9221b10ca80ca2cc558a51ed5558",
+        "signature_sha256": "82d392820f138ff420075418c61da1f43c5d8f0ec17d93652ad66cb816a382ed",
+        "line": 795,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "makeBackgroundToolExposureBridge",
+        "sha256": "5d4c1abc51e3b35677e2d89f5f46d93c1981c91280e68062341c386d1f807d29",
+        "signature_sha256": "b948ffc3b76a36bf9a184d9c76534d1e632d84ce4d86021c7ab3f0fa764967d9",
+        "line": 1466,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "makeBackgroundToolExposureBridge",
+        "sha256": "5d4c1abc51e3b35677e2d89f5f46d93c1981c91280e68062341c386d1f807d29",
+        "signature_sha256": "b948ffc3b76a36bf9a184d9c76534d1e632d84ce4d86021c7ab3f0fa764967d9",
+        "line": 837,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "runtimeJob",
+        "sha256": "3d988b6de5374f2b6ed1650c0fa13978e0acf6bd015ca8d44694756b6e213ad2",
+        "signature_sha256": "ab1a753b502ea6c78e12f244515e9306a04659e28d8b5b72a2f6ad6e840f9a4e",
+        "line": 1500,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "runtimeJob",
+        "sha256": "3d988b6de5374f2b6ed1650c0fa13978e0acf6bd015ca8d44694756b6e213ad2",
+        "signature_sha256": "ab1a753b502ea6c78e12f244515e9306a04659e28d8b5b72a2f6ad6e840f9a4e",
+        "line": 871,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "noteVisibleProgress",
+        "sha256": "2fd3f893e5283bdaa020046c8199752f5ff4358e71f96a275086672d63c87044",
+        "signature_sha256": "a965e640bc5258bdec62761e36bde6e8aaf81b92bd75b743002acda90e6a9df9",
+        "line": 1578,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "noteVisibleProgress",
+        "sha256": "2fd3f893e5283bdaa020046c8199752f5ff4358e71f96a275086672d63c87044",
+        "signature_sha256": "a965e640bc5258bdec62761e36bde6e8aaf81b92bd75b743002acda90e6a9df9",
+        "line": 949,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "reportPhoneWorkProgress",
+        "sha256": "461793ed5b7fc5ec9d30db013753eea94fa87184acbeb100b67c7d50cfdcbc23",
+        "signature_sha256": "416368b108f050206fbc03eab10f2bd7dc9bdfefee0a3d6f29ae14fdbb5d20fc",
+        "line": 1590,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "reportPhoneWorkProgress",
+        "sha256": "461793ed5b7fc5ec9d30db013753eea94fa87184acbeb100b67c7d50cfdcbc23",
+        "signature_sha256": "416368b108f050206fbc03eab10f2bd7dc9bdfefee0a3d6f29ae14fdbb5d20fc",
+        "line": 961,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "routingPhoneActivity",
+        "sha256": "c99e6c1acfb0d26e2af2a347c956714ed676a0493edfb1c808c863887388d269",
+        "signature_sha256": "070346e519dc027aaf8cd01f9f522c961ebab72ddf89c81703dcf3e9d01323da",
+        "line": 1608,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "routingPhoneActivity",
+        "sha256": "c99e6c1acfb0d26e2af2a347c956714ed676a0493edfb1c808c863887388d269",
+        "signature_sha256": "070346e519dc027aaf8cd01f9f522c961ebab72ddf89c81703dcf3e9d01323da",
+        "line": 979,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "publishRunningPresentation",
+        "sha256": "18ccbceba4d2e0350925c04eb917d0df8ef93184bbcf044e3ef66398b9316b60",
+        "signature_sha256": "d508510687b5ac9ce52badeb5994d7529dc90a42c393ecab0f48b62eddc8dd87",
+        "line": 1623,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "publishRunningPresentation",
+        "sha256": "18ccbceba4d2e0350925c04eb917d0df8ef93184bbcf044e3ef66398b9316b60",
+        "signature_sha256": "d508510687b5ac9ce52badeb5994d7529dc90a42c393ecab0f48b62eddc8dd87",
+        "line": 994,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "resumeDetachedResponse",
+        "sha256": "48cf7c13c5ee74135c1b349f52a66fd2cf473b3e68b1f159d958571d2df82600",
+        "signature_sha256": "dd7d2fa3fcc6fea029a1df787a0808d2be3c8197a86956297631f7025c4d3257",
+        "line": 1641,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "resumeDetachedResponse",
+        "sha256": "48cf7c13c5ee74135c1b349f52a66fd2cf473b3e68b1f159d958571d2df82600",
+        "signature_sha256": "dd7d2fa3fcc6fea029a1df787a0808d2be3c8197a86956297631f7025c4d3257",
+        "line": 9,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "reconcileDetachedResponseLedgerBeforeResume",
+        "sha256": "400aec0a54b0944576528e84de1014134f1298ebc088fd608d2f4f3a927689a7",
+        "signature_sha256": "239dd392635d60d0021388a2c7cfbd0ecdd3741aa2003bd0f2049a4e530f1ce6",
+        "line": 1887,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "reconcileDetachedResponseLedgerBeforeResume",
+        "sha256": "400aec0a54b0944576528e84de1014134f1298ebc088fd608d2f4f3a927689a7",
+        "signature_sha256": "239dd392635d60d0021388a2c7cfbd0ecdd3741aa2003bd0f2049a4e530f1ce6",
+        "line": 255,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "prepareOrdinaryJobForResume",
+        "sha256": "1d81101b933105b8267e5f9d77df08951885ec066a14b705a6637f40bec6c9ac",
+        "signature_sha256": "7fba9c9b79af5dcfa8f71301b49cf41981bc8e000bc15c49cba80d8e4a262e0d",
+        "line": 2000,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "prepareOrdinaryJobForResume",
+        "sha256": "1d81101b933105b8267e5f9d77df08951885ec066a14b705a6637f40bec6c9ac",
+        "signature_sha256": "7fba9c9b79af5dcfa8f71301b49cf41981bc8e000bc15c49cba80d8e4a262e0d",
+        "line": 368,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "ordinaryRecoveryAction",
+        "sha256": "66689102e03807ee1a6bf5eaa075c806dff782e965ad9ce8bf970c09a8d79252",
+        "signature_sha256": "30d143bc154116e12e263743fdccda6127a69474eec23dbf425d4012282e15b2",
+        "line": 2146,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "ordinaryRecoveryAction",
+        "sha256": "66689102e03807ee1a6bf5eaa075c806dff782e965ad9ce8bf970c09a8d79252",
+        "signature_sha256": "30d143bc154116e12e263743fdccda6127a69474eec23dbf425d4012282e15b2",
+        "line": 514,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "isOutcomeUnknownRecoveryAction",
+        "sha256": "540f868843ff6754260cd8e0be55c9ed59cb54231a00456a281c02828e849330",
+        "signature_sha256": "c4d45ea34bc7532f2fee3c57edb51e1cd80882156d637576207a108eb98ad977",
+        "line": 2162,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "isOutcomeUnknownRecoveryAction",
+        "sha256": "540f868843ff6754260cd8e0be55c9ed59cb54231a00456a281c02828e849330",
+        "signature_sha256": "c4d45ea34bc7532f2fee3c57edb51e1cd80882156d637576207a108eb98ad977",
+        "line": 530,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "durableResponseHandoff",
+        "sha256": "4fdb9fd47e347a183ee34177790314d00c23dba9808a56d45cd58074249500fc",
+        "signature_sha256": "ad1eeeddbbc3a6b753e11809ce297deb5cfd994552d3c9cc7b1e98c3c03d51ed",
+        "line": 2169,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "durableResponseHandoff",
+        "sha256": "4fdb9fd47e347a183ee34177790314d00c23dba9808a56d45cd58074249500fc",
+        "signature_sha256": "ad1eeeddbbc3a6b753e11809ce297deb5cfd994552d3c9cc7b1e98c3c03d51ed",
+        "line": 537,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "cancelRemoteResponse",
+        "sha256": "8aba74bcd72e20124a8cef4462b031f19fd8847b974a8fc7194b4dc829c8d385",
+        "signature_sha256": "148f46025736d026843ca3cc0ebbd1c7dad8d04268840d509cacc4ad34677a94",
+        "line": 2195,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "cancelRemoteResponse",
+        "sha256": "8aba74bcd72e20124a8cef4462b031f19fd8847b974a8fc7194b4dc829c8d385",
+        "signature_sha256": "148f46025736d026843ca3cc0ebbd1c7dad8d04268840d509cacc4ad34677a94",
+        "line": 563,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "cancelDetachedResponseTransport",
+        "sha256": "40fd3d78105c9755689b3933195984595ddc1d1af1ec5fb8545d227c456400cf",
+        "signature_sha256": "ae42501d9b361906513ecade5f152017e0543965e30ef13c8af505b98f52d02a",
+        "line": 2207,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "cancelDetachedResponseTransport",
+        "sha256": "40fd3d78105c9755689b3933195984595ddc1d1af1ec5fb8545d227c456400cf",
+        "signature_sha256": "ae42501d9b361906513ecade5f152017e0543965e30ef13c8af505b98f52d02a",
+        "line": 575,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "completeDetachedResponse",
+        "sha256": "11849bf1cd0da4fe7fd3bd1d7ebc851b53659b0a89250e3c2e6a912631dc0f82",
+        "signature_sha256": "51e66da4c1dfe683fee6da3891bf49571deaec4ac815083d0783d63065142c60",
+        "line": 2218,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "completeDetachedResponse",
+        "sha256": "11849bf1cd0da4fe7fd3bd1d7ebc851b53659b0a89250e3c2e6a912631dc0f82",
+        "signature_sha256": "51e66da4c1dfe683fee6da3891bf49571deaec4ac815083d0783d63065142c60",
+        "line": 9,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "scheduleSubAgentTimeout",
+        "sha256": "4cc97d2e7a9fcc2c6452248f1ee62cf230362b27c42fe905ab83265a021ad557",
+        "signature_sha256": "11a30e7fca4b05d36fdbde46ec8785db5ec7cecbfd1c238835ac1de9531ea83c",
+        "line": 2286,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "scheduleSubAgentTimeout",
+        "sha256": "4cc97d2e7a9fcc2c6452248f1ee62cf230362b27c42fe905ab83265a021ad557",
+        "signature_sha256": "11a30e7fca4b05d36fdbde46ec8785db5ec7cecbfd1c238835ac1de9531ea83c",
+        "line": 9,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "handle",
+        "sha256": "479ba7fce1270560e6b80b0782064605cb7110f5914232ef11f22d3327df2a01",
+        "signature_sha256": "835b34bda8818d350ce390d65f0018e9a4010b4d63d5eec897447eadcd419fd6",
+        "line": 2326,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "handle",
+        "sha256": "479ba7fce1270560e6b80b0782064605cb7110f5914232ef11f22d3327df2a01",
+        "signature_sha256": "835b34bda8818d350ce390d65f0018e9a4010b4d63d5eec897447eadcd419fd6",
+        "line": 49,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "makeExecutors",
+        "sha256": "d46a03bce800f3e094eb2feaa9f95d8049c3326bce6f2287936576a0255e8bfe",
+        "signature_sha256": "30c82cedeb61d10aac9bf64adf142a2e376adae81a052918a797c02291169035",
+        "line": 2470,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "makeExecutors",
+        "sha256": "d46a03bce800f3e094eb2feaa9f95d8049c3326bce6f2287936576a0255e8bfe",
+        "signature_sha256": "30c82cedeb61d10aac9bf64adf142a2e376adae81a052918a797c02291169035",
+        "line": 193,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "uploadPreparer",
+        "sha256": "27e940ec3ca4bd42c9fd0936d0802bba581feabdd8ce6321a10818cc15528cef",
+        "signature_sha256": "ccba2c407906cd2d41e46422784be9e7cca1175c18caac5514586b2d17113aa1",
+        "line": 2536,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "uploadPreparer",
+        "sha256": "27e940ec3ca4bd42c9fd0936d0802bba581feabdd8ce6321a10818cc15528cef",
+        "signature_sha256": "ccba2c407906cd2d41e46422784be9e7cca1175c18caac5514586b2d17113aa1",
+        "line": 259,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "ialResult",
+        "sha256": "9a41fa252046237c01822646952ef9fc96512a802d6128931bde7a188540bcf8",
+        "signature_sha256": "f1627fb1b29d1583178b27a77811e2181c6805d74d6eaf2def3383d17e061091",
+        "line": 2613,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "ialResult",
+        "sha256": "9a41fa252046237c01822646952ef9fc96512a802d6128931bde7a188540bcf8",
+        "signature_sha256": "f1627fb1b29d1583178b27a77811e2181c6805d74d6eaf2def3383d17e061091",
+        "line": 336,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "ialResult",
+        "sha256": "9a41fa252046237c01822646952ef9fc96512a802d6128931bde7a188540bcf8",
+        "signature_sha256": "c25cfbc6a097db1b28d6033bd686d600be162969164106487b2701f7ba6866c1",
+        "line": 2614,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "ialResult",
+        "sha256": "9a41fa252046237c01822646952ef9fc96512a802d6128931bde7a188540bcf8",
+        "signature_sha256": "c25cfbc6a097db1b28d6033bd686d600be162969164106487b2701f7ba6866c1",
+        "line": 337,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "init",
+        "name": "ialResult",
+        "sha256": "9a41fa252046237c01822646952ef9fc96512a802d6128931bde7a188540bcf8",
+        "signature_sha256": "f39988ee69393afa12e20662938f012a9743356c6cf78c8d3fdc33843bcbc642",
+        "line": 2615,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "init",
+        "name": "ialResult",
+        "sha256": "9a41fa252046237c01822646952ef9fc96512a802d6128931bde7a188540bcf8",
+        "signature_sha256": "f39988ee69393afa12e20662938f012a9743356c6cf78c8d3fdc33843bcbc642",
+        "line": 338,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundExecutor.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "completeTruncatedAfterTerminalReservation",
+        "sha256": "10559a37299eb13c36c28d6810b744c53e24234b4d34d8558e85bbb0afbdcca6",
+        "signature_sha256": "cc904c30684ac4d9a8be2628b3851377f4d42b1791847756542f6b01f1b149c3",
+        "line": 3030,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "completeTruncatedAfterTerminalReservation",
+        "sha256": "10559a37299eb13c36c28d6810b744c53e24234b4d34d8558e85bbb0afbdcca6",
+        "signature_sha256": "cc904c30684ac4d9a8be2628b3851377f4d42b1791847756542f6b01f1b149c3",
+        "line": 77,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "publishTruncatedTerminal",
+        "sha256": "f4c50b7dd891aa87e9e105259d113470f9dc5a138d1dae34f38a26ad22009486",
+        "signature_sha256": "2cca62ea2f04ae7f068e50a3b82a02a7558ca27a885f881f34f06f648f8967c7",
+        "line": 3132,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "publishTruncatedTerminal",
+        "sha256": "f4c50b7dd891aa87e9e105259d113470f9dc5a138d1dae34f38a26ad22009486",
+        "signature_sha256": "2cca62ea2f04ae7f068e50a3b82a02a7558ca27a885f881f34f06f648f8967c7",
+        "line": 179,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "fail",
+        "sha256": "1dabe6d449f4eefa9a7ebcf52806d625dd80496a61bb91a1d684ef5694cfa69b",
+        "signature_sha256": "316cbbbbb0d0350dd17b65950b9d1b1425ceb96a4a84fa6cba683768b4c60f79",
+        "line": 3154,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "fail",
+        "sha256": "1dabe6d449f4eefa9a7ebcf52806d625dd80496a61bb91a1d684ef5694cfa69b",
+        "signature_sha256": "316cbbbbb0d0350dd17b65950b9d1b1425ceb96a4a84fa6cba683768b4c60f79",
+        "line": 201,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "failAfterTerminalReservation",
+        "sha256": "35c573fa457e28cfb1e5fe4f28ec8f1322a5eebefce0e19fd191f753a3bb01a2",
+        "signature_sha256": "51438b593ca4c93f3469f461e942bb430010b5380b0b65db75695f5f9d4954ef",
+        "line": 3175,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "failAfterTerminalReservation",
+        "sha256": "35c573fa457e28cfb1e5fe4f28ec8f1322a5eebefce0e19fd191f753a3bb01a2",
+        "signature_sha256": "51438b593ca4c93f3469f461e942bb430010b5380b0b65db75695f5f9d4954ef",
+        "line": 222,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "finalizeStalePersistedJobsIfNeeded",
+        "sha256": "8dc6a120e2e6477009d5178c84fdd0a539390b97cc3f6c4d556f8b96017268cf",
+        "signature_sha256": "c41f0b1485781372f0624a4658d0e2b0d912145474dc30f74d52d4ef05974a90",
+        "line": 3318,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "finalizeStalePersistedJobsIfNeeded",
+        "sha256": "8dc6a120e2e6477009d5178c84fdd0a539390b97cc3f6c4d556f8b96017268cf",
+        "signature_sha256": "c41f0b1485781372f0624a4658d0e2b0d912145474dc30f74d52d4ef05974a90",
+        "line": 16,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRecovery.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "finalizeStalePersistedJob",
+        "sha256": "41989eac9b94ba4cb9148a8607d7357d2b8202b0d88463df0a87a783062503c5",
+        "signature_sha256": "2af481ad7e85b136a17a292c1d3305d184e45d2795e158e8fd2f10529468cda0",
+        "line": 3361,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "finalizeStalePersistedJob",
+        "sha256": "41989eac9b94ba4cb9148a8607d7357d2b8202b0d88463df0a87a783062503c5",
+        "signature_sha256": "2af481ad7e85b136a17a292c1d3305d184e45d2795e158e8fd2f10529468cda0",
+        "line": 59,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRecovery.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "hasOutcomeUnknownRecoveryEvidence",
+        "sha256": "a2882820c739e060c35f69adc9479b2aeefe2f73c2283d181a2890347385bf98",
+        "signature_sha256": "651b6180527629af15f2ff1dec29ecf2cca1be73d815edd8e55de018706d9ed9",
+        "line": 3472,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "hasOutcomeUnknownRecoveryEvidence",
+        "sha256": "a2882820c739e060c35f69adc9479b2aeefe2f73c2283d181a2890347385bf98",
+        "signature_sha256": "651b6180527629af15f2ff1dec29ecf2cca1be73d815edd8e55de018706d9ed9",
+        "line": 170,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRecovery.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "preservesOutcomeUnknownStaleRecovery",
+        "sha256": "e0095afce9b654bf21ad14c3097abc9e7cef1a45660d87dc8712eaabc943279d",
+        "signature_sha256": "9b77a19731a3f7f080c7ef508f3886bb90a6dd74cb6caf1d3c834180c23a5616",
+        "line": 3492,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "preservesOutcomeUnknownStaleRecovery",
+        "sha256": "e0095afce9b654bf21ad14c3097abc9e7cef1a45660d87dc8712eaabc943279d",
+        "signature_sha256": "9b77a19731a3f7f080c7ef508f3886bb90a6dd74cb6caf1d3c834180c23a5616",
+        "line": 190,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRecovery.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "persistExpirationFailure",
+        "sha256": "05d9b1daeadeea350275170220c810b2f7fd9a20c780ea7a7c61ea803b4e1e65",
+        "signature_sha256": "72bd528317481e87ce6d12da8690d566cb45e11247c7b8cbbede0147eac231b0",
+        "line": 3508,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "persistExpirationFailure",
+        "sha256": "05d9b1daeadeea350275170220c810b2f7fd9a20c780ea7a7c61ea803b4e1e65",
+        "signature_sha256": "72bd528317481e87ce6d12da8690d566cb45e11247c7b8cbbede0147eac231b0",
+        "line": 358,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "persistExpirationPause",
+        "sha256": "184e071cef08feb8513d5e277be3f8a67405cdf15a6a3a56f3263e57c527f312",
+        "signature_sha256": "f88693171b4a49e1b33d67474585fc8e33b2e1bbbb4cc1a32f1193aa2749e0f4",
+        "line": 3578,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "persistExpirationPause",
+        "sha256": "184e071cef08feb8513d5e277be3f8a67405cdf15a6a3a56f3263e57c527f312",
+        "signature_sha256": "f88693171b4a49e1b33d67474585fc8e33b2e1bbbb4cc1a32f1193aa2749e0f4",
+        "line": 428,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "resumeRecoverableJob",
+        "sha256": "2395c5a3bb361693f6fe62b7499ed575492f138da46ef9ef1d722058307eaaa9",
+        "signature_sha256": "a49f61bea5932a66b545057ba6f1b97bb897a6da7eb7c4b835e824fe04510ecf",
+        "line": 3630,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "resumeRecoverableJob",
+        "sha256": "2395c5a3bb361693f6fe62b7499ed575492f138da46ef9ef1d722058307eaaa9",
+        "signature_sha256": "a49f61bea5932a66b545057ba6f1b97bb897a6da7eb7c4b835e824fe04510ecf",
+        "line": 206,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRecovery.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "canAutomaticallyResumeOrdinaryJob",
+        "sha256": "239285dc250a9afb7098e7f501f07c078907c99c9003303b0bfa3e9d0e64faf5",
+        "signature_sha256": "c0cfbe6f4278b277765cbc8fd82b1bee7745e35bb0041cfa96d1b69bd8210729",
+        "line": 3736,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "canAutomaticallyResumeOrdinaryJob",
+        "sha256": "239285dc250a9afb7098e7f501f07c078907c99c9003303b0bfa3e9d0e64faf5",
+        "signature_sha256": "c0cfbe6f4278b277765cbc8fd82b1bee7745e35bb0041cfa96d1b69bd8210729",
+        "line": 312,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRecovery.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "publishExpiredInFlightSaveAfterRecordedRun",
+        "sha256": "02410a9c4f4e639b20abdeea3e79ab90a38feb96d8864b6d9f7beb69dd9f728c",
+        "signature_sha256": "100dfe7e83f8b9138cc4d5e21db3059b84973081a755d7ff9cbb5c59630d0cfa",
+        "line": 3748,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "publishExpiredInFlightSaveAfterRecordedRun",
+        "sha256": "02410a9c4f4e639b20abdeea3e79ab90a38feb96d8864b6d9f7beb69dd9f728c",
+        "signature_sha256": "100dfe7e83f8b9138cc4d5e21db3059b84973081a755d7ff9cbb5c59630d0cfa",
+        "line": 482,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "completeAsFailureAfterSaveFailure",
+        "sha256": "f49e05ee24b198c41dbe33aa28a2e992c1cec0c9b781469f6c03b7968efbc6cc",
+        "signature_sha256": "593137249d39f52cdd2d866664d4a8cab67c2bc845741d80987d3000b62432da",
+        "line": 3815,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "completeAsFailureAfterSaveFailure",
+        "sha256": "f49e05ee24b198c41dbe33aa28a2e992c1cec0c9b781469f6c03b7968efbc6cc",
+        "signature_sha256": "593137249d39f52cdd2d866664d4a8cab67c2bc845741d80987d3000b62432da",
+        "line": 549,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "completeOutcomeUnknownAfterTerminalReservation",
+        "sha256": "3281994815e758d2d8c7926780562108158a470f102e8c9b41322b16afb8de82",
+        "signature_sha256": "73cd1b70a815eced465dd6f48828ee36cf7bfecf8f3cc7444754a066fa50ccca",
+        "line": 3828,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "completeOutcomeUnknownAfterTerminalReservation",
+        "sha256": "3281994815e758d2d8c7926780562108158a470f102e8c9b41322b16afb8de82",
+        "signature_sha256": "73cd1b70a815eced465dd6f48828ee36cf7bfecf8f3cc7444754a066fa50ccca",
+        "line": 562,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "publishExpiredOutcomeUnknownAfterRecordedRun",
+        "sha256": "3d431bcd8f498de23e8e8435d38801423fd276f3be6fa277a775b5c7ce228385",
+        "signature_sha256": "3d49808f7bf2ae34c59702677c70afa010d070fb25ab06e6cb3241b11f96e479",
+        "line": 3903,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "publishExpiredOutcomeUnknownAfterRecordedRun",
+        "sha256": "3d431bcd8f498de23e8e8435d38801423fd276f3be6fa277a775b5c7ce228385",
+        "signature_sha256": "3d49808f7bf2ae34c59702677c70afa010d070fb25ab06e6cb3241b11f96e479",
+        "line": 637,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "releaseRuntimeOwnership",
+        "sha256": "6aed6b6ec514af1b7057a3dad3a8d06bc6514a7cf59fc47ca3d6e08870d22771",
+        "signature_sha256": "17f78546f69cfa11d1b3a6b1586e9b7845652262d73073d07251a9aaccbed436",
+        "line": 3940,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "releaseRuntimeOwnership",
+        "sha256": "6aed6b6ec514af1b7057a3dad3a8d06bc6514a7cf59fc47ca3d6e08870d22771",
+        "signature_sha256": "17f78546f69cfa11d1b3a6b1586e9b7845652262d73073d07251a9aaccbed436",
+        "line": 1014,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "pauseRuntimeOwnership",
+        "sha256": "d1c87c05b4e143af967df905991ac35f47e5e67834655ebece70955c3ab228a0",
+        "signature_sha256": "cdf1d7778e354542e3edba640b523ae66c1d02804204e56be12640ab9aa4a852",
+        "line": 3966,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "pauseRuntimeOwnership",
+        "sha256": "d1c87c05b4e143af967df905991ac35f47e5e67834655ebece70955c3ab228a0",
+        "signature_sha256": "cdf1d7778e354542e3edba640b523ae66c1d02804204e56be12640ab9aa4a852",
+        "line": 1040,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "job",
+        "sha256": "6639985c02ea9c3dd2e9b2cec36325e82fa8b78be80150a54746439a361f37dc",
+        "signature_sha256": "a621337985c331d936c909df245d16efbe4d4be303afb6b874da20f6f5af1e82",
+        "line": 3973,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "job",
+        "sha256": "6639985c02ea9c3dd2e9b2cec36325e82fa8b78be80150a54746439a361f37dc",
+        "signature_sha256": "a621337985c331d936c909df245d16efbe4d4be303afb6b874da20f6f5af1e82",
+        "line": 1047,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "jobs",
+        "sha256": "0ac86f0a9ac000e8a7f79fda44fa73933be813b96f513d7c283100ebfd409418",
+        "signature_sha256": "d1774d5df3b3725be32372427d826c67d11095cdaed71c27de8853bd65074e18",
+        "line": 3994,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "jobs",
+        "sha256": "0ac86f0a9ac000e8a7f79fda44fa73933be813b96f513d7c283100ebfd409418",
+        "signature_sha256": "d1774d5df3b3725be32372427d826c67d11095cdaed71c27de8853bd65074e18",
+        "line": 1068,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "persist",
+        "sha256": "943747b4e0bbe43e0047d496bde46dd170e1c0bcf4d39b91fe71d64707ef1b03",
+        "signature_sha256": "917228aacaecca9747525c57f1edec493eca2eddd92fc5d06a5fcf41e5e1a315",
+        "line": 4000,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "persist",
+        "sha256": "943747b4e0bbe43e0047d496bde46dd170e1c0bcf4d39b91fe71d64707ef1b03",
+        "signature_sha256": "917228aacaecca9747525c57f1edec493eca2eddd92fc5d06a5fcf41e5e1a315",
+        "line": 9,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "persistGenerativeUiRetryCheckpoint",
+        "sha256": "ff20f478e38e0cb2d8a142f3f88da897ac20be76cb7ecbe3a84a22397252d22d",
+        "signature_sha256": "72e56f3676baf3f4c05ce38fdecc08694b4c5a98c531d670619dd996c558561a",
+        "line": 4026,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "persistGenerativeUiRetryCheckpoint",
+        "sha256": "ff20f478e38e0cb2d8a142f3f88da897ac20be76cb7ecbe3a84a22397252d22d",
+        "signature_sha256": "72e56f3676baf3f4c05ce38fdecc08694b4c5a98c531d670619dd996c558561a",
+        "line": 35,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "loadHandoff",
+        "sha256": "df4e6f67c8a33ac3df6a1a7436ba87078f48c6c0f4128cb72f2bc05bf77d806a",
+        "signature_sha256": "b588495677bee8ac2021f9aa866f557aa0754dc510a27b1975511cd09b2a73b9",
+        "line": 4061,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "loadHandoff",
+        "sha256": "df4e6f67c8a33ac3df6a1a7436ba87078f48c6c0f4128cb72f2bc05bf77d806a",
+        "signature_sha256": "b588495677bee8ac2021f9aa866f557aa0754dc510a27b1975511cd09b2a73b9",
+        "line": 70,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "removePayload",
+        "sha256": "ad61f3950248f5ac60b0f2fe39b96c4dbb38d18f8bccf1df81ee3c5fd191d898",
+        "signature_sha256": "62c44f51029b5c783a695580818fe99d57d53e294580be220a9f727dad50b612",
+        "line": 4132,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "removePayload",
+        "sha256": "ad61f3950248f5ac60b0f2fe39b96c4dbb38d18f8bccf1df81ee3c5fd191d898",
+        "signature_sha256": "62c44f51029b5c783a695580818fe99d57d53e294580be220a9f727dad50b612",
+        "line": 141,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "rehydratedMode",
+        "sha256": "6170646782e2489c49495955034928d1a732c3891eef2708b80452ad0c282eb1",
+        "signature_sha256": "4b826cd4ca6bd061bcc74fd7003f30bd97e42719c93cbd9f2f9d399ab327e8b4",
+        "line": 4143,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "rehydratedMode",
+        "sha256": "6170646782e2489c49495955034928d1a732c3891eef2708b80452ad0c282eb1",
+        "signature_sha256": "4b826cd4ca6bd061bcc74fd7003f30bd97e42719c93cbd9f2f9d399ab327e8b4",
+        "line": 152,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "jobsDirectory",
+        "sha256": "3d35e335680e4864e27f470b05364d30a1b0c498cc4e63580bce90bbb4b8fcd8",
+        "signature_sha256": "11f25212b5597bb9a4f93780d7407c35c15c4160ff36e1e11e8a32e884719287",
+        "line": 4147,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "jobsDirectory",
+        "sha256": "3d35e335680e4864e27f470b05364d30a1b0c498cc4e63580bce90bbb4b8fcd8",
+        "signature_sha256": "11f25212b5597bb9a4f93780d7407c35c15c4160ff36e1e11e8a32e884719287",
+        "line": 156,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "payloadURL",
+        "sha256": "aa3ebe816814a33ba14fc75d15fdf323076e9b6a5fbe3bafdc3c783dc7001689",
+        "signature_sha256": "e7e3e5f22a92d8cca69e19cf39d1470f54a9f6f1004c554cb6b169b1907f1301",
+        "line": 4155,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "payloadURL",
+        "sha256": "aa3ebe816814a33ba14fc75d15fdf323076e9b6a5fbe3bafdc3c783dc7001689",
+        "signature_sha256": "e7e3e5f22a92d8cca69e19cf39d1470f54a9f6f1004c554cb6b169b1907f1301",
+        "line": 164,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "recordRun",
+        "sha256": "073b8f04569dbbdeae5a9c4a1d732f0475912cb29f1f4daaf9d87864ae41193a",
+        "signature_sha256": "b4fbc2a95ac9d4d468c3cf2b05a18fbb4e4de7359eb70d40c42de3a03ae03c0d",
+        "line": 4161,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "recordRun",
+        "sha256": "073b8f04569dbbdeae5a9c4a1d732f0475912cb29f1f4daaf9d87864ae41193a",
+        "signature_sha256": "b4fbc2a95ac9d4d468c3cf2b05a18fbb4e4de7359eb70d40c42de3a03ae03c0d",
+        "line": 672,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "recordRunResult",
+        "sha256": "8505886ec57b79df60c386cea29dfc26eef877d714b8b77800c3f829562ddd4f",
+        "signature_sha256": "b2da66649194bfd76e6cdd904460d959aa890e255a10b53d5e65891ba94ca348",
+        "line": 4177,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "recordRunResult",
+        "sha256": "8505886ec57b79df60c386cea29dfc26eef877d714b8b77800c3f829562ddd4f",
+        "signature_sha256": "b2da66649194bfd76e6cdd904460d959aa890e255a10b53d5e65891ba94ca348",
+        "line": 688,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "markRunInterrupted",
+        "sha256": "fe8392abdc5b53ea59b9787a0d64f9e51532744761eb0b52b037f9f79a207c23",
+        "signature_sha256": "4b14883ff8f2ef5b480fbf4703c263ab7c6aede3742e99b7cc12f190ed1f5881",
+        "line": 4246,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "markRunInterrupted",
+        "sha256": "fe8392abdc5b53ea59b9787a0d64f9e51532744761eb0b52b037f9f79a207c23",
+        "signature_sha256": "4b14883ff8f2ef5b480fbf4703c263ab7c6aede3742e99b7cc12f190ed1f5881",
+        "line": 757,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "notifyRunTerminal",
+        "sha256": "cc8d2026cf915e88ba8ed0d85299c01270ee9eddd63726baf6b91720a58705be",
+        "signature_sha256": "11ceab9f3a35bbbfc4cf2ddd3c12d9e3c162e243e5b23b0ee11989a2b3e6054f",
+        "line": 4256,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "notifyRunTerminal",
+        "sha256": "cc8d2026cf915e88ba8ed0d85299c01270ee9eddd63726baf6b91720a58705be",
+        "signature_sha256": "11ceab9f3a35bbbfc4cf2ddd3c12d9e3c162e243e5b23b0ee11989a2b3e6054f",
+        "line": 767,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "archiveTerminalOutput",
+        "sha256": "8e064249c1f60475b3d49ca67ae252a2c96ccbf87b542a23631cb89a7224fdc4",
+        "signature_sha256": "16b7bf44e6cefcc0874a8170ee930ccdf9f66e7c64b4fae3aac04b341f5115e3",
+        "line": 4274,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "archiveTerminalOutput",
+        "sha256": "8e064249c1f60475b3d49ca67ae252a2c96ccbf87b542a23631cb89a7224fdc4",
+        "signature_sha256": "16b7bf44e6cefcc0874a8170ee930ccdf9f66e7c64b4fae3aac04b341f5115e3",
+        "line": 785,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "drainMailboxForBackgroundJob",
+        "sha256": "0730768249f9ff1b0a076191413263b6f6760027b87ac057f8f4ede044ca70dd",
+        "signature_sha256": "05ee6e7f4a3e4bb477bb5902cda16dc990b3ba2a85d11eaa425c274a78ff1e07",
+        "line": 4305,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "drainMailboxForBackgroundJob",
+        "sha256": "0730768249f9ff1b0a076191413263b6f6760027b87ac057f8f4ede044ca70dd",
+        "signature_sha256": "05ee6e7f4a3e4bb477bb5902cda16dc990b3ba2a85d11eaa425c274a78ff1e07",
+        "line": 13,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundMessageProjection.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "assistantMessage",
+        "sha256": "4ec50fa604b165f355814faac2a57d124b5f746d6630c580c62a0e88ab74cd84",
+        "signature_sha256": "b7ef063ca309f606ce146ee00f7faf71d2b91e686e52791441006fc2023244c7",
+        "line": 4351,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "assistantMessage",
+        "sha256": "4ec50fa604b165f355814faac2a57d124b5f746d6630c580c62a0e88ab74cd84",
+        "signature_sha256": "b7ef063ca309f606ce146ee00f7faf71d2b91e686e52791441006fc2023244c7",
+        "line": 59,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundMessageProjection.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "assistantErrorMessage",
+        "sha256": "c37d8edc10830b53fbbe06ef59479f8602518b029378bf711f23e305bcfbfd87",
+        "signature_sha256": "fab15d9cf71ca01d669bcbf38c4ecc089758898ad1aafe14b35d19a2110a534b",
+        "line": 4365,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "assistantErrorMessage",
+        "sha256": "c37d8edc10830b53fbbe06ef59479f8602518b029378bf711f23e305bcfbfd87",
+        "signature_sha256": "fab15d9cf71ca01d669bcbf38c4ecc089758898ad1aafe14b35d19a2110a534b",
+        "line": 73,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundMessageProjection.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "backgroundSummary",
+        "sha256": "7cefef562d53cb22c0a3f5ff7e49b6eb8c09ffa8180cab7457ef2b1906581fce",
+        "signature_sha256": "526ed0a490561e7a3dfab9239550c2ee1e007954b4147f746fd52f3fb29b6a91",
+        "line": 4379,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "backgroundSummary",
+        "sha256": "7cefef562d53cb22c0a3f5ff7e49b6eb8c09ffa8180cab7457ef2b1906581fce",
+        "signature_sha256": "526ed0a490561e7a3dfab9239550c2ee1e007954b4147f746fd52f3fb29b6a91",
+        "line": 812,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "backgroundTerminalStatus",
+        "sha256": "b3862cfba5c6ee1d888eb83e99444c5e0c6a502f46396b7c6407ba757b90c332",
+        "signature_sha256": "85f566bfe99ebc6a268d1b225402cddd4521112453b227c5555fa03f9354ae67",
+        "line": 4390,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "backgroundTerminalStatus",
+        "sha256": "b3862cfba5c6ee1d888eb83e99444c5e0c6a502f46396b7c6407ba757b90c332",
+        "signature_sha256": "85f566bfe99ebc6a268d1b225402cddd4521112453b227c5555fa03f9354ae67",
+        "line": 823,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "resumePresentationStage",
+        "sha256": "d1c107115930ac62ab7f78aa1fd7b7e3f5650ad93dfd7ba23ce22a88abaed971",
+        "signature_sha256": "e353ff1c55a0e7d1501dc075389aeaa4240e42af774dce74e31dcf273f089ae0",
+        "line": 4405,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "resumePresentationStage",
+        "sha256": "d1c107115930ac62ab7f78aa1fd7b7e3f5650ad93dfd7ba23ce22a88abaed971",
+        "signature_sha256": "e353ff1c55a0e7d1501dc075389aeaa4240e42af774dce74e31dcf273f089ae0",
+        "line": 87,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundMessageProjection.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "backgroundFailurePresentation",
+        "sha256": "3aab8065a11b2e0bf28fc4c539ac554cb181220d1d5c33a8530068d0bc3662f3",
+        "signature_sha256": "17db29cf5fb5f34c3172bf583d1c87f58fa689fb19180f2b96c442b7ff358750",
+        "line": 4427,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "backgroundFailurePresentation",
+        "sha256": "3aab8065a11b2e0bf28fc4c539ac554cb181220d1d5c33a8530068d0bc3662f3",
+        "signature_sha256": "17db29cf5fb5f34c3172bf583d1c87f58fa689fb19180f2b96c442b7ff358750",
+        "line": 838,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "backgroundFailureIsRetryable",
+        "sha256": "dad3ece65e9211f1d587ecce48855db83f7734fa0957cc0e9b5c64f55fb3ad3d",
+        "signature_sha256": "96cd0e2e738e9c9e4b47d55fb0e4b1b608590ad15ea4db7de423b55d7da8bc32",
+        "line": 4464,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "backgroundFailureIsRetryable",
+        "sha256": "dad3ece65e9211f1d587ecce48855db83f7734fa0957cc0e9b5c64f55fb3ad3d",
+        "signature_sha256": "96cd0e2e738e9c9e4b47d55fb0e4b1b608590ad15ea4db7de423b55d7da8bc32",
+        "line": 875,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "hasToolInCurrentRun",
+        "sha256": "0b8bf13f7fc23c949f52257d890e5e088f76ea993a17d84e7ba2df4ead3d4fdd",
+        "signature_sha256": "24a40f85d586deff515430ba09b25d45b80bf27cff4abb79e0a094764a24ae50",
+        "line": 4480,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "hasToolInCurrentRun",
+        "sha256": "0b8bf13f7fc23c949f52257d890e5e088f76ea993a17d84e7ba2df4ead3d4fdd",
+        "signature_sha256": "24a40f85d586deff515430ba09b25d45b80bf27cff4abb79e0a094764a24ae50",
+        "line": 891,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundTerminalWriter.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "rehydratedParams",
+        "sha256": "821bb83f2f5f2ee87f05c53a8ad430897efdad15e0454fafe97198e70469e1e9",
+        "signature_sha256": "6d002f4994cc4e43a53634fd9738dfbee966cb7dbeffb488070510776eed9c5e",
+        "line": 4489,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "rehydratedParams",
+        "sha256": "821bb83f2f5f2ee87f05c53a8ad430897efdad15e0454fafe97198e70469e1e9",
+        "signature_sha256": "6d002f4994cc4e43a53634fd9738dfbee966cb7dbeffb488070510776eed9c5e",
+        "line": 170,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "rehydratedVisibleTools",
+        "sha256": "f6b48bf291495c5b0634632a48a440161ccf70453100d802d13fe5afb2ee49e5",
+        "signature_sha256": "191a6a741aed1ab2b8c67917c7fddb85906df24174ec0594ed07dca5cb850f09",
+        "line": 4536,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "rehydratedVisibleTools",
+        "sha256": "f6b48bf291495c5b0634632a48a440161ccf70453100d802d13fe5afb2ee49e5",
+        "signature_sha256": "191a6a741aed1ab2b8c67917c7fddb85906df24174ec0594ed07dca5cb850f09",
+        "line": 217,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundPayloadCodec.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "failedMessages",
+        "sha256": "f9dc4e3f644b454c24e05e52713a0d4e239f4768a25a68722f092e72a5e79460",
+        "signature_sha256": "c6424fe336c8b809b6db573fe429091eaaed13a8e7601d95dc7e8b2fa788cadd",
+        "line": 4547,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "failedMessages",
+        "sha256": "f9dc4e3f644b454c24e05e52713a0d4e239f4768a25a68722f092e72a5e79460",
+        "signature_sha256": "c6424fe336c8b809b6db573fe429091eaaed13a8e7601d95dc7e8b2fa788cadd",
+        "line": 109,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundMessageProjection.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "reconciledDisplayPrefix",
+        "sha256": "38f80c692d2bd1194170728cf241e038b7536c64ee568214454cb3bf97a81905",
+        "signature_sha256": "538a1932568f9b9d6f88fe323512999eb3c809806b499d2901af4aa8d7356871",
+        "line": 4565,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "reconciledDisplayPrefix",
+        "sha256": "38f80c692d2bd1194170728cf241e038b7536c64ee568214454cb3bf97a81905",
+        "signature_sha256": "538a1932568f9b9d6f88fe323512999eb3c809806b499d2901af4aa8d7356871",
+        "line": 127,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundMessageProjection.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "reconciledMessages",
+        "sha256": "79156052e2cc386ad511c3c842b29af42e025c8d7ec845905b8ae3595fb934f9",
+        "signature_sha256": "f44c34f95032a12cebc4418ed191dfe5f4d4a01e0f374525480676fad1cf92b4",
+        "line": 4606,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "reconciledMessages",
+        "sha256": "79156052e2cc386ad511c3c842b29af42e025c8d7ec845905b8ae3595fb934f9",
+        "signature_sha256": "f44c34f95032a12cebc4418ed191dfe5f4d4a01e0f374525480676fad1cf92b4",
+        "line": 168,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundMessageProjection.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "rehydratedModeForTesting",
+        "sha256": "b0d95168356c1f3b81b31443046e541f977d05c51a70faac48849d0728c165e5",
+        "signature_sha256": "523f45055505c5d4d0c9bb3bd1b8931759a6d1d145528fbce4b37c7a2077df87",
+        "line": 4619,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "rehydratedModeForTesting",
+        "sha256": "b0d95168356c1f3b81b31443046e541f977d05c51a70faac48849d0728c165e5",
+        "signature_sha256": "523f45055505c5d4d0c9bb3bd1b8931759a6d1d145528fbce4b37c7a2077df87",
+        "line": 1075,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "canAutomaticallyResumeOrdinaryJobForTesting",
+        "sha256": "f4da24e1ebe805499db705c6ead0f8ce1238ecf13968fa95def5132d9e98e77f",
+        "signature_sha256": "a0652ccba99a8088d04956ccb290f8aa569b46349f3761aad496c6062d3c531d",
+        "line": 4623,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "canAutomaticallyResumeOrdinaryJobForTesting",
+        "sha256": "f4da24e1ebe805499db705c6ead0f8ce1238ecf13968fa95def5132d9e98e77f",
+        "signature_sha256": "a0652ccba99a8088d04956ccb290f8aa569b46349f3761aad496c6062d3c531d",
+        "line": 1079,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "ordinaryRecoveryAllowsResumeForTesting",
+        "sha256": "bdd266433ee913e68390c46d67641cefdda4c4b0e28674cb1e81078ef228620b",
+        "signature_sha256": "24f7318558892db090ff2b4e6a7cc344ff7c96f2983ff73cd829bcd4b10725aa",
+        "line": 4633,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "ordinaryRecoveryAllowsResumeForTesting",
+        "sha256": "bdd266433ee913e68390c46d67641cefdda4c4b0e28674cb1e81078ef228620b",
+        "signature_sha256": "24f7318558892db090ff2b4e6a7cc344ff7c96f2983ff73cd829bcd4b10725aa",
+        "line": 1089,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "ordinaryRecoveryActionForTesting",
+        "sha256": "1a907818e39d0cba93706c603c90e4eb14b188615c34a0dd2a151764dcce130c",
+        "signature_sha256": "930ee83df1d270c2020981604ba4991fdc6c075bf85ea148ded6b5568284c801",
+        "line": 4639,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "ordinaryRecoveryActionForTesting",
+        "sha256": "1a907818e39d0cba93706c603c90e4eb14b188615c34a0dd2a151764dcce130c",
+        "signature_sha256": "930ee83df1d270c2020981604ba4991fdc6c075bf85ea148ded6b5568284c801",
+        "line": 1095,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "rehydratedParamsForTesting",
+        "sha256": "bf64026a1ba15feb9e538ee0d43e5d2c34fc53d1c2363200880aa2eab113bc74",
+        "signature_sha256": "e37c3062802dc3ff20f33dbe2b67dde84d0775ea152af185f8f3a268a99fd547",
+        "line": 4647,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "rehydratedParamsForTesting",
+        "sha256": "bf64026a1ba15feb9e538ee0d43e5d2c34fc53d1c2363200880aa2eab113bc74",
+        "signature_sha256": "e37c3062802dc3ff20f33dbe2b67dde84d0775ea152af185f8f3a268a99fd547",
+        "line": 1103,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "backgroundSummaryForTesting",
+        "sha256": "8f049eaefac361d8faa9fe48911d2d16bc09f5182ab6c8f59258806163f66e72",
+        "signature_sha256": "737f8f710d9265bdd564d31711c05297b577e69ed70faf1d5b6cee2f04afabea",
+        "line": 4663,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "backgroundSummaryForTesting",
+        "sha256": "8f049eaefac361d8faa9fe48911d2d16bc09f5182ab6c8f59258806163f66e72",
+        "signature_sha256": "737f8f710d9265bdd564d31711c05297b577e69ed70faf1d5b6cee2f04afabea",
+        "line": 1119,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "backgroundTerminalStatusForTesting",
+        "sha256": "d08e0b1dbb75a0bb54820775220a9e817b398ec80b65b0f3878abf85eb8e8e46",
+        "signature_sha256": "ce140dc6c6bb47f90c50c2d94fb5e7ff2d8cfe35cb6adc62e100a985c4893c7a",
+        "line": 4667,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "backgroundTerminalStatusForTesting",
+        "sha256": "d08e0b1dbb75a0bb54820775220a9e817b398ec80b65b0f3878abf85eb8e8e46",
+        "signature_sha256": "ce140dc6c6bb47f90c50c2d94fb5e7ff2d8cfe35cb6adc62e100a985c4893c7a",
+        "line": 1123,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "preservesOutcomeUnknownStaleRecoveryForTesting",
+        "sha256": "9d94cfca0693bc1b3e85974f6977933805386a980e74cdcf122876227724f6db",
+        "signature_sha256": "cc34ae456fd30c70f8a7a866a876947c31677b7284ecc9284bb27978de8cbac7",
+        "line": 4685,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "preservesOutcomeUnknownStaleRecoveryForTesting",
+        "sha256": "9d94cfca0693bc1b3e85974f6977933805386a980e74cdcf122876227724f6db",
+        "signature_sha256": "cc34ae456fd30c70f8a7a866a876947c31677b7284ecc9284bb27978de8cbac7",
+        "line": 1141,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "failedMessagesForTesting",
+        "sha256": "ec7038f1e7c5e3099fe16250c4b4ae971eb1406ff97063deb6f3c36637a1f1ac",
+        "signature_sha256": "1ace239feeda29cf2b40d2b08be0d74d145835aace1b43b0e81b70bff168ca73",
+        "line": 4695,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "failedMessagesForTesting",
+        "sha256": "ec7038f1e7c5e3099fe16250c4b4ae971eb1406ff97063deb6f3c36637a1f1ac",
+        "signature_sha256": "1ace239feeda29cf2b40d2b08be0d74d145835aace1b43b0e81b70bff168ca73",
+        "line": 1151,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "reconciledMessagesForTesting",
+        "sha256": "c11e1ac8c5344e85d271836fc82359e0d6c63d8529ea133360a77bbe238e4847",
+        "signature_sha256": "09ccdd58bf6502fed48485160d7dc31e029a98ec462ca3226d6a2d8080e2f22f",
+        "line": 4711,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "reconciledMessagesForTesting",
+        "sha256": "c11e1ac8c5344e85d271836fc82359e0d6c63d8529ea133360a77bbe238e4847",
+        "signature_sha256": "09ccdd58bf6502fed48485160d7dc31e029a98ec462ca3226d6a2d8080e2f22f",
+        "line": 1167,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "persistDurableResponseCheckpointForTesting",
+        "sha256": "88a9e549f345ae4956b23502c41d34645a174bf44c4dd31e346fc10f572958a3",
+        "signature_sha256": "77d5d11b0f9675e71e7fbad2a2961747e4fccc884617ecb1a43b85ea506c0531",
+        "line": 4727,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "persistDurableResponseCheckpointForTesting",
+        "sha256": "88a9e549f345ae4956b23502c41d34645a174bf44c4dd31e346fc10f572958a3",
+        "signature_sha256": "77d5d11b0f9675e71e7fbad2a2961747e4fccc884617ecb1a43b85ea506c0531",
+        "line": 1183,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "persistBackgroundCheckpointForTesting",
+        "sha256": "a9b6472fd7aea3c1d6d8566afe1359996fa6717339161aefb347c352427bae4c",
+        "signature_sha256": "5edaa014e8e291eff01ab617003083c7cce2b492d64080f70dfbd68c06bbe77e",
+        "line": 4735,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "persistBackgroundCheckpointForTesting",
+        "sha256": "a9b6472fd7aea3c1d6d8566afe1359996fa6717339161aefb347c352427bae4c",
+        "signature_sha256": "5edaa014e8e291eff01ab617003083c7cce2b492d64080f70dfbd68c06bbe77e",
+        "line": 1191,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "hydrateDurableResponseForTesting",
+        "sha256": "6bc8639a08119ffb5c7eb47c89ec76867170a0a582f135df8d1f962c2a21e2da",
+        "signature_sha256": "d107968ae91bc417d04621ffebc34adba6cdef8bb26f7d722c74d69f32c9cbae",
+        "line": 4747,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "hydrateDurableResponseForTesting",
+        "sha256": "6bc8639a08119ffb5c7eb47c89ec76867170a0a582f135df8d1f962c2a21e2da",
+        "signature_sha256": "d107968ae91bc417d04621ffebc34adba6cdef8bb26f7d722c74d69f32c9cbae",
+        "line": 1203,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "finishForTesting",
+        "sha256": "5186e614689a2360b6439dbfc297cc40f0ba65039ce6a5017f8134f57bf58f9d",
+        "signature_sha256": "573436b573f85f07809465c0a97b14b5b891ac2a8efec632ab8d77db429486c9",
+        "line": 4768,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "finishForTesting",
+        "sha256": "5186e614689a2360b6439dbfc297cc40f0ba65039ce6a5017f8134f57bf58f9d",
+        "signature_sha256": "573436b573f85f07809465c0a97b14b5b891ac2a8efec632ab8d77db429486c9",
+        "line": 1224,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "withDependenciesForTesting",
+        "sha256": "f99fddf533926f121281e712aacf303eaf1440745b28a7ab70762dadf1def19a",
+        "signature_sha256": "4e96753bee26d020238a1c58f8aca45cb16430927ca2609633c202d05d609c68",
+        "line": 4787,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "withDependenciesForTesting",
+        "sha256": "f99fddf533926f121281e712aacf303eaf1440745b28a7ab70762dadf1def19a",
+        "signature_sha256": "4e96753bee26d020238a1c58f8aca45cb16430927ca2609633c202d05d609c68",
+        "line": 1243,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "requestIdentifier",
+        "sha256": "9c146ab1b739013267951c5c7c34e263a4a01480524de007428e7822380033e2",
+        "signature_sha256": "c223b2e33e85d0ed1839160d82bad16890618bd36e63b788861d4dd1c8322cd1",
+        "line": 4806,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "requestIdentifier",
+        "sha256": "9c146ab1b739013267951c5c7c34e263a4a01480524de007428e7822380033e2",
+        "signature_sha256": "c223b2e33e85d0ed1839160d82bad16890618bd36e63b788861d4dd1c8322cd1",
+        "line": 1262,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "remember",
+        "sha256": "6780c93e920cd1401a39827f046241ce7d718da3941eae7723d1074e6478e9a8",
+        "signature_sha256": "1a2eb77dd721e5f3a88e7faf0658580ff570e23a2ef7850be117fd41d5baff48",
+        "line": 4812,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "remember",
+        "sha256": "6780c93e920cd1401a39827f046241ce7d718da3941eae7723d1074e6478e9a8",
+        "signature_sha256": "1a2eb77dd721e5f3a88e7faf0658580ff570e23a2ef7850be117fd41d5baff48",
+        "line": 1268,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "finish",
+        "sha256": "e04995f1b93acf700f72c384fad0586eb00d06f1f39bac7e35e5429f5dca26aa",
+        "signature_sha256": "349f9e6b2bdcc847e3d45c433cbd6e0a33aa9051668418001a5f3ff78638995d",
+        "line": 4818,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "finish",
+        "sha256": "e04995f1b93acf700f72c384fad0586eb00d06f1f39bac7e35e5429f5dca26aa",
+        "signature_sha256": "349f9e6b2bdcc847e3d45c433cbd6e0a33aa9051668418001a5f3ff78638995d",
+        "line": 1274,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "publishTerminalEvent",
+        "sha256": "e83b481fdc55adb666a332b59fcefb18b561e96d09d747725448129974c73012",
+        "signature_sha256": "91cebb3851dcd4659c2de8dd172168d64f96e38071c4743859ffb54e7dbff04a",
+        "line": 4898,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "publishTerminalEvent",
+        "sha256": "e83b481fdc55adb666a332b59fcefb18b561e96d09d747725448129974c73012",
+        "signature_sha256": "91cebb3851dcd4659c2de8dd172168d64f96e38071c4743859ffb54e7dbff04a",
+        "line": 1354,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "publishStateEvent",
+        "sha256": "91dce7ec45b42b540ec1c29f88064522e298a1ccfe99579f397027ca31ba1c9b",
+        "signature_sha256": "bd0c5046552a78ee24aa9819a298a8f744238f67e059e4e52be0ec3845d3d03f",
+        "line": 4907,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "publishStateEvent",
+        "sha256": "91dce7ec45b42b540ec1c29f88064522e298a1ccfe99579f397027ca31ba1c9b",
+        "signature_sha256": "bd0c5046552a78ee24aa9819a298a8f744238f67e059e4e52be0ec3845d3d03f",
+        "line": 1363,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "taskMap",
+        "sha256": "ae78734c4fab13c30a6fde85e5e33cdc07e6c8f8ff23591b0e8ef676b05f9030",
+        "signature_sha256": "85396528453a2db40dc529b60fd42fef0446870ec4726e436a3de35ca8bea1d2",
+        "line": 4916,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "taskMap",
+        "sha256": "ae78734c4fab13c30a6fde85e5e33cdc07e6c8f8ff23591b0e8ef676b05f9030",
+        "signature_sha256": "85396528453a2db40dc529b60fd42fef0446870ec4726e436a3de35ca8bea1d2",
+        "line": 1372,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "providerSetting",
+        "sha256": "46a0cde01da5b4096e9e89a723f6b4fd235aa94d5318ccca4537f392d00410df",
+        "signature_sha256": "63b5e20ac38f98fa792dec27d2bd153273deceec523243c79b39c936e2340fb3",
+        "line": 4920,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "providerSetting",
+        "sha256": "46a0cde01da5b4096e9e89a723f6b4fd235aa94d5318ccca4537f392d00410df",
+        "signature_sha256": "63b5e20ac38f98fa792dec27d2bd153273deceec523243c79b39c936e2340fb3",
+        "line": 1376,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "chatBackgroundAudioLeaseId",
+        "sha256": "8e8f6dcf18fd2c0cbf1b4567b424e00e902b9822e473e29f8fb510b6ad0d59fd",
+        "signature_sha256": "daa7893d53d1b3cbbb0aad4c011f6f943eee13979d05dabe6dbdd751263336ab",
+        "line": 4926,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "chatBackgroundAudioLeaseId",
+        "sha256": "8e8f6dcf18fd2c0cbf1b4567b424e00e902b9822e473e29f8fb510b6ad0d59fd",
+        "signature_sha256": "daa7893d53d1b3cbbb0aad4c011f6f943eee13979d05dabe6dbdd751263336ab",
+        "line": 1382,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "beginChatBackgroundKeepAlive",
+        "sha256": "498f8eb48727c906edec1515942ae49fc146bdd785395c256a97424e5cfde09b",
+        "signature_sha256": "6422d5b4da51339899fc0164addfed2a21a2b8fa9a9596e91e5487040a8c2724",
+        "line": 4933,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "beginChatBackgroundKeepAlive",
+        "sha256": "498f8eb48727c906edec1515942ae49fc146bdd785395c256a97424e5cfde09b",
+        "signature_sha256": "6422d5b4da51339899fc0164addfed2a21a2b8fa9a9596e91e5487040a8c2724",
+        "line": 1389,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "func",
+        "name": "endChatBackgroundAudioKeepAlive",
+        "sha256": "a899731e1d6c7dd32f634c0bd04208592cd9be7f3781451941e5f6b16f7c9fb9",
+        "signature_sha256": "6a043f0078049174440e3e47c6e298c7db23eced1149365d5532cee39342315d",
+        "line": 4951,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "func",
+        "name": "endChatBackgroundAudioKeepAlive",
+        "sha256": "a899731e1d6c7dd32f634c0bd04208592cd9be7f3781451941e5f6b16f7c9fb9",
+        "signature_sha256": "6a043f0078049174440e3e47c6e298c7db23eced1149365d5532cee39342315d",
+        "line": 1407,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "isExpired",
+        "sha256": "13a48375a9a700f7b7b101796b5577284ab2584dc0e0452dc083913dfdac7087",
+        "signature_sha256": "8ea9a77e8af5546ae6b9b6670e8963f152940a5d079b4d54da2bbfe53efb9fd0",
+        "line": 305,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "isExpired",
+        "sha256": "13a48375a9a700f7b7b101796b5577284ab2584dc0e0452dc083913dfdac7087",
+        "signature_sha256": "8ea9a77e8af5546ae6b9b6670e8963f152940a5d079b4d54da2bbfe53efb9fd0",
+        "line": 75,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "allowsRunningPresentation",
+        "sha256": "67c6cdcabfc1f67cd49e4175d77f38fce66a2ed3d2e742f8538960cd2f8876b3",
+        "signature_sha256": "121c8ade29404d8b304a3535da2867e44d8534b14d15d3c61f626d6b88288a5d",
+        "line": 311,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "allowsRunningPresentation",
+        "sha256": "67c6cdcabfc1f67cd49e4175d77f38fce66a2ed3d2e742f8538960cd2f8876b3",
+        "signature_sha256": "121c8ade29404d8b304a3535da2867e44d8534b14d15d3c61f626d6b88288a5d",
+        "line": 81,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "text",
+        "sha256": "e82978064d689d0f288ac4f21f5307f7b2f275c59f6bcf064b488c0decdb16fa",
+        "signature_sha256": "d109b8b84168fb21c40e60618686c73c002a66cbebcec7368660b530acfe7c87",
+        "line": 501,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "text",
+        "sha256": "e82978064d689d0f288ac4f21f5307f7b2f275c59f6bcf064b488c0decdb16fa",
+        "signature_sha256": "d109b8b84168fb21c40e60618686c73c002a66cbebcec7368660b530acfe7c87",
+        "line": 271,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "messages",
+        "sha256": "7e760bc4fc434e0ba65960c1ea3fd946c01b69a907d6e1e9ff715ea942a41fa8",
+        "signature_sha256": "0f7096c85c73c1a51ba6ac70ad8abe8d46556e2dd648cc377cd747c1a95612dd",
+        "line": 522,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "messages",
+        "sha256": "7e760bc4fc434e0ba65960c1ea3fd946c01b69a907d6e1e9ff715ea942a41fa8",
+        "signature_sha256": "0f7096c85c73c1a51ba6ac70ad8abe8d46556e2dd648cc377cd747c1a95612dd",
+        "line": 292,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "messages",
+        "sha256": "56424fd4180bdf366966a6a9d51a795fe1f51cb5f0f5f52d05c676baafb17ad2",
+        "signature_sha256": "0f7096c85c73c1a51ba6ac70ad8abe8d46556e2dd648cc377cd747c1a95612dd",
+        "line": 568,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "messages",
+        "sha256": "56424fd4180bdf366966a6a9d51a795fe1f51cb5f0f5f52d05c676baafb17ad2",
+        "signature_sha256": "0f7096c85c73c1a51ba6ac70ad8abe8d46556e2dd648cc377cd747c1a95612dd",
+        "line": 338,
+        "file": "iosApp/iosApp/Chat/Background/IOSChatBackgroundRunState.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "bundleIdentifier",
+        "sha256": "197c43a9d2c025d6c9878f1210a86e5f859788715c446fca37c429d3c98639aa",
+        "signature_sha256": "3cb6c1482d41e7e72fb343b51075614f349d1d47675a3893b3269bfd3873863a",
+        "line": 683,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "bundleIdentifier",
+        "sha256": "197c43a9d2c025d6c9878f1210a86e5f859788715c446fca37c429d3c98639aa",
+        "signature_sha256": "3cb6c1482d41e7e72fb343b51075614f349d1d47675a3893b3269bfd3873863a",
+        "line": 52,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "permittedIdentifier",
+        "sha256": "304a2dcb01afac95626363c3af8a2ddb52f737e5c2ab020e3c0877f0c3d9db01",
+        "signature_sha256": "7b7d0d3b0542d32f9156f2a8c4ced38c2d22e541df2874618b000cd3c9723d79",
+        "line": 684,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "permittedIdentifier",
+        "sha256": "304a2dcb01afac95626363c3af8a2ddb52f737e5c2ab020e3c0877f0c3d9db01",
+        "signature_sha256": "7b7d0d3b0542d32f9156f2a8c4ced38c2d22e541df2874618b000cd3c9723d79",
+        "line": 53,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "requestPrefix",
+        "sha256": "aa5abb39af09ee375a00e3dc099ee7310fce6fe6da12e605338568490a7dddf1",
+        "signature_sha256": "565468b19d859a8f4ec4eebb062c99f6cafccc59247afd08c5306bf8747c8d8d",
+        "line": 685,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "requestPrefix",
+        "sha256": "aa5abb39af09ee375a00e3dc099ee7310fce6fe6da12e605338568490a7dddf1",
+        "signature_sha256": "565468b19d859a8f4ec4eebb062c99f6cafccc59247afd08c5306bf8747c8d8d",
+        "line": 54,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "taskMapKey",
+        "sha256": "8eec470c22571a7a4e9ec1a9c9e64bcd3575fec46ad578ddfba865edc6ca199a",
+        "signature_sha256": "f6ff489bbca77d1dcab0be00ec6bb5812dd1087f6da51d80f918a8c4a24e2272",
+        "line": 686,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "taskMapKey",
+        "sha256": "8eec470c22571a7a4e9ec1a9c9e64bcd3575fec46ad578ddfba865edc6ca199a",
+        "signature_sha256": "f6ff489bbca77d1dcab0be00ec6bb5812dd1087f6da51d80f918a8c4a24e2272",
+        "line": 55,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "headlessSharedSettingsForWatch",
+        "sha256": "4daeae95a563e6095d113dba41afa22b879985467798efe1033b2f86be2d3727",
+        "signature_sha256": "3c48bbd0dcc854fef58b1c6aed1346dfb18b3f5edd497a53100477e346c0b0fe",
+        "line": 826,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "headlessSharedSettingsForWatch",
+        "sha256": "4daeae95a563e6095d113dba41afa22b879985467798efe1033b2f86be2d3727",
+        "signature_sha256": "3c48bbd0dcc854fef58b1c6aed1346dfb18b3f5edd497a53100477e346c0b0fe",
+        "line": 197,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "headlessCompositionForWatch",
+        "sha256": "cfd71bb10056e2b21afec228209dc530beebc520dfc033f2331ac17bf885e4b3",
+        "signature_sha256": "d7ce685a90a72979f479468b78bf10ff62a6aa5679384c39697aaf416dac7cbd",
+        "line": 830,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "headlessCompositionForWatch",
+        "sha256": "cfd71bb10056e2b21afec228209dc530beebc520dfc033f2331ac17bf885e4b3",
+        "signature_sha256": "d7ce685a90a72979f479468b78bf10ff62a6aa5679384c39697aaf416dac7cbd",
+        "line": 201,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "lifecycleSnapshotDetail",
+        "sha256": "e34de01bad509f2b58b74f86239b77c20d2e2dced9907f394184212466326bfb",
+        "signature_sha256": "2c52b45b69ac80dfd115bc44977673d1e1b22d428e7523b40ee82a2af7dc601c",
+        "line": 891,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "lifecycleSnapshotDetail",
+        "sha256": "e34de01bad509f2b58b74f86239b77c20d2e2dced9907f394184212466326bfb",
+        "signature_sha256": "2c52b45b69ac80dfd115bc44977673d1e1b22d428e7523b40ee82a2af7dc601c",
+        "line": 262,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "restorableRunIds",
+        "sha256": "4bea405e76705207d75a9515d6206ddcb41e0135a82a5ed430f46d5207edb96d",
+        "signature_sha256": "776ef3fa48b171f4b9be7727e29798ad0feee65578d4cef4ba8f15146f622a7e",
+        "line": 898,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "restorableRunIds",
+        "sha256": "4bea405e76705207d75a9515d6206ddcb41e0135a82a5ed430f46d5207edb96d",
+        "signature_sha256": "776ef3fa48b171f4b9be7727e29798ad0feee65578d4cef4ba8f15146f622a7e",
+        "line": 269,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "startupRecoveryExclusionRunIds",
+        "sha256": "de2d5e3306f941864c1b4b4b00c841944925bff24e97a952dcf07ab39e4ac40d",
+        "signature_sha256": "50e7162d9fa4b2045c9c1ea8c358211b37bd99b1c8f43bcc46182f48af306180",
+        "line": 906,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "startupRecoveryExclusionRunIds",
+        "sha256": "de2d5e3306f941864c1b4b4b00c841944925bff24e97a952dcf07ab39e4ac40d",
+        "signature_sha256": "50e7162d9fa4b2045c9c1ea8c358211b37bd99b1c8f43bcc46182f48af306180",
+        "line": 277,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "runIds",
+        "sha256": "3e1e96419558ebc629c14f304a3ab42fc04d6c9c6c76fecfc1d4ea3b1fd58e06",
+        "signature_sha256": "d2cb4cbdc9fb4a1740d8b9604a359cc68c2aa3fed2c53c2848c4a0b4bcce35c6",
+        "line": 913,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "runIds",
+        "sha256": "3e1e96419558ebc629c14f304a3ab42fc04d6c9c6c76fecfc1d4ea3b1fd58e06",
+        "signature_sha256": "d2cb4cbdc9fb4a1740d8b9604a359cc68c2aa3fed2c53c2848c4a0b4bcce35c6",
+        "line": 284,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "reconnectingWatchProjections",
+        "sha256": "b072fa704f80314e575e083755020d94c775049dba1b6564650bfa67e2fd6b75",
+        "signature_sha256": "fb9da9f8b53ae1aec0462ad68b72a3d84e12c289e84b6bcbe2707e181a370a23",
+        "line": 920,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "reconnectingWatchProjections",
+        "sha256": "b072fa704f80314e575e083755020d94c775049dba1b6564650bfa67e2fd6b75",
+        "signature_sha256": "fb9da9f8b53ae1aec0462ad68b72a3d84e12c289e84b6bcbe2707e181a370a23",
+        "line": 291,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "activeJobCount",
+        "sha256": "032cf3d980e559abfa7d94dd1b05cefe9c447a819e57ccca3b5ecd452b77f7bc",
+        "signature_sha256": "ecc682693db6b0576e145f43a39f9615c85b84544834a04a1790ce7773f0cc65",
+        "line": 1136,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "activeJobCount",
+        "sha256": "032cf3d980e559abfa7d94dd1b05cefe9c447a819e57ccca3b5ecd452b77f7bc",
+        "signature_sha256": "ecc682693db6b0576e145f43a39f9615c85b84544834a04a1790ce7773f0cc65",
+        "line": 507,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "activeSubAgentJobCount",
+        "sha256": "04145b1342f15e41493fc57f8f55624072e823c502e7c13603b60fa0fda6dee1",
+        "signature_sha256": "41168dde05939b74f987867254dc4943073becd2e229e8666867a7f20dfdc8b1",
+        "line": 1140,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "activeSubAgentJobCount",
+        "sha256": "04145b1342f15e41493fc57f8f55624072e823c502e7c13603b60fa0fda6dee1",
+        "signature_sha256": "41168dde05939b74f987867254dc4943073becd2e229e8666867a7f20dfdc8b1",
+        "line": 511,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "activeModelCounts",
+        "sha256": "977103ce7db85734688a0ef39484d261832e1dbeae8f705bc240dd7de920e52e",
+        "signature_sha256": "b28208d4773686344f97138eb0addfb9a1b774a297ea7ab75e7c6ec355297ca3",
+        "line": 1144,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "activeModelCounts",
+        "sha256": "977103ce7db85734688a0ef39484d261832e1dbeae8f705bc240dd7de920e52e",
+        "signature_sha256": "b28208d4773686344f97138eb0addfb9a1b774a297ea7ab75e7c6ec355297ca3",
+        "line": 515,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "activeProviderCounts",
+        "sha256": "bfb066240ec78e2af005bac4a599e80c8bff607e575af58a507aed5d415d2458",
+        "signature_sha256": "dec3387bc8d2a7241777c915e757972f5bda8e7b02cf5af32c51f5a050e49d6d",
+        "line": 1148,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "activeProviderCounts",
+        "sha256": "bfb066240ec78e2af005bac4a599e80c8bff607e575af58a507aed5d415d2458",
+        "signature_sha256": "dec3387bc8d2a7241777c915e757972f5bda8e7b02cf5af32c51f5a050e49d6d",
+        "line": 519,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    },
+    {
+      "before": {
+        "kind": "var",
+        "name": "hasPendingConversationWrites",
+        "sha256": "eddb9f935d3f3f39c5f4b1bd9e58cbfc7ba0d66c9718e94d5c3513041de4cc4d",
+        "signature_sha256": "44e16108c854bdc634633ab8216d42999a91ffa272597b13c519e62f627268ba",
+        "line": 1154,
+        "file": "/tmp/amber-phase5-source-baseline/files/iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      },
+      "after": {
+        "kind": "var",
+        "name": "hasPendingConversationWrites",
+        "sha256": "eddb9f935d3f3f39c5f4b1bd9e58cbfc7ba0d66c9718e94d5c3513041de4cc4d",
+        "signature_sha256": "44e16108c854bdc634633ab8216d42999a91ffa272597b13c519e62f627268ba",
+        "line": 525,
+        "file": "iosApp/iosApp/IOSChatBackgroundGenerationCoordinator.swift"
+      }
+    }
+  ],
+  "missing": [],
+  "extra": [],
+  "signature_changes": []
+}

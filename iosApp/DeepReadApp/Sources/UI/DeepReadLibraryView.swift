@@ -25,7 +25,13 @@ struct DeepReadLibraryView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
                 filterBar
-                if tasks.isEmpty {
+                if let message = runtime.store.loadError {
+                    ContentUnavailableView(
+                        "阅读库暂时无法读取", systemImage: "exclamationmark.triangle",
+                        description: Text(message)
+                    )
+                    .padding(.top, 40)
+                } else if tasks.isEmpty {
                     ContentUnavailableView(
                         query.isEmpty && status == nil ? "你的阅读库" : "没有匹配的文章",
                         systemImage: "books.vertical",

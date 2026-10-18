@@ -1,0 +1,174 @@
+{
+  "phase": "phase3_kernel",
+  "baseline": [
+    {
+      "path": "/tmp/amber-phase3-source-baseline/files/iosApp/iosApp/ChatKernelRunHost.swift",
+      "lines": 3117,
+      "sha256": "e006f33a76c4673f8df867fcb3a4e44bb8c4b22e53491f599431898db70e0276"
+    },
+    {
+      "path": "/tmp/amber-phase3-source-baseline/files/iosApp/iosApp/ChatRunKernelAdapter.swift",
+      "lines": 1685,
+      "sha256": "f7f02996cbd2d7614cfb9ada638452678671a17499d3c4920920b7349bef4279"
+    }
+  ],
+  "result": [
+    {
+      "path": "iosApp/iosApp/ChatKernelRunHost.swift",
+      "lines": 1491,
+      "sha256": "0b916f48d32ead8e767fdc103522f592abf10d6423b659113b6ff1da0e26c2ac"
+    },
+    {
+      "path": "iosApp/iosApp/ChatRunKernelAdapter.swift",
+      "lines": 1180,
+      "sha256": "b8b7757408389530b4628d185ca5f52f04b1e7c985e6eef3bf5c104f42eabb2c"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatDurableResponseSession.swift",
+      "lines": 67,
+      "sha256": "8868a2f1e86552ba0a0cf7c5a74acbfdc4524a9615a538ef6521adc49ff9b7b4"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatImageToolRun.swift",
+      "lines": 489,
+      "sha256": "2659aa0d4fb837df649141b15ab1de3789abc5e6c95eea36dcdf2a27b47cd708"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatKernelApprovalResolver.swift",
+      "lines": 533,
+      "sha256": "d86bd38cab1a45d1fad79a3867f48c69b104fd9911bb05204606bba57f5756fe"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatKernelDurableTextProvider.swift",
+      "lines": 159,
+      "sha256": "2d92a147f087828728e99c04bde2f472f802da8a18b235ab3e43644eed003a57"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatNestedApprovalQueue.swift",
+      "lines": 25,
+      "sha256": "20a77fe03a1b4c707a0b74cae1733b10f0818dd6dfc680d3456c4fc5128c5d2f"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatRunApprovalSession.swift",
+      "lines": 155,
+      "sha256": "7452e5250ab5d90a57678b3071e8418735b365d3dda07352e37ae39806b3b404"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatRunBackgroundHandoffBuilder.swift",
+      "lines": 91,
+      "sha256": "08c539eea56406efc79abb3686a2eb37bbc46fa2b2791d6a7f6a277645c58f6b"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatRunProgressPresentation.swift",
+      "lines": 217,
+      "sha256": "f2177c732bd2b6e4d8d27b520b990738efc90c57f3cbeadc61f8d6a349eb27b7"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatRunRequestFactory.swift",
+      "lines": 97,
+      "sha256": "8dc613390c9cffd14baca222d6475aac4eb6cf7e62138e3e70de9a7ac735bc20"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatRunTerminalCommit.swift",
+      "lines": 473,
+      "sha256": "39891bf4c84f5c8bf832cdb6c38773933199e17a16222eaca59a53ea17736fda"
+    },
+    {
+      "path": "iosApp/iosApp/Chat/Generation/Kernel/ChatRunUploadPreparation.swift",
+      "lines": 298,
+      "sha256": "b7f71657502e6503948ebf31d7eaac5f51aa0371e99b3edbc51de40dadf1703c"
+    }
+  ],
+  "moves": [
+    {
+      "source": "ChatKernelRunHost.swift:2962-3117",
+      "target": "Chat/Generation/Kernel/ChatKernelDurableTextProvider.swift",
+      "responsibility": "KMP Responses streaming and checkpoint callback transport; complete existing type moved",
+      "visibility": "type private to module-internal for Host construction; provider members retain original private scope"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:1311-1407",
+      "target": "Chat/Generation/Kernel/ChatDurableResponseSession.swift",
+      "responsibility": "one provider, cursor, persisted checkpoint, remote cancel; Host still gates run and detach",
+      "visibility": "session internal to Host; only recordDurableResponseCheckpoint and handleDurableDisconnect exposed on Host"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:1896-2125,2171-2221",
+      "target": "Chat/Generation/Kernel/ChatRunUploadPreparation.swift",
+      "responsibility": "per-round Generative UI plan, compaction, memory recall, runtime/image context and usage marking",
+      "visibility": "prepareUploadMessages internal to Host request closure; all helpers private"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:1284-1310,2126-2170",
+      "target": "Chat/Generation/Kernel/ChatRunBackgroundHandoffBuilder.swift",
+      "responsibility": "freeze background-eligible catalog and refresh display snapshot",
+      "visibility": "two static module-internal methods; Host retains handoff field and transfer decision"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:481-982 (execution, activity and tool-ledger portions)",
+      "target": "Chat/Generation/Kernel/ChatImageToolRun.swift",
+      "responsibility": "direct image task/token, Started and one-shot tool terminal/unknown claim, pre-execution failure",
+      "visibility": "only narrow Host run guards/claim/cleanup methods exposed; image state private or private(set)"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:1408-1628,1812-1893 (prompt matching, wait and pause portion)",
+      "target": "Chat/Generation/Kernel/ChatRunApprovalSession.swift",
+      "responsibility": "single pending prompt/continuation, request/run matching, durable waiting snapshot before card publication",
+      "visibility": "session methods internal to Host; waiter private"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:2222-2699",
+      "target": "Chat/Generation/Kernel/ChatRunTerminalCommit.swift",
+      "responsibility": "completed/failed/outcomeUnknown/cancelled durable transcript and run status before Watch/LiveActivity",
+      "visibility": "immutable Run snapshot and typed Result; Host keeps didFinalizeTerminal and clearRunIdentity private"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:2746-2806,2873-2933 and makeAdapter progress callbacks",
+      "target": "Chat/Generation/Kernel/ChatRunProgressPresentation.swift",
+      "responsibility": "Jev and phone progress state, model/tool/stage presentation, keepalive begin",
+      "visibility": "mutable counters private; Host checks runId before progress callbacks"
+    },
+    {
+      "source": "ChatKernelRunHost.swift:984-1045,2949-2961",
+      "target": "Chat/Generation/Kernel/ChatRunRequestFactory.swift",
+      "responsibility": "frozen adapter request and existing mailbox/steer transfer boxes",
+      "visibility": "boxes remain private; RunRequest and Callbacks shape unchanged"
+    },
+    {
+      "source": "ChatRunKernelAdapter.swift:935-955,1031-1488,1496-1511",
+      "target": "Chat/Generation/Kernel/ChatKernelApprovalResolver.swift",
+      "responsibility": "prepared candidate take and typed approval ledger transitions",
+      "visibility": "Adapter retains its test-facing typealiases/forwarder; only toolPart static helper raised from private to internal"
+    },
+    {
+      "source": "ChatRunKernelAdapter.swift:841-859",
+      "target": "Chat/Generation/Kernel/ChatNestedApprovalQueue.swift",
+      "responsibility": "FIFO turn handoff for concurrent nested approvals",
+      "visibility": "queue waiters/busy private; Adapter owns working/snapshotSeq/cancel"
+    }
+  ],
+  "owner_constraints": [
+    "Host alone owns currentRunId, didFinalizeTerminal, cancelCause, runTask, and identity cleanup.",
+    "Adapter alone owns working, snapshotSeq, lastAppliedSnapshotSeq, driver cancellation, and terminal publication gate.",
+    "Image owner owns one image execution task/token and one-shot tool-ledger claim; Host separately claims the run terminal.",
+    "Terminal commit runs only after Host claim and returns a typed result; Host performs teardown or local release. Each external completion follows durable recordRun success.",
+    "Nested queue preserves FIFO by transferring busy turn directly to the first waiter. No actor migration or new unchecked Sendable carrier.",
+    "Phase2 phoneSessionIsActive explicit controller check remains in Adapter. RunRequest and Callbacks external shape remains."
+  ],
+  "verification": {
+    "swift_parse": "passed on Host, Adapter, and all Kernel files",
+    "diff_check": "passed for tracked source",
+    "file_length_limit": 1500,
+    "xcodebuild": "not run by worker per Root instruction",
+    "selected_integration_tests": [
+      "iosAppTests/IOSChatKernelRunHostTests",
+      "iosAppTests/IOSChatKernelRunHostHandoffTests",
+      "iosAppTests/IOSExecNestedToolTests",
+      "iosAppTests/IOSAgentToolEngineKernelHookTests",
+      "iosAppTests/IOSChatKernelLoopRoutingTests",
+      "iosAppTests/IOSChatBackgroundExecutionTests",
+      "iosAppTests/IOSChatBackgroundStaleSweepTests",
+      "iosAppTests/IOSChatBackgroundPhoneActivityTests"
+    ]
+  }
+}

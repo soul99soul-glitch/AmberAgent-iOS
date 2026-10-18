@@ -1,0 +1,33 @@
+{
+  "expected": 199,
+  "executed_once": 187,
+  "missing": [
+    "iosAppTests/IOSJevWebMountContractTests/testActionCallBindsSessionSnapshotAndTarget",
+    "iosAppTests/IOSJevWebMountContractTests/testActionResultMappingRejectsSwallowedFailures",
+    "iosAppTests/IOSJevWebMountContractTests/testCandidatesCarryObservationSnapshotId",
+    "iosAppTests/IOSJevWebMountContractTests/testCompletionCheckRequiresMarkerInURLOrElementLabel",
+    "iosAppTests/IOSJevWebMountContractTests/testConfidenceFloorComesFromPolicy",
+    "iosAppTests/IOSJevWebMountContractTests/testLoopInputParsingNarrowsWhitelistAndRequiresCoreFields",
+    "iosAppTests/IOSJevWebMountContractTests/testMissingInjectionAnswerDoesNotBlock",
+    "iosAppTests/IOSJevWebMountContractTests/testObservationMappingFromObservePayload",
+    "iosAppTests/IOSJevWebMountContractTests/testOutcomeOutputShapeMatchesWebMountUnknownContract",
+    "iosAppTests/IOSJevWebMountContractTests/testPageInjectionHitHandbacksWithoutExecuting",
+    "iosAppTests/IOSJevWebMountContractTests/testScrollAndSubmitReadonlySearchPayloads",
+    "iosAppTests/IOSJevWebMountContractTests/testShadowInjectionHitDoesNotTruncateDryRun"
+  ],
+  "duplicates": {
+    "iosAppTests/IOSJevWebMountContractTests/testObservationMappingFromObservePayload": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testScrollAndSubmitReadonlySearchPayloads": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testShadowInjectionHitDoesNotTruncateDryRun": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testConfidenceFloorComesFromPolicy": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testActionResultMappingRejectsSwallowedFailures": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testLoopInputParsingNarrowsWhitelistAndRequiresCoreFields": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testPageInjectionHitHandbacksWithoutExecuting": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testActionCallBindsSessionSnapshotAndTarget": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testOutcomeOutputShapeMatchesWebMountUnknownContract": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testMissingInjectionAnswerDoesNotBlock": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testCompletionCheckRequiresMarkerInURLOrElementLabel": 0,
+    "iosAppTests/IOSJevWebMountContractTests/testCandidatesCarryObservationSnapshotId": 0
+  },
+  "nonpassing": []
+}

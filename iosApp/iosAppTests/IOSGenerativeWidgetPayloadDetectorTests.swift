@@ -112,7 +112,7 @@ final class IOSGenerativeWidgetPayloadDetectorTests: XCTestCase {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let bubble = try String(
             contentsOf: testDirectory.deletingLastPathComponent()
-                .appendingPathComponent("iosApp/ChatAssistantMarkdownView.swift"),
+                .appendingPathComponent("iosApp/Chat/Rendering/Markdown/ChatAssistantMarkdownView.swift"),
             encoding: .utf8
         )
         XCTAssertFalse(
@@ -146,7 +146,7 @@ final class IOSGenerativeWidgetPayloadDetectorTests: XCTestCase {
 
         let list = try String(
             contentsOf: testDirectory.deletingLastPathComponent()
-                .appendingPathComponent("iosApp/ChatCollectionMessageList.swift"),
+                .appendingPathComponent("iosApp/Chat/Timeline/Regression/ChatSwiftUIMessageList.swift"),
             encoding: .utf8
         )
         XCTAssertTrue(list.contains("@State private var runtime = ChatSwiftUIListScrollRuntime()"))

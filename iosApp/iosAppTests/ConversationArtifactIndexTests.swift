@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class ConversationArtifactIndexTests: XCTestCase {
-    func testIndexesOnlyGeneratedImageResults() {
+    func testGeneratedImagesKeepPromptAndExcludeUserUploads() {
         let userImage = UIMessagePart.Image(url: "file:///user-upload.png", metadata: nil)
         let user = userMessage(parts: [UIMessagePart.Text(text: "参考这张图", metadata: nil), userImage])
         let generated = toolMessage(
@@ -22,6 +22,59 @@ final class ConversationArtifactIndexTests: XCTestCase {
         XCTAssertEqual(index.images[0].source.turn, 1)
         XCTAssertEqual(index.images[0].source.toolCallID, "image-call")
         XCTAssertEqual(index.count, 1)
+    }
+
+    func testIndexesMarkdownImagesWithoutPromotingLinksOrCode() throws {
+        let text = """
+        ![坐像](https://images.example/one.jpg)
+
+        [![半身像](https://images.example/two.jpg)](https://museum.example/item)
+
+        ![册页][portrait]
+
+        [portrait]: https://images.example/three.jpg
+
+        [普通链接](https://images.example/link.jpg)
+        `![代码](https://images.example/inline.jpg)`
+        ```markdown
+        ![代码块](https://images.example/fenced.jpg)
+        ```
+        ![未完成](https://images.example/incomplete.jpg
+        """
+        let assistant = message(role: .assistant, parts: [UIMessagePart.Text(text: text, metadata: nil)])
+        var settings = IOSGenerativeWidgetSettings()
+        settings.enabled = false
+        let index = ConversationArtifactIndex.make(from: [userMessage(), assistant], widgetSettings: settings)
+        XCTAssertEqual(index.images.map(\.url), [
+            "https://images.example/one.jpg", "https://images.example/two.jpg", "https://images.example/three.jpg"
+        ])
+        XCTAssertEqual(index.images.map(\.prompt), ["坐像", "半身像", "册页"])
+        let image = try XCTUnwrap(index.images.first)
+        XCTAssertNil(image.source.toolCallID)
+        XCTAssertNotNil(ConversationArtifactIndex.anchor(for: image.source, conversationID: "c", messages: [assistant]))
+        XCTAssertNil(ConversationArtifactIndex.anchor(for: image.source, conversationID: "c", messages: []))
+    }
+
+    func testIndexesAssistantAndSearchImagesOnceWithStableIdentity() throws {
+        let url = "https://images.example/portrait.jpg"
+        let search = toolMessage(id: "search", name: "search", input: "{}", output: [
+            IosToolOutputJsonBridge.shared.mergeTextMetadata(part: UIMessagePart.Text(text: "search result", metadata: nil), updates: [
+                "app.amber.media.images": #"[{"id":"search-portrait","url":"https://images.example/portrait.jpg","title":"馆藏画像"}]"#
+            ])
+        ])
+        let assistant = message(role: .assistant, parts: [
+            UIMessagePart.Text(text: "![同一张](\(url))", metadata: nil),
+            UIMessagePart.Image(url: "file:///assistant.png", metadata: nil)
+        ])
+        let index = ConversationArtifactIndex.make(from: [userMessage(), search, assistant])
+        XCTAssertEqual(index.images.map(\.url), [url, "file:///assistant.png"])
+        let first = try XCTUnwrap(index.images.first)
+        XCTAssertEqual(first.prompt, "馆藏画像")
+        XCTAssertEqual(first.source.toolCallID, "search")
+        XCTAssertNotNil(ConversationArtifactIndex.anchor(for: first.source, conversationID: "c", messages: [search]))
+        let markdownOnly = ConversationArtifactIndex.make(from: [assistant])
+        XCTAssertEqual(markdownOnly.images.first?.id, first.id)
+        XCTAssertTrue(ConversationArtifactIndex.make(from: []).images.isEmpty)
     }
 
     func testGroupsFileWritesAndEditsAsVersionsWithAvailableContent() {
@@ -323,7 +376,7 @@ final class ConversationArtifactIndexTests: XCTestCase {
     }
 
     func testWidgetCacheReusesParsedMessagesAndDropsStaleEntries() {
-        let cache = ConversationArtifactWidgetCache()
+        let cache = ConversationArtifactContentCache()
         let settings = IOSGenerativeWidgetSettings()
         var computeCount = 0
         let widget = IOSGenerativeWidget(id: "w", title: "T", widgetCode: "<div>x</div>", complete: true)
@@ -342,6 +395,28 @@ final class ConversationArtifactIndexTests: XCTestCase {
         cache.prune()
         _ = lookup("ab")
         XCTAssertEqual(computeCount, 3, "未访问的条目在 prune 时被淘汰")
+    }
+
+    func testImageCacheReusesTextAndDropsChangedOrStaleEntries() {
+        let cache = ConversationArtifactContentCache()
+        var computeCount = 0
+        func lookup(_ text: String) -> [ChatMediaItem] {
+            cache.images(key: "message:0", text: text) {
+                computeCount += 1
+                return [ChatMediaItem(id: text, url: text)]
+            }
+        }
+        XCTAssertEqual(lookup("one").first?.url, "one")
+        cache.prune()
+        _ = lookup("one")
+        cache.prune()
+        XCTAssertEqual(computeCount, 1)
+        XCTAssertEqual(lookup("two").first?.url, "two")
+        cache.prune()
+        XCTAssertEqual(computeCount, 2)
+        cache.prune()
+        _ = lookup("two")
+        XCTAssertEqual(computeCount, 3)
     }
 
     func testExportInlinesBundledFullHtmlRuntime() {

@@ -69,6 +69,74 @@ class GeminiWireToolMapperTest {
     }
 
     @Test
+    fun functionDeclarationsPreserveKeywordNamesInPropertyMaps() {
+        val tool = Tool(
+            name = "mcp__demo__format",
+            description = "Choose an output format",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        listOf("format", "enum", "const", "additionalProperties", "exclusiveMinimum", "exclusiveMaximum")
+                            .forEach { name ->
+                                put(name, buildJsonObject {
+                                    put("type", "string")
+                                    put("format", "uuid")
+                                })
+                            }
+                        put("options", buildJsonObject {
+                            put("type", "object")
+                            put("properties", buildJsonObject {
+                                put("format", buildJsonObject {
+                                    put("type", "string")
+                                    put("enum", buildJsonArray { add(JsonPrimitive("json")) })
+                                })
+                            })
+                            put("required", buildJsonArray { add(JsonPrimitive("format")) })
+                            put("additionalProperties", false)
+                        })
+                        put("records", buildJsonObject {
+                            put("type", "array")
+                            put("items", buildJsonObject {
+                                put("type", "object")
+                                put("properties", buildJsonObject {
+                                    put("enum", buildJsonObject {
+                                        put("type", "integer")
+                                        put("exclusiveMinimum", 0)
+                                    })
+                                })
+                                put("required", buildJsonArray { add(JsonPrimitive("enum")) })
+                            })
+                        })
+                    },
+                    required = listOf("format", "options", "records"),
+                )
+            },
+            execute = { emptyList() },
+        )
+
+        val raw = GeminiWireToolMapper.functionDeclarationsJson(listOf(tool))
+        val parameters = json.parseToJsonElement(raw).jsonArray.single().jsonObject.getValue("parameters")
+
+        assertEquals(
+            json.parseToJsonElement("""{
+                "type":"object",
+                "properties":{
+                    "format":{"type":"string"},
+                    "enum":{"type":"string"},
+                    "const":{"type":"string"},
+                    "additionalProperties":{"type":"string"},
+                    "exclusiveMinimum":{"type":"string"},
+                    "exclusiveMaximum":{"type":"string"},
+                    "options":{"type":"object","properties":{"format":{"type":"string"}},"required":["format"]},
+                    "records":{"type":"array","items":{"type":"object","properties":{"enum":{"type":"integer"}},"required":["enum"]}}
+                },
+                "required":["format","options","records"]
+            }"""),
+            parameters,
+        )
+    }
+
+    @Test
     fun functionDeclarationsStripGeminiUnsupportedSchemaKeywordsRecursively() {
         // Mirrors the Android wire path: MCP-sourced schemas pass keywords such as
         // const/format/enum through verbatim, and the Gemini REST schema rejects

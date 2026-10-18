@@ -1,0 +1,35 @@
+[
+  {
+    "name": "swift-lengths",
+    "status": "fulfilled",
+    "value": {
+      "chunk_id": "9b7d6f",
+      "wall_time_seconds": 0.355782875,
+      "exit_code": 0,
+      "original_token_count": 18,
+      "output": "Swift file length check (strict): 1331 files, 0 over 1500, 0 problems\n"
+    }
+  },
+  {
+    "name": "shared-exports",
+    "status": "fulfilled",
+    "value": {
+      "chunk_id": "3bea03",
+      "wall_time_seconds": 0.027463708,
+      "exit_code": 0,
+      "original_token_count": 16,
+      "output": "OK: all 10 Swift-consumed type families present in Shared.h.\n"
+    }
+  },
+  {
+    "name": "git-diff-check",
+    "status": "fulfilled",
+    "value": {
+      "chunk_id": "4ed2d5",
+      "wall_time_seconds": 0.081829333,
+      "exit_code": 0,
+      "original_token_count": 0,
+      "output": ""
+    }
+  }
+]

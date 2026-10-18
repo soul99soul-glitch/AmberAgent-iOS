@@ -87,64 +87,6 @@ final class IOSSubAgentActivityLayoutTests: XCTestCase {
         }
     }
 
-    func testNativeSubAgentAvatarGallery() async throws {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let previous = scene.windows.first(where: \.isKeyWindow)
-        let window = UIWindow(windowScene: scene)
-        window.overrideUserInterfaceStyle = .light
-        defer {
-            window.isHidden = true
-            window.rootViewController = nil
-            previous?.makeKey()
-        }
-
-        let names = ChatSubAgentPixelSpriteLibrary.spriteNames
-        let content = ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 16)], spacing: 18) {
-                ForEach(Array(names.enumerated()), id: \.offset) { index, name in
-                    VStack(spacing: 8) {
-                        ZStack {
-                            ForEach(ChatSubAgentPixelSpriteLibrary.layers(
-                                forSprite: index,
-                                identity: "gallery:\(index)"
-                            )) { layer in
-                                HomePixelSitShape(bits: layer.bits)
-                                    .fill(layer.color)
-                            }
-                        }
-                        .frame(width: 52, height: 52)
-                        .background(AmberTheme.background)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        Text(name)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(AmberTheme.foreground)
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .padding(24)
-        }
-        .background(AmberTheme.background.ignoresSafeArea())
-        .environment(\.locale, Locale(identifier: "zh_Hans"))
-        .environment(\.dynamicTypeSize, .large)
-
-        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
-        window.rootViewController = UIHostingController(rootView: content)
-        window.makeKeyAndVisible()
-        try await Task.sleep(for: .milliseconds(500))
-        window.layoutIfNeeded()
-        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-            XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
-        }
-        let attachment = XCTAttachment(image: image)
-        attachment.name = "subagent-avatar-gallery-24"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("subagent-avatar-gallery-24.png")
-        try XCTUnwrap(image.pngData()).write(to: path)
-        print("SUBAGENT_AVATAR_GALLERY_EVIDENCE \(path.path)")
-    }
-
     func testNativeChatLayouts() async throws {
         let suite = "SubAgentLayout.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

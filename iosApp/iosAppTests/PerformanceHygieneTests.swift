@@ -31,7 +31,7 @@ final class PerformanceHygieneTests: XCTestCase {
     /// Markdown 与代码块随气泡重算而整体失效重建。现改为注入可判等的 messageID 与身份稳定的
     /// 静态 provider，这里锁住两处都没有退回闭包字面量。
     func testMessageBubbleViewInjectsIdentityStableEnvironmentValues() throws {
-        let content = try source("iosApp/MessageBubbleView.swift")
+        let content = try source("iosApp/Chat/Message/MessageBubbleView.swift")
 
         XCTAssertFalse(
             content.contains(".environment(\\.chatArtifactCodeBlockPinAction"),
@@ -41,7 +41,7 @@ final class PerformanceHygieneTests: XCTestCase {
             content.contains("\\.swiftStreamingMarkdownCodeBlockHeaderAccessory"),
             "未找到 swiftStreamingMarkdownCodeBlockHeaderAccessory 环境键注入，流式代码块头部收纳入口可能被移除或改名。"
         )
-        for file in ["iosApp/MessageBubbleView.swift", "iosApp/ChatSubAgentResultCard.swift"] {
+        for file in ["iosApp/Chat/Rendering/Markdown/ChatAssistantMarkdownView.swift", "iosApp/ChatSubAgentResultCard.swift"] {
             XCTAssertTrue(
                 try source(file).contains(".environment(\\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)"),
                 "\(file) 的 openURL 必须注入常量 ChatMarkdownOpenURLPolicy.openURLAction；每次新建的 OpenURLAction 不可判等，会让子树链接文本随重算失效。"
@@ -77,7 +77,7 @@ final class PerformanceHygieneTests: XCTestCase {
     /// 存档只为判断“是否存在可续任务”。现改为 `archiveStore.exists(taskId:)`。其余方法（如恢复中断任务）
     /// 仍然需要真正 load，因此断言限定在 homeResumeContext 这个计算属性片段内。
     func testHomeResumeContextDoesNotLoadFullArchive() throws {
-        let content = try source("iosApp/CouncilChatRuntimeView.swift")
+        let content = try source("iosApp/Council/CouncilChatViewModel.swift")
         let body = try slice(
             of: content,
             from: "var homeResumeContext: CouncilHomeResumeContext?",
@@ -133,7 +133,7 @@ final class PerformanceHygieneTests: XCTestCase {
     /// permissionsStatus() 逐个探测系统权限——那是同步系统查询，曾出现在发送路径上阻塞主线程。
     /// 注释里提及 permissionsStatus() 作为反面说明是允许的，这里只检查非注释代码行里没有真实调用。
     func testChatViewModelDoesNotProbeSystemPermissionsForToolAvailability() throws {
-        let content = try source("iosApp/ChatViewModel.swift")
+        let content = try source("iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift")
         let codeLines = content
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
