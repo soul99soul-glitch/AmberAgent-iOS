@@ -797,7 +797,8 @@ struct NativeChatTimelineView: View {
                     alignment: entry.role == MessageRole.user ? .topTrailing : .topLeading
                 )
                 .id(entry.id)
-                .transition(userMessageInsertionTransition(for: entry))
+                .transition(entry.phoneToolGroup?.isExpandedMember == true
+                    ? .opacity : userMessageInsertionTransition(for: entry))
                 .zIndex(entry.canAnimateInsertion ? 1 : 0)
                 .modifier(
                     ChatSwiftUIStreamingTailVisibilityModifier(
@@ -876,12 +877,9 @@ struct NativeChatTimelineView: View {
         )
     }
 
-    /// Presentation state: expanding a phone-step group changes its rows' content
-    /// signature exactly once. No animation: the scroll arbiter owns geometry.
+    /// Animate the user's presentation toggle; scrolling remains owned by the driver.
     private func togglePhoneToolGroup(_ groupID: String) {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
+        withAnimation(reduceMotion ? nil : ChatPhoneToolGroupHeader.expansionAnimation) {
             let expanded = !expandedPhoneToolGroupIDs.contains(groupID)
             ChatPhoneToolGroupExpansionStore.shared.setExpanded(expanded, groupID: groupID)
             expandedPhoneToolGroupIDs = ChatPhoneToolGroupExpansionStore.shared.expandedIDs

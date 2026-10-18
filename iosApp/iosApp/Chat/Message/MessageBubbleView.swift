@@ -366,6 +366,7 @@ struct MessageBubbleView: View {
                     if group.isExpanded {
                         messagePartRows
                             .padding(.leading, ChatPhoneToolGroupHeader.expandedStepIndent)
+                            .transition(.opacity)
                     }
                 }
             } else {

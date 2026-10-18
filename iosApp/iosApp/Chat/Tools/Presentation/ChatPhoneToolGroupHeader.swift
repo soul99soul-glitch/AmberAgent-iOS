@@ -34,6 +34,7 @@ extension EnvironmentValues {
 struct ChatPhoneToolGroupHeader: View {
     /// Leading inset for expanded steps (head and member bubbles) under the header.
     static let expandedStepIndent: CGFloat = 12
+    static let expansionAnimation: Animation = .smooth(duration: 0.28)
 
     let summary: ChatPhoneToolGroupSummary
     @Environment(\.chatPhoneToolGroupToggle) private var toggle
@@ -133,6 +134,8 @@ struct ChatPhoneToolGroupHeader: View {
         .transaction { transaction in
             transaction.animation = nil
         }
+        // Move the header with its row while status text keeps its width-update policy.
+        .geometryGroup()
     }
 
     @ViewBuilder
@@ -154,9 +157,11 @@ struct ChatPhoneToolGroupHeader: View {
     }
 
     private var chevron: some View {
-        Image(systemName: summary.isExpanded ? "chevron.up" : "chevron.down")
+        Image(systemName: "chevron.down")
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(AmberTheme.muted)
+            .rotationEffect(.degrees(summary.isExpanded ? -180 : 0))
+            .animation(reduceMotion ? nil : Self.expansionAnimation, value: summary.isExpanded)
     }
 
     @ViewBuilder
