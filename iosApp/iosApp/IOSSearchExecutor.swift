@@ -60,6 +60,7 @@ enum IOSSearchExecutorError: LocalizedError, Equatable {
     case httpStatus(String, Int)
     case emptyResponse(String)
     case responseTooLarge(Int)
+    case scrapeFallbackFailed(primaryReason: String, readerReason: String)
     case freeSearchExhausted(String)
 
     var errorDescription: String? {
@@ -87,7 +88,9 @@ enum IOSSearchExecutorError: LocalizedError, Equatable {
         case .emptyResponse(let provider):
             return "\(provider) returned no parseable content."
         case .responseTooLarge(let limit):
-            return "Response exceeds the \(limit)-byte limit."
+            return "Response exceeds the \(limit)-byte limit. Request a smaller page or API response."
+        case .scrapeFallbackFailed(let primaryReason, let readerReason):
+            return "Direct scrape failed: \(primaryReason) Jina Reader fallback failed: \(readerReason)"
         case .freeSearchExhausted(let detail):
             return "免费搜索源均未返回结果（\(detail)）。免费源受网络环境和反爬限制，结果不稳定；如需稳定搜索，可在「搜索服务」中添加有免费额度的 Tavily、Serper、Exa、Brave 或国内可用的智谱。"
         }
@@ -136,10 +139,24 @@ struct IOSSearchExecutor {
                 return try await scrapeWeb(request: request, transport: transport)
             } catch is CancellationError {
                 throw CancellationError()
-            } catch {
-                // 知乎等站点对直连返回 403，由 Jina Reader 代读正文。
-                guard settings?.searchBuiltinJinaEnabled == true else { throw error }
-                return try await readWithJinaReader(request: request, transport: transport)
+            } catch let directError as IOSSearchExecutorError {
+                // Reader fallback must not bypass policy or response-size failures.
+                guard case .httpStatus("scrape_web", 403) = directError,
+                      settings?.searchBuiltinJinaEnabled == true else { throw directError }
+                try Task.checkCancellation()
+                do {
+                    return try await readWithJinaReader(request: request, transport: transport)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let error as URLError where error.code == .cancelled {
+                    throw error
+                } catch {
+                    try Task.checkCancellation()
+                    throw IOSSearchExecutorError.scrapeFallbackFailed(
+                        primaryReason: directError.localizedDescription,
+                        readerReason: error.localizedDescription
+                    )
+                }
             }
         default:
             throw IOSSearchExecutorError.unsupportedTool(toolName)
@@ -641,19 +658,7 @@ struct IOSSearchExecutor {
         urlRequest.setValue("text/html,text/plain,application/xhtml+xml,application/json;q=0.8,*/*;q=0.3", forHTTPHeaderField: "Accept")
         urlRequest.timeoutInterval = 10
 
-        let responseAndData: (HTTPURLResponse, Data)
-        if let verifiedTransport = transport as? any IOSVerifiedHTTPScrapeTransport {
-            responseAndData = try await verifiedTransport.sendVerifiedHTTPSGET(
-                urlRequest,
-                maximumResponseBytes: 512 * 1_024
-            )
-        } else {
-            responseAndData = try await transport.sendPublic(
-                urlRequest,
-                maximumResponseBytes: 512 * 1_024
-            )
-        }
-        let (response, data) = responseAndData
+        let (response, data) = try await sendScrapeGET(urlRequest, transport: transport)
         guard (200...299).contains(response.statusCode) else {
             throw IOSSearchExecutorError.httpStatus("scrape_web", response.statusCode)
         }
@@ -682,6 +687,17 @@ struct IOSSearchExecutor {
         return cappedScrapeOutput(output)
     }
 
+    @MainActor
+    private static func sendScrapeGET(
+        _ request: URLRequest,
+        transport: any IOSSearchHTTPTransport
+    ) async throws -> (HTTPURLResponse, Data) {
+        if let verifiedTransport = transport as? any IOSVerifiedHTTPScrapeTransport {
+            return try await verifiedTransport.sendVerifiedHTTPSGET(request, maximumResponseBytes: 512 * 1_024)
+        }
+        return try await transport.sendPublic(request, maximumResponseBytes: 512 * 1_024)
+    }
+
     /// Jina Reader 无 Key 可用（有频率限制）。必须用非浏览器 UA：浏览器 UA 会被其
     /// Cloudflare 拦截到 "Just a moment" 验证页（2026-09 实测）。
     @MainActor
@@ -693,10 +709,11 @@ struct IOSSearchExecutor {
             throw IOSSearchExecutorError.invalidURL
         }
         var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "GET"
         urlRequest.setValue("AmberAgent-iOS/1.0 (reader)", forHTTPHeaderField: "User-Agent")
         urlRequest.setValue("text/plain", forHTTPHeaderField: "Accept")
         urlRequest.timeoutInterval = 20
-        let (response, data) = try await transport.sendPublic(urlRequest, maximumResponseBytes: 512 * 1_024)
+        let (response, data) = try await sendScrapeGET(urlRequest, transport: transport)
         guard (200...299).contains(response.statusCode) else {
             throw IOSSearchExecutorError.httpStatus("Jina Reader", response.statusCode)
         }
