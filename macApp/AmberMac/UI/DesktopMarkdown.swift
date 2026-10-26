@@ -15,11 +15,16 @@ struct DesktopMarkdown: View {
     let text: String
     var fontFamily: DesktopMessageFontFamily = .system
     var fontSize: Double = 15
+    /// While true, newly arrived text fades in and growth glides instead of snapping.
+    var streaming = false
     @State private var cache = DesktopMarkdownCache()
 
     var body: some View {
-        DesktopMarkdownBlocks(blocks: cache.blocks(for: text), fontFamily: fontFamily, fontSize: fontSize)
+        let blocks = cache.blocks(for: text)
+        DesktopMarkdownBlocks(blocks: blocks, fontFamily: fontFamily, fontSize: fontSize, streaming: streaming)
             .font(fontFamily.swiftUIFont(size: fontSize))
+            // Every update eases the height change, so a wrapped line slides the column up instead of snapping.
+            .animation(streaming ? .easeOut(duration: 0.25) : nil, value: text)
     }
 }
 
@@ -37,14 +42,17 @@ private struct DesktopMarkdownBlocks: View {
     let blocks: [DesktopMarkdownBlock]
     let fontFamily: DesktopMessageFontFamily
     let fontSize: Double
+    var streaming = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                let tail = streaming && index == blocks.count - 1
                 switch block {
                 case .paragraph(let text):
                     DesktopMathText.render(text, fontSize: fontSize, scheme: scheme)
+                        .desktopStreamingText(text, active: tail)
                         .textSelection(.enabled)
                         .lineSpacing(fontSize * 0.5)
                         .foregroundStyle(DesktopTheme.ink)
@@ -68,7 +76,7 @@ private struct DesktopMarkdownBlocks: View {
                 case .table(let rows, let alignments):
                     DesktopMarkdownTable(rows: rows, alignments: alignments, fontFamily: fontFamily, fontSize: fontSize)
                 case .list(let items):
-                    DesktopMarkdownList(items: items, fontFamily: fontFamily, fontSize: fontSize)
+                    DesktopMarkdownList(items: items, fontFamily: fontFamily, fontSize: fontSize, streaming: tail)
                 case .quote(let blocks):
                     DesktopMarkdownBlocks(blocks: blocks, fontFamily: .serif, fontSize: fontSize + 1)
                         .foregroundStyle(DesktopTheme.inkSecondary)
@@ -94,12 +102,13 @@ private struct DesktopMarkdownList: View {
     let items: [DesktopMarkdownListItem]
     let fontFamily: DesktopMessageFontFamily
     let fontSize: Double
+    var streaming = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let markerWidth = CGFloat(items.map { $0.marker.count }.max() ?? 1) * fontSize * 0.6 + 4
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+            ForEach(Array(items.enumerated()), id: \.offset) { itemIndex, item in
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(item.marker == "•" || item.marker == "-" || item.marker == "*" ? "·" : item.marker)
                         .font(item.marker.first?.isNumber == true ? DesktopTheme.serif(size: fontSize, weight: .medium) : .system(size: fontSize + 4, weight: .bold))
@@ -107,6 +116,7 @@ private struct DesktopMarkdownList: View {
                         .frame(width: markerWidth, alignment: .trailing)
                     DesktopMathText.render(item.text, fontSize: fontSize, scheme: scheme)
                         .font(fontFamily.swiftUIFont(size: fontSize))
+                        .desktopStreamingText(item.text, active: streaming && itemIndex == items.count - 1)
                         .textSelection(.enabled)
                         .lineSpacing(fontSize * 0.45)
                         .frame(maxWidth: .infinity, alignment: .leading)

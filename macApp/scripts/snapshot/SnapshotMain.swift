@@ -20,10 +20,39 @@ import SwiftUI
                 try await capture("empty-1440-light", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, false)
                 try await capture("empty-1440-dark", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, true)
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PANELS"] != nil { try await panels(chat) }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 print("SNAPSHOT COMPLETE"); exit(0)
             } catch { print("SNAPSHOT FAILED", error); exit(1) }
         }
         NSApp.run()
+    }
+
+    /// Frames of the streaming fade from one live window: settled text stays solid, only the new tail fades.
+    @MainActor static func streaming() async throws {
+        let first = "Amber 会把已经出现的文字保持不动，只让新到的这一段慢慢浮现出来，"
+        let host = StreamHost(text: first)
+        let controller = NSHostingController(rootView: StreamPreview(host: host).environment(\.colorScheme, .light))
+        let window = NSWindow(contentViewController: controller)
+        window.setContentSize(NSSize(width: 560, height: 200))
+        window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+        window.orderFront(nil)
+        func shot(_ name: String) throws {
+            let view = controller.view
+            view.layoutSubtreeIfNeeded()
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let out = ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_OUT"] ?? "/tmp"
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out + "/" + name + ".png"))
+            print("CAPTURE", name)
+        }
+        try await Task.sleep(for: .milliseconds(600))
+        try shot("stream-0-settled")
+        host.text = first + "就像墨水在纸上洇开一样，一行接着一行平稳地向上推。"
+        try await Task.sleep(for: .milliseconds(90))
+        try shot("stream-1-mid")
+        try await Task.sleep(for: .milliseconds(600))
+        try shot("stream-2-done")
+        window.orderOut(nil)
     }
 
     @MainActor static func panels(_ workspace: DesktopWorkspace) async throws {
@@ -72,5 +101,16 @@ import SwiftUI
         try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out + "/" + name + ".png"))
         print("CAPTURE", name)
         window.orderOut(nil)
+    }
+}
+
+@MainActor @Observable final class StreamHost { var text: String; init(text: String) { self.text = text } }
+
+struct StreamPreview: View {
+    let host: StreamHost
+    var body: some View {
+        DesktopMarkdown(text: host.text, fontSize: 15, streaming: true)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(24).frame(width: 560, height: 200, alignment: .topLeading).background(DesktopTheme.paper)
     }
 }

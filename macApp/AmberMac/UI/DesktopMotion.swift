@@ -179,3 +179,78 @@ struct DesktopCollaborationProgress: View {
         .background(DesktopTheme.glow(RoundedRectangle(cornerRadius: 10)))
     }
 }
+
+/// Streaming text: characters past `settled` fade (and lift 3pt) in over `duration`. Glyphs already shown draw as-is,
+/// so only the arriving tail animates and nothing earlier flickers.
+struct DesktopStreamingFade: TextRenderer, Animatable {
+    /// Number of characters that were visible before this update.
+    var settled: Int
+    /// 0 → 1 as the new tail appears.
+    var progress: Double
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        let total = layout.reduce(0) { lines, line in lines + line.reduce(0) { $0 + $1.count } }
+        let tail = max(1, total - settled)
+        var index = 0
+        for line in layout {
+            for run in line {
+                for glyph in run {
+                    let position = index
+                    index += 1
+                    guard position >= settled else { context.draw(glyph); continue }
+                    // Stagger across the tail so it washes in left to right rather than all at once.
+                    let local = min(1, max(0, progress * 1.6 - Double(position - settled) / Double(tail) * 0.6))
+                    var copy = context
+                    copy.opacity = local
+                    copy.translateBy(x: 0, y: (1 - local) * 3)
+                    copy.draw(glyph)
+                }
+            }
+        }
+    }
+}
+
+/// Applies the fade to a paragraph-like Text while its message streams; static otherwise.
+struct DesktopStreamingTextModifier: ViewModifier {
+    let text: String
+    let active: Bool
+    @State private var settled = 0
+    @State private var progress = 1.0
+    @State private var shown = ""
+
+    func body(content: Content) -> some View {
+        content
+            .textRenderer(DesktopStreamingFade(settled: active ? settled : .max, progress: active ? progress : 1))
+            .onChange(of: text, initial: true) { old, new in
+                guard active, new.count > shown.count, new.hasPrefix(shown) else {
+                    shown = new; settled = Self.visibleCount(new); progress = 1; return
+                }
+                // Boundary in rendered characters (markdown markers removed, a formula draws as one image).
+                settled = Self.visibleCount(shown)
+                shown = new
+                progress = 0
+                withAnimation(.easeOut(duration: 0.35)) { progress = 1 }
+            }
+    }
+}
+
+extension DesktopStreamingTextModifier {
+    @MainActor static func visibleCount(_ source: String) -> Int {
+        DesktopMathTokenizer.inline(source).reduce(0) { count, segment in
+            switch segment {
+            case .text(let value): count + DesktopMarkdownInline.parse(value).characters.filter { !$0.isNewline }.count
+            case .formula: count + 1
+            }
+        }
+    }
+}
+
+extension View {
+    func desktopStreamingText(_ text: String, active: Bool) -> some View {
+        modifier(DesktopStreamingTextModifier(text: text, active: active))
+    }
+}

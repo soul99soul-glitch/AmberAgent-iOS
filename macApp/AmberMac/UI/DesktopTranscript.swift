@@ -350,7 +350,8 @@ private struct DesktopMessageRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if !message.text.isEmpty {
-                DesktopMarkdown(text: message.text, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize)
+                DesktopMarkdown(text: message.text, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize,
+                    streaming: message.state == .streaming)
                     .environment(\.desktopCodePinning, codePinning)
             } else if message.state == .streaming {
                 Text("正在等待回复…").font(.system(size: 14)).foregroundStyle(DesktopTheme.inkTertiary)
