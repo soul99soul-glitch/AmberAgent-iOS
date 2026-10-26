@@ -15,6 +15,8 @@ enum DesktopTheme {
     }
 
     static let paper = dynamic(0xFAFAF7, 0x171613)
+    /// Sidebar ground: one step deeper than the reading paper so the two columns read apart.
+    static let paperSide = dynamic(0xF4F3EE, 0x1B1A16)
     /// User message, code and chip ground.
     static let paperDeep = dynamic(0xF3F2EC, 0x211F1B)
     static let hover = dynamic(0xECEAE3, 0x26241F)
@@ -47,7 +49,7 @@ enum DesktopTheme {
     // Compatibility accessors used across secondary panels.
     static func background(_ scheme: ColorScheme) -> Color { paper }
     static func surface(_ scheme: ColorScheme) -> Color { paperDeep }
-    static func sidebar(_ scheme: ColorScheme) -> Color { paper }
+    static func sidebar(_ scheme: ColorScheme) -> Color { paperSide }
     static func raised(_ scheme: ColorScheme) -> Color { card }
     static func border(_ scheme: ColorScheme) -> Color { hairline }
     static func muted(_ scheme: ColorScheme) -> Color { inkTertiary }

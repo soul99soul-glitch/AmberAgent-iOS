@@ -287,7 +287,8 @@ struct DesktopWorkspaceView: View {
             .padding(.trailing, 12)
             .frame(height: 52)
         }
-        .background(DesktopTheme.paper)
+        .background(DesktopTheme.paperSide)
+        .overlay(alignment: .trailing) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1).ignoresSafeArea() }
     }
 
     private func moveSelection(_ step: Int) -> KeyPress.Result {
