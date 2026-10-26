@@ -305,4 +305,29 @@ final class LiveGatewayE2ETests: XCTestCase {
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: "\n"))
     }
 
+
+    /// Regenerate keeps「n / m」visible for the whole new reply (it must never drop to 1 and reappear).
+    func testRegenerateKeepsVariantCountThroughoutStream() async throws {
+        for tools in [false, true] {
+            let environment = try makeEnvironment(toolsEnabled: tools)
+            let workspace = makeWorkspace(environment)
+            await send("只回复：第一版", in: workspace)
+            try await waitUntil(timeout: .seconds(60), "first reply") { !workspace.isGenerating }
+            _ = await workspace.flush()
+            let reply = try XCTUnwrap(workspace.selectedConversation?.messages.last)
+            workspace.regenerate(reply.id)
+            var counts: [Int] = []
+            let deadline = ContinuousClock.now + .seconds(90)
+            repeat {
+                if let last = workspace.selectedConversation?.messages.last, last.role == .assistant { counts.append(last.variantCount) }
+                try await Task.sleep(for: .milliseconds(10))
+            } while (workspace.isGenerating || workspace.isMutatingBranch) && ContinuousClock.now < deadline
+            _ = await workspace.flush()
+            counts.append(workspace.selectedConversation?.messages.last?.variantCount ?? 0)
+            let firstTwo = counts.firstIndex(of: 2) ?? 0
+            XCTAssertFalse(counts[firstTwo...].contains { $0 < 2 }, "tools=\(tools) variant count dropped: \(counts)")
+            XCTAssertEqual(counts.last, 2, "tools=\(tools)")
+        }
+    }
+
 }

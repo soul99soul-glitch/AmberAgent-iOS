@@ -106,6 +106,8 @@ final class DesktopSettings {
     var assistantName: String { didSet { persist() } }
     var userNickname: String { didSet { persist() } }
     var reasoningExpandedByDefault: Bool { didSet { persist() } }
+    /// iOS「自动展开思考」: open while the model is thinking, fold softly once the answer starts.
+    var autoExpandThinking: Bool { didSet { persist() } }
     var automaticallyFollowGeneration: Bool { didSet { persist() } }
     var sendShortcut: DesktopSendShortcut { didSet { persist() } }
     var notificationsEnabled: Bool { didSet { persist() } }
@@ -135,6 +137,7 @@ final class DesktopSettings {
         var assistantName: String?
         var userNickname: String?
         var reasoningExpandedByDefault: Bool?
+        var autoExpandThinking: Bool?
         var automaticallyFollowGeneration: Bool?
         var sendShortcut: DesktopSendShortcut?
         var notificationsEnabled: Bool?
@@ -158,6 +161,7 @@ final class DesktopSettings {
         assistantName = record?.assistantName ?? "Amber"
         userNickname = record?.userNickname ?? "你"
         reasoningExpandedByDefault = record?.reasoningExpandedByDefault ?? false
+        autoExpandThinking = record?.autoExpandThinking ?? true
         automaticallyFollowGeneration = record?.automaticallyFollowGeneration ?? true
         sendShortcut = record?.sendShortcut ?? .commandReturn
         notificationsEnabled = record?.notificationsEnabled ?? false
@@ -324,7 +328,7 @@ final class DesktopSettings {
             systemPrompt: systemPrompt, appearance: appearance, auxiliaryModelIDs: auxiliaryModelIDs,
             messageFontFamily: messageFontFamily, messageFontSize: messageFontSize,
             assistantName: assistantName, userNickname: userNickname,
-            reasoningExpandedByDefault: reasoningExpandedByDefault,
+            reasoningExpandedByDefault: reasoningExpandedByDefault, autoExpandThinking: autoExpandThinking,
             automaticallyFollowGeneration: automaticallyFollowGeneration, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
             speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate)
         if let data = try? JSONEncoder().encode(record) { defaults.set(data, forKey: "desktop.settings.v1") }

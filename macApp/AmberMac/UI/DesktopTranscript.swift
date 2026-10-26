@@ -42,14 +42,17 @@ struct DesktopTranscript: View {
     @State private var followsBottom = true
     @State private var userScrolling = false
     @State private var nearBottom = true
+    /// The one writer of the transcript offset while following (iOS「仲裁者」): see DesktopScrollFollower.
+    @State private var position = ScrollPosition(edge: .bottom)
+    @State private var follower = DesktopScrollFollower()
 
     var body: some View {
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
             if findPresented { findBar }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
-                    ForEach(conversation.messages) { message in
+                DesktopTranscriptStack(eager: conversation.messages.count <= 120) {
+                    ForEach(conversation.messages, id: \.rowIdentity) { message in
                         DesktopMessageRow(message: message, conversationID: conversation.id, settings: workspace.settings,
                             speech: workspace.speech, shelf: workspace.artifactShelf, mutationsDisabled: mutationsDisabled,
                             highlighted: findPresented && find.currentMessageID == message.id,
@@ -60,9 +63,9 @@ struct DesktopTranscript: View {
                             onDelete: { confirmation = .delete(message.id, ownerID: conversation.id, variants: message.variantCount) },
                             onSelectVariant: { workspace.selectVariant(message.id, index: $0) })
                             .modifier(DesktopRiseIn(enabled: message.id == conversation.messages.last?.id
-                                || message.id == conversation.messages.dropLast().last?.id))
+                                && message.state == .streaming && message.text.isEmpty))
                             .modifier(DesktopStreamingEdge(active: message.state == .streaming))
-                            .id(message.id)
+                            .id(message.rowIdentity)
                     }
                     if !mutationsDisabled, let last = conversation.messages.last, last.role == .assistant,
                        last.state == .cancelled || last.state == .failed {
@@ -77,19 +80,25 @@ struct DesktopTranscript: View {
                 .padding(.top, 32)
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
+                // Streaming text growth is not an animatable event for the list; only explicit withAnimation moves rows.
+                .transaction(value: conversation.messages.last?.text) { $0.animation = nil }
             }
+            .scrollPosition($position)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            // While following, growth stays pinned to the bottom (no per-token scrollTo jumps); reading history keeps its place.
-            .defaultScrollAnchor(followsBottom && workspace.settings.automaticallyFollowGeneration ? .bottom : .top, for: .sizeChanges)
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height < 80
+            // Growth never moves what the reader sees; the follower alone glides the view down.
+            .defaultScrollAnchor(.top, for: .sizeChanges)
+            .onScrollGeometryChange(for: DesktopScrollFollower.Geometry.self) { geometry in
+                .init(offset: geometry.contentOffset.y, bottom: max(0, geometry.contentSize.height - geometry.containerSize.height))
             } action: { _, value in
-                nearBottom = value
-                if userScrolling { followsBottom = value && workspace.settings.automaticallyFollowGeneration }
+                nearBottom = value.bottom - value.offset < 80
+                if userScrolling { followsBottom = nearBottom && workspace.settings.automaticallyFollowGeneration }
+                follower.update(target: value.bottom, actual: value.offset,
+                    following: followsBottom && workspace.settings.automaticallyFollowGeneration && !userScrolling,
+                    streaming: workspace.isSelectedConversationGenerating) { position.scrollTo(y: $0) }
             }
             .onScrollPhaseChange { _, phase in
                 userScrolling = phase == .interacting || phase == .decelerating
-                if phase == .interacting { followsBottom = false }
+                if phase == .interacting { followsBottom = false; follower.stop() }
                 if phase == .idle, nearBottom { followsBottom = workspace.settings.automaticallyFollowGeneration }
             }
             .onChange(of: conversation.messages.count) {
@@ -100,7 +109,7 @@ struct DesktopTranscript: View {
             .onChange(of: conversation.id, initial: true) {
                 if let focusRequest, focusRequest.conversationID == conversation.id {
                     followsBottom = false
-                    proxy.scrollTo(focusRequest.messageID, anchor: .center)
+                    proxy.scrollTo(rowID(for: focusRequest.messageID), anchor: .center)
                 } else {
                     followsBottom = workspace.settings.automaticallyFollowGeneration
                     proxy.scrollTo("conversation-bottom", anchor: .bottom)
@@ -224,9 +233,13 @@ struct DesktopTranscript: View {
         findFocused = false
     }
 
+    private func rowID(for messageID: UUID) -> UUID {
+        conversation.messages.first { $0.id == messageID }?.rowIdentity ?? messageID
+    }
+
     private func reveal(_ messageID: UUID, proxy: ScrollViewProxy) {
         followsBottom = false
-        withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(messageID, anchor: .center) }
+        withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(rowID(for: messageID), anchor: .center) }
     }
 
     private func followingCount(after messageID: UUID) -> Int {
@@ -273,7 +286,6 @@ private struct DesktopMessageRow: View {
     let onDelete: () -> Void
     let onSelectVariant: (Int) -> Void
     @Environment(\.colorScheme) private var scheme
-    @State private var reasoningExpanded = false
     @State private var hovering = false
     @State private var menuOpen = false
     @State private var copied = false
@@ -288,7 +300,6 @@ private struct DesktopMessageRow: View {
         self.shelf = shelf; self.mutationsDisabled = mutationsDisabled; self.highlighted = highlighted; self.onExport = onExport
         self.onEdit = onEdit; self.onRegenerate = onRegenerate; self.onDelete = onDelete
         self.onSelectVariant = onSelectVariant
-        _reasoningExpanded = State(initialValue: settings.reasoningExpandedByDefault)
     }
 
     private var roleTitle: String {
@@ -319,20 +330,11 @@ private struct DesktopMessageRow: View {
                 .frame(height: 24)
             }
             if !message.reasoning.isEmpty {
-                DisclosureGroup(isExpanded: $reasoningExpanded) {
-                    Text(message.reasoning)
-                        .font(settings.messageFontFamily.swiftUIFont(size: max(12, settings.messageFontSize - 2)))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
-                        .lineSpacing(4)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 12)
-                        .overlay(alignment: .leading) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1) }
-                        .padding(.top, 8)
-                } label: {
-                    Text(message.state == .streaming && message.text.isEmpty ? "正在思考…" : "思考过程")
-                        .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
-                }
+                DesktopReasoningCard(reasoning: message.reasoning,
+                    thinking: message.state == .streaming && message.text.isEmpty,
+                    streaming: message.state == .streaming,
+                    autoExpand: settings.autoExpandThinking, defaultExpanded: settings.reasoningExpandedByDefault,
+                    font: settings.messageFontFamily.swiftUIFont(size: max(12, settings.messageFontSize - 2)))
             }
             if message.role == .user, !message.text.isEmpty {
                 HStack(alignment: .bottom, spacing: 8) {
@@ -376,7 +378,8 @@ private struct DesktopMessageRow: View {
                     .help("上一个版本，保留其他消息")
                     .accessibilityLabel("上一个消息版本")
                     Text("\(message.variantIndex + 1) / \(message.variantCount)")
-                        .monospacedDigit().font(.caption).foregroundStyle(.secondary)
+                        .monospacedDigit().font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                        .contentTransition(.numericText())
                         .accessibilityLabel("第 \(message.variantIndex + 1) 个版本，共 \(message.variantCount) 个")
                     Button { onSelectVariant(message.variantIndex + 1) } label: {
                         Image(systemName: "chevron.right").frame(width: 28, height: 28)
@@ -386,6 +389,7 @@ private struct DesktopMessageRow: View {
                     .accessibilityLabel("下一个消息版本")
                 }
                 .buttonStyle(.borderless)
+                .frame(height: 28)
             }
             if message.state == .cancelled || message.state == .failed {
                 let hasContent = !message.text.isEmpty || !message.reasoning.isEmpty || !message.images.isEmpty || message.unsupportedPartCount > 0
@@ -468,4 +472,21 @@ private struct DesktopMessageRow: View {
             onEdit: onEdit, onRegenerate: onRegenerate, onDelete: onDelete,
             onSpeechError: { speechError = $0 })
     }
+}
+
+/// Lazy stacks estimate unseen rows and correct later, which shows up as the content height briefly jumping while
+/// streaming. Normal conversations are laid out eagerly (exact heights, stable bottom); very long ones stay lazy.
+private struct DesktopTranscriptStack<Content: View>: View {
+    let eager: Bool
+    @ViewBuilder let content: Content
+    var body: some View {
+        if eager { VStack(alignment: .leading, spacing: 24) { content } }
+        else { LazyVStack(alignment: .leading, spacing: 24) { content } }
+    }
+}
+
+extension DesktopMessage {
+    /// A regenerated reply is a new message ID but the same slot (same variant group): keep its row, so the
+    /// version switcher and surrounding layout never get torn down and re-inserted mid-stream.
+    var rowIdentity: UUID { variantIDs.first ?? id }
 }

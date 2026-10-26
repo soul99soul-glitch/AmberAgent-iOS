@@ -21,6 +21,7 @@ import SwiftUI
                 try await capture("empty-1440-dark", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, true)
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PANELS"] != nil { try await panels(chat) }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
             } catch { print("SNAPSHOT FAILED", error); exit(1) }
         }
@@ -54,6 +55,67 @@ import SwiftUI
         try shot("stream-2-done")
         window.orderOut(nil)
     }
+
+    /// Stream replay in the real transcript: 60 chunks at 30ms, sampling the reply's bottom edge each frame.
+    /// Stable = the bottom edge moves monotonically toward its resting place with no reversals or >40pt jumps.
+    @MainActor static func replay() async throws {
+        for scenario in ["plain", "reasoning", "regenerate"] { try await replay(scenario) }
+    }
+
+    /// Streams into the real transcript and samples (distance-from-bottom, content height) every 8ms.
+    @MainActor static func replay(_ scenario: String) async throws {
+        let provider = ReplayProvider()
+        let settings = DesktopSettings(defaults: UserDefaults(suiteName: "amber.replay.\(UUID().uuidString)")!, credentials: DesktopMemoryCredentials())
+        var config = settings.selectedProvider!; config.modelID = "replay"; try settings.saveProvider(config, apiKey: "k")
+        var seed = (0..<6).map { i in DesktopMessage(role: i % 2 == 0 ? .user : .assistant, text: String(repeating: "历史消息内容，用来撑出可滚动的高度。", count: 6)) }
+        if scenario == "regenerate" { seed.append(DesktopMessage(role: .user, text: "再写一遍")); seed.append(DesktopMessage(role: .assistant, text: "旧回答")) }
+        let conversation = DesktopConversation(title: "replay", messages: seed)
+        let workspace = DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage([conversation]),
+            provider: provider, initialConversations: [conversation])
+        workspace.select(conversation.id)
+        let controller = NSHostingController(rootView: DesktopWorkspaceView(workspace: workspace, searchRequest: 0).frame(width: 1180, height: 760))
+        let window = NSWindow(contentViewController: controller)
+        window.setContentSize(NSSize(width: 1180, height: 760))
+        window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+        window.orderFront(nil)
+        try await Task.sleep(for: .milliseconds(800))
+        if scenario == "regenerate" { await workspace.regenerate(seed.last!.id)?.value }
+        else { workspace.draft = "请写一段长文"; workspace.send() }
+        while provider.run == nil { try await Task.sleep(for: .milliseconds(5)) }
+        var samples: [CGFloat] = [], heights: [CGFloat] = [], variants: [Int] = []
+        let sampler = Task { @MainActor in
+            while !Task.isCancelled {
+                if let scroll = allViews(controller.view).compactMap({ $0 as? NSScrollView }).max(by: { $0.documentView?.frame.height ?? 0 < $1.documentView?.frame.height ?? 0 }) {
+                    samples.append((scroll.documentView?.frame.height ?? 0) - scroll.contentView.bounds.maxY)
+                    heights.append(scroll.documentView?.frame.height ?? 0)
+                    variants.append(workspace.selectedConversation?.messages.last?.variantCount ?? 0)
+                }
+                try? await Task.sleep(for: .milliseconds(8))
+            }
+        }
+        var text = "", reasoning = ""
+        for i in 0..<60 {
+            if scenario == "reasoning", i < 25 { reasoning += "先分析第\(i)个要点，再权衡取舍。" }
+            else { text += "第\(i)段：流式生成的内容逐步到达，需要稳定地向上推移，不能前后跳动。"; if i % 7 == 6 { text += "\n\n" } }
+            provider.run?.yield(.snapshot(text: text, reasoning: reasoning))
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        provider.run?.yield(.complete)
+        try await Task.sleep(for: .milliseconds(900))
+        sampler.cancel()
+        var reversals = 0, maxJump: CGFloat = 0, heightDrops = 0
+        for i in 12..<samples.count {
+            let d1 = samples[i - 1] - samples[i - 2], d2 = samples[i] - samples[i - 1]
+            if d1 < -1, d2 > 1 { reversals += 1 }
+            maxJump = max(maxJump, abs(d2))
+            if heights[i] < heights[i - 1] - 1 { heightDrops += 1 }
+        }
+        let variantDrops = zip(variants, variants.dropFirst()).filter { $0 > 1 && $1 < $0 }.count
+        print("REPLAY \(scenario) samples=\(samples.count) maxDistance=\(Int(samples.dropFirst(12).max() ?? 0)) final=\(Int(samples.last ?? -1)) reversals=\(reversals) maxFrameJump=\(Int(maxJump)) heightDrops=\(heightDrops) variantDrops=\(variantDrops)")
+        window.orderOut(nil)
+    }
+
+    @MainActor static func allViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(allViews) }
 
     @MainActor static func panels(_ workspace: DesktopWorkspace) async throws {
         await workspace.collaborations.waitUntilLoaded()
@@ -112,5 +174,12 @@ struct StreamPreview: View {
         DesktopMarkdown(text: host.text, fontSize: 15, streaming: true)
             .fixedSize(horizontal: false, vertical: true)
             .padding(24).frame(width: 560, height: 200, alignment: .topLeading).background(DesktopTheme.paper)
+    }
+}
+
+@MainActor final class ReplayProvider: DesktopTextProvider {
+    var run: DesktopGeneration?
+    func start(configuration: DesktopProviderConfiguration, apiKey: String, messages: [DesktopMessage], responseID: UUID) throws -> DesktopGeneration {
+        let generation = DesktopGeneration(); run = generation; return generation
     }
 }

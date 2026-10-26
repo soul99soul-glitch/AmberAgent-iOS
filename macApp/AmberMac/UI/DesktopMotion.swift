@@ -254,3 +254,137 @@ extension View {
         modifier(DesktopStreamingTextModifier(text: text, active: active))
     }
 }
+
+/// Thinking card: a fixed-height window while it streams (growth scrolls inside, never pushes the answer),
+/// softly folds when the answer begins, and toggles with an eased height change.
+struct DesktopReasoningCard: View {
+    let reasoning: String
+    let thinking: Bool
+    let streaming: Bool
+    let autoExpand: Bool
+    let defaultExpanded: Bool
+    let font: Font
+    @State private var expanded: Bool?
+    @State private var hovering = false
+
+    private var isExpanded: Bool { expanded ?? (thinking ? autoExpand : defaultExpanded) }
+    private var maxHeight: CGFloat { streaming ? 180 : 320 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.smooth(duration: 0.28)) { expanded = !isExpanded }
+            } label: {
+                HStack(spacing: 6) {
+                    if thinking { DesktopPulse() }
+                    Text(thinking ? "正在思考…" : "思考过程")
+                        .font(.system(size: 13)).foregroundStyle(hovering ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary)
+                        .contentTransition(.opacity)
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .frame(height: 24)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .accessibilityLabel(isExpanded ? "收起思考过程" : "展开思考过程")
+
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    Text(reasoning)
+                        .font(font)
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 6)
+                        .id("reasoning-end")
+                }
+                .defaultScrollAnchor(.bottom)
+                .scrollIndicators(.never)
+                .frame(maxHeight: maxHeight)
+                .fixedSize(horizontal: false, vertical: true)
+                .mask {
+                    LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.08),
+                        .init(color: .black, location: 0.92), .init(color: streaming ? .clear : .black, location: 1)],
+                        startPoint: .top, endPoint: .bottom)
+                }
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1) }
+                .padding(.top, 4)
+                .onChange(of: reasoning) { if streaming { proxy.scrollTo("reasoning-end", anchor: .bottom) } }
+            }
+            // Height collapses to zero instead of removing the view, so folding is an eased ramp, not a jump.
+            .frame(maxHeight: isExpanded ? .infinity : 0, alignment: .top)
+            .opacity(isExpanded ? 1 : 0)
+            .clipped()
+        }
+        .onChange(of: thinking) { _, now in
+            // Answer started: fold softly (unless the user chose explicitly).
+            if !now, autoExpand, expanded == nil, !defaultExpanded {
+                withAnimation(.smooth(duration: 0.32)) { expanded = false }
+            }
+        }
+    }
+}
+
+/// Follow-the-tail motor. Content may grow in bursts; the view eases toward the bottom with a critically damped
+/// spring from *its own last written offset* (never from a compensated live value), and the target only ever moves
+/// down while streaming, so estimation dips can't drag the view back. User scrolling stops it immediately.
+@MainActor final class DesktopScrollFollower {
+    struct Geometry: Equatable { var offset: CGFloat; var bottom: CGFloat }
+
+    private var target: CGFloat = 0
+    private var virtual: CGFloat?
+    private var velocity: CGFloat = 0
+    private var timer: Timer?
+    private var write: ((CGFloat) -> Void)?
+    private var lastTick = Date()
+
+    func update(target newTarget: CGFloat, actual: CGFloat, following: Bool, streaming: Bool, write: @escaping (CGFloat) -> Void) {
+        guard following else { stop(); return }
+        self.write = write
+        // Fresh start: seed from where the view really is; monotonic only while a run is engaged.
+        if virtual == nil { virtual = actual; velocity = 0; target = newTarget }
+        else {
+            target = streaming ? max(target, newTarget) : newTarget
+            // Something else already advanced the view (anchor, explicit scroll): never write backwards from it.
+            if let current = virtual, actual > current + 0.5 { virtual = actual }
+        }
+        guard timer == nil, abs(target - (virtual ?? actual)) > 0.5 else { return }
+        lastTick = Date()
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate(); timer = nil
+        virtual = nil; velocity = 0; target = 0
+    }
+
+    private func tick() {
+        guard let current = virtual, let write else { stop(); return }
+        let now = Date()
+        let dt = min(1.0 / 30, max(1.0 / 240, now.timeIntervalSince(lastTick)))
+        lastTick = now
+        // Critically damped: ω = 2/τ with τ ≈ 80ms — catches bursts quickly but never overshoots.
+        let omega: CGFloat = 2 / 0.08
+        let distance = target - current
+        let acceleration = omega * omega * distance - 2 * omega * velocity
+        velocity += acceleration * dt
+        var next = current + velocity * dt
+        if (target - next) * distance < 0 { next = target; velocity = 0 }
+        if abs(target - next) < 0.5, abs(velocity) < 5 {
+            next = target
+            write(next)
+            timer?.invalidate(); timer = nil
+            virtual = next; velocity = 0
+            return
+        }
+        virtual = next
+        write(next)
+    }
+}

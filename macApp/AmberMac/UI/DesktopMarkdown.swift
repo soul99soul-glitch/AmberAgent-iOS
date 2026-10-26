@@ -23,8 +23,7 @@ struct DesktopMarkdown: View {
         let blocks = cache.blocks(for: text)
         DesktopMarkdownBlocks(blocks: blocks, fontFamily: fontFamily, fontSize: fontSize, streaming: streaming)
             .font(fontFamily.swiftUIFont(size: fontSize))
-            // Every update eases the height change, so a wrapped line slides the column up instead of snapping.
-            .animation(streaming ? .easeOut(duration: 0.25) : nil, value: text)
+
     }
 }
 

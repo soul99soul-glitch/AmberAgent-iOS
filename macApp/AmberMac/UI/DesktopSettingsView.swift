@@ -466,7 +466,9 @@ struct DesktopSettingsView: View {
                 }
                 TextField("助手称呼", text: $settings.assistantName, prompt: Text("Amber"))
                 TextField("用户昵称", text: $settings.userNickname, prompt: Text("你"))
-                Toggle("默认展开思考内容", isOn: $settings.reasoningExpandedByDefault)
+                Toggle("思考时自动展开", isOn: $settings.autoExpandThinking)
+                Text("模型思考时展开思考过程，开始作答后自动收起。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                Toggle("已完成的思考默认展开", isOn: $settings.reasoningExpandedByDefault)
                 Picker("发送消息", selection: $settings.sendShortcut) {
                     ForEach(DesktopSendShortcut.allCases) { Text($0.title).tag($0) }
                 }

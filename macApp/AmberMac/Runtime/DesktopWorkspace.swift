@@ -681,7 +681,13 @@ final class DesktopWorkspace {
                 let prefix = Array(conversations[index].messages.prefix(generationPrefixIDs.count))
                 guard prefix.map(\.id) == generationPrefixIDs else { continue }
                 // Agent events contain only new turns; compacted request input never replaces stored history.
-                conversations[index].messages = prefix + turns
+                let previous = conversations[index].messages.dropFirst(prefix.count)
+                var incoming = turns
+                if let first = previous.first(where: { $0.role == .assistant }), !first.variantIDs.isEmpty,
+                   let reply = incoming.firstIndex(where: { $0.role == .assistant }), incoming[reply].variantIDs.isEmpty {
+                    incoming[reply].variantIDs = first.variantIDs.map { $0 == first.id ? incoming[reply].id : $0 }
+                }
+                conversations[index].messages = prefix + incoming
                 assistantID = turns.last?.role == .assistant ? turns.last?.id : nil
             case .complete: terminal = .complete
             case .cancelled: terminal = .cancelled
