@@ -21,7 +21,8 @@ final class DesktopGeneration: @unchecked Sendable {
 
     init(cancellationCompletesAsynchronously: Bool = false) {
         self.cancellationCompletesAsynchronously = cancellationCompletesAsynchronously
-        let stream = AsyncStream<Void>.makeStream()
+        // One pending wake-up is enough: drain() always takes every queued event.
+        let stream = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         signals = stream.stream
         signal = stream.continuation
     }

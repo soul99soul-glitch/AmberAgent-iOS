@@ -15,12 +15,21 @@ struct DesktopMarkdown: View {
     let text: String
     var fontFamily: DesktopMessageFontFamily = .system
     var fontSize: Double = 15
-    @State private var blocks: [DesktopMarkdownBlock] = []
+    @State private var cache = DesktopMarkdownCache()
 
     var body: some View {
-        DesktopMarkdownBlocks(blocks: blocks, fontFamily: fontFamily, fontSize: fontSize)
+        DesktopMarkdownBlocks(blocks: cache.blocks(for: text), fontFamily: fontFamily, fontSize: fontSize)
             .font(fontFamily.swiftUIFont(size: fontSize))
-            .onChange(of: text, initial: true) { _, value in blocks = DesktopMarkdownParser.parse(value) }
+    }
+}
+
+/// Holds the last parse so unchanged text is not re-parsed; reference type so reads don't invalidate the view.
+private final class DesktopMarkdownCache {
+    private var text: String?
+    private var value: [DesktopMarkdownBlock] = []
+    func blocks(for text: String) -> [DesktopMarkdownBlock] {
+        if text != self.text { value = DesktopMarkdownParser.parse(text); self.text = text }
+        return value
     }
 }
 

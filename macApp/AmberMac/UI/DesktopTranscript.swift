@@ -78,7 +78,9 @@ struct DesktopTranscript: View {
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
             }
-            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            // While following, growth stays pinned to the bottom (no per-token scrollTo jumps); reading history keeps its place.
+            .defaultScrollAnchor(followsBottom && workspace.settings.automaticallyFollowGeneration ? .bottom : .top, for: .sizeChanges)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height < 80
             } action: { _, value in
@@ -90,14 +92,10 @@ struct DesktopTranscript: View {
                 if phase == .interacting { followsBottom = false }
                 if phase == .idle, nearBottom { followsBottom = workspace.settings.automaticallyFollowGeneration }
             }
-            .onChange(of: conversation.messages.last?.text) {
-                if followsBottom, workspace.settings.automaticallyFollowGeneration { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
-            }
-            .onChange(of: conversation.messages.last?.reasoning) {
-                if followsBottom, workspace.settings.automaticallyFollowGeneration { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
-            }
             .onChange(of: conversation.messages.count) {
-                if followsBottom, workspace.settings.automaticallyFollowGeneration { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
+                if followsBottom, workspace.settings.automaticallyFollowGeneration {
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
+                }
             }
             .onChange(of: conversation.id, initial: true) {
                 if let focusRequest, focusRequest.conversationID == conversation.id {

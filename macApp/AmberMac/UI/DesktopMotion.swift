@@ -64,17 +64,18 @@ struct DesktopRiseIn: ViewModifier {
 /// While a reply streams in, a faint amber shimmer travels along its leading edge.
 struct DesktopStreamingEdge: ViewModifier {
     let active: Bool
-    @State private var phase: CGFloat = -1
+    @State private var phase: CGFloat = 0
     func body(content: Content) -> some View {
         content.overlay(alignment: .leading) {
             if active {
                 GeometryReader { proxy in
                     Rectangle()
                         .fill(LinearGradient(colors: [.clear, DesktopTheme.accent.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom))
-                        .frame(width: 1.5, height: max(24, proxy.size.height * 0.35))
-                        .offset(y: phase * proxy.size.height)
+                        .frame(width: 1.5, height: min(proxy.size.height, max(24, proxy.size.height * 0.35)))
+                        // Travels the full height and back, easing at both ends, forever.
+                        .offset(y: phase * max(0, proxy.size.height - max(24, proxy.size.height * 0.35)))
                         .onAppear {
-                            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: false)) { phase = 1 }
+                            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { phase = 1 }
                         }
                 }
                 .frame(width: 1.5)

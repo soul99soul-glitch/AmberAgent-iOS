@@ -651,6 +651,8 @@ final class DesktopWorkspace {
                 for await _ in run.signals {
                     guard let self, self.generationID == token else { return }
                     self.apply(run.drain())
+                    // Coalesce token bursts into ~30 layout passes a second; drain() returns everything that arrived.
+                    try? await Task.sleep(for: .milliseconds(33))
                 }
             }
         } catch {
