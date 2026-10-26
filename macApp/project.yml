@@ -31,6 +31,7 @@ targets:
       - path: AmberMac
         excludes:
           - Info.plist
+          - Amber.entitlements
       - path: ../iosApp/iosApp/IOSGeminiProvider.swift
       - path: ../iosApp/iosApp/IOSAntigravityOAuthClient.swift
       - path: ../iosApp/iosApp/IOSCodexOAuthClient.swift
@@ -69,6 +70,7 @@ targets:
         INFOPLIST_FILE: AmberMac/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: AmberMac/Amber.entitlements
         # Developer ID distribution: the agent runs the user's own toolchain (shell, npx/uvx MCP servers),
         # which App Sandbox forbids. Preview stays sandboxed.
         ENABLE_APP_SANDBOX: NO

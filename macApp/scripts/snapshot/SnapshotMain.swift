@@ -10,7 +10,7 @@ import SwiftUI
             do {
                 let chat = DesktopWorkspace.uiFixture()
                 await chat.agentTasks.waitUntilLoaded()
-                for (w, h) in [(1440.0, 900.0), (860.0, 600.0)] {
+                for (w, h) in [(1440.0, 900.0), (1180.0, 800.0), (860.0, 600.0), (1920.0, 1080.0)] {
                     for dark in [false, true] {
                         try await capture("chat-\(Int(w))-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: chat, searchRequest: 0), w, h, dark)
                     }
