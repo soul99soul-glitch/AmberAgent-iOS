@@ -8,6 +8,10 @@ import Foundation
                 let models = try await IOSCodexOAuthClient(providerId: configuration.id.uuidString.lowercased()).fetchCodexModelsOrThrow()
                 return models.map { DesktopCatalogModel(modelID: $0.modelId, name: $0.displayName) }
             }
+            if configuration.authMode == .grokOAuth {
+                let models = try await IOSGrokOAuthClients.shared(providerId: configuration.id.uuidString.lowercased()).fetchGrokModelsOrThrow()
+                return models.map { DesktopCatalogModel(modelID: $0.modelId, name: $0.displayName) }
+            }
             let bridge = DesktopProviderBridge.shared
             let json: String
             if configuration.kind == .gemini {
@@ -89,8 +93,12 @@ import Foundation
         let id = providerID.uuidString.lowercased()
         IOSCodexOAuthClient(providerId: id).logout()
         IOSAntigravityOAuthClients.logout(providerId: id)
+        IOSGrokOAuthClients.logout(providerId: id)
         guard IOSCredentialSideTable.delete(key: IOSCodexAuthStore.credentialKey(providerId: id)),
-              IOSCredentialSideTable.delete(key: IOSAntigravityAuthStore.credentialKey(providerId: id)) else {
+              IOSCredentialSideTable.delete(key: IOSAntigravityAuthStore.credentialKey(providerId: id)),
+              IOSCredentialSideTable.delete(key: IOSGrokOAuthAuthStore.credentialKey(providerId: id)),
+              IOSCredentialSideTable.delete(key: IOSGrokOAuthAuthStore.backupKey(providerId: id)),
+              IOSCredentialSideTable.delete(key: IOSGrokWebAuthStore.credentialKey(providerId: id)) else {
             throw DesktopRuntimeError.message("无法删除登录凭证，请解锁钥匙串后重试。")
         }
     }

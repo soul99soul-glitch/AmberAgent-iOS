@@ -260,6 +260,9 @@ final class DesktopSettings {
         if value.authMode == .codexOAuth, value.kind != .responses {
             throw DesktopRuntimeError.message("Codex 登录须使用 Responses 协议。")
         }
+        if value.authMode == .grokOAuth, value.kind != .openAI {
+            throw DesktopRuntimeError.message("Grok 登录须使用 OpenAI 兼容协议。")
+        }
         if value.authMode == .antigravityOAuth, value.kind != .gemini {
             throw DesktopRuntimeError.message("Antigravity 登录须使用 Gemini 协议。")
         }

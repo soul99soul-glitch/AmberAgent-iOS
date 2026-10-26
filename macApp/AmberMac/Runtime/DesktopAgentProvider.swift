@@ -36,8 +36,10 @@ import CryptoKit
         guard let persistTurns = context.persistTurns else { throw DesktopRuntimeError.message("工具任务必须关联可保存的会话。") }
         guard let model = configuration.selectedModel else { throw DesktopRuntimeError.message("请先选择模型。") }
         let bridge = DesktopProviderBridge.shared
+        // Grok OAuth always targets the CLI proxy so IOSGrokWebProviderResolver recognizes it per request.
+        let baseURL = configuration.authMode == .grokOAuth ? IOSGrokOAuthConstants.cliProxyBaseUrl : configuration.baseURL
         let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue, id: configuration.id.uuidString,
-            name: configuration.name, baseUrl: configuration.baseURL, apiKey: apiKey, authMode: configuration.authMode.rawValue)
+            name: configuration.name, baseUrl: baseURL, apiKey: apiKey, authMode: configuration.authMode.rawValue)
         var input = try bridge.agentRequestHistory(messages: bridge.messages(json: DesktopJSON.encode(messages)))
         let declarations = DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations + DesktopToolRegistry.collaborationDeclarations + DesktopMCPManager.declarations
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
@@ -200,13 +202,15 @@ import CryptoKit
     }
 }
 
-private struct DesktopEngineTransport: IOSAgentTextProvider, IOSAgentStreamingProvider {
+struct DesktopEngineTransport: IOSAgentTextProvider, IOSAgentStreamingProvider {
     private let openAI = OpenAIKmpProvider()
     private let claude = ClaudeKmpProvider()
 
     func prepareRequest(providerSetting: ProviderSetting, params: TextGenerationParams) async throws -> (ProviderSetting, TextGenerationParams) {
-        let resolved = try await IOSCodexProviderResolver.resolved(providerSetting)
-        return (resolved, IOSCodexProviderResolver.augmentParamsForCodex(params, provider: resolved))
+        // Same identity rewrite chain as iOS ChatKernelRunHost: Codex, then Grok OAuth (token refresh + CLI proxy).
+        let resolved = try await IOSGrokWebProviderResolver.resolved(try await IOSCodexProviderResolver.resolved(providerSetting))
+        return (resolved, IOSGrokWebProviderResolver.augmentParamsForGrok(
+            IOSCodexProviderResolver.augmentParamsForCodex(params, provider: resolved), provider: resolved))
     }
 
     func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {

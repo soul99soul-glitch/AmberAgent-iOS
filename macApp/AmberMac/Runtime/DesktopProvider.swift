@@ -37,6 +37,24 @@ import Foundation
             run.installCancellation { task.cancel() }
             return run
         }
+        if configuration.authMode == .grokOAuth {
+            let task = Task {
+                do {
+                    let providerID = configuration.id.uuidString.lowercased()
+                    guard IOSGrokOAuthAuthStore.load(providerId: providerID) != nil else { throw IOSGrokWebError.notSignedIn }
+                    let provider = try await IOSGrokWebProviderResolver.resolved(try bridge.configurationWithAuth(
+                        kind: configuration.kind.rawValue, id: configuration.id.uuidString, name: configuration.name,
+                        baseUrl: IOSGrokOAuthConstants.cliProxyBaseUrl, apiKey: "", authMode: configuration.authMode.rawValue))
+                    try Task.checkCancellation()
+                    try self.startKMP(provider: provider, messages: input,
+                        params: IOSGrokWebProviderResolver.augmentParamsForGrok(params, provider: provider),
+                        responseID: responseID, run: run)
+                } catch is CancellationError { run.yield(.cancelled) }
+                catch { run.yield(.failed(Self.failureMessage(error.localizedDescription))) }
+            }
+            run.installCancellation { task.cancel() }
+            return run
+        }
         let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue,
             id: configuration.id.uuidString, name: configuration.name,
             baseUrl: configuration.baseURL, apiKey: apiKey, authMode: configuration.authMode.rawValue)

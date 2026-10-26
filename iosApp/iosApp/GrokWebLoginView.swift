@@ -225,6 +225,9 @@ private final class GrokAuthPresentationProvider: NSObject, ASWebAuthenticationP
     static let shared = GrokAuthPresentationProvider()
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        #if os(macOS)
+        return NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first ?? NSWindow()
+        #else
         if let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }),
@@ -232,9 +235,11 @@ private final class GrokAuthPresentationProvider: NSObject, ASWebAuthenticationP
             return window
         }
         return UIWindow()
+        #endif
     }
 }
 
+#if !os(macOS)
 struct GrokWebLoginView: View {
     let providerId: String
     let providerBackup: IOSGrokWebProviderBackup?
@@ -373,3 +378,4 @@ struct GrokWebLoginView: View {
         .buttonStyle(.borderedProminent)
     }
 }
+#endif

@@ -100,6 +100,10 @@ internal fun desktopAuthenticatedConfiguration(kind: String, id: String, name: S
             require(provider is ProviderSetting.OpenAI && kind == "responses") { "Codex OAuth requires Responses protocol" }
             provider.copy(authMode = OpenAIAuthMode.CODEX_OAUTH, useResponseApi = true)
         }
+        "grokOAuth" -> {
+            require(provider is ProviderSetting.OpenAI && kind == "openai") { "Grok OAuth requires OpenAI-compatible protocol" }
+            provider
+        }
         "antigravityOAuth" -> {
             require(provider is ProviderSetting.Google) { "Antigravity OAuth requires Gemini protocol" }
             provider.copy(authMode = GoogleAuthMode.ANTIGRAVITY_OAUTH)

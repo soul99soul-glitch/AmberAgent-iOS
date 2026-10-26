@@ -30,6 +30,7 @@ struct DesktopSettingsView: View {
     @State private var confirmsSwitch = false
     @State private var didLoad = false
     @State private var deleting = false
+    @State private var grokSignedIn = false
 
     private enum Destination { case provider(UUID?), tab(Int) }
     private struct ModelParameters: Equatable {
@@ -112,6 +113,7 @@ struct DesktopSettingsView: View {
             if draft.baseURL == old.defaultBaseURL { draft.baseURL = value.defaultBaseURL }
             if draft.authMode == .codexOAuth && value != .responses { draft.authMode = .apiKey }
             if draft.authMode == .antigravityOAuth && value != .gemini { draft.authMode = .apiKey }
+            if draft.authMode == .grokOAuth && value != .openAI { draft.authMode = .apiKey }
         }
     }
 
@@ -177,6 +179,13 @@ struct DesktopSettingsView: View {
                 Form {
                     providerConfiguration
                     if draft.authMode == .codexOAuth { codexAuthentication }
+                    #if !AMBER_MAC_PREVIEW
+                    if draft.authMode == .grokOAuth {
+                        DesktopGrokAuthentication(providerID: editingID, baseURL: $draft.baseURL,
+                            hasUnsavedChanges: hasUnsavedChanges, signedIn: $grokSignedIn)
+                            .id(editingID)
+                    }
+                    #endif
                     models
                     if !catalogRequest.models.isEmpty { catalogModels }
                 }.formStyle(.grouped)
@@ -195,6 +204,7 @@ struct DesktopSettingsView: View {
             Picker("认证方式", selection: $draft.authMode) {
                 Text("API Key").tag(DesktopProviderAuthMode.apiKey)
                 if draft.kind == .responses { Text("ChatGPT / Codex 登录").tag(DesktopProviderAuthMode.codexOAuth) }
+                if draft.kind == .openAI { Text("Grok / xAI 登录").tag(DesktopProviderAuthMode.grokOAuth) }
                 if draft.authMode == .antigravityOAuth { Text("已有 Antigravity 登录").tag(DesktopProviderAuthMode.antigravityOAuth) }
             }
             if draft.authMode == .apiKey {
@@ -209,7 +219,8 @@ struct DesktopSettingsView: View {
                     ProgressView().controlSize(.small)
                     Button("取消") { catalogRequest.cancel() }.buttonStyle(.borderless)
                 }
-            }.disabled(credentialLoadFailed || (draft.authMode == .codexOAuth && (editingID == nil || login.account == nil)))
+            }.disabled(credentialLoadFailed || (draft.authMode == .codexOAuth && (editingID == nil || login.account == nil))
+                || (draft.authMode == .grokOAuth && (editingID == nil || !grokSignedIn)))
             if let message = catalogRequest.status { statusText(message, failed: catalogRequest.failed) }
         }
     }
@@ -536,6 +547,9 @@ struct DesktopSettingsView: View {
         modelBeingEdited = draft.selectedModel?.id ?? draft.models.first?.id
         savedDraft = draft; savedKey = apiKey; savedParameters = parameters
         login.selectProvider(id)
+        #if !AMBER_MAC_PREVIEW
+        grokSignedIn = id.map { IOSGrokOAuthAuthStore.load(providerId: $0.uuidString.lowercased()) != nil } ?? false
+        #endif
     }
     @discardableResult private func save() -> Bool {
         do {
@@ -575,3 +589,69 @@ struct DesktopSettingsView: View {
         DesktopProviderConfiguration(name: "", kind: .openAI, baseURL: DesktopProviderKind.openAI.defaultBaseURL, models: [])
     }
 }
+
+#if !AMBER_MAC_PREVIEW
+/// Grok (SpaceXAI OAuth) section; reuses the iOS PKCE + loopback login model and mirrors the Codex section layout.
+private struct DesktopGrokAuthentication: View {
+    let providerID: UUID?
+    @Binding var baseURL: String
+    let hasUnsavedChanges: Bool
+    @Binding var signedIn: Bool
+    @StateObject private var model: GrokWebLoginModel
+
+    init(providerID: UUID?, baseURL: Binding<String>, hasUnsavedChanges: Bool, signedIn: Binding<Bool>) {
+        self.providerID = providerID
+        _baseURL = baseURL
+        self.hasUnsavedChanges = hasUnsavedChanges
+        _signedIn = signedIn
+        _model = StateObject(wrappedValue: GrokWebLoginModel(
+            providerId: providerID?.uuidString.lowercased() ?? "unsaved", providerBackup: nil))
+    }
+
+    private var isBusy: Bool {
+        switch model.phase {
+        case .requesting, .awaitingAuthorization, .signingIn: true
+        default: false
+        }
+    }
+
+    var body: some View {
+        Section("Grok / xAI 登录") {
+            if case .signedIn(let email) = model.phase {
+                LabeledContent("已登录", value: email.flatMap { $0.isEmpty ? nil : $0 } ?? "Grok 账号")
+            }
+            Text("先保存服务商，再在浏览器完成 xAI 授权。Grok 登录使用 \(IOSGrokOAuthConstants.cliProxyBaseUrl)，无需 API Key。")
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            if baseURL != IOSGrokOAuthConstants.cliProxyBaseUrl {
+                Button("使用 Grok 服务地址") { baseURL = IOSGrokOAuthConstants.cliProxyBaseUrl }
+            }
+            HStack {
+                if isBusy {
+                    ProgressView().controlSize(.small)
+                    Button("取消登录") { model.cancelLogin() }
+                } else {
+                    Button(model.isSignedIn ? "重新登录" : "登录") {
+                        model.startLogin { signedIn = true }
+                    }.disabled(providerID == nil || hasUnsavedChanges)
+                }
+                if model.isSignedIn || isBusy {
+                    Button("退出登录") { model.logout { _ in signedIn = false } }.disabled(providerID == nil)
+                }
+            }
+            if hasUnsavedChanges { Text("保存当前配置后即可登录。模型可在登录后从目录添加。").font(.caption).foregroundStyle(.secondary) }
+            switch model.phase {
+            case .awaitingAuthorization: statusText("在浏览器完成登录后，此处会自动更新。", failed: false)
+            case .failed(let message): statusText(message, failed: true)
+            default: EmptyView()
+            }
+        }
+        .onDisappear { model.cancelLogin() }
+    }
+
+    private func statusText(_ message: String, failed: Bool) -> some View {
+        Label(message, systemImage: failed ? "exclamationmark.circle" : "info.circle")
+            .font(.callout).foregroundStyle(failed ? Color.red : Color.secondary)
+            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+    }
+}
+#endif

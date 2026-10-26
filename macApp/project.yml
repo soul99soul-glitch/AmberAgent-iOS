@@ -38,6 +38,9 @@ targets:
       - path: ../iosApp/iosApp/IOSImageGenerationRepository.swift
       - path: ../iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift
       - path: ../iosApp/iosApp/IOSCodexProviderResolver.swift
+      - path: ../iosApp/iosApp/IOSGrokOAuthClient.swift
+      - path: ../iosApp/iosApp/IOSGrokWebProvider.swift
+      - path: ../iosApp/iosApp/GrokWebLoginView.swift
       - path: ../iosApp/iosApp/AgentResponseStage.swift
       - path: ../iosApp/iosApp/IOSAgentToolEngine.swift
       - path: ../iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolContracts.swift
@@ -68,6 +71,7 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: YES
         ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
+        ENABLE_INCOMING_NETWORK_CONNECTIONS: YES
         ENABLE_USER_SELECTED_FILES: readwrite
         LD_RUNPATH_SEARCH_PATHS:
           - '$(inherited)'

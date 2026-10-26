@@ -22,7 +22,7 @@ enum DesktopProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
 }
 
 enum DesktopProviderAuthMode: String, Codable, Sendable {
-    case apiKey, codexOAuth, antigravityOAuth
+    case apiKey, codexOAuth, antigravityOAuth, grokOAuth
 }
 
 struct DesktopProviderConfiguration: Codable, Equatable, Identifiable, Sendable {
