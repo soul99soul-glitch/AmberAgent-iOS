@@ -6,7 +6,7 @@ final class DesktopWorkspace {
     private(set) var conversations: [DesktopConversation] = []
     var selectedID: UUID?
     var draft = ""
-    /// Composer mode: plain chat, or send the draft to a council / sub-agent team that reports back into this conversation.
+    /// Composer mode: plain chat, or send the draft to the model council, which reports back into this conversation.
     var composerMode = DesktopComposerMode.chat
     private(set) var composerRunID: UUID?
     var searchText = "" { didSet { if searchText != oldValue { scheduleSearch() } } }
@@ -631,7 +631,7 @@ final class DesktopWorkspace {
         generationID = token
         assistantID = replyID
         generationPrefixIDs = prefixIDs
-        generationUsesTools = agentTasks.toolsEnabled
+        generationUsesTools = agentTasks.toolsEnabled || agentTasks.subagentsEnabled
         generationConversationID = conversationID
         isGenerating = true
         isStopping = false
@@ -639,7 +639,7 @@ final class DesktopWorkspace {
         do {
             let run = try provider.start(configuration: configuration, apiKey: apiKey,
                 messages: messages, responseID: replyID, context: DesktopRunContext(
-                    conversationID: conversationID, toolsEnabled: generationUsesTools,
+                    conversationID: conversationID, toolsEnabled: generationUsesTools, subagentsEnabled: agentTasks.subagentsEnabled,
                     persistTurns: { [weak self] turns in
                         guard let self else { return false }
                         return await self.persistAgentTurns(turns, owner: conversationID, token: token)
@@ -1240,16 +1240,11 @@ final class DesktopWorkspace {
     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
     func sendCollaboration() {
-        guard let owner = selectedID, composerMode != .chat else { return }
+        guard let owner = selectedID, composerMode == .council else { return }
         let objective = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !objective.isEmpty else { return }
-        let team = DesktopCollaborationRole.builtIns.prefix(3).map {
-            DesktopCollaborationMember(name: $0.name, rolePrompt: $0.prompt, roleID: $0.id)
-        }
         do {
-            let runID = composerMode == .council
-                ? try collaborations.startCouncil(parentConversationID: owner, objective: objective, seats: [])
-                : try collaborations.startSubagents(parentConversationID: owner, objective: objective, members: team)
+            let runID = try collaborations.startCouncil(parentConversationID: owner, objective: objective, seats: [])
             draft = ""
             composerRunID = runID
             Task {

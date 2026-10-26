@@ -62,7 +62,14 @@ enum DesktopToolRegistry {
 }
 
 extension DesktopToolRegistry {
-    static var collaborationDeclarations: [DesktopToolDeclaration] {
+    static var collaborationDeclarations: [DesktopToolDeclaration] { collaborationDeclarations(subagents: true) }
+
+    /// Council and run management stay available with tools; sub-agent dispatch only when its switch is on.
+    static func collaborationDeclarations(subagents: Bool) -> [DesktopToolDeclaration] {
+        allCollaborationDeclarations.filter { subagents || $0.name != "subagent_dispatch" }
+    }
+
+    private static var allCollaborationDeclarations: [DesktopToolDeclaration] {
         [DesktopToolDeclaration(name: "subagent_dispatch", description: "派发一个只读子代理（可用只读工具多轮执行）并等待结果；role为explorer/historian/oracle/designer/writer/fixer，model_id可选已配置模型UUID，skills可选已启用技能名。",
             parametersJSON: #"{"type":"object","properties":{"task":{"type":"string"},"role":{"type":"string"},"model_id":{"type":"string"},"skills":{"type":"array","items":{"type":"string"}}},"required":["task"],"additionalProperties":false}"#, needsApproval: true),
          declaration("list_agents", "列出当前会话的协作任务与状态。", properties: [:]),

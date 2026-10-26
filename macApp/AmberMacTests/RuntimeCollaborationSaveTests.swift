@@ -56,27 +56,44 @@ import XCTest
         XCTAssertTrue(workspace.savedCollaborationRuns.contains(id))
     }
 
-    func testComposerSubagentModeRunsTeamAndWritesResultBackToConversation() async throws {
+    func testComposerCouncilModePlansSeatsAndWritesResultBackToConversation() async throws {
         let original = DesktopConversation(title: "owner")
         let (workspace, provider, storage) = try setup([original])
         workspace.select(original.id)
-        workspace.composerMode = .subagents
-        workspace.draft = "调研 stdio 传输"
+        workspace.composerMode = .council
+        workspace.draft = "要不要把 stdio 改成登录 shell"
         workspace.sendCollaboration()
         XCTAssertEqual(workspace.draft, "")
         let runID = try XCTUnwrap(workspace.composerRunID)
-        XCTAssertEqual(workspace.collaborations.runs.first { $0.id == runID }?.objective, "调研 stdio 传输")
-        for index in 0..<3 {
-            while provider.runs.count <= index { await Task.yield() }
-            provider.runs[index].yield(.snapshot(text: "member \(index) finding", reasoning: ""))
-            provider.runs[index].yield(.complete)
+        let run = try XCTUnwrap(workspace.collaborations.runs.first { $0.id == runID })
+        XCTAssertTrue(run.isCouncil)
+        XCTAssertEqual(run.objective, "要不要把 stdio 改成登录 shell")
+        // Host plans two seats, then every later call (seat turns, commentary, synthesis) answers.
+        while provider.runs.isEmpty { await Task.yield() }
+        provider.runs[0].yield(.snapshot(text: #"[{"name":"甲","rolePrompt":"支持"},{"name":"乙","rolePrompt":"反对"}]"#, reasoning: ""))
+        provider.runs[0].yield(.complete)
+        var answered = 1
+        while !(workspace.collaborations.runs.first { $0.id == runID }?.status.isTerminal ?? true) {
+            if provider.runs.count > answered {
+                provider.runs[answered].yield(.snapshot(text: "观点 \(answered)", reasoning: ""))
+                provider.runs[answered].yield(.complete)
+                answered += 1
+            }
+            await Task.yield()
         }
-        _ = await workspace.collaborations.waitUntilFinished(runID)
         for _ in 0..<200 where !(workspace.savedCollaborationRuns.contains(runID)) { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertNil(workspace.composerRunID)
         let saved = try XCTUnwrap(storage.values.first { $0.id == original.id })
         XCTAssertEqual(saved.messages.last?.id, runID)
-        XCTAssertTrue(saved.messages.last?.text.contains("member 0 finding") == true)
+        XCTAssertTrue(saved.messages.last?.text.contains("议会协作结果") == true)
+    }
+
+    func testSubagentSwitchExposesDispatchToolOnlyWhenOn() {
+        XCTAssertTrue(DesktopToolRegistry.collaborationDeclarations(subagents: true).contains { $0.name == "subagent_dispatch" })
+        XCTAssertFalse(DesktopToolRegistry.collaborationDeclarations(subagents: false).contains { $0.name == "subagent_dispatch" })
+        XCTAssertTrue(DesktopToolRegistry.collaborationDeclarations(subagents: false).contains { $0.name == "model_council_run" })
+        let context = DesktopRunContext(conversationID: UUID(), toolsEnabled: false, subagentsEnabled: true)
+        XCTAssertTrue(context.toolsEnabled, "sub-agents run through the tool loop even when general tools are off")
     }
 
     func testFailedMessageSaveKeepsArtifactAndDoesNotPublishSuccess() async throws {

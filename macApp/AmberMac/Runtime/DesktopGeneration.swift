@@ -87,13 +87,15 @@ final class DesktopGeneration: @unchecked Sendable {
 struct DesktopRunContext: Sendable {
     let conversationID: UUID
     let toolsEnabled: Bool
+    let subagentsEnabled: Bool
     let persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)?
     let drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?
 
-    init(conversationID: UUID, toolsEnabled: Bool,
+    init(conversationID: UUID, toolsEnabled: Bool, subagentsEnabled: Bool = false,
         persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)? = nil,
         drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])? = nil) {
-        self.conversationID = conversationID; self.toolsEnabled = toolsEnabled; self.persistTurns = persistTurns
+        self.conversationID = conversationID; self.toolsEnabled = toolsEnabled || subagentsEnabled
+        self.subagentsEnabled = subagentsEnabled; self.persistTurns = persistTurns
         self.drainSteer = drainSteer
     }
 }

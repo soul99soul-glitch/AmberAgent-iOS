@@ -213,4 +213,29 @@ final class LiveGatewayE2ETests: XCTestCase {
         let record = try XCTUnwrap(workspace.agentTasks.records.first { $0.conversationID == owner })
         XCTAssertEqual(record.status, .completed, record.error ?? "")
     }
+
+    func testSubagentSwitchLetsModelDispatchSubagentWithToolsOff() async throws {
+        let environment = try makeEnvironment(toolsEnabled: false)
+        environment.defaults.set(true, forKey: "desktop.agent-subagents-enabled")
+        let workspace = makeWorkspace(environment)
+        XCTAssertFalse(workspace.agentTasks.toolsEnabled)
+        XCTAssertTrue(workspace.agentTasks.subagentsEnabled)
+        await send("请调用 subagent_dispatch 工具（如果它尚未暴露，先用 tool_search 搜索 subagent_dispatch），"
+            + "role 用 oracle，task 为：用一句话评价「把 MCP 子进程改为直接 spawn」的风险。拿到结果后用一句话总结给我。", in: workspace)
+        let owner = try XCTUnwrap(workspace.selectedID)
+        let deadline = ContinuousClock.now + .seconds(240)
+        while workspace.isGenerating, ContinuousClock.now < deadline {
+            if let record = workspace.agentTasks.records.first(where: { $0.conversationID == owner && $0.approval != nil }) {
+                workspace.agentTasks.decide(runID: record.id, allow: true)
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertFalse(workspace.isGenerating, "sub-agent run timed out: \(failureContext(workspace))")
+        _ = await workspace.flush()
+        let dispatched = workspace.collaborations.runs.contains { $0.parentConversationID == owner && !$0.isCouncil }
+        print("LiveGatewayE2E subagent runs=\(workspace.collaborations.runs.map { "\($0.status):\($0.outputs.map(\.name))" })")
+        XCTAssertTrue(dispatched, "model never dispatched a sub-agent. \(failureContext(workspace))")
+        XCTAssertEqual(workspace.selectedConversation?.messages.last?.state, .complete, failureContext(workspace))
+    }
+
 }

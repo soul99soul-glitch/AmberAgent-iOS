@@ -128,6 +128,10 @@ final class DesktopAgentTasks {
     var toolsEnabled: Bool {
         didSet { defaults.set(toolsEnabled, forKey: "desktop.agent-tools-enabled") }
     }
+    /// Lets the model dispatch read-only sub-agents mid-conversation; needs the tool loop, so it runs through it.
+    var subagentsEnabled: Bool {
+        didSet { defaults.set(subagentsEnabled, forKey: "desktop.agent-subagents-enabled") }
+    }
     @ObservationIgnored let journal: DesktopAgentJournal
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let notifications: DesktopNotifications?
@@ -143,6 +147,7 @@ final class DesktopAgentTasks {
         self.defaults = defaults
         self.notifications = notifications
         toolsEnabled = defaults.bool(forKey: "desktop.agent-tools-enabled")
+        subagentsEnabled = defaults.bool(forKey: "desktop.agent-subagents-enabled")
         journal = DesktopAgentJournal(directory: directory)
         loading = Task {
             do { records = try await journal.load() }

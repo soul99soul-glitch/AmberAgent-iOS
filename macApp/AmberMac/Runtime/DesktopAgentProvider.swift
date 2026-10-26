@@ -108,7 +108,8 @@ import CryptoKit
         let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue, id: configuration.id.uuidString,
             name: configuration.name, baseUrl: baseURL, apiKey: apiKey, authMode: configuration.authMode.rawValue)
         var input = try bridge.agentRequestHistory(messages: bridge.messages(json: DesktopJSON.encode(messages)))
-        let declarations = DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations + DesktopToolRegistry.collaborationDeclarations + DesktopMCPManager.declarations
+        let declarations = DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations
+            + DesktopToolRegistry.collaborationDeclarations(subagents: context.subagentsEnabled) + DesktopMCPManager.declarations
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
         let exposure = IosToolExposureBridge(tools: tools)
         let guidance = exposure.discoveryGuidance()
@@ -230,8 +231,7 @@ import CryptoKit
         ledger: DesktopEngineLedger, runID: UUID, budget: Int,
         persistTurns: @escaping @MainActor @Sendable ([DesktopMessage]) async -> Bool,
         drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?) async -> IOSAgentToolEngineResult {
-        var registry = Dictionary(uniqueKeysWithValues: (DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations + DesktopToolRegistry.collaborationDeclarations + DesktopMCPManager.declarations)
-            .map { ($0.name, executor as any IOSToolExecutor) })
+        var registry = Dictionary(uniqueKeysWithValues: executor.declarations.map { ($0.name, executor as any IOSToolExecutor) })
         registry["tool_search"] = executor
         let engine = IOSAgentToolEngine(provider: DesktopEngineTransport(), executors: registry,
             configuration: .init(maxSteps: max(0, budget), honorApprovalPause: true), ledger: ledger, ledgerRunId: runID.uuidString)

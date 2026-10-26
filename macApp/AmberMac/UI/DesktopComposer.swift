@@ -73,6 +73,21 @@ struct DesktopComposer: View {
                     .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isGenerating || workspace.isMutatingBranch)
                     .help("允许模型使用已接入的工具；需要确认的操作会先显示审批。")
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.subagentsEnabled.toggle() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("子代理").font(.system(size: 13))
+                            DesktopSwitch(isOn: workspace.agentTasks.subagentsEnabled)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                    }
+                    .buttonStyle(DesktopQuietButtonStyle())
+                    .disabled(workspace.isGenerating || workspace.isMutatingBranch)
+                    .help("允许模型在对话中派发只读子代理（Explorer、Oracle 等）并行调研，结果回到本轮回答。")
+                    .accessibilityLabel("子代理")
+                    .accessibilityValue(workspace.agentTasks.subagentsEnabled ? "已开启" : "已关闭")
                     modeMenu
                     .accessibilityLabel("工具")
                     .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
@@ -179,7 +194,6 @@ struct DesktopComposer: View {
         switch workspace.composerMode {
         case .chat: "向 Amber 发送消息…"
         case .council: "写下要议会讨论的问题，主持人会安排席位…"
-        case .subagents: "写下要子代理调研的任务…"
         }
     }
 
@@ -215,8 +229,10 @@ struct DesktopComposer: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        // Borderless menu labels take the tint, not foregroundStyle; chat mode stays neutral.
+        .tint(workspace.composerMode == .chat ? DesktopTheme.inkTertiary : DesktopTheme.accentInk)
         .disabled(workspace.isGenerating || workspace.isMutatingBranch || workspace.composerRunID != nil)
-        .help("选择发送方式：普通对话、模型议会或子代理")
+        .help("选择发送方式：普通对话或模型议会")
         .accessibilityLabel("发送方式")
         .accessibilityValue(workspace.composerMode.title)
     }
