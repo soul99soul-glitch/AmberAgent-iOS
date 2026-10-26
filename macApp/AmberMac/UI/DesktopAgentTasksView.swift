@@ -9,7 +9,7 @@ struct DesktopAgentTasksView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("任务工作台").font(.system(size: 20, weight: .semibold))
+                    Text("任务工作台").font(DesktopTheme.serif(size: 22, weight: .semibold))
                     Text("查看工具调用、确认操作与执行结果。")
                         .font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme))
                 }
@@ -18,7 +18,7 @@ struct DesktopAgentTasksView: View {
             }
             if let error = workspace.agentTasks.errorMessage {
                 Label(error, systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
@@ -44,7 +44,7 @@ struct DesktopAgentTasksView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(task.title).font(.system(size: 13, weight: .semibold)).lineLimit(2)
                     Label(task.status.title, systemImage: task.status.symbol)
-                        .font(.caption).foregroundStyle(task.status.color)
+                        .font(.system(size: 12)).foregroundStyle(task.status.color)
                 }
                 Spacer(minLength: 12)
                 Button(workspace.summaries.contains(where: { $0.id == task.conversationID }) ? "打开会话" : "原会话已删除") {
@@ -56,9 +56,9 @@ struct DesktopAgentTasksView: View {
                 }
             }
             Text(task.updatedAt, format: .dateTime.year().month().day().hour().minute())
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             if let error = task.error {
-                Text(error).font(.callout).foregroundStyle(.secondary)
+                Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
             if task.approval != nil { DesktopToolApprovalCard(task: task, tasks: workspace.agentTasks) }
@@ -78,24 +78,24 @@ struct DesktopAgentTasksView: View {
                                 HStack {
                                     Text(transaction.name).font(.system(.callout, design: .monospaced).weight(.medium))
                                     Spacer()
-                                    Text(transaction.stateTitle).font(.caption).foregroundStyle(.secondary)
+                                    Text(transaction.stateTitle).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                                 }
-                                if let outcome = transaction.outcome { Text(outcome).font(.caption).foregroundStyle(.secondary) }
+                                if let outcome = transaction.outcome { Text(outcome).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
                                 if let invocation = transaction.canonicalInvocation, !invocation.isEmpty {
                                     DisclosureGroup("调用详情") {
                                         ScrollView {
-                                            Text(invocation).font(.system(size: 11, design: .monospaced))
+                                            Text(invocation).font(.system(size: 12, design: .monospaced))
                                                 .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                                         }.frame(maxHeight: 160).padding(.top, 5)
-                                    }.font(.caption)
+                                    }.font(.system(size: 12))
                                 }
                                 if let payload = transaction.resultPayload, !payload.isEmpty {
                                     DisclosureGroup("执行结果") {
                                         ScrollView {
-                                            Text(payload).font(.system(size: 11, design: .monospaced))
+                                            Text(payload).font(.system(size: 12, design: .monospaced))
                                                 .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                                         }.frame(maxHeight: 180).padding(.top, 5)
-                                    }.font(.caption)
+                                    }.font(.system(size: 12))
                                 }
                             }
                             if transaction.id != task.transactions.last?.id { Divider() }
@@ -162,8 +162,8 @@ struct DesktopToolApprovalCard: View {
                     Spacer()
                     Button { decide(false) } label: {
                         Text("拒绝").font(.system(size: 13, weight: .medium)).padding(.horizontal, 14).frame(height: 30)
-                            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 7))
-                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(DesktopTheme.hairlineStrong))
+                            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
                     }
                     .buttonStyle(DesktopPressButtonStyle())
                     .keyboardShortcut(.escape, modifiers: [])
@@ -174,7 +174,7 @@ struct DesktopToolApprovalCard: View {
                         }
                         .foregroundStyle(DesktopTheme.paper)
                         .padding(.horizontal, 14).frame(height: 30)
-                        .background(DesktopTheme.ink, in: RoundedRectangle(cornerRadius: 7))
+                        .background(DesktopTheme.ink, in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(DesktopPressButtonStyle())
                     .keyboardShortcut(.return, modifiers: .command)

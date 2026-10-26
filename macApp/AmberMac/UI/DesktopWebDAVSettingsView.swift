@@ -38,10 +38,10 @@ struct DesktopWebDAVSettingsView: View {
             operations
             snapshots
             if let failure = failure ?? manager.error {
-                Section { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+                Section { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             }
             if let message {
-                Section { Label(message, systemImage: "info.circle").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
+                Section { Label(message, systemImage: "info.circle").foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
             }
         }
         .formStyle(.grouped)
@@ -77,14 +77,14 @@ struct DesktopWebDAVSettingsView: View {
             LabeledContent("目录", value: manager.configuration.path)
             LabeledContent("用户名", value: manager.configuration.username.isEmpty ? "未填写" : manager.configuration.username)
             Text("账号密码单独保存在本机钥匙串。带认证的连接必须使用 HTTPS；只有点击操作时才会联网。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             Button("编辑同步位置…") { loadConfiguration(); editingConfiguration = true }.disabled(busy)
         }
     }
 
     private var configurationEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("WebDAV 位置").font(.title2.weight(.semibold))
+            Text("WebDAV 位置").font(DesktopTheme.serif(size: 20, weight: .semibold))
             Form {
                 TextField("服务地址", text: $draft.baseURL, prompt: Text("https://example.com/dav"))
                 TextField("目录", text: $draft.path)
@@ -92,8 +92,8 @@ struct DesktopWebDAVSettingsView: View {
                 SecureField("登录密码", text: $password)
             }
             Text("登录密码保存在本机钥匙串；备份加密密码只用于本次操作。取消会放弃本次位置修改。")
-                .font(.caption).foregroundStyle(.secondary)
-            if let failure { Label(failure, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+            if let failure { Label(failure, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 if credentialLoadFailed { Button("重新读取钥匙串") { loadConfiguration() } }
                 Spacer()
@@ -115,7 +115,7 @@ struct DesktopWebDAVSettingsView: View {
         Section("手动备份与恢复") {
             SecureField("备份加密密码", text: $snapshotPassword).disabled(busy)
             Text("上传必须填写备份密码；下载预览和恢复使用原密码。备份不包含钥匙串 API Key、登录凭证或 WebDAV 密码；自定义请求头和请求体作为模型配置随备份保存，请注意其中填写的敏感信息。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 Button("测试连接") { perform { try await manager.testConnection() } }
                 Button("刷新快照") { perform { try await manager.list() } }
@@ -132,11 +132,11 @@ struct DesktopWebDAVSettingsView: View {
             }.disabled(!canUseRemote)
             HStack {
                 if busy { ProgressView().controlSize(.small) }
-                Text(manager.status).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(manager.status).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 if busy { Button("取消") { operation?.cancel(); manager.cancel(); workspace.cancelBackup() }.buttonStyle(.borderless) }
             }
-            if dirty { Text("保存位置后再测试、上传或刷新；下方快照属于已保存的位置。 ").font(.caption).foregroundStyle(.secondary) }
+            if dirty { Text("保存位置后再测试、上传或刷新；下方快照属于已保存的位置。 ").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
         }
     }
 
@@ -144,17 +144,17 @@ struct DesktopWebDAVSettingsView: View {
         Section("远端快照（\(manager.snapshots.count)）") {
             if manager.snapshots.isEmpty {
                 Text("刷新后可查看远端快照。下载会先校验并预览内容，确认后才导入副本。")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(manager.snapshots, id: \.href) { resource in
                 HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: "doc.zipper").foregroundStyle(.secondary)
+                    Image(systemName: "doc.zipper").foregroundStyle(DesktopTheme.inkTertiary)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(resource.fileName).lineLimit(1).help(resource.fileName)
                         HStack(spacing: 8) {
                             Text(ByteCountFormatter.string(fromByteCount: resource.sizeBytes, countStyle: .file))
                             if resource.modifiedAt > 0 { Text(Date(timeIntervalSince1970: Double(resource.modifiedAt) / 1000), format: .dateTime.year().month().day().hour().minute()) }
-                        }.font(.caption).foregroundStyle(.secondary)
+                        }.font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     Button("下载预览") { downloadPreview(resource) }
                     Button { deleting = resource } label: { Image(systemName: "trash") }
@@ -166,8 +166,8 @@ struct DesktopWebDAVSettingsView: View {
 
     private func restorePreview(_ item: RestorePreview) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("确认恢复快照").font(.title2.weight(.semibold))
-            Text(item.fileName).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+            Text("确认恢复快照").font(DesktopTheme.serif(size: 20, weight: .semibold))
+            Text(item.fileName).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(2).textSelection(.enabled)
             Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
                 GridRow { Text("备份时间"); Text(item.createdAt, format: .dateTime.year().month().day().hour().minute()) }
                 GridRow { Text("会话"); Text("\(item.conversationCount) 个") }
@@ -175,7 +175,7 @@ struct DesktopWebDAVSettingsView: View {
                 GridRow { Text("记忆"); Text("\(item.memoryCount) 条") }
             }
             Text("将导入为副本，保留本机现有内容。模型配置不含钥匙串凭证，但可能包含自定义请求头和请求体中的敏感信息；恢复的技能与 SOUL 资料需要检查后启用。")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()
                 Button("取消") { preview = nil }.keyboardShortcut(.cancelAction)

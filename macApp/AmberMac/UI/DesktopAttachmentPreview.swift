@@ -9,7 +9,7 @@ struct DesktopAttachmentThumbnail: View {
             if let data = document.image?.thumbnailData, let image = NSImage(data: data) {
                 Image(nsImage: image).resizable().scaledToFill()
             } else {
-                Image(systemName: document.symbolName).foregroundStyle(.secondary)
+                Image(systemName: document.symbolName).foregroundStyle(DesktopTheme.inkTertiary)
             }
         }
         .frame(width: 24, height: 24)
@@ -28,15 +28,15 @@ struct DesktopAttachmentPreview: View {
             HStack(alignment: .top, spacing: 12) {
                 DesktopAttachmentThumbnail(document: document)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(document.name).font(.headline).lineLimit(2)
-                    Text(document.details).font(.caption).foregroundStyle(.secondary)
+                    Text(document.name).font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                    Text(document.details).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }
                 Spacer(minLength: 8)
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             if let note = document.note {
                 Label(note, systemImage: "info.circle")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Group {
@@ -57,10 +57,10 @@ struct DesktopAttachmentPreview: View {
                     }
                 }
             }
-            .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+            .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 10))
             if let url = document.sourceURL {
                 HStack {
-                    Text("来源：\(url.lastPathComponent)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text("来源：\(url.lastPathComponent)").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1)
                     Spacer()
                     Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                         .buttonStyle(.link)

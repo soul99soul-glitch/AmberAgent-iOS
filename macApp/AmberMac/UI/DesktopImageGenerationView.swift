@@ -22,8 +22,8 @@ struct DesktopImageGenerationView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("图片生成").font(.title2.weight(.semibold))
-                    Text("保存到：\(ownerTitle)").font(.caption).foregroundStyle(.secondary).lineLimit(1).help(ownerTitle)
+                    Text("图片生成").font(DesktopTheme.serif(size: 20, weight: .semibold))
+                    Text("保存到：\(ownerTitle)").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1).help(ownerTitle)
                 }
                 Spacer()
                 Button(generator.isRunning && ownsResult ? "取消并关闭" : "完成") {
@@ -35,18 +35,18 @@ struct DesktopImageGenerationView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if !generator.isAvailable {
                         Label("界面预览不调用真实生图服务，请使用正式版本。", systemImage: "info.circle")
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
                     }
                     HStack {
                         Text(generator.configuredModelName ?? "尚未配置生图模型").lineLimit(1)
                         Spacer()
                         SettingsLink { Text("选择生图模型…") }.buttonStyle(.link)
-                    }.font(.callout)
-                    Text("描述想要生成的图片").font(.headline)
+                    }.font(.system(size: 13))
+                    Text("描述想要生成的图片").font(.system(size: 14, weight: .semibold))
                     TextEditor(text: $prompt)
                         .font(.body).padding(7)
                         .frame(height: 110)
-                        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
                         .accessibilityLabel("图片提示词")
                         .disabled(generator.isRunning)
@@ -58,19 +58,19 @@ struct DesktopImageGenerationView: View {
                     }.disabled(generator.isRunning)
                     TextField("风格（可选）", text: $style).textFieldStyle(.roundedBorder).disabled(generator.isRunning)
                     Text("生成结果直接保存在原会话文件中；加入草稿后，发送时才会作为图片附件进入对话。")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                     if pendingSaveCount > 0 {
                         Label("\(pendingSaveCount) 张生成结果已保留，等待保存到原会话文件。", systemImage: "tray.and.arrow.down")
-                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                            .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
                         Text("重试只保存本地文件，不会再次请求模型生成。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     }
                     if ownsResult, let status = generator.statusMessage {
                         Label(status, systemImage: generator.isRunning ? "sparkles" : "checkmark.circle")
-                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                            .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
                     }
                     if let error = error ?? (ownsResult ? generator.errorMessage : nil) {
-                        Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                        Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.danger).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if ownsResult {
@@ -80,7 +80,7 @@ struct DesktopImageGenerationView: View {
                                     DesktopMessageImageView(source: .init(url: image.dataURL, name: artifact.document.name))
                                 }
                                 HStack {
-                                    Text("已保存到原会话文件").font(.caption).foregroundStyle(.secondary)
+                                    Text("已保存到原会话文件").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                                     Spacer()
                                     Button(addedImages.contains(artifact.document.id) ? "已加入草稿" : "加入原会话草稿") {
                                         do {
@@ -93,7 +93,7 @@ struct DesktopImageGenerationView: View {
                                 }
                             }
                             .padding(12)
-                            .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                            .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
                         }
                     }
                 }
@@ -102,7 +102,7 @@ struct DesktopImageGenerationView: View {
                 if generator.isRunning {
                     ProgressView().controlSize(.small)
                     Text(ownsResult ? "正在生成，可取消" : "另一会话正在生成图片")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }
                 Spacer()
                 if generator.isRunning && ownsResult {

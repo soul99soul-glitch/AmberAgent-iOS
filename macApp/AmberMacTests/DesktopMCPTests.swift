@@ -325,3 +325,12 @@ extension DesktopUserToolchainTests {
         await manager.shutdown()
     }
 }
+
+extension DesktopUserToolchainTests {
+    func testLoginPATHIsResolvedWithoutShellOutputLeakingIntoIt() {
+        let path = DesktopLoginEnvironment.path
+        XCTAssertNotNil(path)
+        XCTAssertFalse(path?.contains("\n") ?? true)
+        XCTAssertTrue(path?.split(separator: ":").contains("/usr/bin") ?? false)
+    }
+}

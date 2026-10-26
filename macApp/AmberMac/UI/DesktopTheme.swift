@@ -25,6 +25,8 @@ enum DesktopTheme {
     static let hairline = dynamic(0x1D1C19, 0xFFF8EB, lightAlpha: 0.09, darkAlpha: 0.08)
     static let hairlineStrong = dynamic(0x1D1C19, 0xFFF8EB, lightAlpha: 0.14, darkAlpha: 0.14)
     static let accent = dynamic(0xA0602A, 0xD5AC7B)
+    static let danger = dynamic(0xB3261E, 0xE5736B)
+    static let switchOff = dynamic(0x1D1C19, 0xFFF8EB, lightAlpha: 0.16, darkAlpha: 0.24)
     static let accentInk = dynamic(0x7A4518, 0xE7C59C)
     static let honey = dynamic(0xDE9648, 0xD5A064, lightAlpha: 0.26, darkAlpha: 0.24)
     static let honeySoft = dynamic(0xDE9648, 0xD5A064, lightAlpha: 0.10, darkAlpha: 0.08)
@@ -94,7 +96,7 @@ struct DesktopQuietButtonStyle: ButtonStyle {
 struct DesktopSwitch: View {
     let isOn: Bool
     var body: some View {
-        Capsule().fill(isOn ? DesktopTheme.accent : DesktopTheme.hairlineStrong)
+        Capsule().fill(isOn ? DesktopTheme.accent : DesktopTheme.switchOff)
             .frame(width: 24, height: 14)
             .overlay(alignment: isOn ? .trailing : .leading) {
                 Circle().fill(DesktopTheme.card).frame(width: 10, height: 10).padding(2)
@@ -117,7 +119,9 @@ struct DesktopPressButtonStyle: ButtonStyle {
 /// The send key: a lump of amber that brightens when there is something to send.
 struct DesktopSendGlyph: View {
     let enabled: Bool
+    var glint = false
     @State private var hovering = false
+    @State private var sweep: CGFloat = -1
     var body: some View {
         Image(systemName: "arrow.up")
             .font(.system(size: 14, weight: .semibold))
@@ -132,8 +136,23 @@ struct DesktopSendGlyph: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(enabled ? DesktopTheme.honeyEdge : .clear, lineWidth: 0.5))
                     .shadow(color: enabled ? DesktopTheme.honey : .clear, radius: hovering ? 10 : 6)
             }
+            .overlay {
+                // Easter egg: type just「琥珀」and light passes through the resin once.
+                LinearGradient(colors: [.clear, .white.opacity(0.75), .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 14)
+                    .rotationEffect(.degrees(20))
+                    .offset(x: sweep * 28)
+                    .opacity(sweep > -1 && sweep < 1 ? 1 : 0)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .allowsHitTesting(false)
+            }
             .animation(.easeOut(duration: 0.2), value: enabled)
             .animation(.easeOut(duration: 0.15), value: hovering)
             .onHover { hovering = $0 }
+            .onChange(of: glint) { _, on in
+                guard on else { return }
+                sweep = -1
+                withAnimation(.easeInOut(duration: 0.9)) { sweep = 1.2 }
+            }
     }
 }

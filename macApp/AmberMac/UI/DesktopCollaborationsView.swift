@@ -32,7 +32,7 @@ struct DesktopCollaborationsView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("多模型协作").font(.system(size: 20, weight: .semibold))
+                    Text("多模型协作").font(DesktopTheme.serif(size: 22, weight: .semibold))
                     Text("各成员只接收本次任务说明与职责。关闭此面板后，正在执行的协作会继续。")
                         .font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme)).fixedSize(horizontal: false, vertical: true)
                 }
@@ -42,14 +42,14 @@ struct DesktopCollaborationsView: View {
             if workspace.collaborations.isLoading { ProgressView("正在读取协作记录…").controlSize(.small) }
             if let failure = workspace.collaborations.loadError {
                 HStack(alignment: .top) {
-                    Label(failure, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
+                    Label(failure, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                     Spacer()
                     Button("重新读取") { workspace.collaborations.retryLoad() }
                 }
             }
             if let failure = workspace.collaborations.persistenceError {
                 HStack(alignment: .top) {
-                    Label(failure, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
+                    Label(failure, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                     Spacer()
                     Button("重试保存") { Task { await workspace.collaborations.flush() } }
                         .disabled(workspace.collaborations.runs.contains { !$0.status.isTerminal })
@@ -58,7 +58,7 @@ struct DesktopCollaborationsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     configuration
-                    if let error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+                    if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
                     if !ownerRuns.isEmpty {
                         Divider()
                         HStack {
@@ -68,7 +68,7 @@ struct DesktopCollaborationsView: View {
                                 }
                             }
                             if let run = selectedRun {
-                                Text(run.status.title).font(.caption).foregroundStyle(.secondary)
+                                Text(run.status.title).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                                 if !run.status.isTerminal { Button("停止") { workspace.collaborations.cancel(run.id) } }
                                 Button("导出结果…") { export(run) }
                                     .disabled(run.outputs.allSatisfy { $0.text.isEmpty })
@@ -88,10 +88,10 @@ struct DesktopCollaborationsView: View {
                                 Spacer()
                             }
                             if let failure = workspace.collaborationSaveErrors[run.id] {
-                                Text(failure).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                                Text(failure).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true)
                             }
                             if let failure = run.error {
-                                Text(failure).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                Text(failure).font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                             }
                             ForEach(run.outputs) { output in outputCard(output) }
                         }
@@ -121,9 +121,9 @@ struct DesktopCollaborationsView: View {
                     Picker("讨论模式", selection: $councilMode) {
                         ForEach(DesktopCouncilMode.allCases, id: \.self) { Text($0.title).tag($0) }
                     }.pickerStyle(.segmented).fixedSize()
-                    Stepper("共 \(rounds) 轮", value: $rounds, in: 1...5).font(.caption).fixedSize()
+                    Stepper("共 \(rounds) 轮", value: $rounds, in: 1...5).font(.system(size: 12)).fixedSize()
                     Spacer()
-                    Toggle("由主持人规划席位", isOn: $hostPlansSeats).toggleStyle(.checkbox).font(.caption)
+                    Toggle("由主持人规划席位", isOn: $hostPlansSeats).toggleStyle(.checkbox).font(.system(size: 12))
                 }
             }
             Text("协作成员").font(.system(size: 13, weight: .semibold)).padding(.top, 4)
@@ -163,7 +163,7 @@ struct DesktopCollaborationsView: View {
             }
             if plansSeats {
                 Text("开始后主持人会按议题设计 2–5 个席位，席位默认使用综合模型。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
             HStack {
                 Menu("添加成员", systemImage: "plus") {
@@ -173,12 +173,12 @@ struct DesktopCollaborationsView: View {
                 }.disabled(members.count >= 8 || plansSeats)
                 Spacer()
                 Stepper("每位成员超时 \(timeoutSeconds) 秒", value: $timeoutSeconds, in: 30...600, step: 30)
-                    .font(.caption).fixedSize()
+                    .font(.system(size: 12)).fixedSize()
             }
             if council { modelPicker("综合模型", selection: $synthesisModelID) }
             HStack {
                 Text("同时执行最多 \(workspace.collaborations.maxConcurrent) 个成员，其余按顺序等待。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Spacer()
                 Button("开始协作") { start() }.buttonStyle(.borderedProminent)
                     .disabled(ownerIsRunning || workspace.collaborations.isLoading || workspace.collaborations.loadError != nil
@@ -200,10 +200,10 @@ struct DesktopCollaborationsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(output.name).font(.system(size: 13, weight: .semibold))
-                Text(output.modelName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(output.modelName).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1)
                 Spacer()
                 if output.status == .running || output.status == .queued { ProgressView().controlSize(.mini) }
-                Text(output.status.title).font(.caption).foregroundStyle(.secondary)
+                Text(output.status.title).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 if !output.text.isEmpty {
                     Button {
                         NSPasteboard.general.clearContents()
@@ -215,7 +215,7 @@ struct DesktopCollaborationsView: View {
             if !output.text.isEmpty {
                 DesktopMarkdown(text: output.text, fontFamily: workspace.settings.messageFontFamily, fontSize: workspace.settings.messageFontSize)
             }
-            if let error = output.error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error = output.error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             if !output.steps.isEmpty {
                 DisclosureGroup("执行步骤 \(output.steps.count)") {
                     VStack(alignment: .leading, spacing: 6) {
@@ -223,16 +223,16 @@ struct DesktopCollaborationsView: View {
                             if let tool = step.tool {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("\(tool)  \(step.arguments)").font(.system(size: 12, design: .monospaced)).lineLimit(2)
-                                    if !step.result.isEmpty { Text(step.result).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+                                    if !step.result.isEmpty { Text(step.result).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(3) }
                                 }
                             } else {
-                                Text(step.text).font(.caption).foregroundStyle(.secondary).lineLimit(4)
+                                Text(step.text).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(4)
                             }
                         }
                     }
                     .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                 }
-                .font(.caption)
+                .font(.system(size: 12))
             }
         }
         .padding(16)

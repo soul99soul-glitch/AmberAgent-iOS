@@ -11,7 +11,7 @@ struct DesktopBackupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("备份与恢复").font(.system(size: 20, weight: .semibold))
+                Text("备份与恢复").font(DesktopTheme.serif(size: 22, weight: .semibold))
                 Spacer()
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
                     .disabled(workspace.isManagingBackup)
@@ -23,7 +23,7 @@ struct DesktopBackupView: View {
                     .disabled(workspace.isManagingBackup)
                 Label(password.isEmpty ? "当前将导出未加密备份，文件内容可被直接读取。" : "将使用所填密码加密备份；恢复时需要相同密码。",
                       systemImage: password.isEmpty ? "lock.open" : "lock")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) {
                 Button("导出备份…", systemImage: "square.and.arrow.up") { exportBackup() }
@@ -33,23 +33,23 @@ struct DesktopBackupView: View {
             }
             .disabled(workspace.isManagingBackup || workspace.isLoading)
             Text("恢复会新增会话与配置，保留当前数据。技能、SOUL 与通用偏好放入“备份恢复资料”会话文件，供检查后手动导入或应用。恢复加密备份前，请先填写原密码。导入 iOS 备份（.amberbackup）只新增会话副本，不导入 iOS 设置与凭证；未设口令的 iOS 备份可留空密码。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             if workspace.isManagingBackup {
                 HStack(spacing: 12) {
                     ProgressView().controlSize(.small)
-                    Text("正在处理备份…").font(.callout)
+                    Text("正在处理备份…").font(.system(size: 13))
                     Spacer()
                     Button("取消") { workspace.cancelBackup() }
                 }
             }
             if let status = workspace.backupStatusMessage {
                 Label(status, systemImage: "checkmark.circle")
-                    .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = workspace.backupErrorMessage {
                 Label(error, systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)

@@ -11,16 +11,16 @@ struct DesktopMCPSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("MCP 服务").font(.headline)
+                Text("MCP 服务").font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button("导入 JSON…") { importing = true }
                 Button("添加服务", systemImage: "plus") { editingServer = DesktopMCPServer() }
             }
             Text("连接后发现真实工具与参数格式。工具调用会遵循审批规则；只读提示不代表自动授权。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             if let loadError = manager.store.loadError {
                 Label(loadError, systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -64,10 +64,10 @@ struct DesktopMCPSettingsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(server.name).font(.headline).lineLimit(1)
+                    Text(server.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                     Text(server.transport == .stdio ? server.command : server.url)
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    Text(server.enabled ? status.title : "已停用").font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1).truncationMode(.middle)
+                    Text(server.enabled ? status.title : "已停用").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }
                 Spacer(minLength: 10)
                 Toggle("启用服务", isOn: Binding(get: { server.enabled }, set: { enabled in
@@ -87,7 +87,7 @@ struct DesktopMCPSettingsView: View {
                     .accessibilityLabel("MCP 服务操作 \(server.name)")
             }
             if case .error(let reason) = status {
-                Text(reason).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                Text(reason).font(.system(size: 12)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true)
             }
             if !server.tools.isEmpty {
                 DisclosureGroup("\(server.tools.filter(\.enabled).count) / \(server.tools.count) 个工具已启用") {
@@ -102,13 +102,13 @@ struct DesktopMCPSettingsView: View {
                                     })).labelsHidden().help("启用工具 \(tool.name)")
                                 }
                                 if let description = tool.description, !description.isEmpty {
-                                    Text(description).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                    Text(description).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                                 }
                                 if let schema = tool.inputSchema {
                                     DisclosureGroup("参数格式") {
-                                        Text(schema).font(.system(size: 11, design: .monospaced))
+                                        Text(schema).font(.system(size: 12, design: .monospaced))
                                             .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 5)
-                                    }.font(.caption)
+                                    }.font(.system(size: 12))
                                 }
                             }
                         }
@@ -116,7 +116,7 @@ struct DesktopMCPSettingsView: View {
                 }.disabled(!server.enabled)
             }
         }
-        .padding(14).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .padding(16).background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func connect(_ id: UUID) {
@@ -159,7 +159,7 @@ private struct DesktopMCPServerEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(original.name.isEmpty ? "添加 MCP 服务" : "编辑 MCP 服务").font(.title2.weight(.semibold))
+            Text(original.name.isEmpty ? "添加 MCP 服务" : "编辑 MCP 服务").font(DesktopTheme.serif(size: 20, weight: .semibold))
             Form {
                 TextField("名称", text: $draft.name)
                 Picker("传输", selection: $draft.transport) {
@@ -177,10 +177,10 @@ private struct DesktopMCPServerEditor: View {
                 }
                 Toggle("启用此服务", isOn: $draft.enabled)
                 Text("请求头和环境变量保存在系统钥匙串中。保存不会自动连接或执行工具。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
             .formStyle(.grouped)
-            if let error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("取消") { if changed { confirmsDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)
@@ -197,10 +197,10 @@ private struct DesktopMCPServerEditor: View {
 
     private func jsonEditor(_ title: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             TextEditor(text: text).font(.system(size: 12, design: .monospaced))
                 .frame(height: 76).padding(5)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.primary.opacity(0.12)))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DesktopTheme.hairlineStrong))
                 .accessibilityLabel(title)
         }
     }
@@ -235,16 +235,16 @@ private struct DesktopMCPJSONImporter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("导入 MCP 配置").font(.title2.weight(.semibold))
+                Text("导入 MCP 配置").font(DesktopTheme.serif(size: 20, weight: .semibold))
                 Spacer()
                 Button("选择 JSON 文件…") { chooseFile() }
             }
             Text("粘贴包含 mcpServers 的 JSON。已有同名服务会提示处理，不会覆盖。")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
             TextEditor(text: $json).font(.system(size: 12, design: .monospaced)).padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
                 .accessibilityLabel("MCP JSON 配置")
-            if let error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)

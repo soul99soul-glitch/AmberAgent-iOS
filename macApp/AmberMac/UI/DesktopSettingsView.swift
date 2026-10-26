@@ -120,7 +120,7 @@ struct DesktopSettingsView: View {
     private var tabs: some View {
         VStack(spacing: 0) {
             HStack(spacing: 24) {
-                Text("设置").font(.system(size: 20, weight: .semibold))
+                Text("设置").font(DesktopTheme.serif(size: 22, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
                 Spacer()
                 Picker("设置分类", selection: Binding(get: { tab }, set: { request(.tab($0)) })) {
                     Text("服务商").tag(0)
@@ -132,10 +132,10 @@ struct DesktopSettingsView: View {
                 .labelsHidden()
                 .frame(width: 360)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
-            .background(.bar)
-            Divider()
+            .padding(.horizontal, 28)
+            .padding(.top, 22)
+            .padding(.bottom, 18)
+            Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
             Group {
                 switch tab {
                 case 1: general
@@ -145,8 +145,10 @@ struct DesktopSettingsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(.easeOut(duration: 0.2), value: tab)
         }
-        .frame(width: 840, height: 680)
+        .background(DesktopTheme.paper)
+        .frame(width: 880, height: 700)
         .tint(DesktopTheme.accent)
         .preferredColorScheme(DesktopTheme.colorScheme(for: settings.appearance))
     }
@@ -156,14 +158,14 @@ struct DesktopSettingsView: View {
             VStack(spacing: 0) {
                 List(selection: Binding(get: { editingID }, set: { request(.provider($0)) })) {
                     ForEach(settings.providers) { provider in
-                        HStack(spacing: 8) {
-                            Image(systemName: settings.selectedProviderID == provider.id ? "checkmark.circle.fill" : "server.rack")
-                                .foregroundStyle(.primary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(provider.name).lineLimit(1)
-                                Text("\(provider.models.filter(\.enabled).count) 个启用模型").font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Circle().fill(settings.selectedProviderID == provider.id ? DesktopTheme.accent : DesktopTheme.hairlineStrong)
+                                .frame(width: 6, height: 6)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(provider.name).font(.system(size: 14)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
+                                Text("\(provider.models.filter(\.enabled).count) 个启用模型").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                             }
-                        }.padding(.vertical, 4).tag(provider.id)
+                        }.padding(.vertical, 6).tag(provider.id)
                     }
                 }
                 Divider()
@@ -173,8 +175,8 @@ struct DesktopSettingsView: View {
                     Button { confirmsDelete = true } label: { Image(systemName: "minus").frame(width: 26, height: 26) }
                         .disabled(editingID == nil).help("移除服务商").accessibilityLabel("移除服务商")
                     Spacer()
-                }.buttonStyle(.borderless).foregroundStyle(.secondary).padding(8)
-            }.frame(minWidth: 170, idealWidth: 190, maxWidth: 240)
+                }.buttonStyle(DesktopQuietButtonStyle()).padding(.horizontal, 10).frame(height: 40)
+            }.frame(minWidth: 190, idealWidth: 210, maxWidth: 260)
             VStack(spacing: 0) {
                 Form {
                     providerConfiguration
@@ -211,7 +213,7 @@ struct DesktopSettingsView: View {
                 SecureField("API Key", text: $apiKey).accessibilityIdentifier("provider-api-key")
             }
             Text("基础地址须使用 HTTPS；本机模型支持 localhost 回环地址。认证方式与协议分别保存。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             HStack {
                 Button("获取模型列表") { fetchModels(testOnly: false) }
                 Button("测试模型生成") { fetchModels(testOnly: true) }.disabled(draft.selectedModel == nil)
@@ -232,7 +234,7 @@ struct DesktopSettingsView: View {
                 LabeledContent("已登录", value: label.isEmpty ? "ChatGPT 账号" : label)
             }
             Text("先保存服务商，再获取登录码。Codex 使用 https://chatgpt.com/backend-api/codex；更换服务地址请先保存。")
-                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).textSelection(.enabled)
             if draft.baseURL != "https://chatgpt.com/backend-api/codex" {
                 Button("使用 Codex 服务地址") { draft.baseURL = "https://chatgpt.com/backend-api/codex" }
             }
@@ -254,7 +256,7 @@ struct DesktopSettingsView: View {
                     Button("退出登录") { if let id = editingID { login.logout(id) } }.disabled(editingID == nil)
                 }
             }
-            if hasUnsavedChanges { Text("保存当前配置后即可登录。模型可在登录后从目录添加。").font(.caption).foregroundStyle(.secondary) }
+            if hasUnsavedChanges { Text("保存当前配置后即可登录。模型可在登录后从目录添加。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
             if let message = login.status { statusText(message, failed: login.failed) }
         }
     }
@@ -262,7 +264,7 @@ struct DesktopSettingsView: View {
     private var models: some View {
         Section("模型") {
             if draft.models.isEmpty {
-                Text("从服务商获取模型，或手动添加精确模型 ID。").font(.callout).foregroundStyle(.secondary)
+                Text("从服务商获取模型，或手动添加精确模型 ID。").font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
             } else {
                 ForEach(draft.models) { model in
                     HStack(spacing: 10) {
@@ -271,12 +273,12 @@ struct DesktopSettingsView: View {
                         Button { modelBeingEdited = model.id } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(model.displayName.isEmpty ? "新模型" : model.displayName).lineLimit(1)
-                                if !model.name.isEmpty { Text(model.modelID).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                                if !model.name.isEmpty { Text(model.modelID).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1) }
                             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                         if draft.selectedModelID == model.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(DesktopTheme.accent).help("当前模型") }
                         Button { removeModel(model.id) } label: { Image(systemName: "minus.circle") }
-                            .buttonStyle(.borderless).foregroundStyle(.secondary)
+                            .buttonStyle(.borderless).foregroundStyle(DesktopTheme.inkTertiary)
                             .help("移除模型").accessibilityLabel("移除 \(model.displayName)")
                     }
                     .padding(.vertical, 3).padding(.horizontal, 6)
@@ -311,14 +313,14 @@ struct DesktopSettingsView: View {
         }
         DisclosureGroup("自定义请求覆盖") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("请求头 · JSON 字符串字典").font(.caption).foregroundStyle(.secondary)
+                Text("请求头 · JSON 字符串字典").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 TextEditor(text: parameterBinding(id, \.headers)).font(.system(size: 12, design: .monospaced))
                     .frame(minHeight: 70, maxHeight: 140).accessibilityLabel("自定义请求头 JSON")
-                Text("请求体 · JSON 对象").font(.caption).foregroundStyle(.secondary)
+                Text("请求体 · JSON 对象").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 TextEditor(text: parameterBinding(id, \.body)).font(.system(size: 12, design: .monospaced))
                     .frame(minHeight: 90, maxHeight: 180).accessibilityLabel("自定义请求体 JSON")
                 Text("留空使用默认值；填写后覆盖同名请求字段。覆盖会随模型配置备份；API Key 请使用上方钥匙串字段。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }.padding(.top, 6)
         }
         Button(draft.selectedModelID == id ? "当前模型" : "保存并使用此模型") {
@@ -329,14 +331,14 @@ struct DesktopSettingsView: View {
 
     private var catalogModels: some View {
         Section("可添加的模型") {
-            Text("添加会保留已有模型的标识、名称和参数。").font(.caption).foregroundStyle(.secondary)
+            Text("添加会保留已有模型的标识、名称和参数。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             ForEach(catalogRequest.models) { model in
                 Toggle(isOn: Binding(get: { selectedCatalogIDs.contains(model.id) }, set: {
                     if $0 { selectedCatalogIDs.insert(model.id) } else { selectedCatalogIDs.remove(model.id) }
                 })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.name.isEmpty ? model.modelID : model.name)
-                        if model.name != model.modelID { Text(model.modelID).font(.caption).foregroundStyle(.secondary) }
+                        if model.name != model.modelID { Text(model.modelID).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
                     }
                 }.toggleStyle(.checkbox).disabled(draft.models.contains(where: { $0.modelID == model.modelID }))
             }
@@ -360,7 +362,7 @@ struct DesktopSettingsView: View {
                 }
             }
             HStack {
-                Text(hasUnsavedChanges ? "有未保存的修改" : "凭证仅保存到系统钥匙串").font(.caption).foregroundStyle(.secondary)
+                Text(hasUnsavedChanges ? "有未保存的修改" : "凭证仅保存到系统钥匙串").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Spacer()
                 Button("保存配置") { save() }.buttonStyle(.borderedProminent).disabled(!canSave)
                     .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("save-provider")
@@ -378,9 +380,9 @@ struct DesktopSettingsView: View {
                 }.pickerStyle(.segmented)
             }
             Section("系统提示词") {
-                Text("用于之后发送的请求。已有消息会保留原样。").font(.caption).foregroundStyle(.secondary)
+                Text("用于之后发送的请求。已有消息会保留原样。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 TextEditor(text: $settings.systemPrompt).font(.system(size: 13)).frame(minHeight: 140)
-                    .padding(6).overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.primary.opacity(0.12)))
+                    .padding(8).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
                     .accessibilityLabel("系统提示词")
             }
             Section("聊天显示") {
@@ -398,7 +400,7 @@ struct DesktopSettingsView: View {
                 Toggle("默认展开思考内容", isOn: $settings.reasoningExpandedByDefault)
                 Toggle("生成时自动跟随", isOn: $settings.automaticallyFollowGeneration)
                 Text("自动跟随仅在你已位于对话底部时生效；查看历史消息时不会抢回滚动位置。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
             Section("辅助任务模型") {
                 ForEach(DesktopAuxiliaryModelTask.allCases) { task in
@@ -409,7 +411,7 @@ struct DesktopSettingsView: View {
                         }
                     }
                 }
-                Text("仅显示已启用模型。图片生成必须明确选择生图模型；当前模型未标为支持图片时使用已配置的回退模型。").font(.caption).foregroundStyle(.secondary)
+                Text("仅显示已启用模型。图片生成必须明确选择生图模型；当前模型未标为支持图片时使用已配置的回退模型。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
             if let speech {
                 Section("系统朗读") {
@@ -425,9 +427,9 @@ struct DesktopSettingsView: View {
                     }
                     HStack {
                         Text("语速")
-                        Text("慢").font(.caption).foregroundStyle(.secondary)
+                        Text("慢").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         Slider(value: $settings.speechRate, in: 0.2...0.6, step: 0.05).frame(maxWidth: 240)
-                        Text("快").font(.caption).foregroundStyle(.secondary)
+                        Text("快").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     }
                     HStack {
                         Button("试听") {
@@ -436,8 +438,8 @@ struct DesktopSettingsView: View {
                         Button("停止朗读") { speech.stop() }.disabled(!speech.isSpeaking)
                         if speech.isLoadingVoices { ProgressView().controlSize(.small) }
                     }
-                    if let error = speech.error { Text(error).font(.caption).foregroundStyle(.orange) }
-                    Text("使用这台 Mac 已安装的系统声音；消息操作菜单可朗读正文。").font(.caption).foregroundStyle(.secondary)
+                    if let error = speech.error { Text(error).font(.system(size: 12)).foregroundStyle(DesktopTheme.accent) }
+                    Text("使用这台 Mac 已安装的系统声音；消息操作菜单可朗读正文。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }.task { await speech.loadVoices() }
             }
             if let notifications {
@@ -447,18 +449,18 @@ struct DesktopSettingsView: View {
                     })).disabled(notifications.isRequestingAuthorization)
                     if notifications.isRequestingAuthorization { ProgressView().controlSize(.small) }
                     if let message = notifications.authorizationMessage {
-                        Text(message).font(.caption).foregroundStyle(.secondary)
+                        Text(message).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     }
                     if let error = notifications.lastDeliveryError {
-                        Text(error).font(.caption).foregroundStyle(.orange)
+                        Text(error).font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
                     }
                     Text("默认关闭。启用后会向系统请求权限；通知不包含会话内容。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }.task { await notifications.refreshAuthorization() }
             }
             Section("数据与凭证") {
                 Text("会话保存在这台 Mac。API Key 和登录凭证保存在系统钥匙串，不包含在会话导出文件里。")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
                 if let onOpenBackup { Button("备份与恢复…", action: onOpenBackup) }
                 if let onOpenStorage { Button("存储用量…", action: onOpenStorage) }
             }
@@ -467,7 +469,7 @@ struct DesktopSettingsView: View {
 
     private func statusText(_ message: String, failed: Bool) -> some View {
         Label(message, systemImage: failed ? "exclamationmark.circle" : "info.circle")
-            .font(.callout).foregroundStyle(failed ? Color.red : Color.secondary)
+            .font(.system(size: 13)).foregroundStyle(failed ? DesktopTheme.danger : DesktopTheme.inkTertiary)
             .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
     private func modelBinding<Value>(_ id: UUID, _ path: WritableKeyPath<DesktopModelConfiguration, Value>, fallback: Value) -> Binding<Value> {
@@ -621,7 +623,7 @@ private struct DesktopGrokAuthentication: View {
                 LabeledContent("已登录", value: email.flatMap { $0.isEmpty ? nil : $0 } ?? "Grok 账号")
             }
             Text("先保存服务商，再在浏览器完成 xAI 授权。Grok 登录使用 \(IOSGrokOAuthConstants.cliProxyBaseUrl)，无需 API Key。")
-                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).textSelection(.enabled)
             if baseURL != IOSGrokOAuthConstants.cliProxyBaseUrl {
                 Button("使用 Grok 服务地址") { baseURL = IOSGrokOAuthConstants.cliProxyBaseUrl }
             }
@@ -638,7 +640,7 @@ private struct DesktopGrokAuthentication: View {
                     Button("退出登录") { model.logout { _ in signedIn = false } }.disabled(providerID == nil)
                 }
             }
-            if hasUnsavedChanges { Text("保存当前配置后即可登录。模型可在登录后从目录添加。").font(.caption).foregroundStyle(.secondary) }
+            if hasUnsavedChanges { Text("保存当前配置后即可登录。模型可在登录后从目录添加。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
             switch model.phase {
             case .awaitingAuthorization: statusText("在浏览器完成登录后，此处会自动更新。", failed: false)
             case .failed(let message): statusText(message, failed: true)
@@ -650,7 +652,7 @@ private struct DesktopGrokAuthentication: View {
 
     private func statusText(_ message: String, failed: Bool) -> some View {
         Label(message, systemImage: failed ? "exclamationmark.circle" : "info.circle")
-            .font(.callout).foregroundStyle(failed ? Color.red : Color.secondary)
+            .font(.system(size: 13)).foregroundStyle(failed ? DesktopTheme.danger : DesktopTheme.inkTertiary)
             .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
 }

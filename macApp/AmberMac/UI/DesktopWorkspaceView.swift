@@ -65,6 +65,7 @@ struct DesktopWorkspaceView: View {
                 }
                 if let task = workspace.agentTasks.records.first(where: { $0.conversationID == workspace.selectedID && $0.approval != nil }) {
                     DesktopToolApprovalCard(task: task, tasks: workspace.agentTasks)
+                        .id(task.approval?.id)
                         .frame(maxWidth: DesktopTheme.contentWidth)
                         .padding(.horizontal, 24)
                         .padding(.bottom, 8)
@@ -442,6 +443,7 @@ struct DesktopWorkspaceView: View {
                 .accessibilityLabel("会话文件")
             Button { tasksPresented = true } label: {
                 Image(systemName: "checklist")
+                    .symbolEffect(.bounce, value: workspace.agentTasks.records.filter { $0.status == .completed }.count)
                     .overlay(alignment: .topTrailing) {
                         if workspace.agentTasks.records.contains(where: { $0.approval != nil }) {
                             DesktopPulse().offset(x: 4, y: -3)

@@ -14,7 +14,7 @@ struct DesktopWorkspaceFilesView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("会话文件").font(.system(size: 20, weight: .semibold))
+                    Text("会话文件").font(DesktopTheme.serif(size: 22, weight: .semibold))
                     Text(workspace.selectedConversationTitle).font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme)).lineLimit(1)
                 }
                 Spacer()
@@ -28,14 +28,14 @@ struct DesktopWorkspaceFilesView: View {
                 .fixedSize(horizontal: false, vertical: true)
             if let error = workspace.fileErrorMessage {
                 HStack(alignment: .top) {
-                    Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
+                    Label(error, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                     Spacer()
                     Button("重试") { workspace.reloadFiles() }
                 }
             }
             if let status = workspace.fileStatusMessage {
                 Label(status, systemImage: "checkmark.circle")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             }
             List(workspace.selectedFiles) { file in
                 HStack(spacing: 12) {
@@ -46,7 +46,7 @@ struct DesktopWorkspaceFilesView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(file.name).font(.system(size: 13, weight: .medium)).lineLimit(1).foregroundStyle(.primary)
-                            Text(file.id).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(file.id).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -56,7 +56,7 @@ struct DesktopWorkspaceFilesView: View {
                         Text(ByteCountFormatter.string(fromByteCount: Int64(file.byteCount), countStyle: .file))
                         Text(file.modifiedAt, format: .dateTime.month(.twoDigits).day(.twoDigits).hour().minute())
                     }
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     Menu {
                         Button("导出文件…", systemImage: "square.and.arrow.up") { export(file) }
                         if file.name == "SKILL.md" {

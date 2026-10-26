@@ -31,8 +31,9 @@ import CryptoKit
         guard let model = request.configuration.selectedModel else { throw DesktopRuntimeError.message("请先选择模型。") }
         let bridge = DesktopProviderBridge.shared
         let configuration = request.configuration
+        let baseURL = configuration.authMode == .grokOAuth ? IOSGrokOAuthConstants.cliProxyBaseUrl : configuration.baseURL
         let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue, id: configuration.id.uuidString,
-            name: configuration.name, baseUrl: configuration.baseURL, apiKey: request.apiKey, authMode: configuration.authMode.rawValue)
+            name: configuration.name, baseUrl: baseURL, apiKey: request.apiKey, authMode: configuration.authMode.rawValue)
         let declarations = DesktopToolRegistry.declarations.filter { request.toolNames.contains($0.name) } + [DesktopSubagentToolPolicy.reportDeclaration]
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
         let exposure = IosToolExposureBridge(tools: tools)

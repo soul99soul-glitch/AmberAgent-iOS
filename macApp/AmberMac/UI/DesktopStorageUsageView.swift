@@ -13,7 +13,7 @@ struct DesktopStorageUsageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("存储用量").font(.system(size: 20, weight: .semibold))
+                Text("存储用量").font(DesktopTheme.serif(size: 22, weight: .semibold))
                 Spacer()
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
             }
@@ -34,12 +34,12 @@ struct DesktopStorageUsageView: View {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(area.title).font(.system(size: 13, weight: .medium))
                                     if let note = area.note {
-                                        Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                        Text(note).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                                     }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 VStack(alignment: .trailing, spacing: 5) {
                                     Text(area.byteCount.map(bytes) ?? "未统计").monospacedDigit()
-                                    if let count = area.fileCount { Text("\(count) 个文件").font(.caption).foregroundStyle(.secondary) }
+                                    if let count = area.fileCount { Text("\(count) 个文件").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
                                 }
                             }.padding(.vertical, 13)
                             Divider()
@@ -47,21 +47,21 @@ struct DesktopStorageUsageView: View {
                     }
                 }
                 Text("统计时间：\(snapshot.scannedAt.formatted(date: .numeric, time: .standard))")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             } else if !isMeasuring && error == nil {
                 ContentUnavailableView("尚未统计", systemImage: "internaldrive", description: Text("刷新可读取本机目录的当前用量。"))
             }
             if let error {
-                Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
+                Label(error, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                if isMeasuring { ProgressView().controlSize(.small); Text("正在统计本机目录…").font(.callout).foregroundStyle(.secondary) }
+                if isMeasuring { ProgressView().controlSize(.small); Text("正在统计本机目录…").font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary) }
                 Spacer()
                 Button("刷新统计") { refresh() }.disabled(isMeasuring)
             }
             Text("未统计项不计入合计。备份与恢复可在通用设置中打开；会话文件可在工作台文件栏中管理。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(24).frame(width: 610, height: 550)
         .background(DesktopTheme.background(colorScheme))

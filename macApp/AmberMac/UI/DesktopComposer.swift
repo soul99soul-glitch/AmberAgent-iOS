@@ -105,7 +105,7 @@ struct DesktopComposer: View {
                         .help("另一个会话正在生成，返回该会话后可以停止")
                     } else {
                         Button { workspace.send() } label: {
-                            DesktopSendGlyph(enabled: !sendDisabled)
+                            DesktopSendGlyph(enabled: !sendDisabled, glint: workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "琥珀")
                         }
                         .buttonStyle(DesktopPressButtonStyle())
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
@@ -228,7 +228,7 @@ struct DesktopComposer: View {
                             }
                         }
                         .padding(9)
-                        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
+                        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 6))
                     }
                 }
             }
@@ -251,7 +251,7 @@ struct DesktopComposer: View {
             Button { previewedAttachment = attachment } label: {
                 HStack(spacing: 6) {
                     DesktopAttachmentThumbnail(document: attachment)
-                    Text(attachment.name).lineLimit(1).frame(maxWidth: 180)
+                    Text(attachment.name).lineLimit(1).truncationMode(.middle).frame(maxWidth: 240)
                 }
             }
             .buttonStyle(.plain)

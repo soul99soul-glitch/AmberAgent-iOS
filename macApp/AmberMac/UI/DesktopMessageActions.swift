@@ -67,12 +67,12 @@ struct DesktopMessageEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("编辑并重新发送").font(.title3.weight(.semibold))
+            Text("编辑并重新发送").font(DesktopTheme.serif(size: 18, weight: .semibold))
             Text(followingCount > 0
                  ? "重新发送将移除这条消息之后的 \(followingCount) 条消息，并根据修改后的内容重新回复。"
                  : "Amber 将根据修改后的内容重新回复。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13))
+                .foregroundStyle(DesktopTheme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $text)
                 .font(.body)
@@ -85,7 +85,7 @@ struct DesktopMessageEditor: View {
                 .disabled(isSubmitting)
             if let submissionError {
                 Text(submissionError)
-                    .font(.callout).foregroundStyle(.red)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.danger)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("message-edit-error")
@@ -93,7 +93,7 @@ struct DesktopMessageEditor: View {
             HStack {
                 if !canSubmit && !isSubmitting {
                     Text("请回到原会话，并等待当前操作完成。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }
                 Spacer()
                 Button("取消", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)

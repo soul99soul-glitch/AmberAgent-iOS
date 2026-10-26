@@ -69,15 +69,18 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
         let generation = UUID()
         self.generation = generation
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
+        // GUI apps inherit only /usr/bin:/bin; bare commands (npx, uvx) resolve through the user's login PATH.
+        // The command is spawned directly so login-shell banners can never reach the JSON-RPC stdout.
+        var environment = ProcessInfo.processInfo.environment
+        if let path = DesktopLoginEnvironment.path { environment["PATH"] = path }
         if configuration.command.hasPrefix("/") {
             child.executableURL = URL(fileURLWithPath: configuration.command)
             child.arguments = configuration.arguments
         } else {
-            // Resolve bare commands (npx, uvx, python3) through the login shell's PATH; GUI apps inherit only /usr/bin:/bin.
-            child.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            child.arguments = ["-l", "-c", "exec \"$0\" \"$@\"", configuration.command] + configuration.arguments
+            child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            child.arguments = [configuration.command] + configuration.arguments
         }
-        child.environment = ProcessInfo.processInfo.environment.merging(configuration.environment) { _, configured in configured }
+        child.environment = environment.merging(configuration.environment) { _, configured in configured }
         child.standardInput = stdin
         child.standardOutput = stdout
         child.standardError = stderr
@@ -206,4 +209,24 @@ private final class DesktopMCPReadQueue: @unchecked Sendable {
             return result
         }
     }
+}
+
+/// The user's login-shell PATH, read once (banners in .zprofile go to a discarded pipe, not to MCP stdout).
+enum DesktopLoginEnvironment {
+    static let path: String? = {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-l", "-c", "printf '\\n__AMBER_PATH__%s' \"$PATH\""]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(decoding: data, as: UTF8.self)
+        guard let range = text.range(of: "__AMBER_PATH__", options: .backwards) else { return nil }
+        let path = text[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
+    }()
 }

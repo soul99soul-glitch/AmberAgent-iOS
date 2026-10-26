@@ -20,7 +20,7 @@ struct DesktopRecipesView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Recipe 自动流程").font(.system(size: 20, weight: .semibold))
+                    Text("Recipe 自动流程").font(DesktopTheme.serif(size: 22, weight: .semibold))
                     Text("固定步骤依次执行，每一步沿用工具原有的确认与取消规则。")
                         .font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme))
                 }
@@ -30,20 +30,20 @@ struct DesktopRecipesView: View {
             }
             if let loadError = store.loadError {
                 HStack(alignment: .top) {
-                    Label(loadError, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
+                    Label(loadError, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                     Spacer()
                     Button("重新读取") { perform { try store.reload() } }
                 }
             }
-            if let error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HSplitView {
                 List(selection: $selectedName) {
                     ForEach(store.recipes) { recipe in
                         VStack(alignment: .leading, spacing: 5) {
                             Text(recipe.manifest.name).font(.system(size: 13, weight: .semibold))
                             Text(recipe.manifest.version + (recipe.enabled ? " · 已启用" : " · 未启用"))
-                                .font(.caption).foregroundStyle(.secondary)
-                            Text(recipe.manifest.description).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                            Text(recipe.manifest.description).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(2)
                         }
                         .padding(.vertical, 7).tag(recipe.id)
                         .contextMenu {
@@ -61,13 +61,13 @@ struct DesktopRecipesView: View {
                         else if store.recipes.isEmpty {
                             ContentUnavailableView("还没有 Recipe", systemImage: "list.number", description: Text("导入 amber.recipe.v1 文件，检查后启用并填写输入。"))
                         } else {
-                            Text("选择一个 Recipe 查看步骤与输入。").foregroundStyle(.secondary)
+                            Text("选择一个 Recipe 查看步骤与输入。").foregroundStyle(DesktopTheme.inkTertiary)
                         }
                         if !operations.isEmpty {
                             Divider()
                             Text("此会话的运行记录").font(.system(size: 13, weight: .semibold))
                             Text("完整记录与重启后的结果可在任务工作台查看。")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                             ForEach(operations) { operation in operationCard(operation) }
                         }
                     }
@@ -112,10 +112,10 @@ struct DesktopRecipesView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(recipe.manifest.steps, id: \.id) { step in
                         HStack(alignment: .top) {
-                            Text(step.id).font(.caption.weight(.medium))
+                            Text(step.id).font(.system(size: 12, weight: .medium))
                             Text(step.tool).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                             Spacer()
-                            Text("\(step.timeoutSeconds ?? 60) 秒").font(.caption).foregroundStyle(.secondary)
+                            Text("\(step.timeoutSeconds ?? 60) 秒").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         }
                     }
                 }.padding(.top, 8)
@@ -126,7 +126,7 @@ struct DesktopRecipesView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(key + (recipe.manifest.inputs[key] == .number ? " · 数字" : " · 文本"))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         TextField(key, text: Binding(get: { inputValues[key] ?? "" }, set: { inputValues[key] = $0 }), axis: .vertical)
                             .textFieldStyle(.roundedBorder).lineLimit(1...4)
                     }
@@ -149,21 +149,21 @@ struct DesktopRecipesView: View {
                     ProgressView().controlSize(.mini)
                     Button("停止") { workspace.recipes.cancel(operation.id) }
                 } else {
-                    Text(operation.result?.succeeded == true ? "已完成" : "未完成").font(.caption).foregroundStyle(.secondary)
+                    Text(operation.result?.succeeded == true ? "已完成" : "未完成").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }
             }
             if let task, task.approval != nil { DesktopToolApprovalCard(task: task, tasks: workspace.agentTasks) }
             if let result = operation.result {
                 Text("已完成步骤：" + (result.completedSteps.isEmpty ? "无" : result.completedSteps.joined(separator: "、")))
-                    .font(.caption).foregroundStyle(.secondary)
-                if let failedStep = result.failedStep { Text("停止于步骤：" + failedStep).font(.caption).foregroundStyle(.secondary) }
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                if let failedStep = result.failedStep { Text("停止于步骤：" + failedStep).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
                 if !result.outputs.isEmpty {
                     Text(json(result.outputs)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if let error = result.error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+                if let error = result.error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             }
-            if let error = operation.error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error = operation.error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
         }
         .padding(16)
         .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))

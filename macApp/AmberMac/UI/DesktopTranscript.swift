@@ -338,7 +338,7 @@ private struct DesktopMessageRow: View {
                         .textSelection(.enabled)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
-                        .background(highlighted ? DesktopTheme.honey : DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 12))
+                        .background(highlighted ? DesktopTheme.honey : DesktopTheme.hover, in: RoundedRectangle(cornerRadius: 12))
                         .frame(maxWidth: 520, alignment: .trailing)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -408,6 +408,8 @@ private struct DesktopMessageRow: View {
                     copied = true
                 } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 12)).frame(width: 24, height: 24)
+                        .contentTransition(.symbolEffect(.replace.downUp))
+                        .foregroundStyle(copied ? DesktopTheme.accent : DesktopTheme.inkTertiary)
                 }
                 .buttonStyle(DesktopQuietButtonStyle())
                 .help(copied ? "已复制" : "复制消息")

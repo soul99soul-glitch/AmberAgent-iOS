@@ -136,6 +136,7 @@ private struct DesktopCodeBlock: View {
                     copied = true
                 } label: {
                     Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .contentTransition(.symbolEffect(.replace.downUp))
                         .font(.system(size: 12))
                         .padding(.horizontal, 8).frame(height: 24)
                 }
@@ -193,6 +194,7 @@ private struct DesktopMarkdownTable: View {
             }
         }
         .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var columnWidths: [CGFloat] {

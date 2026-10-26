@@ -33,7 +33,7 @@ struct DesktopKnowledgeView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("知识与偏好").font(.system(size: 20, weight: .semibold))
+                    Text("知识与偏好").font(DesktopTheme.serif(size: 22, weight: .semibold))
                     Text("管理此 Mac 上的技能、SOUL.md 与记忆。")
                         .font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme))
                 }
@@ -44,7 +44,7 @@ struct DesktopKnowledgeView: View {
             if let error = store.loadError {
                 HStack(alignment: .top) {
                     Label(error, systemImage: "exclamationmark.circle")
-                        .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("重新读取") { perform { try store.reload(); soulDraft = store.soulMarkdown } }
                 }
@@ -115,9 +115,9 @@ struct DesktopKnowledgeView: View {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(skill.name).font(.system(size: 13, weight: .semibold))
-                        Text(skill.description).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(skill.description).font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                         if !skill.allowedTools.isEmpty {
-                            Text("声明工具：" + skill.allowedTools.joined(separator: "、")).font(.caption).foregroundStyle(.secondary)
+                            Text("声明工具：" + skill.allowedTools.joined(separator: "、")).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         }
                     }
                     Spacer(minLength: 12)
@@ -158,7 +158,7 @@ struct DesktopKnowledgeView: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(colorScheme)))
                 .accessibilityLabel("SOUL.md 内容")
             Text("保存后用于后续请求；清空并保存可停用。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
         }
     }
 
@@ -183,7 +183,7 @@ struct DesktopKnowledgeView: View {
                                 if record.archived { Text("已归档") }
                                 if let expiry = record.expiresAt, expiry <= Int64(Date().timeIntervalSince1970 * 1_000) { Text("已过期") }
                             }
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain)
@@ -246,7 +246,7 @@ struct DesktopTextDocumentEditor: View {
                 .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(colorScheme)))
                 .accessibilityLabel(title + " 内容")
-            if let error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("取消") { if text != initialText { confirmsDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)
@@ -322,18 +322,18 @@ private struct DesktopMemoryEditor: View {
             }
             if let source = record.sourceConversationId, let id = UUID(uuidString: source) {
                 HStack {
-                    Text("来自会话 · \(record.sourceMessageIds.count) 条来源消息").font(.caption).foregroundStyle(.secondary)
+                    Text("来自会话 · \(record.sourceMessageIds.count) 条来源消息").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     Spacer()
                     if conversationIDs.contains(id) {
                         Button("查看来源") { dismiss(); onOpenSource(id, record.sourceMessageIds.compactMap(UUID.init(uuidString:)).first) }
                             .disabled(changed || !canOpenSource)
                             .help("先保存当前更改后查看来源。")
                     } else {
-                        Text("来源会话不在此 Mac 上").font(.caption).foregroundStyle(.secondary)
+                        Text("来源会话不在此 Mac 上").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     }
                 }
             }
-            if let error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("取消") { if changed { confirmsDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)

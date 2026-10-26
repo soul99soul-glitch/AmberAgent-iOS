@@ -11,10 +11,10 @@ struct DesktopArtifactShelfView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("产物架").font(.title3.weight(.semibold))
+            Text("产物架").font(DesktopTheme.serif(size: 18, weight: .semibold))
             if let error = workspace.artifactShelf.errorMessage {
                 Label(error, systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let conversation, !workspace.artifactShelf.pins(for: conversation.id).isEmpty {
@@ -30,8 +30,8 @@ struct DesktopArtifactShelfView: View {
                 .frame(maxHeight: 400)
             } else {
                 Text("在消息菜单或代码块上选择“固定”，常用的回答与代码会保存在这里。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -45,10 +45,10 @@ struct DesktopArtifactShelfView: View {
                 Image(systemName: pin.kind == .code ? "chevron.left.forwardslash.chevron.right" : "text.bubble")
                     .foregroundStyle(DesktopTheme.accent)
                 Text(pin.kind == .code ? (pin.codeLanguage ?? "代码") : "消息")
-                    .font(.caption.weight(.medium))
+                    .font(.system(size: 12, weight: .medium))
                 Spacer()
                 Text(pin.createdAt, format: .dateTime.month().day().hour().minute())
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
             Text(pin.text)
                 .font(pin.kind == .code ? .system(size: 12, design: .monospaced) : .callout)
@@ -68,8 +68,8 @@ struct DesktopArtifactShelfView: View {
                 Button("取消固定", systemImage: "pin.slash") { workspace.artifactShelf.unpin(pin.id, in: conversationID) }
             }
             .buttonStyle(.borderless)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.system(size: 12))
+            .foregroundStyle(DesktopTheme.inkTertiary)
         }
         .padding(12)
         .background(DesktopTheme.surface(scheme), in: RoundedRectangle(cornerRadius: 8))

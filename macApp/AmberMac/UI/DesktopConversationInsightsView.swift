@@ -15,7 +15,7 @@ struct DesktopConversationInsightsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("上下文与回顾").font(.title3.weight(.semibold))
+            Text("上下文与回顾").font(DesktopTheme.serif(size: 18, weight: .semibold))
             if let conversation {
                 let prepared = workspace.insights.prepare(messages: conversation.messages, conversationID: conversation.id)
                 let tokens = DesktopConversationInsights.estimatedTokens(prepared,
@@ -24,19 +24,19 @@ struct DesktopConversationInsightsView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("下次请求约 \(tokens.formatted()) tokens").font(.callout.weight(.medium))
                     Text("包含系统提示与当前草稿，仅为估算。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens {
                         ProgressView(value: Double(min(tokens, limit)), total: Double(limit))
-                            .tint(tokens >= limit ? .orange : .accentColor)
+                            .tint(tokens >= limit ? DesktopTheme.danger : DesktopTheme.accent)
                         Text("模型窗口 \(limit.formatted()) tokens\(tokens >= limit ? "，建议先压缩上下文" : "")")
-                            .font(.caption)
+                            .font(.system(size: 12))
                             .foregroundStyle(tokens >= limit ? Color.orange : Color.secondary)
                     }
                     if workspace.insights.value(.compact, for: conversation) != nil {
                         Label("已使用较早对话的摘要，原消息仍保留", systemImage: "checkmark.circle")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         Button("恢复完整上下文") { workspace.insights.clearCompaction(conversation.id) }
-                            .font(.caption)
+                            .font(.system(size: 12))
                             .disabled(actionsDisabled)
                             .help("后续请求重新使用完整消息，保留原有会话回顾和建议")
                     }
@@ -44,7 +44,7 @@ struct DesktopConversationInsightsView: View {
                 if active {
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("正在处理会话辅助内容…").font(.callout)
+                        Text("正在处理会话辅助内容…").font(.system(size: 13))
                         Spacer()
                         Button("停止") { workspace.insights.cancel(conversation.id) }
                     }
@@ -52,7 +52,7 @@ struct DesktopConversationInsightsView: View {
                 if let error = workspace.insights.errors[conversation.id] {
                     VStack(alignment: .leading, spacing: 7) {
                         Label(error, systemImage: "exclamationmark.circle")
-                            .font(.callout).foregroundStyle(.orange)
+                            .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                             .textSelection(.enabled)
                         Button("重新读取记录") { workspace.insights.retryLoad(conversation.id) }
                             .disabled(active)
@@ -72,7 +72,7 @@ struct DesktopConversationInsightsView: View {
                 .frame(maxHeight: 400)
             } else {
                 Text("选中一个会话后，可以回顾内容与整理上下文。")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesktopTheme.inkTertiary)
             }
         }
         .padding(20)
@@ -84,14 +84,14 @@ struct DesktopConversationInsightsView: View {
         let value = workspace.insights.value(kind, for: conversation)
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(kind.title).font(.headline)
+                Text(kind.title).font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button(value == nil ? "生成" : "重新生成") { workspace.requestInsight(kind) }
                     .disabled(actionsDisabled)
             }
             if kind == .compact {
                 Text("将较早的完整对话压缩成摘要用于后续请求，最近两轮保留原文；不会删除历史消息。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let value {
@@ -112,14 +112,14 @@ struct DesktopConversationInsightsView: View {
                         .help("填入输入框，可编辑后发送")
                     }
                 } else {
-                    Text(value.text).font(.callout).textSelection(.enabled)
+                    Text(value.text).font(.system(size: 13)).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(value.createdAt, format: .dateTime.month().day().hour().minute())
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             } else {
                 Text(kind == .suggestions ? "生成可继续追问的问题，点击建议可填入输入框。" : "尚无当前会话的有效记录。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
         }
     }
