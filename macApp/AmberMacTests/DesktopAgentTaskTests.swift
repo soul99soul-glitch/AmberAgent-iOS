@@ -134,3 +134,23 @@ import XCTest
         await tasks.finish(id, status: .cancelled)
     }
 }
+
+@MainActor final class DesktopAutoApprovalTests: XCTestCase {
+    func testGlobalCoversOrdinaryToolsOnlyAndHighRiskCoversEverythingAndPersists() {
+        let defaults = UserDefaults(suiteName: "amber.autoapprove.\(UUID().uuidString)")!
+        let tasks = DesktopAgentTasks(defaults: defaults)
+        XCTAssertFalse(tasks.autoApproves("workspace_file_write"))
+        XCTAssertFalse(tasks.autoApproves("terminal_exec"))
+        tasks.autoApprove = true
+        XCTAssertTrue(tasks.autoApproves("workspace_file_write"))
+        XCTAssertTrue(tasks.autoApproves("memory_tool"))
+        XCTAssertFalse(tasks.autoApproves("terminal_exec"), "shell stays behind 高风险自动批准")
+        XCTAssertFalse(tasks.autoApproves("workspace_artifact_delete"))
+        XCTAssertFalse(tasks.autoApproves("mcp_call_tool"))
+        tasks.autoApproveHighRisk = true
+        XCTAssertTrue(tasks.autoApproves("terminal_exec"))
+        let reopened = DesktopAgentTasks(defaults: defaults)
+        XCTAssertTrue(reopened.autoApprove)
+        XCTAssertTrue(reopened.autoApproveHighRisk)
+    }
+}

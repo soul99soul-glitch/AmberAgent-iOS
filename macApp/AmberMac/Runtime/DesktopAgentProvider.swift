@@ -409,7 +409,8 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
         guard exposed else { return .failed("此工具尚未暴露，请先通过tool_search发现后再调用。") }
         let effect = DesktopToolRegistry.effect(for: tool.toolName, arguments: tool.input)
         let approval = effect == .sideEffect || effect == .idempotent
-        if approval {
+        let autoApproved = approval ? await MainActor.run { tasks.autoApproves(tool.toolName) } : false
+        if approval, !autoApproved {
             if let decision = await tasks.decision(runID: runID, toolID: tool.toolCallId) {
                 if !decision { return .denied("用户拒绝了这一次工具调用。") }
             } else {

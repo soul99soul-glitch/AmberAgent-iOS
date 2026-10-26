@@ -238,4 +238,27 @@ final class LiveGatewayE2ETests: XCTestCase {
         XCTAssertEqual(workspace.selectedConversation?.messages.last?.state, .complete, failureContext(workspace))
     }
 
+
+    func testHighRiskAutoApprovalRunsShellWithoutPrompt() async throws {
+        let environment = try makeEnvironment(toolsEnabled: true)
+        environment.defaults.set(true, forKey: "desktop.agent-auto-approve")
+        environment.defaults.set(true, forKey: "desktop.agent-auto-approve-high-risk")
+        let workspace = makeWorkspace(environment)
+        await send("请调用 terminal_exec 工具（如果尚未暴露，先用 tool_search 搜索 terminal_exec）执行命令：echo amber-auto-ok"
+            + "，然后把命令输出原样告诉我。", in: workspace)
+        let owner = try XCTUnwrap(workspace.selectedID)
+        var prompted = false
+        let deadline = ContinuousClock.now + .seconds(180)
+        while workspace.isGenerating, ContinuousClock.now < deadline {
+            if workspace.agentTasks.records.contains(where: { $0.conversationID == owner && $0.approval != nil }) { prompted = true; break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertFalse(prompted, "auto-approval still asked")
+        while workspace.isGenerating, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        _ = await workspace.flush()
+        let record = try XCTUnwrap(workspace.agentTasks.records.first { $0.conversationID == owner })
+        XCTAssertTrue(record.transactions.contains { $0.name == "terminal_exec" && $0.state == "finished" }, failureContext(workspace))
+        XCTAssertTrue(workspace.selectedConversation?.messages.last?.text.contains("amber-auto-ok") == true, failureContext(workspace))
+    }
+
 }

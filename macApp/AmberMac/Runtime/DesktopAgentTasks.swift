@@ -128,6 +128,19 @@ final class DesktopAgentTasks {
     var toolsEnabled: Bool {
         didSet { defaults.set(toolsEnabled, forKey: "desktop.agent-tools-enabled") }
     }
+    /// iOS parity:「全局自动批准」runs ordinary tools without asking;「高风险自动批准」also runs shell,
+    /// deletion and external MCP calls. Both default off.
+    var autoApprove: Bool {
+        didSet { defaults.set(autoApprove, forKey: "desktop.agent-auto-approve") }
+    }
+    var autoApproveHighRisk: Bool {
+        didSet { defaults.set(autoApproveHighRisk, forKey: "desktop.agent-auto-approve-high-risk") }
+    }
+
+    func autoApproves(_ toolName: String) -> Bool {
+        DesktopToolRegistry.isHighRisk(toolName) ? autoApproveHighRisk : (autoApprove || autoApproveHighRisk)
+    }
+
     /// Lets the model dispatch read-only sub-agents mid-conversation; needs the tool loop, so it runs through it.
     var subagentsEnabled: Bool {
         didSet { defaults.set(subagentsEnabled, forKey: "desktop.agent-subagents-enabled") }
@@ -148,6 +161,8 @@ final class DesktopAgentTasks {
         self.notifications = notifications
         toolsEnabled = defaults.bool(forKey: "desktop.agent-tools-enabled")
         subagentsEnabled = defaults.bool(forKey: "desktop.agent-subagents-enabled")
+        autoApprove = defaults.bool(forKey: "desktop.agent-auto-approve")
+        autoApproveHighRisk = defaults.bool(forKey: "desktop.agent-auto-approve-high-risk")
         journal = DesktopAgentJournal(directory: directory)
         loading = Task {
             do { records = try await journal.load() }

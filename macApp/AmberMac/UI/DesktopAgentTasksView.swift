@@ -163,6 +163,26 @@ struct DesktopToolApprovalCard: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
                     .padding(.leading, 14)
                 HStack(spacing: 8) {
+                    // Turn on auto-approval straight from the prompt, then approve this call.
+                    Menu {
+                        if DesktopToolRegistry.isHighRisk(approval.name) {
+                            Button("开启高风险自动批准并批准") { tasks.autoApprove = true; tasks.autoApproveHighRisk = true; decide(true) }
+                        } else {
+                            Button("开启全局自动批准并批准") { tasks.autoApprove = true; decide(true) }
+                            Button("同时开启高风险自动批准") { tasks.autoApprove = true; tasks.autoApproveHighRisk = true; decide(true) }
+                        }
+                    } label: {
+                        Text("始终允许").font(.system(size: 12))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .tint(DesktopTheme.inkSecondary)
+                    .help(DesktopToolRegistry.isHighRisk(approval.name) ? "这是高风险操作（终端命令、删除或外部工具）" : "之后的普通工具调用不再询问")
+                    if DesktopToolRegistry.isHighRisk(approval.name) {
+                        Text("高风险").font(.system(size: 11, weight: .medium)).foregroundStyle(DesktopTheme.danger)
+                            .padding(.horizontal, 6).frame(height: 18)
+                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(DesktopTheme.danger.opacity(0.5)))
+                    }
                     Spacer()
                     Button { decide(false) } label: {
                         Text("拒绝").font(.system(size: 13, weight: .medium)).padding(.horizontal, 14).frame(height: 30)
@@ -256,6 +276,37 @@ private extension DesktopAgentStatus {
         case .failed, .waiting, .outcomeUnknown: DesktopTheme.accent
         case .completed: DesktopTheme.inkTertiary
         default: DesktopTheme.inkTertiary
+        }
+    }
+}
+
+/// 全局自动批准 / 高风险自动批准 (iOS「快速批准」). High-risk implies global.
+struct DesktopToolApprovalSettings: View {
+    @Bindable var tasks: DesktopAgentTasks
+
+    var body: some View {
+        Section("工具批准") {
+            Toggle(isOn: Binding(get: { tasks.autoApprove || tasks.autoApproveHighRisk }, set: { on in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    tasks.autoApprove = on
+                    if !on { tasks.autoApproveHighRisk = false }
+                }
+            })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("全局自动批准")
+                    Text("写入会话文件、记忆、发起议会等普通工具直接执行，不再逐次确认。")
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                }
+            }
+            Toggle(isOn: Binding(get: { tasks.autoApproveHighRisk }, set: { on in
+                withAnimation(.easeOut(duration: 0.2)) { tasks.autoApproveHighRisk = on }
+            })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("高风险自动批准")
+                    Text("还会直接执行终端命令、删除文件、调用外部 MCP 工具。只在信任当前任务时开启。")
+                        .font(.system(size: 12)).foregroundStyle(tasks.autoApproveHighRisk ? DesktopTheme.danger : DesktopTheme.inkTertiary)
+                }
+            }
         }
     }
 }

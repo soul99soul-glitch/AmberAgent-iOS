@@ -34,6 +34,12 @@ enum DesktopToolRegistry {
         declaration("terminal_exec", "在当前会话工作区执行一条macOS shell命令；每次需要批准，返回真实退出码和输出。", properties: ["command": "string"], required: ["command"], approval: true),
     ]
 
+    /// High risk = can reach outside the conversation workspace or destroy data (iOS「含任意公网网站、远程命令等」).
+    /// Only「高风险自动批准」auto-runs these; ordinary writes/memory/agents fall under「全局自动批准」.
+    static func isHighRisk(_ name: String) -> Bool {
+        name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool" || name == "interrupt_agent"
+    }
+
     static func effect(for name: String, arguments: String) -> DesktopToolEffect {
         switch name {
         case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill", "mcp_list", "mcp_describe_tool", "list_agents": .pure

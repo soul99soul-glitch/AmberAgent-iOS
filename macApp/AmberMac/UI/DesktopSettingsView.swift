@@ -474,6 +474,9 @@ struct DesktopSettingsView: View {
                 Text("自动跟随仅在你已位于对话底部时生效；查看历史消息时不会抢回滚动位置。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
+            if let tasks = syncWorkspace?.agentTasks {
+                DesktopToolApprovalSettings(tasks: tasks)
+            }
             Section("辅助任务模型") {
                 ForEach(DesktopAuxiliaryModelTask.allCases) { task in
                     Picker(task.title, selection: Binding(get: { settings.auxiliaryModelIDs[task.rawValue] }, set: { settings.setAuxiliaryModel($0, for: task) })) {

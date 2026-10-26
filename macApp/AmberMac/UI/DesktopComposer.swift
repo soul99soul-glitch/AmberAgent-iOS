@@ -66,6 +66,12 @@ struct DesktopComposer: View {
                         HStack(spacing: 8) {
                             Text("工具").font(.system(size: 13))
                             DesktopSwitch(isOn: workspace.agentTasks.toolsEnabled)
+                            if workspace.agentTasks.toolsEnabled && (workspace.agentTasks.autoApprove || workspace.agentTasks.autoApproveHighRisk) {
+                                Text(workspace.agentTasks.autoApproveHighRisk ? "全自动" : "自动批准")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(workspace.agentTasks.autoApproveHighRisk ? DesktopTheme.danger : DesktopTheme.accentInk)
+                                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                            }
                         }
                         .padding(.horizontal, 8)
                         .frame(height: 28)
