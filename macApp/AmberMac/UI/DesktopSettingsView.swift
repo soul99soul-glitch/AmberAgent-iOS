@@ -408,6 +408,9 @@ struct DesktopSettingsView: View {
                 TextField("助手称呼", text: $settings.assistantName, prompt: Text("Amber"))
                 TextField("用户昵称", text: $settings.userNickname, prompt: Text("你"))
                 Toggle("默认展开思考内容", isOn: $settings.reasoningExpandedByDefault)
+                Picker("发送消息", selection: $settings.sendShortcut) {
+                    ForEach(DesktopSendShortcut.allCases) { Text($0.title).tag($0) }
+                }
                 Toggle("生成时自动跟随", isOn: $settings.automaticallyFollowGeneration)
                 Text("自动跟随仅在你已位于对话底部时生效；查看历史消息时不会抢回滚动位置。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)

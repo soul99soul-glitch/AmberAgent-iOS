@@ -2,6 +2,27 @@ import Foundation
 import Observation
 import Security
 
+/// Which key combination sends; the other plain/Shift Return inserts a newline.
+enum DesktopSendShortcut: String, Codable, CaseIterable, Identifiable, Sendable {
+    case commandReturn, returnKey, shiftReturn
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .commandReturn: "⌘Return 发送"
+        case .returnKey: "Return 发送"
+        case .shiftReturn: "⇧Return 发送"
+        }
+    }
+    var sendLabel: String {
+        switch self {
+        case .commandReturn: "⌘Return"
+        case .returnKey: "Return"
+        case .shiftReturn: "⇧Return"
+        }
+    }
+    var newlineLabel: String { self == .returnKey ? "⇧Return" : "Return" }
+}
+
 enum DesktopMessageFontFamily: String, Codable, CaseIterable, Identifiable, Sendable {
     case system, serif, mono
     var id: String { rawValue }
@@ -86,6 +107,7 @@ final class DesktopSettings {
     var userNickname: String { didSet { persist() } }
     var reasoningExpandedByDefault: Bool { didSet { persist() } }
     var automaticallyFollowGeneration: Bool { didSet { persist() } }
+    var sendShortcut: DesktopSendShortcut { didSet { persist() } }
     var notificationsEnabled: Bool { didSet { persist() } }
     var speechVoiceIdentifier: String { didSet { persist() } }
     private var storedSpeechRate: Double
@@ -114,6 +136,7 @@ final class DesktopSettings {
         var userNickname: String?
         var reasoningExpandedByDefault: Bool?
         var automaticallyFollowGeneration: Bool?
+        var sendShortcut: DesktopSendShortcut?
         var notificationsEnabled: Bool?
         var speechVoiceIdentifier: String?
         var speechRate: Double?
@@ -136,6 +159,7 @@ final class DesktopSettings {
         userNickname = record?.userNickname ?? "你"
         reasoningExpandedByDefault = record?.reasoningExpandedByDefault ?? false
         automaticallyFollowGeneration = record?.automaticallyFollowGeneration ?? true
+        sendShortcut = record?.sendShortcut ?? .commandReturn
         notificationsEnabled = record?.notificationsEnabled ?? false
         speechVoiceIdentifier = record?.speechVoiceIdentifier ?? ""
         storedSpeechRate = min(0.6, max(0.2, record?.speechRate ?? 0.5))
@@ -297,7 +321,7 @@ final class DesktopSettings {
             messageFontFamily: messageFontFamily, messageFontSize: messageFontSize,
             assistantName: assistantName, userNickname: userNickname,
             reasoningExpandedByDefault: reasoningExpandedByDefault,
-            automaticallyFollowGeneration: automaticallyFollowGeneration, notificationsEnabled: notificationsEnabled,
+            automaticallyFollowGeneration: automaticallyFollowGeneration, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
             speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate)
         if let data = try? JSONEncoder().encode(record) { defaults.set(data, forKey: "desktop.settings.v1") }
     }

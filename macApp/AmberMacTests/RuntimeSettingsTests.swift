@@ -99,3 +99,15 @@ import XCTest
         XCTAssertThrowsError(try DesktopSettings.validateEndpoint("https://example.com/v1?key=secret"))
     }
 }
+
+@MainActor final class DesktopSendShortcutTests: XCTestCase {
+    func testSendShortcutDefaultsToCommandReturnAndPersists() {
+        let defaults = UserDefaults(suiteName: "amber.send.\(UUID().uuidString)")!
+        let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        XCTAssertEqual(settings.sendShortcut, .commandReturn)
+        settings.sendShortcut = .returnKey
+        XCTAssertEqual(DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials()).sendShortcut, .returnKey)
+        XCTAssertEqual(DesktopSendShortcut.returnKey.newlineLabel, "⇧Return")
+        XCTAssertEqual(DesktopSendShortcut.shiftReturn.newlineLabel, "Return")
+    }
+}

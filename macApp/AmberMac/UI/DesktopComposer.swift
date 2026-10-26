@@ -31,9 +31,21 @@ struct DesktopComposer: View {
                     .focused($inputFocused)
                     .accessibilityIdentifier("message-input")
                     .onKeyPress(.return, phases: .down) { event in
+                        // ⌘Return always sends (button shortcut). Here: the configured send key, otherwise a newline.
                         guard !event.modifiers.contains(.command),
                               let editor = NSApp.keyWindow?.firstResponder as? NSTextView,
                               !editor.hasMarkedText() else { return .ignored }
+                        let shift = event.modifiers.contains(.shift)
+                        let sends = switch workspace.settings.sendShortcut {
+                        case .commandReturn: false
+                        case .returnKey: !shift
+                        case .shiftReturn: shift
+                        }
+                        if sends {
+                            if workspace.isSelectedConversationGenerating { if workspace.canQueueInstruction { _ = workspace.queueInstruction() } }
+                            else if !sendDisabled { workspace.send() }
+                            return .handled
+                        }
                         editor.insertText("\n", replacementRange: editor.selectedRange())
                         return .handled
                     }
@@ -136,8 +148,8 @@ struct DesktopComposer: View {
                 return true
             } isTargeted: { fileDropTargeted = $0 }
             Text(workspace.isSelectedConversationGenerating
-                 ? (workspace.pendingAttachments.isEmpty ? "⌘Return 加入队列 · Return 换行" : "生成中仅支持文本排队 · 停止后可发送附件")
-                 : "⌘Return 发送 · Return 换行")
+                 ? (workspace.pendingAttachments.isEmpty ? "\(shortcut.sendLabel) 加入队列 · \(shortcut.newlineLabel) 换行" : "生成中仅支持文本排队 · 停止后可发送附件")
+                 : "\(shortcut.sendLabel) 发送 · \(shortcut.newlineLabel) 换行")
                 .font(.system(size: 12))
                 .foregroundStyle(DesktopTheme.inkTertiary)
                 .lineLimit(1)
@@ -158,6 +170,8 @@ struct DesktopComposer: View {
             DesktopAttachmentPreview(document: document)
         }
     }
+
+    private var shortcut: DesktopSendShortcut { workspace.settings.sendShortcut }
 
     private var sendDisabled: Bool {
         workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
