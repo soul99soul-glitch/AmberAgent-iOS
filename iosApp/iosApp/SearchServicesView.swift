@@ -84,7 +84,7 @@ struct SearchServicesView: View {
                     Circle()
                         .fill(statusActive ? AmberTheme.accentGreen : AmberTheme.muted2)
                         .frame(width: 8, height: 8)
-                    Text("\(totalEnabledCount) / \(totalServiceCount) 个服务已启用 · 多源召回")
+                    Text("\(totalEnabledCount) / \(totalServiceCount) 项已开启")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                     Spacer(minLength: 0)
@@ -96,7 +96,7 @@ struct SearchServicesView: View {
     }
 
     private var statusActive: Bool {
-        sharedSettings.enableWebSearch && totalEnabledCount > 0
+        sharedSettings.enableWebSearch && IOSSearchExecutor.searchProviderSelection(settings: sharedSettings.snapshot).route != .unsupported
     }
 
     // MARK: - Built-in free sources
@@ -123,7 +123,7 @@ struct SearchServicesView: View {
                 SearchServicesDivider()
                 builtinRow(
                     title: "Google WebView 兜底",
-                    subtitle: "免费聚合结果少于 3 条时，在后台网页中打开 Google 搜索补充结果。",
+                    subtitle: "免费聚合结果不足时，在后台网页中打开 Google 搜索补充结果；已有足够结果时跳过。",
                     isOn: sharedSettings.searchGoogleWebViewFallbackEnabled
                 ) { sharedSettings.setSearchGoogleWebViewFallbackEnabled($0) }
             }
@@ -147,13 +147,20 @@ struct SearchServicesView: View {
                 AmberSectionLabel(text: "已配置")
                 Spacer()
                 if configuredProviders.count > 1 {
-                    Label("拖动调整优先级", systemImage: "arrow.up.arrow.down")
+                    Label("拖动调整候补顺序", systemImage: "arrow.up.arrow.down")
                         .font(.caption2)
                         .foregroundStyle(AmberTheme.muted2)
                         .padding(.trailing, 16)
                         .padding(.bottom, 6)
                 }
             }
+
+            Text("点服务名称设为默认。默认服务关闭、缺少 Key 或暂不支持时，按此顺序选择其他可用服务。请求失败时，仅在免费聚合开启时回退免费搜索。")
+                .font(.caption2)
+                .foregroundStyle(AmberTheme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
 
             AmberFormGroup {
                 if configuredProviders.isEmpty {
@@ -173,7 +180,7 @@ struct SearchServicesView: View {
         }
     }
 
-    private func configuredRow(_ provider: ConfiguredSearchProvider) -> some View {
+    private func configuredRow(_ provider: IOSConfiguredSearchProvider) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 15, weight: .semibold))
@@ -182,22 +189,34 @@ struct SearchServicesView: View {
 
             ZStack {
                 Circle().fill(AmberTheme.accent.opacity(0.12)).frame(width: 22, height: 22)
-                Text("\(provider.priority)")
+                Text("\(provider.index + 1)")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(AmberTheme.accent)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(provider.name)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                Text(provider.typeLabel)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(AmberTheme.muted2)
+            Button {
+                sharedSettings.selectSearchProvider(serviceId: provider.id)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                    Text(provider.selected ? "\(provider.typeLabel) · 默认" : provider.typeLabel)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(provider.selected ? AmberTheme.accent : AmberTheme.muted2)
+                    if provider.isFreeAggregate {
+                        Text("受上方免费聚合开关控制")
+                            .font(.caption2)
+                            .foregroundStyle(AmberTheme.muted2)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(provider.name)，\(provider.selected ? "默认搜索服务" : "设为默认搜索服务")")
 
-            Toggle("", isOn: Binding(
+            Toggle("启用\(provider.name)", isOn: Binding(
                 get: { provider.enabled },
                 set: { sharedSettings.setSearchProviderEnabled(serviceId: provider.id, enabled: $0) }
             ))
@@ -265,8 +284,10 @@ struct SearchServicesView: View {
             Text("\(sharedSettings.searchResultSize)")
                 .font(.body.weight(.semibold).monospacedDigit())
                 .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(minWidth: 38)
-            stepperButton(systemImage: "plus", enabled: sharedSettings.searchResultSize < 50) {
+            stepperButton(systemImage: "plus", enabled: sharedSettings.searchResultSize < 10) {
                 sharedSettings.setSearchResultSize(sharedSettings.searchResultSize + 1)
             }
         }
@@ -281,7 +302,7 @@ struct SearchServicesView: View {
             Image(systemName: systemImage)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(enabled ? AmberTheme.accent : AmberTheme.muted2)
-                .frame(width: 40, height: 34)
+                .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -295,7 +316,7 @@ struct SearchServicesView: View {
             AmberSectionLabel(text: "推荐组合")
 
             AmberFormGroup {
-                recommendedRow(title: "零成本", detail: "Jina + DuckDuckGo + Bing")
+                recommendedRow(title: "零成本", detail: "免费聚合搜索 + Jina Reader")
                 SearchServicesDivider()
                 recommendedRow(title: "Google 结果", detail: "Serper / SerpAPI")
                 SearchServicesDivider()
@@ -320,31 +341,8 @@ struct SearchServicesView: View {
 
     // MARK: - Derived data
 
-    private var configuredProviders: [ConfiguredSearchProvider] {
-        let saved = sharedSettings.savedSearchProviders
-        var nameById: [String: String] = [:]
-        var typeById: [String: String] = [:]
-        for entry in saved {
-            guard let sid = entry["serviceId"] else { continue }
-            nameById[sid] = entry["name"]
-            typeById[sid] = entry["serviceType"]
-        }
-        let enabledIds = Set(sharedSettings.snapshot.searchEnabledServiceIds.map { $0.description() })
-        return sharedSettings.snapshot.searchServices.enumerated().map { index, service in
-            let sid = service.id.description()
-            let isDefaultBing = service is SearchServiceOptions.BingLocalOptions
-            let name = nameById[sid] ?? (isDefaultBing ? "Bing HTML 兜底" : "搜索服务")
-            let rawType = typeById[sid] ?? ""
-            let type = rawType.isEmpty ? (isDefaultBing ? "bing_local" : "search") : rawType
-            return ConfiguredSearchProvider(
-                id: sid,
-                index: index,
-                priority: index + 1,
-                name: name,
-                typeLabel: type,
-                enabled: enabledIds.contains(sid)
-            )
-        }
+    private var configuredProviders: [IOSConfiguredSearchProvider] {
+        sharedSettings.configuredSearchProviders
     }
 
     private var builtinEnabledCount: Int {
@@ -360,17 +358,8 @@ struct SearchServicesView: View {
     }
 
     private var totalServiceCount: Int {
-        6 + configuredProviders.count
+        3 + configuredProviders.count
     }
-}
-
-private struct ConfiguredSearchProvider: Identifiable {
-    let id: String        // KMP SearchServiceOptions.id (Uuid string)
-    let index: Int        // index in snapshot.searchServices (priority order, drives reorder)
-    let priority: Int     // 1-based rank for the badge
-    let name: String
-    let typeLabel: String
-    let enabled: Bool
 }
 
 private struct SearchServicesDivider: View {

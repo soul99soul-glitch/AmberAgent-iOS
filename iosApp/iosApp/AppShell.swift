@@ -252,6 +252,9 @@ struct AppShell: View {
             handleScenePhaseChange(phase)
             if phase == .active {
                 Task { await storeCoordinator.refresh() }
+                if didBootstrapConversations {
+                    Task { await IOSWakeScheduler.shared.applicationBecameActive() }
+                }
                 IOSMemoryExtractionCoordinator.shared.resume()
                 IOSMemoryConsolidationCoordinator.shared.resume()
             }
@@ -291,103 +294,109 @@ struct AppShell: View {
                 )
             }
         }
-        .task {
-            // Attach the state-backed instance. AppShell.init may be re-evaluated
-            // while SwiftUI preserves the existing @State object.
-            AgentActivityControlCenter.shared.attach(chatViewModel: chatViewModel)
-            WatchTaskCoordinator.shared.attach(
-                chatViewModel: chatViewModel,
-                sharedSettings: sharedSettings,
-                reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjections
-            )
-            // 启动时引导会话存储：加载历史摘要，选最近一条或新建。
-            // run recovery 不是幂等操作；在任务的第一个 await 前占位，避免 .task
-            // 重启时把本进程正在运行的前台 run 改写为 interrupted。
-            if !didRunStartupRecovery {
-                didRunStartupRecovery = true
-                let interruptedCouncilTaskIds = IOSAdvancedTaskStore.shared.markInterruptedCouncilTasks()
-                IOSAdvancedTaskStore.shared.markInterruptedRemoteCommandTasks()
-                IOSAdvancedTaskStore.shared.markInterruptedEmbeddedIshTasks()
-                CouncilRoomArchiveStore.shared.markInterrupted(taskIds: interruptedCouncilTaskIds)
-                councilChatViewModel.recoverInterruptedTasks(interruptedCouncilTaskIds)
-                await councilChatViewModel.reconcileDurableRuns()
-                await IOSMiniAppAIRunRecovery.reconcile()
-                let backgroundRunIds = IOSChatBackgroundGenerationCoordinator.shared.restorableRunIds
-                let backgroundRecoveryExclusions = IOSChatBackgroundGenerationCoordinator.shared
-                    .startupRecoveryExclusionRunIds
-                let recoveredPendingApprovals = await IOSRunRecovery.recoverPendingApprovalDescriptors(
-                    excludingRunIds: backgroundRecoveryExclusions
-                )
-                let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
-                let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
-                await conversationStore.bootstrap()
-                IOSBuiltinSkills.installIfMissing(enableWith: sharedSettings)
-                await chatViewModel.reconcilePendingMiniAppMutationsAfterConversationBootstrap()
-                didBootstrapConversations = true
-
-                // A failed approval-owner query makes it unsafe to classify any
-                // unfinished run: an awaiting approval could otherwise be swept
-                // as an ordinary interruption with its tool output still empty.
-                if let recoveredPendingApprovals {
-                    await chatViewModel.terminateRecoveredPendingApprovals(recoveredPendingApprovals)
-                    let pendingApprovalRunIds = Set(recoveredPendingApprovals.map(\.runId))
-                    let excludedFromInterrupted = backgroundRecoveryExclusions.union(pendingApprovalRunIds)
-                    if let interruptedRunConversationPairs = await IOSRunRecovery.unfinishedRunConversationPairs(
-                        candidateRunIds: startupCandidateRunIds,
-                        excludingRunIds: excludedFromInterrupted
-                    ) {
-                        let recoveryResult = await chatViewModel.applyToolCallLedgerRecovery(
-                            forInterruptedRuns: interruptedRunConversationPairs
-                        )
-                        staleBackgroundOutcomeUnknownRunIds.formUnion(
-                            recoveryResult.outcomeUnknownRunIds.intersection(backgroundRunIds)
-                        )
-                        let unreconciledRunIds = Set(interruptedRunConversationPairs.map(\.runId))
-                            .subtracting(recoveryResult.reconciledRunIds)
-                        _ = await IOSRunRecovery.recoverInterruptedRuns(
-                            candidateRunIds: startupCandidateRunIds,
-                            excludingRunIds: excludedFromInterrupted
-                                .union(unreconciledRunIds)
-                                .union(recoveryResult.outcomeUnknownRunIds)
-                        )
-                    }
-                }
-                AgentLiveActivityController.shared.restoreExistingActivity(
-                    ownedRunIds: backgroundRunIds
-                )
-                IOSAlarmService.shared.reconcileOnLaunch()
-                IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
-                if scenePhase == .active {
-                    IOSChatBackgroundGenerationCoordinator.shared
-                        .resumeRecoverableJobsIfNeeded()
-                }
-                finalizeStaleBackgroundJobsIfNeeded()
-                if scenePhase == .active {
-                    if let novelCreationViewModel {
-                        await novelCreationViewModel.resumeDetachedBackgroundGeneration()
-                        _ = await novelSessionViewModel?
-                            .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
-                    }
-                }
-            } else {
-                await conversationStore.bootstrap()
-                didBootstrapConversations = true
-            }
-            sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
-            IOSSubAgentActivityStore.shared.start()
-            conversationActivityCenter.start()
-            await openPendingAgentActivityIfReady()
-            await openPendingAppDeepLinkIfReady()
-            #if DEBUG && targetEnvironment(simulator)
-            // Create the explicit preview after launch recovery has removed orphan cards.
-            await IOSPhoneControlActivityPreview.runIfRequested()
-            #endif
-        }
+        .task { await prepareRuntime() }
         .onOpenURL { url in
             enqueueAppURL(url)
         }
         // 分享/导出的进度与失败浮层：App 级单一挂载点。
         .iosShareActivityOverlay()
+    }
+
+    private func prepareRuntime() async {
+        // Attach the state-backed instance. AppShell.init may be re-evaluated
+        // while SwiftUI preserves the existing @State object.
+        AgentActivityControlCenter.shared.attach(chatViewModel: chatViewModel)
+        IOSWakeScheduler.shared.attach(chatViewModel: chatViewModel)
+        WatchTaskCoordinator.shared.attach(
+            chatViewModel: chatViewModel,
+            sharedSettings: sharedSettings,
+            reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjections
+        )
+        // 启动时引导会话存储：加载历史摘要，选最近一条或新建。
+        // run recovery 不是幂等操作；在任务的第一个 await 前占位，避免 .task
+        // 重启时把本进程正在运行的前台 run 改写为 interrupted。
+        if !didRunStartupRecovery {
+            didRunStartupRecovery = true
+            let interruptedCouncilTaskIds = IOSAdvancedTaskStore.shared.markInterruptedCouncilTasks()
+            IOSAdvancedTaskStore.shared.markInterruptedRemoteCommandTasks()
+            IOSAdvancedTaskStore.shared.markInterruptedEmbeddedIshTasks()
+            CouncilRoomArchiveStore.shared.markInterrupted(taskIds: interruptedCouncilTaskIds)
+            councilChatViewModel.recoverInterruptedTasks(interruptedCouncilTaskIds)
+            await councilChatViewModel.reconcileDurableRuns()
+            await IOSMiniAppAIRunRecovery.reconcile()
+            let backgroundRunIds = IOSChatBackgroundGenerationCoordinator.shared.restorableRunIds
+            let backgroundRecoveryExclusions = IOSChatBackgroundGenerationCoordinator.shared
+                .startupRecoveryExclusionRunIds
+            let recoveredPendingApprovals = await IOSRunRecovery.recoverPendingApprovalDescriptors(
+                excludingRunIds: backgroundRecoveryExclusions
+            )
+            let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
+            let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
+            await conversationStore.bootstrap()
+            IOSBuiltinSkills.installIfMissing(enableWith: sharedSettings)
+            await chatViewModel.reconcilePendingMiniAppMutationsAfterConversationBootstrap()
+            didBootstrapConversations = true
+
+            // A failed approval-owner query makes it unsafe to classify any
+            // unfinished run: an awaiting approval could otherwise be swept
+            // as an ordinary interruption with its tool output still empty.
+            if let recoveredPendingApprovals {
+                await chatViewModel.terminateRecoveredPendingApprovals(recoveredPendingApprovals)
+                let pendingApprovalRunIds = Set(recoveredPendingApprovals.map(\.runId))
+                let excludedFromInterrupted = backgroundRecoveryExclusions.union(pendingApprovalRunIds)
+                if let interruptedRunConversationPairs = await IOSRunRecovery.unfinishedRunConversationPairs(
+                    candidateRunIds: startupCandidateRunIds,
+                    excludingRunIds: excludedFromInterrupted
+                ) {
+                    let recoveryResult = await chatViewModel.applyToolCallLedgerRecovery(
+                        forInterruptedRuns: interruptedRunConversationPairs
+                    )
+                    staleBackgroundOutcomeUnknownRunIds.formUnion(
+                        recoveryResult.outcomeUnknownRunIds.intersection(backgroundRunIds)
+                    )
+                    let unreconciledRunIds = Set(interruptedRunConversationPairs.map(\.runId))
+                        .subtracting(recoveryResult.reconciledRunIds)
+                    _ = await IOSRunRecovery.recoverInterruptedRuns(
+                        candidateRunIds: startupCandidateRunIds,
+                        excludingRunIds: excludedFromInterrupted
+                            .union(unreconciledRunIds)
+                            .union(recoveryResult.outcomeUnknownRunIds)
+                    )
+                }
+            }
+            AgentLiveActivityController.shared.restoreExistingActivity(
+                ownedRunIds: backgroundRunIds
+            )
+            IOSAlarmService.shared.reconcileOnLaunch()
+            IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
+            if scenePhase == .active {
+                IOSChatBackgroundGenerationCoordinator.shared
+                    .resumeRecoverableJobsIfNeeded()
+            }
+            finalizeStaleBackgroundJobsIfNeeded()
+            if scenePhase == .active {
+                if let novelCreationViewModel {
+                    await novelCreationViewModel.resumeDetachedBackgroundGeneration()
+                    _ = await novelSessionViewModel?
+                        .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
+                }
+            }
+        } else {
+            await conversationStore.bootstrap()
+            didBootstrapConversations = true
+        }
+        sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
+        IOSSubAgentActivityStore.shared.start()
+        conversationActivityCenter.start()
+        await openPendingAgentActivityIfReady()
+        await openPendingAppDeepLinkIfReady()
+        if scenePhase == .active {
+            await IOSWakeScheduler.shared.applicationBecameActive()
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        // Create the explicit preview after launch recovery has removed orphan cards.
+        await IOSPhoneControlActivityPreview.runIfRequested()
+        #endif
     }
 
     private var shouldShowThemeTryOnBar: Bool {
@@ -647,6 +656,33 @@ struct AppShell: View {
             rootRouter.path = [.settings, .weather]
         case .appleIntegrations:
             rootRouter.path = [.settings, .appleIntegrations]
+        case .wakeTasks:
+            rootRouter.path = [.settings, .appleIntegrations]
+        case .wakeDueTasks:
+            let report = await IOSWakeScheduler.shared.runDueTasks()
+            guard pendingAppDeepLinkDestination == destination else { return }
+            if let runID = report.runIDs.first,
+               let task = IOSWakeScheduler.shared.store.tasks.first(where: { $0.executionRunID == runID }) {
+                pendingAppDeepLinkDestination = .conversation(id: task.conversationID)
+                return
+            }
+            rootRouter.path = [.settings, .appleIntegrations]
+        case .wakeTask(let id):
+            guard let task = IOSWakeScheduler.shared.store.task(id: id) else {
+                conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                    title: "无法打开续跑任务", message: "这项任务不存在。", severity: .warning
+                ))
+                rootRouter.path = [.settings, .appleIntegrations]
+                break
+            }
+            if task.status == .scheduled {
+                _ = await IOSWakeScheduler.shared.runDueTasks()
+            }
+            guard pendingAppDeepLinkDestination == destination else { return }
+            // Reuse the conversation router and its stale-selection guards.
+            // A notification is never permission to retry an interrupted run.
+            pendingAppDeepLinkDestination = .conversation(id: task.conversationID)
+            return
         case .gatewayPair(let payload):
             MacGatewayStore.shared.receivePairingLink(payload)
             rootRouter.path = [.settings, .macGateway]

@@ -114,7 +114,7 @@ struct IOSPhoneControlSettingsView: View {
                     get: { IOSPhoneControlReturnPreference.enabled() },
                     set: { IOSPhoneControlReturnPreference.set($0) }
                 )) {
-                    rowText("完成后返回 Amber", detail: "任务结束时切回宿主 App；unknown 不抢前台")
+                    rowText("完成后返回 Amber", detail: "整轮结束后打开本次对话；人工接管或结果未知时不切换")
                 }
                 .frame(minHeight: 52)
                 .padding(.horizontal, 14)

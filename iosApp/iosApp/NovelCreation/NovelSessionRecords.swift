@@ -116,6 +116,8 @@ struct NovelCandidateRecord: Codable, Equatable, Sendable {
     let chapterPlanDigest: String?
     /// Set only for candidates produced by the ghostwrite pipeline.
     let ghostwritePlanID: NovelChapterPlanID?
+    /// The source run may be pruned at quiet rest; collection still needs its original intent.
+    let generationGranularity: NovelGenerationGranularity?
     let createdAt: Date
 
     init(
@@ -133,6 +135,7 @@ struct NovelCandidateRecord: Codable, Equatable, Sendable {
         collectedCheckpointID: NovelCheckpointID?,
         chapterPlanDigest: String? = nil,
         ghostwritePlanID: NovelChapterPlanID? = nil,
+        generationGranularity: NovelGenerationGranularity? = nil,
         createdAt: Date
     ) {
         self.id = id
@@ -149,6 +152,7 @@ struct NovelCandidateRecord: Codable, Equatable, Sendable {
         self.collectedCheckpointID = collectedCheckpointID
         self.chapterPlanDigest = chapterPlanDigest
         self.ghostwritePlanID = ghostwritePlanID
+        self.generationGranularity = generationGranularity
         self.createdAt = createdAt
     }
 
@@ -167,6 +171,7 @@ struct NovelCandidateRecord: Codable, Equatable, Sendable {
         case collectedCheckpointID
         case chapterPlanDigest
         case ghostwritePlanID
+        case generationGranularity
         case createdAt
     }
 
@@ -195,6 +200,10 @@ struct NovelCandidateRecord: Codable, Equatable, Sendable {
         )
         chapterPlanDigest = try values.decodeIfPresent(String.self, forKey: .chapterPlanDigest)
         ghostwritePlanID = try values.decodeIfPresent(NovelChapterPlanID.self, forKey: .ghostwritePlanID)
+        generationGranularity = try values.decodeIfPresent(
+            NovelGenerationGranularity.self,
+            forKey: .generationGranularity
+        )
         createdAt = try values.decode(Date.self, forKey: .createdAt)
     }
 }

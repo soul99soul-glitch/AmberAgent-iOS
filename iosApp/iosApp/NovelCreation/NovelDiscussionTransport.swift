@@ -59,6 +59,7 @@ extension NovelLiveModelAdapter {
                 }
                 var result: IOSAgentToolEngineResult!
                 let producedVisibleText = VisibleTextFlag()
+                let startedToolExecution = VisibleTextFlag()
                 var executorMap: [String: any IOSToolExecutor] = [:]
                 for attempt in 0..<2 {
                     executorMap = executors(request.novelProjectContext)
@@ -70,6 +71,7 @@ extension NovelLiveModelAdapter {
                     let stepText = DiscussionStepTextAccumulator()
                     let stepReasoning = DiscussionStepTextAccumulator()
                     producedVisibleText.reset()
+                    startedToolExecution.reset()
                     result = await engine.run(
                         providerSetting: request.providerSetting,
                         messages: request.messages,
@@ -77,6 +79,9 @@ extension NovelLiveModelAdapter {
                         onAssistantTurnStarted: {
                             stepText.startNewTurn()
                             stepReasoning.startNewTurn()
+                        },
+                        onToolExecutionStarted: { _, _ in
+                            startedToolExecution.mark()
                         },
                         onAssistantText: { text in
                             producedVisibleText.mark()
@@ -89,6 +94,7 @@ extension NovelLiveModelAdapter {
                     guard !Task.isCancelled else { return }
                     if attempt == 0,
                        !producedVisibleText.isSet,
+                       !startedToolExecution.isSet,
                        let failureMessage = result.providerFailureMessage,
                        NovelPresentation.looksLikeTransportFailure(failureMessage) {
                         continue
@@ -248,6 +254,15 @@ extension NovelLiveModelAdapter {
                             isRetryable: true
                         ))
                     }
+                    return
+                }
+                if let approval = result.pendingApproval,
+                   IOSSearchExecutor.supportedToolNames.contains(approval.toolName) {
+                    callbacks.onFailure(failure(
+                        code: "discussion_search_approval_required",
+                        message: "小说讨论暂不支持逐次搜索审批。请在「设置 → 权限与批准 → 搜索与网页读取」中设为「自动批准」后重试；也可关闭「Agent 网络搜索」后重试。",
+                        isRetryable: true
+                    ))
                     return
                 }
                 if result.pendingApproval != nil {

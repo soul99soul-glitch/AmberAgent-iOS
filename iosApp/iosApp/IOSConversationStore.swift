@@ -901,7 +901,12 @@ final class IOSConversationStore {
         }
         defer { finishConversationWrite() }
         do {
-            return try await storage.updateMemoryMode(id: id, memoryMode: .polluted).boolValue
+            let updated = try await storage.updateMemoryMode(id: id, memoryMode: .polluted).boolValue
+            if updated {
+                advanceWriteSequence(for: id)
+                await refreshCurrentMemoryMode(for: id, expectedImportEpoch: operationImportEpoch)
+            }
+            return updated
         } catch {
             publishIOError(operation: "标记会话记忆污染", detail: "目标 \(id): \(error)")
             return false
@@ -919,12 +924,42 @@ final class IOSConversationStore {
         do {
             let updated = try await storage.updateMemoryMode(id: id, memoryMode: .enabled).boolValue
             if updated {
+                advanceWriteSequence(for: id)
+                await refreshCurrentMemoryMode(for: id, expectedImportEpoch: operationImportEpoch)
                 await refreshSummaries()
             }
             return updated
         } catch {
             publishIOError(operation: "恢复会话记忆", detail: "目标 \(id): \(error)")
             return false
+        }
+    }
+
+    private func refreshCurrentMemoryMode(for id: KotlinUuid, expectedImportEpoch: UInt64) async {
+        guard currentConversation?.id == id else { return }
+        let baseline = writeBaseline(for: id)
+        do {
+            guard let stored = try await storage.loadConversation(id: id),
+                  acceptsWrite(to: id, baseline: baseline, expectedImportEpoch: expectedImportEpoch),
+                  let current = currentConversation, current.id == id,
+                  current.memoryMode != stored.memoryMode else { return }
+            // Only this metadata field belongs to the completed write. Preserve
+            // messages and other fields that may have changed while reading it.
+            setCurrent(Conversation(
+                id: current.id,
+                assistantId: current.assistantId,
+                title: current.title,
+                messageNodes: current.messageNodes,
+                chatSuggestions: current.chatSuggestions,
+                isPinned: current.isPinned,
+                autoApproveToolCalls: current.autoApproveToolCalls,
+                memoryMode: stored.memoryMode,
+                createAt: current.createAt,
+                updateAt: current.updateAt,
+                newConversation: current.newConversation
+            ))
+        } catch {
+            publishIOError(operation: "刷新会话记忆状态", detail: "目标 \(id): \(error)")
         }
     }
 

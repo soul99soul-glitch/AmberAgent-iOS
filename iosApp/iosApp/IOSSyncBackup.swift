@@ -838,7 +838,7 @@ struct IOSWebDAVSyncProvider: IOSRemoteSyncProvider {
                     createdAt: resource.modifiedAt,
                     modifiedAt: resource.modifiedAt,
                     sizeBytes: resource.sizeBytes,
-                    remoteRevision: resource.etag.ifBlank(resource.href),
+                    remoteRevision: resource.remoteRevision,
                     deviceId: "",
                     deviceLabel: "",
                     appVersionName: "",
@@ -861,14 +861,28 @@ struct IOSWebDAVSyncProvider: IOSRemoteSyncProvider {
         ])
         let (response, _) = try await transport.send(request, body: data)
         try validate(response: response, accepted: 200, 201, 204)
+        let etag = response.value(forHTTPHeaderField: "ETag")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"")) ?? ""
+        let remoteRevision: String
+        if !etag.isEmpty {
+            remoteRevision = etag
+        } else {
+            // PUT may omit ETag. Read the server's revision so a later listing
+            // compares the same value, rather than treating our upload as a conflict.
+            let resources = try await propfind(depth: 0, fileName: safeName)
+            guard let resource = resources.first(where: { !$0.isCollection }), !resource.remoteRevision.isEmpty else {
+                throw IOSSyncBackupError.remoteProviderUnavailable("WebDAV 上传已完成，但无法读取远端文件版本")
+            }
+            remoteRevision = resource.remoteRevision
+        }
         return IOSRemoteSnapshot(
             fileName: safeName,
             provider: kind,
             manifest: manifest,
             modifiedAt: Int64(Date().timeIntervalSince1970 * 1000),
             sizeBytes: Int64(data.count),
-            remoteRevision: response.value(forHTTPHeaderField: "ETag")?.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                ?? data.sha256Hex()
+            remoteRevision: remoteRevision
         )
     }
 
@@ -889,12 +903,20 @@ struct IOSWebDAVSyncProvider: IOSRemoteSyncProvider {
 
     private func ensureCollectionExists() async throws {
         guard !config.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let request = try makeRequest(method: "MKCOL")
-        let (response, _) = try await transport.send(request, body: nil)
-        try validate(response: response, accepted: 200, 201, 204, 405)
+        let components = config.path.split(separator: "/")
+        guard !components.isEmpty else { return }
+        guard var url = URL(string: config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw IOSSyncBackupError.providerNotConfigured("WebDAV URL 未配置")
+        }
+        for component in components {
+            url.appendPathComponent(String(component), isDirectory: true)
+            let request = try makeRequest(method: "MKCOL", url: url)
+            let (response, _) = try await transport.send(request, body: nil)
+            try validate(response: response, accepted: 200, 201, 204, 405)
+        }
     }
 
-    private func propfind(depth: Int) async throws -> [IOSWebDAVResource] {
+    private func propfind(depth: Int, fileName: String? = nil) async throws -> [IOSWebDAVResource] {
         let body = Data("""
         <?xml version="1.0" encoding="UTF-8"?>
         <D:propfind xmlns:D="DAV:">
@@ -908,7 +930,7 @@ struct IOSWebDAVSyncProvider: IOSRemoteSyncProvider {
           </D:prop>
         </D:propfind>
         """.utf8)
-        let request = try makeRequest(method: "PROPFIND", headers: [
+        let request = try makeRequest(method: "PROPFIND", fileName: fileName, headers: [
             "Content-Type": "application/xml; charset=utf-8",
             "Depth": "\(depth)",
         ])
@@ -921,6 +943,10 @@ struct IOSWebDAVSyncProvider: IOSRemoteSyncProvider {
         guard let url = buildURL(fileName: fileName) else {
             throw IOSSyncBackupError.providerNotConfigured("WebDAV URL 未配置")
         }
+        return try makeRequest(method: method, url: url, headers: headers)
+    }
+
+    private func makeRequest(method: String, url: URL, headers: [String: String] = [:]) throws -> URLRequest {
         if (!config.username.isEmpty || !config.password.isEmpty),
            url.scheme?.lowercased() != "https" {
             throw IOSSyncBackupError.providerNotConfigured("WebDAV Basic 认证只允许使用 HTTPS")
@@ -1007,6 +1033,8 @@ private struct IOSWebDAVResource {
     let modifiedAt: Int64
     let etag: String
     let isCollection: Bool
+
+    var remoteRevision: String { etag.ifBlank(href) }
 
     var fileName: String {
         if !displayName.isEmpty {

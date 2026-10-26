@@ -457,8 +457,11 @@ extension IOSChatBackgroundGenerationCoordinator {
         await presentationConsumer.value
         runState.clearOperationTask()
         guard runState.reserveTerminal() else { return }
-        // Keep background execution until the runner exits and its local tunnel disconnects.
-        await IOSPhoneControlController.shared.stop(runID: job.runId)
+        // Keep background execution through the return to Amber and runner teardown.
+        await IOSPhoneControlController.shared.stop(
+            runID: job.runId,
+            returnToAmber: !result.wasCancelled && result.toolOutcomeUnknown == nil && result.durabilityFailureMessage == nil
+        )
 
         if !reportsPhoneWorkProgress { progress.completedUnitCount = 3 }
         backgroundTask.updateTitle(

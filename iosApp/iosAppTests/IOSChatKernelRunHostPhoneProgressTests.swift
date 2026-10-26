@@ -1,3 +1,5 @@
+import AmberPhoneControl
+import CryptoKit
 import XCTest
 @preconcurrency import Shared
 @testable import iosApp
@@ -6,6 +8,97 @@ import XCTest
 /// Phone reasoning and background progress ownership.
 @MainActor
 final class IOSChatKernelRunHostPhoneProgressTests: IOSChatKernelRunHostTestCase {
+    func testCompletedPhoneReadAndCollectionReturnToAmberAndRouteOriginalConversation() async throws {
+        for toolName in ["phone_observe", "phone_collect_list"] {
+            let fixture = try HostPhoneReturnFixture(testCase: self)
+            defer { fixture.clear() }
+            let started = await waitForCondition { fixture.provider.callCount == 1 }
+            XCTAssertTrue(started)
+            let runID = try XCTUnwrap(fixture.host.currentRunId)
+            let input = toolName == "phone_observe" ? "{}"
+                : #"{"container":{"identifier":"observed-list"},"direction":"up","max_swipes":0,"max_items":10}"#
+            fixture.provider.emit(F.streamChunk(delta: toolRound("phone-read", toolName, input).message))
+            fixture.provider.finishRound()
+            let readCompleted = await waitForCondition {
+                fixture.provider.callCount == 2
+                    && !(F.toolPart(toolCallId: "phone-read", in: fixture.harness.messages)?.output.isEmpty ?? true)
+            }
+            XCTAssertTrue(readCompleted, toolName)
+            let output = F.toolPart(toolCallId: "phone-read", in: fixture.harness.messages)?.output
+                .compactMap { ($0 as? UIMessagePart.Text)?.text }.joined() ?? ""
+            XCTAssertTrue(output.contains("Captured item"), output)
+            XCTAssertEqual(fixture.controller.phase, .ready)
+            XCTAssertFalse(fixture.http.paths.contains("/wda/apps/activate"), "Reading alone must not end the run or switch apps")
+            fixture.provider.emit(F.streamChunk(delta: F.assistantText("已采集并分析内容")))
+            fixture.provider.finishRound()
+            let completed = await waitForHostIdle(fixture.host)
+            XCTAssertTrue(completed)
+            XCTAssertEqual(fixture.harness.log.terminalStatus(), AgentRunStatus.completed.wireName)
+            XCTAssertEqual(fixture.harness.messages.last?.toText(), "已采集并分析内容")
+            XCTAssertNil(fixture.controller.ownerRunID)
+            XCTAssertEqual(fixture.returnedConversations.map(\.runID), [runID])
+            XCTAssertEqual(fixture.returnedConversations.map(\.conversationID), [fixture.harness.conversationId.toHexDashString()])
+            let activation = try XCTUnwrap(fixture.http.events.firstIndex(of: "/wda/apps/activate"))
+            XCTAssertEqual(Array(fixture.http.events[activation...]), ["/wda/apps/activate", "/wda/activeAppInfo", "/source",
+                "/wda/activeAppInfo", "stop", "stop"])
+            let scopes = await fixture.session.startedScopes
+            XCTAssertEqual(scopes, [Set([fixture.targetBundleID])], "Returning must reuse the original runner")
+        }
+    }
+
+    func testCompletedChatWithPhoneAuthorizationButNoRunnerDoesNotSwitchApps() async throws {
+        let fixture = try HostPhoneReturnFixture(testCase: self)
+        defer { fixture.clear() }
+        let started = await waitForCondition { fixture.provider.callCount == 1 }
+        XCTAssertTrue(started)
+        let runID = try XCTUnwrap(fixture.host.currentRunId)
+        XCTAssertEqual(fixture.controller.ownerRunID, runID)
+        fixture.provider.emit(F.streamChunk(delta: F.assistantText("普通回答")))
+        fixture.provider.finishRound()
+        let completed = await waitForHostIdle(fixture.host)
+        XCTAssertTrue(completed)
+        XCTAssertEqual(fixture.harness.log.terminalStatus(), AgentRunStatus.completed.wireName)
+        XCTAssertTrue(fixture.http.paths.isEmpty)
+        XCTAssertTrue(fixture.returnedConversations.isEmpty)
+        let scopes = await fixture.session.startedScopes
+        XCTAssertTrue(scopes.isEmpty)
+        XCTAssertNil(fixture.controller.ownerRunID)
+    }
+
+    func testCancelledAndUnknownPhoneRunsDoNotReturnOrRouteConversation() async throws {
+        for scenario in ["cancelled", "unknown"] {
+            let fixture = try HostPhoneReturnFixture(testCase: self, failActivation: scenario == "unknown")
+            defer { fixture.clear() }
+            let started = await waitForCondition { fixture.provider.callCount == 1 }
+            XCTAssertTrue(started)
+            let runID = try XCTUnwrap(fixture.host.currentRunId)
+            let toolName = scenario == "unknown" ? "phone_act" : "phone_observe"
+            let input = scenario == "unknown"
+                ? "{\"action\":\"launch\",\"bundle_id\":\"\(fixture.targetBundleID)\"}" : "{}"
+            fixture.provider.emit(F.streamChunk(delta: toolRound("terminal-phone", toolName, input).message))
+            fixture.provider.finishRound()
+            if scenario == "cancelled" {
+                let readCompleted = await waitForCondition { fixture.provider.callCount == 2 }
+                XCTAssertTrue(readCompleted)
+                fixture.host.cancel()
+            }
+            let finished = await waitForHostIdle(fixture.host)
+            XCTAssertTrue(finished, scenario)
+            let cleaned = await waitForCondition { fixture.controller.ownerRunID == nil }
+            XCTAssertTrue(cleaned, scenario)
+            XCTAssertTrue(fixture.returnedConversations.isEmpty, scenario)
+            XCTAssertEqual(fixture.http.paths.filter { $0 == "/wda/apps/activate" }.count,
+                scenario == "unknown" ? 1 : 0, "An unknown action must never dispatch an additional return action")
+            if scenario == "cancelled" {
+                XCTAssertEqual(fixture.harness.log.terminalStatus(), AgentRunStatus.cancelled.wireName)
+            } else {
+                XCTAssertNotEqual(fixture.harness.log.terminalStatus(), AgentRunStatus.completed.wireName)
+                XCTAssertTrue(fixture.harness.ledger.recoveryTransitions.contains { $0.state == .outcomeUnknown })
+            }
+            XCTAssertNil(fixture.controller.handoffState(runID: runID))
+        }
+    }
+
     func testPhoneAutomaticReasoningEligibilityRequiresClaimAndPreservesExplicitLevels() async throws {
         let choices: [(String, ReasoningLevel, Bool)] = [
             ("auto", .high, true), ("high", .high, true), ("low", .low, true),
@@ -315,6 +408,65 @@ final class IOSChatKernelRunHostPhoneProgressTests: IOSChatKernelRunHostTestCase
         XCTAssertNil(try iosChatBackgroundLeaseProgress(harness.keepAlive, runID: runID))
     }
 
+}
+
+/// Composes the existing host, streaming provider and runner fixtures through the real tool engine.
+@MainActor
+private final class HostPhoneReturnFixture {
+    let suite: String
+    let defaults: UserDefaults
+    let targetBundleID = "app.example.read-target"
+    let http: ReadinessHTTPFixture
+    let session: ReadinessSessionStub
+    let controller: IOSPhoneControlController
+    let harness: IOSChatForegroundHarness
+    let provider = IOSChatProgressStreamingProvider()
+    let host: ChatKernelRunHost
+    private let routes = HostPhoneReturnRoutes()
+    var returnedConversations: [(runID: String, conversationID: String?)] { routes.values }
+
+    init(testCase: IOSChatKernelRunHostPhoneProgressTests, failActivation: Bool = false) throws {
+        suite = "KernelHostPhoneReturn-\(UUID().uuidString)"
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        IOSPhoneControlReturnPreference.set(true, defaults)
+        let hostBundleID = "app.amber.return-host"
+        http = ReadinessHTTPFixture(bundleID: targetBundleID, activatedBundleID: hostBundleID,
+            failActivation: failActivation, sourceBody: #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":393,"height":852},"children":[{"type":"XCUIElementTypeTable","rawIdentifier":"observed-list","isEnabled":true,"rect":{"x":0,"y":80,"width":393,"height":700},"children":[{"type":"XCUIElementTypeCell","rawIdentifier":"row-1","isEnabled":true,"rect":{"x":0,"y":80,"width":393,"height":80},"children":[{"type":"XCUIElementTypeStaticText","label":"Captured item","isEnabled":true,"rect":{"x":20,"y":90,"width":250,"height":40}}]}]}]}}"#)
+        session = ReadinessSessionStub(fixture: http)
+        let signingKey = Curve25519.Signing.PrivateKey()
+        let pairingFields: [String: Any] = [
+            "public_key": signingKey.publicKey.rawRepresentation,
+            "private_key": signingKey.rawRepresentation,
+            "identifier": UUID().uuidString,
+        ]
+        let pairing = try PropertyListSerialization.data(fromPropertyList: pairingFields, format: .xml, options: 0)
+        let recorder = routes
+        controller = IOSPhoneControlController(defaults: defaults, credentials: MemoryPairingStore(data: pairing),
+            session: session, localTunnel: PhoneControlTunnelStub(), hostBundleID: hostBundleID,
+            onReturnToConversation: { runID, conversationID in recorder.values.append((runID, conversationID)) },
+            onHandoffChange: { _, _ in })
+        controller.enabled = true
+        controller.selectedBundleIDs = [targetBundleID]
+        harness = testCase.makeHarness()
+        host = testCase.makeHost(harness: harness, provider: provider, phoneControl: controller)
+        let bridge = IosToolExposureBridge(tools: IOSPhoneControlToolCatalog.declarations)
+        bridge.exposeToolNames(names: ["phone_observe", "phone_collect_list", "phone_act"])
+        host.start(providerSetting: harness.providerSetting,
+            params: IOSChatForegroundFixtures.makeParams(toolNames: [], tools: bridge.visibleTools()),
+            inputDigest: "phone-return-regression", conversationId: harness.conversationId,
+            uploadMessages: harness.messages, toolExposureBridge: bridge, phoneControlUserInitiated: true)
+    }
+
+    func clear() {
+        host.cancel()
+        http.unregister()
+        defaults.removePersistentDomain(forName: suite)
+    }
+}
+
+@MainActor
+private final class HostPhoneReturnRoutes {
+    var values: [(runID: String, conversationID: String?)] = []
 }
 
 // The ownership regression never starts native services or writes Keychain.

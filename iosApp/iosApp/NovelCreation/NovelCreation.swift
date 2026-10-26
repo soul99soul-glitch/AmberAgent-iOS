@@ -777,6 +777,29 @@ actor DefaultNovelCreation: NovelCreation {
         return try await startGeneration(request)
     }
 
+    func observeRun(
+        projectID: NovelProjectID,
+        runID: NovelRunID,
+        operationID: NovelOperationID
+    ) async throws -> NovelRun {
+        try await recoverGenerationStateIfNeeded(requiredProjectID: projectID)
+        guard !isRecoveringGenerationState else {
+            throw NovelError.projectBusy(projectID)
+        }
+        guard !blockedLifecycleProjectIDs.contains(projectID) else {
+            throw NovelError.storageIndeterminate(projectID)
+        }
+        let loaded = try await loadCommittedProject(id: projectID)
+        guard let run = loaded.document.activeRuns.first(where: { $0.id == runID }),
+              run.operationID == operationID,
+              loaded.document.appliedOperations.contains(where: {
+                  $0.operationID == operationID && $0.kind == .startRun
+              }) else {
+            throw NovelError.runNotFound(runID)
+        }
+        return try await observeExistingRun(run, projectID: projectID, document: loaded.document)
+    }
+
     private func execute(
         _ action: NovelAction,
         finalCommitAuthorization: NovelRepositoryCommitAuthorization?,

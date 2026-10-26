@@ -8,7 +8,8 @@ import Foundation
 public actor PhoneRunnerClient {
     private let http: RunnerHTTP
     private var allowedBundleIDs: Set<String>
-    private let allowHome: Bool
+    private var allowHome: Bool
+    private var systemNavigationAllowed = false
     private var stopped = false
     private var outcomeUnknown = false
     private var operationInFlight = false
@@ -64,6 +65,20 @@ public actor PhoneRunnerClient {
             throw PhoneControlProblem(.invalidConfiguration, "An application bundle ID is required.")
         }
         allowedBundleIDs.insert(bundleID)
+    }
+
+    /// Extends only this live run to Home and SpringBoard, after its owner requests system navigation.
+    public func allowSystemNavigation() throws {
+        try allowApplication("com.apple.springboard")
+        allowHome = true
+        systemNavigationAllowed = true
+    }
+
+    /// Reads the device's lock state without attempting to wake or unlock it.
+    public func screenLockState() async throws -> Bool {
+        try beginOperation(.observe)
+        defer { finishOperation() }
+        return try await readScreenLockState()
     }
 
     public func status() async throws -> PhoneRunnerStatus {
@@ -290,8 +305,21 @@ public actor PhoneRunnerClient {
                 guard allowHome else {
                     throw PhoneControlProblem(.appOutOfScope, "This run does not allow the Home action.")
                 }
-                try checkScope(try await activeApp())
+                if !systemNavigationAllowed { try checkScope(try await activeApp()) }
                 path = "/wda/homescreen"
+            case .pressButton(let button):
+                try checkSystemNavigation()
+                path = "/wda/pressButton"
+                body["name"] = .string(button.rawValue)
+            case .lockScreen:
+                try checkSystemNavigation()
+                path = "/wda/lock"
+            case .unlockScreen:
+                try checkSystemNavigation()
+                // activeApp can stall on a locked device. The lock-state endpoint has a
+                // dedicated runner path that does not wait for foreground accessibility.
+                guard try await readScreenLockState() else { return .completed }
+                path = "/wda/unlock"
             case .dismissKeyboard:
                 try checkScope(try await activeApp())
                 path = "/wda/keyboard/dismiss"
@@ -507,6 +535,21 @@ public actor PhoneRunnerClient {
         guard (300...3_000).contains(durationMs) else {
             throw PhoneControlProblem(.invalidAction, "Long-press duration must be between 300 and 3000 milliseconds.")
         }
+    }
+
+    private func checkSystemNavigation() throws {
+        guard systemNavigationAllowed else {
+            throw PhoneControlProblem(.appOutOfScope, "This run does not allow device-wide system actions.")
+        }
+    }
+
+    private func readScreenLockState() async throws -> Bool {
+        let response = try await request(stage: .lockState, path: "/wda/locked")
+        try checkCanContinue()
+        guard let locked = response.value.bool else {
+            throw PhoneControlProblem(.malformedResponse, "Runner lock-state response must contain a Boolean value.")
+        }
+        return locked
     }
 
     private func verifiedScreenshotSize(observed: Snapshot?, observationID: String) async throws -> ScreenSize {

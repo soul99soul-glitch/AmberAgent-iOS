@@ -320,7 +320,11 @@ extension NovelFileProjectRepository {
                 fileManager: fileManager,
                 layoutFileName: NovelProjectShardedStorage.previousLayoutFileName
             )
-            return try finalizeLoadedDocument(loaded.document, projectID: projectID)
+            return try finalizeLoadedDocument(
+                loaded.document,
+                projectID: projectID,
+                reconcileWorkspace: false
+            )
         }
         let monoPrevious = previousURL(for: projectID)
         return try readProjectDocument(at: monoPrevious, projectID: projectID)
@@ -422,7 +426,7 @@ extension NovelFileProjectRepository {
         // has its book printed on disk migrates to workspace-native on first
         // open. Failure fails open back to the legacy chain and retries next
         // open; rollback keeps `legacy-package/` beside the workspace.
-        if automaticWorkspaceMigration, shouldMigrateLegacyProject(projectID) {
+        if reconcileWorkspace, automaticWorkspaceMigration, shouldMigrateLegacyProject(projectID) {
             let project = packageURL(for: projectID)
             workspaceNativeByProject[projectID] = nil
             do {
@@ -461,7 +465,9 @@ extension NovelFileProjectRepository {
             // The migration persisted the pruned projection — return it.
             return NovelWorkspaceProjectStore.persistableAtRest(normalized)
         }
-        try publishWorktreeIfNeeded(normalized, projectID: projectID)
+        if reconcileWorkspace {
+            try publishWorktreeIfNeeded(normalized, projectID: projectID)
+        }
         return normalized
     }
 

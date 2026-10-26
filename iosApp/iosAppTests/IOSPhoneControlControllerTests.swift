@@ -944,6 +944,182 @@ final class IOSPhoneControlControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testReturnToAmberNeverStartsRunnerOrActsForStaleOwner() async throws {
+        let fixture = try HandoffControllerFixture(pairing: pairingData())
+        defer { fixture.clear() }
+        let controller = fixture.controller
+        IOSPhoneControlReturnPreference.set(true, fixture.defaults)
+        XCTAssertTrue(controller.claim(runID: "return", onStop: {}))
+        let noRunner = await controller.returnToAmber(runID: "return")
+        XCTAssertEqual(noRunner.outcome, "not_sent")
+        XCTAssertFalse(noRunner.verified)
+        XCTAssertFalse(controller.hasRequestedSession(runID: "return"))
+        let stale = await controller.returnToAmber(runID: "old")
+        XCTAssertEqual(stale.outcome, "not_sent")
+        XCTAssertEqual(controller.ownerRunID, "return")
+        XCTAssertTrue(fixture.activity.returnedConversations.isEmpty)
+        await controller.stop(runID: "return", returnToAmber: true)
+        XCTAssertNil(controller.ownerRunID)
+        XCTAssertTrue(fixture.tunnel.startOwners.isEmpty)
+    }
+
+    @MainActor
+    func testReturnToAmberCannotInterruptHumanTakeoverOrUnknownOutcome() async throws {
+        for scenario in ["in_flight", "paused", "resuming", "unknown"] {
+            let http = ReadinessHTTPFixture(bundleID: try XCTUnwrap(Bundle.main.bundleIdentifier))
+            defer { http.unregister() }
+            let session = ReadinessSessionStub(fixture: http)
+            let fixture = try HandoffControllerFixture(pairing: pairingData(), session: session)
+            defer { fixture.clear() }
+            let controller = fixture.controller
+            IOSPhoneControlReturnPreference.set(true, fixture.defaults)
+            XCTAssertTrue(controller.claim(runID: scenario, onStop: {}))
+            try await controller.start(runID: scenario)
+            let lease = try controller.beginPhoneTool(runID: scenario)
+            if scenario == "unknown" {
+                controller.endPhoneTool(lease, outcomeUnknown: true)
+            } else if scenario != "in_flight" {
+                try controller.requestHumanTakeover(runID: scenario)
+                controller.endPhoneTool(lease)
+                if scenario == "resuming" { try controller.resumeAutomation(runID: scenario) }
+            }
+            let receipt = await controller.returnToAmber(runID: scenario)
+            XCTAssertEqual(receipt.outcome, "not_sent", scenario)
+            XCTAssertFalse(receipt.verified, scenario)
+            await controller.stop(runID: scenario, returnToAmber: true)
+            XCTAssertFalse(http.paths.contains("/wda/apps/activate"), scenario)
+            XCTAssertEqual(http.paths, ["/status"], scenario)
+        }
+    }
+
+    @MainActor
+    func testExplicitReturnUsesHostBundleAndVerifiesFreshForegroundWithinToolLease() async throws {
+        let initialBundleID = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let hostBundleID = "app.amber.test-host"
+        let http = ReadinessHTTPFixture(bundleID: initialBundleID, activatedBundleID: hostBundleID)
+        defer { http.unregister() }
+        let fixture = try HandoffControllerFixture(pairing: pairingData(), session: ReadinessSessionStub(fixture: http),
+            hostBundleID: hostBundleID)
+        defer { fixture.clear() }
+        let controller = fixture.controller
+        XCTAssertTrue(controller.claim(runID: "explicit-return", conversationID: "original-conversation", onStop: {}))
+        try await controller.start(runID: "explicit-return")
+        let lease = try controller.beginPhoneTool(runID: "explicit-return")
+        let receipt = await controller.returnToAmber(runID: "explicit-return", lease: lease)
+        XCTAssertEqual(receipt.outcome, "completed")
+        XCTAssertTrue(receipt.verified)
+        XCTAssertEqual(receipt.bundleID, hostBundleID)
+        XCTAssertEqual(receipt.observedBundleID, hostBundleID)
+        XCTAssertEqual(fixture.activity.returnedConversations.map(\.runID), ["explicit-return"])
+        XCTAssertEqual(fixture.activity.returnedConversations.map(\.conversationID), ["original-conversation"])
+        XCTAssertEqual(controller.selectedBundleIDs, [initialBundleID])
+        XCTAssertEqual(try JSONDecoder().decode(IOSPhoneControlReturnReceipt.self,
+            from: JSONEncoder().encode(receipt)), receipt)
+        XCTAssertEqual(http.paths, ["/status", "/wda/apps/activate", "/wda/activeAppInfo", "/source", "/wda/activeAppInfo"])
+        controller.endPhoneTool(lease)
+        await controller.stop(runID: "explicit-return")
+    }
+
+    @MainActor
+    func testAutomaticReturnRequiresPreferenceAndTerminalRequestAndPrecedesCleanup() async throws {
+        for scenario in ["enabled", "disabled", "not_requested"] {
+            let bundleID = try XCTUnwrap(Bundle.main.bundleIdentifier)
+            let http = ReadinessHTTPFixture(bundleID: bundleID, activatedBundleID: bundleID)
+            defer { http.unregister() }
+            let fixture = try HandoffControllerFixture(pairing: pairingData(), session: ReadinessSessionStub(fixture: http))
+            defer { fixture.clear() }
+            let controller = fixture.controller
+            IOSPhoneControlReturnPreference.set(scenario != "disabled", fixture.defaults)
+            XCTAssertTrue(controller.claim(runID: scenario, onStop: {}))
+            try await controller.start(runID: scenario)
+            controller.revoke(runID: scenario, returnToAmber: scenario != "not_requested")
+            XCTAssertFalse(controller.claim(runID: "new-owner", onStop: {}), "Return and cleanup retain the slot")
+            await controller.stop(runID: scenario)
+            XCTAssertNil(controller.ownerRunID)
+            if scenario == "enabled" {
+                XCTAssertEqual(http.events, ["/status", "/wda/apps/activate", "/wda/activeAppInfo", "/source",
+                    "/wda/activeAppInfo", "stop", "stop"])
+                XCTAssertEqual(controller.phase, .idle)
+            } else {
+                XCTAssertEqual(http.events, ["/status", "stop", "stop"])
+            }
+        }
+    }
+
+    @MainActor
+    func testReturnAcknowledgementDoesNotClaimForegroundAndUnknownPreventsAnotherReturn() async throws {
+        for scenario in ["wrong_foreground", "failed_verification", "unknown"] {
+            let initialBundleID = try XCTUnwrap(Bundle.main.bundleIdentifier)
+            let hostBundleID = "app.amber.test-host"
+            let http = ReadinessHTTPFixture(bundleID: initialBundleID, failSource: scenario == "failed_verification",
+                activatedBundleID: scenario == "wrong_foreground" ? initialBundleID : hostBundleID,
+                failActivation: scenario == "unknown")
+            defer { http.unregister() }
+            let fixture = try HandoffControllerFixture(pairing: pairingData(), session: ReadinessSessionStub(fixture: http),
+                hostBundleID: hostBundleID)
+            defer { fixture.clear() }
+            let controller = fixture.controller
+            XCTAssertTrue(controller.claim(runID: scenario, onStop: {}))
+            try await controller.start(runID: scenario)
+            let receipt = await controller.returnToAmber(runID: scenario)
+            XCTAssertEqual(receipt.outcome, scenario == "unknown" ? "unknown" : "completed")
+            XCTAssertFalse(receipt.verified)
+            XCTAssertTrue(fixture.activity.returnedConversations.isEmpty)
+            if scenario == "wrong_foreground" { XCTAssertEqual(receipt.observedBundleID, initialBundleID) }
+            if scenario == "unknown" {
+                XCTAssertFalse(controller.canDispatchAction(runID: scenario))
+                let retry = await controller.returnToAmber(runID: scenario)
+                XCTAssertEqual(retry.outcome, "not_sent")
+                XCTAssertEqual(http.paths.filter { $0 == "/wda/apps/activate" }.count, 1)
+            }
+            await controller.stop(runID: scenario)
+        }
+    }
+
+    @MainActor
+    func testAutomaticReturnVerificationFailureRemainsVisibleAfterCleanup() async throws {
+        let bundleID = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let http = ReadinessHTTPFixture(bundleID: bundleID, failSource: true, activatedBundleID: bundleID)
+        defer { http.unregister() }
+        let fixture = try HandoffControllerFixture(pairing: pairingData(), session: ReadinessSessionStub(fixture: http))
+        defer { fixture.clear() }
+        let controller = fixture.controller
+        IOSPhoneControlReturnPreference.set(true, fixture.defaults)
+        XCTAssertTrue(controller.claim(runID: "failed-return", onStop: {}))
+        try await controller.start(runID: "failed-return")
+        let result = await controller.stop(runID: "failed-return", returnToAmber: true)
+        XCTAssertTrue(result?.cleanupComplete == true, "Foreground verification failure is distinct from cleanup")
+        XCTAssertEqual(controller.phase, .failed)
+        XCTAssertTrue(controller.statusMessage.contains("前台核验失败"))
+        XCTAssertEqual(http.events.suffix(2), ["stop", "stop"])
+    }
+
+    @MainActor
+    func testSystemNavigationExtendsOnlyLiveOwnerScope() async throws {
+        let bundleID = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let http = ReadinessHTTPFixture(bundleID: bundleID)
+        defer { http.unregister() }
+        let fixture = try HandoffControllerFixture(pairing: pairingData(), session: ReadinessSessionStub(fixture: http))
+        defer { fixture.clear() }
+        let controller = fixture.controller
+        XCTAssertTrue(controller.claim(runID: "system", onStop: {}))
+        try await controller.start(runID: "system")
+        let lease = try controller.beginPhoneTool(runID: "system")
+        try await controller.allowSystemNavigation(runID: "system")
+        XCTAssertTrue(controller.statusText(runID: "system").contains("com.apple.springboard"))
+        XCTAssertEqual(controller.selectedBundleIDs, [bundleID])
+        XCTAssertEqual(fixture.defaults.stringArray(forKey: IOSPhoneControlController.selectedBundleIDsPreferenceKey), [bundleID])
+        controller.endPhoneTool(lease)
+        try controller.requestHumanTakeover(runID: "system")
+        do { try await controller.allowSystemNavigation(runID: "system"); XCTFail("Human control must block scope changes") }
+        catch IOSPhoneControlHandoffError.operationInFlight { }
+        await controller.stop(runID: "system")
+        XCTAssertTrue(controller.claim(runID: "next", onStop: {}))
+        XCTAssertFalse(controller.statusText(runID: "next").contains("com.apple.springboard"))
+        await controller.stop(runID: "next")
+    }
+
+    @MainActor
     func testExternalConnectionModePersistsAndNeverPreparesAmberVPN() async throws {
         let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -1252,12 +1428,14 @@ private final class HandoffControllerFixture {
     let activity = HandoffActivityRecorder()
     let controller: IOSPhoneControlController
 
-    init(pairing: Data? = nil, session: any IOSPhoneControlSessionServing = PhoneControlSession()) throws {
+    init(pairing: Data? = nil, session: any IOSPhoneControlSessionServing = PhoneControlSession(),
+         hostBundleID: String? = Bundle.main.bundleIdentifier) throws {
         suite = "IOSPhoneControlHandoff.\(UUID().uuidString)"
         defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         let recorder = activity
         controller = IOSPhoneControlController(defaults: defaults,
-            credentials: MemoryPairingStore(data: pairing), session: session, localTunnel: tunnel,
+            credentials: MemoryPairingStore(data: pairing), session: session, localTunnel: tunnel, hostBundleID: hostBundleID,
+            onReturnToConversation: { runID, conversationID in recorder.returnedConversations.append((runID, conversationID)) },
             onHandoffChange: { runID, state in recorder.events.append((runID, state)) })
         controller.enabled = true
         controller.selectedBundleIDs = [try XCTUnwrap(Bundle.main.bundleIdentifier)]
@@ -1269,5 +1447,6 @@ private final class HandoffControllerFixture {
 @MainActor
 private final class HandoffActivityRecorder {
     var events: [(String, IOSPhoneControlHandoffState)] = []
+    var returnedConversations: [(runID: String, conversationID: String?)] = []
     var states: [IOSPhoneControlHandoffState] { events.map(\.1) }
 }

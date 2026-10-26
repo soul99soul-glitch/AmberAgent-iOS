@@ -30,6 +30,7 @@ final class ChatKernelRunHost {
     private let backgroundExecution: BackgroundGenerationKeepAlive
     private let toolLedger: IOSAgentRunLedgering
     private let phoneControl: IOSPhoneControlController
+    private let wakeScheduler: IOSWakeScheduler
     private let backgroundCoordinator: IOSChatBackgroundGenerationCoordinator
     /// 全 provider 文本适配器；OpenAI/Claude/Codex/Grok/Gemini 的协议分流
     /// 由唯一 Engine/Adapter 边界完成。
@@ -51,7 +52,8 @@ final class ChatKernelRunHost {
             orchestrationToolService: dependencies.orchestrationToolService,
             memoryPollutionMarker: dependencies.memoryPollutionMarker,
             conversationStoreProvider: dependencies.conversationStoreProvider,
-            ledger: toolLedger
+            ledger: toolLedger,
+            wakeScheduler: wakeScheduler
         )
     }()
 #if DEBUG
@@ -95,6 +97,7 @@ final class ChatKernelRunHost {
     private var streamClock = ChatGenerationSpeedClock()
     private var progressPresentation: ChatRunProgressPresentation?
     private var keepaliveHeld = false
+    private var externallyManagedBackgroundExecution = false
     private var phoneAutomaticReasoning = false
     private var reportsPhoneWorkProgress: Bool { progressPresentation?.reportsPhoneWorkProgress ?? false }
     /// 适配器已进入 run()(决定 cancel 是否调用 adapter.cancel——进入前
@@ -132,7 +135,8 @@ final class ChatKernelRunHost {
         toolLedger: IOSAgentRunLedgering = IOSAgentRunLedger(),
         textProvider: (any IOSAgentTextProvider)? = nil,
         phoneControl: IOSPhoneControlController = .shared,
-        backgroundCoordinator: IOSChatBackgroundGenerationCoordinator = .shared
+        backgroundCoordinator: IOSChatBackgroundGenerationCoordinator = .shared,
+        wakeScheduler: IOSWakeScheduler? = nil
     ) {
         self.dependencies = dependencies
         self.bindings = bindings
@@ -140,6 +144,7 @@ final class ChatKernelRunHost {
         self.toolLedger = toolLedger
         self.textProviderOverride = textProvider
         self.phoneControl = phoneControl
+        self.wakeScheduler = wakeScheduler ?? .shared
         self.backgroundCoordinator = backgroundCoordinator
     }
 
@@ -191,7 +196,9 @@ final class ChatKernelRunHost {
         uploadMessages: [UIMessage],
         toolExposureBridge: IosToolExposureBridge? = nil,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil,
-        phoneControlUserInitiated: Bool = false
+        phoneControlUserInitiated: Bool = false,
+        runId: String = UUID().uuidString,
+        externallyManagedBackgroundExecution: Bool = false
     ) {
         if isRunning {
             cancel()
@@ -200,9 +207,9 @@ final class ChatKernelRunHost {
         bindings.setIsLoading(true)
         bindings.setContextCompactState(.idle)
 
-        let runId = UUID().uuidString
         let startedAt = Int64(Date().timeIntervalSince1970 * 1000)
         currentRunId = runId
+        self.externallyManagedBackgroundExecution = externallyManagedBackgroundExecution
         currentStartedAt = startedAt
         WatchTaskCoordinator.shared.registerRun(runId: runId, startedAt: startedAt)
         currentInputDigest = inputDigest
@@ -288,7 +295,7 @@ final class ChatKernelRunHost {
             IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name)
         }
         let phoneControlClaimed = phoneControlUserInitiated && hasPhoneDeclarations
-            && phoneControl.claim(runID: runId) { [weak self, weak phoneControl, backgroundCoordinator] in
+            && phoneControl.claim(runID: runId, conversationID: conversationId?.toHexDashString()) { [weak self, weak phoneControl, backgroundCoordinator] in
             guard phoneControl?.hasRequestedSession(runID: runId) == true else { return }
             if self?.currentRunId == runId { self?.cancel(cause: .backgroundInterruption) }
             _ = backgroundCoordinator.cancelJob(runId: runId)
@@ -764,7 +771,8 @@ final class ChatKernelRunHost {
         conversationStore: IOSConversationStore?,
         honorKeepAliveLease: Bool = false
     ) -> Bool {
-        guard let runId = currentRunId,
+        guard !externallyManagedBackgroundExecution,
+              let runId = currentRunId,
               cancelCause == nil,
               !didFinalizeTerminal,
               !hasPendingToolApproval,
@@ -1437,6 +1445,7 @@ final class ChatKernelRunHost {
     private func clearRunIdentity() {
         toolRuntime.discardPreparedThemeImport()
         currentRunId = nil
+        externallyManagedBackgroundExecution = false
         currentStartedAt = 0
         currentInputDigest = ""
         currentConversationIdForRun = nil
@@ -1467,13 +1476,27 @@ final class ChatKernelRunHost {
 
     // MARK: - keepalive
 
+    /// Transfers an existing run to the scheduler's BGProcessingTask assertion.
+    /// Keep the Live Activity; only the superseded execution lease is released.
+    @discardableResult
+    func adoptExternalBackgroundExecution(runID: String) -> Bool {
+        guard currentRunId == runID, cancelCause == nil, !didFinalizeTerminal else { return false }
+        externallyManagedBackgroundExecution = true
+        backgroundExecution.end(runID)
+        keepaliveHeld = false
+        return true
+    }
+
     private func canReportPhoneWorkProgress(runId: String) -> Bool {
         reportsPhoneWorkProgress && currentRunId == runId && cancelCause == nil
             && !didFinalizeTerminal && keepaliveHeld && phoneControl.handoffState(runID: runId) != nil
     }
 
     private func beginKeepAlive(runId: String, subtitle: String) {
-        guard currentRunId == runId, let progressPresentation else { return }
+        // A BGProcessingTask owner already holds execution and owns expiration.
+        // A second UIKit lease would interrupt that run when its shorter window expires.
+        guard !externallyManagedBackgroundExecution,
+              currentRunId == runId, let progressPresentation else { return }
         progressPresentation.beginKeepAlive(subtitle: subtitle) { [weak self] in
             guard let self, self.currentRunId == runId else { return }
             self.handleKeepAliveExpiration(runId: runId)
@@ -1484,7 +1507,8 @@ final class ChatKernelRunHost {
     /// 租约到期且 App 已不在前台时先尝试把模型轮交给后台协调器；无法安全
     /// 交接（审批/在途工具/不支持的 provider）才按 interrupted 收口。
     func handleKeepAliveExpiration(runId: String, applicationState: UIApplication.State? = nil) {
-        guard currentRunId == runId,
+        guard !externallyManagedBackgroundExecution,
+              currentRunId == runId,
               (applicationState ?? UIApplication.shared.applicationState) != .active else { return }
         if handoffCurrentGenerationToBackground(
             conversationStore: pendingBackgroundConversationStore

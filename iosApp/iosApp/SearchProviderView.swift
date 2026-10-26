@@ -9,6 +9,7 @@ struct SearchProviderView: View {
     @State private var providerType: SearchProviderType = .bing
     @State private var apiKey = ""
     @State private var saveFailed = false
+    @State private var editingProvider: IOSConfiguredSearchProvider?
     @State private var searXNGURL = ""
     @State private var searXNGEngines = ""
     @State private var searXNGLanguage = ""
@@ -17,7 +18,7 @@ struct SearchProviderView: View {
 
     var body: some View {
         // 读一次被观察的 revision 建立依赖（同 SearchServicesView）:snapshot 是 @ObservationIgnored,
-        // savedSearchProviders 直读 UserDefaults,不读 revision 则删除/开关后列表停在旧状态。
+        // snapshot 与服务名称缓存均不单独发布；revision 负责设置变更后的页面刷新。
         let _ = sharedSettings.revision
 
         ZStack {
@@ -40,6 +41,9 @@ struct SearchProviderView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(item: $editingProvider) { provider in
+            IOSSearchProviderCredentialEditor(sharedSettings: sharedSettings, provider: provider)
+        }
         .alert("保存失败", isPresented: $saveFailed) {
             Button("好", role: .cancel) {}
         } message: {
@@ -58,23 +62,15 @@ struct SearchProviderView: View {
             Text("搜索服务配置")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AmberTheme.foreground)
-                .lineLimit(1)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
-            Button {
+            AmberGlassCircleButton(systemImage: "xmark", accessibilityLabel: "关闭", size: 44, symbolSize: 17) {
                 dismiss()
-            } label: {
-                Text("关闭")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AmberTheme.accent)
-                    .frame(height: 36)
-                    .padding(.horizontal, 14)
-                    .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
-            .amberGlass(cornerRadius: AmberTheme.radiusPill)
-            .accessibilityLabel("关闭")
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
@@ -102,7 +98,7 @@ struct SearchProviderView: View {
                     SearchProviderTextFieldRow(
                         title: "API Key",
                         text: $apiKey,
-                        placeholder: "可选 API Key（本机设置）",
+                        placeholder: "必填 API Key（安全保存在本机）",
                         monospace: true,
                         isSecure: true
                     )
@@ -159,7 +155,7 @@ struct SearchProviderView: View {
             AmberFormGroup {
                 SearchProviderStatusRow(
                     title: "服务启用",
-                    subtitle: "保存会写入真实搜索服务配置，并成为当前执行路由。",
+                    subtitle: "保存后加入已启用服务并设为默认；免费聚合配置仍受总开关控制。",
                     value: canSave ? "可保存" : "缺少 Key",
                     valueColor: canSave ? AmberTheme.accentGreen : AmberTheme.accentAmber
                 )
@@ -171,7 +167,7 @@ struct SearchProviderView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "已保存搜索服务")
             AmberFormGroup {
-                let providers = sharedSettings.savedSearchProviders
+                let providers = sharedSettings.configuredSearchProviders
                 if providers.isEmpty {
                     Text("暂无自定义搜索服务。可添加已接入的搜索服务作为聊天默认搜索。")
                         .font(.caption)
@@ -179,28 +175,37 @@ struct SearchProviderView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14).padding(.vertical, 12)
                 } else {
-                    ForEach(Array(providers.enumerated()), id: \.offset) { index, provider in
+                    ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
                         HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(provider["name"] ?? "?").font(.body.weight(.semibold))
-                                Text("\(provider["serviceType"] ?? "?")")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(AmberTheme.muted2)
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                            if let serviceId = provider["serviceId"] {
-                                Toggle("", isOn: Binding(get: {
-                                    sharedSettings.snapshot.searchEnabledServiceIds.contains { $0.description() == serviceId }
-                                }, set: { enabled in
-                                    sharedSettings.setSearchProviderEnabled(serviceId: serviceId, enabled: enabled)
-                                }))
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .tint(AmberTheme.accent)
+                            if sharedSettings.searchProviderSupportsAPIKey(serviceId: provider.id) {
+                                Button {
+                                    editingProvider = provider
+                                } label: {
+                                    savedProviderLabel(provider, showsCredentialAction: true)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("更新\(provider.name)的 API Key")
+                            } else {
+                                savedProviderLabel(provider)
                             }
-                            Button { sharedSettings.removeSearchProvider(at: index) } label: {
+                            Toggle("启用\(provider.name)", isOn: Binding(get: {
+                                provider.enabled
+                            }, set: { enabled in
+                                sharedSettings.setSearchProviderEnabled(serviceId: provider.id, enabled: enabled)
+                            }))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(AmberTheme.accent)
+                            Button {
+                                if !sharedSettings.removeSearchProvider(serviceId: provider.id) { saveFailed = true }
+                            } label: {
                                 Image(systemName: "minus.circle.fill")
-                                    .font(.system(size: 18)).foregroundStyle(AmberTheme.accentRed)
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(AmberTheme.accentRed)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
                             }.buttonStyle(.plain)
+                            .accessibilityLabel("删除\(provider.name)")
                         }.frame(minHeight: 48).padding(.horizontal, 14).padding(.vertical, 4)
                         if index < providers.count - 1 {
                             SearchProviderDivider()
@@ -226,8 +231,34 @@ struct SearchProviderView: View {
                 .padding(.horizontal, 14).padding(.vertical, 8)
             }
 
-            SearchProviderNote("保存后重启仍然保留。删除单条请使用列表右侧按钮。")
+            SearchProviderNote("保存后重启仍然保留。点服务名称可更新 API Key；删除单条请使用列表右侧按钮。")
         }
+    }
+
+    private func savedProviderLabel(
+        _ provider: IOSConfiguredSearchProvider,
+        showsCredentialAction: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(provider.name)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+            Text(provider.typeLabel)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(AmberTheme.muted2)
+            if showsCredentialAction {
+                Label("更新 API Key", systemImage: "key")
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.accent)
+            }
+            if provider.isFreeAggregate {
+                Text("受免费聚合搜索开关控制")
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted2)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private var canSave: Bool {
@@ -248,8 +279,8 @@ struct SearchProviderView: View {
     }
 }
 
-private enum SearchProviderType: String, CaseIterable, Identifiable {
-    case bing = "Bing HTML 兜底"
+enum SearchProviderType: String, CaseIterable, Identifiable {
+    case bing = "免费聚合搜索"
     case amberAgent = "AmberAgent"
     case zhipu = "智谱"
     case tavily = "Tavily"
@@ -269,6 +300,29 @@ private enum SearchProviderType: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var title: String { rawValue }
+
+    init?(service: SearchServiceOptions) {
+        switch service {
+        case is SearchServiceOptions.BingLocalOptions: self = .bing
+        case is SearchServiceOptions.AmberAgentSearchOptions: self = .amberAgent
+        case is SearchServiceOptions.ZhipuOptions: self = .zhipu
+        case is SearchServiceOptions.TavilyOptions: self = .tavily
+        case is SearchServiceOptions.ExaOptions: self = .exa
+        case is SearchServiceOptions.SearXNGOptions: self = .searXNG
+        case is SearchServiceOptions.LinkUpOptions: self = .linkUp
+        case is SearchServiceOptions.BraveOptions: self = .brave
+        case is SearchServiceOptions.SerperOptions: self = .serper
+        case is SearchServiceOptions.SerpApiOptions: self = .serpAPI
+        case is SearchServiceOptions.MetasoOptions: self = .metaso
+        case is SearchServiceOptions.OllamaOptions: self = .ollama
+        case is SearchServiceOptions.PerplexityOptions: self = .perplexity
+        case is SearchServiceOptions.FirecrawlOptions: self = .firecrawl
+        case is SearchServiceOptions.JinaOptions: self = .jina
+        case is SearchServiceOptions.BochaOptions: self = .bocha
+        case is SearchServiceOptions.GrokOptions: self = .grok
+        default: return nil
+        }
+    }
 
     var serialName: String {
         switch self {
@@ -294,7 +348,7 @@ private enum SearchProviderType: String, CaseIterable, Identifiable {
 
     var requiresAPIKey: Bool {
         switch self {
-        case .bing, .searXNG, .jina:
+        case .bing, .searXNG:
             false
         default:
             true
@@ -304,7 +358,7 @@ private enum SearchProviderType: String, CaseIterable, Identifiable {
     var note: String {
         switch self {
         case .bing:
-            "无需 API Key，保存后即可用于聊天搜索。"
+            "无需 API Key；此配置使用免费聚合搜索，受「搜索服务」中的免费聚合开关控制。"
         case .tavily:
             "Tavily 使用官方 Search API，支持普通搜索和近期新闻查询。"
         case .exa:
@@ -318,7 +372,7 @@ private enum SearchProviderType: String, CaseIterable, Identifiable {
         case .serpAPI:
             "SerpAPI 使用 Google Search API，支持普通和新闻搜索。"
         case .jina:
-            "Jina 可使用默认搜索端点，API Key 可选。"
+            "Jina Search 需要 API Key；免费 Jina Reader 网页代读在搜索服务页单独设置。"
         case .searXNG:
             "SearXNG 当前不可用。"
         default:

@@ -565,11 +565,13 @@ final class ChatPluginExecution {
         ])
     }
 
-    private func executePluginRemote(
+    func executePluginRemote(
         _ remote: IOSPluginRemoteManifest,
         descriptor: IOSDynamicRecipeToolDescriptor,
-        argumentsJSON: String
+        argumentsJSON: String,
+        resolveHost: @escaping @Sendable (String) throws -> [String] = IOSSearchExecutor.resolveIPAddresses
     ) async -> String {
+        let deadline = Date(timeIntervalSinceNow: TimeInterval(descriptor.timeoutMs) / 1_000)
         guard let arguments = ChatToolCallParsing.jsonObject(argumentsJSON) else {
             return ChatToolOutputFormatter.toolFailureJSON(
                 toolName: descriptor.toolId,
@@ -600,6 +602,7 @@ final class ChatPluginExecution {
                     enabledOverride: runtime.isMcpNetworkAllowed()
                 )
             case .openapi:
+                try Task.checkCancellation()
                 guard let rawURL = remote.url, var components = URLComponents(string: rawURL) else {
                     throw IOSPluginRuntimeError.invalidRemoteDefinition
                 }
@@ -630,17 +633,23 @@ final class ChatPluginExecution {
                 configuration.timeoutIntervalForRequest = TimeInterval(descriptor.timeoutMs) / 1_000
                 let validated = try IOSSearchExecutor.allowedPublicHTTPURL(from: url.absoluteString)
                 guard let host = validated.host else { throw IOSPluginRuntimeError.invalidRemoteDefinition }
-                let addresses = try await Task.detached(priority: .userInitiated) {
-                    try IOSSearchExecutor.resolveIPAddresses(host)
-                }.value
+                let addresses = try await IOSVerifiedHTTPScrapeAddressResolver.resolveSystemAddresses(
+                    host, resolveHost: resolveHost, deadline: deadline
+                )
+                try Task.checkCancellation()
                 guard !addresses.isEmpty, addresses.allSatisfy(IOSPublicURLPolicy.publicHostAllowed) else {
                     throw IOSSearchExecutorError.disallowedURL("plugin endpoint resolves to a non-public address")
                 }
+                let remaining = deadline.timeIntervalSinceNow
+                guard remaining > 0 else { throw URLError(.timedOut) }
+                request.timeoutInterval = remaining
+                configuration.timeoutIntervalForRequest = remaining
+                configuration.timeoutIntervalForResource = remaining
                 let loader = IOSBoundedPublicURLSessionLoader(
                     configuration: configuration,
                     maximumResponseBytes: descriptor.maxOutputChars * 4,
                     requiresHTTPS: true,
-                    resolveHost: IOSSearchExecutor.resolveIPAddresses,
+                    resolveHost: resolveHost,
                     allowedRedirectDomains: descriptor.capabilityBroker?.capabilities.networkDomains
                 )
                 requestMayHaveApplied = descriptor.effectClassRawValue == IOSToolEffectClass.sideEffect.rawValue

@@ -547,6 +547,36 @@ final class IOSMemoryPollutionTests: XCTestCase {
 
     // MARK: - 复位 + 列表投影
 
+    func testResetCurrentConversationRefreshesModeAndSurvivesNextMessageSave() async throws {
+        let directory = makeTempDirectory("ResetCurrent")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = await makeStore(directory: directory)
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let marked = await store.markConversationMemoryPolluted(id)
+        XCTAssertTrue(marked)
+        await store.selectConversation(id: id)
+        XCTAssertEqual(memoryMode(of: store.currentConversation), .polluted)
+        let beforeReset = store.writeBaseline(for: id)
+
+        let reset = await store.resetConversationMemoryPollution(id)
+        XCTAssertTrue(reset)
+        XCTAssertEqual(memoryMode(of: store.currentConversation), .enabled)
+
+        let staleSave = await store.save(
+            messages: [UIMessage.companion.user(prompt: "stale write")],
+            to: id,
+            ifUnchangedSince: beforeReset
+        )
+        XCTAssertFalse(staleSave, "A snapshot captured before the metadata reset is stale.")
+        let saved = await store.save(messages: [UIMessage.companion.user(prompt: "after reset")], to: id)
+        XCTAssertTrue(saved)
+
+        let freshStore = await makeStore(directory: directory)
+        let reloaded = try await freshStore.loadConversationForOrchestration(id)
+        XCTAssertEqual(memoryMode(of: reloaded), .enabled)
+        XCTAssertEqual(reloaded?.currentMessages.last?.toText(), "after reset")
+    }
+
     func testResetRestoresEnabledAndListProjectionListsOnlyPolluted() async throws {
         let directory = makeTempDirectory("Reset")
         defer { try? FileManager.default.removeItem(at: directory) }

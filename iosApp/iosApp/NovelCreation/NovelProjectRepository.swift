@@ -443,6 +443,9 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
 
         // Replacement can rewrite append-mostly sections under the same IDs;
         // those fingerprints are sound for reducer transitions, not imports.
+        let expectedInstalledDocument = isWorkspaceNative(projectID)
+            ? NovelWorkspaceProjectStore.persistableAtRest(document)
+            : document
         sectionCaches[projectID] = nil
         pointerFingerprints[projectID] = nil
         workspaceNativeByProject[projectID] = nil
@@ -450,11 +453,10 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         do {
             try writeShardedProject(document)
         } catch {
-            if let installed = try? readInstalledProjectDocument(projectID: projectID),
-               installed.project.revision == document.project.revision {
+            let installed = try? readInstalledProjectDocument(projectID: projectID)
+            if installed == expectedInstalledDocument {
                 // Continue cleanup after an indeterminate result.
-            } else if let unchanged = try? readInstalledProjectDocument(projectID: projectID),
-                      unchanged.project.revision == loaded.document.project.revision {
+            } else if installed == loaded.document {
                 do {
                     try fileManager.removeItem(at: replacementMarkerURL(for: projectID))
                 } catch {

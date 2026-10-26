@@ -404,6 +404,13 @@ struct ChatToolStepModel: Identifiable {
     /// 未单独映射的工具:给一个友好中文标签,不显示裸工具名。状态由胶囊上的对勾/转圈表示,不再加文字。
     static func friendlyToolTitle(_ name: String, executed: Bool) -> String {
         let known: [String: String] = [
+            "phone_return_to_amber": Self.localized("返回任务对话"),
+            "phone_clipboard": Self.localized("读取剪贴板"),
+            "wake_schedule": Self.localized("安排任务续跑"),
+            "wake_list": Self.localized("查看续跑任务"),
+            "wake_cancel": Self.localized("取消续跑任务"),
+            "shortcut_compose": Self.localized("编写快捷指令流程"),
+            "phone_system": Self.localized("查看系统界面"),
             "phone_status": Self.localized("查看手机状态"),
             "phone_apps": Self.localized("查看手机应用"),
             "phone_add_app": Self.localized("添加控制应用"),

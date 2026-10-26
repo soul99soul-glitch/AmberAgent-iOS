@@ -140,6 +140,77 @@ final class IOSOrchestrationToolTests: IOSOrchestrationToolTestCase {
         XCTAssertEqual(childRun.capabilitySnapshot, executionPolicy.encodedJSON)
     }
 
+    func testSpawnForkAllExcludesPendingParentToolBatchFromChildAndHandoff() async throws {
+        let base = makeTempDirectory("SpawnPendingParentTools")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        func assistant(parts: [UIMessagePart]) -> UIMessage {
+            let seed = UIMessage.companion.assistant(prompt: "")
+            return UIMessage(
+                id: seed.id, role: seed.role, parts: parts, annotations: seed.annotations,
+                createdAt: seed.createdAt, finishedAt: seed.finishedAt,
+                modelId: seed.modelId, usage: seed.usage, translation: seed.translation
+            )
+        }
+        func tool(_ id: String, name: String, output: [UIMessagePart]) -> UIMessagePart.Tool {
+            UIMessagePart.Tool(
+                toolCallId: id, toolName: name, input: "{}", output: output,
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+            )
+        }
+        let completedHistory = assistant(parts: [
+            UIMessagePart.Text(text: "已完成的助手历史", metadata: nil),
+            tool("historical-completed", name: "workspace_read", output: [
+                UIMessagePart.Text(text: "已读取", metadata: nil)
+            ])
+        ])
+        let pendingBatch = assistant(parts: [
+            tool("approved-write", name: "workspace_write", output: [
+                UIMessagePart.Text(text: "已写入", metadata: nil)
+            ]),
+            tool("pending-spawn", name: "spawn_agent", output: [])
+        ])
+        await store.saveCurrent(messages: [
+            UIMessage.companion.user(prompt: "q1"), completedHistory,
+            UIMessage.companion.user(prompt: "q2"), pendingBatch
+        ])
+        let db = makeDatabase(directory: base)
+        let scheduler = FakeBackgroundScheduler()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler, currentConversationId: { parentId }
+        )
+
+        let result = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(taskName: "clean-history", message: "独立任务", forkTurns: "all"),
+            providerSetting: makeProviderSetting(), params: makeParams(), runId: "parent-pending-tools"
+        ))
+
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        let childHex = try XCTUnwrap(result["child_thread_id"] as? String)
+        let childId = try KotlinUuid.companion.parse(uuidString: childHex)
+        let loadedChildMessages = await store.messages(for: childId)
+        let childMessages = try XCTUnwrap(loadedChildMessages)
+        let handoff = try XCTUnwrap(scheduler.startedHandoff)
+        for (label, messages) in [
+            ("persisted child", childMessages),
+            ("handoff display", handoff.displayMessages),
+            ("handoff upload", handoff.uploadMessages)
+        ] {
+            let tools = messages.flatMap { $0.parts.compactMap { $0 as? UIMessagePart.Tool } }
+            XCTAssertEqual(tools.map(\.toolCallId), ["historical-completed"], label)
+            XCTAssertTrue(messages.contains { $0.id == completedHistory.id }, label)
+            XCTAssertFalse(messages.contains { $0.id == pendingBatch.id }, label)
+            XCTAssertTrue(messages.contains { $0.role == .user && $0.toText() == "q2" }, label)
+        }
+        XCTAssertEqual(store.currentConversation?.id, parentId)
+        XCTAssertTrue(store.currentConversation?.messageNodes.contains {
+            $0.messages.contains { $0.id == pendingBatch.id }
+        } == true, "fork must preserve the parent batch for its own executor")
+    }
+
     // MARK: - M3: spawn/followup 的 handoff fullToolNames 取桥全目录
 
     /// 红测试对应缺陷：startDurableBackgroundRun 用 params.tools.map(\.name)（当轮

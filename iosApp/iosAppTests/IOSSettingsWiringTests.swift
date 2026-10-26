@@ -125,7 +125,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("phoneControlUserInitiated: Bool = false"))
         XCTAssertTrue(host.contains("let hasPhoneDeclarations = bridge.fullToolDeclarations()"))
         XCTAssertTrue(host.contains("phoneControlUserInitiated && hasPhoneDeclarations"))
-        XCTAssertTrue(host.contains("&& phoneControl.claim(runID: runId)"))
+        XCTAssertTrue(host.contains("&& phoneControl.claim(runID: runId, conversationID: conversationId?.toHexDashString())"))
         XCTAssertFalse(host.contains("phoneControl.start(runID:"))
         XCTAssertTrue(chat.contains("includePhoneControlTools: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild"))
         let autoResume = try XCTUnwrap(inbox.range(of: "private func resumeYieldedRunIfReady"))

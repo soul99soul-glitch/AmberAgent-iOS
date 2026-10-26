@@ -6,8 +6,8 @@ import UIKit
 
 @MainActor
 extension IOSChatBackgroundGenerationCoordinator {
-    /// P1-d: 后台 job 的 mailbox drain（引擎每轮批量执行后调用）。Room drain
-    /// （事务化 exactly-once）+ 渲染 + 会话持久化全部在 MainActor 内完成；
+    /// 后台 job 先保存带稳定 ID 的信封消息，再确认 Room 投递。
+    /// 保存失败时仍保留 pending，下一轮或恢复时可安全重放；
     /// 返回渲染出的 user 消息（@unchecked Sendable 盒，KMP UIMessage 非
     /// Sendable 不外传）。无信封时返回空盒（引擎零追加）。
     func drainMailboxForBackgroundJob(
@@ -15,7 +15,12 @@ extension IOSChatBackgroundGenerationCoordinator {
         mailboxStore: IOSMailboxStore,
         conversationId: KotlinUuid
     ) async -> IOSMailboxDrainResult {
-        let snapshots = await mailboxStore.drainPending(forConversationId: conversationId)
+        let snapshots: [IOSMailboxStore.EnvelopeSnapshot]
+        do { snapshots = try await mailboxStore.pendingEnvelopes(forConversationId: conversationId) }
+        catch {
+            backgroundMailboxLogger.error("mailbox read failed for \(conversationId): \(error.localizedDescription)")
+            return IOSMailboxDrainResult(values: [])
+        }
         guard !snapshots.isEmpty else { return IOSMailboxDrainResult(values: []) }
         let drained = snapshots.map { envelope in
             amberMailboxMessage(
@@ -25,8 +30,8 @@ extension IOSChatBackgroundGenerationCoordinator {
                 payload: envelope.payload
             )
         }
-        // 持久化：会话既有消息 + 渲染信封（复用既有写路径与 operationMutex，
-        // 不在 Swift 侧另建写通道；drain 事务保证信封不会重复落盘）。
+        // Reuse the conversation's existing write/CAS owner. A stable envelope
+        // identity closes the commit-before-ack replay window without another store.
         let current: [UIMessage]
         if store.currentConversation?.id == conversationId {
             current = store.currentConversation?.currentMessages ?? []
@@ -41,19 +46,21 @@ extension IOSChatBackgroundGenerationCoordinator {
         let uniqueDrained = drained.filter {
             !existingIds.contains($0.id.toHexDashString().lowercased())
         }
-        guard !uniqueDrained.isEmpty else {
-            return IOSMailboxDrainResult(values: [])
-        }
         let baseline = store.writeBaseline(for: conversationId)
         let persisted = await store.save(messages: current + uniqueDrained, to: conversationId, ifUnchangedSince: baseline)
-        if !persisted {
-            // 信封已标 delivered，持久化失败时由终态 persist（working 含 drained）兜底；
-            // 只记录日志便于诊断，不回滚 drain（会丢投递记录）。
+        guard persisted else {
             backgroundMailboxLogger.error(
-                "mailbox drain persist failed for \(conversationId) — terminal persist is the fallback"
+                "mailbox persist failed for \(conversationId); envelopes remain pending"
             )
+            return IOSMailboxDrainResult(values: [])
         }
-        return IOSMailboxDrainResult(values: uniqueDrained)
+        do { try await mailboxStore.acknowledge(snapshots) }
+        catch {
+            backgroundMailboxLogger.error("mailbox acknowledgement failed for \(conversationId): \(error.localizedDescription)")
+        }
+        // A resumed engine can hold an older working snapshot than the store.
+        // Let its existing mailbox-ID filter decide what still needs uploading.
+        return IOSMailboxDrainResult(values: drained)
     }
 
     static func assistantMessage(_ text: String) -> UIMessage {

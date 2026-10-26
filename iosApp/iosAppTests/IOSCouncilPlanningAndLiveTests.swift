@@ -7,6 +7,23 @@ import Observation
 
 @MainActor
 final class IOSCouncilPlanningAndLiveTests: IOSCouncilMechanicsTestCase {
+    func testHostSystemPromptPreservesConfiguredInstructionsWithoutInventingProviderRoutes() {
+        let runner = IOSCouncilRoomRunner(
+            streamer: ScriptedCouncilStreamer([]),
+            researcher: StaticCouncilResearcher(),
+            taskStore: IOSAdvancedTaskStore(userDefaults: isolatedDefaults(), storageKey: "host-prompt")
+        )
+        var settings = compactRoomSettings()
+        settings.host.prompt = "主持人只用来源里的事实。"
+
+        let prompt = runner.hostSystemPrompt(settings: settings)
+
+        XCTAssertTrue(prompt.hasPrefix(settings.host.prompt))
+        XCTAssertFalse(prompt.contains("不要声称调用了跨服务商模型"))
+        XCTAssertFalse(prompt.contains("所有席位都运行在当前 OpenAI-compatible 服务商内"))
+        XCTAssertTrue(prompt.contains("不要虚构模型、服务商或工具调用"))
+    }
+
     func testChatCouncilToolUsesPersistedRoomModelsWhenArgumentsDoNotOverrideThem() async {
         let defaults = isolatedDefaults()
         let roomSettingsStore = IOSCouncilRoomSettingsStore(

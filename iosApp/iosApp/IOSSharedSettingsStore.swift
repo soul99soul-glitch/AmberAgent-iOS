@@ -120,6 +120,7 @@ final class IOSSharedSettingsStore {
     @ObservationIgnored private let loadCredential: (String) -> String?
     @ObservationIgnored private let storeCredential: (String, String) -> Bool
     @ObservationIgnored private let deleteCredential: (String) -> Bool
+    @ObservationIgnored private var searchProviderMirror: [[String: String]] = []
 
     let defaults: UserDefaults
     private let fullSettingsJsonKey = "app.amber.ios.sharedSettingsJson"
@@ -168,6 +169,7 @@ final class IOSSharedSettingsStore {
         } else {
             self.snapshot = IosSettingsDefaults.shared.defaultSeededSettings()
         }
+        searchProviderMirror = defaults.array(forKey: searchProvidersKey) as? [[String: String]] ?? []
         // Scheme B rehydration: the persisted JSON is redacted (provider apiKeys
         // are the mask sentinel). Rehydrate the real apiKeys from the Keychain
         // side-table so the in-memory snapshot carries usable credentials. Also
@@ -1104,8 +1106,37 @@ final class IOSSharedSettingsStore {
 
     /// User-customized search provider entries (persisted to UserDefaults).
     var savedSearchProviders: [[String: String]] {
-        get { (defaults.array(forKey: searchProvidersKey) as? [[String: String]]) ?? [] }
-        set { defaults.set(newValue, forKey: searchProvidersKey) }
+        get { searchProviderMirror }
+        set {
+            guard searchProviderMirror != newValue else { return }
+            defaults.set(newValue, forKey: searchProvidersKey)
+            searchProviderMirror = newValue
+            revision &+= 1
+        }
+    }
+
+    /// Settings owns the service list; the local mirror only supplies custom names.
+    /// Backups intentionally omit that mirror, so management must not depend on it.
+    var configuredSearchProviders: [IOSConfiguredSearchProvider] {
+        let names = Dictionary(savedSearchProviders.compactMap { entry -> (String, String)? in
+            guard let id = entry["serviceId"], let name = entry["name"], !name.isEmpty else { return nil }
+            return (id, name)
+        }, uniquingKeysWith: { _, latest in latest })
+        let enabledIds = Set(snapshot.searchEnabledServiceIds.map { $0.description() })
+        return snapshot.searchServices.enumerated().map { index, service in
+            let id = service.id.description()
+            let providerType = SearchProviderType(service: service)
+            let isFreeAggregate = service is SearchServiceOptions.BingLocalOptions
+            return IOSConfiguredSearchProvider(
+                id: id,
+                index: index,
+                name: isFreeAggregate ? IOSFreeSearchAggregator.providerName : (names[id] ?? providerType?.title ?? "搜索服务"),
+                typeLabel: providerType?.serialName ?? String(describing: type(of: service)),
+                enabled: enabledIds.contains(id),
+                selected: Int(snapshot.searchServiceSelected) == index,
+                isFreeAggregate: isFreeAggregate
+            )
+        }
     }
 
     /// Add a custom search provider to persistent storage.
@@ -1146,10 +1177,26 @@ final class IOSSharedSettingsStore {
         guard index >= 0 && index < providers.count else { return }
         let removed = providers.remove(at: index)
         if let serviceId = removed["serviceId"] {
-            let merged = IosSettingsMutations.shared.removeSearchService(settings: snapshot, id: serviceId)
-            guard restoreSnapshot(merged) else { return }
+            removeSearchProvider(serviceId: serviceId)
+        } else {
+            savedSearchProviders = providers
         }
-        savedSearchProviders = providers
+    }
+
+    @discardableResult
+    func removeSearchProvider(serviceId: String) -> Bool {
+        if snapshot.searchServices.contains(where: { $0.id.description() == serviceId }) {
+            let merged = IosSettingsMutations.shared.removeSearchService(settings: snapshot, id: serviceId)
+            guard restoreSnapshot(merged) else { return false }
+        }
+        savedSearchProviders = savedSearchProviders.filter { $0["serviceId"] != serviceId }
+        return true
+    }
+
+    func selectSearchProvider(serviceId: String) {
+        guard let index = snapshot.searchServices.firstIndex(where: { $0.id.description() == serviceId }) else { return }
+        let merged = IosSettingsMutations.shared.selectSearchService(settings: snapshot, index: Int32(index))
+        restoreSnapshot(merged)
     }
 
     func setEnableWebSearch(_ enabled: Bool) {
@@ -1188,7 +1235,7 @@ final class IOSSharedSettingsStore {
     }
 
     func setSearchResultSize(_ size: Int) {
-        let merged = IosSettingsMutations.shared.setSearchResultSize(settings: snapshot, size: Int32(size))
+        let merged = IosSettingsMutations.shared.setSearchResultSize(settings: snapshot, size: Int32(min(max(size, 1), 10)))
         restoreSnapshot(merged)
     }
 
@@ -1307,6 +1354,16 @@ final class IOSSharedSettingsStore {
             .map(IOSCredentialSideTable.settingsPath)
     }
 
+}
+
+struct IOSConfiguredSearchProvider: Identifiable, Equatable {
+    let id: String
+    let index: Int
+    let name: String
+    let typeLabel: String
+    let enabled: Bool
+    let selected: Bool
+    let isFreeAggregate: Bool
 }
 
 extension IOSSharedSettingsStore: IOSSettingsSnapshotSource {}

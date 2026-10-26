@@ -44,6 +44,12 @@ protocol NovelCreation: Sendable {
     /// 默认实现为立即结束的空流，测试替身免实现。
     func mutationEvents() async -> AsyncStream<NovelProjectMutationEvent>
     func start(_ request: NovelRunRequest) async throws -> NovelRun
+    /// Subscribes to an existing run without reconstructing or re-executing its request.
+    func observeRun(
+        projectID: NovelProjectID,
+        runID: NovelRunID,
+        operationID: NovelOperationID
+    ) async throws -> NovelRun
     /// Closes a user-visible run across the pre-durable start and durable runtime boundary.
     /// Success means the requested run can no longer become an active hidden run.
     func interruptRun(_ command: NovelCancelRunCommand) async throws
@@ -131,6 +137,14 @@ protocol NovelCreation: Sendable {
 }
 
 extension NovelCreation {
+    func observeRun(
+        projectID: NovelProjectID,
+        runID: NovelRunID,
+        operationID: NovelOperationID
+    ) async throws -> NovelRun {
+        throw NovelError.generationUnavailable
+    }
+
     func applyWorkspacePlot(
         projectID: NovelProjectID,
         branchID: NovelBranchID,

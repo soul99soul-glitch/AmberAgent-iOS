@@ -40,6 +40,9 @@ final class ChatConversationRunState {
     }
     var steerQueueRevision = 0
     var steerQueueLoaded = true
+    @ObservationIgnored var isCommittingSteerQueue = false
+    @ObservationIgnored var restoreSteerQueueAfterCommit = false
+    @ObservationIgnored var steerQueueAutoContinueTask: Task<Void, Never>?
     var waitingForChildRunId: String?
     var childResultWakeTask: Task<Void, Never>?
 

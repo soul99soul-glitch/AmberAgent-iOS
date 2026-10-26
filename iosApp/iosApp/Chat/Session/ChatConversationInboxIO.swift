@@ -46,6 +46,14 @@ final class ChatConversationInboxIO {
         await mailboxStore.drainPending(forConversationId: id)
     }
 
+    func pendingEnvelopes(forConversationId id: KotlinUuid?) async throws -> [IOSMailboxStore.EnvelopeSnapshot] {
+        try await mailboxStore.pendingEnvelopes(forConversationId: id)
+    }
+
+    func acknowledge(_ envelopes: [IOSMailboxStore.EnvelopeSnapshot]) async throws {
+        try await mailboxStore.acknowledge(envelopes)
+    }
+
     func events(for id: String) async -> AsyncStream<Void> {
         await activityCenter.events(for: id)
     }

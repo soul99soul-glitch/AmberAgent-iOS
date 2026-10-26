@@ -33,7 +33,11 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         let settingsStore = SettingsStore(userDefaults: defaults, storageKey: "settings-\(UUID().uuidString)")
-        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let credentials = IOSSearchTestCredentialStore()
+        let sharedSettings = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: credentials.load,
+            storeCredential: credentials.store, deleteCredential: credentials.delete
+        )
         sharedSettings.setEnableWebSearch(enableWebSearch)
         let runtime = ChatToolRuntime(
             settingsStore: settingsStore,

@@ -15,6 +15,7 @@ final class ChatToolRuntime {
     /// on the pre-contract behavior; the chat coordinator wires its real
     /// ledger here so user denials become durable, attributable facts.
     let ledger: IOSAgentRunLedgering?
+    let wakeScheduler: IOSWakeScheduler
     /// Wave B2: recipe store 的基目录（nil = documents，与 registry 同源）。
     /// 也用于 checkpoint 落盘（`recipes/.checkpoints/`）。
     private let recipeStoreBaseDirectory: URL?
@@ -215,7 +216,8 @@ final class ChatToolRuntime {
         recipeRegistry: IOSDynamicToolRegistry? = nil,
         soulPreviousStore: IOSSoulPreviousStore? = nil,
         mcpImportClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)? = nil,
-        autoApprovalGate: IOSJevAutoApprovalGate? = nil
+        autoApprovalGate: IOSJevAutoApprovalGate? = nil,
+        wakeScheduler: IOSWakeScheduler? = nil
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -230,6 +232,7 @@ final class ChatToolRuntime {
         self.jsCellRegistry = jsCellRegistry ?? .shared
         self.conversationStoreProvider = conversationStoreProvider
         self.ledger = ledger
+        self.wakeScheduler = wakeScheduler ?? .shared
         self.recipeStoreBaseDirectory = recipeStoreBaseDirectory
         let resolvedRecipeRegistry = recipeRegistry
             ?? recipeStoreBaseDirectory.map(IOSDynamicToolRegistry.init(baseDirectory:))
@@ -811,6 +814,8 @@ final class ChatToolRuntime {
             "send_message", "followup_task", "wait_agent",
         ])
         .union(IOSAppleAgentToolCatalog.toolNames)
+        .union(IOSWakeToolCatalog.toolNames)
+        .union(IOSShortcutAuthoringToolCatalog.toolNames)
         .union(IOSSkillToolCatalog.toolNames)
         .union(IOSMcpManagementToolCatalog.toolNames)
         .union(IOSProviderConfigToolCatalog.toolNames)
@@ -1025,6 +1030,10 @@ final class ChatToolRuntime {
     func isAdvancedToolEnabled(_ toolName: String) -> Bool {
         switch toolName {
         case "mcp_list", "mcp_describe_tool", "mcp_import_from_skill":
+            true
+        case let name where IOSWakeToolCatalog.toolNames.contains(name):
+            true
+        case let name where IOSShortcutAuthoringToolCatalog.toolNames.contains(name):
             true
         case let name where IOSAppleAgentToolCatalog.toolNames.contains(name):
             IOSCapabilityRegistry.capability(forToolName: name).map { isCapabilityPolicyEnabled($0.id) } ?? false

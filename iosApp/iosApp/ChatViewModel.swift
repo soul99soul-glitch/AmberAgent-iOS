@@ -76,6 +76,7 @@ final class ChatViewModel {
     }
 
     @ObservationIgnored var deferredGenerationStart: DeferredGenerationStart?
+    @ObservationIgnored var wakeTaskStartsInFlight: Set<String> = []
 
 #if DEBUG
     @ObservationIgnored var beforeIdleMailboxPreviewApplyForTesting: (() async -> Void)?
@@ -935,6 +936,7 @@ final class ChatViewModel {
     @ObservationIgnored lazy var chatRunLedger: IOSAgentRunLedgering = IOSAgentRunLedger(dao: agentRuntimeDao)
     @ObservationIgnored let mcpManager: IOSMcpManager
     @ObservationIgnored let phoneControl: IOSPhoneControlController
+    @ObservationIgnored let wakeScheduler: IOSWakeScheduler
     /// App lifetime retains one observable presentation and Host per live conversation.
     @ObservationIgnored let runRegistry = ChatConversationRunRegistry()
     var runActivityRevision = 0
@@ -1004,6 +1006,7 @@ final class ChatViewModel {
     @ObservationIgnored private let injectedOrchestrationToolService: IOSThreadOrchestrationToolService?
     @ObservationIgnored private lazy var defaultOrchestrationToolService: IOSThreadOrchestrationToolService = {
         let sharedSettings = self.sharedSettings
+        let wakeScheduler = self.wakeScheduler
         let runtimeDao = db.agentRuntimeDao()
         let mailboxDao = db.mailboxDao()
         let threadEdgeDao = db.threadEdgeDao()
@@ -1023,7 +1026,8 @@ final class ChatViewModel {
                         localToolExecutor: nil,
                         searchTransport: IOSURLSessionSearchHTTPTransport(),
                         mcpManager: IOSMcpManager(sharedSettings: IOSSharedSettingsStore(), configStore: .shared),
-                        orchestrationToolService: nil
+                        orchestrationToolService: nil,
+                        wakeScheduler: wakeScheduler
                     )
                 }
                 return self.makeBackgroundToolRuntime()
@@ -1068,7 +1072,8 @@ final class ChatViewModel {
             mcpManager: mcpManager,
             orchestrationToolService: orchestrationToolService,
             memoryPollutionMarker: memoryPollutionMarker,
-            conversationStoreProvider: { [weak self] in self?.conversationStore }
+            conversationStoreProvider: { [weak self] in self?.conversationStore },
+            wakeScheduler: wakeScheduler
         )
     }
 
@@ -1110,7 +1115,8 @@ final class ChatViewModel {
         orchestrationToolService: IOSThreadOrchestrationToolService? = nil,
         mailboxActivityCenter: IOSMailboxActivityCenter? = nil,
         agentRuntimeDao: AgentRuntimeDao? = nil,
-        phoneControl: IOSPhoneControlController = .shared
+        phoneControl: IOSPhoneControlController = .shared,
+        wakeScheduler: IOSWakeScheduler? = nil
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -1123,6 +1129,7 @@ final class ChatViewModel {
         self.liveActivityController = liveActivityController ?? .shared
         self.injectedAgentRuntimeDao = agentRuntimeDao
         self.phoneControl = phoneControl
+        self.wakeScheduler = wakeScheduler ?? .shared
         // Build from the shared config store (same UserDefaults key as
         // McpServersView) so callTool reaches the same configured servers;
         // tests inject a manager with a deterministic directory instead.
@@ -1150,6 +1157,12 @@ final class ChatViewModel {
             guard let self else { return }
             self.refreshIntelligentUIReceipts(messages: finalMessages, conversationID: conversationId.toHexDashString())
             let terminal = try? await self.runStore.snapshot(runId: runId)
+            if let terminal, terminal.status.isTerminal, terminal.finishedAt != nil {
+                await self.wakeScheduler.recordRunTerminal(
+                    runID: runId, status: terminal.status.wireName,
+                    result: IOSWakeTaskOutput.text(in: finalMessages, baseline: displayBaseline)
+                )
+            }
             await self.orchestrationToolService.notifyRunTerminal(
                 conversationId: conversationId,
                 runId: runId,

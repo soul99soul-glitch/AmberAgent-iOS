@@ -252,7 +252,7 @@ enum IOSSavedActionIntentResolver {
 }
 
 @MainActor
-private enum IOSAppIntentDataSource {
+enum IOSAppIntentDataSource {
     static func conversations(limit: Int? = 20) async -> [IOSConversationEntity] {
         let summaries = await IOSConversationStore().appIntentSummaries(limit: limit)
         return summaries.map(IOSConversationEntity.init)
@@ -291,17 +291,51 @@ struct IOSAmberAppShortcuts: AppShortcutsProvider {
             shortTitle: LocalizedStringResource("快捷消息", table: "AppIntents"),
             systemImageName: "text.badge.checkmark"
         )
+        AppShortcut(
+            intent: IOSRunDueWakeTasksIntent(),
+            phrases: ["让 \(.applicationName) 继续到期任务"],
+            shortTitle: LocalizedStringResource("执行到期任务", table: "AppIntents"),
+            systemImageName: "clock.arrow.circlepath"
+        )
+        AppShortcut(
+            intent: IOSOpenAndRunDueWakeTasksIntent(),
+            phrases: ["打开 \(.applicationName) 执行待办任务"],
+            shortTitle: LocalizedStringResource("打开并续跑", table: "AppIntents"),
+            systemImageName: "play.circle"
+        )
+        AppShortcut(
+            intent: IOSScheduleWakeTaskIntent(),
+            phrases: ["让 \(.applicationName) 安排稍后任务"],
+            shortTitle: LocalizedStringResource("安排稍后任务", table: "AppIntents"),
+            systemImageName: "calendar.badge.clock"
+        )
+        AppShortcut(
+            intent: IOSReadLatestAnswerIntent(),
+            phrases: ["读取 \(.applicationName) 最新回答"],
+            shortTitle: LocalizedStringResource("读取最新回答", table: "AppIntents"),
+            systemImageName: "text.bubble"
+        )
+        AppShortcut(
+            intent: IOSSignalWakeEventIntent(),
+            phrases: ["向 \(.applicationName) 发送自动化事件"],
+            shortTitle: LocalizedStringResource("发送自动化事件", table: "AppIntents"),
+            systemImageName: "bolt.horizontal.circle"
+        )
     }
 
     static let shortcutTileColor: ShortcutTileColor = .orange
 }
 
-private enum IOSAppIntentError: LocalizedError {
+enum IOSAppIntentError: LocalizedError {
     case invalidDestination
     case emptyPrompt
     case promptTooLong
     case missingSavedAction
     case missingConversation
+    case missingAnswer
+    case invalidEvent
+    case eventContentTooLong
+    case taskPromptTooLong
 
     static func validatedPrompt(_ value: String) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -327,6 +361,14 @@ private enum IOSAppIntentError: LocalizedError {
             String(localized: "这条快捷消息已被删除，请重新选择。", table: "AppIntents")
         case .missingConversation:
             String(localized: "这段对话已被删除，请重新选择。", table: "AppIntents")
+        case .missingAnswer:
+            String(localized: "这段对话还没有可读取的回答。", table: "AppIntents")
+        case .invalidEvent:
+            String(localized: "事件名不能为空，且不能超过 200 个字符。", table: "AppIntents")
+        case .eventContentTooLong:
+            String(localized: "事件资料不能超过 8000 个字符。", table: "AppIntents")
+        case .taskPromptTooLong:
+            String(localized: "任务说明不能超过 8000 个字符。", table: "AppIntents")
         }
     }
 }

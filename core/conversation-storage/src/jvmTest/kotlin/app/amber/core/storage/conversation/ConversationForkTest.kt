@@ -129,6 +129,42 @@ class ConversationForkTest {
     // MARK: - 截断点安全（空 tool part 裁剪）
 
     @Test
+    fun forkAllDropsPendingToolBatchWithoutReplayingParentWork() {
+        val completed = assistantWithTool(
+            "completed-call",
+            "workspace_read",
+            output = listOf(UIMessagePart.Text("已读取", metadata = null)),
+        )
+        val pendingBatch = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "approved-write",
+                    toolName = "workspace_write",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("已写入", metadata = null)),
+                ),
+                UIMessagePart.Tool(
+                    toolCallId = "pending-spawn",
+                    toolName = "spawn_agent",
+                    input = "{}",
+                    output = emptyList(),
+                ),
+            ),
+        )
+        val source = sourceConversation(
+            listOf(node(user("q1")), node(completed), node(user("q2")), node(pendingBatch)),
+        )
+
+        val forked = fork(source, "all")
+
+        assertEquals(3, forked.messageNodes.size, "all 模式不能把父线程尚未执行完的工具批次交给子线程重放")
+        assertEquals(completed, forked.messageNodes[1].messages.single(), "已完成的历史工具调用必须保留")
+        assertEquals("q2", texts(forked).last(), "保留当前用户请求作为安全的历史终点")
+        assertEquals(4, source.messageNodes.size, "fork 不得修改父线程消息")
+    }
+
+    @Test
     fun forkTrimsConsecutiveUnsafeAssistantMessagesForRequestedTurns() {
         val unfinished1 = assistantWithTool("tc-1", "search_web")
         val unfinished2 = assistantWithTool("tc-2", "scrape_web")

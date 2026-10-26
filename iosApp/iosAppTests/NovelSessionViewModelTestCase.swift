@@ -672,6 +672,10 @@ actor NovelSessionSnapshotFailingCreation: NovelCreation {
         try await base.start(request)
     }
 
+    func observeRun(projectID: NovelProjectID, runID: NovelRunID, operationID: NovelOperationID) async throws -> NovelRun {
+        try await base.observeRun(projectID: projectID, runID: runID, operationID: operationID)
+    }
+
     func interruptRun(_ command: NovelCancelRunCommand) async throws {
         try await base.interruptRun(command)
         if shouldBlockInterruptReturn {
@@ -740,6 +744,16 @@ actor NovelSessionAttachBlockingCreation: NovelCreation {
     }
 
     func start(_ request: NovelRunRequest) async throws -> NovelRun {
+        try await waitForStartGate()
+        return try await base.start(request)
+    }
+
+    func observeRun(projectID: NovelProjectID, runID: NovelRunID, operationID: NovelOperationID) async throws -> NovelRun {
+        try await waitForStartGate()
+        return try await base.observeRun(projectID: projectID, runID: runID, operationID: operationID)
+    }
+
+    private func waitForStartGate() async throws {
         if shouldFailNextStart {
             shouldFailNextStart = false
             throw NovelError.repositoryFailure("Injected active-run subscription failure.")
@@ -750,7 +764,6 @@ actor NovelSessionAttachBlockingCreation: NovelCreation {
                 blockedStartContinuation = continuation
             }
         }
-        return try await base.start(request)
     }
 
     func interruptRun(_ command: NovelCancelRunCommand) async throws {
@@ -823,6 +836,10 @@ actor NovelSessionPerformReturnBlockingCreation: NovelCreation {
 
     func start(_ request: NovelRunRequest) async throws -> NovelRun {
         try await base.start(request)
+    }
+
+    func observeRun(projectID: NovelProjectID, runID: NovelRunID, operationID: NovelOperationID) async throws -> NovelRun {
+        try await base.observeRun(projectID: projectID, runID: runID, operationID: operationID)
     }
 
     func interruptRun(_ command: NovelCancelRunCommand) async throws {

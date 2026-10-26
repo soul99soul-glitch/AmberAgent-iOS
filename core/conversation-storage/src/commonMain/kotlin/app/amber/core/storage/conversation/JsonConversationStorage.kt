@@ -361,13 +361,9 @@ class JsonConversationStorage(
             chatSuggestions = existing.chatSuggestions,
             isPinned = existing.isPinned,
             autoApproveToolCalls = existing.autoApproveToolCalls,
-            // P2-a：POLLUTED 由 harness/用户显式写者拥有，旧消息快照回写不得把它
-            // 降级回 ENABLED（只升不降）。见 MemoryPollutionTest。
-            memoryMode = if (existing.memoryMode == ConversationMemoryMode.POLLUTED) {
-                existing.memoryMode
-            } else {
-                incoming.memoryMode
-            },
+            // updateMemoryMode owns every transition, including an explicit reset.
+            // A message snapshot can be stale in either direction.
+            memoryMode = existing.memoryMode,
         )
     }
 

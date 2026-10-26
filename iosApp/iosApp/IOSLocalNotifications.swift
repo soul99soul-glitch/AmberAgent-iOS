@@ -560,12 +560,14 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
             actionHandler: WatchTaskCoordinator.shared
         )
         IOSChatBackgroundGenerationCoordinator.shared.prepareForApplicationLaunch()
+        IOSWakeScheduler.shared.prepareForApplicationLaunch()
         MacGatewayStore.shared.applicationDidFinishLaunching()
         return true
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
         IOSJevMetricsStore.setApplicationBackgroundState(true)
+        IOSWakeScheduler.shared.applicationEnteredBackground()
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {

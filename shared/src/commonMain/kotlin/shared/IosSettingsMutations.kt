@@ -1195,16 +1195,18 @@ object IosSettingsMutations {
     /** Remove a search service by [id] (Uuid string); no-op if not found. */
     fun removeSearchService(settings: Settings, id: String): Settings {
         val parsed = kotlin.uuid.Uuid.parse(id)
+        if (settings.searchServices.none { it.id == parsed }) return settings
+        val selectedId = settings.searchServices.getOrNull(settings.searchServiceSelected)?.id
         val services = settings.searchServices.filterNot { it.id == parsed }
         val selected = if (services.isEmpty()) {
             0
         } else {
-            settings.searchServiceSelected.coerceIn(0, services.lastIndex)
+            services.indexOfFirst { it.id == selectedId }.takeIf { it >= 0 }
+                ?: settings.searchServiceSelected.coerceIn(0, services.lastIndex)
         }
         val enabledIds = settings.searchEnabledServiceIds
             .filterNot { it == parsed }
             .filter { id -> services.any { service -> service.id == id } }
-            .ifEmpty { services.getOrNull(selected)?.let { listOf(it.id) }.orEmpty() }
         return settings.copy(
             searchServices = services,
             searchServiceSelected = selected,

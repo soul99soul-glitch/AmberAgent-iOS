@@ -9,6 +9,7 @@ extension ChatToolRuntime {
         params: TextGenerationParams,
         runId: String,
         conversationId: KotlinUuid? = nil,
+        baseMessages: [UIMessage] = [],
         nestedTools: IOSJsSandboxTools? = nil,
         toolExposureBridge: IosToolExposureBridge? = nil,
         execStoreScope: IOSJsStoreScope? = nil
@@ -24,6 +25,16 @@ extension ChatToolRuntime {
             ])
         }
         switch toolCall.toolName {
+        case let name where IOSShortcutAuthoringToolCatalog.toolNames.contains(name):
+            return await IOSShortcutAuthoringToolExecutor.execute(input: toolCall.input)
+        case let name where IOSWakeToolCatalog.toolNames.contains(name):
+            return await IOSWakeToolExecutor.execute(
+                tool: toolCall,
+                runID: runId,
+                conversationID: conversationId?.toHexDashString(),
+                messages: baseMessages,
+                scheduler: wakeScheduler
+            )
         case IOSWeatherToolCatalog.toolName:
             return await IOSWeatherToolExecutor.execute(input: toolCall.input)
         case IOSHealthAgentToolCatalog.toolName:
@@ -388,6 +399,11 @@ extension ChatToolRuntime {
         }
 
         if IOSSearchExecutor.supportedToolNames.contains(name) {
+            switch searchToolPermission() {
+            case .denied(let reason): return .denied(reason)
+            case .needsApproval(let reason): return .needsApproval(reason)
+            case .allow: break
+            }
             let output = await dispatchSearchToolCall(toolCall(name: name, input: arguments))
             recordSubAgentParentToolApproval(
                 toolName: name,

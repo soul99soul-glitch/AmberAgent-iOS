@@ -1014,6 +1014,7 @@ struct DeepReadCreateView: View {
     @State private var deepReadMessage: String?
     @State private var deepReadMessageIsError = false
     @State private var isImportingDeepReadFile = false
+    @State private var templateStore = IOSDeepReadTemplateStore.shared
 
     var body: some View {
         NavigationStack {
@@ -1041,7 +1042,20 @@ struct DeepReadCreateView: View {
         }
         .presentationDetents([.large])
         .onAppear {
-            selectedTemplateId = IOSDeepReadTemplate.normalizedTemplateId(sharedSettings.todayBoard.deepReadTemplateId)
+            let configured = IOSDeepReadTemplate.normalizedTemplateId(sharedSettings.todayBoard.deepReadTemplateId)
+            selectedTemplateId = templateOptions.contains { $0.id == configured } ? configured : IOSDeepReadTemplate.defaultId
+        }
+    }
+
+    private var templateOptions: [IOSDeepReadTemplate] {
+        Self.templateOptions(customTemplates: templateStore.templates)
+    }
+
+    static func templateOptions(customTemplates: [IOSDeepReadCustomTemplate]) -> [IOSDeepReadTemplate] {
+        DeepReadSynthesisTemplate.options.map {
+            IOSDeepReadTemplate(id: $0.id, name: $0.name, description: $0.detail)
+        } + customTemplates.map {
+            IOSDeepReadTemplate(id: $0.id, name: $0.name, description: $0.description)
         }
     }
 
@@ -1067,12 +1081,14 @@ struct DeepReadCreateView: View {
                     deepReadTextField(title: "搜索", text: $searchQuery, placeholder: "可选：搜索一个主题并纳入来源")
 
                     Picker("版式", selection: $selectedTemplateId) {
-                        ForEach(IOSDeepReadTemplate.builtIns) { template in
-                            Text(verbatim: IOSAppLocalization.string(template.name, defaultValue: template.name))
+                        ForEach(templateOptions) { template in
+                            Text(verbatim: template.id.hasPrefix(IOSDeepReadTemplate.customPrefix)
+                                 ? template.name
+                                 : IOSAppLocalization.string(template.name, defaultValue: template.name))
                                 .tag(template.id)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
 
                     AmberGlassGroup(spacing: 16) {
                         HStack(spacing: 10) {
@@ -1092,6 +1108,7 @@ struct DeepReadCreateView: View {
                                     .frame(width: 42)
                             }
                             .buttonStyle(.glass)
+                            .disabled(isCreatingDeepRead)
                             .accessibilityLabel("从文件创建深度阅读")
 
                             Button {
@@ -1101,6 +1118,7 @@ struct DeepReadCreateView: View {
                                     .frame(width: 42)
                             }
                             .buttonStyle(.glass)
+                            .disabled(isCreatingDeepRead)
                             .accessibilityLabel("从当前 WebMount 页面创建深度阅读")
                         }
                     }
@@ -1165,6 +1183,7 @@ struct DeepReadCreateView: View {
     private func createDeepReadTask(includeConversation: Bool) async {
         guard !isCreatingDeepRead else { return }
         isCreatingDeepRead = true
+        let templateId = selectedTemplateId
         deepReadMessage = nil
         deepReadMessageIsError = false
         defer { isCreatingDeepRead = false }
@@ -1194,7 +1213,7 @@ struct DeepReadCreateView: View {
                     ))
                 }
             }
-            try launch(title: deepReadTitle, sources: sources, templateId: selectedTemplateId)
+            try launch(title: deepReadTitle, sources: sources, templateId: templateId)
             manualText = ""
             searchQuery = ""
         } catch {
@@ -1206,12 +1225,13 @@ struct DeepReadCreateView: View {
     private func createFromWebMount() async {
         guard !isCreatingDeepRead else { return }
         isCreatingDeepRead = true
+        let templateId = selectedTemplateId
         defer { isCreatingDeepRead = false }
         let result = await IOSDeepReadWebMountAdapter.currentPageSource()
         switch result {
         case .success(let source):
             do {
-                try launch(title: source.title, sources: [source], templateId: sharedSettings.todayBoard.deepReadTemplateId)
+                try launch(title: source.title, sources: [source], templateId: templateId)
             } catch {
                 deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
                 deepReadMessageIsError = true
@@ -1223,6 +1243,7 @@ struct DeepReadCreateView: View {
     }
 
     private func handleDeepReadFileImport(_ result: Result<[URL], Error>) {
+        guard !isCreatingDeepRead else { return }
         switch result {
         case .success(let urls):
             guard let url = urls.first else {
@@ -1230,15 +1251,16 @@ struct DeepReadCreateView: View {
                 deepReadMessageIsError = true
                 return
             }
+            isCreatingDeepRead = true
+            let templateId = selectedTemplateId
             documentStore.registerPickedFile(url)
             Task {
-                isCreatingDeepRead = true
                 defer { isCreatingDeepRead = false }
                 let read = await documentStore.readSelectedDocumentForDeepRead()
                 switch read {
                 case .success(let source):
                     do {
-                        try launch(title: source.title, sources: [source], templateId: sharedSettings.todayBoard.deepReadTemplateId)
+                        try launch(title: source.title, sources: [source], templateId: templateId)
                     } catch {
                         deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
                         deepReadMessageIsError = true

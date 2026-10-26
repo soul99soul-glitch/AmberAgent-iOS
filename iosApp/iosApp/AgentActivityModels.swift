@@ -465,7 +465,8 @@ extension AgentActivityPresentation {
     static func runningTool(toolName: String) -> AgentActivityPresentation {
         switch toolName {
         case "phone_status": return .phoneControl(.checkingStatus)
-        case "phone_observe": return .phoneControl(.observing)
+        case "phone_observe", "phone_system", "phone_clipboard": return .phoneControl(.observing)
+        case "phone_return_to_amber": return .phoneControl(.openingApp)
         case "phone_act": return .phoneControl(.connecting)
         case "phone_run_goal": return .phoneControl(.deciding)
         case "phone_scroll_until", "phone_collect_list", "phone_run_flow": return .phoneControl(.observing)

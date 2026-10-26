@@ -35,6 +35,7 @@ struct IOSAppleIntegrationsView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         capabilitySection
+                        IOSWakeTasksSection()
                         notificationSection
                         reminderSection
                         shortcutSection
@@ -216,6 +217,9 @@ struct IOSAppleIntegrationsView: View {
                     Label("询问 Amber", systemImage: "sparkles")
                     Label("生成每日简报", systemImage: "sun.max")
                     Label("运行快捷消息", systemImage: "text.badge.checkmark")
+                    Label("安排、执行和取消续跑任务", systemImage: "clock.arrow.circlepath")
+                    Label("发送自动化事件与资料", systemImage: "bolt.badge.clock")
+                    Label("读取回答与继续指定对话", systemImage: "text.bubble")
                     Text("安装后可在“快捷指令”App、Siri 和系统搜索中使用。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)

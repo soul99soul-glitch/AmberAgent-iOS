@@ -505,6 +505,7 @@ final class ChatDynamicToolLifecycle {
             params: pending.params,
             runId: pending.runId,
             conversationId: pending.conversationId,
+            baseMessages: pending.baseMessages,
             nestedTools: nestedTools,
             toolExposureBridge: toolExposureBridge,
             // store 分支可见性：run 的 working 消息就是它所在分支（重新生成时

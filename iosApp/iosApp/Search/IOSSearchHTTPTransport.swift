@@ -48,10 +48,11 @@ struct IOSURLSessionSearchHTTPTransport: IOSSearchHTTPTransport {
         guard let url = request.url else { throw IOSSearchExecutorError.invalidURL }
         let validated = try IOSSearchExecutor.allowedPublicHTTPURL(from: url.absoluteString)
         guard let host = validated.host else { throw IOSSearchExecutorError.invalidURL }
-        let resolver = resolveHost
-        let addresses = try await Task.detached(priority: .userInitiated) {
-            try resolver(host)
-        }.value
+        let deadline = Date(timeIntervalSinceNow: request.timeoutInterval)
+        let addresses = try await IOSVerifiedHTTPScrapeAddressResolver.resolveSystemAddresses(
+            host, resolveHost: resolveHost, deadline: deadline
+        )
+        try Task.checkCancellation()
         guard !addresses.isEmpty, addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
             throw IOSSearchExecutorError.disallowedURL("host resolves to a non-public address")
         }
@@ -61,7 +62,10 @@ struct IOSURLSessionSearchHTTPTransport: IOSSearchHTTPTransport {
             requiresHTTPS: validated.scheme?.lowercased() == "https",
             resolveHost: resolveHost
         )
-        return try await loader.load(request)
+        var boundedRequest = request
+        boundedRequest.timeoutInterval = deadline.timeIntervalSinceNow
+        guard boundedRequest.timeoutInterval > 0 else { throw URLError(.timedOut) }
+        return try await loader.load(boundedRequest)
     }
 }
 

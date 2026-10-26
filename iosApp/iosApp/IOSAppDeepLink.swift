@@ -12,6 +12,9 @@ enum IOSAppDeepLink {
         case healthSummary
         case weather
         case appleIntegrations
+        case wakeTasks
+        case wakeDueTasks
+        case wakeTask(id: String)
         case agentActivity(AgentActivityDeepLink.Target)
         /// 深度阅读实时活动卡片的落点。
         case deepReadTask(id: String)
@@ -49,6 +52,13 @@ enum IOSAppDeepLink {
             return .agentPrompt(handoffID: parts[1])
         case ("task", ["active"]) where queryItems.isEmpty:
             return .activeTask
+        case ("wake", []) where queryItems.isEmpty:
+            return .wakeTasks
+        case ("wake", ["due"]) where queryItems.isEmpty:
+            return .wakeDueTasks
+        case ("wake", let parts) where parts.count == 1 && queryItems.isEmpty:
+            guard UUID(uuidString: parts[0]) != nil else { return nil }
+            return .wakeTask(id: parts[0])
         case ("settings", ["health"]) where queryItems.isEmpty:
             return .healthSummary
         case ("settings", ["weather"]) where queryItems.isEmpty:
@@ -101,6 +111,15 @@ enum IOSAppDeepLink {
         case .appleIntegrations:
             components.host = "settings"
             components.path = "/apple-integrations"
+        case .wakeTasks:
+            components.host = "wake"
+        case .wakeDueTasks:
+            components.host = "wake"
+            components.path = "/due"
+        case .wakeTask(let id):
+            guard UUID(uuidString: id) != nil else { return nil }
+            components.host = "wake"
+            components.path = "/\(id)"
         case .gatewayPair(let payload):
             guard isSafeIdentifier(payload, maxLength: MacGatewayPairingPayload.maximumLinkLength) else { return nil }
             components.host = "gateway"

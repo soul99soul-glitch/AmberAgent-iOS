@@ -150,6 +150,8 @@ final class ChatRunKernelAdapter {
     /// 引擎段的驱动子任务——Host 取消手势的取消点(只取消引擎段,适配器自身
     /// 任务保持存活以完成收口)。
     private var driverTask: Task<IOSAgentToolEngineResult, Never>?
+    /// 审批后的执行不在引擎 driver 内，仍由同一 run 持有取消权。
+    private var approvalExecutionTask: Task<ApprovalResolution, Never>?
     /// Host 取消(CG C cancel 的适配层等价)。取消后:引擎回调一律忽略
     /// (取消填充是权威快照),迟到的引擎结果不回灌。
     private var isCancelledByHost = false
@@ -345,15 +347,21 @@ final class ChatRunKernelAdapter {
                         // B1: Host 的逐轮上传准备(语境注入/压缩/记忆召回),
                         // 序同 CG-C:预算提示先入列,Host 准备再往头部前置,
                         // 最终头部次序 [运行时语境…, 图像提示?, 预算提示, …]。
-                        // @MainActor async 闭包:盒装后经 Task 跳 MainActor
-                        // 执行(MainActor.run 只吃同步闭包);抛错 = 上传准备
-                        // 失败,沿引擎通用 catch 以 failed 收口。
+                        // @MainActor async 闭包需要独立任务跨 actor；driver
+                        // 取消时同步取消它，准备阶段才能停止后续辅助请求。
                         if uploadPreparer.value != nil {
                             let inbox = UncheckedMessagesBox(upload)
-                            let outbox = try await Task { @MainActor () throws -> UncheckedMessagesBox in
+                            let preparation = Task { @MainActor () throws -> UncheckedMessagesBox in
+                                try Task.checkCancellation()
                                 guard let prepare = uploadPreparer.value else { return inbox }
                                 return UncheckedMessagesBox(try await prepare(inbox.value))
-                            }.value
+                            }
+                            let outbox = try await withTaskCancellationHandler {
+                                try await preparation.value
+                            } onCancel: {
+                                preparation.cancel()
+                            }
+                            try Task.checkCancellation()
                             upload = outbox.value
                         }
                         return upload
@@ -630,6 +638,7 @@ final class ChatRunKernelAdapter {
         guard !didReportTerminal, !isStoppedByHost else { return }
         isCancelledByHost = true
         cancellationFailureReason = failureReason
+        approvalExecutionTask?.cancel()
         if let driverTask {
             // A streaming driver returns the exact terminal accumulator,
             // including any tail absent from the throttled UI snapshot.
@@ -672,6 +681,7 @@ final class ChatRunKernelAdapter {
         lastAppliedSnapshotSeq = .max
         driverTask?.cancel()
         driverTask = nil
+        approvalExecutionTask?.cancel()
     }
 
     // MARK: - 执行器装配
@@ -702,7 +712,8 @@ final class ChatRunKernelAdapter {
             nestedToolRunner: nestedToolRunner,
             nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider,
             recipeCatalogSnapshot: recipeCatalogSnapshot,
-            executionPolicy: request.executionPolicy
+            executionPolicy: request.executionPolicy,
+            phoneControl: request.phoneControl
         )
     }
 
@@ -1003,10 +1014,19 @@ final class ChatRunKernelAdapter {
         candidates: PreparedApprovalCandidates,
         request: RunRequest
     ) async -> ApprovalResolution {
-        await approvalResolver.resolveApproval(
-            prompt: prompt, decision: decision, pending: pending,
-            candidates: candidates, request: request
-        )
+        guard !isStoppedByHost else { return .failed }
+        let execution = Task { @MainActor in
+            await approvalResolver.resolveApproval(
+                prompt: prompt, decision: decision, pending: pending,
+                candidates: candidates, request: request
+            )
+        }
+        approvalExecutionTask = execution
+        let resolution = await execution.value
+        approvalExecutionTask = nil
+        // 已发出的工具仍记录真实终态；迟到结果不能夺回取消或后台交接的快照。
+        guard !isStoppedByHost else { return .failed }
+        return resolution
     }
 
     private func markDurabilityFailure() {

@@ -103,6 +103,10 @@ final class IOSPhoneControlCatalogTests: XCTestCase {
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_scroll_until", input: "{}"), .sideEffect)
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_collect_list", input: "{}"), .sideEffect)
         XCTAssertEqual(IOSToolEffectClassMapping.forToolName("phone_stop", input: "{}"), .sideEffect)
+        for name in ["phone_return_to_amber", "phone_clipboard", "phone_system"] {
+            XCTAssertEqual(IOSToolEffectClassMapping.forToolName(name, input: "{}"), .sideEffect)
+            XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.contains(name))
+        }
         XCTAssertTrue(ChatToolRuntime.execNestedToolWhitelist(visibleToolNames: IOSPhoneControlToolCatalog.toolNames).isEmpty)
     }
 

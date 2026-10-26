@@ -64,6 +64,7 @@ enum NovelGenerationReducer {
                 collectedCheckpointID: nil,
                 chapterPlanDigest: run.chapterPlanDigest,
                 ghostwritePlanID: run.ghostwritePlanID,
+                generationGranularity: run.granularity,
                 createdAt: message.createdAt
             ))
             candidateIDs.insert(candidateID)
@@ -370,6 +371,7 @@ enum NovelGenerationReducer {
                 collectedCheckpointID: nil,
                 chapterPlanDigest: run.chapterPlanDigest,
                 ghostwritePlanID: run.ghostwritePlanID,
+                generationGranularity: run.granularity,
                 createdAt: now
             ))
         }
@@ -971,6 +973,7 @@ private extension NovelGenerationReducer {
                     collectedCheckpointID: nil,
                     chapterPlanDigest: run.chapterPlanDigest,
                     ghostwritePlanID: run.ghostwritePlanID,
+                    generationGranularity: run.granularity,
                     createdAt: now
                 ))
             }

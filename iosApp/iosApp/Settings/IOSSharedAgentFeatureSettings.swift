@@ -335,8 +335,8 @@ extension IOSSharedSettingsStore {
     var searchBuiltinHackerNewsEnabled: Bool { snapshot.searchBuiltinHackerNewsEnabled }
     var searchGoogleWebViewFallbackEnabled: Bool { snapshot.searchGoogleWebViewFallbackEnabled }
 
-    /// Per-search max result count (SearchCommonOptions.resultSize).
-    var searchResultSize: Int { Int(snapshot.searchCommonOptions.resultSize) }
+    /// iOS search tools return at most ten results, including restored settings.
+    var searchResultSize: Int { min(max(Int(snapshot.searchCommonOptions.resultSize), 1), 10) }
 
     /// Real default display setting.
     var displaySetting: DisplaySetting {
