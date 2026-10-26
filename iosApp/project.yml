@@ -300,6 +300,7 @@ targets:
     sources:
       - path: ActivityWidget
       - path: iosApp/AgentActivityModels.swift
+      - path: iosApp/AgentResponseStage.swift
       - path: iosApp/AgentActivityControlIntents.swift
       - path: iosApp/IOSAlarmActivityModels.swift
       - path: iosApp/IOSAppLanguage.swift
@@ -340,6 +341,7 @@ targets:
     sources:
       - path: ActivityWidget
       - path: iosApp/AgentActivityModels.swift
+      - path: iosApp/AgentResponseStage.swift
       - path: iosApp/AgentActivityControlIntents.swift
       - path: iosApp/IOSAlarmActivityModels.swift
       - path: iosApp/IOSAppLanguage.swift

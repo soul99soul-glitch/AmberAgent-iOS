@@ -50,3 +50,10 @@ docs/cloud-design/**/.thumbnail
 
 # App Store Connect API 私钥：放 ~/.appstoreconnect/private_keys/，不要提交
 *.p8
+
+# Native Mac generated project and build outputs
+macApp/AmberMac.xcodeproj/
+macApp/build/
+
+# desktop-shared build outputs
+desktop-shared/build/

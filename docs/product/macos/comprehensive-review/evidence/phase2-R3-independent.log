@@ -1,0 +1,43 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'amber-audit-data-proof': failed storing manifest for 'amber-audit-data-proof' in cache: attempt to write a readonly database
+Building for debugging...
+[Planning deferred tasks]
+[6 / 15] AmberMacTests-product
+[8 / 17] AmberMacTests-product
+[12 / 16] AmberMacTests-product
+[14 / 16] AmberMacTests-product
+Build complete! (1.61秒)
+Test Suite 'Selected tests' started at 2026-10-23 23:13:46.034.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-23 23:13:46.034.
+Test Suite 'AuditDataProof' started at 2026-10-23 23:13:46.034.
+Test Case '-[AmberMacTests.AuditDataProof testFlushWaitsForAcceptedWorkspaceImport]' started.
+Test Case '-[AmberMacTests.AuditDataProof testFlushWaitsForAcceptedWorkspaceImport]' passed (0.016 seconds).
+Test Suite 'AuditDataProof' passed at 2026-10-23 23:13:46.051.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.016 (0.017) seconds
+Test Suite 'RuntimeFileFacadeTests' started at 2026-10-23 23:13:46.051.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAcceptedConversationExportsFinishWithoutWaitingOnThemselves]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAcceptedConversationExportsFinishWithoutWaitingOnThemselves]' passed (0.008 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAttachmentCopyStaysWithOriginalOwnerAndSurvivesSourceDeletion]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAttachmentCopyStaysWithOriginalOwnerAndSurvivesSourceDeletion]' passed (0.107 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFileFailureIsRetainedWithOriginalOwnerAfterSwitching]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFileFailureIsRetainedWithOriginalOwnerAfterSwitching]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedAttachmentCopy]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedAttachmentCopy]' passed (0.008 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceDeleteAndExport]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceDeleteAndExport]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceImportWithOriginalOwner]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceImportWithOriginalOwner]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForKnowledgeAndConversationImport]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForKnowledgeAndConversationImport]' passed (0.010 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testOldFileOperationErrorDoesNotPreventSuccessfulFlush]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testOldFileOperationErrorDoesNotPreventSuccessfulFlush]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testWorkspacePreviewDoesNotExposeDeletedTemporarySourceURL]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testWorkspacePreviewDoesNotExposeDeletedTemporarySourceURL]' passed (0.007 seconds).
+Test Suite 'RuntimeFileFacadeTests' passed at 2026-10-23 23:13:46.218.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.166 (0.167) seconds
+Test Suite 'AmberMacTests.xctest' passed at 2026-10-23 23:13:46.218.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.183 (0.184) seconds
+Test Suite 'Selected tests' passed at 2026-10-23 23:13:46.218.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.183 (0.184) seconds

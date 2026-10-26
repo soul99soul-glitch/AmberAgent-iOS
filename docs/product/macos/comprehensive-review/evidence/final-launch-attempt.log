@@ -1,0 +1,7 @@
+open -n macApp/build/swiftpm-preview/AmberPreview.app
+exit=1; NSOSStatusErrorDomain -10827 kLSNoExecutableErr
+Actual CFBundleExecutable=AmberPreview; Mach-O arm64 file exists, executable mode=0755, 20359776 bytes; strict bundle signature verifies.
+Direct bundle executable invocation exit=134, zero output.
+Process listing unavailable: sysmon request failed, pgrep cannot get process list.
+CUA last attempt: Transport closed.
+Final actual window/relaunch remains unverified. These restricted-context results do not establish a production crash cause.

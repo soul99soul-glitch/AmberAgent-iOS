@@ -692,9 +692,11 @@ struct IOSSearchExecutor {
         _ request: URLRequest,
         transport: any IOSSearchHTTPTransport
     ) async throws -> (HTTPURLResponse, Data) {
+        #if os(iOS)
         if let verifiedTransport = transport as? any IOSVerifiedHTTPScrapeTransport {
             return try await verifiedTransport.sendVerifiedHTTPSGET(request, maximumResponseBytes: 512 * 1_024)
         }
+        #endif
         return try await transport.sendPublic(request, maximumResponseBytes: 512 * 1_024)
     }
 
@@ -898,8 +900,10 @@ struct IOSSearchExecutor {
     ) async throws -> [String: Any] {
         let (response, data) = try await transport.send(request)
         guard (200...299).contains(response.statusCode) else {
-#if DEBUG
+#if DEBUG && os(iOS)
             NSLog("[AmberSearch] \(provider) HTTP \(response.statusCode) body=\(String(data: data, encoding: .utf8)?.prefix(400) ?? "")")
+#elseif DEBUG
+            NSLog("[AmberSearch] \(provider) HTTP \(response.statusCode)")
 #endif
             throw IOSSearchExecutorError.httpStatus(provider, response.statusCode)
         }

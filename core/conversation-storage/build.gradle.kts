@@ -7,12 +7,21 @@ kotlin {
     jvm()
     iosArm64()
     iosSimulatorArm64()
+    macosArm64()
 
     compilerOptions {
         optIn.add("kotlin.uuid.ExperimentalUuidApi")
     }
 
     sourceSets {
+        macosArm64Main {
+            kotlin.srcDir("src/iosMain/kotlin")
+        }
+        macosArm64Test {
+            kotlin.srcDir("src/iosSimulatorArm64Test/kotlin")
+            dependencies { implementation(kotlin("test")) }
+        }
+
         commonMain.dependencies {
             api(project(":core:types"))
             api(project(":core:agent-utils"))

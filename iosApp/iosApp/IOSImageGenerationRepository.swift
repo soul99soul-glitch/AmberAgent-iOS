@@ -229,10 +229,13 @@ final class IOSImageGenerationRepository {
 
     private let historyStore: IOSImageGenerationHistoryStore
     private let fileManager: FileManager
+    private let outputDirectory: URL?
 
-    init(historyStore: IOSImageGenerationHistoryStore = .shared, fileManager: FileManager = .default) {
+    init(historyStore: IOSImageGenerationHistoryStore = .shared, fileManager: FileManager = .default,
+         outputDirectory: URL? = nil) {
         self.historyStore = historyStore
         self.fileManager = fileManager
+        self.outputDirectory = outputDirectory
     }
 
     func generate(
@@ -265,7 +268,9 @@ final class IOSImageGenerationRepository {
             options: [.sortedKeys]
         )
 
+        try Task.checkCancellation()
         let (response, data) = try await transport.send(urlRequest)
+        try Task.checkCancellation()
         guard (200...299).contains(response.statusCode) else {
             throw IOSImageGenerationError.httpStatus(response.statusCode, responseBodyPreview(data))
         }
@@ -286,7 +291,9 @@ final class IOSImageGenerationRepository {
         let directory = try imageDirectory()
         var files: [IOSGeneratedImageFile] = []
         for (index, item) in payload.enumerated() {
+            try Task.checkCancellation()
             let data = try await imageData(from: item, transport: transport)
+            try Task.checkCancellation()
             let ext = fileExtension(for: item.mimeType)
             let fileURL = directory.appendingPathComponent("\(recordId)_\(index).\(ext)", isDirectory: false)
             try data.write(to: fileURL, options: [.atomic])
@@ -305,6 +312,7 @@ final class IOSImageGenerationRepository {
             files: files,
             createdAt: Self.nowMillis()
         )
+        try Task.checkCancellation()
         historyStore.insert(record)
         didInsertHistory = true
         return record
@@ -395,11 +403,14 @@ final class IOSImageGenerationRepository {
             id: diagnosticId,
             "start provider=\(diagnosticTokenSummary(providerId)) promptChars=\(trimmedPrompt.count) count=\(targetCount) aspect=\(request.aspectRatio.rawValue) sourceImage=\(request.sourceImageURL != nil)"
         )
+        try Task.checkCancellation()
         let routingModel = try await client.fetchImageRoutingModel(preferredModelID: preferredRoutingModelID)
+        try Task.checkCancellation()
         writeCodexImageDiagnostic(id: diagnosticId, "routing model=\(routingModel) imageModel=\(request.model)")
         var base64Images: [String] = []
         var noImageReasons: [String] = []
         for attempt in 0..<targetCount {
+            try Task.checkCancellation()
             do {
                 let image = try await generateOneCodexImage(
                     request: request,
@@ -440,6 +451,7 @@ final class IOSImageGenerationRepository {
         let directory = try imageDirectory()
         var files: [IOSGeneratedImageFile] = []
         for (index, base64) in base64Images.enumerated() {
+            try Task.checkCancellation()
             guard let imageData = Data(base64Encoded: Self.normalizedBase64(base64)) else { continue }
             let fileURL = directory.appendingPathComponent("\(recordId)_\(index).png", isDirectory: false)
             try imageData.write(to: fileURL, options: [.atomic])
@@ -459,6 +471,7 @@ final class IOSImageGenerationRepository {
             files: files,
             createdAt: Self.nowMillis()
         )
+        try Task.checkCancellation()
         historyStore.insert(record)
         didInsertHistory = true
         writeCodexImageDiagnostic(id: diagnosticId, "completed record=\(diagnosticTokenSummary(recordId)) files=\(files.count)")
@@ -476,6 +489,7 @@ final class IOSImageGenerationRepository {
     ) async throws -> String {
         do {
             let token = try await client.getValidAccessToken()
+            try Task.checkCancellation()
             let accountId = IOSCodexAuthStore.load(providerId: providerId)?.accountId
             writeCodexImageDiagnostic(id: diagnosticId, "attempt \(attempt) token ok account=\(accountId?.isEmpty == false)")
             return try await sendCodexImageRequest(
@@ -490,6 +504,7 @@ final class IOSImageGenerationRepository {
         } catch IOSImageGenerationError.httpStatus(let status, _) where status == 401 {
             writeCodexImageDiagnostic(id: diagnosticId, "attempt \(attempt) got 401; refreshing token")
             let token = try await client.getValidAccessToken(forceRefresh: true)
+            try Task.checkCancellation()
             let accountId = IOSCodexAuthStore.load(providerId: providerId)?.accountId
             return try await sendCodexImageRequest(
                 request: request,
@@ -1155,8 +1170,8 @@ final class IOSImageGenerationRepository {
     }
 
     private func imageDirectory() throws -> URL {
-        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let directory = documents.appendingPathComponent("image-generation", isDirectory: true)
+        let directory = outputDirectory ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("image-generation", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }

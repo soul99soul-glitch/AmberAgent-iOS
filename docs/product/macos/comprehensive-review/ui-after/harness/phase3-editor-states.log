@@ -1,0 +1,13 @@
+2026-10-23 23:33:51.434 AmberOffscreenReview[17938:10356419] Failure on line 688 in function id scheduleApplicationNotification(LSNotificationCode, NSWorkspaceNotificationCenter *): noErr == _LSModifyNotification(notificationID, 1, &code, 0, NULL, NULL, NULL)
+2026-10-23 23:33:51.584 AmberOffscreenReview[17938:10356428] Connection Invalid error for service com.apple.hiservices-xpcservice.
+2026-10-23 23:33:51.584 AmberOffscreenReview[17938:10356419] Error received in message reply handler: Connection invalid
+EXPECTED PARTIAL LOCAL FAILURE: The file “待恢复的第二张生成结果.png” couldn’t be opened because there is no such file.
+IMAGE COUNTS artifacts=1 pending=1
+BACKUP STATUS 已恢复 1 个会话副本、1 个服务商配置副本和 1 条记忆。现有内容已保留。 配置不含密钥，请在设置中填写或重新登录。 配置和知识资料副本保存在“备份恢复资料”的会话文件中；通用偏好待手动应用，技能和 SOUL 等待导入启用。 ERROR nil
+PHASE2 UI STATES COMPLETE, network requests 0
+EDITOR CAPTURE phase3-editor-ready (0.0, 0.0, 560.0, 390.0)
+EDITOR BUSY STATE 1 presented true sheetVisible true attached false
+EDITOR CAPTURE phase3-editor-busy (0.0, 0.0, 560.0, 390.0)
+EDITOR CAPTURE phase3-editor-failure (0.0, 0.0, 560.0, 466.0)
+PHASE3 REAL EDITOR COMPLETE: busy disabled; duplicate blocked; failure preserved exact draft; retry success dismissed
+OFFSCREEN COMPLETE

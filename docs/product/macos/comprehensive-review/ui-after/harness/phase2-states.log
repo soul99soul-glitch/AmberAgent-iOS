@@ -1,0 +1,17 @@
+2026-10-23 23:28:47.179 AmberOffscreenReview[15925:10344478] Failure on line 688 in function id scheduleApplicationNotification(LSNotificationCode, NSWorkspaceNotificationCenter *): noErr == _LSModifyNotification(notificationID, 1, &code, 0, NULL, NULL, NULL)
+2026-10-23 23:28:47.328 AmberOffscreenReview[15925:10344478] Error received in message reply handler: Connection invalid
+2026-10-23 23:28:47.328 AmberOffscreenReview[15925:10344492] Connection Invalid error for service com.apple.hiservices-xpcservice.
+2026-10-23 23:28:47.668 AmberOffscreenReview[15925:10344478] +[NSXPCSharedListener endpointForReply:withListenerName:replyErrorCode:]: an error occurred while attempting to obtain endpoint for listener 'ClientCallsAuxiliary': Connection invalid
+2026-10-23 23:28:47.668 AmberOffscreenReview[15925:10344493] +[NSXPCSharedListener endpointForReply:withListenerName:replyErrorCode:]: an error occurred while attempting to obtain endpoint for listener 'com.apple.view-bridge': Connection invalid
+2026-10-23 23:28:48.343 AmberOffscreenReview[15925:10344502] +[NSXPCSharedListener endpointForReply:withListenerName:replyErrorCode:]: an error occurred while attempting to obtain endpoint for listener 'com.apple.view-bridge': Connection invalid
+EXPECTED PARTIAL LOCAL FAILURE: The file “待恢复的第二张生成结果.png” couldn’t be opened because there is no such file.
+IMAGE COUNTS artifacts=1 pending=1
+BACKUP STATUS 已恢复 1 个会话副本、1 个服务商配置副本和 1 条记忆。现有内容已保留。 配置不含密钥，请在设置中填写或重新登录。 配置和知识资料副本保存在“备份恢复资料”的会话文件中；通用偏好待手动应用，技能和 SOUL 等待导入启用。 ERROR nil
+CAPTURE phase2-cancelled-steer-860-light content (0.0, 0.0, 860.0, 600.0) window (-820.0, -652.0, 860.0, 652.0) pixels 860 600
+CAPTURE phase2-cancelled-steer-860-dark content (0.0, 0.0, 860.0, 600.0) window (-820.0, -652.0, 860.0, 652.0) pixels 860 600
+CAPTURE phase2-images-pending-light content (0.0, 0.0, 740.0, 660.0) window (-40.0, -688.0, 740.0, 688.0) pixels 740 660
+CAPTURE phase2-images-partial-light content (0.0, 0.0, 740.0, 660.0) window (-40.0, -688.0, 740.0, 688.0) pixels 740 660
+CAPTURE phase2-images-partial-dark content (0.0, 0.0, 740.0, 660.0) window (-40.0, -688.0, 740.0, 688.0) pixels 740 660
+CAPTURE phase2-images-recovered-light content (0.0, 0.0, 740.0, 660.0) window (-40.0, -688.0, 740.0, 688.0) pixels 740 660
+PHASE2 UI STATES COMPLETE, network requests 0
+OFFSCREEN COMPLETE

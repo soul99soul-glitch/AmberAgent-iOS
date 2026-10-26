@@ -60,7 +60,11 @@ enum IOSFreeSearchAggregator {
         googleFallbackEnabled: Bool,
         transport: any IOSSearchHTTPTransport,
         googleFallback: (String, Int) async throws -> [IOSSearchResult] = { query, maxResults in
+            #if os(iOS)
             try await IOSGoogleWebViewSearch.search(query: query, maxResults: maxResults)
+            #else
+            throw IOSSearchExecutorError.unsupportedProvider("Google WebView 搜索仅在 iOS 可用。")
+            #endif
         },
         now: () -> Date = Date.init
     ) async throws -> [IOSSearchResult] {

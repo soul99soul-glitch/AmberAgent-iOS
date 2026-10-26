@@ -1,0 +1,323 @@
+{
+  "sources": [
+    {
+      "path": "iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift",
+      "sha256": "560868722bef45f2399b846751797206ba130c73d6f08a7fe21811f86f78add8"
+    },
+    {
+      "path": "iosApp/iosApp/IOSCodexOAuthClient.swift",
+      "sha256": "1adb753dc340356a16878116473f443073a64df7f6ae3af90324e135f6989464"
+    },
+    {
+      "path": "iosApp/iosApp/IOSCredentialRedactor.swift",
+      "sha256": "58da575fa27ee3d9cdc8460320d86e96e00955dded83b604b526c48dfbecab08"
+    },
+    {
+      "path": "iosApp/iosApp/IOSImageGenerationModels.swift",
+      "sha256": "ca016c5558b9fb9b06213da0867bd9ff23bf331a42547482423c2c20bace3180"
+    },
+    {
+      "path": "iosApp/iosApp/IOSImageGenerationRepository.swift",
+      "sha256": "17be84d77e7bba3374010a32ba0b824ca4b66ef7d7dc16dd5aee359f9196469e"
+    },
+    {
+      "path": "iosApp/iosApp/IOSMcpClient.swift",
+      "sha256": "160832f37cbda034f943b746c69b3ff2cc8877a740d25cdbbd59f73e1e8c7c04"
+    },
+    {
+      "path": "iosApp/iosApp/IOSSyncBackupError.swift",
+      "sha256": "872766da7602aeda536bf40ffd57217997e04af1969213247af9daf49aa8f75f"
+    },
+    {
+      "path": "iosApp/iosApp/IOSWebDAVClient.swift",
+      "sha256": "a8d6afd0761eda78352411badfbbc8cbf945749cf22461a7e2303e5b13fb0ff6"
+    },
+    {
+      "path": "iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift",
+      "sha256": "dc017de547f26e9c044ddd293a725315f866f263b3ff762f1da41f2a5b5e25c8"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopAgentTasks.swift",
+      "sha256": "efcd55462428001e327bdd7c065139d000eccd551ce89d7214d13112ce31ec84"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopAuxiliaryRouting.swift",
+      "sha256": "ae5007050705015a49830b3b143f61855a4f6a62ef264dbd6640f80f719d0149"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopBackup.swift",
+      "sha256": "a9d699d55b3536893a00329b06724c82dc68d4847cb7b809137b3551e1cb8b6a"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopCodeHighlights.swift",
+      "sha256": "8b59fe1c6afa53a12fc3ce2283b9b2af409a397029fd5b29ae756ab60ec91bf8"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopCollaborations.swift",
+      "sha256": "820c388238acf88899e56401deb4551612c908313f53faf1579afe2fb6e04d34"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopCommandRunner.swift",
+      "sha256": "df23f8661a06b027c3f4fd24dbf50d42a9d23995fe57c8063233b0873867258a"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopConversationExport.swift",
+      "sha256": "9141c985b86665484b0609c93f8f3340d21872790d5b5aeff4d4aeb3de23f448"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopConversationInsights.swift",
+      "sha256": "1eca3d48c6ce1bbc68a69f120d8c63aad0e8c8142db1b85a34c3383b4c8c61d5"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopConversationPresentation.swift",
+      "sha256": "241d9c62235cf17fab1463595fac8f73153b3a6856afed5e00f6b8fa759896f6"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopConversationStorageProtocol.swift",
+      "sha256": "34bff29a1d681c0309d6da1031550a10a224083d6aa4e96b35ae7d7c4a9cee49"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopConversationSummary.swift",
+      "sha256": "2d0ab27c4cc979f3f263b9a9180862b8b173025b02ce9baed6247648de35824a"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopDocumentImport.swift",
+      "sha256": "9bfde5cd7050e4a87b198f08beeb41c7766ee5a410f93aff2432608d3196360e"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopFixtures.swift",
+      "sha256": "0cbe7f1e5015fb78eda67634479609d1d04f016c43605002b84d12c29a0cb934"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopGeneratedImageArtifacts.swift",
+      "sha256": "196760b5dcee2082770d4f43d8559124dede42a9ec838215e0917f218c56ed1d"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopGeneration.swift",
+      "sha256": "d4e7b2ec6a961dcea042e989a6bc05b35555dab8c89c4707249ea15744c0bf24"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopImageGeneration.swift",
+      "sha256": "e3fb8acdb82eb8983952323e6a2b369a05d9f4bcbdbbf859da1f7ee1e0ddfb5d"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopKnowledgeModels.swift",
+      "sha256": "eb11dec766224a757382886139202998ff32492c35c51396bb957b4e58246f24"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopKnowledgeStore.swift",
+      "sha256": "d732fc3501993be305f84fff9e2e811f854791a6bbd7ae2d69c3ede767654f4d"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopKnowledgeTools.swift",
+      "sha256": "df46cc9ace2d600f60f1a15c96d8464f9c976978d2b353457c34edf1c850f87d"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopMCPManager.swift",
+      "sha256": "b8bbc42f58cce982086314c80201ef90bcc5dcf9990bf803bb14b4bdc114e626"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopMCPStdioTransport.swift",
+      "sha256": "e352971304afec6077cd5f3dd6c1e8687cecafb58412b9e92f1c63babd7ef93d"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopMCPStore.swift",
+      "sha256": "589e36a0fecf0a4f09d6acc7c9095112e7987d06e1438e54dfc4598ac037cb87"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopMathTokenizer.swift",
+      "sha256": "8fee89c44068a250e16408977ccd1241b1596f55162208b9bda4d27d15dc6de1"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopMessageAttachment.swift",
+      "sha256": "fd614bbff9e0d1a88194b4877c2a9e24aa589c65d3c5e430b838f8ffa8e510ac"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopModelConfiguration.swift",
+      "sha256": "47d0bf036643903fbeb292a522f22c92320beb5cadea7292f1d60320f39a2af2"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopModels.swift",
+      "sha256": "0ed92dbd641d22821415072b24e5c9f220a7dcc48104fd7ea3c51f37e2ac96ba"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopNotifications.swift",
+      "sha256": "86c8fc058a7fcf2150b04b0abcbed6c17ed2c77a8099d34b6d97cecb0e801000"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopOAuth.swift",
+      "sha256": "9669ec143d81c830476b48964a52cc36d74c6ce0d52315d989551fbb6bee5e3b"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopOAuthCredentials.swift",
+      "sha256": "8ac84ac4c511b97eee0a8fe159da6ef74fb1dcb648992a0fc7daeaf4f510d6c2"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopProviderCatalog.swift",
+      "sha256": "fddf6cbdc61ef307c92e07a8b9f00a0122b1bd8b7a874d9634613d664949f8f5"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopPublicSearchURL.swift",
+      "sha256": "49aa2d97327e15446bbba4d57bfcb4c3847875b500109c31fea636233a482a99"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopQueuedInstruction.swift",
+      "sha256": "76895fa1eae34c75eb88a50835b9e005444f5e32adcb04de05a4ec5cab477429"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopRecipeRuns.swift",
+      "sha256": "3071509d9c3cc64f70ae11c63d55df24aaaf63b63b1fb1a9c9626718dc38060e"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopRecipes.swift",
+      "sha256": "ccfff556808a240da2201a0e8e0215ee2b0e19e33360c2db5fd458cffe5dd67f"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopSearchSettings.swift",
+      "sha256": "c892d6ac23692c216e0b936f1d90b5c620675b1d4ac125a9514e31b2f9d3f76f"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopSettings.swift",
+      "sha256": "f3e0180f96d00b3a9a657e4759732b85210ce5cb7946ec0851e7230e24f12704"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopSpeechPlayer.swift",
+      "sha256": "6d1dc2f952ab2f61190b9490665fc583245b6c03bf3d48de55fd77f1bbf0f00c"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopStorageUsage.swift",
+      "sha256": "2ae47806c40bf6150f2f56fb99d740c3980cdfc1ca7adc1e10e65b0ca160ee80"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopTitleGeneration.swift",
+      "sha256": "c9da9fc928c5675b8e173bfd05c60980739bfc29fd4945f9863e415207fd05b1"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopToolRegistry.swift",
+      "sha256": "cdfd67ff44d2a3dd1cec65ae1fba14de82c36031a0c8cb43ecb8a61d828033f2"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopWebDAV.swift",
+      "sha256": "67f584a8d7094c117f0b501daec2973bd1c030c8ab9d1e88e697eb88c18700b7"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopWorkspace.swift",
+      "sha256": "7844a5262d7f1c2cc04dbc17305f3e7f45c39eb137099b8038683ef835172d95"
+    },
+    {
+      "path": "macApp/AmberMac/Runtime/DesktopWorkspaceFiles.swift",
+      "sha256": "d9719c8a5051866ae6ff8619384d810cea0a14088dbea7e9e80bf9871de1d3b6"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopAgentTasksView.swift",
+      "sha256": "cb60021af5bb1bdfe45989f597f8bd9f64829eb0724ed06faf1c2e26f6480e24"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopAppLifecycle.swift",
+      "sha256": "e2ac44831885129002aaa952cf07a7f1c44ac98df5a6d21c18b7e1d8a85a1ff9"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopAttachmentPreview.swift",
+      "sha256": "24c01b8f9d9eacfbb37fcfaed548f2f48e3aa6fe19e8bf0f623c7a0650a75e30"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopBackupView.swift",
+      "sha256": "e4e9bd2484ed5f430b705b5b5b07da3356209a8916bfc799c4e89ccc851d17f2"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopCollaborationsView.swift",
+      "sha256": "f15a09ebe02006f44ee3bca23c99e46e463f135fe26003ca11844b7175d1df1b"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopComposer.swift",
+      "sha256": "8f2c277d8fd4fb1bf7351a5b617aa750d702712bbed49aab6856f5c326ff69f0"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopConversationInsightsView.swift",
+      "sha256": "fe946baa847447df6e13d326cd20b36ff5694100523df106761871a94ca62756"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopImageGenerationView.swift",
+      "sha256": "4cb9891d516ccd81a9091f41d5d2f1d85922f496d84f514c0f71e390e6f76191"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopKnowledgeView.swift",
+      "sha256": "bfb8449d8579ba79e63de8ab9e213f4f144d58a6760e9a08a3f6f785b67fe06f"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopMCPSettingsView.swift",
+      "sha256": "88f34104179ab7c9091d58740990a08eb4b52b4fc26d18d18d551f406f01e5bd"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopMarkdown.swift",
+      "sha256": "9801c5b9e5c217401b66cd75f57b4cedc1be3f02cb06d9a7d3c35946fcf1f741"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopMarkdownParser.swift",
+      "sha256": "2cc24724512f2b3f7fd6c32f8ceec37cf1ea639ae582e49d8d9d5496d0e51423"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopMathView.swift",
+      "sha256": "7b4192b66a5e88aa48868d4ab2ccc94b91108d1d89a100d1db786aa996cdb228"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopMessageActions.swift",
+      "sha256": "f0b8dee89d9c105340098689bbe350eba25202570aa241b6b9a7b1f3f0a495a4"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopMessageImages.swift",
+      "sha256": "16c861b5c5bc16a5dd9e4969ff79611d5e068a7aa5a9351a24bb1b2d8036ec33"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopRecipesView.swift",
+      "sha256": "f97f412904b1b965b9c8eb33eb6ae5e4e8ffd35ac030d464d4b498e838f85ff9"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopSearchSettingsView.swift",
+      "sha256": "f1326c3fe5799f0a39b6ac698d17ce64ff2a1bec8734a3ecb8faf715bde5f73e"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopSettingsView.swift",
+      "sha256": "027b739adb3bddb575c81d672b40de3148cc2ad833f987c311a017a2b0620bbd"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopStorageUsageView.swift",
+      "sha256": "fc38a997b95368d83aa23a906ab6bec0bb7f8ac4861b02977e1c9f22d4e7c5d6"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopTheme.swift",
+      "sha256": "7a1b17e2c628fcc1c22e76c7b809da7db2564901144def107fee1d252abc8b8d"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopTranscript.swift",
+      "sha256": "da6e56ff63fbbd1f29ce489283c5e0bb9d66a6ba6ab0c0451ff093e2a99e2573"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopTypography.swift",
+      "sha256": "f326b7d3a559146e5fe68bd98b51ce75b9ab6e3f8b6a628011dbe810dc98f540"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopWebDAVSettingsView.swift",
+      "sha256": "c0418ce4dc10179503710d9408f63eedceb5f25c5074026d84fad35bc4177754"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopWorkspaceFilesView.swift",
+      "sha256": "fb363f22d67afea71f9b6ad4d4c5c70838b650d60a9346c9ee2cc8106019860a"
+    },
+    {
+      "path": "macApp/AmberMac/UI/DesktopWorkspaceView.swift",
+      "sha256": "d92a2849627d35d2cc67bb4ecfd00d18f54eb28c7ee1d96570ff38c0843cef23"
+    },
+    {
+      "path": "macApp/Preview/AmberPreviewApp.swift",
+      "sha256": "3552518f4273113e86209885c40b03562431260048b15b1201ced283a2812700"
+    },
+    {
+      "path": "macApp/Preview/PreviewSettingsView.swift",
+      "sha256": "55aea383a819795414f49614341fbe8e0bb6e5e3c8b90b6b583dbe9b10252dac"
+    }
+  ],
+  "count": 79,
+  "mismatches": 0,
+  "iosMathRevision": "066ba2f8353782a644889efe9ceb884ea844180b"
+}

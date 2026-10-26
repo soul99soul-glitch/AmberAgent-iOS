@@ -1,0 +1,69 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'amber-audit-data-proof': failed storing manifest for 'amber-audit-data-proof' in cache: attempt to write a readonly database
+Building for debugging...
+[Planning deferred tasks]
+[5 / 26] AmberMac
+[7 / 33] AmberMac
+[9 / 33] AmberMac
+[10 / 33] AmberMac
+[11 / 43] AmberMac
+[13 / 42] AmberMac
+[18 / 42] AmberMac
+[19 / 42] AmberMac
+[21 / 41] AmberMacTests-product
+[21 / 40] AmberMac
+[23 / 40] AmberMac
+/private/tmp/amber-audit-data-proof/Sources/AmberMac/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[26 / 40] AmberMac
+[27 / 40]
+[27 / 40] AmberMac
+[31 / 40] AmberMacTests-product
+[34 / 45] AmberMacTests-product
+[35 / 45] AmberMacTests-product
+[37 / 44] AmberMacTests-product
+[40 / 44] AmberMacTests-product
+[42 / 44] AmberMacTests-product
+Build complete! (6.39秒)
+Test Suite 'Selected tests' started at 2026-10-23 23:12:31.807.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-23 23:12:31.808.
+Test Suite 'DesktopImageGenerationTests' started at 2026-10-23 23:12:31.808.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualCodexSSEParserReturnsToolImage]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualCodexSSEParserReturnsToolImage]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRequestSavesAnImageToTheCapturedOwnerAndCleansStaging]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRequestSavesAnImageToTheCapturedOwnerAndCleansStaging]' passed (0.019 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRollsBackEarlierImagesWhenLaterDataIsInvalid]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRollsBackEarlierImagesWhenLaterDataIsInvalid]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testBusyReentryPreservesTheRunningOwnerAndStatus]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testBusyReentryPreservesTheRunningOwnerAndStatus]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancelAfterFirstLocalSaveKeepsRemainingImagesRecoverable]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancelAfterFirstLocalSaveKeepsRemainingImagesRecoverable]' passed (0.012 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancellationStopsTheActualTransportAndDoesNotPublishFiles]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancellationStopsTheActualTransportAndDoesNotPublishFiles]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testFailedWorkspaceSaveRetainsRemoteImageAndRetriesWithoutAnotherRequest]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testFailedWorkspaceSaveRetainsRemoteImageAndRetriesWithoutAnotherRequest]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testOriginalCodexRequestBodyAndPendingResultPollingAreReused]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testOriginalCodexRequestBodyAndPendingResultPollingAreReused]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPartialLocalSaveRetriesOnlyRemainingImages]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPartialLocalSaveRetriesOnlyRemainingImages]' passed (0.014 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPreviewAndMissingExplicitImageModelCannotDispatchNetwork]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPreviewAndMissingExplicitImageModelCannotDispatchNetwork]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testReopenRecoversOriginalOwnerAndDoesNotCleanAnotherOwnersPendingImage]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testReopenRecoversOriginalOwnerAndDoesNotCleanAnotherOwnersPendingImage]' passed (0.010 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testRetryValidationReplacesThePreviousProviderFailureWithoutAnotherRequest]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testRetryValidationReplacesThePreviousProviderFailureWithoutAnotherRequest]' passed (0.003 seconds).
+Test Suite 'DesktopImageGenerationTests' passed at 2026-10-23 23:12:31.900.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.092 (0.093) seconds
+Test Suite 'AmberMacTests.xctest' passed at 2026-10-23 23:12:31.900.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.092 (0.093) seconds
+Test Suite 'Selected tests' passed at 2026-10-23 23:12:31.900.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.092 (0.093) seconds

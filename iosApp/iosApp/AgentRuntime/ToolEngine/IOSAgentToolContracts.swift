@@ -240,3 +240,28 @@ public struct IOSMailboxDrainResult: @unchecked Sendable {
     }
 }
 
+
+// Immutable crossing from a provider step to its MainActor transport.
+struct UncheckedUIMessageBox: @unchecked Sendable {
+    let value: [UIMessage]
+    init(_ value: [UIMessage]) { self.value = value }
+}
+
+
+extension TextGenerationParams {
+    /// P0-a: a copy of these params carrying a different tool declaration list.
+    /// Kotlin data-class default args don't bridge to Swift, so rebuild all
+    /// fields explicitly (same shape makeTextGenerationParams uses).
+    func replacingTools(_ tools: [Tool]) -> TextGenerationParams {
+        TextGenerationParams(
+            model: model,
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            tools: tools,
+            reasoningLevel: reasoningLevel,
+            customHeaders: customHeaders,
+            customBody: customBody
+        )
+    }
+}

@@ -1,0 +1,169 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'amber-mac-runtime.wey6oi': failed storing manifest for 'amber-mac-runtime.wey6oi' in cache: attempt to write a readonly database
+Building for debugging...
+[Planning deferred tasks]
+[45 / 69]
+[46 / 70] AmberMac
+[48 / 159]
+[54 / 159]
+[56 / 159]
+[59 / 159]
+[64 / 159]
+[69 / 159]
+[71 / 159]
+[72 / 159]
+[76 / 159]
+[77 / 159]
+[79 / 159]
+[81 / 159]
+[84 / 159]
+[88 / 159]
+[91 / 159]
+[94 / 159]
+[95 / 159]
+[99 / 159]
+[103 / 159]
+[106 / 159]
+[108 / 159]
+[111 / 159]
+[113 / 159]
+[115 / 159]
+[117 / 159]
+[120 / 159]
+[122 / 159]
+[123 / 159]
+[124 / 159]
+[127 / 159] AmberMac
+[130 / 159] AmberMac
+[135 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.wey6oI/Sources/AmberMac/DesktopRecipeRuns.swift:40:127: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+32 |         let id = UUID()
+33 |         operations.insert(DesktopRecipeOperation(id: id, owner: conversationID, name: name), at: 0)
+34 |         running[id] = Task {
+   |                            |- note: 'self' implicitly strongly captured here
+   |                            `- note: add 'self' as a capture list item to silence
+35 |             defer {
+36 |                 running[id] = nil
+   :
+38 |             }
+39 |             do {
+40 |                 _ = try await tasks.begin(id: id, conversationID: conversationID, title: "Recipe · \(name)", cancel: { [weak self] in self?.cancel(id) })
+   |                                                                                                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                                                                                              `- note: explicitly assign the capture list item to silence
+41 |                 try Task.checkCancellation()
+42 |                 let result = await store.run(name: name, inputs: inputs) { [execute] tool, arguments in
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[136 / 159] AmberMacTests-product
+[137 / 159] AmberMacTests-product
+[139 / 159] AmberMac
+[141 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.wey6oI/Sources/AmberMac/IOSImageGenerationRepository.swift:706:13: warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 704 |         diagnosticId: String? = nil
+ 705 |     ) async throws -> String {
+ 706 |         var extraction = Self.codexImageExtraction(from: data)
+     |             `- warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 707 |         if let image = extraction.images.first {
+ 708 |             if let diagnosticId {
+
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.wey6oI/Sources/AmberMac/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[145 / 159] AmberMac
+[149 / 160] AmberMacTests-product
+[151 / 176]
+[153 / 176]
+[154 / 176]
+[157 / 176] AmberMacTests-product
+[160 / 176] AmberMacTests-product
+[167 / 176] AmberMacTests-product
+[169 / 176] AmberMacTests-product
+[170 / 176] AmberMacTests-product
+[170 / 176] AllIncludingTests
+[170 / 176] AmberMacTests-product
+[172 / 176] AmberMacTests-product
+[174 / 176] AmberMacTests-product
+Build complete! (28.11秒)
+Test Suite 'Selected tests' started at 2026-10-23 23:10:14.611.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-23 23:10:14.612.
+Test Suite 'RuntimeAgentDurabilityTests' started at 2026-10-23 23:10:14.612.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testMessageWriteFailureDoesNotAcknowledgeToolDispatch]' started.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testMessageWriteFailureDoesNotAcknowledgeToolDispatch]' passed (0.022 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testSelectedConversationChangesDoNotRedirectDurableCheckpointAndMetadataErrorDoesNotBlockAck]' started.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testSelectedConversationChangesDoNotRedirectDurableCheckpointAndMetadataErrorDoesNotBlockAck]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testStoppedOrDeletedRunDoesNotAcknowledgeOrWriteLateTurn]' started.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testStoppedOrDeletedRunDoesNotAcknowledgeOrWriteLateTurn]' passed (0.004 seconds).
+Test Suite 'RuntimeAgentDurabilityTests' passed at 2026-10-23 23:10:14.644.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.031 (0.032) seconds
+Test Suite 'RuntimeAgentTranscriptTests' started at 2026-10-23 23:10:14.644.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAgentProjectionOnlyMarksTrailingAssistantAsStreaming]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAgentProjectionOnlyMarksTrailingAssistantAsStreaming]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAsyncStopWaitsForFinalCanonicalTranscriptBeforeFlush]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAsyncStopWaitsForFinalCanonicalTranscriptBeforeFlush]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCancellingAfterDurableSteerKeepsCompletedTurnAndRetryableReply]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCancellingAfterDurableSteerKeepsCompletedTurnAndRetryableReply]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCompactedInputNeverReplacesCanonicalHistoryDuringToolTurns]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCompactedInputNeverReplacesCanonicalHistoryDuringToolTurns]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testDeletingAsynchronouslyStoppingOwnerDoesNotBlockNextConversation]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testDeletingAsynchronouslyStoppingOwnerDoesNotBlockNextConversation]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testKnowledgeContextIsInjectedAndUnreadableStorePreventsProviderCall]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testKnowledgeContextIsInjectedAndUnreadableStorePreventsProviderCall]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testMultipleToolTurnsReplaceOnlyRunSuffixAndTerminalTargetsLastAssistant]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testMultipleToolTurnsReplaceOnlyRunSuffixAndTerminalTargetsLastAssistant]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testStopDrainsAcceptedTranscriptAndRejectsLateReplacement]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testStopDrainsAcceptedTranscriptAndRejectsLateReplacement]' passed (0.004 seconds).
+Test Suite 'RuntimeAgentTranscriptTests' passed at 2026-10-23 23:10:14.682.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.037 (0.038) seconds
+Test Suite 'RuntimeBranchTests' started at 2026-10-23 23:10:14.682.
+Test Case '-[AmberMacTests.RuntimeBranchTests testChatStopDoesNotCancelIndependentInsightRequest]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testChatStopDoesNotCancelIndependentInsightRequest]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testCompactFacadePreparesNextRequestWithoutRemovingOriginalHistory]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testCompactFacadePreparesNextRequestWithoutRemovingOriginalHistory]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeleteRemovesOnlyTargetNodeAndPersistsNextRequestContext]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeleteRemovesOnlyTargetNodeAndPersistsNextRequestContext]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeletingOnlyUserThenRegeneratingOrphanReplyDoesNotChangeBranchOrLaunch]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeletingOnlyUserThenRegeneratingOrphanReplyDoesNotChangeBranchOrLaunch]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditResendsNewUserCandidateWithoutOldReplyOrTrailingTurns]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditResendsNewUserCandidateWithoutOldReplyOrTrailingTurns]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testFailedMutationDoesNotPublishOrGenerateAndErrorStaysWithOwner]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testFailedMutationDoesNotPublishOrGenerateAndErrorStaysWithOwner]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testRegeneratePreservesOriginalCandidateAndRequestsOnlyEarlierContext]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testRegeneratePreservesOriginalCandidateAndRequestsOnlyEarlierContext]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testSelectingCandidateKeepsLaterNodesAndNextRequestUsesSelectedContent]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testSelectingCandidateKeepsLaterNodesAndNextRequestUsesSelectedContent]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testStopWhileBranchSaveIsPendingPreventsGenerationAndFlushesCancelledPlaceholder]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testStopWhileBranchSaveIsPendingPreventsGenerationAndFlushesCancelledPlaceholder]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testSuccessfulBranchAndGenerationDoNotHideConcurrentMetadataWriteFailure]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testSuccessfulBranchAndGenerationDoNotHideConcurrentMetadataWriteFailure]' passed (0.004 seconds).
+Test Suite 'RuntimeBranchTests' passed at 2026-10-23 23:10:14.728.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.046 (0.046) seconds
+Test Suite 'RuntimeInstructionQueueTests' started at 2026-10-23 23:10:14.728.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testDeleteFailureRestoresQueueAndAttachmentQueueRejectionKeepsDraft]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testDeleteFailureRestoresQueueAndAttachmentQueueRejectionKeepsDraft]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testExplicitSendRetriesOriginalResponseSaveBeforeSendingPendingQueueOnce]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testExplicitSendRetriesOriginalResponseSaveBeforeSendingPendingQueueOnce]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testFailedRunRetainsQueueForExplicitSendAndStaleRunCannotDrain]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testFailedRunRetainsQueueForExplicitSendAndStaleRunCannotDrain]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testStopPreservesPendingQueueAndWithdrawalAppendsToDraft]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testStopPreservesPendingQueueAndWithdrawalAppendsToDraft]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testSubmittedInstructionWriteFailureShowsAwaitingSaveWithoutResending]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testSubmittedInstructionWriteFailureShowsAwaitingSaveWithoutResending]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testTextQueueStartsNewRequestAfterCompletionForOriginalOwner]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testTextQueueStartsNewRequestAfterCompletionForOriginalOwner]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testToolBoundaryLeasesOnceAndOnlyDurableCanonicalAckRemovesQueue]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testToolBoundaryLeasesOnceAndOnlyDurableCanonicalAckRemovesQueue]' passed (0.005 seconds).
+Test Suite 'RuntimeInstructionQueueTests' passed at 2026-10-23 23:10:14.766.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.037 (0.038) seconds
+Test Suite 'AmberMacTests.xctest' passed at 2026-10-23 23:10:14.766.
+	 Executed 28 tests, with 0 failures (0 unexpected) in 0.151 (0.154) seconds
+Test Suite 'Selected tests' passed at 2026-10-23 23:10:14.766.
+	 Executed 28 tests, with 0 failures (0 unexpected) in 0.151 (0.156) seconds
