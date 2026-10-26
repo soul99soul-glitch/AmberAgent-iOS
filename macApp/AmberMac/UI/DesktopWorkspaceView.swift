@@ -487,8 +487,7 @@ struct DesktopWorkspaceView: View {
             .frame(maxWidth: DesktopTheme.contentWidth)
             if workspace.settings.selectedProvider?.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
                 SettingsLink { Label("配置服务商", systemImage: "slider.horizontal.3") }
-                    .buttonStyle(.borderedProminent)
-                    .tint(DesktopTheme.accent)
+                    .buttonStyle(.desktopProminent)
                     .padding(.top, 24)
             }
             Spacer()

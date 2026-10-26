@@ -105,7 +105,7 @@ struct DesktopWebDAVSettingsView: View {
                         failure = nil; message = "WebDAV 位置已保存。"
                         editingConfiguration = false
                     } catch { failure = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).disabled(busy || credentialLoadFailed)
+                }.buttonStyle(.desktopProminent).disabled(busy || credentialLoadFailed)
             }
         }.padding(24).frame(width: 560)
         .interactiveDismissDisabled(dirty)
@@ -190,7 +190,7 @@ struct DesktopWebDAVSettingsView: View {
                         if let error = workspace.backupErrorMessage { throw DesktopRuntimeError.message(error) }
                         message = workspace.backupStatusMessage
                     }
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(.desktopProminent)
             }
         }.padding(24).frame(width: 520)
     }

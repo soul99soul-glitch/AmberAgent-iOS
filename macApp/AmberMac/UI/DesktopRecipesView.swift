@@ -44,8 +44,9 @@ struct DesktopRecipesView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(recipe.manifest.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
                                     Text(recipe.manifest.version + (recipe.enabled ? " · 已启用" : " · 未启用"))
-                                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-                                    Text(recipe.manifest.description).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(2)
+                                        .font(.system(size: 12)).foregroundStyle(selectedName == recipe.id ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary)
+                                    Text(recipe.manifest.description).font(.system(size: 12))
+                                        .foregroundStyle(selectedName == recipe.id ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary).lineLimit(2)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -136,7 +137,7 @@ struct DesktopRecipesView: View {
                     }
                 }
             }
-            Button("运行 Recipe") { start(recipe) }.buttonStyle(.borderedProminent)
+            Button("运行 Recipe") { start(recipe) }.buttonStyle(.desktopProminent)
                 .disabled(!recipe.enabled || store.loadError != nil || workspace.selectedID == nil
                     || operations.contains(where: \.isRunning) || workspace.isLoading || workspace.isManagingBackup
                     || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable)

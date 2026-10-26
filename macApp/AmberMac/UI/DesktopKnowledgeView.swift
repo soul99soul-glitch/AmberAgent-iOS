@@ -130,6 +130,7 @@ struct DesktopKnowledgeView: View {
                 .padding(.vertical, 8)
             }
             .listStyle(.inset)
+            .listRowSeparatorTint(DesktopTheme.hairline)
             .scrollContentBackground(.hidden)
             .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
@@ -149,13 +150,10 @@ struct DesktopKnowledgeView: View {
                 Spacer()
                 Button("导入…") { chooseMarkdown { pendingSoulImport = $0 } }
                 Button("保存") { perform { try store.saveSoul(soulDraft) } }
-                    .buttonStyle(.borderedProminent).disabled(!soulChanged)
+                    .buttonStyle(.desktopProminent).disabled(!soulChanged)
             }
             TextEditor(text: $soulDraft).font(.system(size: 13, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(colorScheme)))
+                .desktopEditor()
                 .accessibilityLabel("SOUL.md 内容")
             Text("保存后用于后续请求；清空并保存可停用。")
                 .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
@@ -193,6 +191,7 @@ struct DesktopKnowledgeView: View {
                 .padding(.vertical, 8)
             }
             .listStyle(.inset)
+            .listRowSeparatorTint(DesktopTheme.hairline)
             .scrollContentBackground(.hidden)
             .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
@@ -239,12 +238,10 @@ struct DesktopTextDocumentEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(title).font(.system(size: 20, weight: .semibold))
+            Text(title).font(DesktopTheme.serif(size: 22, weight: .semibold))
             Text(subtitle).font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme))
             TextEditor(text: $text).font(.system(size: 13, design: .monospaced))
-                .scrollContentBackground(.hidden).padding(8)
-                .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(colorScheme)))
+                .desktopEditor()
                 .accessibilityLabel(title + " 内容")
             if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
@@ -252,7 +249,7 @@ struct DesktopTextDocumentEditor: View {
                 Button("取消") { if text != initialText { confirmsDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)
                 Button("保存") {
                     do { try onSave(text); dismiss() } catch { self.error = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).keyboardShortcut("s", modifiers: .command)
+                }.buttonStyle(.desktopProminent).keyboardShortcut("s", modifiers: .command)
             }
         }
         .padding(24).frame(width: 700, height: 540)
@@ -297,14 +294,13 @@ private struct DesktopMemoryEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(original.id == 0 ? "新增记忆" : "编辑记忆").font(.system(size: 20, weight: .semibold))
+            Text(original.id == 0 ? "新增记忆" : "编辑记忆").font(DesktopTheme.serif(size: 22, weight: .semibold))
             if record.kind == .topic {
                 TextField("主题名称", text: Binding(get: { record.topicTitle ?? "" }, set: { record.topicTitle = $0 }))
                     .textFieldStyle(.desktop)
             }
-            TextEditor(text: $record.content).font(.system(size: 14)).scrollContentBackground(.hidden).padding(8)
-                .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(colorScheme)))
+            TextEditor(text: $record.content).font(.system(size: 14))
+                .desktopEditor()
                 .accessibilityLabel("记忆内容")
             HStack(spacing: 20) {
                 Picker("范围", selection: $record.scope) { ForEach(DesktopMemoryScope.allCases, id: \.self) { Text($0.title).tag($0) } }
@@ -339,7 +335,7 @@ private struct DesktopMemoryEditor: View {
                 Button("取消") { if changed { confirmsDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)
                 Button("保存") {
                     do { try onSave(proposed); dismiss() } catch { self.error = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).disabled(record.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }.buttonStyle(.desktopProminent).disabled(record.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && (record.kind != .topic || (record.topicTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                     .keyboardShortcut("s", modifiers: .command)
             }

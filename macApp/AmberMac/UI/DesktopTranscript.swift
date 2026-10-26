@@ -180,7 +180,7 @@ struct DesktopTranscript: View {
 
     private var findBar: some View {
         HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").foregroundStyle(DesktopTheme.inkTertiary)
             TextField("在会话中查找", text: $findQuery)
                 .textFieldStyle(.plain)
                 .focused($findFocused)
@@ -191,7 +191,7 @@ struct DesktopTranscript: View {
                 .onExitCommand(perform: closeFind)
                 .accessibilityIdentifier("conversation-find")
             if !findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(find.label).monospacedDigit().foregroundStyle(.secondary)
+                Text(find.label).monospacedDigit().foregroundStyle(DesktopTheme.inkTertiary)
                     .accessibilityLabel(find.matches.isEmpty ? "没有匹配的消息" : "第 \(find.label) 条匹配消息")
             }
             Button { find.step(-1) } label: { Image(systemName: "chevron.up") }
@@ -207,11 +207,13 @@ struct DesktopTranscript: View {
                 .accessibilityLabel("关闭查找")
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 12))
+        .font(.system(size: 13))
+        .foregroundStyle(DesktopTheme.inkSecondary)
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(DesktopTheme.raised(scheme), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(scheme)))
+        .frame(height: 36)
+        .background(DesktopTheme.field, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(findFocused ? DesktopTheme.accent : DesktopTheme.hairlineStrong))
+        .animation(.easeOut(duration: 0.15), value: findFocused)
         .frame(maxWidth: DesktopTheme.contentWidth)
         .padding(.horizontal, 24)
         .padding(.top, 12)
@@ -275,6 +277,7 @@ private struct DesktopMessageRow: View {
     @Environment(\.colorScheme) private var scheme
     @State private var reasoningExpanded = false
     @State private var hovering = false
+    @State private var menuOpen = false
     @State private var copied = false
     @State private var speechError: String?
     @State private var shareAnchor = DesktopShareAnchor()
@@ -313,7 +316,7 @@ private struct DesktopMessageRow: View {
                         Text("正在生成").font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
                     }
                     Spacer()
-                    actionButtons.opacity(hovering ? 1 : 0)
+                    actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
                 }
                 .frame(height: 24)
             }
@@ -336,7 +339,7 @@ private struct DesktopMessageRow: View {
             if message.role == .user, !message.text.isEmpty {
                 HStack(alignment: .bottom, spacing: 8) {
                     Spacer(minLength: 120)
-                    actionButtons.opacity(hovering ? 1 : 0)
+                    actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
                     Text(message.text)
                         .font(settings.messageFontFamily.swiftUIFont(size: settings.messageFontSize + 1))
                         .foregroundStyle(DesktopTheme.ink)
@@ -423,6 +426,8 @@ private struct DesktopMessageRow: View {
             }
             Menu {
                 messageActions
+                    .onAppear { menuOpen = true }
+                    .onDisappear { menuOpen = false }
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 24, height: 24)
             }

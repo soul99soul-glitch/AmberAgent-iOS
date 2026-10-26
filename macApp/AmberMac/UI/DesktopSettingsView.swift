@@ -167,7 +167,7 @@ struct DesktopSettingsView: View {
                                         .help(settings.selectedProviderID == provider.id ? "当前对话使用的服务商" : "")
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(provider.name).font(.system(size: 14)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
-                                        Text("\(provider.models.filter(\.enabled).count) 个启用模型").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                                        Text("\(provider.models.filter(\.enabled).count) 个启用模型").font(.system(size: 12)).foregroundStyle(editingID == provider.id ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary)
                                     }
                                     Spacer(minLength: 0)
                                 }
@@ -323,10 +323,10 @@ struct DesktopSettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("请求头 · JSON 字符串字典").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 TextEditor(text: parameterBinding(id, \.headers)).font(.system(size: 12, design: .monospaced))
-                    .frame(minHeight: 70, maxHeight: 140).accessibilityLabel("自定义请求头 JSON")
+                    .frame(minHeight: 70, maxHeight: 140).desktopEditor().accessibilityLabel("自定义请求头 JSON")
                 Text("请求体 · JSON 对象").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 TextEditor(text: parameterBinding(id, \.body)).font(.system(size: 12, design: .monospaced))
-                    .frame(minHeight: 90, maxHeight: 180).accessibilityLabel("自定义请求体 JSON")
+                    .frame(minHeight: 90, maxHeight: 180).desktopEditor().accessibilityLabel("自定义请求体 JSON")
                 Text("留空使用默认值；填写后覆盖同名请求字段。覆盖会随模型配置备份；API Key 请使用上方钥匙串字段。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }.padding(.top, 6)
@@ -347,6 +347,10 @@ struct DesktopSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.name.isEmpty ? model.modelID : model.name)
                         if model.name != model.modelID { Text(model.modelID).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary) }
+                    }
+                    if draft.models.contains(where: { $0.modelID == model.modelID }) {
+                        Spacer()
+                        Text("已添加").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     }
                 }.toggleStyle(.checkbox).disabled(draft.models.contains(where: { $0.modelID == model.modelID }))
             }
@@ -372,7 +376,7 @@ struct DesktopSettingsView: View {
             HStack {
                 Text(hasUnsavedChanges ? "有未保存的修改" : "凭证仅保存到系统钥匙串").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Spacer()
-                Button("保存配置") { save() }.buttonStyle(.borderedProminent).disabled(!canSave)
+                Button("保存配置") { save() }.buttonStyle(.desktopProminent).disabled(!canSave)
                     .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("save-provider")
             }
         }.padding(.horizontal, 22).padding(.vertical, 16)
@@ -390,7 +394,7 @@ struct DesktopSettingsView: View {
             Section("系统提示词") {
                 Text("用于之后发送的请求。已有消息会保留原样。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 TextEditor(text: $settings.systemPrompt).font(.system(size: 13)).frame(minHeight: 140)
-                    .padding(8).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
+                    .desktopEditor()
                     .accessibilityLabel("系统提示词")
             }
             Section("聊天显示") {

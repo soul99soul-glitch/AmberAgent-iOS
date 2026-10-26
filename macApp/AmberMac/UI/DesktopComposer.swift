@@ -149,6 +149,8 @@ struct DesktopComposer: View {
         .padding(.top, 8)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
+        // The composer, not the sidebar search, owns first focus at launch.
+        .onAppear { inputFocused = true }
         .onChange(of: focusRequest) { inputFocused = true }
         .onChange(of: workspace.selectedID) { inputFocused = true; queuePresented = false }
         .onChange(of: workspace.selectedQueuedMessages.isEmpty) { _, empty in if empty { queuePresented = false } }
@@ -185,7 +187,7 @@ struct DesktopComposer: View {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(DesktopQuietButtonStyle())
             .help("查看队列、撤回消息或重试保存")
             Spacer()
             if workspace.selectedQueuedMessages.contains(where: { $0.status == .awaitingSave }) {

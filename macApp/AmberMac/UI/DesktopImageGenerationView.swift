@@ -44,10 +44,9 @@ struct DesktopImageGenerationView: View {
                     }.font(.system(size: 13))
                     Text("描述想要生成的图片").font(.system(size: 14, weight: .semibold))
                     TextEditor(text: $prompt)
-                        .font(.system(size: 14)).scrollContentBackground(.hidden).padding(8)
+                        .font(.system(size: 14))
                         .frame(height: 110)
-                        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
+                        .desktopEditor()
                         .accessibilityLabel("图片提示词")
                         .disabled(generator.isRunning)
                     HStack(spacing: 20) {
@@ -109,12 +108,12 @@ struct DesktopImageGenerationView: View {
                     Button("取消生成", role: .cancel) { operation?.cancel(); generator.cancel() }
                 } else if pendingSaveCount > 0 {
                     Button("重试保存") { retrySaving() }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.desktopProminent)
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(generator.isRunning || !ownerExists || workspace.isManagingBackup)
                 } else {
                     Button("生成图片") { generate() }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.desktopProminent)
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(generator.isRunning || !generator.isAvailable || !ownerExists || workspace.isManagingBackup
                             || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

@@ -27,7 +27,7 @@ enum DesktopTheme {
     static let hairlineStrong = dynamic(0x1D1C19, 0xFFF8EB, lightAlpha: 0.14, darkAlpha: 0.14)
     static let accent = dynamic(0xA0602A, 0xD5AC7B)
     static let danger = dynamic(0xB3261E, 0xE5736B)
-    static let switchOff = dynamic(0x1D1C19, 0xFFF8EB, lightAlpha: 0.16, darkAlpha: 0.24)
+    static let switchOff = dynamic(0x8F8B81, 0x7D786D)
     static let accentInk = dynamic(0x7A4518, 0xE7C59C)
     static let honey = dynamic(0xDE9648, 0xD5A064, lightAlpha: 0.26, darkAlpha: 0.24)
     static let honeySoft = dynamic(0xDE9648, 0xD5A064, lightAlpha: 0.10, darkAlpha: 0.08)
@@ -86,6 +86,7 @@ struct DesktopQuietButtonStyle: ButtonStyle {
             configuration.label
                 .foregroundStyle(hovering && enabled ? DesktopTheme.ink : DesktopTheme.inkTertiary)
                 .background(RoundedRectangle(cornerRadius: 6).fill(hovering && enabled ? DesktopTheme.hover : .clear))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(hovering && enabled ? DesktopTheme.hairline : .clear))
                 .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
                 .contentShape(RoundedRectangle(cornerRadius: 6))
                 .onHover { hovering = $0 }
@@ -109,11 +110,17 @@ struct DesktopSwitch: View {
 
 /// Press feedback for primary round buttons: a quick squash, then spring back.
 struct DesktopPressButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.9 : 1)
-            .animation(.spring(response: 0.22, dampingFraction: 0.55), value: configuration.isPressed)
-            .contentShape(Rectangle())
+    func makeBody(configuration: Configuration) -> some View { PressLabel(configuration: configuration) }
+    private struct PressLabel: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var enabled
+        var body: some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed && enabled ? 0.9 : 1)
+                .opacity(enabled ? 1 : 0.4)
+                .animation(.spring(response: 0.22, dampingFraction: 0.55), value: configuration.isPressed)
+                .contentShape(Rectangle())
+        }
     }
 }
 
@@ -166,10 +173,20 @@ struct DesktopFieldStyle: TextFieldStyle {
             .textFieldStyle(.plain)
             .font(.system(size: 13))
             .focused($focused)
+            .modifier(DesktopFieldFrame(focused: focused))
+    }
+}
+
+private struct DesktopFieldFrame: ViewModifier {
+    let focused: Bool
+    @Environment(\.isEnabled) private var enabled
+    func body(content: Content) -> some View {
+        content
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(DesktopTheme.field, in: RoundedRectangle(cornerRadius: 8))
+            .background(enabled ? DesktopTheme.field : DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.accent : DesktopTheme.hairlineStrong))
+            .opacity(enabled ? 1 : 0.55)
             .animation(.easeOut(duration: 0.15), value: focused)
     }
 }
@@ -184,6 +201,7 @@ struct DesktopSelectableRow<Content: View>: View {
     let action: () -> Void
     @ViewBuilder let content: Content
     @State private var hovering = false
+    @FocusState private var focused: Bool
     var body: some View {
         Button(action: action) {
             content
@@ -194,11 +212,62 @@ struct DesktopSelectableRow<Content: View>: View {
                     if selected { DesktopTheme.glow(RoundedRectangle(cornerRadius: 8)) }
                     else if hovering { RoundedRectangle(cornerRadius: 8).fill(DesktopTheme.hover) }
                 }
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.accent : .clear, lineWidth: 1.5))
                 .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: selected)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
+}
+
+/// Primary action: amber fill with a paper label (white on the light dark-mode amber would fail contrast).
+struct DesktopProminentButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Label(configuration: configuration) }
+    private struct Label: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DesktopTheme.paper)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 28)
+                .background(RoundedRectangle(cornerRadius: 8).fill(DesktopTheme.accent).brightness(hovering && enabled ? 0.04 : 0))
+                .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+extension ButtonStyle where Self == DesktopProminentButtonStyle {
+    static var desktopProminent: DesktopProminentButtonStyle { DesktopProminentButtonStyle() }
+}
+
+/// Paper editor frame shared by every TextEditor: field ground, hairline, amber edge while editing, dim when disabled.
+struct DesktopEditorFrame: ViewModifier {
+    @FocusState private var focused: Bool
+    @Environment(\.isEnabled) private var enabled
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .focused($focused)
+            .padding(8)
+            .background(enabled ? DesktopTheme.field : DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.accent : DesktopTheme.hairlineStrong))
+            .opacity(enabled ? 1 : 0.6)
+            .animation(.easeOut(duration: 0.15), value: focused)
+    }
+}
+
+extension View {
+    func desktopEditor() -> some View { modifier(DesktopEditorFrame()) }
 }

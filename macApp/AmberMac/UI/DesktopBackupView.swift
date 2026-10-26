@@ -27,7 +27,7 @@ struct DesktopBackupView: View {
             }
             HStack(spacing: 12) {
                 Button("导出备份…", systemImage: "square.and.arrow.up") { exportBackup() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.desktopProminent)
                 Button("从备份恢复…", systemImage: "square.and.arrow.down") { restoreBackup() }
                 Button("导入 iOS 备份…", systemImage: "iphone") { importIOSBackup() }
             }
@@ -54,7 +54,7 @@ struct DesktopBackupView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(24).frame(width: 620, height: 440)
+        .padding(24).frame(width: 620).frame(minHeight: 440)
         .background(DesktopTheme.background(colorScheme))
         .tint(DesktopTheme.accent)
         .interactiveDismissDisabled(workspace.isManagingBackup)

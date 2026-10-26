@@ -184,7 +184,7 @@ private struct DesktopMCPServerEditor: View {
             HStack {
                 Spacer()
                 Button("取消") { if changed { confirmsDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)
-                Button("保存") { save() }.buttonStyle(.borderedProminent).keyboardShortcut("s", modifiers: .command)
+                Button("保存") { save() }.buttonStyle(.desktopProminent).keyboardShortcut("s", modifiers: .command)
             }
         }
         .padding(22).frame(width: 660, height: 590)
@@ -199,8 +199,8 @@ private struct DesktopMCPServerEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             TextEditor(text: text).font(.system(size: 12, design: .monospaced))
-                .frame(height: 76).padding(5)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DesktopTheme.hairlineStrong))
+                .frame(height: 76)
+                .desktopEditor()
                 .accessibilityLabel(title)
         }
     }
@@ -241,15 +241,15 @@ private struct DesktopMCPJSONImporter: View {
             }
             Text("粘贴包含 mcpServers 的 JSON。已有同名服务会提示处理，不会覆盖。")
                 .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
-            TextEditor(text: $json).font(.system(size: 12, design: .monospaced)).padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
+            TextEditor(text: $json).font(.system(size: 12, design: .monospaced))
+                .desktopEditor()
                 .accessibilityLabel("MCP JSON 配置")
             if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("导入") { do { try onImport(json); dismiss() } catch { self.error = error.localizedDescription } }
-                    .buttonStyle(.borderedProminent).disabled(json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .buttonStyle(.desktopProminent).disabled(json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(22).frame(width: 680, height: 520)

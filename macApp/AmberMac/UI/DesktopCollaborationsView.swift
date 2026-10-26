@@ -64,9 +64,10 @@ struct DesktopCollaborationsView: View {
                         HStack {
                             Picker("协作记录", selection: $selectedRunID) {
                                 ForEach(ownerRuns) { run in
-                                    Text(run.objective).lineLimit(1).tag(Optional(run.id))
+                                    Text(run.objective.count > 40 ? run.objective.prefix(40) + "…" : run.objective).tag(Optional(run.id))
                                 }
                             }
+                            .frame(maxWidth: 320)
                             if let run = selectedRun {
                                 Text(run.status.title).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                                 if !run.status.isTerminal { Button("停止") { workspace.collaborations.cancel(run.id) } }
@@ -180,7 +181,7 @@ struct DesktopCollaborationsView: View {
                 Text("同时执行最多 \(workspace.collaborations.maxConcurrent) 个成员，其余按顺序等待。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Spacer()
-                Button("开始协作") { start() }.buttonStyle(.borderedProminent)
+                Button("开始协作") { start() }.buttonStyle(.desktopProminent)
                     .disabled(ownerIsRunning || workspace.collaborations.isLoading || workspace.collaborations.loadError != nil
                         || workspace.selectedID == nil || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -194,6 +195,7 @@ struct DesktopCollaborationsView: View {
                 Text("\(model.providerName) · \(model.modelName)").tag(Optional(model.id))
             }
         }
+        .frame(maxWidth: 220)
     }
 
     private func outputCard(_ output: DesktopCollaborationOutput) -> some View {

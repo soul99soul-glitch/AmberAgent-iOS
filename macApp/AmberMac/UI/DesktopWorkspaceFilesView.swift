@@ -19,7 +19,7 @@ struct DesktopWorkspaceFilesView: View {
                 }
                 Spacer()
                 Button("添加文件…", systemImage: "plus") { importFiles() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.desktopProminent)
                     .disabled(workspace.selectedID == nil)
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
             }
@@ -72,6 +72,7 @@ struct DesktopWorkspaceFilesView: View {
                 .padding(.vertical, 7)
             }
             .listStyle(.inset)
+            .listRowSeparatorTint(DesktopTheme.hairline)
             .scrollContentBackground(.hidden)
             .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))

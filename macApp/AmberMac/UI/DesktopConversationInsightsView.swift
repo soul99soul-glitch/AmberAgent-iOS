@@ -30,7 +30,7 @@ struct DesktopConversationInsightsView: View {
                             .tint(tokens >= limit ? DesktopTheme.danger : DesktopTheme.accent)
                         Text("模型窗口 \(limit.formatted()) tokens\(tokens >= limit ? "，建议先压缩上下文" : "")")
                             .font(.system(size: 12))
-                            .foregroundStyle(tokens >= limit ? Color.orange : Color.secondary)
+                            .foregroundStyle(tokens >= limit ? DesktopTheme.danger : DesktopTheme.inkTertiary)
                     }
                     if workspace.insights.value(.compact, for: conversation) != nil {
                         Label("已使用较早对话的摘要，原消息仍保留", systemImage: "checkmark.circle")
@@ -102,13 +102,16 @@ struct DesktopConversationInsightsView: View {
                             dismiss()
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
-                                Text(suggestion).multilineTextAlignment(.leading)
+                                Text(suggestion).font(.system(size: 13)).multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 0)
                                 Image(systemName: "arrow.down.left")
                             }
+                            .padding(.horizontal, 10).padding(.vertical, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(DesktopQuietButtonStyle())
                         .help("填入输入框，可编辑后发送")
                     }
                 } else {
