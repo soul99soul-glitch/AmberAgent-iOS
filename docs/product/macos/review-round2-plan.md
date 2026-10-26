@@ -31,3 +31,8 @@
 - **Phase A · 剩余 UI 一致性**：U6–U8；重拍全量截图，subagent 复核主窗与面板。
 - **Phase B · 运行时回归**：全量 Mac 测试、在线 E2E（网关 + npx MCP）、Release 构建启动；subagent 复核 R1/R2 调用链。
 - **Phase C · 交付**：文档与记录更新，提交。
+
+## 执行结果
+
+- Phase A：U6–U8 完成；subagent 复核新增 2 项确认问题（输入框比同行弹出菜单高、深色输入框底与纸面难分）已修。复核提出的「导出会在保存面板后才报错」经核对为假阳性：菜单项在会话未载入时已禁用，`DesktopFileActions.exportConversation` 在弹面板前即 guard。
+- Phase B：Mac 全量 278/0（8 项在线测试默认跳过）；在线 E2E 6/6（真实网关发送/重开、停止保留、审批写文件；登录 PATH、真实 npx MCP）；Release 构建签名有效、可启动。

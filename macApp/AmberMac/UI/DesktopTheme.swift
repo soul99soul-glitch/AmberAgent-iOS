@@ -19,6 +19,7 @@ enum DesktopTheme {
     static let paperDeep = dynamic(0xF3F2EC, 0x211F1B)
     static let hover = dynamic(0xECEAE3, 0x26241F)
     static let card = dynamic(0xFFFFFF, 0x1C1B17)
+    static let field = dynamic(0xFFFFFF, 0x211F1B)
     static let ink = dynamic(0x1D1C19, 0xEDEAE3)
     static let inkSecondary = dynamic(0x4A4842, 0xC4C0B6)
     static let inkTertiary = dynamic(0x6B6860, 0x9C978C)
@@ -166,8 +167,8 @@ struct DesktopFieldStyle: TextFieldStyle {
             .font(.system(size: 13))
             .focused($focused)
             .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.vertical, 4)
+            .background(DesktopTheme.field, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.accent : DesktopTheme.hairlineStrong))
             .animation(.easeOut(duration: 0.15), value: focused)
     }
