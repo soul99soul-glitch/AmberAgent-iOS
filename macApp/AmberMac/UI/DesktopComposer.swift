@@ -22,6 +22,10 @@ struct DesktopComposer: View {
                 }
                 TextField("向 Amber 发送消息…", text: $workspace.draft, axis: .vertical)
                     .font(.system(size: 15))
+                    .foregroundStyle(DesktopTheme.ink)
+                    .lineSpacing(4)
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
                     .textFieldStyle(.plain)
                     .lineLimit(1...8)
                     .focused($inputFocused)
@@ -34,59 +38,58 @@ struct DesktopComposer: View {
                         return .handled
                     }
                     .onPasteCommand(of: [.image, .fileURL]) { _ in pasteAttachments() }
-                HStack(spacing: 10) {
+                HStack(spacing: 4) {
                     Button { DesktopFileActions.addAttachments(workspace) } label: {
-                        Image(systemName: "paperclip").frame(width: 30, height: 30)
+                        Image(systemName: "paperclip").font(.system(size: 14)).frame(width: 28, height: 28)
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
                         || workspace.isGenerating || workspace.isMutatingBranch || workspace.isReadingAttachments)
                     .help("添加图片、PDF、文档或代码文件，也可拖入文件或粘贴图片")
                     .accessibilityLabel("添加附件")
-                    Toggle(isOn: Binding(get: { workspace.agentTasks.toolsEnabled }, set: { workspace.agentTasks.toolsEnabled = $0 })) {
-                        Label("工具", systemImage: "wrench.and.screwdriver")
-                            .font(.system(size: 11, weight: .medium))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(workspace.agentTasks.toolsEnabled ? DesktopTheme.accentWash(scheme) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 6))
-                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DesktopTheme.border(scheme)))
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.toolsEnabled.toggle() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("工具").font(.system(size: 13))
+                            DesktopSwitch(isOn: workspace.agentTasks.toolsEnabled)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
                     }
-                    .toggleStyle(.button)
-                    .buttonStyle(.plain)
-                    .controlSize(.small)
-                    .foregroundStyle(workspace.agentTasks.toolsEnabled ? DesktopTheme.accent : .secondary)
+                    .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isGenerating || workspace.isMutatingBranch)
                     .help("允许模型使用已接入的工具；需要确认的操作会先显示审批。")
+                    .accessibilityLabel("工具")
+                    .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
                     if workspace.isReadingAttachments {
                         ProgressView().controlSize(.mini)
                         Text("正在读取附件…")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
                     if workspace.isMutatingBranch {
                         ProgressView().controlSize(.small)
-                        Text("正在保存…").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("正在保存…").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     } else if workspace.isSelectedConversationGenerating {
                         Button { workspace.queueInstruction() } label: {
-                            Image(systemName: "text.badge.plus")
-                                .frame(width: 30, height: 30)
+                            Image(systemName: "text.badge.plus").font(.system(size: 14))
+                                .frame(width: 32, height: 32)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(DesktopQuietButtonStyle())
                         .disabled(!workspace.canQueueInstruction)
                         .help(workspace.pendingAttachments.isEmpty ? "加入队列 ⌘Return · 当前轮次结束后继续" : "生成中仅支持文本排队，请停止后发送附件")
                         .accessibilityLabel("加入队列")
                         .keyboardShortcut(.return, modifiers: .command)
                         Button { workspace.stop() } label: {
-                            Image(systemName: "stop.fill")
-                                .foregroundStyle(.primary)
-                                .frame(width: 30, height: 30)
+                            RoundedRectangle(cornerRadius: 2).fill(DesktopTheme.inkSecondary).frame(width: 10, height: 10)
+                                .frame(width: 32, height: 32)
+                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
                         }
-                        .buttonStyle(.bordered)
-                        .tint(.primary)
+                        .buttonStyle(DesktopPressButtonStyle())
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                         .help("停止生成")
                         .accessibilityLabel("停止生成")
                         .keyboardShortcut(".", modifiers: .command)
@@ -95,19 +98,17 @@ struct DesktopComposer: View {
                             if let owner = workspace.generationConversationID { workspace.select(owner) }
                         } label: {
                             Label("查看生成中的会话", systemImage: "arrow.turn.up.left")
-                                .font(.caption)
+                                .font(.system(size: 12))
+                                .padding(.horizontal, 10).frame(height: 28)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(DesktopQuietButtonStyle())
                         .help("另一个会话正在生成，返回该会话后可以停止")
                     } else {
                         Button { workspace.send() } label: {
-                            Image(systemName: "arrow.up")
-                                .fontWeight(.semibold)
-                                .foregroundStyle(sendDisabled ? Color.secondary : (scheme == .dark ? DesktopTheme.background(.dark) : .white))
-                                .frame(width: 30, height: 30)
+                            DesktopSendGlyph(enabled: !sendDisabled)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(DesktopTheme.accent)
+                        .buttonStyle(DesktopPressButtonStyle())
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                         .disabled(sendDisabled)
                         .help("发送消息 ⌘Return")
                         .accessibilityLabel("发送消息")
@@ -115,10 +116,16 @@ struct DesktopComposer: View {
                     }
                 }
             }
-            .padding(12)
-            .background(DesktopTheme.raised(scheme), in: RoundedRectangle(cornerRadius: 12))
+            .padding(8)
+            .animation(.spring(response: 0.32, dampingFraction: 0.8), value: workspace.isSelectedConversationGenerating)
+            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(fileDropTargeted ? DesktopTheme.accent : DesktopTheme.border(scheme)))
+                .strokeBorder(fileDropTargeted || inputFocused ? DesktopTheme.accent : DesktopTheme.hairlineStrong,
+                    lineWidth: fileDropTargeted ? 1.5 : 1))
+            .background(RoundedRectangle(cornerRadius: 12).inset(by: -4)
+                .fill(inputFocused || fileDropTargeted ? DesktopTheme.honeySoft : .clear))
+            .animation(.easeOut(duration: 0.18), value: inputFocused)
+            .animation(.easeOut(duration: 0.18), value: fileDropTargeted)
             .dropDestination(for: URL.self) { urls, _ in
                 guard !workspace.isLoading, !workspace.isLoadingSelectedConversation,
                       !workspace.selectedConversationUnavailable, !workspace.isGenerating,
@@ -131,15 +138,16 @@ struct DesktopComposer: View {
             Text(workspace.isSelectedConversationGenerating
                  ? (workspace.pendingAttachments.isEmpty ? "⌘Return 加入队列 · Return 换行" : "生成中仅支持文本排队 · 停止后可发送附件")
                  : "⌘Return 发送 · Return 换行")
-                .font(.system(size: 11))
-                .foregroundStyle(DesktopTheme.muted(scheme))
+                .font(.system(size: 12))
+                .foregroundStyle(DesktopTheme.inkTertiary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 4)
         }
         .frame(maxWidth: DesktopTheme.contentWidth)
         .padding(.horizontal, 24)
         .padding(.top, 8)
-        .padding(.bottom, 14)
+        .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .onChange(of: focusRequest) { inputFocused = true }
         .onChange(of: workspace.selectedID) { inputFocused = true; queuePresented = false }
@@ -162,6 +170,9 @@ struct DesktopComposer: View {
                     attachmentChip(attachment)
                 }
             }
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: workspace.pendingAttachments.map(\.id))
         }
         .scrollIndicators(.hidden)
     }
@@ -178,12 +189,13 @@ struct DesktopComposer: View {
             .help("查看队列、撤回消息或重试保存")
             Spacer()
             if workspace.selectedQueuedMessages.contains(where: { $0.status == .awaitingSave }) {
-                Text("已提交，待保存").foregroundStyle(.orange)
+                Text("已提交，待保存").foregroundStyle(DesktopTheme.accent)
             }
         }
-        .font(.caption)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+        .font(.system(size: 12))
+        .foregroundStyle(DesktopTheme.inkSecondary)
+        .padding(.horizontal, 10).frame(height: 28)
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 6))
         .popover(isPresented: $queuePresented) { queueDetails }
     }
 
@@ -248,10 +260,12 @@ struct DesktopComposer: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("移除附件 \(attachment.name)")
         }
-        .font(.caption)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(.primary.opacity(0.05), in: Capsule())
+        .font(.system(size: 12))
+        .foregroundStyle(DesktopTheme.inkSecondary)
+        .padding(.leading, 8).padding(.trailing, 6)
+        .frame(height: 28)
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 6))
+        .transition(.scale(scale: 0.85, anchor: .leading).combined(with: .opacity))
         .help(attachment.name)
     }
 

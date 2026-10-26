@@ -31,19 +31,22 @@ private struct DesktopMarkdownBlocks: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .paragraph(let text):
                     DesktopMathText.render(text, fontSize: fontSize, scheme: scheme)
                         .textSelection(.enabled)
-                        .lineSpacing(fontSize / 3)
+                        .lineSpacing(fontSize * 0.5)
+                        .foregroundStyle(DesktopTheme.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .heading(let text, let level):
-                    DesktopMathText.render(text, fontSize: fontSize + (level == 1 ? 9 : level == 2 ? 6 : 2), scheme: scheme)
-                        .font(fontFamily.swiftUIFont(size: fontSize + (level == 1 ? 9 : level == 2 ? 6 : 2), weight: .semibold))
+                    // Editorial headings: Songti serif, regardless of body font choice.
+                    DesktopMathText.render(text, fontSize: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2), scheme: scheme)
+                        .font(DesktopTheme.serif(size: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2), weight: level <= 2 ? .semibold : .medium))
+                        .foregroundStyle(DesktopTheme.ink)
                         .textSelection(.enabled)
-                        .padding(.top, 8)
+                        .padding(.top, level <= 2 ? 12 : 6)
                 case .code(let text, let language):
                     DesktopCodeBlock(text: text, language: language, fontSize: fontSize)
                 case .math(let source):
@@ -58,16 +61,20 @@ private struct DesktopMarkdownBlocks: View {
                 case .list(let items):
                     DesktopMarkdownList(items: items, fontFamily: fontFamily, fontSize: fontSize)
                 case .quote(let blocks):
-                    DesktopMarkdownBlocks(blocks: blocks, fontFamily: fontFamily, fontSize: fontSize)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 14)
+                    DesktopMarkdownBlocks(blocks: blocks, fontFamily: .serif, fontSize: fontSize + 1)
+                        .foregroundStyle(DesktopTheme.inkSecondary)
+                        .padding(.leading, 18)
+                        .padding(.vertical, 2)
                         .overlay(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(DesktopTheme.border(scheme))
-                                .frame(width: 2)
+                            Rectangle().fill(DesktopTheme.accent.opacity(0.55)).frame(width: 1.5)
                         }
                 case .divider:
-                    Divider()
+                    HStack(spacing: 10) {
+                        Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
+                        Text("·  ·  ·").font(DesktopTheme.serif(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                        Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
+                    }
+                    .padding(.vertical, 8)
                 }
             }
         }
@@ -85,14 +92,14 @@ private struct DesktopMarkdownList: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(item.marker)
-                        .font(.system(size: fontSize - 1, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                    Text(item.marker == "•" || item.marker == "-" || item.marker == "*" ? "·" : item.marker)
+                        .font(item.marker.first?.isNumber == true ? DesktopTheme.serif(size: fontSize, weight: .medium) : .system(size: fontSize + 4, weight: .bold))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
                         .frame(width: markerWidth, alignment: .trailing)
                     DesktopMathText.render(item.text, fontSize: fontSize, scheme: scheme)
                         .font(fontFamily.swiftUIFont(size: fontSize))
                         .textSelection(.enabled)
-                        .lineSpacing(fontSize / 3)
+                        .lineSpacing(fontSize * 0.45)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.leading, CGFloat(item.level) * 18)
@@ -111,16 +118,16 @@ private struct DesktopCodeBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(language.isEmpty ? "代码" : language).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 2) {
+                Text(language.isEmpty ? "代码" : language).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Spacer()
                 if let pinning {
                     let pinned = pinning.isPinned(text)
                     Button { pinning.toggle(text, language) } label: {
-                        Label(pinned ? "已固定" : "固定", systemImage: pinned ? "pin.fill" : "pin").font(.caption)
+                        Label(pinned ? "已固定" : "固定", systemImage: pinned ? "pin.fill" : "pin").font(.system(size: 12))
+                            .padding(.horizontal, 8).frame(height: 24)
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(DesktopQuietButtonStyle())
                     .help(pinned ? "从产物架移除" : "固定到产物架")
                 }
                 Button {
@@ -128,26 +135,28 @@ private struct DesktopCodeBlock: View {
                     NSPasteboard.general.setString(text, forType: .string)
                     copied = true
                 } label: {
-                    Label(copied ? "已复制" : "复制代码", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.caption)
+                    Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 8).frame(height: 24)
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .buttonStyle(DesktopQuietButtonStyle())
                 .help("复制代码")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            Divider()
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .frame(height: 32)
             ScrollView(.horizontal) {
                 Text(DesktopCodeHighlights.highlight(text.isEmpty ? " " : text, language: language, fontSize: fontSize - 2))
+                    .lineSpacing(3)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
-                    .padding(14)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 14)
             }
+            .scrollIndicators(.automatic)
         }
-        .background(DesktopTheme.surface(scheme), in: RoundedRectangle(cornerRadius: 8))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(scheme)))
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .onChange(of: text) { copied = false }
     }
 }
@@ -169,13 +178,16 @@ private struct DesktopMarkdownTable: View {
                                 .font(fontFamily.swiftUIFont(size: fontSize - 1, weight: rowIndex == 0 ? .semibold : .regular))
                                 .textSelection(.enabled)
                                 .multilineTextAlignment(textAlignment(column))
+                                .foregroundStyle(rowIndex == 0 ? DesktopTheme.inkSecondary : DesktopTheme.ink)
                                 .frame(width: widths[column] - 28, alignment: alignment(column))
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
+                                .frame(width: widths[column], alignment: alignment(column))
                                 .frame(maxHeight: .infinity, alignment: alignment(column))
-                                .background(rowIndex == 0 ? DesktopTheme.surface(scheme) : .clear)
-                                .border(DesktopTheme.border(scheme), width: 0.5)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle().fill(rowIndex == 0 ? DesktopTheme.hairlineStrong : DesktopTheme.hairline).frame(height: 1)
+                                }
                         }
                 }
             }

@@ -128,48 +128,101 @@ private extension DesktopToolTransaction {
 struct DesktopToolApprovalCard: View {
     let task: DesktopAgentTask
     let tasks: DesktopAgentTasks
-    @Environment(\.colorScheme) private var colorScheme
     @State private var detailsPresented = false
+    @State private var appeared = false
+    @State private var decided = false
 
     var body: some View {
         if let approval = task.approval {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("需要确认 · \(approval.name)", systemImage: "hand.raised")
-                    .font(.system(size: 13, weight: .semibold))
-                Text(approval.reason).font(.system(size: 13)).lineLimit(3)
-                Text(approval.arguments).font(.system(size: 12, design: .monospaced)).lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button("查看完整调用内容") { detailsPresented = true }
-                    .buttonStyle(.link)
-                    .popover(isPresented: $detailsPresented) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text(approval.name).font(.headline).lineLimit(1)
-                                Spacer()
-                                Button("完成") { detailsPresented = false }
-                            }
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text(approval.reason).font(.callout)
-                                    Text(approval.arguments).font(.system(size: 12, design: .monospaced))
-                                }
-                                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        .padding(18).frame(width: 520, height: 320)
-                    }
-                HStack {
-                    Spacer()
-                    Button("拒绝") { tasks.decide(runID: task.id, allow: false) }
-                    Button("允许这次调用") { tasks.decide(runID: task.id, allow: true) }
-                        .buttonStyle(.borderedProminent)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    DesktopPulse()
+                    Text("等待你批准").font(.system(size: 14, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
+                    Text(approval.name).font(.system(size: 12, design: .monospaced)).foregroundStyle(DesktopTheme.inkTertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button("查看完整调用") { detailsPresented = true }
+                        .buttonStyle(.link)
+                        .font(.system(size: 12))
+                        .popover(isPresented: $detailsPresented) { details(approval) }
                 }
+                .padding(.bottom, 6)
+                Text(approval.reason).font(.system(size: 14)).foregroundStyle(DesktopTheme.inkSecondary)
+                    .lineSpacing(4).lineLimit(3)
+                    .padding(.leading, 14)
+                    .padding(.bottom, 12)
+                Text(approval.arguments).font(.system(size: 12, design: .monospaced)).foregroundStyle(DesktopTheme.ink)
+                    .lineLimit(2).truncationMode(.middle)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DesktopTheme.paper, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
+                    .padding(.leading, 14)
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button { decide(false) } label: {
+                        Text("拒绝").font(.system(size: 13, weight: .medium)).padding(.horizontal, 14).frame(height: 30)
+                            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(DesktopTheme.hairlineStrong))
+                    }
+                    .buttonStyle(DesktopPressButtonStyle())
+                    .keyboardShortcut(.escape, modifiers: [])
+                    Button { decide(true) } label: {
+                        HStack(spacing: 8) {
+                            Text("批准").font(.system(size: 13, weight: .medium))
+                            Text("⌘↩").font(.system(size: 12)).opacity(0.7)
+                        }
+                        .foregroundStyle(DesktopTheme.paper)
+                        .padding(.horizontal, 14).frame(height: 30)
+                        .background(DesktopTheme.ink, in: RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(DesktopPressButtonStyle())
+                    .keyboardShortcut(.return, modifiers: .command)
+                }
+                .padding(.top, 12)
+                .disabled(decided)
             }
-            .padding(14)
-            .background(DesktopTheme.accentWash(colorScheme), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.accent.opacity(0.22)))
+            .padding(16)
+            .background {
+                RoundedRectangle(cornerRadius: 12).fill(DesktopTheme.card)
+                    .overlay(RoundedRectangle(cornerRadius: 12).fill(RadialGradient(colors: [DesktopTheme.honey, DesktopTheme.honeySoft, .clear],
+                        center: .topLeading, startRadius: 0, endRadius: 360)))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(DesktopTheme.honeyEdge))
+                    .background(RoundedRectangle(cornerRadius: 12).inset(by: -4).fill(DesktopTheme.honeySoft))
+                    .shadow(color: DesktopTheme.honey, radius: 16, y: 8)
+            }
             .tint(DesktopTheme.accent)
+            .scaleEffect(appeared ? 1 : 0.97)
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared ? 0 : 8)
+            .onAppear { withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) { appeared = true } }
         }
+    }
+
+    private func decide(_ allow: Bool) {
+        decided = true
+        withAnimation(.easeIn(duration: 0.16)) { appeared = false }
+        tasks.decide(runID: task.id, allow: allow)
+    }
+
+    private func details(_ approval: DesktopToolApproval) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text(approval.name).font(DesktopTheme.serif(size: 17, weight: .semibold)).lineLimit(1)
+                Spacer()
+                Button("完成") { detailsPresented = false }
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(approval.reason).font(.system(size: 14)).foregroundStyle(DesktopTheme.inkSecondary).lineSpacing(4)
+                    Text(approval.arguments).font(.system(size: 12, design: .monospaced))
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(20).frame(width: 540, height: 340)
     }
 }
 
@@ -196,9 +249,9 @@ private extension DesktopAgentStatus {
     }
     var color: Color {
         switch self {
-        case .failed, .waiting, .outcomeUnknown: .orange
-        case .completed: .green
-        default: .secondary
+        case .failed, .waiting, .outcomeUnknown: DesktopTheme.accent
+        case .completed: DesktopTheme.inkTertiary
+        default: DesktopTheme.inkTertiary
         }
     }
 }

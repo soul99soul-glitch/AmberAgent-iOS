@@ -2,6 +2,10 @@ import AppKit
 import Foundation
 
 enum DesktopCodeHighlights {
+    private static let warm = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0.85, green: 0.75, blue: 0.60, alpha: 1) : NSColor(red: 0.48, green: 0.35, blue: 0.23, alpha: 1)
+    }
     static func highlight(_ source: String, language: String, fontSize: Double) -> AttributedString {
         let result = NSMutableAttributedString(string: source, attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular), .foregroundColor: NSColor.labelColor,
@@ -19,12 +23,17 @@ enum DesktopCodeHighlights {
         }
         let pattern = "(?<comment>" + comment + #")|(?<string>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(?<keyword>\b(?:"# + keywords + #")\b)|(?<number>\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return AttributedString(result) }
-        let colors: [(String, NSColor)] = [("comment", .secondaryLabelColor), ("string", .systemRed), ("keyword", .systemBlue), ("number", .systemPurple)]
+        // Ink-and-amber palette: keywords carry weight, strings carry the warm tone.
+        let colors: [(String, NSColor)] = [("comment", .tertiaryLabelColor), ("string", Self.warm), ("keyword", .labelColor), ("number", Self.warm)]
+        let bold = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .semibold)
         regex.enumerateMatches(in: source, range: NSRange(location: 0, length: (source as NSString).length)) { match, _, _ in
             guard let match else { return }
             for (name, color) in colors {
                 let range = match.range(withName: name)
-                if range.location != NSNotFound { result.addAttribute(.foregroundColor, value: color, range: range) }
+                if range.location != NSNotFound {
+                    result.addAttribute(.foregroundColor, value: color, range: range)
+                    if name == "keyword" { result.addAttribute(.font, value: bold, range: range) }
+                }
             }
         }
         return AttributedString(result)

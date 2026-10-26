@@ -48,7 +48,7 @@ struct DesktopTranscript: View {
             VStack(spacing: 0) {
             if findPresented { findBar }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 32) {
+                LazyVStack(alignment: .leading, spacing: 24) {
                     ForEach(conversation.messages) { message in
                         DesktopMessageRow(message: message, conversationID: conversation.id, settings: workspace.settings,
                             speech: workspace.speech, shelf: workspace.artifactShelf, mutationsDisabled: mutationsDisabled,
@@ -59,6 +59,9 @@ struct DesktopTranscript: View {
                             onRegenerate: { requestRegeneration(message) },
                             onDelete: { confirmation = .delete(message.id, ownerID: conversation.id, variants: message.variantCount) },
                             onSelectVariant: { workspace.selectVariant(message.id, index: $0) })
+                            .modifier(DesktopRiseIn(enabled: message.id == conversation.messages.last?.id
+                                || message.id == conversation.messages.dropLast().last?.id))
+                            .modifier(DesktopStreamingEdge(active: message.state == .streaming))
                             .id(message.id)
                     }
                     if !mutationsDisabled, let last = conversation.messages.last, last.role == .assistant,
@@ -71,10 +74,11 @@ struct DesktopTranscript: View {
                 }
                 .frame(maxWidth: DesktopTheme.contentWidth)
                 .padding(.horizontal, 24)
-                .padding(.top, 28)
-                .padding(.bottom, 24)
+                .padding(.top, 32)
+                .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
             }
+            .defaultScrollAnchor(.bottom)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height < 80
             } action: { _, value in
@@ -264,6 +268,7 @@ private struct DesktopMessageRow: View {
     let onSelectVariant: (Int) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var reasoningExpanded = false
+    @State private var hovering = false
     @State private var copied = false
     @State private var speechError: String?
     @State private var shareAnchor = DesktopShareAnchor()
@@ -288,80 +293,60 @@ private struct DesktopMessageRow: View {
         }
     }
 
-    private var roleSymbol: String {
-        switch message.role {
-        case .user: "person.crop.circle"
-        case .assistant: "sparkle"
-        case .system: "gearshape"
-        case .tool: "wrench.and.screwdriver"
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: roleSymbol)
-                    .foregroundStyle(message.role == .user ? Color.secondary : DesktopTheme.accent)
-                    .font(.system(size: 13, weight: .medium))
-                Text(roleTitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .help(roleTitle)
-                if message.state == .streaming {
-                    ProgressView().controlSize(.mini)
-                    Text("正在生成").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !message.text.isEmpty {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(message.text, forType: .string)
-                        copied = true
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc").frame(width: 24, height: 24)
+            if message.role != .user {
+                HStack(spacing: 8) {
+                    Text(roleTitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .lineLimit(1)
+                        .help(roleTitle)
+                    if message.state == .streaming {
+                        DesktopPulse()
+                        Text("正在生成").font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(DesktopTheme.muted(scheme))
-                    .help(copied ? "已复制" : "复制消息")
-                    .accessibilityLabel("复制消息")
+                    Spacer()
+                    actionButtons.opacity(hovering ? 1 : 0)
                 }
-                Menu {
-                    messageActions
-                } label: {
-                    Image(systemName: "ellipsis").frame(width: 28, height: 28)
-                }
-                .menuStyle(.borderlessButton)
-                .foregroundStyle(DesktopTheme.muted(scheme))
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .background(DesktopShareAnchorView(anchor: shareAnchor))
-                .help(mutationsDisabled ? "生成或保存完成后可更改消息" : "消息操作")
-                .accessibilityLabel("\(roleTitle)的消息操作")
+                .frame(height: 24)
             }
             if !message.reasoning.isEmpty {
                 DisclosureGroup(isExpanded: $reasoningExpanded) {
                     Text(message.reasoning)
                         .font(settings.messageFontFamily.swiftUIFont(size: max(12, settings.messageFontSize - 2)))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .lineSpacing(4)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 12)
+                        .overlay(alignment: .leading) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1) }
                         .padding(.top, 8)
                 } label: {
-                    Label("思考过程", systemImage: "brain").font(.caption).foregroundStyle(.secondary)
+                    Text(message.state == .streaming && message.text.isEmpty ? "正在思考…" : "思考过程")
+                        .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
                 }
             }
             if message.role == .user, !message.text.isEmpty {
-                Text(message.text)
-                    .font(settings.messageFontFamily.swiftUIFont(size: settings.messageFontSize))
-                    .lineSpacing(5)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .bottom, spacing: 8) {
+                    Spacer(minLength: 120)
+                    actionButtons.opacity(hovering ? 1 : 0)
+                    Text(message.text)
+                        .font(settings.messageFontFamily.swiftUIFont(size: settings.messageFontSize + 1))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .lineSpacing(6)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(highlighted ? DesktopTheme.honey : DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 12))
+                        .frame(maxWidth: 520, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else if !message.text.isEmpty {
                 DesktopMarkdown(text: message.text, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize)
                     .environment(\.desktopCodePinning, codePinning)
             } else if message.state == .streaming {
-                Text("正在等待回复…").font(.callout).foregroundStyle(.secondary)
+                Text("正在等待回复…").font(.system(size: 14)).foregroundStyle(DesktopTheme.inkTertiary)
             }
             if !message.images.isEmpty {
                 ForEach(Array(message.images.enumerated()), id: \.offset) { _, image in
@@ -397,21 +382,50 @@ private struct DesktopMessageRow: View {
             if message.state == .cancelled || message.state == .failed {
                 let hasContent = !message.text.isEmpty || !message.reasoning.isEmpty || !message.images.isEmpty || message.unsupportedPartCount > 0
                 Label(message.state == .cancelled ? (hasContent ? "已停止，已保留生成内容" : "已停止，可重新生成") : "生成未完成，可重试", systemImage: message.state == .cancelled ? "stop.circle" : "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
             }
         }
-        .padding(message.role == .user ? 16 : 0)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(highlighted ? DesktopTheme.accentWash(scheme) : message.role == .user ? DesktopTheme.surface(scheme) : .clear,
-            in: RoundedRectangle(cornerRadius: 8).inset(by: message.role == .user ? 0 : -10))
+        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+        .background(highlighted && message.role != .user ? DesktopTheme.honeySoft : .clear,
+            in: RoundedRectangle(cornerRadius: 10).inset(by: -10))
         .animation(.easeOut(duration: 0.18), value: highlighted)
-        .padding(.leading, message.role == .user ? 40 : 0)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .onChange(of: message.text) { copied = false }
         .contextMenu { messageActions }
         .alert("无法朗读", isPresented: Binding(get: { speechError != nil }, set: { if !$0 { speechError = nil } })) {
             Button("好", role: .cancel) { speechError = nil }
         } message: { Text(speechError ?? "") }
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 2) {
+            if !message.text.isEmpty {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message.text, forType: .string)
+                    copied = true
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 12)).frame(width: 24, height: 24)
+                }
+                .buttonStyle(DesktopQuietButtonStyle())
+                .help(copied ? "已复制" : "复制消息")
+                .accessibilityLabel("复制消息")
+            }
+            Menu {
+                messageActions
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 24, height: 24)
+            }
+            .menuStyle(.borderlessButton)
+            .foregroundStyle(DesktopTheme.inkTertiary)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .background(DesktopShareAnchorView(anchor: shareAnchor))
+            .help(mutationsDisabled ? "生成或保存完成后可更改消息" : "消息操作")
+            .accessibilityLabel("\(roleTitle)的消息操作")
+        }
     }
 
     private var pinnedMessage: DesktopPinnedSnippet? {

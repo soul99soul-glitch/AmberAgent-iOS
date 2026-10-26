@@ -12,10 +12,11 @@ final class DesktopCodeHighlightsTests: XCTestCase {
             let range = (source as NSString).range(of: token)
             return try XCTUnwrap(text.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor)
         }
-        XCTAssertEqual(try color("let"), NSColor.systemBlue)
-        XCTAssertEqual(try color("https://example.com"), NSColor.systemRed)
-        XCTAssertEqual(try color("// 来源"), NSColor.secondaryLabelColor)
-        XCTAssertEqual(try color("42"), NSColor.systemPurple)
+        XCTAssertEqual(try color("let"), NSColor.labelColor)
+        XCTAssertEqual((text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold), true)
+        XCTAssertNotEqual(try color("https://example.com"), NSColor.labelColor)
+        XCTAssertEqual(try color("// 来源"), NSColor.tertiaryLabelColor)
+        XCTAssertEqual(try color("42"), try color("https://example.com"))
         XCTAssertEqual((text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize, 13)
     }
 

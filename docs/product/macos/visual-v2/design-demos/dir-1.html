@@ -83,7 +83,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stro
   border-right:1px solid var(--hair);
   display:flex;flex-direction:column;min-height:0;
 }
-.side-top{height:52px;display:flex;align-items:center;padding:0 12px 0 20px;gap:8px}
+.side-top{height:52px;display:flex;align-items:center;padding:0 12px 0 20px;gap:4px}
 .lights{display:flex;gap:8px;margin-right:auto}
 .lights i{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
 .lights i:nth-child(1){background:#FF5F57}.lights i:nth-child(2){background:#FEBC2E}.lights i:nth-child(3){background:#28C840}
@@ -94,7 +94,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stro
 .tb-btn:hover{background:var(--paper-3);color:var(--ink)}
 
 .search{
-  margin:8px 16px 16px;height:32px;border-radius:8px;
+  margin:8px 12px 16px;height:32px;border-radius:8px;
   display:flex;align-items:center;gap:8px;padding:0 10px;
   color:var(--ink-3);font-size:13px;
   box-shadow:inset 0 0 0 1px var(--hair);
@@ -104,7 +104,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stro
 .search span{flex:1}
 .kbd{font-family:var(--sans);font-size:12px;color:var(--ink-3);letter-spacing:.02em}
 
-.list{flex:1;overflow:hidden;padding:0 8px}
+.list{flex:1;overflow:hidden;padding:0 12px}
 .group{margin-bottom:16px}
 .group h6{font-size:12px;font-weight:500;color:var(--ink-3);padding:0 12px;height:24px;line-height:24px}
 .row{
@@ -159,12 +159,13 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stro
 .tb-sep{width:1px;height:16px;background:var(--hair-2);margin:0 4px}
 .tb-btn .badge{position:absolute}
 
-.scroll{flex:1;overflow:auto;min-height:0;scrollbar-width:none}
+.scroll{flex:1;overflow:auto;min-height:0;scrollbar-width:none;display:flex;flex-direction:column}
+.scroll .col{margin-top:auto}
 .scroll::-webkit-scrollbar{display:none}
-.col{width:680px;margin:0 auto;padding:24px 0 32px}
+.col{width:680px;margin:0 auto;padding:16px 0 24px}
 
 /* messages */
-.u{display:flex;justify-content:flex-end;margin-bottom:24px}
+.u{display:flex;justify-content:flex-end;margin-bottom:16px}
 .u p{
   max-width:520px;background:var(--paper-2);border-radius:12px;padding:10px 16px;
   font-size:15px;line-height:1.7;color:var(--ink);
@@ -189,7 +190,7 @@ code.ic{font-family:var(--mono);font-size:13px;padding:1px 5px;border-radius:4px
 .tool .chev{width:12px;height:12px;color:var(--ink-3)}
 
 /* code */
-.code{border-radius:10px;background:var(--paper-2);margin:0 0 24px;overflow:hidden}
+.code{border-radius:10px;background:var(--paper-2);margin:0 0 16px;overflow:hidden}
 .code-h{height:32px;display:flex;align-items:center;padding:0 8px 0 16px;font-size:12px;color:var(--ink-3)}
 .code-h .txt-btn{margin-left:auto;height:24px;font-size:12px;color:var(--ink-3)}
 .code-h .txt-btn svg.i{width:12px;height:12px}
@@ -197,7 +198,7 @@ code.ic{font-family:var(--mono);font-size:13px;padding:1px 5px;border-radius:4px
   font-family:var(--mono);font-size:13px;line-height:1.65;padding:0 16px 14px;color:var(--code-fn);
   white-space:pre;overflow:hidden;
 }
-.k{color:var(--code-kw);font-weight:600}.s{color:var(--code-str)}.c{color:var(--code-cm);font-style:italic}.n{color:var(--code-kw)}
+.k{color:var(--code-kw);font-weight:600}.s{color:var(--code-str)}.c{color:var(--code-cm)}.n{color:var(--code-kw)}
 
 /* approval — the one lit object */
 .approve{
@@ -210,15 +211,15 @@ code.ic{font-family:var(--mono);font-size:13px;padding:1px 5px;border-radius:4px
 .approve-h{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink);margin-bottom:4px}
 .approve-h .pulse{margin:0 4px 0 2px}
 .approve-h em{font-style:normal;font-weight:400;color:var(--ink-3);font-size:13px;margin-left:auto}
-.approve .why{font-size:14px;line-height:1.7;color:var(--ink-2);margin:0 0 12px 18px}
+.approve .why{font-size:14px;line-height:1.7;color:var(--ink-2);margin:0 0 12px 20px}
 .cmd{
-  margin-left:18px;height:40px;border-radius:8px;display:flex;align-items:center;gap:8px;padding:0 12px;
+  margin-left:20px;height:40px;border-radius:8px;display:flex;align-items:center;gap:8px;padding:0 12px;
   background:var(--paper);box-shadow:inset 0 0 0 1px var(--hair);
   font-family:var(--mono);font-size:13px;color:var(--ink);
 }
 .cmd .p{color:var(--ink-3)}
 .cmd .cwd{margin-left:auto;color:var(--ink-3);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.approve-f{display:flex;align-items:center;gap:8px;margin:12px 0 0 18px}
+.approve-f{display:flex;align-items:center;gap:8px;margin:12px 0 0 20px}
 .check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);margin-right:auto}
 .check i{width:14px;height:14px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--hair-2);background:var(--surface)}
 .btn{
@@ -234,7 +235,7 @@ code.ic{font-family:var(--mono);font-size:13px;padding:1px 5px;border-radius:4px
 [data-theme="dark"] .btn-1:hover{filter:brightness(.92)}
 
 /* ===== Composer ===== */
-.dock{flex:none;padding:0 0 20px}
+.dock{flex:none;padding:8px 0 16px}
 .composer{
   width:680px;margin:0 auto;border-radius:12px;background:var(--surface);
   box-shadow:inset 0 0 0 1px var(--hair-2), 0 1px 2px rgba(0,0,0,.03);
@@ -301,7 +302,7 @@ code.ic{font-family:var(--mono);font-size:13px;padding:1px 5px;border-radius:4px
 
 /* ===== State switch (outside window, demo only) ===== */
 .demo-switch{
-  position:fixed;right:16px;bottom:16px;z-index:10;display:flex;padding:2px;border-radius:8px;
+  position:fixed;right:16px;bottom:16px;opacity:.85;z-index:10;display:flex;padding:2px;border-radius:8px;
   background:rgba(120,116,108,.16);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
   box-shadow:inset 0 0 0 .5px rgba(0,0,0,.08);
 }
@@ -420,7 +421,6 @@ code.ic{font-family:var(--mono);font-size:13px;padding:1px 5px;border-radius:4px
 <span class="c">// 新进程组：killpg(pgid, SIGTERM) 能整组回收</span>
 <span class="n">posix_spawnattr_setflags</span>(&amp;attr, <span class="n">Int16</span>(POSIX_SPAWN_SETPGROUP))
 <span class="n">posix_spawnattr_setpgroup</span>(&amp;attr, <span class="s">0</span>)
-
 env[<span class="s">"PATH"</span>] = <span class="k">try await</span> LoginShell.<span class="n">resolvedPATH</span>()  <span class="c">// 只解析一次</span></pre>
           </div>
         </div>
