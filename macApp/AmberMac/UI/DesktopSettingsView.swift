@@ -268,7 +268,8 @@ struct DesktopSettingsView: View {
     private var models: some View {
         Section("模型") {
             if draft.models.isEmpty {
-                Text("从服务商获取模型，或手动添加精确模型 ID。").font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
+                Text("填好地址和 API Key 后，点「获取模型列表」勾选要用的模型；服务商不提供列表时再手动添加。")
+                    .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
             } else {
                 ForEach(draft.models) { model in
                     HStack(spacing: 10) {
@@ -289,7 +290,7 @@ struct DesktopSettingsView: View {
                     .background(modelBeingEdited == model.id ? DesktopTheme.accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 6))
                 }
             }
-            Button("手动添加模型", systemImage: "plus") {
+            Button("手动输入模型 ID", systemImage: "plus") {
                 let model = DesktopModelConfiguration(modelID: "")
                 draft.models.append(model); parameters[model.id] = ModelParameters(model)
                 modelBeingEdited = model.id
@@ -351,6 +352,9 @@ struct DesktopSettingsView: View {
                 }.toggleStyle(.checkbox).disabled(draft.models.contains(where: { $0.modelID == model.modelID }))
             }
             Button("添加所选模型（\(selectedCatalogIDs.count)）") {
+                draft.models.removeAll { $0.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                if let selected = draft.selectedModelID, !draft.models.contains(where: { $0.id == selected }) { draft.selectedModelID = nil }
+                if let editing = modelBeingEdited, !draft.models.contains(where: { $0.id == editing }) { modelBeingEdited = nil }
                 let previous = Set(draft.models.map(\.id))
                 draft.models = DesktopModelCatalogMerge.merge(catalogRequest.models.filter { selectedCatalogIDs.contains($0.id) }, into: draft.models)
                 for model in draft.models where !previous.contains(model.id) { parameters[model.id] = ModelParameters(model) }
@@ -491,6 +495,11 @@ struct DesktopSettingsView: View {
     }
     private func configuredDraft() throws -> DesktopProviderConfiguration {
         var value = draft
+        // A row added by「手动添加模型」and never filled carries no meaning; drop it rather than block saving.
+        value.models.removeAll { $0.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if let selected = value.selectedModelID, !value.models.contains(where: { $0.id == selected }) {
+            value.selectedModelID = value.models.first(where: \.enabled)?.id
+        }
         for index in value.models.indices {
             guard let fields = parameters[value.models[index].id] else { continue }
             func integer(_ input: String, label: String) throws -> Int? {
@@ -546,6 +555,9 @@ struct DesktopSettingsView: View {
         catalogRequest.cancel(); selectedCatalogIDs = []
         editingID = id
         draft = settings.providers.first(where: { $0.id == id }) ?? Self.emptyProvider()
+        // The first-run template carries one empty model slot; models come from「获取模型列表」, so hide it.
+        draft.models.removeAll { $0.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if let selected = draft.selectedModelID, !draft.models.contains(where: { $0.id == selected }) { draft.selectedModelID = nil }
         status = nil; failed = false; credentialLoadFailed = false; apiKey = ""
         if let id {
             do { apiKey = try settings.apiKey(for: id) }
