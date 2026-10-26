@@ -29,9 +29,10 @@ struct DesktopBackupView: View {
                 Button("导出备份…", systemImage: "square.and.arrow.up") { exportBackup() }
                     .buttonStyle(.borderedProminent)
                 Button("从备份恢复…", systemImage: "square.and.arrow.down") { restoreBackup() }
+                Button("导入 iOS 备份…", systemImage: "iphone") { importIOSBackup() }
             }
             .disabled(workspace.isManagingBackup || workspace.isLoading)
-            Text("恢复会新增会话与配置，保留当前数据。技能、SOUL 与通用偏好放入“备份恢复资料”会话文件，供检查后手动导入或应用。恢复加密备份前，请先填写原密码。")
+            Text("恢复会新增会话与配置，保留当前数据。技能、SOUL 与通用偏好放入“备份恢复资料”会话文件，供检查后手动导入或应用。恢复加密备份前，请先填写原密码。导入 iOS 备份（.amberbackup）只新增会话副本，不导入 iOS 设置与凭证；未设口令的 iOS 备份可留空密码。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if workspace.isManagingBackup {
                 HStack(spacing: 12) {
@@ -76,6 +77,16 @@ struct DesktopBackupView: View {
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
             workspace.importBackup(from: url, password: password.isEmpty ? nil : password)
+        }
+    }
+
+    private func importIOSBackup() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: DesktopIOSBackup.fileExtension) ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            workspace.importIOSBackup(from: url, password: password.isEmpty ? nil : password)
         }
     }
 }

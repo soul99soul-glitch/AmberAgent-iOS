@@ -1344,7 +1344,28 @@ final class DesktopWorkspace {
         restoreBackup { try DesktopBackup.decode(data, password: password) }
     }
 
-    private func restoreBackup(_ read: @escaping @Sendable () throws -> DesktopBackupPayload) -> Task<Void, Never>? {
+    /// Imports conversations from an iOS `.amberbackup` as new copies; iOS settings and credentials are skipped.
+    @discardableResult
+    func importIOSBackup(from url: URL, password: String?) -> Task<Void, Never>? {
+        restoreBackup(note: Self.iosBackupNote) {
+            let granted = url.startAccessingSecurityScopedResource()
+            defer { if granted { url.stopAccessingSecurityScopedResource() } }
+            try Task.checkCancellation()
+            return try DesktopIOSBackup.payload(Data(contentsOf: url), passphrase: password)
+        }
+    }
+
+    @discardableResult
+    func importIOSBackup(data: Data, password: String?) -> Task<Void, Never>? {
+        restoreBackup(note: Self.iosBackupNote) { try DesktopIOSBackup.payload(data, passphrase: password) }
+    }
+
+    private static func iosBackupNote(_ restored: DesktopBackupRestoreResult) -> String {
+        "已从 iOS 备份导入 \(restored.conversations.count) 个会话副本，现有内容已保留。iOS 的设置、服务商与凭证不会导入。"
+    }
+
+    private func restoreBackup(note: (@MainActor (DesktopBackupRestoreResult) -> String)? = nil,
+                               _ read: @escaping @Sendable () throws -> DesktopBackupPayload) -> Task<Void, Never>? {
         guard beginBackup() else { return nil }
         let task = Task {
             defer { isManagingBackup = false }
@@ -1358,7 +1379,7 @@ final class DesktopWorkspace {
                     updateSummary(conversation)
                 }
                 if let id = restored.knowledgeConversationID ?? restored.conversations.first?.id { select(id) }
-                backupStatusMessage = restored.message
+                backupStatusMessage = note?(restored) ?? restored.message
             } catch is CancellationError { backupStatusMessage = "恢复已取消，现有内容已保留。" }
             catch { backupErrorMessage = "恢复失败：" + error.localizedDescription }
         }
