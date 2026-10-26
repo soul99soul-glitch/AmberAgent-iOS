@@ -149,11 +149,12 @@ final class LiveGatewayE2ETests: XCTestCase {
     func testStopKeepsAndPersistsPartialText() async throws {
         let environment = try makeEnvironment()
         let workspace = makeWorkspace(environment)
-        await send("从1数到300，每个数字一行，不要省略，不要其它内容。", in: workspace)
+        await send("从1数到2000，每个数字一行，不要省略，不要其它内容。", in: workspace)
         try await waitUntil("first streamed text") {
             !(workspace.selectedConversation?.messages.last?.text.isEmpty ?? true) || !workspace.isGenerating
         }
         XCTAssertTrue(workspace.isGenerating, "stream ended before stop could be exercised: \(failureContext(workspace))")
+        let textAtStop = workspace.selectedConversation?.messages.last?.text ?? ""
         workspace.stop()
         let stopFlushed = await workspace.flush()
         XCTAssertTrue(stopFlushed)
@@ -165,7 +166,9 @@ final class LiveGatewayE2ETests: XCTestCase {
         XCTAssertEqual(reply.role, .assistant)
         XCTAssertEqual(reply.state, .cancelled, failureContext(workspace))
         XCTAssertFalse(reply.text.isEmpty)
-        XCTAssertFalse(reply.text.hasSuffix("300"), "reply looks complete, stop had no effect")
+        // Text accepted before stop (possibly not yet painted — UI commits are coalesced) is kept; the run must not finish.
+        XCTAssertTrue(reply.text.hasPrefix(textAtStop), "kept text diverged from what was shown")
+        XCTAssertFalse(reply.text.hasSuffix("2000"), "reply looks complete, stop had no effect")
 
         let relaunched = makeWorkspace(environment)
         await relaunched.waitUntilLoaded()
