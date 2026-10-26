@@ -25,6 +25,10 @@ struct DesktopWorkspaceView: View {
     @State private var imageGenerationOwner: ImageGenerationOwner?
     @State private var composerFocusRequest = 0
     @State private var hoveredRow: UUID?
+    @AppStorage("desktop.inspector.visible") private var inspectorVisible = true
+    @State private var inspectorDocked = false
+    /// Detail-column width from which the inspector docks beside the transcript (680 column + margins + 300 panel).
+    static let inspectorDockWidth: CGFloat = 1080
     @State private var markTaps = 0
     @Namespace private var sidebarNamespace
 
@@ -39,6 +43,9 @@ struct DesktopWorkspaceView: View {
             sidebar
                 .navigationSplitViewColumnWidth(min: 228, ideal: 268, max: 360)
         } detail: {
+            GeometryReader { geometry in
+            let docked = inspectorVisible && geometry.size.width >= Self.inspectorDockWidth
+            HStack(spacing: 0) {
             VStack(spacing: 0) {
                 if workspace.isLoading {
                     ProgressView("正在读取会话…").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -83,6 +90,20 @@ struct DesktopWorkspaceView: View {
             }
             .animation(.spring(response: 0.38, dampingFraction: 0.86), value: workspace.selectedID)
             .background(DesktopTheme.paper)
+            if docked {
+                DesktopInspector(workspace: workspace,
+                    onLocate: { messageID in
+                        guard let conversationID = workspace.selectedID else { return }
+                        transcriptFocus = DesktopTranscriptFocus(conversationID: conversationID, messageID: messageID)
+                    },
+                    onOpenFiles: { filesPresented = true }, onOpenTasks: { tasksPresented = true })
+                    .frame(width: 300)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+            }
+            .animation(.smooth(duration: 0.3), value: docked)
+            .onChange(of: docked, initial: true) { _, value in inspectorDocked = value }
+            }
             .navigationTitle(workspace.selectedConversationTitle)
             .toolbar { toolbar }
             .toolbarBackground(DesktopTheme.paper, for: .windowToolbar)
@@ -430,6 +451,10 @@ struct DesktopWorkspaceView: View {
             .help(workspace.settings.selectedModelID == nil ? "在设置中添加服务商与模型"
                 : workspace.settings.selectedProvider.map { "\($0.name) · \($0.modelID)" } ?? "在设置中添加服务商与模型")
             .accessibilityLabel("选择服务商与模型")
+            Button { withAnimation(.smooth(duration: 0.3)) { inspectorVisible.toggle() } } label: { Image(systemName: "sidebar.right") }
+                .help(inspectorVisible ? "隐藏右侧面板" : "显示右侧面板（窗口足够宽时常驻）")
+                .accessibilityLabel("右侧面板")
+            if !inspectorDocked {
             Button { insightsPresented.toggle() } label: { Image(systemName: "text.bubble") }
                 .disabled(workspace.selectedConversation == nil || workspace.isLoading)
                 .help("上下文与回顾")
@@ -463,6 +488,7 @@ struct DesktopWorkspaceView: View {
             }
             .help("工具任务与待确认操作")
             .accessibilityLabel("任务工作台")
+            }
         }
     }
 

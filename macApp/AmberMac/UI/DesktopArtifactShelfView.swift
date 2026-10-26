@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DesktopArtifactShelfView: View {
     @Bindable var workspace: DesktopWorkspace
+    var embedded = false
     let onLocate: (UUID) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var copiedID: UUID?
@@ -11,7 +12,7 @@ struct DesktopArtifactShelfView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("产物架").font(DesktopTheme.serif(size: 18, weight: .semibold))
+            if !embedded { Text("产物架").font(DesktopTheme.serif(size: 18, weight: .semibold)) }
             if let error = workspace.artifactShelf.errorMessage {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
@@ -19,15 +20,13 @@ struct DesktopArtifactShelfView: View {
             }
             if let conversation, !workspace.artifactShelf.pins(for: conversation.id).isEmpty {
                 let messageIDs = Set(conversation.messages.map(\.id))
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(workspace.artifactShelf.pins(for: conversation.id)) { pin in
-                            row(pin, conversationID: conversation.id, available: messageIDs.contains(pin.messageID))
-                        }
+                let list = VStack(alignment: .leading, spacing: 12) {
+                    ForEach(workspace.artifactShelf.pins(for: conversation.id)) { pin in
+                        row(pin, conversationID: conversation.id, available: messageIDs.contains(pin.messageID))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 400)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if embedded { list } else { ScrollView { list }.frame(maxHeight: 400) }
             } else {
                 Text("在消息菜单或代码块上选择“固定”，常用的回答与代码会保存在这里。")
                     .font(.system(size: 13))
@@ -35,8 +34,8 @@ struct DesktopArtifactShelfView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .padding(embedded ? 0 : 20)
+        .frame(width: embedded ? nil : 420)
     }
 
     private func row(_ pin: DesktopPinnedSnippet, conversationID: UUID, available: Bool) -> some View {

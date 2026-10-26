@@ -2,6 +2,8 @@ import SwiftUI
 
 struct DesktopConversationInsightsView: View {
     @Bindable var workspace: DesktopWorkspace
+    /// Embedded in the inspector: no own title/padding/width, no dismiss on pick.
+    var embedded = false
     @Environment(\.dismiss) private var dismiss
 
     private var conversation: DesktopConversation? { workspace.selectedConversation }
@@ -15,7 +17,7 @@ struct DesktopConversationInsightsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("上下文与回顾").font(DesktopTheme.serif(size: 18, weight: .semibold))
+            if !embedded { Text("上下文与回顾").font(DesktopTheme.serif(size: 18, weight: .semibold)) }
             if let conversation {
                 let prepared = workspace.insights.prepare(messages: conversation.messages, conversationID: conversation.id)
                 let tokens = DesktopConversationInsights.estimatedTokens(prepared,
@@ -59,24 +61,22 @@ struct DesktopConversationInsightsView: View {
                             .help("重新读取本机会话辅助记录；生成失败可使用对应的生成按钮重试")
                     }
                 }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        insightSection(.recap, conversation: conversation)
-                        Divider()
-                        insightSection(.suggestions, conversation: conversation)
-                        Divider()
-                        insightSection(.compact, conversation: conversation)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                let sections = VStack(alignment: .leading, spacing: 20) {
+                    insightSection(.recap, conversation: conversation)
+                    Divider()
+                    insightSection(.suggestions, conversation: conversation)
+                    Divider()
+                    insightSection(.compact, conversation: conversation)
                 }
-                .frame(maxHeight: 400)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if embedded { sections } else { ScrollView { sections }.frame(maxHeight: 400) }
             } else {
                 Text("选中一个会话后，可以回顾内容与整理上下文。")
                     .foregroundStyle(DesktopTheme.inkTertiary)
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .padding(embedded ? 0 : 20)
+        .frame(width: embedded ? nil : 420)
     }
 
     @ViewBuilder
@@ -99,7 +99,7 @@ struct DesktopConversationInsightsView: View {
                     ForEach(Array(value.suggestions.enumerated()), id: \.offset) { _, suggestion in
                         Button {
                             workspace.draft = suggestion
-                            dismiss()
+                            if !embedded { dismiss() }
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
                                 Text(suggestion).font(.system(size: 13)).multilineTextAlignment(.leading)
