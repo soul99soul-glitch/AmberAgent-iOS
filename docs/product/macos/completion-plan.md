@@ -50,3 +50,17 @@
 ## 完成口径
 
 每项关闭需：UI 入口、状态 owner/持久化、真实消费者、匹配证据（测试/实窗截图/实网请求）。验证日志写入 `docs/product/macos/completion/`。
+
+## 执行记录（2026-10-26）
+
+| Phase | 结果 | 证据 |
+| --- | --- | --- |
+| 1 回归 | KMP 18 模块 jvmTest 365/0、desktop-shared 37/0；iOS 受影响 19 类 302/0；iOS 全量 5081 项中 13 项失败集中在 PhoneControlSavedTasks/BottomOverlay（与本分支改动文件无交集，main 复核见下） | 本节 |
+| 2 正式 Native | 修 KMP 回调继承 MainActor 崩溃（d6c9a8d）、未登记模型丢工具（8eecab3）；真实网关 E2E：发送/重开、停止保留 partial、审批→写文件→续轮 3/3 | LiveGatewayE2ETests |
+| 3 沙盒 | 正式 App 关沙盒（Developer ID 分发），登录 PATH 一次读取、MCP 直接 spawn；真实 npx MCP 连通 | DesktopUserToolchainTests |
+| 4 功能 | iOS 备份导入、产物架/会话内查找/单条导出分享、Grok OAuth、子代理只读工具循环、议会多轮/辩论/主持规划席位 | 各提交测试 |
+| 5 视觉与交付 | 方向 1「琥珀含光」+ 宋体杂志感，主窗口/输入器/审批卡/Markdown/二级面板主题化；页面切换、发光滑动、入场、流式光边、按压/开关/复制动效，彩蛋 3 个；Release 构建签名可启动 | visual-v2/native-after |
+
+Mac 测试最终 277/0（8 项为需环境变量的在线测试，默认跳过）。
+
+仍需人工：真实 Grok/Codex 账号登录、系统通知授权与点击、Developer ID 签名与公证（需证书）。
