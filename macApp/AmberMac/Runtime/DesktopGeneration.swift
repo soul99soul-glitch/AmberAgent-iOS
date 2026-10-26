@@ -88,14 +88,16 @@ struct DesktopRunContext: Sendable {
     let conversationID: UUID
     let toolsEnabled: Bool
     let subagentsEnabled: Bool
+    /// nil = the global auto-approve switches; scheduled/unattended runs pass their own.
+    let approvalPolicy: DesktopApprovalPolicy?
     let persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)?
     let drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?
 
-    init(conversationID: UUID, toolsEnabled: Bool, subagentsEnabled: Bool = false,
+    init(conversationID: UUID, toolsEnabled: Bool, subagentsEnabled: Bool = false, approvalPolicy: DesktopApprovalPolicy? = nil,
         persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)? = nil,
         drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])? = nil) {
         self.conversationID = conversationID; self.toolsEnabled = toolsEnabled || subagentsEnabled
-        self.subagentsEnabled = subagentsEnabled; self.persistTurns = persistTurns
+        self.subagentsEnabled = subagentsEnabled; self.approvalPolicy = approvalPolicy; self.persistTurns = persistTurns
         self.drainSteer = drainSteer
     }
 }

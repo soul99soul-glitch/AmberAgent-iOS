@@ -154,3 +154,16 @@ import XCTest
         XCTAssertTrue(reopened.autoApproveHighRisk)
     }
 }
+
+@MainActor final class DesktopApprovalPolicyTests: XCTestCase {
+    func testInjectedPolicyOverridesGlobalSwitchesAndRespectsAllowList() {
+        let tasks = DesktopAgentTasks(defaults: UserDefaults(suiteName: "amber.policy.\(UUID().uuidString)")!)
+        tasks.autoApprove = true
+        let strict = DesktopApprovalPolicy(autoApproveOrdinary: false, autoApproveHighRisk: false)
+        XCTAssertFalse(tasks.autoApproves("workspace_file_write", policy: strict), "a run's own policy wins over the global switch")
+        let scheduled = DesktopApprovalPolicy(autoApproveOrdinary: true, autoApproveHighRisk: true, allowedTools: ["terminal_exec"])
+        XCTAssertTrue(tasks.autoApproves("terminal_exec", policy: scheduled))
+        XCTAssertFalse(tasks.autoApproves("workspace_file_write", policy: scheduled), "outside the allow-list still asks")
+        XCTAssertTrue(tasks.autoApproves("workspace_file_write"), "no policy = global switches")
+    }
+}

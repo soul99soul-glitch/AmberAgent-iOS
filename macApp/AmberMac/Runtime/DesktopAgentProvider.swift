@@ -128,7 +128,7 @@ import CryptoKit
                 let executor = DesktopAgentExecutor(runID: id, owner: context.conversationID, tasks: tasks,
                     files: files, knowledge: knowledge, mcp: mcp, declarations: declarations, exposure: exposure,
                     sourceMessageIDs: messages.last(where: { $0.role == .user }).map { [$0.id.uuidString.lowercased()] } ?? [],
-                    collaborations: collaborations, searchSettings: searchSettings)
+                    collaborations: collaborations, searchSettings: searchSettings, approvalPolicy: context.approvalPolicy)
                 let sink = DesktopEngineTranscript(input: input, responseID: responseID, generation: generation)
                 let ledger = DesktopEngineLedger(tasks: tasks, runID: id)
                 let result = await self.resume(provider: provider, messages: input, params: params, exposure: exposure,
@@ -384,11 +384,13 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
     let searchSettings: DesktopSearchSettings
     private let scopeLock = NSLock()
     private var skillScope = DesktopSkillToolScope()
+    let approvalPolicy: DesktopApprovalPolicy?
 
     init(runID: UUID, owner: UUID, tasks: DesktopAgentTasks, files: DesktopWorkspaceFiles,
         knowledge: DesktopKnowledgeStore, mcp: DesktopMCPManager, declarations: [DesktopToolDeclaration],
         exposure: IosToolExposureBridge, sourceMessageIDs: [String], collaborations: DesktopCollaborations,
-        searchSettings: DesktopSearchSettings) {
+        searchSettings: DesktopSearchSettings, approvalPolicy: DesktopApprovalPolicy? = nil) {
+        self.approvalPolicy = approvalPolicy
         self.runID = runID; self.owner = owner; self.tasks = tasks; self.files = files
         self.knowledge = knowledge; self.mcp = mcp; self.declarations = declarations
         self.exposure = exposure; self.sourceMessageIDs = sourceMessageIDs
@@ -409,7 +411,8 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
         guard exposed else { return .failed("此工具尚未暴露，请先通过tool_search发现后再调用。") }
         let effect = DesktopToolRegistry.effect(for: tool.toolName, arguments: tool.input)
         let approval = effect == .sideEffect || effect == .idempotent
-        let autoApproved = approval ? await MainActor.run { tasks.autoApproves(tool.toolName) } : false
+        let policy = approvalPolicy
+        let autoApproved = approval ? await MainActor.run { tasks.autoApproves(tool.toolName, policy: policy) } : false
         if approval, !autoApproved {
             if let decision = await tasks.decision(runID: runID, toolID: tool.toolCallId) {
                 if !decision { return .denied("用户拒绝了这一次工具调用。") }

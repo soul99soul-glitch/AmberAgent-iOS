@@ -121,6 +121,23 @@ actor DesktopAgentJournal {
     }
 }
 
+/// Which tool calls run without a prompt. High risk is decided only by DesktopToolRegistry.isHighRisk.
+struct DesktopApprovalPolicy: Codable, Equatable, Sendable {
+    var autoApproveOrdinary: Bool
+    var autoApproveHighRisk: Bool
+    /// When set, only these tools may auto-run; anything else still asks (and an unattended run will wait).
+    var allowedTools: Set<String>?
+
+    init(autoApproveOrdinary: Bool, autoApproveHighRisk: Bool, allowedTools: Set<String>? = nil) {
+        self.autoApproveOrdinary = autoApproveOrdinary; self.autoApproveHighRisk = autoApproveHighRisk; self.allowedTools = allowedTools
+    }
+
+    func autoApproves(_ toolName: String) -> Bool {
+        if let allowedTools, !allowedTools.contains(toolName) { return false }
+        return DesktopToolRegistry.isHighRisk(toolName) ? autoApproveHighRisk : (autoApproveOrdinary || autoApproveHighRisk)
+    }
+}
+
 @MainActor @Observable
 final class DesktopAgentTasks {
     private(set) var records: [DesktopAgentTask] = []
@@ -137,8 +154,14 @@ final class DesktopAgentTasks {
         didSet { defaults.set(autoApproveHighRisk, forKey: "desktop.agent-auto-approve-high-risk") }
     }
 
-    func autoApproves(_ toolName: String) -> Bool {
-        DesktopToolRegistry.isHighRisk(toolName) ? autoApproveHighRisk : (autoApprove || autoApproveHighRisk)
+    /// The interactive policy: the two global switches.
+    var globalApprovalPolicy: DesktopApprovalPolicy {
+        DesktopApprovalPolicy(autoApproveOrdinary: autoApprove || autoApproveHighRisk, autoApproveHighRisk: autoApproveHighRisk)
+    }
+
+    /// The single approval decision point. `policy` overrides the global switches (unattended runs pass their own).
+    func autoApproves(_ toolName: String, policy: DesktopApprovalPolicy? = nil) -> Bool {
+        (policy ?? globalApprovalPolicy).autoApproves(toolName)
     }
 
     /// Lets the model dispatch read-only sub-agents mid-conversation; needs the tool loop, so it runs through it.
