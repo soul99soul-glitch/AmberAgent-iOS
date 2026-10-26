@@ -19,6 +19,7 @@ struct DesktopKnowledgeView: View {
     @State private var memoryScope: DesktopMemoryScope?
     @State private var error: String?
     @State private var selectedTab = 0
+    @State private var previousTab = 0
 
     private var soulChanged: Bool { soulDraft != store.soulMarkdown }
     private var visibleMemories: [DesktopMemoryRecord] {
@@ -49,21 +50,19 @@ struct DesktopKnowledgeView: View {
                     Button("重新读取") { perform { try store.reload(); soulDraft = store.soulMarkdown } }
                 }
             }
-            Picker("知识分类", selection: $selectedTab) {
-                Text("技能").tag(0)
-                Text("SOUL").tag(1)
-                Text("记忆").tag(2)
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 300)
-            .disabled(store.loadError != nil)
-            Group {
+            DesktopSegmented(options: [(0, "技能"), (1, "SOUL"), (2, "记忆")], selection: $selectedTab)
+                .accessibilityLabel("知识分类")
+                .disabled(store.loadError != nil)
+            ZStack {
                 switch selectedTab {
-                case 1: soul
-                case 2: memories
-                default: skills
+                case 1: soul.modifier(DesktopTabTransition(forward: selectedTab > previousTab))
+                case 2: memories.modifier(DesktopTabTransition(forward: selectedTab > previousTab))
+                default: skills.modifier(DesktopTabTransition(forward: selectedTab > previousTab))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .onChange(of: selectedTab) { old, _ in previousTab = old }
             .disabled(store.loadError != nil)
         }
         .padding(24)

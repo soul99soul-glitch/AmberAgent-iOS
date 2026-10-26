@@ -162,11 +162,9 @@ private struct DesktopMCPServerEditor: View {
             Text(original.name.isEmpty ? "添加 MCP 服务" : "编辑 MCP 服务").font(DesktopTheme.serif(size: 20, weight: .semibold))
             Form {
                 TextField("名称", text: $draft.name)
-                Picker("传输", selection: $draft.transport) {
-                    Text("HTTP").tag(DesktopMCPServer.Transport.streamableHTTP)
-                    Text("SSE").tag(DesktopMCPServer.Transport.sse)
-                    Text("stdio").tag(DesktopMCPServer.Transport.stdio)
-                }.pickerStyle(.segmented)
+                LabeledContent("传输") {
+                    DesktopSegmented(options: [(DesktopMCPServer.Transport.streamableHTTP, "HTTP"), (.sse, "SSE"), (.stdio, "stdio")], selection: $draft.transport)
+                }
                 if draft.transport == .stdio {
                     TextField("可执行文件或命令", text: $draft.command)
                     jsonEditor("启动参数（JSON 字符串数组）", text: $arguments)

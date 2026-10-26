@@ -13,6 +13,7 @@ struct DesktopSettingsView: View {
     @State private var login: DesktopCodexLogin
     @State private var catalogRequest = DesktopCatalogRequest()
     @State private var tab = 0
+    @State private var previousTab = 0
     @State private var editingID: UUID?
     @State private var draft = Self.emptyProvider()
     @State private var savedDraft: DesktopProviderConfiguration?
@@ -122,30 +123,25 @@ struct DesktopSettingsView: View {
             HStack(spacing: 24) {
                 Text("设置").font(DesktopTheme.serif(size: 22, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
                 Spacer()
-                Picker("设置分类", selection: Binding(get: { tab }, set: { request(.tab($0)) })) {
-                    Text("服务商").tag(0)
-                    Text("通用").tag(1)
-                    if mcp != nil { Text("MCP").tag(2) }
-                    if syncWorkspace != nil { Text("同步").tag(3) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 360)
+                DesktopSegmented(options: [(0, "服务商"), (1, "通用")] + (mcp != nil ? [(2, "MCP")] : []) + (syncWorkspace != nil ? [(3, "同步")] : []),
+                    selection: Binding(get: { tab }, set: { request(.tab($0)) }))
+                    .accessibilityLabel("设置分类")
             }
             .padding(.horizontal, 28)
             .padding(.top, 22)
             .padding(.bottom, 18)
             Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
-            Group {
+            ZStack {
                 switch tab {
-                case 1: general
-                case 2: if let mcp { DesktopMCPSettingsView(manager: mcp) }
-                case 3: if let syncWorkspace { DesktopWebDAVSettingsView(workspace: syncWorkspace) }
-                default: providers
+                case 1: general.modifier(DesktopTabTransition(forward: tab > previousTab))
+                case 2: if let mcp { DesktopMCPSettingsView(manager: mcp).modifier(DesktopTabTransition(forward: tab > previousTab)) }
+                case 3: if let syncWorkspace { DesktopWebDAVSettingsView(workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
+                default: providers.modifier(DesktopTabTransition(forward: tab > previousTab))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(.easeOut(duration: 0.2), value: tab)
+            .clipped()
+            .onChange(of: tab) { old, _ in previousTab = old }
         }
         .background(DesktopTheme.paper)
         .frame(width: 880, height: 700)
@@ -385,11 +381,9 @@ struct DesktopSettingsView: View {
     private var general: some View {
         Form {
             Section("外观") {
-                Picker("主题", selection: $settings.appearance) {
-                    Text("跟随系统").tag("system")
-                    Text("浅色").tag("light")
-                    Text("深色").tag("dark")
-                }.pickerStyle(.segmented)
+                LabeledContent("主题") {
+                    DesktopSegmented(options: [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")], selection: $settings.appearance)
+                }
             }
             Section("系统提示词") {
                 Text("用于之后发送的请求。已有消息会保留原样。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)

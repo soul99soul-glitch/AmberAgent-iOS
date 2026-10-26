@@ -212,7 +212,7 @@ struct DesktopSelectableRow<Content: View>: View {
                     if selected { DesktopTheme.glow(RoundedRectangle(cornerRadius: 8)) }
                     else if hovering { RoundedRectangle(cornerRadius: 8).fill(DesktopTheme.hover) }
                 }
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.accent : .clear, lineWidth: 1.5))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.accent.opacity(0.5) : .clear, lineWidth: 1))
                 .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)

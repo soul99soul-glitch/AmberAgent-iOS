@@ -85,3 +85,61 @@ struct DesktopStreamingEdge: ViewModifier {
         .animation(.easeOut(duration: 0.3), value: active)
     }
 }
+
+/// Segmented switcher: a paper chip slides under the chosen option (replaces the system segmented picker,
+/// which jumps without motion and paints a solid accent block).
+struct DesktopSegmented<Value: Hashable>: View {
+    let options: [(value: Value, title: String)]
+    @Binding var selection: Value
+    var expands = false
+    @Namespace private var chip
+    @State private var hovered: Value?
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.value) { option in
+                let selected = option.value == selection
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { selection = option.value }
+                } label: {
+                    Text(option.title)
+                        .font(.system(size: 13, weight: selected ? .medium : .regular))
+                        .foregroundStyle(selected ? DesktopTheme.ink : (hovered == option.value ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary))
+                        .lineLimit(1)
+                        .padding(.horizontal, 14)
+                        .frame(maxWidth: expands ? .infinity : nil)
+                        .frame(height: 26)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(DesktopTheme.card)
+                                    .shadow(color: .black.opacity(0.08), radius: 1.5, y: 1)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DesktopTheme.hairline))
+                                    .matchedGeometryEffect(id: "chip", in: chip)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovered = $0 ? option.value : (hovered == option.value ? nil : hovered) }
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
+            }
+        }
+        .padding(2)
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
+        .opacity(enabled ? 1 : 0.5)
+        .fixedSize(horizontal: !expands, vertical: true)
+    }
+}
+
+/// Tab content swap: the incoming page drifts in from the side of the chosen tab.
+struct DesktopTabTransition: ViewModifier {
+    let forward: Bool
+    func body(content: Content) -> some View {
+        content.transition(.asymmetric(
+            insertion: .opacity.combined(with: .offset(x: forward ? 14 : -14)),
+            removal: .opacity))
+    }
+}

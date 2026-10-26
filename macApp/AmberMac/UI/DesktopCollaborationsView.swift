@@ -109,19 +109,16 @@ struct DesktopCollaborationsView: View {
 
     private var configuration: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("协作方式", selection: $council) {
-                Text("子代理 · 只读工具").tag(false)
-                Text("议会 · 多轮讨论后综合").tag(true)
-            }.pickerStyle(.segmented)
+            DesktopSegmented(options: [(false, "子代理 · 只读工具"), (true, "议会 · 多轮讨论后综合")], selection: $council, expands: true)
+                .accessibilityLabel("协作方式")
             Text("任务说明").font(.system(size: 13, weight: .semibold))
             TextField("这次要完成什么？请提供所需背景和资料。", text: $objective, axis: .vertical)
                 .textFieldStyle(.desktop).lineLimit(3...6)
                 .accessibilityLabel("协作任务说明")
             if council {
                 HStack {
-                    Picker("讨论模式", selection: $councilMode) {
-                        ForEach(DesktopCouncilMode.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }.pickerStyle(.segmented).fixedSize()
+                    DesktopSegmented(options: DesktopCouncilMode.allCases.map { ($0, $0.title) }, selection: $councilMode)
+                        .accessibilityLabel("讨论模式")
                     Stepper("共 \(rounds) 轮", value: $rounds, in: 1...5).font(.system(size: 12)).fixedSize()
                     Spacer()
                     Toggle("由主持人规划席位", isOn: $hostPlansSeats).toggleStyle(.checkbox).font(.system(size: 12))
@@ -171,7 +168,7 @@ struct DesktopCollaborationsView: View {
                     ForEach(DesktopCollaborationRole.builtIns) { role in
                         Button(role.name) { members.append(.init(name: role.name, rolePrompt: role.prompt, roleID: role.id)) }
                     }
-                }.disabled(members.count >= 8 || plansSeats)
+                }.disabled(members.count >= 8 || plansSeats).fixedSize()
                 Spacer()
                 Stepper("每位成员超时 \(timeoutSeconds) 秒", value: $timeoutSeconds, in: 30...600, step: 30)
                     .font(.system(size: 12)).fixedSize()
