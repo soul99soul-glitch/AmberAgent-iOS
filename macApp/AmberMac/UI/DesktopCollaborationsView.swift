@@ -10,9 +10,12 @@ struct DesktopCollaborationsView: View {
     @State private var council = true
     @State private var objective = ""
     @State private var members = DesktopCollaborationRole.builtIns.prefix(3).map {
-        DesktopCollaborationMember(name: $0.name, rolePrompt: $0.prompt)
+        DesktopCollaborationMember(name: $0.name, rolePrompt: $0.prompt, roleID: $0.id)
     }
     @State private var synthesisModelID: UUID?
+    @State private var councilMode = DesktopCouncilMode.freeChat
+    @State private var rounds = 2
+    @State private var hostPlansSeats = false
     @State private var timeoutSeconds = 180
     @State private var selectedRunID: UUID?
     @State private var error: String?
@@ -22,6 +25,8 @@ struct DesktopCollaborationsView: View {
     }
     private var selectedRun: DesktopCollaborationRun? { ownerRuns.first { $0.id == selectedRunID } }
     private var ownerIsRunning: Bool { ownerRuns.contains { !$0.status.isTerminal } }
+    private var plansSeats: Bool { council && hostPlansSeats }
+    private var enabledSkills: [DesktopSkill] { workspace.knowledge.skills.filter(\.enabled) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -104,42 +109,68 @@ struct DesktopCollaborationsView: View {
     private var configuration: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("协作方式", selection: $council) {
-                Text("子代理 · 并行完成").tag(false)
-                Text("议会 · 并行后综合").tag(true)
+                Text("子代理 · 只读工具").tag(false)
+                Text("议会 · 多轮讨论后综合").tag(true)
             }.pickerStyle(.segmented)
             Text("任务说明").font(.system(size: 13, weight: .semibold))
             TextField("这次要完成什么？请提供所需背景和资料。", text: $objective, axis: .vertical)
                 .textFieldStyle(.roundedBorder).lineLimit(3...6)
                 .accessibilityLabel("协作任务说明")
-            Text("协作成员").font(.system(size: 13, weight: .semibold)).padding(.top, 4)
-            ForEach($members) { $member in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        TextField("成员名称", text: $member.name).textFieldStyle(.roundedBorder).frame(width: 130)
-                        modelPicker("成员模型", selection: $member.modelID)
-                        Menu("预设职责") {
-                            ForEach(DesktopCollaborationRole.builtIns) { role in
-                                Button(role.name) { member.name = role.name; member.rolePrompt = role.prompt }
-                            }
-                        }.fixedSize()
-                        Button { let removedID = member.id; members.removeAll { $0.id == removedID } } label: { Image(systemName: "minus.circle") }
-                            .buttonStyle(.borderless).disabled(members.count == 1)
-                            .accessibilityLabel("移除成员 \(member.name)")
-                    }
-                    TextField("成员职责", text: $member.rolePrompt, axis: .vertical)
-                        .textFieldStyle(.roundedBorder).lineLimit(1...3)
-                        .accessibilityLabel("\(member.name) 的职责")
+            if council {
+                HStack {
+                    Picker("讨论模式", selection: $councilMode) {
+                        ForEach(DesktopCouncilMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented).fixedSize()
+                    Stepper("共 \(rounds) 轮", value: $rounds, in: 1...5).font(.caption).fixedSize()
+                    Spacer()
+                    Toggle("由主持人规划席位", isOn: $hostPlansSeats).toggleStyle(.checkbox).font(.caption)
                 }
-                .padding(12)
-                .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
+            }
+            Text("协作成员").font(.system(size: 13, weight: .semibold)).padding(.top, 4)
+            if !plansSeats {
+                ForEach($members) { $member in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            TextField("成员名称", text: $member.name).textFieldStyle(.roundedBorder).frame(width: 130)
+                            modelPicker("成员模型", selection: $member.modelID)
+                            Menu("预设职责") {
+                                ForEach(DesktopCollaborationRole.builtIns) { role in
+                                    Button(role.name) { member.name = role.name; member.rolePrompt = role.prompt; member.roleID = role.id }
+                                }
+                            }.fixedSize()
+                            if !council && !enabledSkills.isEmpty {
+                                Menu(member.skillNames.isEmpty ? "默认技能" : "技能 \(member.skillNames.count)") {
+                                    ForEach(enabledSkills) { skill in
+                                        Toggle(skill.name, isOn: Binding(get: { member.skillNames.contains(skill.name) }, set: { on in
+                                            member.skillNames.removeAll { $0 == skill.name }
+                                            if on { member.skillNames.append(skill.name) }
+                                        }))
+                                    }
+                                }.fixedSize()
+                            }
+                            Button { let removedID = member.id; members.removeAll { $0.id == removedID } } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless).disabled(members.count == 1)
+                                .accessibilityLabel("移除成员 \(member.name)")
+                        }
+                        TextField("成员职责", text: $member.rolePrompt, axis: .vertical)
+                            .textFieldStyle(.roundedBorder).lineLimit(1...3)
+                            .accessibilityLabel("\(member.name) 的职责")
+                    }
+                    .padding(12)
+                    .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
+                }
+            }
+            if plansSeats {
+                Text("开始后主持人会按议题设计 2–5 个席位，席位默认使用综合模型。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Menu("添加成员", systemImage: "plus") {
                     ForEach(DesktopCollaborationRole.builtIns) { role in
-                        Button(role.name) { members.append(.init(name: role.name, rolePrompt: role.prompt)) }
+                        Button(role.name) { members.append(.init(name: role.name, rolePrompt: role.prompt, roleID: role.id)) }
                     }
-                }.disabled(members.count >= 8)
+                }.disabled(members.count >= 8 || plansSeats)
                 Spacer()
                 Stepper("每位成员超时 \(timeoutSeconds) 秒", value: $timeoutSeconds, in: 30...600, step: 30)
                     .font(.caption).fixedSize()
@@ -185,6 +216,24 @@ struct DesktopCollaborationsView: View {
                 DesktopMarkdown(text: output.text, fontFamily: workspace.settings.messageFontFamily, fontSize: workspace.settings.messageFontSize)
             }
             if let error = output.error { Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if !output.steps.isEmpty {
+                DisclosureGroup("执行步骤 \(output.steps.count)") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(output.steps.enumerated()), id: \.offset) { _, step in
+                            if let tool = step.tool {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(tool)  \(step.arguments)").font(.system(size: 12, design: .monospaced)).lineLimit(2)
+                                    if !step.result.isEmpty { Text(step.result).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+                                }
+                            } else {
+                                Text(step.text).font(.caption).foregroundStyle(.secondary).lineLimit(4)
+                            }
+                        }
+                    }
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                }
+                .font(.caption)
+            }
         }
         .padding(16)
         .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
@@ -196,7 +245,8 @@ struct DesktopCollaborationsView: View {
         do {
             if council {
                 selectedRunID = try workspace.collaborations.startCouncil(parentConversationID: owner, objective: objective,
-                    seats: members, synthesisModelID: synthesisModelID, timeoutSeconds: timeoutSeconds)
+                    seats: hostPlansSeats ? [] : members, synthesisModelID: synthesisModelID, mode: councilMode, rounds: rounds,
+                    timeoutSeconds: timeoutSeconds)
             } else {
                 selectedRunID = try workspace.collaborations.startSubagents(parentConversationID: owner, objective: objective,
                     members: members, timeoutSeconds: timeoutSeconds)

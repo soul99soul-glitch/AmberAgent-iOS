@@ -19,6 +19,72 @@ import CryptoKit
         self.text = text; self.tasks = tasks; self.files = files; self.knowledge = knowledge; self.mcp = mcp
         self.collaborations = collaborations
         self.searchSettings = searchSettings
+        collaborations.toolRunner = { [weak self] request, onSteps in
+            guard let self else { throw DesktopRuntimeError.message("协作运行时已释放。") }
+            return try self.runCollaborationMember(request, onSteps: onSteps)
+        }
+    }
+
+    // Sub-agent members run the same engine with a frozen read-only registry and no approval pauses.
+    private func runCollaborationMember(_ request: DesktopCollaborationToolRequest,
+        onSteps: @escaping @MainActor @Sendable ([DesktopCollaborationOutput.Step]) -> Void) throws -> DesktopGeneration {
+        guard let model = request.configuration.selectedModel else { throw DesktopRuntimeError.message("请先选择模型。") }
+        let bridge = DesktopProviderBridge.shared
+        let configuration = request.configuration
+        let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue, id: configuration.id.uuidString,
+            name: configuration.name, baseUrl: configuration.baseURL, apiKey: request.apiKey, authMode: configuration.authMode.rawValue)
+        let declarations = DesktopToolRegistry.declarations.filter { request.toolNames.contains($0.name) } + [DesktopSubagentToolPolicy.reportDeclaration]
+        let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
+        let exposure = IosToolExposureBridge(tools: tools)
+        exposure.exposeToolNames(names: declarations.map(\.name))
+        let skills = request.skillNames.compactMap { name in knowledge.skills.first { $0.name == name && $0.enabled } }
+            .map { "已加载技能 \($0.name)：\n" + DesktopKnowledgeStore.skillBody($0.markdown) }
+        let system = ([request.systemPrompt] + skills).joined(separator: "\n\n")
+        let user = "目标：\n\(request.objective)\n\n可用工具：\(declarations.map(\.name).joined(separator: ", "))"
+        let inputJSON = try DesktopJSON.encode([DesktopMessage(role: .system, text: system), DesktopMessage(role: .user, text: user)])
+        let params = try bridge.paramsFromJSON(json: DesktopJSON.encode(model)).replacingTools(exposure.visibleTools())
+        let executor = DesktopAgentExecutor(runID: UUID(), owner: request.ownerID, tasks: tasks, files: files, knowledge: knowledge,
+            mcp: mcp, declarations: declarations, exposure: exposure, sourceMessageIDs: [], collaborations: collaborations,
+            searchSettings: searchSettings)
+        let report = DesktopSubagentReportExecutor()
+        var registry = Dictionary(uniqueKeysWithValues: request.toolNames.map { ($0, executor as any IOSToolExecutor) })
+        registry[DesktopSubagentToolPolicy.reportToolName] = report
+        let engine = IOSAgentToolEngine(provider: DesktopEngineTransport(), executors: registry,
+            configuration: .init(maxSteps: request.maxSteps, honorApprovalPause: false))
+        let generation = DesktopGeneration(cancellationCompletesAsynchronously: true)
+        let task = Task {
+            // Built inside the task so the engine receives a disconnected message list.
+            guard let input = try? DesktopProviderBridge.shared.messages(json: inputJSON) else {
+                generation.yield(.failed("无法构造子代理请求。")); return
+            }
+            let result = await engine.run(providerSetting: provider, messages: input, params: params, onMessagesUpdated: { messages in
+                let steps = Self.steps(messages)
+                Task { @MainActor in onSteps(steps) }
+            })
+            onSteps(Self.steps(result.messages))
+            if result.wasCancelled || Task.isCancelled { generation.yield(.cancelled); return }
+            guard result.providerFailureMessage == nil, result.durabilityFailureMessage == nil, result.toolOutcomeUnknown == nil,
+                  result.pendingApproval == nil, !result.guardStopped, !result.hitStepLimit else {
+                generation.yield(.failed("子代理未能完成。")); return
+            }
+            let fallback = result.messages.last { $0.role == .assistant }?.parts
+                .compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n") ?? ""
+            generation.yield(.snapshot(text: report.captured ?? fallback, reasoning: ""))
+            generation.yield(.complete)
+        }
+        generation.installCancellation { task.cancel() }
+        return generation
+    }
+
+    nonisolated private static func steps(_ messages: [UIMessage]) -> [DesktopCollaborationOutput.Step] {
+        messages.filter { $0.role == .assistant }.flatMap(\.parts).compactMap { part -> DesktopCollaborationOutput.Step? in
+            if let tool = part as? UIMessagePart.Tool {
+                let output = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+                return .init(tool: tool.toolName, arguments: String(tool.input.prefix(200)), result: String(output.prefix(300)))
+            }
+            guard let text = (part as? UIMessagePart.Text)?.text.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+            return .init(text: String(text.prefix(600)))
+        }
     }
 
     func userMessage(id: UUID, text: String, attachments: [DesktopMessageAttachment]) throws -> DesktopMessage {
@@ -236,6 +302,20 @@ struct DesktopEngineTransport: IOSAgentTextProvider, IOSAgentStreamingProvider {
     }
 }
 
+private final class DesktopSubagentReportExecutor: IOSToolExecutor, @unchecked Sendable {
+    private let lock = NSLock()
+    private var report: String?
+    var captured: String? { lock.withLock { report } }
+
+    func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+        guard let text = DesktopSubagentToolPolicy.reportText(arguments: arguments) else {
+            return .failed("subagent_report 需要非空的 summary。")
+        }
+        lock.withLock { report = text }
+        return .filled(#"{"status":"ok"}"#)
+    }
+}
+
 private final class DesktopEngineTranscript: @unchecked Sendable {
     private let lock = NSLock()
     private let inputCount: Int
@@ -403,14 +483,19 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                     guard let role = DesktopCollaborationRole.builtIns.first(where: { $0.id == roleName }) else {
                         throw DesktopRuntimeError.message("子代理角色不存在。")
                     }
-                    let member = DesktopCollaborationMember(name: role.name, rolePrompt: role.prompt, modelID: try Self.modelID(args["model_id"]))
+                    let member = DesktopCollaborationMember(name: role.name, rolePrompt: role.prompt, modelID: try Self.modelID(args["model_id"]),
+                        roleID: role.id, skillNames: args["skills"] as? [String] ?? [])
                     runID = try await collaborations.startSubagents(parentConversationID: owner, objective: Self.string("task", args), members: [member])
                 } else {
-                    guard let rawSeats = args["seats"] as? [[String: Any]] else { throw DesktopRuntimeError.message("模型议会需要席位。") }
+                    let rawSeats = args["seats"] as? [[String: Any]] ?? []
                     let seats = try rawSeats.map { DesktopCollaborationMember(name: try Self.string("name", $0),
                         rolePrompt: try Self.string("role_prompt", $0), modelID: try Self.modelID($0["model_id"])) }
+                    let mode = try (args["mode"] as? String).map {
+                        guard let mode = DesktopCouncilMode(rawValue: $0) else { throw DesktopRuntimeError.message("议会模式须为 free_chat 或 debate。") }
+                        return mode
+                    } ?? .freeChat
                     runID = try await collaborations.startCouncil(parentConversationID: owner, objective: Self.string("objective", args),
-                        seats: seats, synthesisModelID: Self.modelID(args["synthesis_model_id"]))
+                        seats: seats, synthesisModelID: Self.modelID(args["synthesis_model_id"]), mode: mode, rounds: args["rounds"] as? Int ?? 2)
                 }
                 let result = await withTaskCancellationHandler {
                     await collaborations.waitUntilFinished(runID)

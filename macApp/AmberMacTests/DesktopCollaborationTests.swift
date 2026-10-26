@@ -118,7 +118,7 @@ import XCTest
         provider.automatic = true
         let runtime = DesktopCollaborations(settings: settings, provider: provider)
         let owner = UUID()
-        let id = try runtime.startCouncil(parentConversationID: owner, objective: "Council topic", seats: members(2))
+        let id = try runtime.startCouncil(parentConversationID: owner, objective: "Council topic", seats: members(2), rounds: 1)
         let resultFinished = await runtime.waitUntilFinished(id)
         let result = try XCTUnwrap(resultFinished)
         XCTAssertEqual(result.status, .completed)
@@ -134,9 +134,10 @@ import XCTest
     func testSeatFailureCanProduceMarkedPartialCouncilButNeverFalseSuccess() async throws {
         let settings = try settings(), provider = Provider()
         let runtime = DesktopCollaborations(settings: settings, provider: provider)
-        let id = try runtime.startCouncil(parentConversationID: UUID(), objective: "Council", seats: members(2))
-        await waitForCalls(2, provider: provider)
+        let id = try runtime.startCouncil(parentConversationID: UUID(), objective: "Council", seats: members(2), rounds: 1)
+        await waitForCalls(1, provider: provider)
         provider.calls[0].generation.yield(.snapshot(text: "Verified seat result", reasoning: "")); provider.calls[0].generation.yield(.complete)
+        await waitForCalls(2, provider: provider)
         provider.calls[1].generation.yield(.failed("raw body with secret"))
         await waitForCalls(3, provider: provider)
         XCTAssertFalse(provider.calls[2].messages.last?.text.contains("secret") ?? true)
@@ -257,5 +258,114 @@ import XCTest
         runtime.cancel(id)
         _ = await runtime.waitUntilFinished(id)
         XCTAssertTrue(delivery.sent.isEmpty)
+    }
+
+    func testCouncilRoundsSpeakSequentiallyWithHostCommentaryBetweenRounds() async throws {
+        let settings = try settings(), provider = Provider()
+        provider.automatic = true
+        let runtime = DesktopCollaborations(settings: settings, provider: provider)
+        let id = try runtime.startCouncil(parentConversationID: UUID(), objective: "Topic", seats: members(2), rounds: 3)
+        let finished = await runtime.waitUntilFinished(id)
+        let result = try XCTUnwrap(finished)
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.rounds, 3)
+        XCTAssertEqual(result.outputs.map(\.name), [
+            "Member 0 · 第1轮", "Member 1 · 第1轮", "主持人 · 第1轮点评",
+            "Member 0 · 第2轮", "Member 1 · 第2轮", "主持人 · 第2轮点评",
+            "Member 0 · 第3轮", "Member 1 · 第3轮", "综合"])
+        // The second seat sees the first seat's same-round output; round 2 sees the host commentary.
+        XCTAssertTrue(provider.calls[1].messages.last?.text.contains("Output 1") ?? false)
+        XCTAssertTrue(provider.calls[3].messages.last?.text.contains("[主持人 · 第1轮点评] Output 3") ?? false)
+        XCTAssertEqual(result.finalText, "Output 9")
+    }
+
+    func testDebateModeChangesSeatPromptWording() {
+        let debate = DesktopCollaborations.seatPrompt(objective: "T", mode: .debate, round: 1, rounds: 2, transcript: [])
+        let free = DesktopCollaborations.seatPrompt(objective: "T", mode: .freeChat, round: 1, rounds: 2, transcript: [])
+        XCTAssertTrue(debate.contains("模式：辩论"))
+        XCTAssertTrue(debate.contains("回应前文的核心判断"))
+        XCTAssertTrue(free.contains("补充前文没有覆盖的新角度"))
+        XCTAssertFalse(free.contains("回应前文的核心判断"))
+    }
+
+    func testOldRunsDecodeWithDefaultModeRoundsAndSteps() throws {
+        let json = #"[{"id":"\#(UUID())","parentConversationID":"\#(UUID())","objective":"Old","isCouncil":true,"createdAt":0,"outputs":[{"id":"\#(UUID())","name":"A","modelName":"M","text":"t","status":"completed"}],"finalText":"","status":"completed"}]"#
+        let run = try XCTUnwrap(JSONDecoder().decode([DesktopCollaborationRun].self, from: Data(json.utf8)).first)
+        XCTAssertEqual(run.mode, .freeChat)
+        XCTAssertEqual(run.rounds, 1)
+        XCTAssertEqual(run.outputs[0].steps, [])
+    }
+
+    func testPlannedSeatsSkipDistractorObjectsAndResolveNamedModels() throws {
+        let settings = try settings(), models = settings.modelSelections, host = UUID()
+        let text = #"先列举 {历史, 政治}。{"seats":[{"name":"史官","rolePrompt":"看历史 {先例}"},{"name":"史官","rolePrompt":"重复"},{"name":"策士","lens":"看策略","model":"Second"}]}"#
+        let seats = DesktopCollaborations.plannedSeats(from: text, models: models, hostModelID: host)
+        XCTAssertEqual(seats.map(\.name), ["史官", "策士"])
+        XCTAssertEqual(seats[0].rolePrompt, "看历史 {先例}")
+        XCTAssertEqual(seats[0].modelID, host)
+        XCTAssertEqual(seats[1].modelID, models.first { $0.modelName == "Second" }?.id)
+        XCTAssertTrue(DesktopCollaborations.plannedSeats(from: #"{"seats":[{"name":"独"}]}"#, models: models, hostModelID: host).isEmpty)
+    }
+
+    func testEmptyCouncilSeatsAreHostPlanned() async throws {
+        let settings = try settings(), provider = Provider()
+        let runtime = DesktopCollaborations(settings: settings, provider: provider)
+        let id = try runtime.startCouncil(parentConversationID: UUID(), objective: "Plan", seats: [], rounds: 1)
+        await waitForCalls(1, provider: provider)
+        XCTAssertTrue(provider.calls[0].messages.last?.text.contains("\"seats\"") ?? false)
+        provider.calls[0].generation.yield(.snapshot(text: #"{"seats":[{"name":"甲","rolePrompt":"一"},{"name":"乙","rolePrompt":"二"}]}"#, reasoning: ""))
+        provider.calls[0].generation.yield(.complete)
+        provider.automatic = true
+        let finished = await runtime.waitUntilFinished(id)
+        let result = try XCTUnwrap(finished)
+        XCTAssertEqual(result.outputs.map(\.name), ["主持人 · 规划席位", "甲 · 第1轮", "乙 · 第1轮", "综合"])
+        XCTAssertEqual(result.status, .completed)
+    }
+
+    func testSubagentToolPolicyIsReadOnlyAndRoleScoped() {
+        let explorer = DesktopCollaborationRole.builtIns.first { $0.id == "explorer" }
+        XCTAssertEqual(Set(DesktopSubagentToolPolicy.toolNames(for: explorer)), ["search_web", "scrape_web", "workspace_file_read", "workspace_file_list"])
+        XCTAssertEqual(DesktopSubagentToolPolicy.toolNames(for: DesktopCollaborationRole.builtIns.first { $0.id == "fixer" }), [])
+        let rogue = DesktopCollaborationRole(id: "x", name: "X", prompt: "p",
+            toolAllowlist: ["workspace_file_write", "terminal_exec", "mcp_call_tool", "memory_tool", "subagent_dispatch", "workspace_file_read"], maxTurns: 2)
+        XCTAssertEqual(DesktopSubagentToolPolicy.toolNames(for: rogue), ["workspace_file_read"])
+        for name in DesktopSubagentToolPolicy.toolNames(for: nil) {
+            XCTAssertEqual(DesktopToolRegistry.effect(for: name, arguments: "{}") == .sideEffect, false, name)
+        }
+    }
+
+    func testSubagentReportArgumentsBecomeOutputText() {
+        XCTAssertEqual(DesktopSubagentToolPolicy.reportText(arguments: #"{"summary":" 结论 ","findings":"证据"}"#), "结论\n\n证据")
+        XCTAssertNil(DesktopSubagentToolPolicy.reportText(arguments: #"{"summary":"  "}"#))
+        XCTAssertNil(DesktopSubagentToolPolicy.reportText(arguments: "not json"))
+    }
+
+    func testSubagentsUseInjectedToolRunnerWithRoleScopeAndRecordSteps() async throws {
+        let settings = try settings(), provider = Provider()
+        let runtime = DesktopCollaborations(settings: settings, provider: provider)
+        var requests: [DesktopCollaborationToolRequest] = []
+        runtime.toolRunner = { request, onSteps in
+            requests.append(request)
+            onSteps([.init(tool: "search_web", arguments: #"{"query":"q"}"#, result: "hits"), .init(text: "done")])
+            let generation = DesktopGeneration()
+            generation.yield(.snapshot(text: "Reported summary", reasoning: ""))
+            generation.yield(.complete)
+            return generation
+        }
+        let owner = UUID()
+        let member = DesktopCollaborationMember(name: "Explorer", rolePrompt: "scout", roleID: "explorer", skillNames: ["notes"])
+        let id = try runtime.startSubagents(parentConversationID: owner, objective: "Find", members: [member])
+        let finished = await runtime.waitUntilFinished(id)
+        let result = try XCTUnwrap(finished)
+        XCTAssertTrue(provider.calls.isEmpty)
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].ownerID, owner)
+        XCTAssertEqual(requests[0].maxSteps, 5)
+        XCTAssertEqual(requests[0].skillNames, ["notes"])
+        XCTAssertTrue(requests[0].systemPrompt.contains("subagent_report"))
+        XCTAssertFalse(requests[0].toolNames.contains("workspace_file_write"))
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.outputs[0].text, "Reported summary")
+        XCTAssertEqual(result.outputs[0].steps.map(\.tool), ["search_web", nil])
     }
 }

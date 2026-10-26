@@ -63,11 +63,12 @@ enum DesktopToolRegistry {
 
 extension DesktopToolRegistry {
     static var collaborationDeclarations: [DesktopToolDeclaration] {
-        [declaration("subagent_dispatch", "派发一个独立文本子任务并等待结果；role为explorer/historian/oracle/designer/writer/fixer，model_id可选已配置模型UUID。", properties: ["task": "string", "role": "string", "model_id": "string"], required: ["task"], approval: true),
+        [DesktopToolDeclaration(name: "subagent_dispatch", description: "派发一个只读子代理（可用只读工具多轮执行）并等待结果；role为explorer/historian/oracle/designer/writer/fixer，model_id可选已配置模型UUID，skills可选已启用技能名。",
+            parametersJSON: #"{"type":"object","properties":{"task":{"type":"string"},"role":{"type":"string"},"model_id":{"type":"string"},"skills":{"type":"array","items":{"type":"string"}}},"required":["task"],"additionalProperties":false}"#, needsApproval: true),
          declaration("list_agents", "列出当前会话的协作任务与状态。", properties: [:]),
          declaration("interrupt_agent", "取消当前会话的指定协作run，需要用户批准。", properties: ["run_id": "string"], required: ["run_id"], approval: true),
-         DesktopToolDeclaration(name: "model_council_run", description: "让2至6个席位分别讨论目标并由综合模型汇总结论，需要用户批准；model_id为可选已配置模型UUID。",
-            parametersJSON: #"{"type":"object","properties":{"objective":{"type":"string"},"seats":{"type":"array","minItems":2,"maxItems":6,"items":{"type":"object","properties":{"name":{"type":"string"},"role_prompt":{"type":"string"},"model_id":{"type":"string"}},"required":["name","role_prompt"],"additionalProperties":false}},"synthesis_model_id":{"type":"string"}},"required":["objective","seats"],"additionalProperties":false}"#, needsApproval: true)]
+         DesktopToolDeclaration(name: "model_council_run", description: "让席位按轮次依次讨论目标（mode为free_chat自由讨论或debate辩论，rounds为1至5轮，默认2），主持人轮末点评并由综合模型汇总，需要用户批准；seats为空时由主持人规划2至5个席位；model_id为可选已配置模型UUID。",
+            parametersJSON: #"{"type":"object","properties":{"objective":{"type":"string"},"seats":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"name":{"type":"string"},"role_prompt":{"type":"string"},"model_id":{"type":"string"}},"required":["name","role_prompt"],"additionalProperties":false}},"synthesis_model_id":{"type":"string"},"mode":{"type":"string","enum":["free_chat","debate"]},"rounds":{"type":"integer","minimum":1,"maximum":5}},"required":["objective"],"additionalProperties":false}"#, needsApproval: true)]
     }
 
     static var knowledgeDeclarations: [DesktopToolDeclaration] {
