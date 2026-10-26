@@ -158,6 +158,7 @@ class DesktopProviderBridgeTest {
         assertEquals(2048, params.maxTokens)
         assertEquals(ReasoningLevel.HIGH, params.reasoningLevel)
         assertTrue(ModelAbility.REASONING in params.model.abilities)
+        assertTrue(ModelAbility.TOOL in params.model.abilities)
         val known = DesktopProviderBridge.paramsFromJSON("""{"id":"$id","modelID":"gpt-4o","reasoning":"off"}""")
         assertTrue(ModelAbility.TOOL in known.model.abilities)
         assertTrue(known.model.contextWindowTokens!! > 0)

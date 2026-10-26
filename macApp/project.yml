@@ -169,6 +169,9 @@ schemes:
     test:
       environmentVariables:
         AMBER_MAC_PROVIDER_TEST_URL: '$(AMBER_MAC_PROVIDER_TEST_URL)'
+        AMBER_MAC_LIVE_BASE_URL: '$(AMBER_MAC_LIVE_BASE_URL)'
+        AMBER_MAC_LIVE_API_KEY: '$(AMBER_MAC_LIVE_API_KEY)'
+        AMBER_MAC_LIVE_MODEL: '$(AMBER_MAC_LIVE_MODEL)'
       targets:
         - AmberMacTests
       parallelizable: false

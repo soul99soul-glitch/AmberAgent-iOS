@@ -53,6 +53,9 @@ internal fun desktopModelParams(json: String): TextGenerationParams {
     require(options.temperature == null || (options.temperature.isFinite() && options.temperature in 0f..2f)) { "Temperature must be between zero and two" }
     val wireID = options.modelID.trim()
     val abilities = ModelRegistry.MODEL_ABILITIES.getData(wireID).toMutableSet()
+    // Tools are attached only when the user enables agent tools; the registry must not silently drop them
+    // for model IDs it does not recognise (gateway aliases, new releases).
+    abilities += ModelAbility.TOOL
     if (options.reasoning.isEnabled) abilities += ModelAbility.REASONING
     val inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(wireID).toMutableSet()
     when (options.supportsVision) {
