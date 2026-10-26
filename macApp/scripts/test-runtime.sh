@@ -24,9 +24,11 @@ cp "$project_dir/../iosApp/iosApp/IOSCredentialRedactor.swift" "$test_dir/Source
 cp "$project_dir/../iosApp/iosApp/IOSWebDAVClient.swift" "$test_dir/Sources/AmberMac/"
 cp "$project_dir/../iosApp/iosApp/IOSSyncBackupError.swift" "$test_dir/Sources/AmberMac/"
 cp "$project_dir/../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift" "$test_dir/Sources/AmberMac/"
+cp "$project_dir/../iosApp/iosApp/IOSWebMountPublicDNS.swift" "$test_dir/Sources/AmberMac/"
 for source in "$project_dir"/AmberMacTests/*.swift; do
   case "$(basename "$source")" in
-    KMPProviderIntegrationTests.swift) continue ;;
+    # Need the KMP Shared framework or the full app wiring; they run in the Xcode test target.
+    KMPProviderIntegrationTests.swift|DesktopGrokOAuthTests.swift|LiveGatewayE2ETests.swift|DesktopSearchLiveProbeTests.swift|DesktopIOSBackupTests.swift) continue ;;
   esac
   cp "$source" "$test_dir/Tests/AmberMacTests/"
 done

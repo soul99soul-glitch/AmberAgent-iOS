@@ -61,6 +61,7 @@ targets:
       - path: ../iosApp/iosApp/IOSFreeSearchAggregator.swift
       - path: ../iosApp/iosApp/Search/IOSSearchHTTPProtocol.swift
       - path: ../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
+      - path: ../iosApp/iosApp/IOSWebMountPublicDNS.swift
       - path: ../iosApp/iosApp/IOSCredentialRedactor.swift
     settings:
       base:
@@ -136,6 +137,7 @@ targets:
       - path: ../iosApp/iosApp/IOSWebDAVClient.swift
       - path: ../iosApp/iosApp/IOSSyncBackupError.swift
       - path: ../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
+      - path: ../iosApp/iosApp/IOSWebMountPublicDNS.swift
     settings:
       base:
         PRODUCT_NAME: AmberPreview

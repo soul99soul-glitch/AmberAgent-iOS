@@ -14,7 +14,7 @@ find "$project_dir/AmberMac" -name '*.swift' | while read -r f; do
 done
 # Shared iOS sources the Preview target compiles (keep in sync with project.yml AmberMacPreview).
 for f in IOSCodexOAuthClient.swift IOSImageGenerationModels.swift IOSImageGenerationRepository.swift Chat/Media/ChatGeneratedImageURL.swift \
-  IOSMcpClient.swift IOSCredentialRedactor.swift IOSWebDAVClient.swift IOSSyncBackupError.swift Infrastructure/Networking/IOSPublicURLPolicy.swift; do
+  IOSMcpClient.swift IOSCredentialRedactor.swift IOSWebDAVClient.swift IOSSyncBackupError.swift Infrastructure/Networking/IOSPublicURLPolicy.swift IOSWebMountPublicDNS.swift; do
   cp "$project_dir/../iosApp/iosApp/$f" "$work/Sources/AmberSnapshot/"
 done
 cp "$project_dir/scripts/snapshot/SnapshotMain.swift" "$work/Sources/AmberSnapshot/"

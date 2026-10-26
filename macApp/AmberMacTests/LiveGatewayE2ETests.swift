@@ -43,6 +43,8 @@ final class LiveGatewayE2ETests: XCTestCase {
         return (base, values[1], values[2])
     }
 
+    private var lastAgentProvider: DesktopAgentProvider?
+
     private func makeEnvironment(toolsEnabled: Bool = false) throws -> Environment {
         let live = try liveValues()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("amber-live-e2e-" + UUID().uuidString, isDirectory: true)
@@ -78,6 +80,7 @@ final class LiveGatewayE2ETests: XCTestCase {
             directory: directory.appendingPathComponent("collaborations", isDirectory: true), notifications: notifications)
         let provider = DesktopAgentProvider(text: text, tasks: tasks, files: files, knowledge: knowledge, mcp: mcp,
             collaborations: collaborations, searchSettings: searchSettings)
+        lastAgentProvider = provider
         let names = Set((DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations + DesktopMCPManager.declarations).map(\.name))
         let recipes = DesktopRecipeRuns(store: DesktopRecipeStore(directory: directory, registeredTools: names), tasks: tasks) {
             try await provider.performRecipeTool(runID: $0, owner: $1, name: $2, argumentsJSON: $3)
@@ -259,6 +262,44 @@ final class LiveGatewayE2ETests: XCTestCase {
         let record = try XCTUnwrap(workspace.agentTasks.records.first { $0.conversationID == owner })
         XCTAssertTrue(record.transactions.contains { $0.name == "terminal_exec" && $0.state == "finished" }, failureContext(workspace))
         XCTAssertTrue(workspace.selectedConversation?.messages.last?.text.contains("amber-auto-ok") == true, failureContext(workspace))
+    }
+
+
+    /// Every tool the model can see, called once through the production executor (auto-approved), real network/process.
+    func testEveryExposedToolActuallyRuns() async throws {
+        let environment = try makeEnvironment(toolsEnabled: true)
+        environment.defaults.set(true, forKey: "desktop.agent-auto-approve")
+        environment.defaults.set(true, forKey: "desktop.agent-auto-approve-high-risk")
+        let workspace = makeWorkspace(environment)
+        await workspace.waitUntilLoaded()
+        await workspace.agentTasks.waitUntilLoaded()
+        workspace.createConversation()
+        let owner = try XCTUnwrap(workspace.selectedID)
+        let provider = try XCTUnwrap(lastAgentProvider)
+        let runID = try await workspace.agentTasks.begin(conversationID: owner, title: "tool audit", cancel: {})
+        let calls: [(String, String, String)] = [
+            ("tools_list", "{}", "workspace_file_write"),
+            ("workspace_file_write", #"{"path":"audit.txt","content":"audit-ok"}"#, "audit.txt"),
+            ("workspace_file_list", "{}", "audit.txt"),
+            ("workspace_file_read", #"{"path":"audit.txt"}"#, "audit-ok"),
+            ("terminal_exec", #"{"command":"echo shell-ok && cat audit.txt"}"#, "shell-ok"),
+            ("search_web", #"{"query":"Swift programming language"}"#, "swift"),
+            ("scrape_web", #"{"url":"https://example.com"}"#, "Example Domain"),
+            ("memory_tool", #"{"action":"create","content":"审计记忆：Amber 工具链"}"#, "审计记忆"),
+            ("memory_tool", #"{"action":"search","query":"审计记忆"}"#, "审计记忆"),
+            ("skills_list", "{}", "["),
+            ("mcp_list", "{}", "["),
+            ("workspace_artifact_delete", #"{"path":"audit.txt"}"#, "audit.txt"),
+        ]
+        var failures: [String] = []
+        for (name, args, expect) in calls {
+            do {
+                let output = try await provider.performRecipeTool(runID: runID, owner: owner, name: name, argumentsJSON: args)
+                if !output.lowercased().contains(expect.lowercased()) { failures.append("\(name): unexpected output \(output.prefix(240))") }
+                print("ToolAudit \(name) OK \(output.prefix(120))")
+            } catch { failures.append("\(name): \(error.localizedDescription)") }
+        }
+        XCTAssertTrue(failures.isEmpty, failures.joined(separator: "\n"))
     }
 
 }
