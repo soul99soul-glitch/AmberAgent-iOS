@@ -70,7 +70,7 @@ enum IOSFreeSearchAggregator {
     ) async throws -> [IOSSearchResult] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw IOSSearchExecutorError.missingQuery }
-        let limit = min(max(maxResults, 1), 10)
+        let limit = min(max(maxResults, 1), IOSSearchExecutor.maxResultsLimit)
         let engines = engines(for: trimmed, now: now())
 
         var perEngine: [IOSFreeSearchEngine: [IOSSearchResult]] = [:]
@@ -180,7 +180,7 @@ enum IOSFreeSearchAggregator {
             let html = try await fetchHTML(
                 "https://www.bing.com/search", query: [("q", query)], engine: engine, transport: transport
             )
-            let results = IOSSearchExecutor.parseBingHTML(html: html, maxResults: 10)
+            let results = IOSSearchExecutor.parseBingHTML(html: html, maxResults: IOSSearchExecutor.maxResultsLimit)
             if results.isEmpty, looksBlocked(html) { throw IOSFreeSearchEngineError.blocked }
             return results
         case .duckDuckGo:

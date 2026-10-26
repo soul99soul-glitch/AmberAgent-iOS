@@ -70,3 +70,13 @@ import XCTest
         }
     }
 }
+
+@MainActor final class DesktopSearchResultLimitTests: XCTestCase {
+    func testResultCountAllowsUpToFiftyAndPersists() throws {
+        let defaults = UserDefaults(suiteName: "amber.search.limit.\(UUID().uuidString)")!
+        let settings = DesktopSearchSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        try settings.save(service: .free, resultCount: 50, apiKey: "")
+        XCTAssertEqual(DesktopSearchSettings(defaults: defaults, credentials: DesktopMemoryCredentials()).resultCount, 50)
+        XCTAssertThrowsError(try settings.save(service: .free, resultCount: 51, apiKey: ""))
+    }
+}

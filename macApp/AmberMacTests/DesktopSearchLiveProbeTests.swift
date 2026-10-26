@@ -20,4 +20,10 @@ import XCTest
             settings: DesktopSearchSettings(defaults: UserDefaults(suiteName: UUID().uuidString)!, credentials: DesktopMemoryCredentials()))
         XCTAssertTrue(output.lowercased().contains("swift"), output)
     }
+
+    func testExecutorHonoursRequestsAboveTen() throws {
+        XCTAssertEqual(try IOSSearchExecutor.searchRequest(from: #"{"query":"x","max_results":30}"#).maxResults, 30)
+        XCTAssertEqual(try IOSSearchExecutor.searchRequest(from: #"{"query":"x","max_results":500}"#).maxResults, 50)
+    }
+
 }

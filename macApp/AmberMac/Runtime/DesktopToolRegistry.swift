@@ -29,7 +29,8 @@ enum DesktopToolRegistry {
         declaration("workspace_file_read", "读取当前会话工作区中的UTF8文本文件。", properties: ["path": "string"], required: ["path"]),
         declaration("workspace_file_write", "把UTF8成果写入当前会话工作区；需要用户批准，覆盖已有文件须overwrite=true。", properties: ["path": "string", "content": "string", "overwrite": "boolean"], required: ["path", "content"], approval: true),
         declaration("workspace_artifact_delete", "删除当前会话工作区的文件，需要用户批准。", properties: ["path": "string"], required: ["path"], approval: true),
-        declaration("search_web", "搜索公开网页，返回标题、网址和摘要。", properties: ["query": "string"], required: ["query"]),
+        declaration("search_web", "搜索公开网页，返回标题、网址和摘要。max_results 可选（1–50），默认使用设置里的结果数量。",
+            properties: ["query": "string", "max_results": "integer"], required: ["query"]),
         declaration("scrape_web", "读取一个公开HTTP/HTTPS网页的正文。", properties: ["url": "string"], required: ["url"]),
         declaration("terminal_exec", "在当前会话工作区执行一条macOS shell命令；每次需要批准，返回真实退出码和输出。", properties: ["command": "string"], required: ["command"], approval: true),
     ]

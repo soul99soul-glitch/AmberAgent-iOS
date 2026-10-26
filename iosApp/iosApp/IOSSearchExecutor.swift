@@ -1206,8 +1206,11 @@ struct IOSSearchExecutor {
         return nil
     }
 
+    /// Matches the settings range (IosSettingsMutations.setSearchResultSize clamps to 1...50).
+    static let maxResultsLimit = 50
+
     private static func sanitizedMaxResults(_ value: Int) -> Int {
-        min(max(value, 1), 10)
+        min(max(value, 1), maxResultsLimit)
     }
 
     private static func sanitizedMaxChars(_ value: Int) -> Int {

@@ -24,6 +24,8 @@ enum DesktopSearchService: String, Codable, CaseIterable, Identifiable, Sendable
 @MainActor @Observable final class DesktopSearchSettings {
     private(set) var service: DesktopSearchService
     private(set) var resultCount: Int
+    /// Same 1...50 range as iOS/Android settings.
+    static let resultLimit = 50
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let credentials: any DesktopCredentialStore
     private struct Record: Codable { var service: DesktopSearchService; var resultCount: Int }
@@ -33,7 +35,7 @@ enum DesktopSearchService: String, Codable, CaseIterable, Identifiable, Sendable
         self.defaults = defaults; self.credentials = credentials
         let record = defaults.data(forKey: "desktop.search.v1").flatMap { try? JSONDecoder().decode(Record.self, from: $0) }
         service = record?.service ?? .free
-        resultCount = min(10, max(1, record?.resultCount ?? 5))
+        resultCount = min(Self.resultLimit, max(1, record?.resultCount ?? 5))
     }
 
     func apiKey(for service: DesktopSearchService) throws -> String {
@@ -43,7 +45,7 @@ enum DesktopSearchService: String, Codable, CaseIterable, Identifiable, Sendable
     func save(service: DesktopSearchService, resultCount: Int, apiKey: String) throws {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard service == .free || !key.isEmpty else { throw DesktopRuntimeError.message("请填写搜索服务的 API Key。") }
-        guard (1...10).contains(resultCount) else { throw DesktopRuntimeError.message("搜索结果数量须为 1–10。") }
+        guard (1...Self.resultLimit).contains(resultCount) else { throw DesktopRuntimeError.message("搜索结果数量须为 1–\(Self.resultLimit)。") }
         if service != .free { try credentials.save(key, id: service.credentialID) }
         let record = Record(service: service, resultCount: resultCount)
         let data = try JSONEncoder().encode(record)
