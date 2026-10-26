@@ -23,6 +23,19 @@ enum DesktopProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
 
 enum DesktopProviderAuthMode: String, Codable, Sendable {
     case apiKey, codexOAuth, antigravityOAuth, grokOAuth
+    case zhipuCodingPlan, kimiCodingPlan, mimoCodingPlan, minimaxTokenPlan
+
+    var isPlan: Bool { [.zhipuCodingPlan, .kimiCodingPlan, .mimoCodingPlan, .minimaxTokenPlan].contains(self) }
+    /// Plan endpoints are fixed by the vendor (mirrors KMP OpenAIAuthMode.fixedBaseUrl).
+    var planBaseURL: String? {
+        switch self {
+        case .zhipuCodingPlan: "https://open.bigmodel.cn/api/coding/paas/v4"
+        case .kimiCodingPlan: "https://api.kimi.com/coding/v1"
+        case .mimoCodingPlan: "https://token-plan-cn.xiaomimimo.com/v1"
+        case .minimaxTokenPlan: "https://api.minimaxi.com/v1"
+        default: nil
+        }
+    }
 }
 
 struct DesktopProviderConfiguration: Codable, Equatable, Identifiable, Sendable {

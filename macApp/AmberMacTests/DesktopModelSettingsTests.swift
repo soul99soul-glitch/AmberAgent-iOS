@@ -374,3 +374,42 @@ import XCTest
         XCTAssertEqual(auth.logouts, [id])
     }
 }
+
+@MainActor final class DesktopProviderPresetTests: XCTestCase {
+    private func settings() -> DesktopSettings {
+        DesktopSettings(defaults: UserDefaults(suiteName: "amber.presets.\(UUID().uuidString)")!, credentials: DesktopMemoryCredentials())
+    }
+
+    func testCodingPlanPresetPinsPlanEndpointAndSurvivesSave() throws {
+        let zhipu = try XCTUnwrap(DesktopProviderPreset.all.first { $0.id == "zhipu" })
+        var plan = zhipu.configuration(plan: true)
+        XCTAssertEqual(plan.authMode, .zhipuCodingPlan)
+        XCTAssertEqual(plan.baseURL, "https://open.bigmodel.cn/api/coding/paas/v4")
+        plan.modelID = "glm-4.6"
+        plan.baseURL = "https://tampered.example.com/v1"
+        let store = settings()
+        try store.saveProvider(plan, apiKey: "plan-key")
+        let saved = try XCTUnwrap(store.providers.first { $0.id == plan.id })
+        XCTAssertEqual(saved.baseURL, "https://open.bigmodel.cn/api/coding/paas/v4", "plan endpoint is fixed by the vendor")
+        XCTAssertEqual(DesktopProviderPreset.matching(saved)?.id, "zhipu")
+        let api = zhipu.configuration(plan: false)
+        XCTAssertEqual(api.authMode, .apiKey)
+        XCTAssertEqual(api.baseURL, "https://open.bigmodel.cn/api/paas/v4")
+    }
+
+    func testPlanRequiresOpenAICompatibleProtocol() throws {
+        var plan = try XCTUnwrap(DesktopProviderPreset.all.first { $0.id == "kimi" }).configuration(plan: true)
+        plan.modelID = "kimi-for-coding"
+        plan.kind = .claude
+        XCTAssertThrowsError(try settings().saveProvider(plan, apiKey: "k"))
+    }
+
+    func testEveryPresetMatchesItself() {
+        for preset in DesktopProviderPreset.all where preset.id != "custom" {
+            XCTAssertEqual(DesktopProviderPreset.matching(preset.configuration(plan: false))?.id, preset.id, preset.id)
+            if preset.plan != nil {
+                XCTAssertEqual(DesktopProviderPreset.matching(preset.configuration(plan: true))?.id, preset.id, preset.id)
+            }
+        }
+    }
+}

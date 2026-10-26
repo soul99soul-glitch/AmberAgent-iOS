@@ -22,7 +22,8 @@ import Foundation
                 json = bridge.catalogJSON(models: try await IOSGeminiClient(provider: google).listModelsOrThrow())
             } else {
                 json = try await bridge.listModelsOrThrow(kind: configuration.kind.rawValue,
-                    id: configuration.id.uuidString, name: configuration.name, baseUrl: configuration.baseURL, apiKey: apiKey)
+                    id: configuration.id.uuidString, name: configuration.name, baseUrl: configuration.baseURL, apiKey: apiKey,
+                    authMode: configuration.authMode.rawValue)
             }
             return try DesktopJSON.decode([DesktopCatalogModel].self, from: json)
         } catch is CancellationError { throw CancellationError() }

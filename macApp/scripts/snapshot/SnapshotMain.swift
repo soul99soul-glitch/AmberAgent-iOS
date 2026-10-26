@@ -42,6 +42,7 @@ import SwiftUI
             ("panel-image", AnyView(DesktopImageGenerationView(workspace: workspace, ownerID: owner)), 760, 640),
             ("panel-storage", AnyView(DesktopStorageUsageView(sources: workspace.storageUsageSources, conversationCount: workspace.summaries.count)), 760, 560),
             ("panel-search", AnyView(DesktopSearchSettingsView(settings: workspace.searchSettings)), 560, 420),
+            ("panel-presets", AnyView(DesktopProviderPresetPicker { _, _ in }), 620, 600),
         ]
         for (name, view, w, h) in shots {
             for dark in [false, true] { try await capture("\(name)-\(dark ? "dark" : "light")", view.background(DesktopTheme.paper), w, h, dark) }

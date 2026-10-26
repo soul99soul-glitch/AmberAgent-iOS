@@ -243,8 +243,9 @@ object DesktopProviderBridge {
     fun catalogJSON(models: List<Model>): String = desktopCatalogJSON(models)
 
     @Throws(Throwable::class)
-    suspend fun listModelsOrThrow(kind: String, id: String, name: String, baseUrl: String, apiKey: String): String = withContext(Dispatchers.Default) {
-        val provider = configuration(kind, id, name, baseUrl, apiKey)
+    suspend fun listModelsOrThrow(kind: String, id: String, name: String, baseUrl: String, apiKey: String,
+        authMode: String = "apiKey"): String = withContext(Dispatchers.Default) {
+        val provider = desktopAuthenticatedConfiguration(kind, id, name, baseUrl, apiKey, authMode)
         desktopCatalogJSON(when (provider) {
             is ProviderSetting.OpenAI -> catalogOpenAI.listModelsOrThrow(provider)
             is ProviderSetting.Claude -> catalogClaude.listModelsOrThrow(provider)

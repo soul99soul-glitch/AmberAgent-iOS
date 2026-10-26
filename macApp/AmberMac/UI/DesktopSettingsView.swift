@@ -32,8 +32,11 @@ struct DesktopSettingsView: View {
     @State private var didLoad = false
     @State private var deleting = false
     @State private var grokSignedIn = false
+    @State private var presetPickerPresented = false
+    @State private var advancedConnection = false
+    @State private var pendingPreset: (DesktopProviderPreset, Bool)?
 
-    private enum Destination { case provider(UUID?), tab(Int) }
+    private enum Destination { case provider(UUID?), tab(Int), preset(DesktopProviderPreset, Bool) }
     private struct ModelParameters: Equatable {
         var context: String
         var temperature: String
@@ -63,6 +66,14 @@ struct DesktopSettingsView: View {
         self.speech = speech
         _login = State(initialValue: DesktopCodexLogin(authorizer: oauth))
     }
+    /// Changes whenever a new preset draft becomes fetchable (key typed, or keyless local server).
+    private var autoFetchKey: String? {
+        guard editingID == nil, let preset = DesktopProviderPreset.matching(draft), preset.id != "custom" else { return nil }
+        if !preset.needsKey { return draft.baseURL + ":" }
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.count >= 8 ? draft.baseURL + "|" + key : nil
+    }
+
     private var hasUnsavedChanges: Bool {
         draft != savedDraft || apiKey != savedKey || parameters != savedParameters
     }
@@ -93,6 +104,22 @@ struct DesktopSettingsView: View {
             Button("放弃修改", role: .destructive) { if let destination = pendingDestination { apply(destination) } }
             Button("取消", role: .cancel) { pendingDestination = nil }
         } message: { Text("请先保存或放弃当前服务商及模型的修改。") }
+        .task(id: autoFetchKey) {
+            guard let autoFetchKey, editingID == nil, draft.models.isEmpty, !catalogRequest.isLoading else { return }
+            try? await Task.sleep(for: .milliseconds(autoFetchKey.hasSuffix(":") ? 0 : 700))
+            guard !Task.isCancelled else { return }
+            fetchModels(testOnly: false)
+        }
+        .onChange(of: catalogRequest.models) { _, models in
+            // Fresh provider: pre-tick everything so「添加所选模型」is one click.
+            if editingID == nil, draft.models.isEmpty { selectedCatalogIDs = Set(models.map(\.id)) }
+        }
+        .sheet(isPresented: $presetPickerPresented) {
+            DesktopProviderPresetPicker { preset, usePlan in
+                presetPickerPresented = false
+                request(.preset(preset, usePlan))
+            }
+        }
         .confirmationDialog("移除这个服务商？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("移除服务商", role: .destructive) { deleteProvider() }
         } message: { Text("API Key 和登录凭证也会从钥匙串移除。已有会话会保留。") }
@@ -173,7 +200,7 @@ struct DesktopSettingsView: View {
                     .padding(8)
                 }
                 HStack {
-                    Button { request(.provider(nil)) } label: { Image(systemName: "plus").frame(width: 26, height: 26) }
+                    Button { presetPickerPresented = true } label: { Image(systemName: "plus").frame(width: 26, height: 26) }
                         .help("添加服务商").accessibilityLabel("添加服务商")
                     Button { confirmsDelete = true } label: { Image(systemName: "minus").frame(width: 26, height: 26) }
                         .disabled(editingID == nil).help("移除服务商").accessibilityLabel("移除服务商")
@@ -201,23 +228,55 @@ struct DesktopSettingsView: View {
     }
 
     private var providerConfiguration: some View {
-        Section(editingID == nil ? "添加服务商" : "服务商配置") {
+        let preset = DesktopProviderPreset.matching(draft)
+        return Section(editingID == nil ? "添加服务商" : "服务商配置") {
             TextField("名称", text: $draft.name, prompt: Text("例如：OpenAI / 本地模型")).accessibilityIdentifier("provider-name")
-            Picker("协议", selection: $draft.kind) {
-                ForEach(DesktopProviderKind.allCases) { Text($0.title).tag($0) }
+            if let preset, let plan = preset.plan {
+                LabeledContent("计费方式") {
+                    DesktopSegmented(options: [(false, "按量 API"), (true, preset.planTitle)], selection: Binding(
+                        get: { draft.authMode == plan },
+                        set: { usePlan in
+                            draft.authMode = usePlan ? plan : .apiKey
+                            draft.baseURL = usePlan ? (plan.planBaseURL ?? draft.baseURL) : preset.baseURL
+                        }))
+                }
+                Text(draft.authMode == plan
+                     ? "使用\(preset.planTitle)的订阅 Key 与专用地址，按套餐额度计费；可用模型以套餐为准。"
+                     : "按调用量计费的普通 API Key。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
-            TextField("API 地址", text: $draft.baseURL).accessibilityIdentifier("provider-base-url")
-            Picker("认证方式", selection: $draft.authMode) {
-                Text("API Key").tag(DesktopProviderAuthMode.apiKey)
-                if draft.kind == .responses { Text("ChatGPT / Codex 登录").tag(DesktopProviderAuthMode.codexOAuth) }
-                if draft.kind == .openAI { Text("Grok / xAI 登录").tag(DesktopProviderAuthMode.grokOAuth) }
-                if draft.authMode == .antigravityOAuth { Text("已有 Antigravity 登录").tag(DesktopProviderAuthMode.antigravityOAuth) }
+            if draft.authMode == .apiKey || draft.authMode.isPlan {
+                if preset?.needsKey != false {
+                    SecureField("API Key", text: $apiKey, prompt: Text(preset?.keyPlaceholder ?? "sk-…")).accessibilityIdentifier("provider-api-key")
+                    if let url = preset?.keyURL {
+                        Link("获取 \(preset?.name ?? "") API Key", destination: url).font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
+                    }
+                }
             }
-            if draft.authMode == .apiKey {
-                SecureField("API Key", text: $apiKey).accessibilityIdentifier("provider-api-key")
+            if preset == nil || preset?.id == "custom" || advancedConnection {
+                Picker("协议", selection: $draft.kind) {
+                    ForEach(DesktopProviderKind.allCases) { Text($0.title).tag($0) }
+                }
+                TextField("API 地址", text: $draft.baseURL).accessibilityIdentifier("provider-base-url")
+                    .disabled(draft.authMode.isPlan)
+                Picker("认证方式", selection: $draft.authMode) {
+                    Text("API Key").tag(DesktopProviderAuthMode.apiKey)
+                    if draft.kind == .responses { Text("ChatGPT / Codex 登录").tag(DesktopProviderAuthMode.codexOAuth) }
+                    if draft.kind == .openAI { Text("Grok / xAI 登录").tag(DesktopProviderAuthMode.grokOAuth) }
+                    if draft.authMode == .antigravityOAuth { Text("已有 Antigravity 登录").tag(DesktopProviderAuthMode.antigravityOAuth) }
+                    if draft.authMode.isPlan { Text(preset?.planTitle ?? "编程套餐").tag(draft.authMode) }
+                }
+                Text("基础地址须使用 HTTPS；本机模型支持 localhost 回环地址。认证方式与协议分别保存。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+            } else {
+                LabeledContent("接口") {
+                    HStack(spacing: 8) {
+                        Text("\(draft.kind.title) · \(draft.baseURL)").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                            .lineLimit(1).truncationMode(.middle)
+                        Button("修改") { advancedConnection = true }.buttonStyle(.link).font(.system(size: 12))
+                    }
+                }
             }
-            Text("基础地址须使用 HTTPS；本机模型支持 localhost 回环地址。认证方式与协议分别保存。")
-                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             HStack {
                 Button("获取模型列表") { fetchModels(testOnly: false) }
                 Button("测试模型生成") { fetchModels(testOnly: true) }.disabled(draft.selectedModel == nil)
@@ -548,7 +607,12 @@ struct DesktopSettingsView: View {
     private func apply(_ destination: Destination) {
         pendingDestination = nil
         switch destination {
-        case .provider(let id): load(id)
+        case .preset(let preset, let usePlan):
+            load(nil)
+            draft = preset.configuration(plan: usePlan)
+            advancedConnection = preset.id == "custom"
+            savedDraft = nil
+        case .provider(let id): load(id); advancedConnection = false
         case .tab(let value):
             if hasUnsavedChanges { load(editingID) }
             tab = value

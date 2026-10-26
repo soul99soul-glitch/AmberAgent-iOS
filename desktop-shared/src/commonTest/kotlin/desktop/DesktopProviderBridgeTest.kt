@@ -286,3 +286,16 @@ class DesktopProviderBridgeTest {
     }
 
 }
+
+class DesktopCodingPlanBridgeTest {
+    @kotlin.test.Test
+    fun codingPlanModesPinVendorEndpointAndPlanMode() {
+        val plan = desktopAuthenticatedConfiguration("openai", "00000000-0000-0000-0000-000000000001", "GLM",
+            "https://example.com/v1", "key", "zhipuCodingPlan") as app.amber.ai.provider.ProviderSetting.OpenAI
+        kotlin.test.assertEquals(app.amber.ai.provider.OpenAIAuthMode.ZHIPU_CODING_PLAN, plan.authMode)
+        kotlin.test.assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", plan.baseUrl)
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            desktopAuthenticatedConfiguration("claude", "00000000-0000-0000-0000-000000000002", "x", "https://a.b/v1", "k", "kimiCodingPlan")
+        }
+    }
+}

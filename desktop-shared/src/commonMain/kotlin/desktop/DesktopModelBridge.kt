@@ -10,6 +10,7 @@ import app.amber.ai.provider.GoogleAuthMode
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.OpenAIAuthMode
+import app.amber.ai.provider.fixedBaseUrl
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
 import app.amber.ai.registry.ModelRegistry
@@ -99,6 +100,17 @@ internal fun desktopAuthenticatedConfiguration(kind: String, id: String, name: S
         "codexOAuth" -> {
             require(provider is ProviderSetting.OpenAI && kind == "responses") { "Codex OAuth requires Responses protocol" }
             provider.copy(authMode = OpenAIAuthMode.CODEX_OAUTH, useResponseApi = true)
+        }
+        // Coding / Token plans: same key, plan endpoint; KMP pins the base URL and adds the plan User-Agent.
+        "zhipuCodingPlan", "kimiCodingPlan", "mimoCodingPlan", "minimaxTokenPlan" -> {
+            require(provider is ProviderSetting.OpenAI && kind == "openai") { "Coding plans use the OpenAI-compatible protocol" }
+            val mode = when (authMode) {
+                "zhipuCodingPlan" -> OpenAIAuthMode.ZHIPU_CODING_PLAN
+                "kimiCodingPlan" -> OpenAIAuthMode.KIMI_CODING_PLAN
+                "mimoCodingPlan" -> OpenAIAuthMode.MIMO_CODING_PLAN
+                else -> OpenAIAuthMode.MINIMAX_TOKEN_PLAN
+            }
+            provider.copy(authMode = mode, baseUrl = mode.fixedBaseUrl() ?: provider.baseUrl)
         }
         "grokOAuth" -> {
             require(provider is ProviderSetting.OpenAI && kind == "openai") { "Grok OAuth requires OpenAI-compatible protocol" }

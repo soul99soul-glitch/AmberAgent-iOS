@@ -276,7 +276,7 @@ final class DesktopSettings {
         value.baseURL = value.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while value.baseURL.hasSuffix("/") { value.baseURL.removeLast() }
         guard !value.name.isEmpty else { throw DesktopRuntimeError.message("请填写服务商名称。") }
-        guard !value.models.isEmpty || value.authMode != .apiKey else { throw DesktopRuntimeError.message("请至少添加一个模型。") }
+        guard !value.models.isEmpty || !(value.authMode == .apiKey || value.authMode.isPlan) else { throw DesktopRuntimeError.message("请至少添加一个模型。") }
         value.models = try value.models.map { try $0.validated(for: value.kind) }
         guard Set(value.models.map(\.id)).count == value.models.count else {
             throw DesktopRuntimeError.message("模型标识重复，请重新添加该模型。")
@@ -286,6 +286,10 @@ final class DesktopSettings {
         }
         if value.authMode == .grokOAuth, value.kind != .openAI {
             throw DesktopRuntimeError.message("Grok 登录须使用 OpenAI 兼容协议。")
+        }
+        if value.authMode.isPlan {
+            guard value.kind == .openAI else { throw DesktopRuntimeError.message("编程套餐须使用 OpenAI 兼容协议。") }
+            if let base = value.authMode.planBaseURL { value.baseURL = base }
         }
         if value.authMode == .antigravityOAuth, value.kind != .gemini {
             throw DesktopRuntimeError.message("Antigravity 登录须使用 Gemini 协议。")
