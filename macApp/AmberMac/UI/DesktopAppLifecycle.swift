@@ -68,11 +68,12 @@ struct DesktopWindowLifecycleView: View {
     let workspace: DesktopWorkspace
     let delegate: AmberMacAppDelegate
     let searchRequest: Int
+    var findRequest = 0
     let windowID: String
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        DesktopWorkspaceView(workspace: workspace, searchRequest: searchRequest)
+        DesktopWorkspaceView(workspace: workspace, searchRequest: searchRequest, findRequest: findRequest)
             .task {
                 delegate.bind(workspace: workspace) { openWindow(id: windowID) }
             }

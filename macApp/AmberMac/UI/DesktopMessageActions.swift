@@ -4,6 +4,10 @@ struct DesktopMessageActionItems: View {
     let message: DesktopMessage
     let speech: DesktopSpeechPlayer
     let mutationsDisabled: Bool
+    let isPinned: Bool
+    let onTogglePin: () -> Void
+    let onExport: () -> Void
+    let onShare: () -> Void
     let onEdit: () -> Void
     let onRegenerate: () -> Void
     let onDelete: () -> Void
@@ -24,6 +28,11 @@ struct DesktopMessageActionItems: View {
             }
             if speech.isSpeaking && speech.currentMessageID != message.id {
                 Button("停止朗读", systemImage: "speaker.slash") { speech.stop() }
+            }
+            if !message.text.isEmpty {
+                Button(isPinned ? "从产物架移除" : "固定到产物架", systemImage: isPinned ? "pin.slash" : "pin", action: onTogglePin)
+                Button("导出此消息…", systemImage: "square.and.arrow.down", action: onExport)
+                Button("分享…", systemImage: "square.and.arrow.up", action: onShare)
             }
             if message.canEdit {
                 Button("编辑并重新发送…", systemImage: "pencil", action: onEdit)

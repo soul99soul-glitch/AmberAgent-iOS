@@ -42,6 +42,14 @@ extension DesktopConversationExport {
         try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
 
+    static func markdown(_ message: DesktopMessage, title: String) -> String {
+        markdown(DesktopConversation(title: title, messages: [message]))
+    }
+
+    static func writeMarkdown(_ message: DesktopMessage, title: String, to url: URL) async throws {
+        try await writeMarkdown(DesktopConversation(title: title, messages: [message]), to: url)
+    }
+
     static func writePDF(_ conversation: DesktopConversation, to url: URL) async throws {
         let task = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()

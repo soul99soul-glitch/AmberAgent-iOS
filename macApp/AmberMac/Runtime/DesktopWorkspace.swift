@@ -29,6 +29,7 @@ final class DesktopWorkspace {
     private var instructionQueue: [DesktopQueuedInstruction] = []
     let settings: DesktopSettings
     let insights: DesktopConversationInsights
+    let artifactShelf: DesktopArtifactShelf
     let files: DesktopWorkspaceFiles
     let agentTasks: DesktopAgentTasks
     let knowledge: DesktopKnowledgeStore
@@ -98,9 +99,10 @@ final class DesktopWorkspace {
          webDAV: DesktopWebDAVManager? = nil, notifications: DesktopNotifications? = nil,
          storageUsageSources: [DesktopStorageUsage.Source]? = nil,
          imageGeneration: DesktopImageGeneration? = nil, speech: DesktopSpeechPlayer? = nil,
-         searchSettings: DesktopSearchSettings? = nil) {
+         searchSettings: DesktopSearchSettings? = nil, artifactShelf: DesktopArtifactShelf? = nil) {
         self.settings = settings
         self.insights = insights ?? DesktopConversationInsights()
+        self.artifactShelf = artifactShelf ?? DesktopArtifactShelf()
         self.files = files
         self.agentTasks = agentTasks ?? DesktopAgentTasks()
         self.knowledge = knowledge ?? DesktopKnowledgeStore(directory: FileManager.default.temporaryDirectory
@@ -809,6 +811,7 @@ final class DesktopWorkspace {
                 self.fileErrors[id] = nil
                 self.fileReadFailures.remove(id)
                 self.insights.remove(id)
+                self.artifactShelf.removeConversation(id)
                 do { try await self.files.removeConversation(id) }
                 catch { self.recordError("会话已删除，但工作区文件清理失败，请检查文件夹权限。", owner: nil) }
             } catch {
@@ -1212,6 +1215,16 @@ final class DesktopWorkspace {
     }
 
     @discardableResult
+    func exportMessage(_ messageID: UUID, to url: URL) -> Task<Void, Never>? {
+        guard let conversation = selectedConversation,
+              let message = conversation.messages.first(where: { $0.id == messageID }) else { return nil }
+        return performFileTask { [self] in
+            do { try await DesktopConversationExport.writeMarkdown(message, title: conversation.title, to: url) }
+            catch { recordError("导出失败，请检查目标文件夹权限并重试。", owner: conversation.id) }
+        }
+    }
+
+    @discardableResult
     func runRecipe(name: String, inputs: [String: DesktopRecipeJSONValue]) -> UUID? {
         guard !isLoading, !isManagingBackup, !selectedConversationUnavailable, let owner = selectedID else {
             errorMessage = "请先选择并读取完整会话，再执行 Recipe。"
@@ -1397,7 +1410,8 @@ final class DesktopWorkspace {
     }
 
     private var backupCoordinator: DesktopBackupCoordinator {
-        DesktopBackupCoordinator(storage: storage, files: files, insights: insights, settings: settings, knowledge: knowledge)
+        DesktopBackupCoordinator(storage: storage, files: files, insights: insights, settings: settings, knowledge: knowledge,
+            artifactShelf: artifactShelf)
     }
 
     private func beginBackup() -> Bool {

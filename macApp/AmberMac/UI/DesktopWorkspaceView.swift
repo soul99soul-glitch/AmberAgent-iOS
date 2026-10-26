@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct DesktopWorkspaceView: View {
     @Bindable var workspace: DesktopWorkspace
     let searchRequest: Int
+    var findRequest = 0
     @Environment(\.colorScheme) private var scheme
     @FocusState private var searchFocused: Bool
     @State private var renameID: UUID?
@@ -13,6 +14,7 @@ struct DesktopWorkspaceView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var transcriptFocus: DesktopTranscriptFocus?
     @State private var insightsPresented = false
+    @State private var shelfPresented = false
     @State private var filesPresented = false
     @State private var tasksPresented = false
     @State private var knowledgePresented = false
@@ -48,7 +50,7 @@ struct DesktopWorkspaceView: View {
                         Button("重新读取") { workspace.reloadSelectedConversation() }
                     }
                 } else if let conversation = workspace.selectedConversation, !conversation.messages.isEmpty {
-                    DesktopTranscript(conversation: conversation, workspace: workspace, focusRequest: transcriptFocus)
+                    DesktopTranscript(conversation: conversation, workspace: workspace, focusRequest: transcriptFocus, findRequest: findRequest)
                 } else {
                     welcome
                 }
@@ -359,6 +361,17 @@ struct DesktopWorkspaceView: View {
                 .popover(isPresented: $insightsPresented, arrowEdge: .bottom) {
                     DesktopConversationInsightsView(workspace: workspace)
                 }
+            Button { shelfPresented.toggle() } label: { Image(systemName: "pin") }
+                .disabled(workspace.selectedConversation == nil || workspace.isLoading)
+                .help("产物架")
+                .accessibilityLabel("产物架")
+                .popover(isPresented: $shelfPresented, arrowEdge: .bottom) {
+                    DesktopArtifactShelfView(workspace: workspace) { messageID in
+                        guard let conversationID = workspace.selectedID else { return }
+                        transcriptFocus = DesktopTranscriptFocus(conversationID: conversationID, messageID: messageID)
+                        shelfPresented = false
+                    }
+                }
             Button { filesPresented = true } label: { Image(systemName: "folder") }
                 .disabled(workspace.selectedID == nil || workspace.isLoading)
                 .help("此会话的文件与产物")
@@ -471,6 +484,15 @@ enum DesktopFileActions {
         let name = conversation.title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         panel.nameFieldStringValue = "\(String(name.prefix(80))).json"
         if panel.runModal() == .OK, let url = panel.url { workspace.exportConversation(to: url) }
+    }
+
+    @MainActor static func exportMessage(_ workspace: DesktopWorkspace, messageID: UUID) {
+        guard let conversation = workspace.selectedConversation else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        let name = conversation.title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        panel.nameFieldStringValue = "\(String(name.prefix(80))) · 消息.md"
+        if panel.runModal() == .OK, let url = panel.url { workspace.exportMessage(messageID, to: url) }
     }
 
     @MainActor static func addAttachments(_ workspace: DesktopWorkspace) {

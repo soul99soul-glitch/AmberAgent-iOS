@@ -11,7 +11,13 @@ struct DesktopTranscript: View {
     let conversation: DesktopConversation
     @Bindable var workspace: DesktopWorkspace
     let focusRequest: DesktopTranscriptFocus?
+    var findRequest = 0
+    @Environment(\.colorScheme) private var scheme
     @State private var editingMessage: MessageEditDraft?
+    @State private var findPresented = false
+    @State private var findQuery = ""
+    @State private var find = DesktopConversationFind()
+    @FocusState private var findFocused: Bool
     @State private var confirmation: MessageConfirmation?
 
     private var mutationsDisabled: Bool {
@@ -39,10 +45,15 @@ struct DesktopTranscript: View {
 
     var body: some View {
         ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+            if findPresented { findBar }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 32) {
                     ForEach(conversation.messages) { message in
-                        DesktopMessageRow(message: message, settings: workspace.settings, speech: workspace.speech, mutationsDisabled: mutationsDisabled,
+                        DesktopMessageRow(message: message, conversationID: conversation.id, settings: workspace.settings,
+                            speech: workspace.speech, shelf: workspace.artifactShelf, mutationsDisabled: mutationsDisabled,
+                            highlighted: findPresented && find.currentMessageID == message.id,
+                            onExport: { DesktopFileActions.exportMessage(workspace, messageID: message.id) },
                             onEdit: { editingMessage = MessageEditDraft(id: message.id, ownerID: conversation.id,
                                 text: message.textForEditing, followingCount: followingCount(after: message.id)) },
                             onRegenerate: { requestRegeneration(message) },
@@ -95,8 +106,10 @@ struct DesktopTranscript: View {
             }
             .onChange(of: focusRequest) { _, request in
                 guard let request, request.conversationID == conversation.id else { return }
-                followsBottom = false
-                withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(request.messageID, anchor: .center) }
+                reveal(request.messageID, proxy: proxy)
+            }
+            .onChange(of: find.currentMessageID) { _, id in
+                if findPresented, let id { reveal(id, proxy: proxy) }
             }
             .onChange(of: workspace.settings.automaticallyFollowGeneration) { _, enabled in
                 followsBottom = enabled && nearBottom
@@ -116,7 +129,14 @@ struct DesktopTranscript: View {
                     .padding(18)
                 }
             }
+            }
         }
+        .onChange(of: findRequest) {
+            findPresented = true
+            findFocused = true
+        }
+        .onChange(of: findQuery) { updateFind() }
+        .onChange(of: conversation.messages) { if findPresented { updateFind() } }
         .accessibilityIdentifier("conversation-transcript")
         .sheet(item: $editingMessage) { draft in
             DesktopMessageEditor(initialText: draft.text, followingCount: draft.followingCount,
@@ -146,6 +166,57 @@ struct DesktopTranscript: View {
             } message: {
                 Text(confirmationDetail)
             }
+    }
+
+    private var findBar: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("在会话中查找", text: $findQuery)
+                .textFieldStyle(.plain)
+                .focused($findFocused)
+                .onKeyPress(keys: [.return]) { press in
+                    find.step(press.modifiers.contains(.shift) ? -1 : 1)
+                    return .handled
+                }
+                .onExitCommand(perform: closeFind)
+                .accessibilityIdentifier("conversation-find")
+            if !findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(find.label).monospacedDigit().foregroundStyle(.secondary)
+                    .accessibilityLabel(find.matches.isEmpty ? "没有匹配的消息" : "第 \(find.label) 条匹配消息")
+            }
+            Button { find.step(-1) } label: { Image(systemName: "chevron.up") }
+                .disabled(find.matches.isEmpty)
+                .help("上一个 ⇧Return")
+                .accessibilityLabel("上一个匹配")
+            Button { find.step(1) } label: { Image(systemName: "chevron.down") }
+                .disabled(find.matches.isEmpty)
+                .help("下一个 Return")
+                .accessibilityLabel("下一个匹配")
+            Button(action: closeFind) { Image(systemName: "xmark.circle.fill") }
+                .help("关闭查找 Esc")
+                .accessibilityLabel("关闭查找")
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: 12))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(DesktopTheme.raised(scheme), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.border(scheme)))
+        .frame(maxWidth: DesktopTheme.contentWidth)
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+    }
+
+    private func updateFind() { find.update(findQuery, messages: conversation.messages) }
+
+    private func closeFind() {
+        findPresented = false
+        findFocused = false
+    }
+
+    private func reveal(_ messageID: UUID, proxy: ScrollViewProxy) {
+        followsBottom = false
+        withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(messageID, anchor: .center) }
     }
 
     private func followingCount(after messageID: UUID) -> Int {
@@ -180,9 +251,13 @@ struct DesktopTranscript: View {
 
 private struct DesktopMessageRow: View {
     let message: DesktopMessage
+    let conversationID: UUID
     let settings: DesktopSettings
     let speech: DesktopSpeechPlayer
+    let shelf: DesktopArtifactShelf
     let mutationsDisabled: Bool
+    let highlighted: Bool
+    let onExport: () -> Void
     let onEdit: () -> Void
     let onRegenerate: () -> Void
     let onDelete: () -> Void
@@ -191,11 +266,14 @@ private struct DesktopMessageRow: View {
     @State private var reasoningExpanded = false
     @State private var copied = false
     @State private var speechError: String?
+    @State private var shareAnchor = DesktopShareAnchor()
 
-    init(message: DesktopMessage, settings: DesktopSettings, speech: DesktopSpeechPlayer, mutationsDisabled: Bool,
+    init(message: DesktopMessage, conversationID: UUID, settings: DesktopSettings, speech: DesktopSpeechPlayer,
+         shelf: DesktopArtifactShelf, mutationsDisabled: Bool, highlighted: Bool, onExport: @escaping () -> Void,
          onEdit: @escaping () -> Void, onRegenerate: @escaping () -> Void,
          onDelete: @escaping () -> Void, onSelectVariant: @escaping (Int) -> Void) {
-        self.message = message; self.settings = settings; self.speech = speech; self.mutationsDisabled = mutationsDisabled
+        self.message = message; self.conversationID = conversationID; self.settings = settings; self.speech = speech
+        self.shelf = shelf; self.mutationsDisabled = mutationsDisabled; self.highlighted = highlighted; self.onExport = onExport
         self.onEdit = onEdit; self.onRegenerate = onRegenerate; self.onDelete = onDelete
         self.onSelectVariant = onSelectVariant
         _reasoningExpanded = State(initialValue: settings.reasoningExpandedByDefault)
@@ -257,6 +335,7 @@ private struct DesktopMessageRow: View {
                 .foregroundStyle(DesktopTheme.muted(scheme))
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .background(DesktopShareAnchorView(anchor: shareAnchor))
                 .help(mutationsDisabled ? "生成或保存完成后可更改消息" : "消息操作")
                 .accessibilityLabel("\(roleTitle)的消息操作")
             }
@@ -280,6 +359,7 @@ private struct DesktopMessageRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if !message.text.isEmpty {
                 DesktopMarkdown(text: message.text, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize)
+                    .environment(\.desktopCodePinning, codePinning)
             } else if message.state == .streaming {
                 Text("正在等待回复…").font(.callout).foregroundStyle(.secondary)
             }
@@ -323,7 +403,9 @@ private struct DesktopMessageRow: View {
         }
         .padding(message.role == .user ? 16 : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(message.role == .user ? DesktopTheme.surface(scheme) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(highlighted ? DesktopTheme.accentWash(scheme) : message.role == .user ? DesktopTheme.surface(scheme) : .clear,
+            in: RoundedRectangle(cornerRadius: 8).inset(by: message.role == .user ? 0 : -10))
+        .animation(.easeOut(duration: 0.18), value: highlighted)
         .padding(.leading, message.role == .user ? 40 : 0)
         .onChange(of: message.text) { copied = false }
         .contextMenu { messageActions }
@@ -332,8 +414,31 @@ private struct DesktopMessageRow: View {
         } message: { Text(speechError ?? "") }
     }
 
+    private var pinnedMessage: DesktopPinnedSnippet? {
+        shelf.pinnedSnippet(messageID: message.id, kind: .message, text: message.text, in: conversationID)
+    }
+
+    private var codePinning: DesktopCodePinning {
+        DesktopCodePinning(
+            isPinned: { shelf.pinnedSnippet(messageID: message.id, kind: .code, text: $0, in: conversationID) != nil },
+            toggle: { code, language in
+                if let pin = shelf.pinnedSnippet(messageID: message.id, kind: .code, text: code, in: conversationID) {
+                    shelf.unpin(pin.id, in: conversationID)
+                } else {
+                    shelf.pin(messageID: message.id, kind: .code, text: code, codeLanguage: language, in: conversationID)
+                }
+            })
+    }
+
     private var messageActions: some View {
         DesktopMessageActionItems(message: message, speech: speech, mutationsDisabled: mutationsDisabled,
+            isPinned: pinnedMessage != nil,
+            onTogglePin: {
+                if let pin = pinnedMessage { shelf.unpin(pin.id, in: conversationID) }
+                else { shelf.pin(messageID: message.id, kind: .message, text: message.text, in: conversationID) }
+            },
+            onExport: onExport,
+            onShare: { shareAnchor.share(message.text) },
             onEdit: onEdit, onRegenerate: onRegenerate, onDelete: onDelete,
             onSpeechError: { speechError = $0 })
     }

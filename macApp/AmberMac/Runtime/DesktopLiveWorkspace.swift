@@ -27,6 +27,7 @@ import Foundation
             files: files, agentTasks: tasks, knowledge: knowledge, mcp: mcp, collaborations: collaborations, recipes: recipes, webDAV: webDAV,
             notifications: notifications, storageUsageSources: DesktopStorageUsage.sources(
                 amberRoot: directory, knowledgeDirectory: knowledge.directory),
-            imageGeneration: imageGeneration, searchSettings: searchSettings)
+            imageGeneration: imageGeneration, searchSettings: searchSettings,
+            artifactShelf: DesktopArtifactShelf(fileURL: directory.appendingPathComponent("artifact-shelf.json")))
     }
 }

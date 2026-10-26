@@ -6,6 +6,7 @@ struct AmberMacApp: App {
     @NSApplicationDelegateAdaptor(AmberMacAppDelegate.self) private var appDelegate
     @State private var workspace: DesktopWorkspace
     @State private var searchRequest = 0
+    @State private var findRequest = 0
     @State private var backupPresented = false
     @State private var storagePresented = false
 
@@ -21,7 +22,7 @@ struct AmberMacApp: App {
 
     var body: some Scene {
         Window("Amber", id: "main") {
-            DesktopWindowLifecycleView(workspace: workspace, delegate: appDelegate, searchRequest: searchRequest, windowID: "main")
+            DesktopWindowLifecycleView(workspace: workspace, delegate: appDelegate, searchRequest: searchRequest, findRequest: findRequest, windowID: "main")
                 .frame(minWidth: 860, minHeight: 600)
                 .tint(DesktopTheme.accent)
                 .preferredColorScheme(DesktopTheme.colorScheme(for: workspace.settings.appearance))
@@ -42,8 +43,11 @@ struct AmberMacApp: App {
                     .disabled(workspace.selectedConversation == nil)
             }
             CommandGroup(after: .textEditing) {
-                Button("搜索会话") { searchRequest += 1 }
+                Button("在会话中查找") { findRequest += 1 }
                     .keyboardShortcut("f", modifiers: .command)
+                    .disabled(workspace.selectedConversation?.messages.isEmpty != false)
+                Button("搜索会话") { searchRequest += 1 }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
             }
             SidebarCommands()
         }

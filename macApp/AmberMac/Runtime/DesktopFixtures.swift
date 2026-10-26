@@ -29,7 +29,7 @@ final class DesktopMemoryCredentials: DesktopCredentialStore {
             | 工作方式 | 对应操作 |
             | --- | --- |
             | 开始新的思考 | 新建对话 ⌘N |
-            | 回到已有内容 | 搜索会话 ⌘F |
+            | 回到已有内容 | 搜索会话 ⇧⌘F |
             | 保留阶段成果 | 导出会话 |
 
             ```swift

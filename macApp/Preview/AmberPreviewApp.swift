@@ -5,12 +5,13 @@ struct AmberPreviewApp: App {
     @NSApplicationDelegateAdaptor(AmberMacAppDelegate.self) private var appDelegate
     @State private var workspace = DesktopWorkspace.uiFixture()
     @State private var searchRequest = 0
+    @State private var findRequest = 0
 
     var body: some Scene {
         Window("Amber · 界面预览", id: "preview") {
             VStack(spacing: 0) {
                 DesktopWindowLifecycleView(workspace: workspace, delegate: appDelegate,
-                    searchRequest: searchRequest, windowID: "preview")
+                    searchRequest: searchRequest, findRequest: findRequest, windowID: "preview")
                 Divider()
                 HStack(spacing: 7) {
                     Image(systemName: "eye")
@@ -43,8 +44,11 @@ struct AmberPreviewApp: App {
                     .disabled(workspace.selectedConversation == nil)
             }
             CommandGroup(after: .textEditing) {
-                Button("搜索会话") { searchRequest += 1 }
+                Button("在会话中查找") { findRequest += 1 }
                     .keyboardShortcut("f", modifiers: .command)
+                    .disabled(workspace.selectedConversation?.messages.isEmpty != false)
+                Button("搜索会话") { searchRequest += 1 }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
             }
             SidebarCommands()
         }

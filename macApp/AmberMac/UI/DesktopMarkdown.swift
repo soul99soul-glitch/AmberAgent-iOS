@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+/// Lets the transcript offer pinning for code blocks without coupling Markdown rendering to the shelf.
+struct DesktopCodePinning {
+    let isPinned: @MainActor (String) -> Bool
+    let toggle: @MainActor (_ code: String, _ language: String) -> Void
+}
+
+extension EnvironmentValues {
+    @Entry var desktopCodePinning: DesktopCodePinning?
+}
+
 struct DesktopMarkdown: View {
     let text: String
     var fontFamily: DesktopMessageFontFamily = .system
@@ -96,6 +106,7 @@ private struct DesktopCodeBlock: View {
     let language: String
     let fontSize: Double
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.desktopCodePinning) private var pinning
     @State private var copied = false
 
     var body: some View {
@@ -103,6 +114,15 @@ private struct DesktopCodeBlock: View {
             HStack {
                 Text(language.isEmpty ? "代码" : language).font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                if let pinning {
+                    let pinned = pinning.isPinned(text)
+                    Button { pinning.toggle(text, language) } label: {
+                        Label(pinned ? "已固定" : "固定", systemImage: pinned ? "pin.fill" : "pin").font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help(pinned ? "从产物架移除" : "固定到产物架")
+                }
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)

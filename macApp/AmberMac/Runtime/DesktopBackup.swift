@@ -36,6 +36,7 @@ struct DesktopBackupPayload: Codable, Sendable {
         let document: String
         var insights: Data?
         var files: [File] = []
+        var pins: [DesktopPinnedSnippet]?
     }
     var version = 1
     var createdAt = Date()
@@ -204,10 +205,12 @@ struct DesktopBackupRestoreResult: Sendable {
     let insights: DesktopConversationInsights
     let settings: DesktopSettings
     let knowledge: DesktopKnowledgeStore
+    let artifactShelf: DesktopArtifactShelf
 
     init(storage: any DesktopConversationStorage, files: DesktopWorkspaceFiles, insights: DesktopConversationInsights,
-         settings: DesktopSettings, knowledge: DesktopKnowledgeStore) {
+         settings: DesktopSettings, knowledge: DesktopKnowledgeStore, artifactShelf: DesktopArtifactShelf = DesktopArtifactShelf()) {
         self.storage = storage; self.files = files; self.insights = insights; self.settings = settings; self.knowledge = knowledge
+        self.artifactShelf = artifactShelf
     }
 
     func snapshot(current: [DesktopConversation]) async throws -> DesktopBackupPayload {
@@ -234,7 +237,8 @@ struct DesktopBackupRestoreResult: Sendable {
                 attachments.append(.init(path: entry.id, data: try await files.read(conversationID: id, path: entry.id)))
             }
             value.conversations.append(.init(id: id, document: document,
-                insights: try await insights.backupRecord(id), files: attachments))
+                insights: try await insights.backupRecord(id), files: attachments,
+                pins: artifactShelf.pins(for: id).isEmpty ? nil : artifactShelf.pins(for: id)))
         }
         let directory = knowledge.directory
         value.knowledgeFiles = try await Task.detached { try DesktopBackup.readFiles(in: directory) }.value
@@ -280,6 +284,7 @@ struct DesktopBackupRestoreResult: Sendable {
                 saved.append(try await storage.save(conversation))
                 for file in entry.files { _ = try await files.write(conversationID: conversation.id, path: file.path, data: file.data) }
                 if let record = entry.insights { try await insights.restoreRecord(record, for: conversation.id) }
+                artifactShelf.restore(entry.pins ?? [], for: conversation.id)
             }
             if !payload.knowledgeFiles.isEmpty || !payload.unconfiguredProviders.isEmpty || payload.preferences != nil {
                 try Task.checkCancellation()
@@ -311,6 +316,7 @@ struct DesktopBackupRestoreResult: Sendable {
                 do { try await storage.delete(id) } catch { cleanupFailed = true }
                 do { try await files.removeConversation(id) } catch { cleanupFailed = true }
                 insights.remove(id)
+                artifactShelf.removeConversation(id)
             }
             await insights.flush()
             if cleanupFailed { throw DesktopRuntimeError.message("恢复未完成，现有内容未更改；部分本次副本清理失败，请检查磁盘权限后重新读取会话列表。") }
