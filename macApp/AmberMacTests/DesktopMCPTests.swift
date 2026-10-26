@@ -297,3 +297,31 @@ import XCTest
 }
 
 private extension Array { var single: Element? { count == 1 ? first : nil } }
+
+@MainActor final class DesktopUserToolchainTests: XCTestCase {
+    func testShellToolResolvesUserLoginPATH() async throws {
+        let result = try await DesktopCommandRunner.run("command -v git && echo $PATH", directory: FileManager.default.temporaryDirectory)
+        XCTAssertEqual(result.exitCode, 0, result.output)
+        XCTAssertTrue(result.output.contains("/git"), result.output)
+    }
+}
+
+extension DesktopUserToolchainTests {
+    /// Opt-in: launches a real npx MCP server by bare command name, the way users configure it.
+    func testBareNpxStdioServerConnectsThroughLoginShell() async throws {
+        guard ProcessInfo.processInfo.environment["AMBER_MAC_LIVE_MODEL"]?.isEmpty == false else {
+            throw XCTSkip("Live toolchain check runs with the live E2E environment.")
+        }
+        var server = DesktopMCPServer()
+        server.name = "everything"
+        server.transport = .stdio
+        server.command = "npx"
+        server.arguments = ["-y", "@modelcontextprotocol/server-everything@2025.9.25", "stdio"]
+        let store = DesktopMCPStore(defaults: UserDefaults(suiteName: "amber.mcp.live.\(UUID().uuidString)")!, credentials: DesktopMemoryCredentials())
+        try store.upsert(server)
+        let manager = DesktopMCPManager(store: store)
+        try await manager.connect(id: server.id)
+        XCTAssertTrue(store.servers.first?.tools.contains { $0.name == "echo" } == true)
+        await manager.shutdown()
+    }
+}
