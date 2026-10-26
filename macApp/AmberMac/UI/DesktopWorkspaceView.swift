@@ -215,7 +215,7 @@ struct DesktopWorkspaceView: View {
                     Text(group.title)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(DesktopTheme.inkTertiary)
-                        .padding(.leading, 12)
+                        .padding(.leading, 22)
                 }
                 }
             }
