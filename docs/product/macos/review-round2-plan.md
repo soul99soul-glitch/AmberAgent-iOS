@@ -36,3 +36,4 @@
 
 - Phase A：U6–U8 完成；subagent 复核新增 2 项确认问题（输入框比同行弹出菜单高、深色输入框底与纸面难分）已修。复核提出的「导出会在保存面板后才报错」经核对为假阳性：菜单项在会话未载入时已禁用，`DesktopFileActions.exportConversation` 在弹面板前即 guard。
 - Phase B：Mac 全量 278/0（8 项在线测试默认跳过）；在线 E2E 6/6（真实网关发送/重开、停止保留、审批写文件；登录 PATH、真实 npx MCP）；Release 构建签名有效、可启动。
+- iOS：全量 5081 项中 13 项失败（PhoneControlSavedTasks 12 项 + BottomOverlay 1 项），在 main 上复跑同样 13 项失败（4 过 13 败），为既有问题，非本分支引入。
