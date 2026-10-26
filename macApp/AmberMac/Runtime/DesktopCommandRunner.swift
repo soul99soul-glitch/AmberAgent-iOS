@@ -70,7 +70,8 @@ enum DesktopCommandRunner {
             posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
             posix_spawnattr_setpgroup(&attributes, 0)
             // App runs already have a QoS; zsh's background nice() is unnecessary here.
-            var arguments = ["/bin/zsh", "-o", "NO_BGNICE", "-c", command].map { strdup($0) } + [nil]
+            // Login shell so GUI launches see the user's PATH (Homebrew, nvm, …) from .zprofile.
+            var arguments = ["/bin/zsh", "-l", "-o", "NO_BGNICE", "-c", command].map { strdup($0) } + [nil]
             let environmentStrings: [String] = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
             var environment: [UnsafeMutablePointer<CChar>?] = environmentStrings.map { strdup($0) }
             environment.append(nil)

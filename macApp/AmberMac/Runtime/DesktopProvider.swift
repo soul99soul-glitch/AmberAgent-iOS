@@ -61,16 +61,17 @@ import Foundation
     private func startKMP(provider: ProviderSetting, messages: [UIMessage], params: TextGenerationParams,
         responseID: UUID, run: DesktopGeneration) throws {
         let input = messages
+        // Kotlin invokes these callbacks on its own threads; they must not inherit MainActor isolation.
         let accumulator = DesktopKMPAccumulator(messages: input, model: params.model, responseID: responseID, run: run)
         let job: Kotlinx_coroutines_coreJob
         if let value = provider as? ProviderSetting.OpenAI {
             job = openAI.streamTextCancellable(providerSetting: value, messages: input, params: params,
-                onChunk: { accumulator.append($0) }, onComplete: { run.yield(.complete) },
-                onError: { run.yield(.failed(Self.failureMessage($0.message ?? ""))) })
+                onChunk: { @Sendable in accumulator.append($0) }, onComplete: { @Sendable in run.yield(.complete) },
+                onError: { @Sendable in run.yield(.failed(Self.failureMessage($0.message ?? ""))) })
         } else if let value = provider as? ProviderSetting.Claude {
             job = claude.streamTextCancellable(providerSetting: value, messages: input, params: params,
-                onChunk: { accumulator.append($0) }, onComplete: { run.yield(.complete) },
-                onError: { run.yield(.failed(Self.failureMessage($0.message ?? ""))) })
+                onChunk: { @Sendable in accumulator.append($0) }, onComplete: { @Sendable in run.yield(.complete) },
+                onError: { @Sendable in run.yield(.failed(Self.failureMessage($0.message ?? ""))) })
         } else { throw DesktopRuntimeError.message("此服务商协议尚未接入桌面版。") }
         let box = DesktopKMPJob(job)
         run.installCancellation { box.cancel() }

@@ -73,8 +73,9 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
             child.executableURL = URL(fileURLWithPath: configuration.command)
             child.arguments = configuration.arguments
         } else {
-            child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            child.arguments = [configuration.command] + configuration.arguments
+            // Resolve bare commands (npx, uvx, python3) through the login shell's PATH; GUI apps inherit only /usr/bin:/bin.
+            child.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            child.arguments = ["-l", "-c", "exec \"$0\" \"$@\"", configuration.command] + configuration.arguments
         }
         child.environment = ProcessInfo.processInfo.environment.merging(configuration.environment) { _, configured in configured }
         child.standardInput = stdin
