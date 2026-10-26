@@ -59,8 +59,15 @@ actor DesktopAgentJournal {
                         record.status = uncertain ? .outcomeUnknown : .interrupted
                         record.approval = nil
                         record.error = uncertain ? "上次工具执行中断，结果需要核对；不会自动重放。" : "上次任务已中断，可以从原会话继续。"
-                        for index in record.transactions.indices where record.transactions[index].state == "started" {
-                            record.transactions[index].state = "outcome_unknown"
+                        for index in record.transactions.indices {
+                            switch record.transactions[index].state {
+                            case "started": record.transactions[index].state = "outcome_unknown"
+                            // The approval prompt died with the process; the call never ran.
+                            case "waiting_user":
+                                record.transactions[index].state = "finished"
+                                record.transactions[index].outcome = "interrupted"
+                            default: break
+                            }
                         }
                         try save(record)
                     }

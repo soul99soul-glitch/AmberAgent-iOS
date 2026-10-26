@@ -156,3 +156,23 @@ struct DesktopSendGlyph: View {
             }
     }
 }
+
+/// Paper text field: card ground, hairline edge, amber edge while editing.
+struct DesktopFieldStyle: TextFieldStyle {
+    @FocusState private var focused: Bool
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .focused($focused)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.accent : DesktopTheme.hairlineStrong))
+            .animation(.easeOut(duration: 0.15), value: focused)
+    }
+}
+
+extension TextFieldStyle where Self == DesktopFieldStyle {
+    static var desktop: DesktopFieldStyle { DesktopFieldStyle() }
+}

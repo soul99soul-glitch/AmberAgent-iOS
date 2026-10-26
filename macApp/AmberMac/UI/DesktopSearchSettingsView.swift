@@ -16,7 +16,7 @@ struct DesktopSearchSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("联网搜索").font(DesktopTheme.serif(size: 20, weight: .semibold))
+            Text("联网搜索").font(DesktopTheme.serif(size: 22, weight: .semibold))
             Text("聊天工具与 Recipe 共用此配置；搜索结果会回到发起任务的会话。")
                 .foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
             Form {
@@ -24,11 +24,11 @@ struct DesktopSearchSettingsView: View {
                     ForEach(DesktopSearchService.allCases) { Text($0.title).tag($0) }
                 }
                 Stepper("结果数量：\(resultCount)", value: $resultCount, in: 1...10)
-                if service != .free { SecureField("API Key", text: $apiKey).textFieldStyle(.roundedBorder) }
+                if service != .free { SecureField("API Key", text: $apiKey).textFieldStyle(.desktop) }
                 Text(service == .free ? "免费聚合源可能受到反爬限制；可切换到你已有凭证的搜索服务。" : "凭证保存在本机钥匙串，备份与导出不包含此凭证。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
-            .formStyle(.grouped)
+            .formStyle(.grouped).scrollContentBackground(.hidden)
             if let error { Text(error).foregroundStyle(DesktopTheme.danger).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()

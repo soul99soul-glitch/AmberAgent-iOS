@@ -114,7 +114,7 @@ struct DesktopCollaborationsView: View {
             }.pickerStyle(.segmented)
             Text("任务说明").font(.system(size: 13, weight: .semibold))
             TextField("这次要完成什么？请提供所需背景和资料。", text: $objective, axis: .vertical)
-                .textFieldStyle(.roundedBorder).lineLimit(3...6)
+                .textFieldStyle(.desktop).lineLimit(3...6)
                 .accessibilityLabel("协作任务说明")
             if council {
                 HStack {
@@ -131,7 +131,7 @@ struct DesktopCollaborationsView: View {
                 ForEach($members) { $member in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            TextField("成员名称", text: $member.name).textFieldStyle(.roundedBorder).frame(width: 130)
+                            TextField("成员名称", text: $member.name).textFieldStyle(.desktop).frame(minWidth: 120, idealWidth: 160, maxWidth: 200)
                             modelPicker("成员模型", selection: $member.modelID)
                             Menu("预设职责") {
                                 ForEach(DesktopCollaborationRole.builtIns) { role in
@@ -153,7 +153,7 @@ struct DesktopCollaborationsView: View {
                                 .accessibilityLabel("移除成员 \(member.name)")
                         }
                         TextField("成员职责", text: $member.rolePrompt, axis: .vertical)
-                            .textFieldStyle(.roundedBorder).lineLimit(1...3)
+                            .textFieldStyle(.desktop).lineLimit(1...3)
                             .accessibilityLabel("\(member.name) 的职责")
                     }
                     .padding(12)

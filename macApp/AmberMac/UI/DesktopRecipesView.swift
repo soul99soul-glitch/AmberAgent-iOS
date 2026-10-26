@@ -128,7 +128,7 @@ struct DesktopRecipesView: View {
                         Text(key + (recipe.manifest.inputs[key] == .number ? " · 数字" : " · 文本"))
                             .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         TextField(key, text: Binding(get: { inputValues[key] ?? "" }, set: { inputValues[key] = $0 }), axis: .vertical)
-                            .textFieldStyle(.roundedBorder).lineLimit(1...4)
+                            .textFieldStyle(.desktop).lineLimit(1...4)
                     }
                 }
             }

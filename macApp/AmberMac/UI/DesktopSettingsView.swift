@@ -190,7 +190,7 @@ struct DesktopSettingsView: View {
                     #endif
                     models
                     if !catalogRequest.models.isEmpty { catalogModels }
-                }.formStyle(.grouped)
+                }.formStyle(.grouped).scrollContentBackground(.hidden)
                 statusFooter
             }.frame(minWidth: 560, maxWidth: .infinity)
         }.disabled(deleting)
@@ -464,7 +464,7 @@ struct DesktopSettingsView: View {
                 if let onOpenBackup { Button("备份与恢复…", action: onOpenBackup) }
                 if let onOpenStorage { Button("存储用量…", action: onOpenStorage) }
             }
-        }.formStyle(.grouped)
+        }.formStyle(.grouped).scrollContentBackground(.hidden)
     }
 
     private func statusText(_ message: String, failed: Bool) -> some View {

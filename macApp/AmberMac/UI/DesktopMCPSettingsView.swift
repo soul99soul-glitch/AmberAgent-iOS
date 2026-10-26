@@ -179,7 +179,7 @@ private struct DesktopMCPServerEditor: View {
                 Text("请求头和环境变量保存在系统钥匙串中。保存不会自动连接或执行工具。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
-            .formStyle(.grouped)
+            .formStyle(.grouped).scrollContentBackground(.hidden)
             if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()

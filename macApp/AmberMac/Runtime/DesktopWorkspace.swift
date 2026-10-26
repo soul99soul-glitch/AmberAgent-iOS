@@ -1178,7 +1178,7 @@ final class DesktopWorkspace {
 
     @discardableResult
     func exportConversation(to url: URL) -> Task<Void, Never>? {
-        guard let owner = selectedID else { errorMessage = "请先选择要导出的会话。"; return nil }
+        guard let owner = selectedID, selectedConversation != nil else { errorMessage = "请先读取要导出的会话。"; return nil }
         guard branchMutationOwner != owner else { recordError("正在保存消息更改，请稍候再导出。", owner: owner); return nil }
         if generationConversationID == owner, let generation { apply(generation.drain()) }
         if let conversation = conversations.first(where: { $0.id == owner }) { persist(conversation) }

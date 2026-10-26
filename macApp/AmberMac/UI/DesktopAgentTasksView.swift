@@ -151,11 +151,15 @@ struct DesktopToolApprovalCard: View {
                     .lineSpacing(4).lineLimit(3)
                     .padding(.leading, 14)
                     .padding(.bottom, 12)
-                Text(approval.arguments).font(.system(size: 12, design: .monospaced)).foregroundStyle(DesktopTheme.ink)
-                    .lineLimit(2).truncationMode(.middle)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DesktopTheme.paper, in: RoundedRectangle(cornerRadius: 8))
+                ScrollView {
+                    Text(approval.arguments).font(.system(size: 12, design: .monospaced)).foregroundStyle(DesktopTheme.ink)
+                        .lineSpacing(2).textSelection(.enabled)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 112)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(DesktopTheme.paper, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
                     .padding(.leading, 14)
                 HStack(spacing: 8) {

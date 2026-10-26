@@ -18,6 +18,7 @@ for f in IOSCodexOAuthClient.swift IOSImageGenerationModels.swift IOSImageGenera
   cp "$project_dir/../iosApp/iosApp/$f" "$work/Sources/AmberSnapshot/"
 done
 cp "$project_dir/scripts/snapshot/SnapshotMain.swift" "$work/Sources/AmberSnapshot/"
+cp "$project_dir/Preview/PreviewSettingsView.swift" "$work/Sources/AmberSnapshot/"
 iosmath="$project_dir/build/SourcePackages/checkouts/iosMath"
 cat > "$work/Package.swift" <<PKG
 // swift-tools-version: 6.0

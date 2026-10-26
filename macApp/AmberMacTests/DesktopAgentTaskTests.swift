@@ -30,6 +30,22 @@ import XCTest
         XCTAssertNil(reopened.records.first?.approval)
     }
 
+    func testReopenClosesApprovalThatWasStillWaiting() async throws {
+        let directory = try directory()
+        let journal = DesktopAgentJournal(directory: directory)
+        var value = DesktopAgentTask(id: UUID(), conversationID: UUID(), title: "写文件", status: .waiting, createdAt: Date(), updatedAt: Date())
+        value.approval = DesktopToolApproval(id: "call-1", name: "workspace_file_write", arguments: "{}", reason: "写入")
+        value.transactions = [DesktopToolTransaction(id: "call-1", name: "workspace_file_write", argsDigest: "d", effect: "sideEffect", state: "waiting_user")]
+        try await journal.save(value)
+        let reopened = DesktopAgentTasks(directory: directory)
+        await reopened.waitUntilLoaded()
+        let record = try XCTUnwrap(reopened.records.first)
+        XCTAssertEqual(record.status, .interrupted)
+        XCTAssertNil(record.approval)
+        XCTAssertEqual(record.transactions.first?.state, "finished")
+        XCTAssertEqual(record.transactions.first?.outcome, "interrupted")
+    }
+
     func testReopenNeverReplaysStartedEffectAndKeepsOtherRunOwners() async throws {
         let directory = try directory()
         let journal = DesktopAgentJournal(directory: directory)

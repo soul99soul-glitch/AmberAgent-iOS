@@ -124,13 +124,19 @@ struct DesktopTranscript: View {
                         followsBottom = workspace.settings.automaticallyFollowGeneration
                         withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
                     } label: {
-                        Image(systemName: "arrow.down").frame(width: 32, height: 32)
+                        Image(systemName: "arrow.down").font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(DesktopTheme.inkSecondary)
+                            .frame(width: 32, height: 32)
+                            .background(DesktopTheme.card, in: Circle())
+                            .overlay(Circle().strokeBorder(DesktopTheme.hairlineStrong))
+                            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
                     }
-                    .buttonStyle(.bordered)
-                    .clipShape(Circle())
+                    .buttonStyle(DesktopPressButtonStyle())
                     .help("回到最新消息")
                     .accessibilityLabel("回到最新消息")
-                    .padding(18)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: .infinity)
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
                 }
             }
             }

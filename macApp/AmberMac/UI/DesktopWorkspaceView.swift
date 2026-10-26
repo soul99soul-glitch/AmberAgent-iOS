@@ -37,7 +37,7 @@ struct DesktopWorkspaceView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 248, max: 340)
+                .navigationSplitViewColumnWidth(min: 228, ideal: 268, max: 360)
         } detail: {
             VStack(spacing: 0) {
                 if workspace.isLoading {
@@ -77,6 +77,8 @@ struct DesktopWorkspaceView: View {
             .background(DesktopTheme.paper)
             .navigationTitle(workspace.selectedConversationTitle)
             .toolbar { toolbar }
+            .toolbarBackground(DesktopTheme.paper, for: .windowToolbar)
+            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $filesPresented) { DesktopWorkspaceFilesView(workspace: workspace) }
@@ -139,7 +141,7 @@ struct DesktopWorkspaceView: View {
                 .help("新建会话 ⌘N")
                 .accessibilityLabel("新建会话")
             }
-            .padding(.leading, 20)
+            .padding(.leading, 16)
             .padding(.trailing, 12)
             .padding(.top, 8)
             .padding(.bottom, 12)
@@ -189,7 +191,7 @@ struct DesktopWorkspaceView: View {
                             .tag(conversation.id)
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+                            .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
                             .onTapGesture { selectResult(conversation) }
                             .accessibilityAddTraits(workspace.selectedID == conversation.id ? [.isSelected, .isButton] : .isButton)
                             .contextMenu {
@@ -215,7 +217,7 @@ struct DesktopWorkspaceView: View {
                     Text(group.title)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(DesktopTheme.inkTertiary)
-                        .padding(.leading, 22)
+                        .padding(.leading, 14)
                 }
                 }
             }
@@ -281,7 +283,7 @@ struct DesktopWorkspaceView: View {
             }
             .font(.system(size: 13))
             .tint(DesktopTheme.inkSecondary)
-            .padding(.leading, 20)
+            .padding(.leading, 16)
             .padding(.trailing, 12)
             .frame(height: 52)
         }
@@ -517,10 +519,10 @@ struct DesktopWorkspaceView: View {
                 Text(title).font(.system(size: 14)).foregroundStyle(DesktopTheme.inkSecondary).lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 4)
             .frame(height: 48)
             .overlay(alignment: .bottom) {
-                if divider { Rectangle().fill(DesktopTheme.hairline).frame(height: 1).padding(.horizontal, 12) }
+                if divider { Rectangle().fill(DesktopTheme.hairline).frame(height: 1) }
             }
             .contentShape(Rectangle())
         }

@@ -165,7 +165,7 @@ struct DesktopKnowledgeView: View {
     private var memories: some View {
         VStack(spacing: 12) {
             HStack {
-                TextField("搜索记忆", text: $memoryQuery).textFieldStyle(.roundedBorder)
+                TextField("搜索记忆", text: $memoryQuery).textFieldStyle(.desktop)
                 Picker("范围", selection: $memoryScope) {
                     Text("全部范围").tag(Optional<DesktopMemoryScope>.none)
                     ForEach(DesktopMemoryScope.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
@@ -300,7 +300,7 @@ private struct DesktopMemoryEditor: View {
             Text(original.id == 0 ? "新增记忆" : "编辑记忆").font(.system(size: 20, weight: .semibold))
             if record.kind == .topic {
                 TextField("主题名称", text: Binding(get: { record.topicTitle ?? "" }, set: { record.topicTitle = $0 }))
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.desktop)
             }
             TextEditor(text: $record.content).font(.system(size: 14)).scrollContentBackground(.hidden).padding(8)
                 .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 8))

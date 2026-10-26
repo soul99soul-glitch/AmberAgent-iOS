@@ -67,7 +67,7 @@ struct DesktopMessageEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("编辑并重新发送").font(DesktopTheme.serif(size: 18, weight: .semibold))
+            Text("编辑并重新发送").font(DesktopTheme.serif(size: 22, weight: .semibold))
             Text(followingCount > 0
                  ? "重新发送将移除这条消息之后的 \(followingCount) 条消息，并根据修改后的内容重新回复。"
                  : "Amber 将根据修改后的内容重新回复。")
@@ -77,8 +77,8 @@ struct DesktopMessageEditor: View {
             TextEditor(text: $text)
                 .font(.body)
                 .padding(8)
-                .background(.background, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+                .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
                 .frame(minHeight: 180, idealHeight: 240)
                 .accessibilityLabel("编辑消息内容")
                 .accessibilityIdentifier("message-edit-input")

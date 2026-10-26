@@ -44,7 +44,7 @@ struct DesktopWebDAVSettingsView: View {
                 Section { Label(message, systemImage: "info.circle").foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
             }
         }
-        .formStyle(.grouped)
+        .formStyle(.grouped).scrollContentBackground(.hidden)
         .task {
             guard !didLoad else { return }
             didLoad = true

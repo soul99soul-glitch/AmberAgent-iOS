@@ -22,7 +22,7 @@ struct DesktopImageGenerationView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("图片生成").font(DesktopTheme.serif(size: 20, weight: .semibold))
+                    Text("图片生成").font(DesktopTheme.serif(size: 22, weight: .semibold))
                     Text("保存到：\(ownerTitle)").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1).help(ownerTitle)
                 }
                 Spacer()
@@ -40,14 +40,14 @@ struct DesktopImageGenerationView: View {
                     HStack {
                         Text(generator.configuredModelName ?? "尚未配置生图模型").lineLimit(1)
                         Spacer()
-                        SettingsLink { Text("选择生图模型…") }.buttonStyle(.link)
+                        SettingsLink { Text("选择生图模型…") }.buttonStyle(.link).foregroundStyle(DesktopTheme.accent)
                     }.font(.system(size: 13))
                     Text("描述想要生成的图片").font(.system(size: 14, weight: .semibold))
                     TextEditor(text: $prompt)
-                        .font(.body).padding(7)
+                        .font(.system(size: 14)).scrollContentBackground(.hidden).padding(8)
                         .frame(height: 110)
                         .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
                         .accessibilityLabel("图片提示词")
                         .disabled(generator.isRunning)
                     HStack(spacing: 20) {
@@ -56,7 +56,7 @@ struct DesktopImageGenerationView: View {
                         }.frame(maxWidth: 240)
                         Stepper("数量：\(count)", value: $count, in: 1...4)
                     }.disabled(generator.isRunning)
-                    TextField("风格（可选）", text: $style).textFieldStyle(.roundedBorder).disabled(generator.isRunning)
+                    TextField("风格（可选）", text: $style).textFieldStyle(.desktop).disabled(generator.isRunning)
                     Text("生成结果直接保存在原会话文件中；加入草稿后，发送时才会作为图片附件进入对话。")
                         .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                     if pendingSaveCount > 0 {

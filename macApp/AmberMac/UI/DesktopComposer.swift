@@ -20,7 +20,7 @@ struct DesktopComposer: View {
                 if !workspace.pendingAttachments.isEmpty {
                     attachmentList
                 }
-                TextField("向 Amber 发送消息…", text: $workspace.draft, axis: .vertical)
+                TextField("", text: $workspace.draft, prompt: Text("向 Amber 发送消息…").foregroundStyle(DesktopTheme.inkTertiary), axis: .vertical)
                     .font(.system(size: 15))
                     .foregroundStyle(DesktopTheme.ink)
                     .lineSpacing(4)

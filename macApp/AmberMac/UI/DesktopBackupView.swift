@@ -19,7 +19,7 @@ struct DesktopBackupView: View {
             Text("备份包含会话、会话文件、服务商与模型配置、记忆及本地知识资料。不包含钥匙串 API Key / 登录凭证；自定义请求头和请求体作为模型配置随备份保存，请注意其中填写的敏感信息。")
                 .font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme)).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 10) {
-                SecureField("备份密码（可选）", text: $password).textFieldStyle(.roundedBorder)
+                SecureField("备份密码（可选）", text: $password).textFieldStyle(.desktop)
                     .disabled(workspace.isManagingBackup)
                 Label(password.isEmpty ? "当前将导出未加密备份，文件内容可被直接读取。" : "将使用所填密码加密备份；恢复时需要相同密码。",
                       systemImage: password.isEmpty ? "lock.open" : "lock")
