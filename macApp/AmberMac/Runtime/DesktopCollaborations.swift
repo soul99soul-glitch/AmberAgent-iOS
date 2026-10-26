@@ -54,6 +54,32 @@ struct DesktopCollaborationMember: Codable, Equatable, Identifiable, Sendable {
     var skillNames: [String] = []
 }
 
+enum DesktopComposerMode: String, CaseIterable, Identifiable, Sendable {
+    case chat, council, subagents
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .chat: "对话"
+        case .council: "模型议会"
+        case .subagents: "子代理"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .chat: "bubble.left"
+        case .council: "person.3"
+        case .subagents: "point.3.connected.trianglepath.dotted"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .chat: "与当前模型对话"
+        case .council: "主持人规划席位，多轮讨论后综合，结果写回本会话"
+        case .subagents: "Explorer、Historian、Oracle 只读调研，结果写回本会话"
+        }
+    }
+}
+
 enum DesktopCouncilMode: String, Codable, CaseIterable, Sendable {
     case freeChat = "free_chat", debate
     var title: String { self == .freeChat ? "自由讨论" : "辩论" }

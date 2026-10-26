@@ -143,3 +143,38 @@ struct DesktopTabTransition: ViewModifier {
             removal: .opacity))
     }
 }
+
+/// Live strip above the composer while a council / sub-agent run started from the composer works.
+struct DesktopCollaborationProgress: View {
+    let run: DesktopCollaborationRun
+    let onOpen: () -> Void
+    let onStop: () -> Void
+
+    private var active: DesktopCollaborationOutput? { run.outputs.last { $0.status == .running } }
+    private var done: Int { run.outputs.filter { $0.status.isTerminal }.count }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            DesktopPulse()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(run.isCouncil ? "模型议会进行中" : "子代理调研中")
+                    .font(.system(size: 13, weight: .medium)).foregroundStyle(DesktopTheme.ink)
+                Text(active.map { "\($0.name) 正在发言" } ?? (run.outputs.isEmpty ? "主持人正在安排席位…" : "正在综合结论…"))
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkSecondary)
+                    .lineLimit(1)
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.2), value: active?.id)
+            }
+            Spacer(minLength: 8)
+            if !run.outputs.isEmpty {
+                Text("\(done)/\(run.outputs.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(DesktopTheme.inkTertiary)
+            }
+            Button("查看", action: onOpen).buttonStyle(.link).font(.system(size: 12))
+            Button("停止", action: onStop).buttonStyle(.link).font(.system(size: 12))
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 48)
+        .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 10))
+        .background(DesktopTheme.glow(RoundedRectangle(cornerRadius: 10)))
+    }
+}

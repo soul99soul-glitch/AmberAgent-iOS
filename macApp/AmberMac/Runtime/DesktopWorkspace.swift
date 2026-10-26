@@ -6,6 +6,9 @@ final class DesktopWorkspace {
     private(set) var conversations: [DesktopConversation] = []
     var selectedID: UUID?
     var draft = ""
+    /// Composer mode: plain chat, or send the draft to a council / sub-agent team that reports back into this conversation.
+    var composerMode = DesktopComposerMode.chat
+    private(set) var composerRunID: UUID?
     var searchText = "" { didSet { if searchText != oldValue { scheduleSearch() } } }
     private(set) var summaries: [DesktopConversationSummary] = []
     private(set) var sidebarResults: [DesktopConversationSearchResult] = []
@@ -1234,6 +1237,29 @@ final class DesktopWorkspace {
     }
 
     @discardableResult
+    /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+    /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+    func sendCollaboration() {
+        guard let owner = selectedID, composerMode != .chat else { return }
+        let objective = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !objective.isEmpty else { return }
+        let team = DesktopCollaborationRole.builtIns.prefix(3).map {
+            DesktopCollaborationMember(name: $0.name, rolePrompt: $0.prompt, roleID: $0.id)
+        }
+        do {
+            let runID = composerMode == .council
+                ? try collaborations.startCouncil(parentConversationID: owner, objective: objective, seats: [])
+                : try collaborations.startSubagents(parentConversationID: owner, objective: objective, members: team)
+            draft = ""
+            composerRunID = runID
+            Task {
+                _ = await collaborations.waitUntilFinished(runID)
+                if composerRunID == runID { composerRunID = nil }
+                await saveCollaborationResult(runID: runID)?.value
+            }
+        } catch { recordError(error.localizedDescription, owner: owner) }
+    }
+
     func saveCollaborationResult(runID: UUID) -> Task<Void, Never>? {
         guard !isManagingBackup else { collaborationSaveErrors[runID] = "请等待备份完成后再保存协作结果。"; return nil }
         guard let initial = collaborations.runs.first(where: { $0.id == runID }), initial.status.isTerminal else {

@@ -56,6 +56,29 @@ import XCTest
         XCTAssertTrue(workspace.savedCollaborationRuns.contains(id))
     }
 
+    func testComposerSubagentModeRunsTeamAndWritesResultBackToConversation() async throws {
+        let original = DesktopConversation(title: "owner")
+        let (workspace, provider, storage) = try setup([original])
+        workspace.select(original.id)
+        workspace.composerMode = .subagents
+        workspace.draft = "调研 stdio 传输"
+        workspace.sendCollaboration()
+        XCTAssertEqual(workspace.draft, "")
+        let runID = try XCTUnwrap(workspace.composerRunID)
+        XCTAssertEqual(workspace.collaborations.runs.first { $0.id == runID }?.objective, "调研 stdio 传输")
+        for index in 0..<3 {
+            while provider.runs.count <= index { await Task.yield() }
+            provider.runs[index].yield(.snapshot(text: "member \(index) finding", reasoning: ""))
+            provider.runs[index].yield(.complete)
+        }
+        _ = await workspace.collaborations.waitUntilFinished(runID)
+        for _ in 0..<200 where !(workspace.savedCollaborationRuns.contains(runID)) { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNil(workspace.composerRunID)
+        let saved = try XCTUnwrap(storage.values.first { $0.id == original.id })
+        XCTAssertEqual(saved.messages.last?.id, runID)
+        XCTAssertTrue(saved.messages.last?.text.contains("member 0 finding") == true)
+    }
+
     func testFailedMessageSaveKeepsArtifactAndDoesNotPublishSuccess() async throws {
         let original = DesktopConversation(title: "owner"), other = DesktopConversation(title: "other")
         let (workspace, provider, storage) = try setup([original, other])

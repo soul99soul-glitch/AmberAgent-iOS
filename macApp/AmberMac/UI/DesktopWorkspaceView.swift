@@ -70,7 +70,15 @@ struct DesktopWorkspaceView: View {
                         .padding(.horizontal, 24)
                         .padding(.bottom, 8)
                 }
-                DesktopComposer(workspace: workspace, focusRequest: composerFocusRequest)
+                if let runID = workspace.composerRunID, let run = workspace.collaborations.runs.first(where: { $0.id == runID }) {
+                    DesktopCollaborationProgress(run: run, onOpen: { collaborationsPresented = true },
+                        onStop: { workspace.collaborations.cancel(runID) })
+                        .frame(maxWidth: DesktopTheme.contentWidth)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                DesktopComposer(workspace: workspace, focusRequest: composerFocusRequest, onOpenCollaborations: { collaborationsPresented = true })
                     .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable || workspace.isManagingBackup)
             }
             .animation(.spring(response: 0.38, dampingFraction: 0.86), value: workspace.selectedID)

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct DesktopComposer: View {
     @Bindable var workspace: DesktopWorkspace
     var focusRequest: Int = 0
+    var onOpenCollaborations: () -> Void = {}
     @Environment(\.colorScheme) private var scheme
     @FocusState private var inputFocused: Bool
     @State private var fileDropTargeted = false
@@ -20,7 +21,7 @@ struct DesktopComposer: View {
                 if !workspace.pendingAttachments.isEmpty {
                     attachmentList
                 }
-                TextField("", text: $workspace.draft, prompt: Text("向 Amber 发送消息…").foregroundStyle(DesktopTheme.inkTertiary), axis: .vertical)
+                TextField("", text: $workspace.draft, prompt: Text(placeholder).foregroundStyle(DesktopTheme.inkTertiary), axis: .vertical)
                     .font(.system(size: 15))
                     .foregroundStyle(DesktopTheme.ink)
                     .lineSpacing(4)
@@ -43,7 +44,7 @@ struct DesktopComposer: View {
                         }
                         if sends {
                             if workspace.isSelectedConversationGenerating { if workspace.canQueueInstruction { _ = workspace.queueInstruction() } }
-                            else if !sendDisabled { workspace.send() }
+                            else if !sendDisabled { submit() }
                             return .handled
                         }
                         editor.insertText("\n", replacementRange: editor.selectedRange())
@@ -72,6 +73,7 @@ struct DesktopComposer: View {
                     .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isGenerating || workspace.isMutatingBranch)
                     .help("允许模型使用已接入的工具；需要确认的操作会先显示审批。")
+                    modeMenu
                     .accessibilityLabel("工具")
                     .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
                     if workspace.isReadingAttachments {
@@ -116,14 +118,14 @@ struct DesktopComposer: View {
                         .buttonStyle(DesktopQuietButtonStyle())
                         .help("另一个会话正在生成，返回该会话后可以停止")
                     } else {
-                        Button { workspace.send() } label: {
+                        Button { submit() } label: {
                             DesktopSendGlyph(enabled: !sendDisabled, glint: workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "琥珀")
                         }
                         .buttonStyle(DesktopPressButtonStyle())
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                         .disabled(sendDisabled)
-                        .help("发送消息 ⌘Return")
-                        .accessibilityLabel("发送消息")
+                        .help(workspace.composerMode == .chat ? "发送消息 ⌘Return" : "发起\(workspace.composerMode.title) ⌘Return")
+                        .accessibilityLabel(workspace.composerMode == .chat ? "发送消息" : "发起\(workspace.composerMode.title)")
                         .keyboardShortcut(.return, modifiers: .command)
                     }
                 }
@@ -172,6 +174,52 @@ struct DesktopComposer: View {
     }
 
     private var shortcut: DesktopSendShortcut { workspace.settings.sendShortcut }
+
+    private var placeholder: String {
+        switch workspace.composerMode {
+        case .chat: "向 Amber 发送消息…"
+        case .council: "写下要议会讨论的问题，主持人会安排席位…"
+        case .subagents: "写下要子代理调研的任务…"
+        }
+    }
+
+    private func submit() {
+        if workspace.composerMode == .chat { workspace.send() } else { workspace.sendCollaboration() }
+    }
+
+    /// Chat / 模型议会 / 子代理 — chosen per send, right beside the tools switch.
+    private var modeMenu: some View {
+        Menu {
+            ForEach(DesktopComposerMode.allCases) { mode in
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { workspace.composerMode = mode }
+                } label: {
+                    Label { Text(mode.title); Text(mode.detail) } icon: { Image(systemName: mode.symbol) }
+                }
+            }
+            Divider()
+            Button("协作详细设置…", systemImage: "slider.horizontal.3") { onOpenCollaborations() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: workspace.composerMode.symbol).font(.system(size: 12))
+                Text(workspace.composerMode.title).font(.system(size: 13))
+            }
+            .foregroundStyle(workspace.composerMode == .chat ? DesktopTheme.inkTertiary : DesktopTheme.accentInk)
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background {
+                if workspace.composerMode != .chat { DesktopTheme.glow(RoundedRectangle(cornerRadius: 6)) }
+            }
+            .contentTransition(.opacity)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(workspace.isGenerating || workspace.isMutatingBranch || workspace.composerRunID != nil)
+        .help("选择发送方式：普通对话、模型议会或子代理")
+        .accessibilityLabel("发送方式")
+        .accessibilityValue(workspace.composerMode.title)
+    }
 
     private var sendDisabled: Bool {
         workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
