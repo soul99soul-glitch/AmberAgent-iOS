@@ -177,3 +177,28 @@ struct DesktopFieldStyle: TextFieldStyle {
 extension TextFieldStyle where Self == DesktopFieldStyle {
     static var desktop: DesktopFieldStyle { DesktopFieldStyle() }
 }
+
+/// List row whose selection is the amber glow and whose hover is the paper ground.
+struct DesktopSelectableRow<Content: View>: View {
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let content: Content
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    if selected { DesktopTheme.glow(RoundedRectangle(cornerRadius: 8)) }
+                    else if hovering { RoundedRectangle(cornerRadius: 8).fill(DesktopTheme.hover) }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: selected)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}

@@ -156,19 +156,26 @@ struct DesktopSettingsView: View {
     private var providers: some View {
         HSplitView {
             VStack(spacing: 0) {
-                List(selection: Binding(get: { editingID }, set: { request(.provider($0)) })) {
-                    ForEach(settings.providers) { provider in
-                        HStack(spacing: 10) {
-                            Circle().fill(settings.selectedProviderID == provider.id ? DesktopTheme.accent : DesktopTheme.hairlineStrong)
-                                .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(provider.name).font(.system(size: 14)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
-                                Text("\(provider.models.filter(\.enabled).count) 个启用模型").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                // Selection is the amber glow, not the system highlight (which turns rows blue and kills ink contrast).
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(settings.providers) { provider in
+                            DesktopSelectableRow(selected: editingID == provider.id, action: { request(.provider(provider.id)) }) {
+                                HStack(spacing: 10) {
+                                    Circle().fill(settings.selectedProviderID == provider.id ? DesktopTheme.accent : DesktopTheme.hairlineStrong)
+                                        .frame(width: 6, height: 6)
+                                        .help(settings.selectedProviderID == provider.id ? "当前对话使用的服务商" : "")
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(provider.name).font(.system(size: 14)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
+                                        Text("\(provider.models.filter(\.enabled).count) 个启用模型").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
                             }
-                        }.padding(.vertical, 6).tag(provider.id)
+                        }
                     }
+                    .padding(8)
                 }
-                Divider()
                 HStack {
                     Button { request(.provider(nil)) } label: { Image(systemName: "plus").frame(width: 26, height: 26) }
                         .help("添加服务商").accessibilityLabel("添加服务商")
@@ -176,6 +183,7 @@ struct DesktopSettingsView: View {
                         .disabled(editingID == nil).help("移除服务商").accessibilityLabel("移除服务商")
                     Spacer()
                 }.buttonStyle(DesktopQuietButtonStyle()).padding(.horizontal, 10).frame(height: 40)
+                .overlay(alignment: .top) { Rectangle().fill(DesktopTheme.hairline).frame(height: 1) }
             }.frame(minWidth: 190, idealWidth: 210, maxWidth: 260)
             VStack(spacing: 0) {
                 Form {

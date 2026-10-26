@@ -37,22 +37,26 @@ struct DesktopRecipesView: View {
             }
             if let error { Text(error).font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).fixedSize(horizontal: false, vertical: true) }
             HSplitView {
-                List(selection: $selectedName) {
-                    ForEach(store.recipes) { recipe in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(recipe.manifest.name).font(.system(size: 13, weight: .semibold))
-                            Text(recipe.manifest.version + (recipe.enabled ? " · 已启用" : " · 未启用"))
-                                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-                            Text(recipe.manifest.description).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(2)
-                        }
-                        .padding(.vertical, 7).tag(recipe.id)
-                        .contextMenu {
-                            Button("编辑 JSON") { editing = recipe }
-                            Button("删除 Recipe", role: .destructive) { deleting = recipe }
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(store.recipes) { recipe in
+                            DesktopSelectableRow(selected: selectedName == recipe.id, action: { selectedName = recipe.id }) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(recipe.manifest.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
+                                    Text(recipe.manifest.version + (recipe.enabled ? " · 已启用" : " · 未启用"))
+                                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                                    Text(recipe.manifest.description).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(2)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .contextMenu {
+                                Button("编辑 JSON") { editing = recipe }
+                                Button("删除 Recipe", role: .destructive) { deleting = recipe }
+                            }
                         }
                     }
+                    .padding(8)
                 }
-                .listStyle(.sidebar).scrollContentBackground(.hidden)
                 .background(DesktopTheme.sidebar(colorScheme))
                 .frame(minWidth: 195, idealWidth: 225, maxWidth: 280)
                 ScrollView {
