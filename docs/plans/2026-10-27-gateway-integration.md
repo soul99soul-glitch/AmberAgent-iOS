@@ -116,3 +116,26 @@
 - 由记忆驱动的任务建议：没有足够明确的产品定义，不做。
 - 模型迁入 KMP：手机经网关远程管理后，已没有这个必要。
 - 真实推送送达：需要 APNs `.p8`，以请求构造单测加 outbox 验证，真机送达列为用户执行项。
+
+## 实施结果（2026-10-27）
+
+P1–P6 全部完成，提交 d027e6c、c599d02、89fdb68、40f3be7（P4 与 P5 改动交织在相同文件里，合并为一次提交）、9796954。每个阶段都跑了全量测试，并经 subagent review 后修复。最终结果：gateway 60 项全绿；Mac 394 项，其中 369 项通过、0 失败、25 项跳过（外部账号、基准测试和需要手动配合的真机用例默认跳过）；iOS 的 MacGatewayTests 与 IOSAppDeepLinkTests 共 14 项全绿。
+
+本机实测：
+- Amber 设置页启用后，SMAppService 注册了 `app.amber.macos.gateway`，launchd 显示在运行。
+- iOS 模拟器通过 `amber://` 深链完成配对，上报了 sandbox 推送 token。
+- 一次真实的定时运行在网关中以 amber 会话出现，状态从 waiting 变为 completed。
+- 在模拟器上点「批准」后，Mac 上的定时运行继续执行并写出了文件。
+- 在模拟器上，定时任务列表、立即运行、停用、新建每周任务都经真实 daemon 生效。
+
+和设计的偏差：
+- **APNs 默认 Bundle ID**：iOS 实际为 `app.amber.ios`。
+- **控制通道**：Amber 一直监听 `amber-app.sock`，启用网关后不需要重启 Amber。
+- **忙时应答**：Amber 忙时回 504「Mac 正忙」，不让 daemon 误报「Amber 未运行」。
+- **对话里修改任务**：开启了无人值守自动批准的任务，不能在对话里通过 `schedule_update` 修改。
+- **间隔上限**：间隔规则加了 7 天上限，防止远程请求触发日期计算溢出。
+
+需要用户执行的项：
+- **推送凭据与真机送达**：导入 APNs `.p8`，在真机上验证锁屏送达和通知上的「批准」按钮。
+- **Codex hooks**：在 Codex `/hooks` 中信任 gateway 的 hook。
+- **Mac mini**：原有 CLI 部署照常使用；如果改用 Amber 内置的网关，在 Amber 中启用时会自动迁移。
