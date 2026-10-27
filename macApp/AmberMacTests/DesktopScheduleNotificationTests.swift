@@ -126,4 +126,32 @@ import XCTest
         XCTAssertEqual(delivery.sent.first?.userInfo["conversationID"], owner.uuidString.lowercased())
         XCTAssertFalse(skipped, "skipped slots stay quiet")
     }
+
+    func testOnlyNewsNotifies() {
+        func record(_ status: DesktopScheduleRunStatus, _ noteworthy: Bool?) -> DesktopScheduleRunRecord {
+            DesktopScheduleRunRecord(startedAt: Date(), status: status, noteworthy: noteworthy)
+        }
+        XCTAssertTrue(record(.completed, true).shouldNotify)
+        XCTAssertTrue(record(.completed, nil).shouldNotify, "not judged (no title model): notify as before")
+        XCTAssertFalse(record(.completed, false).shouldNotify, "nothing new stays on the board quietly")
+        XCTAssertTrue(record(.failed, false).shouldNotify, "failures always notify")
+        XCTAssertTrue(record(.failed, nil).shouldNotify)
+        XCTAssertFalse(record(.skipped, nil).shouldNotify)
+    }
+
+    func testCompletedNoticeUsesTheSummaryAndQuietRunsSendNothing() async {
+        let defaults = UserDefaults(suiteName: "amber.schedule-notify.\(UUID().uuidString)")!
+        let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        settings.notificationsEnabled = true
+        let delivery = Delivery()
+        let service = DesktopNotifications(settings: settings, delivery: delivery)
+        var record = DesktopScheduleRunRecord(startedAt: Date(), status: .completed, summary: "新增 3 条待回复邮件", noteworthy: true)
+        let sent = await service.notifySchedule(taskName: "收件箱", record: record)
+        record.id = UUID(); record.noteworthy = false
+        let quiet = await service.notifySchedule(taskName: "收件箱", record: record)
+        XCTAssertTrue(sent)
+        XCTAssertFalse(quiet)
+        XCTAssertEqual(delivery.sent.map(\.body), ["新增 3 条待回复邮件"])
+        XCTAssertEqual(delivery.sent.first?.title, "⏱ 收件箱 已完成")
+    }
 }

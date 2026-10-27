@@ -74,6 +74,9 @@ public struct GatewayEvent: Codable, Sendable, Equatable {
     /// `promptSubmit` only: a longer opening of the prompt (≤ 400 characters), kept on the Mac so the Amber app
     /// can write a title from it. Never sent to the phone or put in a push.
     public var opening: String?
+    /// Amber `runExit` only: the run completed with nothing new to report, so its completion is not pushed.
+    /// Ignored for failures.
+    public var quiet: Bool?
 
     public init(
         id: String = UUID().uuidString,
@@ -140,6 +143,8 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     /// A `Stop` or `SessionEnd` was seen; distinguishes clean headless exits from crashes.
     public var sawTurnEnd: Bool
     public var sawFailure: Bool
+    /// The last `runExit` was quiet (see `GatewayEvent.quiet`): a clean completion is recorded but not pushed.
+    public var quietCompletion: Bool?
     public var process: ProcessIdentity?
     public var startedAt: Date
     public var updatedAt: Date

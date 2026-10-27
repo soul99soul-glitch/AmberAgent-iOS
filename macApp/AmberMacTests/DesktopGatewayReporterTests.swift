@@ -78,6 +78,19 @@ import XCTest
         XCTAssertEqual(events.last?.exitCode, 1)
     }
 
+    func testQuietCompletionReachesTheSpooledRunExit() async throws {
+        let (reporter, spool) = try make()
+        let quiet = UUID(), loud = UUID()
+        reporter.runStarted(runID: UUID(), conversationID: quiet, taskName: "汇总")
+        reporter.runFinished(conversationID: quiet, succeeded: true, quiet: true)
+        reporter.runStarted(runID: UUID(), conversationID: loud, taskName: "汇总")
+        reporter.runFinished(conversationID: loud, succeeded: true)
+        let exits = await drained(spool, count: 4).filter { $0.kind == .runExit }
+        XCTAssertEqual(exits.count, 2)
+        XCTAssertEqual(Set(exits.map(\.quiet)), [true, nil])
+        XCTAssertTrue(exits.allSatisfy { $0.exitCode == 0 })
+    }
+
     func testExcerptIsCollapsedAndCapped() {
         XCTAssertNil(DesktopGatewayReporter.excerpt("{}"))
         XCTAssertNil(DesktopGatewayReporter.excerpt("  "))

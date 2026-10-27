@@ -75,6 +75,24 @@ struct AmberSessionTests {
         #expect(PushContent.render(p.first!, gatewayName: "Mac").title == "Amber 定时任务 · 每日汇总")
     }
 
+    @Test func quietCompletionIsRecordedWithoutPushButFailuresStillPush() {
+        func finish(exit: Int32, quiet: Bool?) -> (Registry, [PushIntent]) {
+            var r = Registry()
+            _ = r.ingest(event(.runStart, 0), config: config, now: t0, presence: away)
+            var e = event(.runExit, 10, exit: exit)
+            e.quiet = quiet
+            let p = pushes(r.ingest(e, config: config, now: t0, presence: away))
+            return (r, p)
+        }
+        let (quiet, quietPushes) = finish(exit: 0, quiet: true)
+        #expect(quiet.sessions["amber:run-1"]?.state == .completed)
+        #expect(quietPushes.isEmpty, "nothing new: the board shows it, the phone isn't buzzed")
+        #expect(finish(exit: 0, quiet: false).1.first?.state == .completed)
+        #expect(finish(exit: 0, quiet: nil).1.first?.state == .completed, "not judged: push as before")
+        let failed = finish(exit: 1, quiet: true).1
+        #expect(failed.first?.state == .stopped && failed.first?.abnormal == true, "failures always push")
+    }
+
     @Test func apnsPayloadOffersActionsOnlyForOrdinaryApprovals() {
         let ordinary = PushIntent(kind: .task, sessionKey: "amber:run-1", agent: .amber, subject: "每日汇总", state: .waiting,
                                   waitReason: .permission, toolCallId: "c1", highRisk: false, level: .timeSensitive, createdAt: t0)

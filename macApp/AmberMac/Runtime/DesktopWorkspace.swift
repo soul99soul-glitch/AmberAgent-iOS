@@ -1610,7 +1610,8 @@ extension DesktopWorkspace {
             scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
             scheduledRunTaskConversations[task.id] = nil
             agentTasks.unattendedConversations[conversationID] = nil
-            gatewayReporter?.runFinished(conversationID: conversationID, succeeded: record.status == .completed)
+            gatewayReporter?.runFinished(conversationID: conversationID, succeeded: record.status == .completed,
+                quiet: record.status == .completed && record.noteworthy == false)
         }
 
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return failed("结果会话已删除。") }

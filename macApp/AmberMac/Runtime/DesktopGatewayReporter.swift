@@ -54,9 +54,13 @@ import Foundation
         }
     }
 
-    func runFinished(conversationID: UUID?, succeeded: Bool) {
+    /// `quiet`: completed with nothing new, so the gateway records it without pushing (failures push regardless).
+    func runFinished(conversationID: UUID?, succeeded: Bool, quiet: Bool = false) {
         guard let conversationID else { return }
-        send(.runExit, conversationID: conversationID) { $0.exitCode = succeeded ? 0 : 1 }
+        send(.runExit, conversationID: conversationID) {
+            $0.exitCode = succeeded ? 0 : 1
+            if quiet { $0.quiet = true }
+        }
         runs[conversationID] = nil
         pendingCall[conversationID] = nil
     }

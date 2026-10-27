@@ -66,6 +66,7 @@ enum SessionMachine {
             return
         case .runExit:
             r.waitReason = nil
+            r.quietCompletion = event.quiet
             if event.exitCode == 0 && event.signal == nil {
                 r.state = .completed
             } else {

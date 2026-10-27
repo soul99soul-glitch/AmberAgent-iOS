@@ -223,6 +223,8 @@ public struct Registry: Codable, Sendable, Equatable {
         case .stalled, .completed, .stopped:
             let entered = old?.state != rec.state || old?.abnormal != rec.abnormal
             guard entered, rec.state != .stopped || rec.abnormal else { return [] }
+            // B6: an Amber run that finished with nothing new stays on the board but doesn't push.
+            if rec.state == .completed, rec.agent == .amber, rec.quietCompletion == true { return [] }
             return makeIntent(&rec, subject: nil, config: config, now: now).map { [.push($0)] } ?? []
         }
     }

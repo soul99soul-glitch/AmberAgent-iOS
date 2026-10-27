@@ -113,6 +113,14 @@ extension DesktopNotificationDelivery {
     }
 }
 
+extension DesktopScheduleRunRecord {
+    /// Only bother the user when something is new: failures and noteworthy (or not judged) completions notify;
+    /// a completion judged not noteworthy stays on the board quietly. Skipped runs never notify.
+    var shouldNotify: Bool {
+        status == .failed || (status == .completed && noteworthy != false)
+    }
+}
+
 @MainActor @Observable final class DesktopNotifications {
     private(set) var isRequestingAuthorization = false
     private(set) var authorizationMessage: String?
@@ -167,10 +175,10 @@ extension DesktopNotificationDelivery {
     /// Finished scheduled run; titled with the task name.
     @discardableResult
     func notifySchedule(taskName: String, record: DesktopScheduleRunRecord) async -> Bool {
-        guard record.status == .completed || record.status == .failed else { return false }
+        guard record.shouldNotify else { return false }
         var info = ["scheduleRunID": record.id.uuidString.lowercased(), "outcome": record.status.rawValue]
         if let id = record.conversationID { info["conversationID"] = id.uuidString.lowercased() }
-        let body = record.status == .completed ? "打开 Amber 查看结果。" : (record.error.map { String($0.prefix(120)) } ?? "打开 Amber 查看原因。")
+        let body = record.status == .completed ? (record.summary ?? "打开 Amber 查看结果。") : (record.error.map { String($0.prefix(120)) } ?? "打开 Amber 查看原因。")
         return await deliver(identifier: "amber.schedule." + record.id.uuidString.lowercased(),
             title: "⏱ \(taskName) " + (record.status == .completed ? "已完成" : "未完成"), body: body, userInfo: info, category: nil)
     }
