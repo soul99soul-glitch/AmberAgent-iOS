@@ -8,6 +8,7 @@ import Foundation
 @MainActor final class DesktopBoardWriter {
     private let provider: any DesktopTextProvider
     private let paths: GatewayPaths
+    private let available: @MainActor () -> Bool
     private let request: @MainActor () -> (DesktopProviderConfiguration, String)?
     private let queue = DispatchQueue(label: "amber.board.writer")
     /// Session keys ever queued; a failed title is not retried (the board keeps the opening words).
@@ -18,8 +19,9 @@ import Foundation
     var timeout: Duration = .seconds(30)
 
     init(provider: any DesktopTextProvider, paths: GatewayPaths = .resolve(),
+         available: @escaping @MainActor () -> Bool = { true },
          request: @escaping @MainActor () -> (DesktopProviderConfiguration, String)?) {
-        self.provider = provider; self.paths = paths; self.request = request
+        self.provider = provider; self.paths = paths; self.available = available; self.request = request
     }
 
     // MARK: Session titles
@@ -27,11 +29,14 @@ import Foundation
     /// Queues untitled sessions that have an opening; generates one at a time.
     /// The model (and its Keychain key) is only looked up when there is something to title.
     func queueTitles(_ sessions: [SessionRecord]) {
+        // Each poll resumes a queue that stalled because the model was briefly unavailable.
+        next()
         let fresh = sessions.sorted { $0.startedAt < $1.startedAt }.filter {
             ($0.agent == .claude || $0.agent == .codex) && $0.generatedTitle == nil && $0.opening?.isEmpty == false
                 && !attempted.contains($0.key)
         }
-        guard !fresh.isEmpty, request() != nil else { return }
+        // Checked without the Keychain; the key is read once per generation, in `next`.
+        guard !fresh.isEmpty, available() else { return }
         attempted.formUnion(fresh.map(\.key))
         pending += fresh
         next()

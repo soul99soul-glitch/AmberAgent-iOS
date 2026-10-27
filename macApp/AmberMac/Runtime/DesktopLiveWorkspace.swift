@@ -54,7 +54,9 @@ import Foundation
         let control = DesktopGatewayControl(tasks: tasks, reporter: reporter, scheduler: scheduler)
         control.board = { [weak self] in self?.boardItems() ?? [] }
         gatewayControl = control
-        boardWriter = DesktopBoardWriter(provider: text) { [weak self] in self?.boardWriterRequest() }
+        boardWriter = DesktopBoardWriter(provider: text, available: { [weak self] in self?.settings.configuration(for: .title) != nil }) { [weak self] in
+            self?.boardWriterRequest()
+        }
         // Not as a test host: the title model's key is a Keychain read, which prompts an unsigned test build.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             Task { @MainActor [weak self] in

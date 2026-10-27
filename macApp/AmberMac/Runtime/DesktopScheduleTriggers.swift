@@ -179,8 +179,10 @@ import Foundation
     func registryChanged() {
         let modified = (try? FileManager.default.attributesOfItem(atPath: registryURL.path))?[.modificationDate] as? Date
         guard modified != registryModified || sessionStates == nil else { return }
+        // A missing or half-written file must not become the baseline: the next good read would fire for everything.
+        guard let data = try? Data(contentsOf: registryURL), let registry = try? GatewayJSON.decoder().decode(Registry.self, from: data) else { return }
         registryModified = modified
-        let sessions = Array(RegistryStore(url: registryURL).load().sessions.values)
+        let sessions = Array(registry.sessions.values)
         defer { sessionStates = Dictionary(sessions.map { ($0.key, $0.state) }, uniquingKeysWith: { a, _ in a }) }
         guard let previous = sessionStates else { return }
         // The registry drops old sessions; so can the record of what they already fired.

@@ -1707,6 +1707,9 @@ extension DesktopWorkspace {
             record.status = .failed
             record.error = record.error ?? "运行结果未能保存，请检查磁盘空间或文件权限。"
         }
+        // The conversation is done: hand it back to the user before the (slow) summary call. The board keeps showing
+        // the run until it returns.
+        scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
         // Failed runs notify anyway; a completed one gets a line and a noteworthy flag (B6 reads it).
         if record.status == .completed, let boardWriter,
            let reply = conversations.first(where: { $0.id == conversationID })?.messages.last(where: { $0.role == .assistant })?.text,

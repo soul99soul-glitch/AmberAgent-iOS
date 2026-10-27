@@ -108,6 +108,25 @@ import XCTest
         XCTAssertEqual(provider.runs.count, 2)
     }
 
+    func testAQueueStalledByAMissingKeyResumesOnTheNextPoll() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("amber-board-writer-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let provider = Provider()
+        let settings = DesktopSettings(defaults: UserDefaults(suiteName: "amber.board-writer.\(UUID().uuidString)")!,
+            credentials: DesktopMemoryCredentials())
+        let configuration = settings.selectedProvider!
+        final class Key { var present = false }
+        let key = Key()
+        let writer = DesktopBoardWriter(provider: provider, paths: GatewayPaths(stateDir: dir)) { key.present ? (configuration, "key") : nil }
+        writer.queueTitles([session("a")])
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(provider.runs.isEmpty, "the model is configured but its key can't be read yet")
+        key.present = true
+        writer.queueTitles([])
+        await waitFor { !provider.runs.isEmpty }
+        XCTAssertEqual(provider.runs.count, 1, "the next poll picks the queued session up again")
+    }
+
     func testNoModelMeansNoWork() async throws {
         let (writer, provider, spool) = make(model: false)
         writer.queueTitles([session("a")])
