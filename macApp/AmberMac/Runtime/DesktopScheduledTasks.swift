@@ -112,6 +112,8 @@ struct DesktopScheduleRunRecord: Identifiable, Codable, Equatable, Sendable {
     var autoApprovedTools: [String] = []
     /// One line written by the title model after the run (see DesktopBoardWriter); nil when none is configured.
     var summary: String?
+    /// Whether the run turned up something new (DesktopBoardWriter). nil = not judged; completed runs then notify.
+    var noteworthy: Bool?
 }
 
 struct DesktopScheduledTask: Identifiable, Codable, Equatable, Sendable {
