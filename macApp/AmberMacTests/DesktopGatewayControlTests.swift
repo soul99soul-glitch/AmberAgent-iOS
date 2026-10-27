@@ -124,6 +124,27 @@ import XCTest
         func end() {}
     }
 
+    func testAQuittingSecondListenerDoesNotDeleteTheSocketAndTheFirstRebinds() async throws {
+        let (control, _, _, paths, _) = try await make()
+        control.start()
+        defer { control.stop() }
+        let other = UnixSocketServer(path: paths.amberSocket.path, queue: DispatchQueue(label: "other"), respond: { _ in nil })
+        try other.start()
+        other.stop()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.amberSocket.path), "the other process removed its own socket")
+        control.ensureListening()
+        let request = try GatewayJSON.encoder().encode(AmberControl.Request(action: .decide, sessionKey: "amber:x", toolCallId: "c", allow: false))
+        let socket = paths.amberSocket.path
+        let reply = await Task.detached { UnixSocketClient.request(request, to: socket, timeout: 3) }.value
+        XCTAssertNotNil(reply, "Amber answers again after rebinding")
+
+        let intruder = UnixSocketServer(path: paths.amberSocket.path, queue: DispatchQueue(label: "intruder"), respond: { _ in nil })
+        try intruder.start()
+        control.stop()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.amberSocket.path), "stop never removes a socket another server owns")
+        intruder.stop()
+    }
+
     func testSocketRoundTripAndGarbage() async throws {
         let (control, _, _, paths, _) = try await make()
         control.start()

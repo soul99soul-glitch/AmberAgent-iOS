@@ -104,6 +104,9 @@ public final class UnixSocketServer {
     private let handler: (Data) -> Data?
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
+    /// Inode of the socket file this server bound; `stop` only unlinks the path if it is still ours, so a
+    /// server that took the path over afterwards keeps its socket.
+    private var boundInode: ino_t = 0
 
     public init(path: String, queue: DispatchQueue, handler: @escaping (Data) -> Bool) {
         self.path = path
@@ -129,6 +132,8 @@ public final class UnixSocketServer {
         }
         umask(oldMask)
         guard rc == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        var info = stat()
+        if stat(path, &info) == 0 { boundInode = info.st_ino }
         chmod(path, 0o600)
         guard listen(fd, 64) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
@@ -144,7 +149,14 @@ public final class UnixSocketServer {
         source = nil
         if fd >= 0 { close(fd) }
         fd = -1
-        unlink(path)
+        if isBound { unlink(path) }
+        boundInode = 0
+    }
+
+    /// The path still names the socket this server bound (another process may have replaced or removed it).
+    public var isBound: Bool {
+        var info = stat()
+        return boundInode != 0 && stat(path, &info) == 0 && info.st_ino == boundInode
     }
 
     private func acceptPending() {

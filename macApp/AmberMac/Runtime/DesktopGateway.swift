@@ -10,7 +10,7 @@ import ServiceManagement
 @MainActor protocol DesktopGatewayService: AnyObject {
     var status: SMAppService.Status { get }
     func register() throws
-    func unregister() throws
+    func unregister() async throws
 }
 
 extension SMAppService: DesktopGatewayService {}
@@ -59,8 +59,19 @@ extension SMAppService: DesktopGatewayService {}
          bundledBinary: URL = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/amber-gateway")) {
         self.paths = paths; self.installation = installation; self.service = service; self.bundledBinary = bundledBinary
         refresh()
-        // The app may have moved since the hooks were installed; hooks only know the stable symlink.
-        if isEnabled, installation.linkTarget?.path != bundledBinary.path { try? installation.linkBinary(bundledBinary) }
+        guard isEnabled, status != .needsApproval else { return }
+        // The app may have moved or been rebuilt since it registered: hooks only know the stable symlink, and
+        // launchd keeps the old bundle's registration (it refuses to spawn a re-signed binary, EX_CONFIG).
+        if installation.linkTarget?.path != bundledBinary.path { try? installation.linkBinary(bundledBinary) }
+        if !paths.daemonRunning { Task { await reregister() } }
+    }
+
+    /// launchd pins the code signature it saw at registration and refuses a rebuilt binary (EX_CONFIG) until the
+    /// agent is registered again. Unregistering is asynchronous; registering before it finishes changes nothing.
+    func reregister() async {
+        try? await service.unregister()
+        do { try service.register() } catch { message = "后台服务重新注册失败：\(error.localizedDescription)" }
+        refresh()
     }
 
     // MARK: enable / disable
@@ -72,7 +83,6 @@ extension SMAppService: DesktopGatewayService {}
             try installation.installHooks()
             // One daemon per state directory: the app takes over from `amber-gateway install`.
             if installation.hasCLIDeployment { installation.removeCLIDeployment() }
-            if service.status == .enabled { try? service.unregister() }
             try service.register()
         } catch {
             if service.status != .enabled && service.status != .requiresApproval { removeOwnHooksAndLink() }
@@ -85,16 +95,16 @@ extension SMAppService: DesktopGatewayService {}
         }
     }
 
-    func disable() {
+    @discardableResult
+    func disable() -> Task<Void, Never> {
         message = nil
-        do {
-            try service.unregister()
-        } catch {
-            message = "停止后台服务失败：\(error.localizedDescription)"
-        }
+        // Hooks first: the daemon going away is what launchd does asynchronously.
         removeOwnHooksAndLink()
         pairing = nil
-        refresh()
+        return Task {
+            do { try await service.unregister() } catch { message = "停止后台服务失败：\(error.localizedDescription)" }
+            refresh()
+        }
     }
 
     /// Hooks and the symlink are shared with a CLI install; leave them alone once the CLI has re-pointed the link.

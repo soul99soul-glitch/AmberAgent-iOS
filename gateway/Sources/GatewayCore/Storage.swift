@@ -79,8 +79,13 @@ public struct RegistryStore: Sendable {
 
     public func load() -> Registry {
         guard let data = try? Data(contentsOf: url),
-              let registry = try? GatewayJSON.decoder().decode(Registry.self, from: data)
+              var registry = try? GatewayJSON.decoder().decode(Registry.self, from: data)
         else { return Registry() }
+        // Titles recorded before host-injected turns were filtered out (see HookParser.summary).
+        for key in registry.sessions.keys where registry.sessions[key]?.summary?.hasPrefix("<") == true {
+            registry.sessions[key]?.summary = nil
+            registry.sessions[key]?.opening = nil
+        }
         return registry
     }
 

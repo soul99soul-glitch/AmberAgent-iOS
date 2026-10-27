@@ -6,6 +6,7 @@ struct MacGatewaySettingsView: View {
     @Environment(\.openURL) private var openURL
     @State private var confirmsUnpair = false
     @State private var creatingSchedule = false
+    @State private var showsEndedTasks = false
 
     private let store = MacGatewayStore.shared
     private static let refreshInterval: Duration = .seconds(10)
@@ -178,7 +179,9 @@ struct MacGatewaySettingsView: View {
     }
 
     private var tasksSection: some View {
-        let sessions = Array((store.status?.sessions ?? []).prefix(Self.visibleTaskLimit))
+        let all = Array((store.status?.sessions ?? []).prefix(Self.visibleTaskLimit))
+        let open = all.filter(\.isOpen)
+        let ended = all.filter { !$0.isOpen }
         return VStack(spacing: 0) {
             AmberSectionLabel(text: "任务")
             AmberFormGroup {
@@ -189,27 +192,52 @@ struct MacGatewaySettingsView: View {
                     }
                     rowDivider
                 }
-                if sessions.isEmpty {
+                if all.isEmpty {
                     settingsRow(icon: "tray", title: L("暂无任务"),
                                 detail: L("在 Mac 上使用 Claude Code 或 Codex 后会出现在这里")) {
                         EmptyView()
                     }
+                } else if open.isEmpty {
+                    settingsRow(icon: "checkmark.circle", title: L("没有进行中的任务"),
+                                detail: L("任务运行或等你处理时会出现在这里")) {
+                        EmptyView()
+                    }
                 }
-                ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                ForEach(Array(open.enumerated()), id: \.element.id) { index, session in
                     if index > 0 { rowDivider }
-                    settingsRow(icon: Self.agentIcon(session.agent), title: session.subject, detail: taskDetail(session)) {
+                    settingsRow(icon: Self.agentIcon(session.agent), title: session.displayTitle, detail: taskDetail(session)) {
                         Toggle("", isOn: Binding(
                             get: { session.monitored },
                             set: { value in Task { await store.setMonitored(session, value) } }
                         ))
                         .labelsHidden()
                         .tint(AmberTheme.accent)
-                        .accessibilityLabel(Text(verbatim: L("推送") + " " + session.subject))
+                        .accessibilityLabel(Text(verbatim: L("推送") + " " + session.displayTitle))
                     }
                     if let approval = session.pendingApproval { approvalRow(approval, sessionKey: session.key) }
                 }
+                if !ended.isEmpty {
+                    rowDivider
+                    settingsRow(icon: "clock.arrow.circlepath", title: L("已结束") + " \(ended.count)",
+                                detail: L("最近 7 天结束的任务"), action: { withAnimation(.easeOut(duration: 0.2)) { showsEndedTasks.toggle() } }) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted)
+                            .rotationEffect(.degrees(showsEndedTasks ? 90 : 0))
+                    }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityValue(Text(verbatim: showsEndedTasks ? L("已展开") : L("已收起")))
+                    if showsEndedTasks {
+                        ForEach(ended) { session in
+                            rowDivider
+                            settingsRow(icon: Self.agentIcon(session.agent), title: session.displayTitle, detail: taskDetail(session)) {
+                                EmptyView()
+                            }
+                        }
+                    }
+                }
             }
-            if !sessions.isEmpty {
+            if !open.isEmpty {
                 sectionFooter(L("关闭开关后，该任务不再推送。"))
             }
         }

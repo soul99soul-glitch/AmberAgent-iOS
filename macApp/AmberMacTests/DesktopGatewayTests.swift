@@ -15,7 +15,7 @@ import XCTest
             if failRegister { throw DesktopRuntimeError.message("register failed") }
             status = .enabled
         }
-        func unregister() throws { status = .notRegistered }
+        func unregister() async throws { status = .notRegistered }
     }
 
     private var dir: URL!
@@ -37,7 +37,7 @@ import XCTest
         try String(contentsOf: installation.codexHooks, encoding: .utf8)
     }
 
-    func testEnableMigratesCLIDeploymentLinksAndRegistersThenDisableUndoes() throws {
+    func testEnableMigratesCLIDeploymentLinksAndRegistersThenDisableUndoes() async throws {
         let service = Service()
         let (gateway, _) = try make(service)
         let install = gateway.installation
@@ -51,7 +51,7 @@ import XCTest
         XCTAssertEqual(install.linkTarget?.path, dir.appendingPathComponent("A.app/Contents/MacOS/amber-gateway").path)
         XCTAssertTrue(try hooks(install).contains("_amber_gateway"))
 
-        gateway.disable()
+        await gateway.disable().value
         XCTAssertFalse(gateway.isEnabled)
         XCTAssertNil(install.linkTarget)
         XCTAssertFalse(try hooks(install).contains("_amber_gateway"))
@@ -79,15 +79,32 @@ import XCTest
         XCTAssertFalse(rolledBack.contains("_amber_gateway"))
     }
 
-    func testDisableLeavesHooksAloneWhenTheCLIOwnsTheLink() throws {
+    func testDisableLeavesHooksAloneWhenTheCLIOwnsTheLink() async throws {
         let service = Service()
         let (gateway, _) = try make(service)
         gateway.enable()
         let cli = gateway.installation.cliBinary
         try gateway.installation.linkBinary(cli)
-        gateway.disable()
+        await gateway.disable().value
         XCTAssertEqual(gateway.installation.linkTarget?.path, cli.path)
         XCTAssertTrue(try hooks(gateway.installation).contains("_amber_gateway"))
+    }
+
+    func testLaunchReregistersWhenRegisteredButTheDaemonIsNotRunning() async throws {
+        final class Counting: DesktopGatewayService {
+            var status: SMAppService.Status = .enabled
+            var registrations = 0
+            func register() throws { registrations += 1; status = .enabled }
+            func unregister() async throws { status = .notRegistered }
+        }
+        let service = Counting()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("amber-gateway-rereg-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let gateway = DesktopGateway(paths: GatewayPaths(stateDir: dir.appendingPathComponent("state")), installation: GatewayInstallation(home: dir),
+            service: service, bundledBinary: dir.appendingPathComponent("A.app/Contents/MacOS/amber-gateway"))
+        for _ in 0..<50 where service.registrations == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(service.registrations, 1, "a rebuilt app re-registers so launchd accepts the new signature")
+        XCTAssertTrue(gateway.isEnabled)
     }
 
     func testLaunchRepointsTheLinkWhenTheAppMoved() throws {

@@ -13,6 +13,8 @@ extension Daemon {
             var key: String
             var agent: AgentKind
             var subject: String
+            /// Opening words of the first prompt; the phone shows it in place of `subject` when present.
+            var summary: String?
             var origin: SessionOrigin
             var host: String?
             var state: TaskState
@@ -159,7 +161,7 @@ extension Daemon {
             .sorted { ($0.isOpen ? 1 : 0, $0.updatedAt) > ($1.isOpen ? 1 : 0, $1.updatedAt) }
             .prefix(Self.statusSessionLimit)
             .map {
-                StatusResponse.Session(key: $0.key, agent: $0.agent, subject: Registry.subject(for: $0), origin: $0.origin,
+                StatusResponse.Session(key: $0.key, agent: $0.agent, subject: Registry.subject(for: $0), summary: $0.generatedTitle ?? $0.summary, origin: $0.origin,
                                        host: $0.host, state: $0.state, waitReason: $0.waitReason, abnormal: $0.abnormal,
                                        monitored: $0.monitored, updatedAt: $0.updatedAt,
                                        pendingApproval: Self.pendingApproval($0))

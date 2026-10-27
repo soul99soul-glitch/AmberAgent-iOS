@@ -31,6 +31,15 @@ import Foundation
 
     func stop() { server?.stop(); server = nil }
 
+    /// Rebinds if another process took over or removed the socket path (e.g. a second Amber that has since quit).
+    /// Cheap; called from the gateway settings poll and on activation.
+    func ensureListening() {
+        guard let server, !server.isBound else { return }
+        server.stop()
+        self.server = nil
+        start()
+    }
+
     /// The socket queue blocks for the reply while the work runs on the main actor (never the other way round,
     /// so this cannot deadlock: the main actor never waits on the socket queue).
     nonisolated private static func bridge(_ work: @escaping @MainActor @Sendable (Data) async -> Data?) -> @Sendable (Data) -> Data? {

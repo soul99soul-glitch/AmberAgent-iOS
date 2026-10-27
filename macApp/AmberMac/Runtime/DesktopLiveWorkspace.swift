@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @MainActor extension DesktopWorkspace {
@@ -51,5 +52,15 @@ import Foundation
         gatewayControl = control
         // Listening is harmless when the gateway is off (nobody connects), and it means enabling needs no restart.
         control.start()
+        // The phone can only reach Amber through this socket; take the path back whenever Amber comes to front.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { control.ensureListening() }
+        }
+        Task { @MainActor in
+            while true {
+                try? await Task.sleep(for: .seconds(30))
+                control.ensureListening()
+            }
+        }
     }
 }

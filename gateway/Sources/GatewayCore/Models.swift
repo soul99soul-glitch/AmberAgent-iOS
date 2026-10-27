@@ -31,6 +31,8 @@ public enum EventKind: String, Codable, Sendable {
     case sessionEnd
     case runStart
     case runExit
+    /// From the Amber app: a model-written title (`GatewayEvent.title`) for an existing session. Changes nothing else.
+    case retitle
 }
 
 public struct ProcessIdentity: Codable, Hashable, Sendable {
@@ -66,6 +68,12 @@ public struct GatewayEvent: Codable, Sendable, Equatable {
     public var toolCallId: String?
     public var detail: String?
     public var highRisk: Bool?
+    /// `promptSubmit` only: a short, whitespace-collapsed excerpt of the user's prompt, used as the task's
+    /// display title on the phone (over TLS). Never put in a push body or the outbox.
+    public var summary: String?
+    /// `promptSubmit` only: a longer opening of the prompt (≤ 400 characters), kept on the Mac so the Amber app
+    /// can write a title from it. Never sent to the phone or put in a push.
+    public var opening: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -111,6 +119,12 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     public var sessionId: String
     public var cwd: String?
     public var title: String?
+    /// Opening words of the first prompt (see `GatewayEvent.summary`). Display only; pushes use `subject`.
+    public var summary: String?
+    /// Opening of the first prompt for title writing; Mac-local (see `GatewayEvent.opening`).
+    public var opening: String?
+    /// Title the Amber app wrote from `opening`; shown on the phone in place of `summary`.
+    public var generatedTitle: String?
     public var origin: SessionOrigin
     /// App hosting the session (host origin only), e.g. "Synara".
     public var host: String?

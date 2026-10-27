@@ -62,6 +62,8 @@ enum SessionMachine {
             } else {
                 r.state = .stopped
             }
+        case .retitle:
+            return
         case .runExit:
             r.waitReason = nil
             if event.exitCode == 0 && event.signal == nil {

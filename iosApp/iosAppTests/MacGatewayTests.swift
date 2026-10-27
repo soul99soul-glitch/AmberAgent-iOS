@@ -50,6 +50,13 @@ struct MacGatewayTests {
         #expect(status.sessions[0].pendingApproval?.toolCallId == "c1")
         #expect(status.sessions[0].pendingApproval?.highRisk == false)
         #expect(status.sessions[1].pendingApproval == nil, "older gateways and agent sessions omit the field")
+        #expect(status.sessions[0].isOpen && status.sessions[1].isOpen)
+        #expect(status.sessions[1].displayTitle == "p", "no summary falls back to the directory name")
+        var named = status.sessions[1]
+        named.summary = "在 amber-macos 实现定时任务"
+        named.state = "stopped"
+        #expect(named.displayTitle == "在 amber-macos 实现定时任务")
+        #expect(!named.isOpen, "ended tasks get no push switch")
     }
 
     @Test func approvalNotificationActionsMapToDecisions() {

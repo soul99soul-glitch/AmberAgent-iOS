@@ -54,6 +54,8 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
         var key: String
         var agent: String
         var subject: String
+        /// Opening words of the session's first prompt (newer gateways); a better name than the directory.
+        var summary: String?
         var origin: String
         /// App hosting the session on the Mac, e.g. "Synara".
         var host: String?
@@ -62,6 +64,9 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
         var abnormal: Bool
         var monitored: Bool
         var updatedAt: Date
+        var displayTitle: String { summary ?? subject }
+        /// Running or waiting; only these can still push, so only these get a push switch.
+        var isOpen: Bool { state == "running" || state == "waiting" || state == "stalled" }
         /// Amber scheduled runs waiting on a tool call (answered with `decide`).
         var pendingApproval: PendingApproval?
         var id: String { key }

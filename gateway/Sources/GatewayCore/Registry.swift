@@ -66,6 +66,11 @@ public struct Registry: Codable, Sendable, Equatable {
         }
 
         let key = SessionRecord.key(event.agent, event.sessionId)
+        // A title for a session that exists; it must not reorder, reopen or create anything.
+        if event.kind == .retitle {
+            if let title = event.title, !title.isEmpty, sessions[key] != nil { sessions[key]!.generatedTitle = title }
+            return []
+        }
         let old = sessions[key]
         if old == nil && config.isExcluded(cwd: event.cwd) { return [] }
         if let old, event.timestamp < old.updatedAt, event.kind != .runExit { return [] }
@@ -91,6 +96,11 @@ public struct Registry: Codable, Sendable, Equatable {
         )
         if rec.cwd == nil { rec.cwd = event.cwd }
         if let title = event.title { rec.title = title }
+        // The first real prompt names the conversation, the way Synara titles its threads; later turns don't rename it.
+        if rec.summary == nil || rec.summary?.hasPrefix("<") == true, let summary = event.summary {
+            rec.summary = summary
+            rec.opening = event.opening
+        }
         if let origin = event.origin, rec.origin != .host { rec.origin = origin }
         if let host = event.host { rec.host = host }
 

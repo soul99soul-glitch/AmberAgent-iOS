@@ -38,9 +38,53 @@ struct HookParserTests {
         #expect(event?.kind == c.expect)
         guard let event else { return }
         #expect(event.agent == c.source)
-        // Push bodies and stored state carry metadata only (design doc section 2 hard constraint).
-        let encoded = String(decoding: try GatewayJSON.encoder().encode(event), as: UTF8.self)
+        // Metadata only, except the prompt excerpt that names the task on the phone.
+        var stripped = event
+        stripped.summary = nil
+        stripped.opening = nil
+        let encoded = String(decoding: try GatewayJSON.encoder().encode(stripped), as: UTF8.self)
         #expect(!encoded.contains("SECRET"))
+        #expect((event.summary != nil) == (event.kind == .promptSubmit))
+    }
+
+    @Test func promptSummaryNamesTheTaskButNeverReachesAPush() throws {
+        let long = "  在 /Users/mi/Downloads/AI/amber-macos（分支 feat/macos）实现「定时任务」功能，\n\n先读这些计划文档再动手  "
+        let payload = try JSONSerialization.data(withJSONObject: ["session_id": "s", "cwd": "/Users/mi", "hook_event_name": "UserPromptSubmit", "prompt": long])
+        let event = try #require(HookParser.parse(source: .claude, payload: payload))
+        let summary = try #require(event.summary)
+        #expect(summary.count == HookParser.summaryLimit && summary.hasSuffix("…") && summary.hasPrefix("在 /Users/mi"))
+        #expect(!summary.contains("\n"))
+
+        var registry = Registry()
+        let away = { Presence(screenLocked: true, idleSeconds: 999) }
+        _ = registry.ingest(event, config: GatewayConfig(), now: Date(), presence: away)
+        var second = event
+        second.id = "second"; second.summary = "后来的一句"; second.timestamp = event.timestamp.addingTimeInterval(1)
+        _ = registry.ingest(second, config: GatewayConfig(), now: Date(), presence: away)
+        #expect(registry.sessions["claude:s"]?.summary == summary, "the first prompt keeps naming the task")
+        #expect(HookParser.summary("<task-notification> <task-id>b1</task-id> completed") == nil, "host-injected turns are not titles")
+        #expect(registry.sessions["claude:s"]?.opening?.hasPrefix("在 /Users/mi/Downloads/AI/amber-macos（分支 feat/macos）实现「定时任务」功能， 先读这些") == true)
+
+        let before = try #require(registry.sessions["claude:s"])
+        var retitle = GatewayEvent(agent: .claude, kind: .retitle, sessionId: "s", timestamp: event.timestamp.addingTimeInterval(-60), title: "Amber 定时任务实现")
+        retitle.id = "retitle"
+        #expect(registry.ingest(retitle, config: GatewayConfig(), now: Date(), presence: away).isEmpty)
+        let after = try #require(registry.sessions["claude:s"])
+        #expect(after.generatedTitle == "Amber 定时任务实现")
+        #expect(after.updatedAt == before.updatedAt && after.state == before.state, "a title never reorders or reopens a task")
+        var stray = retitle
+        stray.id = "stray"; stray.sessionId = "unknown"
+        _ = registry.ingest(stray, config: GatewayConfig(), now: Date(), presence: away)
+        #expect(registry.sessions["claude:unknown"] == nil)
+
+        var stop = event
+        stop.id = "stop"; stop.kind = .turnStop; stop.summary = nil; stop.timestamp = event.timestamp.addingTimeInterval(2)
+        let effects = registry.ingest(stop, config: GatewayConfig(), now: Date(), presence: away)
+        let pushes = effects.compactMap { if case .push(let p) = $0 { p } else { nil } }
+        #expect(pushes.count == 1)
+        let text = PushContent.render(pushes[0], gatewayName: "Mac")
+        #expect(text.title == "Claude Code · mi", "the lock screen still names the directory, never the prompt")
+        #expect(!(text.title + text.body).contains("定时任务"))
     }
 
     @Test func malformedPayloadIsIgnored() {
