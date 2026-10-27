@@ -41,6 +41,7 @@ import Foundation
         }
         scheduler.startObservingSystem()
         self.scheduler = scheduler
+        agentProvider?.scheduler = scheduler
         let gateway = DesktopGateway()
         self.gateway = gateway
         let reporter = DesktopGatewayReporter { gateway.isEnabled }

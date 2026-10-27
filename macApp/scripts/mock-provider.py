@@ -94,6 +94,30 @@ class ProviderHandler(BaseHTTPRequestHandler):
                 }, "tool_calls"))
             self.event("[DONE]")
             return
+        if body["model"] == "mock-schedule-create":
+            # Drafts one scheduled task, then reports the tool result back.
+            tool_outputs = [
+                message.get("content") for message in body.get("messages", [])
+                if isinstance(message, dict) and message.get("role") == "tool"
+            ]
+            if tool_outputs:
+                text = tool_outputs[-1] if isinstance(tool_outputs[-1], str) else json.dumps(tool_outputs[-1], ensure_ascii=False)
+                self.event(chunk({"role": "assistant", "content": "schedule-result:" + text[:300]}, "stop"))
+            else:
+                self.event(chunk({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "schedule-create-call",
+                        "type": "function",
+                        "function": {
+                            "name": "schedule_create",
+                            "arguments": '{"name":"晨间汇总","prompt":"汇总昨晚的新文件","rule":"daily","hour":9,"minute":0}',
+                        },
+                    }],
+                }, "tool_calls"))
+            self.event("[DONE]")
+            return
         if body["model"] == "mock-scheduled-write":
             # One workspace write, then echo the tool result so tests can tell executed / denied apart.
             tool_outputs = [

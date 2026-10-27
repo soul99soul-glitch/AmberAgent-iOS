@@ -247,6 +247,41 @@ final class KMPProviderIntegrationTests: XCTestCase {
         XCTAssertTrue(record.autoApprovedTools.isEmpty)
     }
 
+    /// Conversation → schedule_create: waits on the approval card even with every auto-approve switch on, then creates
+    /// a task whose approval policy is the default.
+    func testScheduleCreateFromChatWaitsForApprovalThenCreatesTask() async throws {
+        let (workspace, _, _, root) = try scheduledWorkspace(approval: DesktopUnattendedApproval())
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: nil),
+            defaults: UserDefaults(suiteName: "amber.chat-schedule.\(UUID().uuidString)")!,
+            runner: { _, slot in DesktopScheduleRunRecord(scheduledFor: slot, startedAt: Date(), finishedAt: Date(), status: .completed) },
+            timerEnabled: false)
+        try XCTUnwrap(workspace.agentProvider).scheduler = scheduler
+        var config = try XCTUnwrap(workspace.settings.selectedProvider)
+        config.modelID = "mock-schedule-create"
+        try workspace.settings.saveProvider(config, apiKey: fixtureKey)
+        workspace.agentTasks.toolsEnabled = true
+        workspace.createConversation()
+        workspace.draft = "每天早上九点帮我汇总新文件"
+        workspace.send()
+        var waiting: DesktopAgentTask?
+        for _ in 0..<400 where waiting == nil {
+            waiting = workspace.agentTasks.records.first { $0.status == .waiting }
+            if waiting == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let run = try XCTUnwrap(waiting, "schedule_create must wait for a person despite global auto-approve")
+        XCTAssertEqual(run.approval?.name, "schedule_create")
+        XCTAssertTrue(scheduler.tasks.isEmpty)
+        workspace.agentTasks.decide(runID: run.id, allow: true)
+        for _ in 0..<400 where scheduler.tasks.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        let task = try XCTUnwrap(scheduler.tasks.first)
+        XCTAssertEqual(task.name, "晨间汇总")
+        XCTAssertEqual(task.schedule, .daily(hour: 9, minute: 0))
+        XCTAssertEqual(task.approval, DesktopUnattendedApproval())
+        for _ in 0..<200 where workspace.isGenerating { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(workspace.selectedConversation?.messages.last?.text.hasPrefix("schedule-result:") == true)
+    }
+
     /// Opt-in live check against the real gateway daemon on this Mac (AMBER_MAC_GATEWAY_LIVE=1): the run shows up in
     /// the daemon's registry as an amber session, waits for approval with the call recorded, then completes.
     func testScheduledRunIsReportedToTheLiveGateway() async throws {

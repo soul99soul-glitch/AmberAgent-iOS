@@ -72,6 +72,8 @@ final class DesktopWorkspace {
 
     @ObservationIgnored private let storage: any DesktopConversationStorage
     @ObservationIgnored private let provider: any DesktopTextProvider
+    /// The tool-running provider in the live app (and agent tests); nil for previews and plain-text fakes.
+    var agentProvider: DesktopAgentProvider? { provider as? DesktopAgentProvider }
     @ObservationIgnored private var persistence: Task<Void, Never>?
     @ObservationIgnored private var generation: DesktopGeneration?
     @ObservationIgnored private var generationID: UUID?

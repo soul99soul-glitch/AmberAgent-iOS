@@ -171,7 +171,7 @@ final class DesktopAgentTasks {
 
     /// The single approval decision point. `policy` overrides the global switches (unattended runs pass their own).
     func autoApproves(_ toolName: String, policy: DesktopApprovalPolicy? = nil) -> Bool {
-        (policy ?? globalApprovalPolicy).autoApproves(toolName)
+        !DesktopToolRegistry.alwaysAsks(toolName) && (policy ?? globalApprovalPolicy).autoApproves(toolName)
     }
 
     /// Lets the model dispatch read-only sub-agents mid-conversation; needs the tool loop, so it runs through it.

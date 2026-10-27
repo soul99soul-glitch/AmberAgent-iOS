@@ -12,6 +12,8 @@ import CryptoKit
     private let collaborations: DesktopCollaborations
     private let searchSettings: DesktopSearchSettings
     private var recipeExecutors: [UUID: DesktopAgentExecutor] = [:]
+    /// Set by the live app once the scheduler exists; conversations then get the `schedule_*` tools.
+    weak var scheduler: DesktopScheduler?
 
     init(text: DesktopKMPProvider, tasks: DesktopAgentTasks, files: DesktopWorkspaceFiles,
         knowledge: DesktopKnowledgeStore, mcp: DesktopMCPManager, collaborations: DesktopCollaborations,
@@ -108,8 +110,10 @@ import CryptoKit
         let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue, id: configuration.id.uuidString,
             name: configuration.name, baseUrl: baseURL, apiKey: apiKey, authMode: configuration.authMode.rawValue)
         var input = try bridge.agentRequestHistory(messages: bridge.messages(json: DesktopJSON.encode(messages)))
+        // Scheduled runs carry their own policy; they never see the tools that create or edit tasks.
+        let scheduling = scheduler != nil && context.approvalPolicy == nil
         let declarations = DesktopToolRegistry.agentDeclarations(toolsEnabled: context.toolsEnabled,
-            subagentsEnabled: context.subagentsEnabled)
+            subagentsEnabled: context.subagentsEnabled, scheduling: scheduling)
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
         let exposure = IosToolExposureBridge(tools: tools)
         let guidance = exposure.discoveryGuidance()
@@ -129,6 +133,7 @@ import CryptoKit
                     files: files, knowledge: knowledge, mcp: mcp, declarations: declarations, exposure: exposure,
                     sourceMessageIDs: messages.last(where: { $0.role == .user }).map { [$0.id.uuidString.lowercased()] } ?? [],
                     collaborations: collaborations, searchSettings: searchSettings, approvalPolicy: context.approvalPolicy)
+                if scheduling { executor.scheduler = scheduler }
                 let sink = DesktopEngineTranscript(input: input, responseID: responseID, generation: generation)
                 let ledger = DesktopEngineLedger(tasks: tasks, runID: id)
                 let result = await self.resume(provider: provider, messages: input, params: params, exposure: exposure,
@@ -385,6 +390,8 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
     private let scopeLock = NSLock()
     private var skillScope = DesktopSkillToolScope()
     let approvalPolicy: DesktopApprovalPolicy?
+    /// Only for conversation runs; nil makes `schedule_*` unavailable even if a model names them.
+    weak var scheduler: DesktopScheduler?
 
     init(runID: UUID, owner: UUID, tasks: DesktopAgentTasks, files: DesktopWorkspaceFiles,
         knowledge: DesktopKnowledgeStore, mcp: DesktopMCPManager, declarations: [DesktopToolDeclaration],
@@ -516,6 +523,9 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                 } onCancel: { Task { @MainActor [collaborations] in collaborations.cancel(runID) } }
                 guard let result else { throw DesktopRuntimeError.message("协作任务未返回记录。") }
                 output = try DesktopJSON.encode(result)
+            case "schedule_list", "schedule_create", "schedule_update":
+                guard let scheduler else { return .failed("定时任务在此会话不可用。") }
+                output = try await DesktopScheduleTools.perform(tool.toolName, arguments: args, scheduler: scheduler)
             case "list_agents":
                 let records = await MainActor.run { collaborations.runs.filter { $0.parentConversationID == owner } }
                 output = try DesktopJSON.encode(records)

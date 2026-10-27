@@ -37,13 +37,16 @@ enum DesktopToolRegistry {
 
     /// High risk = can reach outside the conversation workspace or destroy data (iOS「含任意公网网站、远程命令等」).
     /// Only「高风险自动批准」auto-runs these; ordinary writes/memory/agents fall under「全局自动批准」.
+    /// Creating or changing a scheduled task makes Amber act later, unattended: always ask, whatever the policy says.
+    static func alwaysAsks(_ name: String) -> Bool { name == "schedule_create" || name == "schedule_update" }
+
     static func isHighRisk(_ name: String) -> Bool {
         name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool" || name == "interrupt_agent"
     }
 
     static func effect(for name: String, arguments: String) -> DesktopToolEffect {
         switch name {
-        case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill", "mcp_list", "mcp_describe_tool", "list_agents": .pure
+        case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill", "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list": .pure
         case "search_web", "scrape_web": .networkRead
         case "memory_tool": memoryEffect(arguments)
         default: .sideEffect
@@ -74,10 +77,13 @@ extension DesktopToolRegistry {
     /// Returns the declarations for one chat run. Sub-agent-only mode gets the
     /// read-only dispatch controls, while council remains behind the ordinary
     /// tools switch (or both switches together).
-    static func agentDeclarations(toolsEnabled: Bool, subagentsEnabled: Bool) -> [DesktopToolDeclaration] {
+    /// `scheduling`: the conversation may draft scheduled tasks. Off for scheduled runs themselves, so a task never
+    /// creates or edits tasks.
+    static func agentDeclarations(toolsEnabled: Bool, subagentsEnabled: Bool, scheduling: Bool = false) -> [DesktopToolDeclaration] {
         if toolsEnabled {
             return declarations + knowledgeDeclarations
                 + collaborationDeclarations(subagents: subagentsEnabled) + DesktopMCPManager.declarations
+                + (scheduling ? scheduleDeclarations : [])
         }
         guard subagentsEnabled else { return [] }
         let allowed = Set(["subagent_dispatch", "list_agents", "interrupt_agent"])
@@ -96,6 +102,20 @@ extension DesktopToolRegistry {
          declaration("interrupt_agent", "取消当前会话的指定协作run，需要用户批准。", properties: ["run_id": "string"], required: ["run_id"], approval: true),
          DesktopToolDeclaration(name: "model_council_run", description: "让席位按轮次依次讨论目标（mode为free_chat自由讨论或debate辩论，rounds为1至5轮，默认2），主持人轮末点评并由综合模型汇总，需要用户批准；seats为空时由主持人规划2至5个席位；model_id为可选已配置模型UUID。",
             parametersJSON: #"{"type":"object","properties":{"objective":{"type":"string"},"seats":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"name":{"type":"string"},"role_prompt":{"type":"string"},"model_id":{"type":"string"}},"required":["name","role_prompt"],"additionalProperties":false}},"synthesis_model_id":{"type":"string"},"mode":{"type":"string","enum":["free_chat","debate"]},"rounds":{"type":"integer","minimum":1,"maximum":5}},"required":["objective"],"additionalProperties":false}"#, needsApproval: true)]
+    }
+
+    /// Fields shared by create and update. Approval policy is deliberately not offered: tasks made in chat start
+    /// with nothing auto-approved, and only the Mac UI changes that.
+    private static let scheduleFields = #""name":{"type":"string"},"prompt":{"type":"string","description":"到点后发给模型的完整提示词"},"rule":{"type":"string","enum":["once","daily","weekdays","weekly","interval"]},"hour":{"type":"integer","minimum":0,"maximum":23},"minute":{"type":"integer","minimum":0,"maximum":59},"weekdays":{"type":"array","items":{"type":"integer","minimum":1,"maximum":7},"description":"每周规则的星期，1=周日…7=周六"},"interval_minutes":{"type":"integer","minimum":15,"maximum":10080},"at":{"type":"string","description":"仅一次规则的本地时间 yyyy-MM-dd HH:mm"},"use_tools":{"type":"boolean"}"#
+
+    static var scheduleDeclarations: [DesktopToolDeclaration] {
+        [declaration("schedule_list", "列出 Amber 的定时任务（名称、规则、是否启用、下次运行、上次结果）。", properties: [:]),
+         DesktopToolDeclaration(name: "schedule_create",
+            description: "起草一个定时任务，到点时 Amber 在新会话里运行 prompt。永远需要用户批准；新任务不会自动批准任何工具。",
+            parametersJSON: #"{"type":"object","properties":{"# + scheduleFields + #"},"required":["name","prompt","rule"],"additionalProperties":false}"#, needsApproval: true),
+         DesktopToolDeclaration(name: "schedule_update",
+            description: "修改已有定时任务的名称、提示词、时间规则或启用状态（id 来自 schedule_list）。永远需要用户批准；不能修改审批设置。",
+            parametersJSON: #"{"type":"object","properties":{"id":{"type":"string"},"enabled":{"type":"boolean"},"# + scheduleFields + #"},"required":["id"],"additionalProperties":false}"#, needsApproval: true)]
     }
 
     static var knowledgeDeclarations: [DesktopToolDeclaration] {

@@ -163,8 +163,8 @@ struct DesktopToolApprovalCard: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
                     .padding(.leading, 14)
                 HStack(spacing: 8) {
-                    // Turn on auto-approval straight from the prompt, then approve this call.
-                    Menu {
+                    // Turn on auto-approval straight from the prompt, then approve this call. Not for calls that always ask.
+                    if !DesktopToolRegistry.alwaysAsks(approval.name) { Menu {
                         if DesktopToolRegistry.isHighRisk(approval.name) {
                             Button("开启高风险自动批准并批准") { tasks.autoApprove = true; tasks.autoApproveHighRisk = true; decide(true) }
                         } else {
@@ -177,7 +177,7 @@ struct DesktopToolApprovalCard: View {
                     .menuStyle(.borderlessButton)
                     .fixedSize()
                     .tint(DesktopTheme.inkSecondary)
-                    .help(DesktopToolRegistry.isHighRisk(approval.name) ? "这是高风险操作（终端命令、删除或外部工具）" : "之后的普通工具调用不再询问")
+                    .help(DesktopToolRegistry.isHighRisk(approval.name) ? "这是高风险操作（终端命令、删除或外部工具）" : "之后的普通工具调用不再询问") }
                     if DesktopToolRegistry.isHighRisk(approval.name) {
                         Text("高风险").font(.system(size: 11, weight: .medium)).foregroundStyle(DesktopTheme.danger)
                             .padding(.horizontal, 6).frame(height: 18)
