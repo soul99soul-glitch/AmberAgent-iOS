@@ -184,6 +184,17 @@ import ServiceManagement
             // Full-height editor so the approval section and run history are visible too.
             try await capture("schedules-full-\(dark ? "dark" : "light")", view.frame(height: 1500).background(DesktopTheme.paper), 900, 1500, dark)
         }
+        var folder = DesktopScheduledTask(name: "整理下载", prompt: "把新下载的文件按类型归档，并列出它们。", schedule: .daily(hour: 9, minute: 0))
+        folder.trigger = .folder(path: NSHomeDirectory() + "/Downloads")
+        var agent = DesktopScheduledTask(name: "会话复盘", prompt: "总结这个会话做了什么、还剩什么。", schedule: .daily(hour: 9, minute: 0))
+        agent.trigger = .agentSession(.ended)
+        for task in [folder, agent] { _ = await scheduler.save(task: task) }
+        for dark in [false, true] {
+            try await capture("schedules-event-\(dark ? "dark" : "light")",
+                DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler, initialSelection: folder.id).background(DesktopTheme.paper), 900, 760, dark)
+        }
+        try await capture("schedules-event-session-light",
+            DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler, initialSelection: agent.id).background(DesktopTheme.paper), 900, 760, false)
     }
 
     /// Mac Gateway settings tab and pairing sheet against a throwaway state dir (the SMAppService is not registered).

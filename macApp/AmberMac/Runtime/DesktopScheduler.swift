@@ -30,6 +30,8 @@ import Observation
     static let maxConcurrentRuns = 2
     /// Even with nothing due the timer rechecks this often, so a missed system notification cannot strand a task.
     static let maximumTimerInterval: TimeInterval = 60
+    /// Event-triggered runs of one task start at least this far apart, like the interval rule's floor.
+    static let minimumEventGap = TimeInterval(DesktopSchedule.minimumIntervalMinutes * 60)
 
     private(set) var tasks: [DesktopScheduledTask] = []
     private(set) var running: Set<UUID> = []
@@ -60,6 +62,7 @@ import Observation
     @ObservationIgnored private var loading: Task<Void, Never>?
     @ObservationIgnored private var runTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var queuedSlots: [UUID: Date] = [:]
+    @ObservationIgnored private var queuedContexts: [UUID: String] = [:]
     @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     /// Writes run in order so a later state never lands under an earlier one.
     @ObservationIgnored private var writes: Task<Void, Never>?
@@ -115,12 +118,12 @@ import Observation
         if let error = value.validationError { return error }
         var value = value
         let previous = tasks.first { $0.id == value.id }
-        if previous?.schedule != value.schedule || previous?.enabled != value.enabled || previous == nil {
+        if previous?.schedule != value.schedule || previous?.trigger != value.trigger || previous?.enabled != value.enabled || previous == nil {
             value.nextRunAt = DesktopSchedulePlanner.initialNextRun(value, now: clock(), calendar: calendar())
             dequeue(value.id)
         }
         if !value.enabled { dequeue(value.id) }
-        if value.enabled, value.nextRunAt == nil, case .once = value.schedule { return "这个时间已经过去，请重新选择。" }
+        if value.enabled, value.trigger == nil, value.nextRunAt == nil, case .once = value.schedule { return "这个时间已经过去，请重新选择。" }
         // Run history is owned by the scheduler, never by an editor's stale copy.
         if let previous { value.lastRun = previous.lastRun; value.recentRuns = previous.recentRuns }
         await writes?.value
@@ -157,10 +160,30 @@ import Observation
         return nil
     }
 
+    /// An event-triggered task's event happened; `context` (new file names, the session) is appended to the prompt.
+    /// Same rules as a due slot: no overlap with itself, queued behind the global cap, nothing while paused.
+    func fire(_ id: UUID, context: String) {
+        guard isLoaded, !isPaused, let task = tasks.first(where: { $0.id == id }), task.enabled, task.trigger != nil else { return }
+        if running.contains(id) || queued.contains(id) {
+            return finishSkipped(id, scheduledFor: nil, reason: "上一次运行尚未结束，本次已跳过。", context: context)
+        }
+        // lastRun too: a burst of skipped records can push the last real run out of the capped history.
+        if let last = ([task.lastRun].compactMap { $0 } + task.recentRuns).first(where: { $0.triggerContext != nil && $0.status != .skipped }),
+           clock().timeIntervalSince(last.startedAt) < Self.minimumEventGap {
+            return finishSkipped(id, scheduledFor: nil,
+                reason: "距上次事件触发不足 \(DesktopSchedule.minimumIntervalMinutes) 分钟，本次已跳过。", context: context)
+        }
+        if running.count >= Self.maxConcurrentRuns {
+            queued.append(id); queuedContexts[id] = context
+        } else {
+            start(task, scheduledFor: nil, context: context)
+        }
+    }
+
     /// Cancels queued and running runs; `reason` replaces the generic cancel message in their records.
     func cancelAll(reason: String? = nil) {
         cancelReason = reason
-        queued.removeAll(); queuedSlots.removeAll()
+        queued.removeAll(); queuedSlots.removeAll(); queuedContexts.removeAll()
         for task in runTasks.values { task.cancel() }
     }
 
@@ -235,15 +258,20 @@ import Observation
 
     // MARK: runs
 
-    private func start(_ task: DesktopScheduledTask, scheduledFor: Date?) {
+    private func start(_ task: DesktopScheduledTask, scheduledFor: Date?, context: String? = nil) {
         running.insert(task.id)
         activity.begin()
-        let started = DesktopScheduleRunRecord(scheduledFor: scheduledFor, startedAt: clock(), status: .running)
+        var started = DesktopScheduleRunRecord(scheduledFor: scheduledFor, startedAt: clock(), status: .running)
+        started.triggerContext = context
         update(task.id) { $0.record(started) }
+        // The runner only sees the prompt; the event's details ride along at its end.
+        var input = task
+        if let context { input.prompt += "\n\n" + context }
         runTasks[task.id] = Task { [weak self, runner] in
-            var record = await runner(task, scheduledFor)
+            var record = await runner(input, scheduledFor)
             guard let self else { return }
             record.id = started.id
+            record.triggerContext = context
             if record.status == .failed, let reason = self.cancelReason { record.error = reason }
             self.update(task.id) { $0.record(record) }
             self.running.remove(task.id)
@@ -257,20 +285,22 @@ import Observation
     private func drainQueue() {
         while !isPaused, running.count < Self.maxConcurrentRuns, !queued.isEmpty {
             let id = queued.removeFirst()
-            let slot = queuedSlots.removeValue(forKey: id)
+            let slot = queuedSlots.removeValue(forKey: id), context = queuedContexts.removeValue(forKey: id)
             guard let task = tasks.first(where: { $0.id == id }), task.enabled, !running.contains(id) else { continue }
-            start(task, scheduledFor: slot)
+            start(task, scheduledFor: slot, context: context)
         }
     }
 
     private func dequeue(_ id: UUID) {
         queued.removeAll { $0 == id }
         queuedSlots[id] = nil
+        queuedContexts[id] = nil
     }
 
-    private func finishSkipped(_ id: UUID, scheduledFor: Date, reason: String) {
+    private func finishSkipped(_ id: UUID, scheduledFor: Date?, reason: String, context: String? = nil) {
         let now = clock()
-        let record = DesktopScheduleRunRecord(scheduledFor: scheduledFor, startedAt: now, finishedAt: now, status: .skipped, error: reason)
+        var record = DesktopScheduleRunRecord(scheduledFor: scheduledFor, startedAt: now, finishedAt: now, status: .skipped, error: reason)
+        record.triggerContext = context
         update(id) { $0.record(record) }
         if let task = tasks.first(where: { $0.id == id }) { onRunFinished?(task, record) }
     }
@@ -281,7 +311,7 @@ import Observation
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         change(&tasks[index])
         // A once-task that has fired is spent; keep it listed but switched off.
-        if case .once = tasks[index].schedule, tasks[index].nextRunAt == nil, tasks[index].lastRun != nil { tasks[index].enabled = false }
+        if tasks[index].trigger == nil, case .once = tasks[index].schedule, tasks[index].nextRunAt == nil, tasks[index].lastRun != nil { tasks[index].enabled = false }
         persist(tasks[index])
     }
 

@@ -49,6 +49,7 @@ final class DesktopWorkspace {
     let titles = DesktopTitleGeneration()
     /// Set by the live app; previews and tests run without one.
     var scheduler: DesktopScheduler?
+    var scheduleTriggers: DesktopScheduleTriggers?
     var gateway: DesktopGateway?
     var gatewayReporter: DesktopGatewayReporter?
     var gatewayControl: DesktopGatewayControl?

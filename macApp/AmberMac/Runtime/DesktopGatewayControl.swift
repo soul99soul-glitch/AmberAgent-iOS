@@ -115,7 +115,7 @@ import Foundation
     }
 
     static func summary(_ task: DesktopScheduledTask, _ scheduler: DesktopScheduler) -> AmberControl.ScheduleSummary {
-        AmberControl.ScheduleSummary(id: task.id.uuidString, name: task.name, rule: DesktopScheduledTasksView.ruleText(task.schedule),
+        AmberControl.ScheduleSummary(id: task.id.uuidString, name: task.name, rule: DesktopScheduledTasksView.ruleText(task),
             enabled: task.enabled, running: scheduler.running.contains(task.id), paused: scheduler.isPaused,
             nextRunAt: scheduler.isPaused ? nil : task.nextRunAt,
             lastStatus: task.lastRun?.status.rawValue, lastRunAt: task.lastRun?.finishedAt ?? task.lastRun?.startedAt,

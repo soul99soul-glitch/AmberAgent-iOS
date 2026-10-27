@@ -30,7 +30,7 @@ import Foundation
             }
             if arguments["name"] != nil { task.name = try text("name", arguments) }
             if arguments["prompt"] != nil { task.prompt = try text("prompt", arguments) }
-            if arguments["rule"] != nil { task.schedule = try schedule(arguments, calendar: calendar) }
+            if arguments["rule"] != nil { task.schedule = try schedule(arguments, calendar: calendar); task.trigger = nil }
             if let tools = arguments["use_tools"] as? Bool { task.toolsEnabled = tools }
             if let enabled = arguments["enabled"] as? Bool { task.enabled = enabled }
             if let error = await scheduler.save(task: task) { throw DesktopRuntimeError.message(error) }
@@ -74,7 +74,7 @@ import Foundation
     }
 
     private static func summary(_ task: DesktopScheduledTask, _ scheduler: DesktopScheduler) -> [String: Any] {
-        var value: [String: Any] = ["id": task.id.uuidString, "name": task.name, "rule": DesktopScheduledTasksView.ruleText(task.schedule),
+        var value: [String: Any] = ["id": task.id.uuidString, "name": task.name, "rule": DesktopScheduledTasksView.ruleText(task),
             "enabled": task.enabled, "running": scheduler.running.contains(task.id)]
         if let next = task.nextRunAt { value["next_run"] = next.formatted(.iso8601) }
         if let last = task.lastRun { value["last_status"] = last.status.rawValue }

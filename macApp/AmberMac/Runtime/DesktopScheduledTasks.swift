@@ -68,6 +68,27 @@ enum DesktopSchedule: Codable, Equatable, Sendable {
     }
 }
 
+/// What an agent session did to set off an event-triggered task.
+enum DesktopAgentSessionEvent: String, Codable, Sendable {
+    /// Stopped or completed.
+    case ended
+    /// Waiting for a reply or a permission.
+    case needsYou
+}
+
+/// Runs a task when something happens instead of by the clock. Set from the Mac editor only.
+enum DesktopScheduleTrigger: Codable, Equatable, Sendable {
+    /// New (non-hidden) files appear in the directory at `path`.
+    case folder(path: String)
+    /// A Claude Code / Codex session tracked by the gateway enters the state.
+    case agentSession(DesktopAgentSessionEvent)
+
+    var validationError: String? {
+        if case .folder(let path) = self, path.isEmpty { return "请选择要监听的文件夹。" }
+        return nil
+    }
+}
+
 enum DesktopScheduleOutput: Codable, Equatable, Sendable {
     case newConversation
     case appendTo(UUID)
@@ -114,6 +135,8 @@ struct DesktopScheduleRunRecord: Identifiable, Codable, Equatable, Sendable {
     var summary: String?
     /// Whether the run turned up something new (DesktopBoardWriter). nil = not judged; completed runs then notify.
     var noteworthy: Bool?
+    /// What set off an event-triggered run (new file names, the agent session); nil for timed and manual runs.
+    var triggerContext: String?
 }
 
 struct DesktopScheduledTask: Identifiable, Codable, Equatable, Sendable {
@@ -123,7 +146,10 @@ struct DesktopScheduledTask: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     var name: String
     var prompt: String
+    /// Ignored while `trigger` is set (kept so the editor can switch back, and old files keep decoding).
     var schedule: DesktopSchedule
+    /// nil = runs by `schedule`; otherwise runs on the event and never has a `nextRunAt`.
+    var trigger: DesktopScheduleTrigger?
     /// A model ID from DesktopSettings (DesktopModelConfiguration.id); nil = the default chat model at run time.
     var modelID: UUID?
     var toolsEnabled = true
@@ -155,6 +181,7 @@ struct DesktopScheduledTask: Identifiable, Codable, Equatable, Sendable {
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "请填写任务名称。" }
         if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "请填写提示词。" }
         if approval.approvalTimeoutHours < 1 { return "审批超时至少 1 小时。" }
+        if let trigger { return trigger.validationError }
         return schedule.validationError
     }
 }
@@ -175,7 +202,7 @@ enum DesktopSchedulePlanner {
 
     /// First slot for a new or edited task: the next one strictly after `now`.
     static func initialNextRun(_ task: DesktopScheduledTask, now: Date, calendar: Calendar) -> Date? {
-        guard task.enabled else { return nil }
+        guard task.enabled, task.trigger == nil else { return nil }
         return task.schedule.nextFire(after: now, calendar: calendar)
     }
 
@@ -193,7 +220,7 @@ enum DesktopSchedulePlanner {
     /// After a time-zone or clock change: wall-clock rules move to the new local time. A slot already due
     /// stays due so the missed-run policy still applies to it.
     static func recompute(_ task: DesktopScheduledTask, now: Date, calendar: Calendar) -> Date? {
-        guard task.enabled else { return nil }
+        guard task.enabled, task.trigger == nil else { return nil }
         if let due = task.nextRunAt, due <= now { return due }
         return task.schedule.nextFire(after: now, calendar: calendar)
     }
