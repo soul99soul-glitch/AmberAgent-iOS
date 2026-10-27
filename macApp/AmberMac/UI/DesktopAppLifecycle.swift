@@ -12,6 +12,7 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        DesktopSystemNotificationDelivery.registerCategories()
     }
 
     /// SwiftUI quits a single-Window app when its window closes; keep running in the menu bar instead when asked to.
@@ -34,7 +35,16 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard let id = response.notification.request.content.userInfo["conversationID"] as? String,
+        let info = response.notification.request.content.userInfo
+        let action = response.actionIdentifier
+        if action == DesktopNotificationAction.approve || action == DesktopNotificationAction.deny {
+            guard let workspace, let runID = (info["runID"] as? String).flatMap(UUID.init(uuidString:)),
+                  let toolID = info["toolID"] as? String else { return }
+            await workspace.agentTasks.decideFromNotification(runID: runID, toolID: toolID,
+                allow: action == DesktopNotificationAction.approve)
+            return
+        }
+        guard let id = info["conversationID"] as? String,
               let id = UUID(uuidString: id) else { return }
         await notificationRouter.receive(conversationID: id)?.value
     }

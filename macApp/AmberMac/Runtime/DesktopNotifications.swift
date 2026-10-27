@@ -2,7 +2,27 @@ import Foundation
 import Observation
 @preconcurrency import UserNotifications
 
-enum DesktopNotificationOutcome: String, Sendable { case completed, failed }
+enum DesktopNotificationOutcome: String, Sendable { case completed, failed, needsApproval }
+
+/// Notification categories and actions for unattended (scheduled) runs.
+enum DesktopNotificationAction {
+    static let approvalCategory = "amber.approval"
+    /// High-risk tools: only「查看」, so approving always happens in the app after reading the full call.
+    static let highRiskApprovalCategory = "amber.approval.high-risk"
+    static let approve = "amber.approve"
+    static let deny = "amber.deny"
+    static let view = "amber.view"
+
+    static func approvalIdentifier(runID: UUID) -> String { "amber.approval." + runID.uuidString.lowercased() }
+
+    /// Body text for an approval prompt: tool name plus a whitespace-collapsed argument excerpt (≤ 120 characters).
+    static func approvalBody(_ approval: DesktopToolApproval) -> String {
+        let collapsed = approval.arguments.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let excerpt = collapsed.count > 120 ? String(collapsed.prefix(119)) + "…" : collapsed
+        let risk = DesktopToolRegistry.isHighRisk(approval.name) ? "（高风险，请打开 Amber 核对后批准）" : ""
+        return "工具：\(approval.name)\(risk)" + (excerpt.isEmpty || excerpt == "{}" ? "" : "\n参数：\(excerpt)")
+    }
+}
 
 @MainActor final class DesktopNotificationRouter {
     private weak var workspace: DesktopWorkspace?
@@ -45,6 +65,17 @@ enum DesktopNotificationOutcome: String, Sendable { case completed, failed }
     func requestAuthorization() async throws -> Bool
     func isAuthorized() async -> Bool
     func send(identifier: String, title: String, body: String, userInfo: [String: String]) async throws
+    func send(identifier: String, title: String, body: String, userInfo: [String: String], category: String?) async throws
+    func remove(identifiers: [String])
+}
+
+extension DesktopNotificationDelivery {
+    func send(identifier: String, title: String, body: String, userInfo: [String: String], category: String?) async throws {
+        var info = userInfo
+        if let category { info["category"] = category }
+        try await send(identifier: identifier, title: title, body: body, userInfo: info)
+    }
+    func remove(identifiers: [String]) {}
 }
 
 @MainActor struct DesktopSystemNotificationDelivery: DesktopNotificationDelivery {
@@ -56,11 +87,29 @@ enum DesktopNotificationOutcome: String, Sendable { case completed, failed }
         return settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
     }
     func send(identifier: String, title: String, body: String, userInfo: [String: String]) async throws {
+        try await send(identifier: identifier, title: title, body: body, userInfo: userInfo, category: nil)
+    }
+    func send(identifier: String, title: String, body: String, userInfo: [String: String], category: String?) async throws {
         let content = UNMutableNotificationContent()
         content.title = title; content.body = body
         content.sound = .default
         content.userInfo = userInfo
+        if let category { content.categoryIdentifier = category }
         try await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+    }
+    func remove(identifiers: [String]) {
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
+
+    static func registerCategories() {
+        let approve = UNNotificationAction(identifier: DesktopNotificationAction.approve, title: "批准", options: [.authenticationRequired])
+        let deny = UNNotificationAction(identifier: DesktopNotificationAction.deny, title: "拒绝", options: [])
+        let view = UNNotificationAction(identifier: DesktopNotificationAction.view, title: "查看", options: [.foreground])
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: DesktopNotificationAction.approvalCategory, actions: [approve, deny, view], intentIdentifiers: []),
+            UNNotificationCategory(identifier: DesktopNotificationAction.highRiskApprovalCategory, actions: [view], intentIdentifiers: [])
+        ])
     }
 }
 
@@ -98,6 +147,48 @@ enum DesktopNotificationOutcome: String, Sendable { case completed, failed }
         if authorized { authorizationMessage = "系统已允许通知。" }
         else if settings.notificationsEnabled { authorizationMessage = "系统未允许通知，请在系统设置中为 Amber 开启。" }
         else { authorizationMessage = "启用后会向系统请求授权。" }
+    }
+
+    /// A scheduled run is waiting for an approval. High-risk tools get no「批准」button.
+    @discardableResult
+    func notifyApproval(runID: UUID, conversationID: UUID, taskName: String, approval: DesktopToolApproval) async -> Bool {
+        let highRisk = DesktopToolRegistry.isHighRisk(approval.name)
+        return await deliver(identifier: DesktopNotificationAction.approvalIdentifier(runID: runID),
+            title: "⏱ \(taskName) 等待批准", body: DesktopNotificationAction.approvalBody(approval),
+            userInfo: ["runID": runID.uuidString.lowercased(), "conversationID": conversationID.uuidString.lowercased(),
+                "toolID": approval.id, "outcome": DesktopNotificationOutcome.needsApproval.rawValue],
+            category: highRisk ? DesktopNotificationAction.highRiskApprovalCategory : DesktopNotificationAction.approvalCategory)
+    }
+
+    func clearApproval(runID: UUID) {
+        delivery.remove(identifiers: [DesktopNotificationAction.approvalIdentifier(runID: runID)])
+    }
+
+    /// Finished scheduled run; titled with the task name.
+    @discardableResult
+    func notifySchedule(taskName: String, record: DesktopScheduleRunRecord) async -> Bool {
+        guard record.status == .completed || record.status == .failed else { return false }
+        var info = ["scheduleRunID": record.id.uuidString.lowercased(), "outcome": record.status.rawValue]
+        if let id = record.conversationID { info["conversationID"] = id.uuidString.lowercased() }
+        let body = record.status == .completed ? "打开 Amber 查看结果。" : (record.error.map { String($0.prefix(120)) } ?? "打开 Amber 查看原因。")
+        return await deliver(identifier: "amber.schedule." + record.id.uuidString.lowercased(),
+            title: "⏱ \(taskName) " + (record.status == .completed ? "已完成" : "未完成"), body: body, userInfo: info, category: nil)
+    }
+
+    private func deliver(identifier: String, title: String, body: String, userInfo: [String: String], category: String?) async -> Bool {
+        guard settings.notificationsEnabled else { return false }
+        guard await delivery.isAuthorized(), settings.notificationsEnabled else {
+            authorizationMessage = "系统未允许通知，可在系统设置中为 Amber 开启。"
+            return false
+        }
+        do {
+            try await delivery.send(identifier: identifier, title: title, body: body, userInfo: userInfo, category: category)
+            lastDeliveryError = nil
+            return true
+        } catch {
+            lastDeliveryError = "任务结果已保留，但系统通知未能送达。"
+            return false
+        }
     }
 
     @discardableResult

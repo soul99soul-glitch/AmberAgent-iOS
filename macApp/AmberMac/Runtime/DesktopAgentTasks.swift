@@ -188,6 +188,9 @@ final class DesktopAgentTasks {
     @ObservationIgnored private var deciding: Set<UUID> = []
     @ObservationIgnored private var loadFailed = false
     @ObservationIgnored private var invalidated: Set<UUID> = []
+    /// Conversations a scheduled task is running in → task name. Their runs notify through the scheduler
+    /// (task-named result) and push approval prompts with action buttons instead of the generic notice.
+    @ObservationIgnored var unattendedConversations: [UUID: String] = [:]
 
     init(directory: URL? = nil, defaults: UserDefaults = .standard, notifications: DesktopNotifications? = nil) {
         self.defaults = defaults
@@ -226,6 +229,9 @@ final class DesktopAgentTasks {
         guard !invalidated.contains(runID) else { throw CancellationError() }
         let record = try await journal.change(runID) { $0.status = .waiting; $0.approval = approval }
         publish(record)
+        if let notifications, let name = unattendedConversations[record.conversationID] {
+            Task { await notifications.notifyApproval(runID: runID, conversationID: record.conversationID, taskName: name, approval: approval) }
+        }
     }
 
     func decision(runID: UUID, toolID: String) -> Bool? { decisions[runID]?[toolID] }
@@ -257,9 +263,19 @@ final class DesktopAgentTasks {
                 // Only the exact call id receives this one-use decision. Another call must ask again.
                 decisions[runID, default: [:]][approval.id] = allow
                 publish(record)
+                notifications?.clearApproval(runID: runID)
                 waiters.removeValue(forKey: runID)?.resume(returning: allow)
             } catch { errorMessage = "无法保存审批决定，工具尚未执行，请重试。" }
         }
+    }
+
+    /// 「批准」/「拒绝」from a notification. Only answers the exact pending call it was sent for, and never a
+    /// high-risk one (those notifications have no approve button; this guards a stale or forged response too).
+    func decideFromNotification(runID: UUID, toolID: String, allow: Bool) async {
+        await loading?.value
+        guard let approval = records.first(where: { $0.id == runID })?.approval, approval.id == toolID else { return }
+        if allow, DesktopToolRegistry.isHighRisk(approval.name) { return }
+        decide(runID: runID, allow: allow)
     }
 
     func finish(_ runID: UUID, status: DesktopAgentStatus, error: String? = nil) async {
@@ -267,7 +283,9 @@ final class DesktopAgentTasks {
         do {
             let record = try await journal.change(runID) { $0.status = status; $0.error = error; $0.approval = nil }
             publish(record)
-            if let notifications, status == .completed || status == .failed || status == .outcomeUnknown {
+            notifications?.clearApproval(runID: runID)
+            if let notifications, unattendedConversations[record.conversationID] == nil,
+               status == .completed || status == .failed || status == .outcomeUnknown {
                 Task { await notifications.notify(runID: runID, conversationID: record.conversationID,
                     outcome: status == .completed ? .completed : .failed) }
             }

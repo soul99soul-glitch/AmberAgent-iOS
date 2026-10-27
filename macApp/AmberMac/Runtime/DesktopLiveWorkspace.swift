@@ -36,6 +36,9 @@ import Foundation
                 }
                 return await self.runScheduled(task, scheduledFor: slot)
             })
+        scheduler.onRunFinished = { task, record in
+            Task { await notifications.notifySchedule(taskName: task.name, record: record) }
+        }
         scheduler.startObservingSystem()
         self.scheduler = scheduler
     }

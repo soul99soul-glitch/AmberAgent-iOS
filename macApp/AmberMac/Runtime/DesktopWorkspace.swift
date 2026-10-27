@@ -1564,7 +1564,11 @@ extension DesktopWorkspace {
         }
         record.conversationID = conversationID
         scheduledRunConversationIDs.insert(conversationID)
-        defer { scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil }
+        agentTasks.unattendedConversations[conversationID] = task.name
+        defer {
+            scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
+            agentTasks.unattendedConversations[conversationID] = nil
+        }
 
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return failed("结果会话已删除。") }
         let request: (DesktopProviderConfiguration, String)
