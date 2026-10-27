@@ -292,10 +292,7 @@ enum MacTasksBoardLayout {
             if item.approval != nil || item.column == .needsYou { return "hand.raised" }
             if item.failed { return "exclamationmark.triangle" }
             return item.column == .done ? "checkmark.circle" : "play.circle"
-        case .agentSession:
-            if item.sessionKey?.hasPrefix("codex") == true { return "chevron.left.forwardslash.chevron.right" }
-            if item.sessionKey?.hasPrefix("claude") == true { return "sparkles" }
-            return "terminal"
+        case .agentSession: return item.waitingForReply ? "text.bubble" : "terminal"
         }
     }
 }

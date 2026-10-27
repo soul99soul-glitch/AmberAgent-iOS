@@ -297,7 +297,9 @@ final class MacGatewayStore {
                 approval: .init(sessionKey: session.key, toolCallId: pending.toolCallId, tool: pending.tool,
                                 detail: pending.detail, highRisk: pending.highRisk))
         }
-        let items = approvals + sessions.filter { $0.agent != "amber" && $0.agent != "run" }.map { session in
+        // Same rule as the Mac's board: sessions with no prompt have nothing to show but their directory name.
+        let items = approvals + sessions.filter { $0.agent != "amber" && $0.agent != "run" }
+            .filter { $0.summary != nil || $0.state == "waiting" }.map { session in
             let column: MacGatewayBoardItem.Column = switch session.state {
             case "waiting": .needsYou
             case "running", "stalled": .running

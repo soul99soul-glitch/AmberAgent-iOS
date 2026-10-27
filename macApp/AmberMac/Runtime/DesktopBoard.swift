@@ -50,6 +50,9 @@ import Foundation
         }
 
         for rec in sessions where rec.agent != .amber && rec.agent != .run {
+            // No prompt ever submitted (e.g. a host's sub-second background call): nothing to name it by.
+            // Kept only while it waits on you, so a pending request is never hidden.
+            if rec.generatedTitle == nil, rec.summary == nil, rec.state != .waiting { continue }
             let column: AmberControl.BoardItem.Column
             switch rec.state {
             case .waiting: column = .needsYou

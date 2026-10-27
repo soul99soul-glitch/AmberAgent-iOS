@@ -53,17 +53,20 @@ import XCTest
             session("b", .running, ago: 10, summary: "长句", generated: "Amber 定时任务"),
             session("c", .stopped, ago: 8 * 86_400),
             session("d", .completed, ago: 120),
+            session("e", .waiting, wait: .permission, ago: 40),
         ], now: now)
 
-        XCTAssertEqual(items.map(\.column), [.needsYou, .running, .scheduled, .scheduled, .done, .done, .done])
+        XCTAssertEqual(items.map(\.column), [.needsYou, .needsYou, .running, .scheduled, .scheduled, .done, .done])
+        XCTAssertEqual(items[1].title, "mi", "a session with no prompt is still shown while it waits on you")
+        XCTAssertFalse(items.contains { $0.id == "session:claude:d" }, "a session with no prompt has nothing to show once it ends")
         XCTAssertEqual(items[0].title, "在 amber-macos 实现定时任务")
         XCTAssertTrue(items[0].waitingForReply)
-        XCTAssertEqual(items[1].title, "Amber 定时任务", "a written title wins over the first prompt")
+        XCTAssertEqual(items[2].title, "Amber 定时任务", "a written title wins over the first prompt")
         XCTAssertEqual(items.filter { $0.column == .scheduled }.map(\.title), ["周报", "每日汇总"], "soonest first; disabled tasks are not scheduled")
         let done = items.filter { $0.column == .done }
-        XCTAssertEqual(done.map(\.title), ["mi", "每日汇总", "每日汇总"], "newest first; skipped and >7 day items dropped")
-        XCTAssertEqual(done[1].detail, "新增 3 个文件")
-        XCTAssertTrue(done[2].failed)
+        XCTAssertEqual(done.map(\.title), ["每日汇总", "每日汇总"], "newest first; skipped and >7 day items dropped")
+        XCTAssertEqual(done[0].detail, "新增 3 个文件")
+        XCTAssertTrue(done[1].failed)
     }
 
     func testLiveRunWaitingOnApprovalNeedsYouAndCarriesTheAnswerKey() {

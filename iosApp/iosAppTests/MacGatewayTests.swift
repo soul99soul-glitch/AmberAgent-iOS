@@ -156,7 +156,7 @@ struct MacGatewayTests {
     }
 
     @Test @MainActor func fallbackBoardGroupsGatewaySessionsWithoutAmber() throws {
-        let json = #"{"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[{"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","abnormal":false,"monitored":true,"updatedAt":1800000000},{"key":"amber:r2","agent":"amber","subject":"清理","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1799999000,"pendingApproval":{"toolCallId":"c9","tool":"shell_run","highRisk":true}},{"key":"codex:a","agent":"codex","subject":"p","summary":"修 bug","origin":"interactive","state":"stopped","abnormal":true,"monitored":true,"updatedAt":1800000000},{"key":"claude:b","agent":"claude","subject":"q","origin":"interactive","state":"waiting","waitReason":"input","abnormal":false,"monitored":true,"updatedAt":1800000050},{"key":"claude:c","agent":"claude","subject":"r","origin":"interactive","state":"stalled","abnormal":false,"monitored":true,"updatedAt":1800000010}]}"#
+        let json = #"{"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[{"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","abnormal":false,"monitored":true,"updatedAt":1800000000},{"key":"amber:r2","agent":"amber","subject":"清理","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1799999000,"pendingApproval":{"toolCallId":"c9","tool":"shell_run","highRisk":true}},{"key":"codex:a","agent":"codex","subject":"p","summary":"修 bug","origin":"interactive","state":"stopped","abnormal":true,"monitored":true,"updatedAt":1800000000},{"key":"claude:b","agent":"claude","subject":"q","origin":"interactive","state":"waiting","waitReason":"input","abnormal":false,"monitored":true,"updatedAt":1800000050},{"key":"claude:c","agent":"claude","subject":"r","summary":"跑测试","origin":"interactive","state":"stalled","abnormal":false,"monitored":true,"updatedAt":1800000010},{"key":"claude:e","agent":"claude","subject":"arquiel","origin":"host","host":"Synara","state":"stopped","abnormal":false,"monitored":true,"updatedAt":1800000060}]}"#
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let status = try decoder.decode(MacGatewayStatus.self, from: Data(json.utf8))
@@ -167,6 +167,9 @@ struct MacGatewayTests {
         #expect(board[0].waitingForReply && board[0].detail.hasPrefix("Claude Code"))
         #expect(board[1].approval == .init(sessionKey: "amber:r2", toolCallId: "c9", tool: "shell_run", detail: nil, highRisk: true))
         #expect(board[3].title == "修 bug" && board[3].failed)
+        #expect(!board.contains { $0.id == "session:claude:e" }, "a session with no prompt is dropped unless it waits on you")
+        #expect(board.filter { $0.kind == .agentSession }.map(MacTasksBoardLayout.icon) == ["text.bubble", "terminal", "terminal"],
+                "same session icons as the Mac's board")
     }
 
     @Test func gatewayPairDeepLinkRoundTrips() throws {
