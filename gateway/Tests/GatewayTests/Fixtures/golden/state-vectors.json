@@ -1,0 +1,431 @@
+{
+  "about": "Golden vectors for Registry (design doc 3.2/3.3/3.5, D9, D10). Presence defaults to at-desk {locked:false, idle:0}. 'at' is seconds from an arbitrary base. Default config: presence 60s, permission 20s, dedupe 600s.",
+  "cases": [
+    {
+      "name": "interactive turn end, user away: push waiting immediately",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "sessionStart", "sessionId": "s1", "cwd": "/w/amber", "process": {"pid": 100, "startSec": 1, "startUsec": 0}, "origin": "interactive"}},
+        {"at": 1, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "s1"}},
+        {"at": 30, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1"}, "presence": {"locked": false, "idle": 120}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "waiting", "waitReason": "turnEnd", "abnormal": false, "origin": "interactive", "pending": false}},
+        "pushes": [{"session": "claude:s1", "state": "waiting", "level": "timeSensitive", "subject": "amber"}]
+      }
+    },
+    {
+      "name": "interactive turn end, user at desk: hold, then push once when idle crosses threshold",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "s1", "cwd": "/w/amber", "origin": "interactive"}},
+        {"at": 10, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1"}, "presence": {"locked": false, "idle": 3}},
+        {"at": 15, "tick": {"locked": false, "idle": 8}},
+        {"at": 75, "tick": {"locked": false, "idle": 65}},
+        {"at": 80, "tick": {"locked": false, "idle": 70}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "waiting", "pending": false}},
+        "pushes": [{"session": "claude:s1", "state": "waiting", "atStep": 3}]
+      }
+    },
+    {
+      "name": "held push fires when the screen locks",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "c1", "cwd": "/w/x", "origin": "interactive"}, "presence": {"locked": false, "idle": 1}},
+        {"at": 5, "tick": {"locked": true, "idle": 2}}
+      ],
+      "expect": {
+        "sessions": {"codex:c1": {"state": "waiting", "pending": false}},
+        "pushes": [{"session": "codex:c1", "state": "waiting", "atStep": 1}]
+      }
+    },
+    {
+      "name": "user replies while push is held: cancelled",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1", "cwd": "/w/amber", "origin": "interactive"}, "presence": {"locked": false, "idle": 2}},
+        {"at": 20, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "s1"}},
+        {"at": 90, "tick": {"locked": true, "idle": 90}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "running", "pending": false}},
+        "pushes": []
+      }
+    },
+    {
+      "name": "permission uses the shorter threshold",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "permissionRequest", "sessionId": "c1", "cwd": "/w/x", "origin": "interactive"}, "presence": {"locked": false, "idle": 30}},
+        {"at": 0, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "c2", "cwd": "/w/y", "origin": "interactive"}, "presence": {"locked": false, "idle": 30}}
+      ],
+      "expect": {
+        "sessions": {
+          "codex:c1": {"state": "waiting", "waitReason": "permission", "pending": false},
+          "codex:c2": {"state": "waiting", "waitReason": "turnEnd", "pending": true}
+        },
+        "pushes": [{"session": "codex:c1", "state": "waiting", "waitReason": "permission"}]
+      }
+    },
+    {
+      "name": "escalation from turn-end wait to permission wait re-evaluates",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1", "cwd": "/w/a", "origin": "interactive"}, "presence": {"locked": false, "idle": 30}},
+        {"at": 1, "event": {"agent": "claude", "kind": "permissionRequest", "sessionId": "s1"}, "presence": {"locked": false, "idle": 31}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "waiting", "waitReason": "permission", "pending": false}},
+        "pushes": [{"session": "claude:s1", "state": "waiting", "waitReason": "permission", "atStep": 1}]
+      }
+    },
+    {
+      "name": "claude idle/permission notifications while already waiting do not push again",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1", "cwd": "/w/a", "origin": "interactive"}, "presence": {"locked": true, "idle": 0}},
+        {"at": 60, "event": {"agent": "claude", "kind": "idleNotice", "sessionId": "s1"}, "presence": {"locked": true, "idle": 60}},
+        {"at": 70, "event": {"agent": "claude", "kind": "permissionRequest", "sessionId": "s1"}, "presence": {"locked": true, "idle": 70}},
+        {"at": 76, "event": {"agent": "claude", "kind": "permissionNotice", "sessionId": "s1"}, "presence": {"locked": true, "idle": 76}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "waiting", "waitReason": "permission"}},
+        "pushes": [{"session": "claude:s1", "atStep": 0}, {"session": "claude:s1", "waitReason": "permission", "atStep": 2}]
+      }
+    },
+    {
+      "name": "codex interrupt counts as turn end",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "promptSubmit", "sessionId": "c1", "cwd": "/w/x", "origin": "interactive"}},
+        {"at": 5, "event": {"agent": "codex", "kind": "interrupt", "sessionId": "c1"}}
+      ],
+      "expect": {"sessions": {"codex:c1": {"state": "waiting", "waitReason": "turnEnd", "pending": true}}, "pushes": []}
+    },
+    {
+      "name": "headless claude -p: Stop then exit = completed",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "sessionStart", "sessionId": "h1", "cwd": "/w/batch", "process": {"pid": 200, "startSec": 5, "startUsec": 1}, "origin": "headless"}},
+        {"at": 1, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "h1"}},
+        {"at": 40, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "h1"}},
+        {"at": 41, "processExit": {"pid": 200, "startSec": 5, "startUsec": 1}}
+      ],
+      "expect": {
+        "sessions": {"claude:h1": {"state": "completed", "abnormal": false}},
+        "pushes": [{"session": "claude:h1", "state": "completed", "level": "active", "atStep": 3}]
+      }
+    },
+    {
+      "name": "headless killed before any Stop = stopped abnormal",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "h2", "cwd": "/w/batch", "process": {"pid": 201, "startSec": 5, "startUsec": 0}, "origin": "headless"}},
+        {"at": 1, "event": {"agent": "codex", "kind": "promptSubmit", "sessionId": "h2"}},
+        {"at": 9, "processExit": {"pid": 201, "startSec": 5, "startUsec": 0}}
+      ],
+      "expect": {
+        "sessions": {"codex:h2": {"state": "stopped", "abnormal": true}},
+        "pushes": [{"session": "codex:h2", "state": "stopped", "abnormal": true}]
+      }
+    },
+    {
+      "name": "headless: new prompt after a Stop resets the clean-exit evidence",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "promptSubmit", "sessionId": "h3", "process": {"pid": 202, "startSec": 5, "startUsec": 0}, "origin": "headless"}},
+        {"at": 5, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "h3"}},
+        {"at": 6, "event": {"agent": "codex", "kind": "promptSubmit", "sessionId": "h3"}},
+        {"at": 9, "processExit": {"pid": 202, "startSec": 5, "startUsec": 0}}
+      ],
+      "expect": {"sessions": {"codex:h3": {"state": "stopped", "abnormal": true}}}
+    },
+    {
+      "name": "headless StopFailure then exit = abnormal",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "h4", "process": {"pid": 203, "startSec": 5, "startUsec": 0}, "origin": "headless"}},
+        {"at": 5, "event": {"agent": "claude", "kind": "turnFailure", "sessionId": "h4"}},
+        {"at": 6, "event": {"agent": "claude", "kind": "sessionEnd", "sessionId": "h4"}},
+        {"at": 7, "processExit": {"pid": 203, "startSec": 5, "startUsec": 0}}
+      ],
+      "expect": {"sessions": {"claude:h4": {"state": "stopped", "abnormal": true}}, "pushes": [{"session": "claude:h4", "state": "stopped", "abnormal": true, "atStep": 2}]}
+    },
+    {
+      "name": "headless SessionEnd completes immediately; later exit is a no-op",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "h5", "process": {"pid": 204, "startSec": 5, "startUsec": 0}, "origin": "headless"}},
+        {"at": 3, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "h5"}},
+        {"at": 4, "processExit": {"pid": 204, "startSec": 5, "startUsec": 0}}
+      ],
+      "expect": {"sessions": {"codex:h5": {"state": "completed", "abnormal": false}}, "pushes": [{"session": "codex:h5", "state": "completed", "atStep": 1}]}
+    },
+    {
+      "name": "completed push is deduped within the window",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "h6", "origin": "headless"}},
+        {"at": 3, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "h6"}},
+        {"at": 100, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "h6"}},
+        {"at": 200, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "h6"}},
+        {"at": 900, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "h6"}},
+        {"at": 901, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "h6"}}
+      ],
+      "expect": {"pushes": [{"session": "codex:h6", "state": "completed", "atStep": 1}, {"session": "codex:h6", "state": "completed", "atStep": 5}]}
+    },
+    {
+      "name": "run wrapper: exit 0 completed, exit 1 and signal abnormal",
+      "steps": [
+        {"at": 0, "event": {"agent": "run", "kind": "runStart", "sessionId": "r1", "title": "true", "process": {"pid": 300, "startSec": 9, "startUsec": 0}, "origin": "headless"}},
+        {"at": 1, "event": {"agent": "run", "kind": "runExit", "sessionId": "r1", "exitCode": 0}},
+        {"at": 1, "processExit": {"pid": 300, "startSec": 9, "startUsec": 0}},
+        {"at": 2, "event": {"agent": "run", "kind": "runStart", "sessionId": "r2", "title": "false", "origin": "headless"}},
+        {"at": 3, "event": {"agent": "run", "kind": "runExit", "sessionId": "r2", "exitCode": 1}},
+        {"at": 4, "event": {"agent": "run", "kind": "runStart", "sessionId": "r3", "title": "sh", "origin": "headless"}},
+        {"at": 5, "event": {"agent": "run", "kind": "runExit", "sessionId": "r3", "signal": 9}}
+      ],
+      "expect": {
+        "sessions": {
+          "run:r1": {"state": "completed", "abnormal": false},
+          "run:r2": {"state": "stopped", "abnormal": true},
+          "run:r3": {"state": "stopped", "abnormal": true}
+        },
+        "pushes": [
+          {"session": "run:r1", "state": "completed", "subject": "true"},
+          {"session": "run:r2", "state": "stopped", "abnormal": true, "subject": "false"},
+          {"session": "run:r3", "state": "stopped", "abnormal": true}
+        ]
+      }
+    },
+    {
+      "name": "run wrapper itself killed: no runExit, process exit = abnormal",
+      "steps": [
+        {"at": 0, "event": {"agent": "run", "kind": "runStart", "sessionId": "r4", "title": "make", "process": {"pid": 301, "startSec": 9, "startUsec": 0}, "origin": "headless"}},
+        {"at": 50, "processExit": {"pid": 301, "startSec": 9, "startUsec": 0}}
+      ],
+      "expect": {"sessions": {"run:r4": {"state": "stopped", "abnormal": true}}, "pushes": [{"session": "run:r4", "state": "stopped", "abnormal": true}]}
+    },
+    {
+      "name": "interactive killed (no SessionEnd) = stopped abnormal and pushed",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "sessionStart", "sessionId": "s1", "cwd": "/w/a", "process": {"pid": 400, "startSec": 1, "startUsec": 0}, "origin": "interactive"}},
+        {"at": 5, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1"}, "presence": {"locked": false, "idle": 1}},
+        {"at": 9, "processExit": {"pid": 400, "startSec": 1, "startUsec": 0}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "stopped", "abnormal": true, "pending": false}},
+        "pushes": [{"session": "claude:s1", "state": "stopped", "abnormal": true, "atStep": 2}]
+      }
+    },
+    {
+      "name": "interactive normal exit: stopped, not pushed",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "c1", "process": {"pid": 401, "startSec": 1, "startUsec": 0}, "origin": "interactive"}},
+        {"at": 5, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "c1"}},
+        {"at": 6, "processExit": {"pid": 401, "startSec": 1, "startUsec": 0}}
+      ],
+      "expect": {"sessions": {"codex:c1": {"state": "stopped", "abnormal": false}}, "pushes": []}
+    },
+    {
+      "name": "recycled PID (different start time) does not affect the session",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "c1", "process": {"pid": 402, "startSec": 1, "startUsec": 0}, "origin": "interactive"}},
+        {"at": 5, "processExit": {"pid": 402, "startSec": 2, "startUsec": 0}}
+      ],
+      "expect": {"sessions": {"codex:c1": {"state": "running", "abnormal": false}}, "pushes": []}
+    },
+    {
+      "name": "codex exec runs an auxiliary session in the same process: stays headless, completes (runtime evidence 2026-09-27)",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "main", "cwd": "/w/job", "process": {"pid": 600, "startSec": 1, "startUsec": 0}, "origin": "headless"}},
+        {"at": 1, "event": {"agent": "codex", "kind": "promptSubmit", "sessionId": "main"}},
+        {"at": 2, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "aux", "cwd": "/w/aux", "process": {"pid": 600, "startSec": 1, "startUsec": 0}, "origin": "headless"}},
+        {"at": 9, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "main"}},
+        {"at": 10, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "main"}},
+        {"at": 10, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "aux"}},
+        {"at": 11, "processExit": {"pid": 600, "startSec": 1, "startUsec": 0}}
+      ],
+      "expect": {
+        "sessions": {"codex:main": {"state": "completed", "abnormal": false, "origin": "headless"}},
+        "pushes": [{"session": "codex:main", "state": "completed", "atStep": 4}, {"session": "codex:aux", "state": "completed", "atStep": 5}]
+      }
+    },
+    {
+      "name": "interactive codex with an auxiliary session in the same process still gets waiting pushes",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "main", "cwd": "/w/app", "process": {"pid": 601, "startSec": 1, "startUsec": 0}, "origin": "interactive"}},
+        {"at": 1, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "aux", "cwd": "/w/aux", "process": {"pid": 601, "startSec": 1, "startUsec": 0}, "origin": "interactive"}},
+        {"at": 5, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "main"}, "presence": {"locked": true, "idle": 0}}
+      ],
+      "expect": {
+        "sessions": {"codex:main": {"state": "waiting", "origin": "interactive"}},
+        "pushes": [{"session": "codex:main", "state": "waiting", "atStep": 2}]
+      }
+    },
+    {
+      "name": "codex memory-consolidation sessions are excluded by default",
+      "config": {"excludeCwdPrefixes": ["/Users/me/.codex/memories"]},
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "mem", "cwd": "/Users/me/.codex/memories"}}
+      ],
+      "expect": {"sessionCount": 0}
+    },
+    {
+      "name": "multi-session host (app-server): per-session end, one push when host dies",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "t1", "cwd": "/w/a", "process": {"pid": 500, "startSec": 1, "startUsec": 0}, "origin": "host"}},
+        {"at": 1, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "t2", "cwd": "/w/b", "process": {"pid": 500, "startSec": 1, "startUsec": 0}, "origin": "host"}},
+        {"at": 2, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "t3", "cwd": "/w/c", "process": {"pid": 500, "startSec": 1, "startUsec": 0}, "origin": "host"}},
+        {"at": 3, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "t2"}, "presence": {"locked": true, "idle": 999}},
+        {"at": 4, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "t1"}},
+        {"at": 9, "processExit": {"pid": 500, "startSec": 1, "startUsec": 0}}
+      ],
+      "expect": {
+        "sessions": {
+          "codex:t1": {"state": "stopped", "abnormal": false, "origin": "host"},
+          "codex:t2": {"state": "stopped", "abnormal": true, "origin": "host"},
+          "codex:t3": {"state": "stopped", "abnormal": true, "origin": "host"}
+        },
+        "pushes": [{"state": "stopped", "abnormal": true, "subject": "宿主进程（2 个会话）", "atStep": 5}]
+      }
+    },
+    {
+      "name": "app-server origin: waiting is tracked but never pushed",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "t1", "process": {"pid": 501, "startSec": 1, "startUsec": 0}, "origin": "host"}, "presence": {"locked": true, "idle": 999}}
+      ],
+      "expect": {"sessions": {"codex:t1": {"state": "waiting", "origin": "host", "pending": false}}, "pushes": []}
+    },
+    {
+      "name": "duplicate event id (spool retry after a lost ack) is applied once",
+      "steps": [
+        {"at": 0, "event": {"id": "dup", "agent": "claude", "kind": "turnStop", "sessionId": "s1", "origin": "interactive"}, "presence": {"locked": true, "idle": 0}},
+        {"at": 1, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "s1"}},
+        {"at": 2, "event": {"id": "dup", "agent": "claude", "kind": "turnStop", "sessionId": "s1", "origin": "interactive"}, "presence": {"locked": true, "idle": 0}}
+      ],
+      "expect": {"sessions": {"claude:s1": {"state": "running"}}, "pushes": [{"session": "claude:s1", "atStep": 0}]}
+    },
+    {
+      "name": "stale event older than the record is ignored",
+      "steps": [
+        {"at": 10, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "s1", "origin": "interactive"}},
+        {"at": 5, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1"}, "presence": {"locked": true, "idle": 0}}
+      ],
+      "expect": {"sessions": {"claude:s1": {"state": "running"}}, "pushes": []}
+    },
+    {
+      "name": "excluded cwd is never registered",
+      "config": {"excludeCwdPrefixes": ["/w/secret"]},
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1", "cwd": "/w/secret/repo", "origin": "interactive"}, "presence": {"locked": true, "idle": 0}}
+      ],
+      "expect": {"sessions": {}, "pushes": [], "sessionCount": 0}
+    },
+    {
+      "name": "headless task silent past the stall window: one stalled push, cleared by the next event",
+      "config": {"headlessStallMinutes": 10},
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "sessionStart", "sessionId": "h1", "cwd": "/w/batch", "origin": "headless"}},
+        {"at": 300, "heartbeat": {}},
+        {"at": 600, "heartbeat": {}},
+        {"at": 660, "heartbeat": {}},
+        {"at": 700, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "h1"}},
+        {"at": 710, "event": {"agent": "codex", "kind": "sessionEnd", "sessionId": "h1"}}
+      ],
+      "expect": {
+        "sessions": {"codex:h1": {"state": "completed", "abnormal": false}},
+        "pushes": [
+          {"session": "codex:h1", "state": "stalled", "subject": "batch", "atStep": 2},
+          {"session": "codex:h1", "state": "completed", "atStep": 5}
+        ]
+      }
+    },
+    {
+      "name": "interactive sessions never stall (they idle legitimately)",
+      "config": {"headlessStallMinutes": 1},
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "promptSubmit", "sessionId": "s1", "origin": "interactive"}},
+        {"at": 3600, "heartbeat": {}}
+      ],
+      "expect": {"sessions": {"claude:s1": {"state": "running"}}, "pushes": []}
+    },
+    {
+      "name": "health alerts fire on entering a bad state only, and re-arm after recovery",
+      "steps": [
+        {"at": 0, "heartbeat": {"diskGB": 12, "battery": 80, "onBattery": true}},
+        {"at": 60, "heartbeat": {"diskGB": 11, "battery": 15, "onBattery": true}},
+        {"at": 120, "heartbeat": {"diskGB": 11, "battery": 14, "onBattery": false}},
+        {"at": 180, "heartbeat": {"diskGB": 30, "battery": 13, "onBattery": true, "thermal": "serious"}},
+        {"at": 240, "heartbeat": {"diskGB": 10}}
+      ],
+      "expect": {
+        "pushes": [
+          {"kind": "health", "subject": "disk", "detail": "磁盘剩余 12 GB", "atStep": 0},
+          {"kind": "health", "subject": "battery", "detail": "电量 15%，未接电源", "atStep": 1},
+          {"kind": "health", "subject": "battery", "atStep": 3},
+          {"kind": "health", "subject": "thermal", "atStep": 3},
+          {"kind": "health", "subject": "disk", "atStep": 4}
+        ]
+      }
+    },
+    {
+      "name": "permission approved (no hook reports it), turn then ends while away: the turn-end wait is pushed too",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "permissionRequest", "sessionId": "s1", "cwd": "/w/a", "origin": "interactive"}, "presence": {"locked": true, "idle": 300}},
+        {"at": 120, "event": {"agent": "claude", "kind": "turnStop", "sessionId": "s1"}, "presence": {"locked": true, "idle": 60}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "waiting", "waitReason": "turnEnd"}},
+        "pushes": [
+          {"session": "claude:s1", "waitReason": "permission", "atStep": 0},
+          {"session": "claude:s1", "waitReason": "turnEnd", "atStep": 1}
+        ]
+      }
+    },
+    {
+      "name": "permission approved at the desk: the tool finishing cancels the held push (runtime evidence 2026-09-27)",
+      "steps": [
+        {"at": 0, "event": {"agent": "claude", "kind": "permissionRequest", "sessionId": "s1", "cwd": "/w/a", "origin": "interactive", "tool": "Bash"}, "presence": {"locked": false, "idle": 2}},
+        {"at": 12, "event": {"agent": "claude", "kind": "toolDone", "sessionId": "s1", "tool": "Bash"}},
+        {"at": 40, "tick": {"locked": false, "idle": 28}}
+      ],
+      "expect": {
+        "sessions": {"claude:s1": {"state": "running", "pending": false}},
+        "pushes": []
+      }
+    },
+    {
+      "name": "a parallel tool finishing does not resolve another tool's permission wait",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "permissionRequest", "sessionId": "c1", "cwd": "/w/x", "origin": "interactive", "tool": "Bash"}, "presence": {"locked": false, "idle": 2}},
+        {"at": 1, "event": {"agent": "codex", "kind": "toolDone", "sessionId": "c1", "tool": "Read"}},
+        {"at": 30, "tick": {"locked": false, "idle": 30}}
+      ],
+      "expect": {
+        "sessions": {"codex:c1": {"state": "waiting", "waitReason": "permission", "pending": false}},
+        "pushes": [{"session": "codex:c1", "waitReason": "permission", "atStep": 2}]
+      }
+    },
+    {
+      "name": "run wrapper never stalls: it emits nothing until exit and its exit is always observed",
+      "steps": [
+        {"at": 0, "event": {"agent": "run", "kind": "runStart", "sessionId": "r1", "title": "make", "process": {"pid": 310, "startSec": 1, "startUsec": 0}, "origin": "headless"}},
+        {"at": 7200, "heartbeat": {}}
+      ],
+      "expect": {"sessions": {"run:r1": {"state": "running"}}, "pushes": []}
+    },
+    {
+      "name": "late runExit (spooled past the ack deadline) corrects an abnormal stop from process exit",
+      "steps": [
+        {"at": 0, "event": {"agent": "run", "kind": "runStart", "sessionId": "r2", "title": "make", "process": {"pid": 311, "startSec": 1, "startUsec": 0}, "origin": "headless"}},
+        {"at": 50, "processExit": {"pid": 311, "startSec": 1, "startUsec": 0}},
+        {"at": 51, "event": {"agent": "run", "kind": "runExit", "sessionId": "r2", "exitCode": 0}}
+      ],
+      "expect": {
+        "sessions": {"run:r2": {"state": "completed", "abnormal": false}},
+        "pushes": [
+          {"session": "run:r2", "state": "stopped", "abnormal": true, "atStep": 1},
+          {"session": "run:r2", "state": "completed", "atStep": 2}
+        ]
+      }
+    },
+    {
+      "name": "held waiting push is dropped once the session turns out to be a host (D9)",
+      "steps": [
+        {"at": 0, "event": {"agent": "codex", "kind": "turnStop", "sessionId": "c1", "cwd": "/w/x", "origin": "interactive"}, "presence": {"locked": false, "idle": 0}},
+        {"at": 1, "event": {"agent": "codex", "kind": "idleNotice", "sessionId": "c1", "origin": "host"}, "presence": {"locked": false, "idle": 1}},
+        {"at": 60, "tick": {"locked": true, "idle": 60}}
+      ],
+      "expect": {"sessions": {"codex:c1": {"origin": "host", "pending": false}}, "pushes": []}
+    }
+  ]
+}

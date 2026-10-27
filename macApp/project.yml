@@ -20,6 +20,8 @@ configs:
   Debug: debug
   Release: release
 packages:
+  AmberGateway:
+    path: ../gateway
   iosMath:
     url: https://github.com/maitbayev/iosMath
     revision: 066ba2f8353782a644889efe9ceb884ea844180b
@@ -32,6 +34,12 @@ targets:
         excludes:
           - Info.plist
           - Amber.entitlements
+          - LaunchAgents
+      - path: AmberMac/LaunchAgents
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
       - path: ../iosApp/iosApp/IOSGeminiProvider.swift
       - path: ../iosApp/iosApp/IOSAntigravityOAuthClient.swift
       - path: ../iosApp/iosApp/IOSCodexOAuthClient.swift
@@ -102,9 +110,33 @@ targets:
     dependencies:
       - package: iosMath
         product: iosMath
+      - package: AmberGateway
+        product: GatewayKit
+      - target: amber-gateway
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
       - framework: ../desktop-shared/build/bin/macosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)/Shared.framework
         embed: true
         codeSign: true
+  # The gateway daemon/CLI, embedded at Amber.app/Contents/MacOS/amber-gateway and run by launchd.
+  amber-gateway:
+    type: tool
+    platform: macOS
+    sources:
+      - path: ../gateway/Sources/amber-gateway
+    dependencies:
+      - package: AmberGateway
+        product: GatewayKit
+    settings:
+      base:
+        PRODUCT_NAME: amber-gateway
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.macos.gateway
+        SWIFT_VERSION: '5.0'
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
+        ARCHS: arm64
   AmberMacPreview:
     type: application
     platform: macOS

@@ -17,6 +17,10 @@ if ! command -v xcodegen >/dev/null 2>&1; then
 fi
 cd "$project_dir"
 xcodegen generate
+if [ "$action" = test ]; then
+  # The embedded gateway keeps its own SwiftPM suite (built binary, real TLS/UDS round trips).
+  swift test --package-path "$project_dir/../gateway" --scratch-path "$project_dir/build/gateway"
+fi
 xcodebuild -quiet -project AmberMac.xcodeproj -scheme AmberMac \
   -configuration "$configuration" -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$project_dir/build" \
@@ -28,6 +32,8 @@ if [ "$action" = build ]; then
   app="$project_dir/build/Build/Products/$configuration/Amber.app"
   if [ -n "$identity" ] && [ -d "$app" ]; then
     codesign --force --timestamp=none --sign "$identity" "$app/Contents/Frameworks/Shared.framework"
+    # Embedded gateway daemon: SMAppService requires it to share the app's signing team.
+    codesign --force --timestamp=none --options runtime --identifier app.amber.macos.gateway --sign "$identity" "$app/Contents/MacOS/amber-gateway"
     codesign --force --timestamp=none --options runtime --entitlements "$project_dir/AmberMac/Amber.entitlements" --sign "$identity" "$app"
   fi
 fi
