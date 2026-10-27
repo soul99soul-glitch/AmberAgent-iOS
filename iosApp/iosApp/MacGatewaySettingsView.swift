@@ -203,6 +203,7 @@ struct MacGatewaySettingsView: View {
                         .tint(AmberTheme.accent)
                         .accessibilityLabel(Text(verbatim: L("推送") + " " + session.subject))
                     }
+                    if let approval = session.pendingApproval { approvalRow(approval) }
                 }
             }
             if !sessions.isEmpty {
@@ -241,6 +242,7 @@ struct MacGatewaySettingsView: View {
         let agent = switch session.agent {
         case "claude": "Claude Code"
         case "codex": "Codex"
+        case "amber": L("Amber 定时任务")
         default: L("任务")
         }
         let state = switch session.state {
@@ -248,7 +250,7 @@ struct MacGatewaySettingsView: View {
         case "waiting": session.waitReason == "permission" ? L("等你确认") : L("等你回复")
         case "stalled": L("可能卡住了")
         case "completed": L("已完成")
-        default: session.abnormal ? L("意外中断") : L("已停止")
+        default: session.agent == "amber" ? L("未完成") : session.abnormal ? L("意外中断") : L("已停止")
         }
         return [agent, session.host, state, session.updatedAt.formatted(.relative(presentation: .named))]
             .compactMap { $0 }.joined(separator: " · ")
@@ -258,6 +260,7 @@ struct MacGatewaySettingsView: View {
         switch agent {
         case "claude": "sparkles"
         case "codex": "chevron.left.forwardslash.chevron.right"
+        case "amber": "clock"
         default: "terminal"
         }
     }
@@ -272,6 +275,25 @@ struct MacGatewaySettingsView: View {
     }
 
     // MARK: - Rows
+
+    /// The tool call an Amber scheduled run is waiting on, under its task row.
+    private func approvalRow(_ approval: MacGatewayStatus.PendingApproval) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: approval.tool)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(approval.highRisk ? AmberTheme.accentRed : AmberTheme.accent)
+            if let detail = approval.detail {
+                Text(verbatim: detail)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 54)
+        .padding(.trailing, 14)
+        .padding(.bottom, 12)
+    }
 
     private var rowDivider: some View {
         Divider().overlay(AmberTheme.borderSoft).padding(.leading, 54)

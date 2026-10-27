@@ -20,6 +20,14 @@ extension Daemon {
             var abnormal: Bool
             var monitored: Bool
             var updatedAt: Date
+            /// Amber scheduled runs waiting on a tool call: what the phone shows and answers.
+            var pendingApproval: PendingApproval?
+        }
+        struct PendingApproval: Encodable {
+            var toolCallId: String
+            var tool: String
+            var detail: String?
+            var highRisk: Bool
         }
 
         var gateway: Gateway
@@ -125,7 +133,8 @@ extension Daemon {
             .map {
                 StatusResponse.Session(key: $0.key, agent: $0.agent, subject: Registry.subject(for: $0), origin: $0.origin,
                                        host: $0.host, state: $0.state, waitReason: $0.waitReason, abnormal: $0.abnormal,
-                                       monitored: $0.monitored, updatedAt: $0.updatedAt)
+                                       monitored: $0.monitored, updatedAt: $0.updatedAt,
+                                       pendingApproval: Self.pendingApproval($0))
             }
         let response = StatusResponse(
             gateway: .init(id: identity.id, name: identity.name),
@@ -137,6 +146,12 @@ extension Daemon {
         )
         guard let data = try? GatewayJSON.encoder().encode(response) else { return .error(500, "encode failed") }
         return HTTPResponse(status: 200, body: data)
+    }
+
+    static func pendingApproval(_ rec: SessionRecord) -> StatusResponse.PendingApproval? {
+        guard rec.agent == .amber, rec.state == .waiting, rec.waitReason == .permission,
+              let id = rec.waitingToolCallId, let tool = rec.waitingTool else { return nil }
+        return .init(toolCallId: id, tool: tool, detail: rec.waitingDetail, highRisk: rec.waitingHighRisk ?? true)
     }
 
     private func registerPushToken(_ body: [String: Any], device: PairedDevice) -> HTTPResponse {

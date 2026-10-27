@@ -18,6 +18,7 @@ extension AgentKind {
         case .claude: "Claude Code"
         case .codex: "Codex"
         case .run: "任务"
+        case .amber: "Amber 定时任务"
         }
     }
 }
@@ -28,7 +29,13 @@ public enum PushContent {
         switch intent.kind {
         case .task:
             let agent = intent.agent?.displayName ?? "任务"
-            return ("\(agent) · \(intent.subject)", intent.state?.label(intent.waitReason, abnormal: intent.abnormal) ?? "")
+            var body = intent.state?.label(intent.waitReason, abnormal: intent.abnormal) ?? ""
+            if intent.agent == .amber {
+                // A scheduled run that did not finish is a failure, not the user stopping it.
+                if intent.state == .stopped { body = "未完成" }
+                if intent.state == .waiting, intent.highRisk == true { body = "等你确认（高风险，请在 Mac 上核对）" }
+            }
+            return ("\(agent) · \(intent.subject)", body)
         case .health:
             return ("\(gatewayName) 健康提醒", intent.detail ?? intent.subject)
         case .sleep:

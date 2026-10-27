@@ -33,4 +33,5 @@ xcodebuild -quiet -project AmberMac.xcodeproj -scheme AmberMac \
   -derivedDataPath "$project_dir/build" -parallel-testing-enabled NO \
   "AMBER_MAC_PROVIDER_TEST_URL=http://127.0.0.1:$fixture_port" \
   "AMBER_MAC_PERFORMANCE_BENCHMARK=${AMBER_MAC_PERFORMANCE_BENCHMARK:-}" \
+  "AMBER_MAC_GATEWAY_LIVE=${AMBER_MAC_GATEWAY_LIVE:-}" \
   -only-testing:AmberMacTests/KMPProviderIntegrationTests test

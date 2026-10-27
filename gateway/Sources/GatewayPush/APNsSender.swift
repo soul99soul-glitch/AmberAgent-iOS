@@ -9,19 +9,38 @@ public struct PushMessage: Sendable, Equatable {
     public var threadId: String
     public var timeSensitive: Bool
     public var isTest: Bool
+    /// Notification category that offers in-place actions (Amber approvals), and keys the app needs to act.
+    public var category: String?
+    public var userInfo: [String: String]
 
-    public init(title: String, body: String, threadId: String, timeSensitive: Bool, isTest: Bool = false) {
+    public static let amberApprovalCategory = "amber.gateway.approval"
+    public static let amberDeepLink = "amber://settings/mac-gateway"
+
+    public init(title: String, body: String, threadId: String, timeSensitive: Bool, isTest: Bool = false,
+                category: String? = nil, userInfo: [String: String] = [:]) {
         self.title = title
         self.body = body
         self.threadId = threadId
         self.timeSensitive = timeSensitive
         self.isTest = isTest
+        self.category = category
+        self.userInfo = userInfo
     }
 
     public init(_ intent: PushIntent, gatewayName: String) {
         let text = PushContent.render(intent, gatewayName: gatewayName)
+        var info: [String: String] = [:]
+        var category: String?
+        if intent.agent == .amber, let key = intent.sessionKey {
+            info = ["deepLink": Self.amberDeepLink, "sessionKey": key]
+            // High-risk calls are approved on the Mac after reading the full call, never from a lock screen.
+            if let call = intent.toolCallId, intent.highRisk == false {
+                info["toolCallId"] = call
+                category = Self.amberApprovalCategory
+            }
+        }
         self.init(title: text.title, body: text.body, threadId: intent.sessionKey ?? intent.kind.rawValue,
-                  timeSensitive: intent.level == .timeSensitive, isTest: intent.kind == .test)
+                  timeSensitive: intent.level == .timeSensitive, isTest: intent.kind == .test, category: category, userInfo: info)
     }
 }
 
@@ -90,12 +109,16 @@ public actor APNsSender {
     }
 
     static func payload(_ m: PushMessage) -> [String: Any] {
-        ["aps": [
+        var aps: [String: Any] = [
             "alert": ["title": m.title, "body": m.body],
             "sound": "default",
             "thread-id": m.threadId,
             "interruption-level": m.timeSensitive ? "time-sensitive" : "active",
-        ]]
+        ]
+        if let category = m.category { aps["category"] = category }
+        var payload: [String: Any] = ["aps": aps]
+        for (key, value) in m.userInfo { payload[key] = value }
+        return payload
     }
 
     func providerToken(now: Date = Date()) throws -> String {

@@ -77,7 +77,7 @@ public enum AgentProcess {
             return ProcessTree.arguments(pid: snap.identity.pid)?.contains { $0.contains("claude-code") } ?? false
         case .codex:
             return snap.name == "codex"
-        case .run:
+        case .run, .amber:
             return false
         }
     }
@@ -98,7 +98,7 @@ public enum AgentProcess {
             if rest.contains("--input-format=stream-json") { return .host }
             if rest.contains("-p") || rest.contains("--print") { return .headless }
             return .interactive
-        case .run:
+        case .run, .amber:
             return .headless
         }
     }

@@ -41,6 +41,10 @@ import Foundation
         }
         scheduler.startObservingSystem()
         self.scheduler = scheduler
-        gateway = DesktopGateway()
+        let gateway = DesktopGateway()
+        self.gateway = gateway
+        let reporter = DesktopGatewayReporter { gateway.isEnabled }
+        gatewayReporter = reporter
+        tasks.onUnattendedApproval = { reporter.approval(conversationID: $0, $1) }
     }
 }

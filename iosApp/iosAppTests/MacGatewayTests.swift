@@ -41,6 +41,16 @@ struct MacGatewayTests {
         #expect(MacGatewayPinningDelegate.spkiFingerprint(of: certificate) == "E1koSGeJkiwpjjeThRw6ApEq2SvdvsQLpfEav0yC6Iw=")
     }
 
+    @Test func statusDecodesAmberPendingApproval() throws {
+        let json = #"{"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[{"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1800000000,"pendingApproval":{"toolCallId":"c1","tool":"workspace_file_write","detail":"path a.txt","highRisk":false}},{"key":"claude:s","agent":"claude","subject":"p","origin":"interactive","state":"running","abnormal":false,"monitored":true,"updatedAt":1800000000}]}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let status = try decoder.decode(MacGatewayStatus.self, from: Data(json.utf8))
+        #expect(status.sessions[0].pendingApproval?.toolCallId == "c1")
+        #expect(status.sessions[0].pendingApproval?.highRisk == false)
+        #expect(status.sessions[1].pendingApproval == nil, "older gateways and agent sessions omit the field")
+    }
+
     @Test func gatewayPairDeepLinkRoundTrips() throws {
         let url = try #require(URL(string: "amber-test://gateway/pair?p=\(Self.encodedPayload)"))
         let destination = try #require(IOSAppDeepLink.parse(url, expectedScheme: "amber-test"))

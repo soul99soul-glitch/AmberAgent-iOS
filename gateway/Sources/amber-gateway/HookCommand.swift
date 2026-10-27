@@ -7,7 +7,7 @@ import HookIngest
 /// hooked events (`PermissionRequest`, `Stop`) treat hook output as a decision.
 enum HookCommand {
     static func run(_ args: [String]) -> Never {
-        guard let name = args.first, let source = AgentKind(rawValue: name), source != .run else { exit(0) }
+        guard let name = args.first, let source = AgentKind(rawValue: name), source != .run, source != .amber else { exit(0) }
         let payload = FileHandle.standardInput.readDataToEndOfFile()
         guard var event = HookParser.parse(source: source, payload: payload) else { exit(0) }
         if let (identity, origin, host) = AgentProcess.locate(source: source) {

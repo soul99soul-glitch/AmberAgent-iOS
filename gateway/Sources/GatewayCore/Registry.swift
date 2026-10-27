@@ -32,7 +32,7 @@ public struct Registry: Codable, Sendable, Equatable {
         if config.headlessStallMinutes > 0 {
             for key in sessions.keys.sorted() {
                 // `run` children emit nothing between start and exit, and their exit is always observed.
-                guard var rec = sessions[key], rec.state == .running, rec.origin == .headless, rec.agent != .run,
+                guard var rec = sessions[key], rec.state == .running, rec.origin == .headless, rec.agent != .run, rec.agent != .amber,
                       now.timeIntervalSince(rec.updatedAt) >= config.headlessStallMinutes * 60
                 else { continue }
                 let old = rec
@@ -146,7 +146,7 @@ public struct Registry: Codable, Sendable, Equatable {
         var effects: [RegistryEffect] = []
         for key in sessions.keys.sorted() {
             guard var rec = sessions[key], rec.pendingPushSince != nil else { continue }
-            guard rec.state == .waiting, rec.origin == .interactive else {
+            guard rec.state == .waiting, rec.origin == .interactive || rec.agent == .amber else {
                 rec.pendingPushSince = nil
                 sessions[key] = rec
                 continue
@@ -200,8 +200,10 @@ public struct Registry: Codable, Sendable, Equatable {
             // A permission wait ends on its tool's `toolDone`; without one it lasts until the turn ends,
             // and that switch to turnEnd is a new wait.
             let entered = old?.state != .waiting || old?.waitReason != rec.waitReason
-            // D9: only interactive sessions get "waiting for you".
-            guard entered, rec.origin == .interactive else { return [] }
+            // D9: only interactive sessions get "waiting for you". Amber approvals are the exception: an
+            // unattended task waiting on a tool call is exactly what the phone is for.
+            let entered2 = entered || (rec.agent == .amber && old?.waitingToolCallId != rec.waitingToolCallId)
+            guard entered2, rec.origin == .interactive || rec.agent == .amber else { return [] }
             if presence().isAway(threshold: threshold(for: rec, config)) {
                 rec.pendingPushSince = nil
                 return makeIntent(&rec, subject: nil, config: config, now: now).map { [.push($0)] } ?? []
@@ -233,6 +235,8 @@ public struct Registry: Codable, Sendable, Equatable {
             state: rec.state,
             waitReason: rec.waitReason,
             abnormal: rec.abnormal,
+            toolCallId: rec.agent == .amber && rec.state == .waiting ? rec.waitingToolCallId : nil,
+            highRisk: rec.agent == .amber && rec.state == .waiting ? rec.waitingHighRisk : nil,
             level: rec.state == .waiting ? .timeSensitive : .active,
             createdAt: now
         )

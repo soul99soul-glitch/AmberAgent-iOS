@@ -191,6 +191,8 @@ final class DesktopAgentTasks {
     /// Conversations a scheduled task is running in → task name. Their runs notify through the scheduler
     /// (task-named result) and push approval prompts with action buttons instead of the generic notice.
     @ObservationIgnored var unattendedConversations: [UUID: String] = [:]
+    /// Approval lifecycle of unattended runs, for reporting to the Mac Gateway: (conversation, approval or nil when answered).
+    @ObservationIgnored var onUnattendedApproval: (@MainActor (UUID, DesktopToolApproval?) -> Void)?
 
     init(directory: URL? = nil, defaults: UserDefaults = .standard, notifications: DesktopNotifications? = nil) {
         self.defaults = defaults
@@ -229,8 +231,11 @@ final class DesktopAgentTasks {
         guard !invalidated.contains(runID) else { throw CancellationError() }
         let record = try await journal.change(runID) { $0.status = .waiting; $0.approval = approval }
         publish(record)
-        if let notifications, let name = unattendedConversations[record.conversationID] {
-            Task { await notifications.notifyApproval(runID: runID, conversationID: record.conversationID, taskName: name, approval: approval) }
+        if let name = unattendedConversations[record.conversationID] {
+            if let notifications {
+                Task { await notifications.notifyApproval(runID: runID, conversationID: record.conversationID, taskName: name, approval: approval) }
+            }
+            onUnattendedApproval?(record.conversationID, approval)
         }
     }
 
@@ -264,6 +269,7 @@ final class DesktopAgentTasks {
                 decisions[runID, default: [:]][approval.id] = allow
                 publish(record)
                 notifications?.clearApproval(runID: runID)
+                if unattendedConversations[record.conversationID] != nil { onUnattendedApproval?(record.conversationID, nil) }
                 waiters.removeValue(forKey: runID)?.resume(returning: allow)
             } catch { errorMessage = "无法保存审批决定，工具尚未执行，请重试。" }
         }

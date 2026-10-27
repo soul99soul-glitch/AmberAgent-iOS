@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@preconcurrency import GatewayCore
 @testable import AmberMac
 
 @MainActor
@@ -243,6 +244,45 @@ final class KMPProviderIntegrationTests: XCTestCase {
         let written = try await files.list(conversationID: try XCTUnwrap(record.conversationID))
         XCTAssertEqual(written.map(\.id), ["summary.txt"])
         XCTAssertTrue(record.autoApprovedTools.isEmpty)
+    }
+
+    /// Opt-in live check against the real gateway daemon on this Mac (AMBER_MAC_GATEWAY_LIVE=1): the run shows up in
+    /// the daemon's registry as an amber session, waits for approval with the call recorded, then completes.
+    func testScheduledRunIsReportedToTheLiveGateway() async throws {
+        guard ProcessInfo.processInfo.environment["AMBER_MAC_GATEWAY_LIVE"] == "1" else { throw XCTSkip("Set AMBER_MAC_GATEWAY_LIVE=1 with the gateway enabled.") }
+        let paths = GatewayPaths.resolve()
+        guard paths.daemonRunning else { throw XCTSkip("Mac Gateway daemon is not running.") }
+        let (workspace, _, task, root) = try scheduledWorkspace(approval: DesktopUnattendedApproval())
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reporter = DesktopGatewayReporter(paths: paths, isEnabled: { true })
+        workspace.gatewayReporter = reporter
+        workspace.agentTasks.onUnattendedApproval = { reporter.approval(conversationID: $0, $1) }
+        let running = Task { await workspace.runScheduled(task) }
+        var waiting: DesktopAgentTask?
+        for _ in 0..<400 where waiting == nil {
+            waiting = workspace.agentTasks.records.first { $0.status == .waiting }
+            if waiting == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let run = try XCTUnwrap(waiting)
+        func session() -> SessionRecord? {
+            RegistryStore(url: paths.registry).load().sessions.values.first { $0.agent == .amber && $0.title == task.name && $0.isOpen }
+        }
+        var live: SessionRecord?
+        for _ in 0..<100 where live?.waitingToolCallId == nil { live = session(); try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(live?.state, .waiting)
+        XCTAssertEqual(live?.waitingTool, "workspace_file_write")
+        XCTAssertEqual(live?.waitingToolCallId, run.approval?.id)
+        let key = try XCTUnwrap(live?.key)
+        workspace.agentTasks.decide(runID: run.id, allow: true)
+        let record = try await withTimeout { await running.value }
+        XCTAssertEqual(record.status, .completed, record.error ?? "")
+        var final: SessionRecord?
+        for _ in 0..<100 where final?.state != .completed {
+            final = RegistryStore(url: paths.registry).load().sessions[key]
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(final?.state, .completed)
+        print("GATEWAY_LIVE session=\(key) final=\(final?.state.rawValue ?? "nil")")
     }
 
     private func withTimeout<T: Sendable>(seconds: Double = 15, _ body: @escaping @MainActor () async -> T) async throws -> T {

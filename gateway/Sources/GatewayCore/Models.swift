@@ -1,7 +1,8 @@
 import Foundation
 
 public enum AgentKind: String, Codable, Sendable {
-    case claude, codex, run
+    /// `amber`: a scheduled task run by the Amber Mac app. Reported by the app itself, never by a hook.
+    case claude, codex, run, amber
 }
 
 public enum SessionOrigin: String, Codable, Sendable {
@@ -60,6 +61,11 @@ public struct GatewayEvent: Codable, Sendable, Equatable {
     public var tool: String?
     /// App that spawned a host session, e.g. "Synara".
     public var host: String?
+    /// Amber `permissionRequest` only: the pending tool call, a short argument excerpt and its risk class.
+    /// Shown over TLS in `/v1/status`; never put in a push body.
+    public var toolCallId: String?
+    public var detail: String?
+    public var highRisk: Bool?
 
     public init(
         id: String = UUID().uuidString,
@@ -112,6 +118,10 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     public var waitReason: WaitReason?
     /// Tool that raised the current permission wait; only its own `toolDone` resolves the wait.
     public var waitingTool: String?
+    /// Amber permission waits: what the phone shows and answers (see `GatewayEvent`).
+    public var waitingToolCallId: String?
+    public var waitingDetail: String?
+    public var waitingHighRisk: Bool?
     public var abnormal: Bool
     /// A `Stop` or `SessionEnd` was seen; distinguishes clean headless exits from crashes.
     public var sawTurnEnd: Bool
@@ -158,6 +168,9 @@ public struct PushIntent: Codable, Sendable, Equatable {
     public var state: TaskState?
     public var waitReason: WaitReason?
     public var abnormal: Bool
+    /// Amber approval pushes: lets the phone answer from the notification. Not shown in the push text.
+    public var toolCallId: String?
+    public var highRisk: Bool?
     /// Short metadata-only line for non-task pushes, e.g. "剩余 12 GB".
     public var detail: String?
     public var level: Level
@@ -166,8 +179,10 @@ public struct PushIntent: Codable, Sendable, Equatable {
     public init(
         id: String = UUID().uuidString, kind: Kind, sessionKey: String? = nil, agent: AgentKind? = nil,
         subject: String, state: TaskState? = nil, waitReason: WaitReason? = nil, abnormal: Bool = false,
-        detail: String? = nil, level: Level = .active, createdAt: Date
+        toolCallId: String? = nil, highRisk: Bool? = nil, detail: String? = nil, level: Level = .active, createdAt: Date
     ) {
+        self.toolCallId = toolCallId
+        self.highRisk = highRisk
         self.id = id
         self.kind = kind
         self.sessionKey = sessionKey

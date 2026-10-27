@@ -49,6 +49,7 @@ final class DesktopWorkspace {
     /// Set by the live app; previews and tests run without one.
     var scheduler: DesktopScheduler?
     var gateway: DesktopGateway?
+    var gatewayReporter: DesktopGatewayReporter?
     /// Opens the scheduled-tasks page (menu bar item, notifications).
     var showsScheduledTasks = false
     private(set) var savingCollaborationRuns: Set<UUID> = []
@@ -1566,9 +1567,11 @@ extension DesktopWorkspace {
         record.conversationID = conversationID
         scheduledRunConversationIDs.insert(conversationID)
         agentTasks.unattendedConversations[conversationID] = task.name
+        gatewayReporter?.runStarted(runID: record.id, conversationID: conversationID, taskName: task.name)
         defer {
             scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
             agentTasks.unattendedConversations[conversationID] = nil
+            gatewayReporter?.runFinished(conversationID: conversationID, succeeded: record.status == .completed)
         }
 
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return failed("结果会话已删除。") }

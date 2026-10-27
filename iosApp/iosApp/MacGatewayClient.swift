@@ -62,7 +62,17 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
         var abnormal: Bool
         var monitored: Bool
         var updatedAt: Date
+        /// Amber scheduled runs waiting on a tool call (answered with `decide`).
+        var pendingApproval: PendingApproval?
         var id: String { key }
+    }
+
+    struct PendingApproval: Decodable, Equatable, Sendable {
+        var toolCallId: String
+        var tool: String
+        var detail: String?
+        /// High-risk calls are only approved on the Mac; the phone can still deny.
+        var highRisk: Bool
     }
 
     var gateway: Gateway
