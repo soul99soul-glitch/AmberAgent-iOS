@@ -650,8 +650,8 @@ struct AppShell: View {
         case .gatewayPair(let payload):
             MacGatewayStore.shared.receivePairingLink(payload)
             rootRouter.path = [.settings, .macGateway]
-        case .macGateway:
-            rootRouter.path = [.settings, .macGateway]
+        case .macTasks:
+            rootRouter.path = [.macTasks]
         case .deepReadTask(let id):
             rootRouter.path = [.board, .deepReadTask(id: id)]
         case .agentActivity(let target):
@@ -896,6 +896,8 @@ enum Route: Hashable {
     case appleIntegrations
     case appleWatch
     case macGateway
+    /// Task board of the paired Mac (scheduled tasks, their runs, Claude Code / Codex sessions).
+    case macTasks
     case subscription
     case capabilities
     case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)
@@ -1044,6 +1046,8 @@ private extension View {
                 )
             case .macGateway:
                 MacGatewaySettingsView()
+            case .macTasks:
+                MacTasksBoardView()
             case .phoneControl:
                 IOSPhoneControlSettingsView()
             case .phoneSavedTasks:

@@ -666,6 +666,10 @@ final class AmberThemePackTests: XCTestCase {
         let phosphors = Set(HomeShortcutEntry.allCases.map(\.phosphor))
         XCTAssertEqual(phosphors.count, 5, "five distinct phosphor glyphs")
         XCTAssertFalse(HomeShortcutEntry.deepRead.title.isEmpty)
+        // 小说创作的首页入口让位给「任务」（Mac 任务看板）；顺序即首页从左到右。
+        XCTAssertEqual(HomeShortcutEntry.allCases, [.deepRead, .tasks, .council, .miniApps, .webMount])
+        XCTAssertEqual(HomeShortcutEntry.tasks.title, "任务")
+        XCTAssertEqual(HomeShortcutEntry.tasks.phosphor, .listChecks)
     }
 
     func testPixelSitGlyphsNonEmptyAndDistinct() {

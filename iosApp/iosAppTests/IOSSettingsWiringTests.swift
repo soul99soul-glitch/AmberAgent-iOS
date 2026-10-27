@@ -80,6 +80,10 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(shell.contains("case .macGateway:\n                MacGatewaySettingsView()"))
         XCTAssertTrue(shell.contains("MacGatewayStore.shared.receivePairingLink(payload)"))
         XCTAssertTrue(shell.contains("rootRouter.path = [.settings, .macGateway]"))
+        // Push landings and the Settings row open the task board.
+        XCTAssertTrue(shell.contains("case .macTasks:\n                MacTasksBoardView()"))
+        XCTAssertTrue(shell.contains("rootRouter.path = [.macTasks]"))
+        XCTAssertTrue(try source("iosApp/MacGatewaySettingsView.swift").contains("router.navigate(to: .macTasks)"))
         XCTAssertTrue(delegate.contains("MacGatewayStore.shared.applicationDidFinishLaunching()"))
         XCTAssertTrue(delegate.contains("MacGatewayStore.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)"))
         XCTAssertTrue(delegate.contains("MacGatewayStore.shared.didFailToRegisterForRemoteNotifications(error)"))

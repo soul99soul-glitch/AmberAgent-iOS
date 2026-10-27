@@ -94,6 +94,27 @@ struct HomeDeepReadTaskRef: Equatable {
     }
 }
 
+struct HomeMacTaskRef: Equatable {
+    let id: String
+    let title: String
+    let waitingForReply: Bool
+    let updatedAt: Date
+
+    init(id: String, title: String, waitingForReply: Bool, updatedAt: Date) {
+        self.id = id
+        self.title = title
+        self.waitingForReply = waitingForReply
+        self.updatedAt = updatedAt
+    }
+
+    init(_ item: MacGatewayBoardItem) {
+        id = item.id
+        title = item.title
+        waitingForReply = item.waitingForReply
+        updatedAt = item.updatedAt
+    }
+}
+
 struct HomeMiniAppRef: Equatable {
     let id: String
     let title: String
@@ -148,6 +169,7 @@ struct HomeContinueCardModel: Equatable {
         case council
         case miniApp
         case imageGeneration
+        case macTask
 
         var icon: HomePhosphor {
             switch self {
@@ -156,6 +178,7 @@ struct HomeContinueCardModel: Equatable {
             case .council: .chatCircleDots
             case .miniApp: .squaresFour
             case .imageGeneration: .imageSquare
+            case .macTask: .listChecks
             }
         }
     }
@@ -166,6 +189,7 @@ struct HomeContinueCardModel: Equatable {
         case resumeProject(NovelProjectID)
         case miniAppRunner(String)
         case generatedImage(ChatMessageAnchor)
+        case macTasks
     }
 
     private enum Priority: Int {
@@ -195,6 +219,7 @@ struct HomeContinueCardModel: Equatable {
         deepReadTasks: [HomeDeepReadTaskRef] = [],
         miniApps: [HomeMiniAppRef] = [],
         imageGeneration: HomeImageGenerationRef? = nil,
+        macTasks: [HomeMacTaskRef] = [],
         now: Date = Date()
     ) -> HomeContinueCardModel? {
         let locale = IOSAppLanguagePreference.selected().resolvedLocale()
@@ -330,6 +355,25 @@ struct HomeContinueCardModel: Equatable {
                 )
             ))
         }
+
+        // Mac 上等你处理的任务（等批准 / 等回复）：标题作首行，状态放副信息。
+        candidates.append(contentsOf: macTasks.map { task in
+            Candidate(
+                stableID: "mac-task:\(task.id)",
+                priority: .actionRequired,
+                updatedAt: task.updatedAt,
+                model: .init(
+                    feature: .macTask,
+                    title: task.title,
+                    meta: formatted(
+                        "%@ · %@",
+                        arguments: ["Mac", localized(task.waitingForReply ? "等你回复" : "等你确认")]
+                    ),
+                    ctaTitle: localized("处理"),
+                    destination: .macTasks
+                )
+            )
+        })
 
         return candidates.sorted { lhs, rhs in
             if lhs.priority != rhs.priority { return lhs.priority.rawValue > rhs.priority.rawValue }
