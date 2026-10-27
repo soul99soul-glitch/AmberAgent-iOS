@@ -112,6 +112,60 @@ import Observation
         XCTAssertTrue(transport.requests.isEmpty)
     }
 
+    func testMacStagingHistoryRetains81FileRecordsAcrossRestart() {
+        let historyDefaults = defaults()
+        let owner = UUID()
+        let history = IOSImageGenerationHistoryStore(userDefaults: historyDefaults, key: "mac-staging-history", limit: nil)
+        for index in 0..<81 {
+            history.insert(IOSImageGenerationRecord(
+                id: UUID().uuidString,
+                prompt: "Prompt \(index)",
+                model: "image-fixture",
+                aspectRatio: .square,
+                count: 1,
+                style: "",
+                source: "macos:" + owner.uuidString,
+                files: [IOSGeneratedImageFile(
+                    id: UUID().uuidString,
+                    path: "/tmp/amber-r7-\(index).png",
+                    mimeType: "image/png"
+                )],
+                createdAt: Int64(index)
+            ))
+        }
+
+        let reopened = IOSImageGenerationHistoryStore(
+            userDefaults: historyDefaults, key: "mac-staging-history", limit: nil)
+        XCTAssertEqual(reopened.records.count, 81)
+        XCTAssertTrue(reopened.records.allSatisfy { $0.files.count == 1 })
+    }
+
+    func testDefaultHistoryStoreKeepsIOSRecordLimitAt80() {
+        let historyDefaults = defaults()
+        let owner = UUID()
+        let history = IOSImageGenerationHistoryStore(userDefaults: historyDefaults, key: "ios-default-history")
+        for index in 0..<81 {
+            history.insert(IOSImageGenerationRecord(
+                id: UUID().uuidString,
+                prompt: "Prompt \(index)",
+                model: "image-fixture",
+                aspectRatio: .square,
+                count: 1,
+                style: "",
+                source: "macos:" + owner.uuidString,
+                files: [IOSGeneratedImageFile(
+                    id: UUID().uuidString,
+                    path: "/tmp/amber-r7-default-\(index).png",
+                    mimeType: "image/png"
+                )],
+                createdAt: Int64(index)
+            ))
+        }
+
+        let reopened = IOSImageGenerationHistoryStore(userDefaults: historyDefaults, key: "ios-default-history")
+        XCTAssertEqual(reopened.records.count, 80)
+    }
+
     func testPartialLocalSaveRetriesOnlyRemainingImages() async throws {
         let (settings, _) = try settings()
         let root = directory(), heldRoot = directory(), staging = directory(), owner = UUID()

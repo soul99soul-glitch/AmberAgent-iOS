@@ -65,11 +65,14 @@ import Foundation
                     try await IOSGeminiClient(provider: google).streamText(messages: input, params: params) {
                         accumulator.append($0)
                     }
-                    run.yield(.complete)
+                    if accumulator.flushAndStop() { run.yield(.complete) }
                 } catch is CancellationError { run.yield(.cancelled) }
-                catch { run.yield(.failed(Self.failureMessage(error.localizedDescription))) }
+                catch {
+                    _ = accumulator.flushAndStop()
+                    run.yield(.failed(Self.failureMessage(error.localizedDescription)))
+                }
             }
-            run.installCancellation { task.cancel() }
+            run.installCancellation({ task.cancel() }, flushBeforeCancellation: { _ = accumulator.flushAndStop() })
         } else {
             try startKMP(provider: provider, messages: input, params: params, responseID: responseID, run: run)
         }
@@ -84,15 +87,23 @@ import Foundation
         let job: Kotlinx_coroutines_coreJob
         if let value = provider as? ProviderSetting.OpenAI {
             job = openAI.streamTextCancellable(providerSetting: value, messages: input, params: params,
-                onChunk: { @Sendable in accumulator.append($0) }, onComplete: { @Sendable in run.yield(.complete) },
-                onError: { @Sendable in run.yield(.failed(Self.failureMessage($0.message ?? ""))) })
+                onChunk: { @Sendable in accumulator.append($0) },
+                onComplete: { @Sendable in if accumulator.flushAndStop() { run.yield(.complete) } },
+                onError: { @Sendable in
+                    _ = accumulator.flushAndStop()
+                    run.yield(.failed(Self.failureMessage($0.message ?? "")))
+                })
         } else if let value = provider as? ProviderSetting.Claude {
             job = claude.streamTextCancellable(providerSetting: value, messages: input, params: params,
-                onChunk: { @Sendable in accumulator.append($0) }, onComplete: { @Sendable in run.yield(.complete) },
-                onError: { @Sendable in run.yield(.failed(Self.failureMessage($0.message ?? ""))) })
+                onChunk: { @Sendable in accumulator.append($0) },
+                onComplete: { @Sendable in if accumulator.flushAndStop() { run.yield(.complete) } },
+                onError: { @Sendable in
+                    _ = accumulator.flushAndStop()
+                    run.yield(.failed(Self.failureMessage($0.message ?? "")))
+                })
         } else { throw DesktopRuntimeError.message("此服务商协议尚未接入桌面版。") }
         let box = DesktopKMPJob(job)
-        run.installCancellation { box.cancel() }
+        run.installCancellation({ box.cancel() }, flushBeforeCancellation: { _ = accumulator.flushAndStop() })
     }
 
     nonisolated private static func failureMessage(_ raw: String) -> String {
@@ -111,10 +122,16 @@ private final class DesktopKMPJob: @unchecked Sendable {
 }
 
 private final class DesktopKMPAccumulator: @unchecked Sendable {
+    private static let publishIntervalNanoseconds: UInt64 = 33_000_000
     private let lock = NSLock()
     private let accumulator: MessageStreamAccumulator
     private let run: DesktopGeneration
     private let responseID: UUID
+    private let timerQueue = DispatchQueue(label: "app.amber.mac.kmp-snapshot", qos: .userInitiated)
+    private var timer: DispatchWorkItem?
+    private var dirty = false
+    private var stopped = false
+    private var lastPublishedUptime: UInt64?
 
     init(messages: [UIMessage], model: Model, responseID: UUID, run: DesktopGeneration) {
         accumulator = MessageStreamAccumulator(initialMessages: messages, model: model)
@@ -124,16 +141,69 @@ private final class DesktopKMPAccumulator: @unchecked Sendable {
 
     func append(_ chunk: MessageChunk) {
         lock.lock()
-        defer { lock.unlock() }
+        guard !stopped else { lock.unlock(); return }
         accumulator.append(chunk: chunk)
+        dirty = true
+        let now = DispatchTime.now().uptimeNanoseconds
+        let flushNow: Bool
+        if let lastPublishedUptime {
+            flushNow = now >= lastPublishedUptime
+                && now - lastPublishedUptime >= Self.publishIntervalNanoseconds
+        } else {
+            flushNow = true
+        }
+        if flushNow {
+            timer?.cancel()
+            timer = nil
+        } else {
+            scheduleFlushLocked(now: now, lastPublishedUptime: lastPublishedUptime)
+        }
+        lock.unlock()
+        if flushNow { _ = publishCurrent() }
+    }
+
+    @discardableResult
+    func flushAndStop() -> Bool {
+        lock.lock()
+        stopped = true
+        timer?.cancel()
+        timer = nil
+        lock.unlock()
+        return publishCurrent()
+    }
+
+    private func scheduleFlushLocked(now: UInt64, lastPublishedUptime: UInt64?) {
+        guard timer == nil, !stopped else { return }
+        let elapsed = lastPublishedUptime.map { now >= $0 ? now - $0 : 0 } ?? 0
+        let delay = max(1, Self.publishIntervalNanoseconds - min(Self.publishIntervalNanoseconds, elapsed))
+        let work = DispatchWorkItem { [weak self] in _ = self?.publishCurrent() }
+        timer = work
+        timerQueue.asyncAfter(deadline: .now() + .nanoseconds(Int(delay)), execute: work)
+    }
+
+    @discardableResult
+    private func publishCurrent() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        timer?.cancel()
+        timer = nil
+        guard dirty else {
+            return true
+        }
+        dirty = false
+        lastPublishedUptime = DispatchTime.now().uptimeNanoseconds
+        let input = Array(accumulator.snapshot().suffix(1))
         do {
-            let json = try DesktopProviderBridge.shared.snapshot(
-                messages: Array(accumulator.snapshot().suffix(1)), assistantId: responseID.uuidString)
+            let json = try DesktopProviderBridge.shared.snapshot(messages: input, assistantId: responseID.uuidString)
             let messages = try DesktopJSON.decode([DesktopMessage].self, from: json)
             if let last = messages.last, last.role == .assistant {
                 run.yield(.snapshot(text: last.text, reasoning: last.reasoning,
                     canonicalJSON: last.canonicalJSON, unsupportedPartCount: last.unsupportedPartCount))
             }
-        } catch { run.yield(.failed("无法读取服务商返回的消息，请重试。")) }
+            return true
+        } catch {
+            run.yield(.failed("无法读取服务商返回的消息，请重试。"))
+            return false
+        }
     }
 }

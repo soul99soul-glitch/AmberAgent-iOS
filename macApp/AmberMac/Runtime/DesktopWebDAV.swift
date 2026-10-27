@@ -7,6 +7,7 @@ struct DesktopWebDAVConfiguration: Codable, Equatable, Sendable {
     var username = ""
 
     func validate() throws {
+        try IOSWebDAVConfig(baseURL: baseURL, path: path).validateDirectoryPath()
         guard let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
               url.user == nil, url.password == nil else {

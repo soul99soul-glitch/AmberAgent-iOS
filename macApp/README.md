@@ -2,17 +2,17 @@
 
 Apple Silicon、macOS 15+ 的原生 SwiftUI 客户端。在本仓复用 KMP 消息、provider、会话存储，以及 iOS 原有工具引擎、搜索、OAuth、MCP、WebDAV 和生图代码。Shared.framework 仍由本仓 Gradle 生成，Core 没有独立发布。
 
-八阶段实现和独立 review 记录见 ../docs/product/macos/。最新[全面复核与修复记录](../docs/product/macos/comprehensive-review/review.md)确认并修复六个问题，按四阶段完成受影响回归和独立 review。**正式版尚未完成 Native 集成验收**：正式构建仍在 Xcode/Gradle 缓存权限处受阻；真实模型、正式 Keychain 和沙盒内工具仍待验证。下面的 Preview 是共用页面的可运行开发产物，不能作为正式聊天应用使用。
+实现和独立 review 记录见 ../docs/product/macos/。本机已能构建真实 Shared.framework 和正式 Native 应用；最新[审查与性能验证](../docs/product/macos/performance-review/review.md)记录本轮修复、测试、测量和剩余边界。早期云端记录中的 Xcode/Gradle 权限阻塞不代表当前本机状态。
 
 ## 打开界面
 
-最新原生产物：macApp/build/swiftpm-preview/AmberPreview.app；打包文件为 macApp/build/AmberPreview.zip，已验证解压后的严格签名。双击应用或在仓库根执行：
+正式 Release 应用在 `macApp/build/Build/Products/Release/Amber.app`。在仓库根执行：
 
 ~~~bash
-open macApp/build/swiftpm-preview/AmberPreview.app
+open macApp/build/Build/Products/Release/Amber.app
 ~~~
 
-Preview 共用 Runtime/UI，使用隔离的示例会话、内存凭证和明确标注的示例回复，不连接模型、登录或生图服务。文件导入、可读导出、知识编辑和备份会按操作实际读写，示例会话不写入正式会话库。2026-10-23 全面复核后的最新包已构建、解压并完成严格 ad hoc 签名校验，79 个构建源与当前源码零差异；最终新包的实窗重启检查未通过当前执行环境，尚未验收。修复与交付边界见[最新审查](../docs/product/macos/comprehensive-review/review.md)。此前视觉取舍、24 个组件场景与实窗交互证据见 [design-refresh](../docs/product/macos/design-refresh/README.md)；这些证据不替代正式 Native 集成验收。
+可选 Preview 位于 `macApp/build/swiftpm-preview/AmberPreview.app`，共用 Runtime/UI，使用隔离的示例会话、内存凭证和示例回复，不连接模型、登录或生图服务。文件导入、导出、知识编辑和备份仍会按操作实际读写，示例会话不写入正式会话库。Preview 和离屏组件图用于界面验证，真实 provider 与 Shared 接线另由正式 Native 测试验证。
 
 可重复构建使用与 iOS 相同锁定 revision 的真实 iosMath：
 
@@ -24,7 +24,7 @@ macApp/scripts/build-preview-swiftpm.sh
 
 ~~~bash
 macApp/scripts/build-preview-swiftpm.sh \
-  --iosmath-path iosApp/build/ExperimentalDeviceBuild/SourcePackages/checkouts/iosMath
+  --iosmath-path macApp/build/SourcePackages/checkouts/iosMath
 ~~~
 
 脚本校验依赖 revision，编译同源 SwiftUI 与真实公式组件，复制字体资源，并按 Preview 的 App Sandbox 权限签名。它不生成假的 Shared，也不解除应用沙盒。Xcode 可选择 AmberMacPreview scheme；受限环境中固定 SwiftPM manifest 缓存目录可能不可写，同源 SwiftPM 入口不依赖该目录。
@@ -34,17 +34,17 @@ macApp/scripts/build-preview-swiftpm.sh \
 | 领域 | 已接线的行为 |
 | --- | --- |
 | 聊天 | 流式/停止/重试、编辑重发/删除/重生成/变体、按需加载历史、消息搜索定位、上下文预算/压缩、回顾/建议、原会话指令队列 |
-| 模型 | OpenAI 兼容、Responses、Claude、Gemini；多模型、目录、参数及模型级 headers/body；原 Codex/Antigravity OAuth；独立辅助模型、视觉回退和标题生成 |
+| 模型 | OpenAI 兼容、Responses、Claude、Gemini；多模型、目录、参数及模型级 headers/body；Codex/Grok 登录和已有 Antigravity token 解析；独立辅助模型、视觉回退和标题生成 |
 | 阅读与文件 | 中文 Markdown、列表/引用/表格、代码高亮、真实 iosMath；拖放/粘贴图片，PDF/DOCX/PPTX/RTF/文本解析预览；Workspace 与 Markdown/PDF/JSON 导出 |
 | 工具 | 复用 IOSAgentToolEngine；工具发现、原 run 审批、持久事务、搜索、会话目录读写和本地命令；不自动重放结果未知的调用 |
 | 外部服务与知识 | MCP HTTP/SSE/stdio、工具启停；Skills/SOUL/记忆与来源；技能可收紧工具范围 |
-| 协作 | 有并发/超时/取消的文本子任务、模型议会各席位与综合、结果回原会话；Recipe 固定工具步骤共用审批与事务链 |
+| 协作 | 有并发/超时/取消和只读工具循环的子代理、议会多轮讨论与综合、结果回原会话；Recipe 固定工具步骤共用审批与事务链 |
 | 媒体 | 系统语音、声音/语速与消息朗读；OpenAI 兼容/Codex 生图复用原 repository，结果保存至原会话文件 |
 | 数据与偏好 | 任务生命周期、可选通知、加密备份/副本恢复、WebDAV 快照、实际存储用量、字体/字号/主题/昵称/思考展开/跟随生成 |
 
-当前整套共用 Swift Runtime **253 项测试通过**，正式 Swift 104 文件语法检查通过；之前的 KMP/JVM 隔离验证 **82 项通过**，本轮未重跑。各项实际 UI 和正式 Native 状态见[最新审查](../docs/product/macos/comprehensive-review/review.md)、validation.md 与 ios-parity-todo.md，不能用这些计数替代真实原生集成。
+当前测试计数、正式 Native/local provider、KMP/iOS 回归及性能测量统一见[最新审查](../docs/product/macos/performance-review/review.md)。流式 provider 在约 30Hz 发布完整快照，终态、失败和停止前保留最后已接受内容；MCP 分片只扫描新增字节，长会话保存后的消息查找使用线性索引。
 
-明确保留的差距包括子代理独立对话和工具/技能角色配置、议会多轮模式、SSH、固定产物架、单次请求覆盖、iOS 全量备份/CloudKit 互导，以及多语言和 Mac 订阅；这些没有用空入口冒充实现。
+固定产物架、议会多轮和 iOS 会话备份导入已有入口。仍保留的边界包括子代理独立会话、专门的 SSH 配置、单次请求参数覆盖、Antigravity 首次登录、iOS 全量备份/CloudKit 互导、多语言与 Mac 订阅。真实 OAuth 账号登录、系统通知授权/点击及 Developer ID 公证需各自的账号、权限和证书验证。
 
 按约定排除小说创作、深度阅读、小应用、WebMount。手机控制、Watch、Live Activity、AlarmKit、iSH、嵌入式 Python 未搬入 Mac。
 
@@ -58,7 +58,7 @@ macApp/scripts/build.sh test
 CONFIGURATION=Release macApp/scripts/build.sh
 ~~~
 
-正式应用路径为 macApp/build/Build/Products/Debug/Amber.app。XcodeGen 工程 macApp/AmberMac.xcodeproj 的 AmberMac scheme 连接真实 desktop-shared Mac framework，iOS 继续使用原 shared 模块。
+默认 Debug 构建路径为 `macApp/build/Build/Products/Debug/Amber.app`；设置 `CONFIGURATION=Release` 后生成 `macApp/build/Build/Products/Release/Amber.app`。XcodeGen 工程 macApp/AmberMac.xcodeproj 的 AmberMac scheme 连接真实 desktop-shared Mac framework，iOS 继续使用原 shared 模块。
 
 Swift Runtime、真实 provider 和 Gradle 验证入口分别为：
 

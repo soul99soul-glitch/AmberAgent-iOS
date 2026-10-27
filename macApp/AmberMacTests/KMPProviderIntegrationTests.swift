@@ -68,17 +68,105 @@ final class KMPProviderIntegrationTests: XCTestCase {
 
     func testCancellationPreservesAcceptedPartialAndRejectsLateChunks() async throws {
         let provider = DesktopKMPProvider()
+        let responseID = UUID()
         let run = try provider.start(configuration: configuration(kind: .openAI, model: "mock-cancel"), apiKey: fixtureKey,
-            messages: [DesktopMessage(role: .user, text: "Say hello")], responseID: UUID())
+            messages: [DesktopMessage(role: .user, text: "Say hello")], responseID: responseID)
         let events = try await collect(run, cancelAfterPartial: true)
         XCTAssertEqual(snapshots(events).last?.text, "partial")
         XCTAssertTrue(events.contains { if case .cancelled = $0 { true } else { false } })
         XCTAssertFalse(events.contains { if case .complete = $0 { true } else { false } })
+        try assertCanonicalSnapshots(events, responseID: responseID)
+        let lastSnapshot = try XCTUnwrap(events.lastIndex { if case .snapshot = $0 { true } else { false } })
+        let cancelled = try XCTUnwrap(events.firstIndex { if case .cancelled = $0 { true } else { false } })
+        XCTAssertLessThan(lastSnapshot, cancelled)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(run.drain().isEmpty)
     }
 
-    private func collect(_ run: DesktopGeneration, cancelAfterPartial: Bool = false) async throws -> [DesktopProviderEvent] {
+    func testStreamErrorPreservesTheAcceptedPartialBeforeFailure() async throws {
+        let provider = DesktopKMPProvider()
+        let responseID = UUID()
+        let run = try provider.start(configuration: configuration(kind: .openAI, model: "mock-stream-error"), apiKey: fixtureKey,
+            messages: [DesktopMessage(role: .user, text: "Say hello")], responseID: responseID)
+        let events = try await collect(run)
+        XCTAssertEqual(snapshots(events).last?.text, "partial")
+        XCTAssertTrue(events.contains { if case .failed = $0 { true } else { false } })
+        XCTAssertFalse(events.contains { if case .complete = $0 { true } else { false } })
+        try assertCanonicalSnapshots(events, responseID: responseID)
+        let lastSnapshot = try XCTUnwrap(events.lastIndex { if case .snapshot = $0 { true } else { false } })
+        let failed = try XCTUnwrap(events.firstIndex { if case .failed = $0 { true } else { false } })
+        XCTAssertLessThan(lastSnapshot, failed)
+    }
+
+    func testBurstSnapshotBaselineIsOptIn() async throws {
+        guard ProcessInfo.processInfo.environment["AMBER_MAC_PERFORMANCE_BENCHMARK"] == "1" else {
+            throw XCTSkip("Set AMBER_MAC_PERFORMANCE_BENCHMARK=1 to run the provider burst baseline.")
+        }
+        for count in [1_000, 5_000] {
+            let provider = DesktopKMPProvider()
+            let responseID = UUID()
+            let start = Date()
+            let run = try provider.start(configuration: configuration(kind: .openAI, model: "mock-burst-\(count)"), apiKey: fixtureKey,
+                messages: [DesktopMessage(role: .user, text: "Say hello")], responseID: responseID)
+            let events = try await collect(run, maxWaitMilliseconds: 60_000)
+            let elapsedMilliseconds = Int(Date().timeIntervalSince(start) * 1_000)
+            let payloads = snapshotPayloads(events)
+            XCTAssertTrue(events.contains { if case .complete = $0 { true } else { false } })
+            XCTAssertFalse(events.contains { if case .failed = $0 { true } else { false } })
+            let latest = try XCTUnwrap(payloads.last)
+            let canonical = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(latest.utf8)) as? [String: Any])
+            let usage = try XCTUnwrap(canonical["usage"] as? [String: Any])
+            let text = snapshots(events).last?.text
+            XCTAssertEqual(text?.count, count)
+            XCTAssertEqual(usage["completionTokens"] as? Int, count)
+            XCTAssertEqual(canonical["id"] as? String, responseID.uuidString.lowercased())
+            print("PERF provider_burst chunks=\(count) snapshots=\(payloads.count) elapsed_ms=\(elapsedMilliseconds) final_text_chars=\(text?.count ?? -1) usage_completion=\(usage["completionTokens"] ?? "nil")")
+        }
+    }
+
+    func testAgentProviderSubagentOnlyScopeRejectsHiddenWorkspaceWrite() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("amber-agent-scope-" + UUID().uuidString, isDirectory: true)
+        let suite = "amber-agent-scope.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let credentials = DesktopMemoryCredentials()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            UserDefaults().removePersistentDomain(forName: suite)
+        }
+
+        let settings = DesktopSettings(defaults: defaults, credentials: credentials)
+        let tasks = DesktopAgentTasks(directory: root.appendingPathComponent("agent-runs"), defaults: defaults)
+        await tasks.waitUntilLoaded()
+        let files = DesktopWorkspaceFiles(directory: root.appendingPathComponent("workspaces"))
+        let knowledge = DesktopKnowledgeStore(directory: root.appendingPathComponent("knowledge"))
+        let mcp = DesktopMCPManager(store: DesktopMCPStore(defaults: defaults, credentials: credentials))
+        let text = DesktopKMPProvider()
+        let collaborations = DesktopCollaborations(settings: settings, provider: text)
+        let search = DesktopSearchSettings(defaults: defaults, credentials: credentials)
+        let provider = DesktopAgentProvider(text: text, tasks: tasks, files: files, knowledge: knowledge, mcp: mcp,
+            collaborations: collaborations, searchSettings: search)
+        let owner = UUID()
+        let context = DesktopRunContext(conversationID: owner, toolsEnabled: false, subagentsEnabled: true,
+            persistTurns: { _ in true })
+        let run = try provider.start(configuration: configuration(kind: .openAI, model: "mock-agent-scope"), apiKey: fixtureKey,
+            messages: [DesktopMessage(role: .user, text: "尝试写文件，然后给出最终答复")], responseID: UUID(), context: context)
+
+        let events = try await collect(run)
+        let messages = events.flatMap { event -> [DesktopMessage] in
+            if case .transcript(let values) = event { return values }
+            return []
+        }
+        XCTAssertEqual(messages.last(where: { $0.role == .assistant })?.text, "scope-safe")
+        let record = try XCTUnwrap(tasks.records.first { $0.conversationID == owner })
+        XCTAssertEqual(record.status, .completed, record.error ?? "")
+        XCTAssertNil(record.approval)
+        XCTAssertTrue(record.transactions.allSatisfy { $0.name != "workspace_file_write" || $0.outcome == "failed" })
+        let ownerFiles = try await files.list(conversationID: owner)
+        XCTAssertTrue(ownerFiles.isEmpty)
+    }
+
+    private func collect(_ run: DesktopGeneration, cancelAfterPartial: Bool = false,
+                         maxWaitMilliseconds: Int = 8_000) async throws -> [DesktopProviderEvent] {
         var events: [DesktopProviderEvent] = []
         var finished = false
         let consumer = Task { @MainActor in
@@ -92,7 +180,7 @@ final class KMPProviderIntegrationTests: XCTestCase {
             finished = true
         }
         defer { consumer.cancel(); run.cancel() }
-        for _ in 0..<400 {
+        for _ in 0..<(maxWaitMilliseconds / 20) {
             if finished { break }
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -103,6 +191,13 @@ final class KMPProviderIntegrationTests: XCTestCase {
     private func snapshots(_ events: [DesktopProviderEvent]) -> [(text: String, reasoning: String)] {
         events.compactMap { event in
             if case .snapshot(let text, let reasoning, _, _) = event { return (text, reasoning) }
+            return nil
+        }
+    }
+
+    private func snapshotPayloads(_ events: [DesktopProviderEvent]) -> [String] {
+        events.compactMap { event in
+            if case .snapshot(_, _, let canonicalJSON, _) = event { return canonicalJSON }
             return nil
         }
     }

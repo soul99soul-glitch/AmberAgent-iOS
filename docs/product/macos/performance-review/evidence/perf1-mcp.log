@@ -1,0 +1,131 @@
+Building for debugging...
+[Planning deferred tasks]
+[45 / 69]
+[46 / 70] AmberMac
+[54 / 159]
+[59 / 159]
+[67 / 159]
+[72 / 159]
+[77 / 159]
+[79 / 159]
+[81 / 159]
+[84 / 159]
+[89 / 159]
+[91 / 159]
+[94 / 159]
+[95 / 159]
+[103 / 159]
+[107 / 159]
+[111 / 159]
+[116 / 159]
+[121 / 159]
+[122 / 159]
+[124 / 159]
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.k2iaPM/Sources/AmberMac/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1259 |     }
+1260 | 
+1261 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+[129 / 159] AmberMac
+[137 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.k2iaPM/Sources/AmberMac/IOSImageGenerationRepository.swift:708:13: warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 706 |         diagnosticId: String? = nil
+ 707 |     ) async throws -> String {
+ 708 |         var extraction = Self.codexImageExtraction(from: data)
+     |             `- warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 709 |         if let image = extraction.images.first {
+ 710 |             if let diagnosticId {
+
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[138 / 159] AmberMacTests-product
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.k2iaPM/Sources/AmberMac/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1259 |     }
+1260 | 
+1261 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+[139 / 159] AmberMacTests-product
+[140 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.k2iaPM/Sources/AmberMac/DesktopRecipeRuns.swift:40:127: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+32 |         let id = UUID()
+33 |         operations.insert(DesktopRecipeOperation(id: id, owner: conversationID, name: name), at: 0)
+34 |         running[id] = Task {
+   |                            |- note: 'self' implicitly strongly captured here
+   |                            `- note: add 'self' as a capture list item to silence
+35 |             defer {
+36 |                 running[id] = nil
+   :
+38 |             }
+39 |             do {
+40 |                 _ = try await tasks.begin(id: id, conversationID: conversationID, title: "Recipe · \(name)", cancel: { [weak self] in self?.cancel(id) })
+   |                                                                                                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                                                                                              `- note: explicitly assign the capture list item to silence
+41 |                 try Task.checkCancellation()
+42 |                 let result = await store.run(name: name, inputs: inputs) { [execute] tool, arguments in
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[142 / 159] AmberMacTests-product
+[143 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.k2iaPM/Sources/AmberMac/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[149 / 160] AmberMacTests-product
+[151 / 176]
+[153 / 176]
+[154 / 176]
+[158 / 176] AmberMacTests-product
+[159 / 176] AmberMacTests-product
+[168 / 176] AmberMacTests-product
+[170 / 176] AmberMacTests-product
+[172 / 176] AmberMacTests-product
+Build complete! (16.14秒)
+Test Suite 'Selected tests' started at 2026-10-27 10:04:14.947.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-27 10:04:14.948.
+Test Suite 'DesktopMCPTests' started at 2026-10-27 10:04:14.948.
+Test Case '-[AmberMacTests.DesktopMCPTests testActualStdioProcessHandshakeCallsAndCancelTermination]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testActualStdioProcessHandshakeCallsAndCancelTermination]' passed (0.318 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testCancelledInitializeCannotLaunchStdioProcess]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testCancelledInitializeCannotLaunchStdioProcess]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testCredentialsStayInIndependentVaultAndToolTogglesSurviveDiscovery]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testCredentialsStayInIndependentVaultAndToolTogglesSurviveDiscovery]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testExitedStdioServerCannotRestartWithoutANewInitializeHandshake]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testExitedStdioServerCannotRestartWithoutANewInitializeHandshake]' passed (0.124 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testImportValidatesWholeBatchBeforePersistingAndRestoresStdioArguments]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testImportValidatesWholeBatchBeforePersistingAndRestoresStdioArguments]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testMissingCredentialsCanBeRepairedWithoutKeepingStaleLoadError]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testMissingCredentialsCanBeRepairedWithoutKeepingStaleLoadError]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testOnlyUnconfirmedDispatchedCallsBecomeUnknownWithoutReplay]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testOnlyUnconfirmedDispatchedCallsBecomeUnknownWithoutReplay]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testOriginalSSEParserMatchesResponseIDAndRejectsCrossOriginEndpoint]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testOriginalSSEParserMatchesResponseIDAndRejectsCrossOriginEndpoint]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testRealSharedHTTPClientInitializesPaginatesUsesSessionAndCallsOnce]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testRealSharedHTTPClientInitializesPaginatesUsesSessionAndCallsOnce]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testShutdownReapsAnOwnedProcessGroupThatIgnoresSIGTERM]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testShutdownReapsAnOwnedProcessGroupThatIgnoresSIGTERM]' passed (0.643 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testUnreadablePersistedConfigurationCannotBeOverwritten]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testUnreadablePersistedConfigurationCannotBeOverwritten]' passed (0.002 seconds).
+Test Suite 'DesktopMCPTests' passed at 2026-10-27 10:04:16.055.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 1.106 (1.107) seconds
+Test Suite 'DesktopUserToolchainTests' started at 2026-10-27 10:04:16.055.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testBareNpxStdioServerConnectsThroughLoginShell]' started.
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.k2iaPM/Tests/AmberMacTests/DesktopMCPTests.swift:340: -[AmberMacTests.DesktopUserToolchainTests testBareNpxStdioServerConnectsThroughLoginShell] : Test skipped - Live toolchain check runs with the live E2E environment.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testBareNpxStdioServerConnectsThroughLoginShell]' skipped (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testLoginPATHIsResolvedWithoutShellOutputLeakingIntoIt]' started.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testLoginPATHIsResolvedWithoutShellOutputLeakingIntoIt]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testShellToolResolvesUserLoginPATH]' started.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testShellToolResolvesUserLoginPATH]' passed (0.016 seconds).
+Test Suite 'DesktopUserToolchainTests' passed at 2026-10-27 10:04:16.073.
+	 Executed 3 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.017 (0.018) seconds
+Test Suite 'AmberMacTests.xctest' passed at 2026-10-27 10:04:16.073.
+	 Executed 14 tests, with 1 test skipped and 0 failures (0 unexpected) in 1.123 (1.125) seconds
+Test Suite 'Selected tests' passed at 2026-10-27 10:04:16.073.
+	 Executed 14 tests, with 1 test skipped and 0 failures (0 unexpected) in 1.123 (1.126) seconds

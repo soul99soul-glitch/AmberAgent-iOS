@@ -284,7 +284,7 @@ struct DesktopBackupRestoreResult: Sendable {
                 saved.append(try await storage.save(conversation))
                 for file in entry.files { _ = try await files.write(conversationID: conversation.id, path: file.path, data: file.data) }
                 if let record = entry.insights { try await insights.restoreRecord(record, for: conversation.id) }
-                artifactShelf.restore(entry.pins ?? [], for: conversation.id)
+                try artifactShelf.restore(entry.pins ?? [], for: conversation.id)
             }
             if !payload.knowledgeFiles.isEmpty || !payload.unconfiguredProviders.isEmpty || payload.preferences != nil {
                 try Task.checkCancellation()
@@ -316,7 +316,7 @@ struct DesktopBackupRestoreResult: Sendable {
                 do { try await storage.delete(id) } catch { cleanupFailed = true }
                 do { try await files.removeConversation(id) } catch { cleanupFailed = true }
                 insights.remove(id)
-                artifactShelf.removeConversation(id)
+                if !artifactShelf.removeConversation(id) { cleanupFailed = true }
             }
             await insights.flush()
             if cleanupFailed { throw DesktopRuntimeError.message("恢复未完成，现有内容未更改；部分本次副本清理失败，请检查磁盘权限后重新读取会话列表。") }

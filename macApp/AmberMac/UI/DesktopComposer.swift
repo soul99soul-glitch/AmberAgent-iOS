@@ -79,6 +79,8 @@ struct DesktopComposer: View {
                     .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isGenerating || workspace.isMutatingBranch)
                     .help("允许模型使用已接入的工具；需要确认的操作会先显示审批。")
+                    .accessibilityLabel("工具")
+                    .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.subagentsEnabled.toggle() }
                     } label: {
@@ -95,8 +97,6 @@ struct DesktopComposer: View {
                     .accessibilityLabel("子代理")
                     .accessibilityValue(workspace.agentTasks.subagentsEnabled ? "已开启" : "已关闭")
                     modeMenu
-                    .accessibilityLabel("工具")
-                    .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
                     if workspace.isReadingAttachments {
                         ProgressView().controlSize(.mini)
                         Text("正在读取附件…")
@@ -115,7 +115,7 @@ struct DesktopComposer: View {
                         }
                         .buttonStyle(DesktopQuietButtonStyle())
                         .disabled(!workspace.canQueueInstruction)
-                        .help(workspace.pendingAttachments.isEmpty ? "加入队列 ⌘Return · 当前轮次结束后继续" : "生成中仅支持文本排队，请停止后发送附件")
+                        .help(workspace.pendingAttachments.isEmpty ? "\(shortcut.sendLabel) 加入队列 · 当前轮次结束后继续" : "生成中仅支持文本排队，请停止后发送附件")
                         .accessibilityLabel("加入队列")
                         .keyboardShortcut(.return, modifiers: .command)
                         Button { workspace.stop() } label: {
@@ -145,7 +145,7 @@ struct DesktopComposer: View {
                         .buttonStyle(DesktopPressButtonStyle())
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                         .disabled(sendDisabled)
-                        .help(workspace.composerMode == .chat ? "发送消息 ⌘Return" : "发起\(workspace.composerMode.title) ⌘Return")
+                        .help(workspace.composerMode == .chat ? "发送消息 \(shortcut.sendLabel)" : "发起\(workspace.composerMode.title) \(shortcut.sendLabel)")
                         .accessibilityLabel(workspace.composerMode == .chat ? "发送消息" : "发起\(workspace.composerMode.title)")
                         .keyboardShortcut(.return, modifiers: .command)
                     }

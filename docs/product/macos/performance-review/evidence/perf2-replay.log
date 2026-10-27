@@ -1,0 +1,14 @@
+CAPTURE chat-1440-light
+CAPTURE chat-1440-dark
+CAPTURE chat-1180-light
+CAPTURE chat-1180-dark
+CAPTURE chat-860-light
+CAPTURE chat-860-dark
+CAPTURE chat-1920-light
+CAPTURE chat-1920-dark
+CAPTURE empty-1440-light
+CAPTURE empty-1440-dark
+REPLAY plain samples=263 maxDistance=59 final=0 reversals=26 maxFrameJump=30 heightDrops=0 variantDrops=0
+REPLAY reasoning samples=262 maxDistance=59 final=0 reversals=8 maxFrameJump=41 heightDrops=1 variantDrops=0
+REPLAY regenerate samples=264 maxDistance=61 final=0 reversals=23 maxFrameJump=30 heightDrops=0 variantDrops=0
+SNAPSHOT COMPLETE

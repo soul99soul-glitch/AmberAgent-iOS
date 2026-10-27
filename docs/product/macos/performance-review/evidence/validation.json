@@ -1,0 +1,54 @@
+{
+  "scope": "macOS + actually consumed Swift/KMP",
+  "baseline": "d57c7a5",
+  "runtime": {
+    "tests": 297,
+    "passed": 295,
+    "skipped": 2,
+    "failed": 0
+  },
+  "native": {
+    "tests": 322,
+    "passed": 304,
+    "skipped": 18,
+    "failed": 0
+  },
+  "local_provider": {
+    "passed": 8,
+    "failed": 0
+  },
+  "kmp_storage_jvm": {
+    "tests": 65,
+    "failed": 0
+  },
+  "desktop_shared_jvm": {
+    "tests": 38,
+    "failed": 0
+  },
+  "kmp_ios_simulator": {
+    "tests": 6,
+    "failed": 0
+  },
+  "ios_shared_regressions": {
+    "tests": 32,
+    "failed": 0
+  },
+  "release": {
+    "build": "passed",
+    "strict_signature": "passed",
+    "architecture": "arm64",
+    "launch": "main window observed through CUA; process executable path confirmed"
+  },
+  "not_run": [
+    "external paid providers",
+    "real account OAuth",
+    "system notification permission/click",
+    "Developer ID notarization"
+  ],
+  "release_workspace": {
+    "tests": 18,
+    "passed": 18,
+    "failed": 0
+  },
+  "review_gate": "PASS within the documented scope; account/system/external-provider boundaries retained"
+}

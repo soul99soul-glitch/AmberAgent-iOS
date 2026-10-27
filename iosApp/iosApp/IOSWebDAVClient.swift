@@ -9,6 +9,13 @@ struct IOSWebDAVConfig: Codable, Equatable {
     var isConfigured: Bool {
         URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
     }
+
+    func validateDirectoryPath() throws {
+        guard !path.contains("\\"), !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              path.split(separator: "/").allSatisfy({ $0 != "." && $0 != ".." }) else {
+            throw IOSSyncBackupError.providerNotConfigured("WebDAV 目录不能包含 .、..、反斜杠或控制字符。")
+        }
+    }
 }
 
 protocol IOSWebDAVTransport: Sendable {
@@ -100,6 +107,7 @@ struct IOSWebDAVClient: Sendable {
     }
 
     func makeRequest(method: String, fileName: String? = nil, headers: [String: String] = [:]) throws -> URLRequest {
+        try config.validateDirectoryPath()
         if let fileName {
             guard !fileName.isEmpty, fileName == URL(fileURLWithPath: fileName).lastPathComponent,
                   !fileName.contains("\\") else {

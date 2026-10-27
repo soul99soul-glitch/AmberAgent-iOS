@@ -1,0 +1,62 @@
+⚙️  Generating plists...
+⚙️  Generating project...
+⚙️  Writing project...
+Created project at /Users/mi/Downloads/AI/amber-macos/macApp/AmberMac.xcodeproj
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 (in target 'AmberMac' from project 'AmberMac')
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopCollaborationsView.swift:82:47: warning: result of call to 'saveCollaborationResult(runID:)' is unused [#NoUsage]
+ 80 |                                 if workspace.savingCollaborationRuns.contains(run.id) { ProgressView().controlSize(.small) }
+ 81 |                                 Button(workspace.savedCollaborationRuns.contains(run.id) ? "已保存到原会话" : "保存到原会话") {
+ 82 |                                     workspace.saveCollaborationResult(runID: run.id)
+    |                                               `- warning: result of call to 'saveCollaborationResult(runID:)' is unused [#NoUsage]
+ 83 |                                 }
+ 84 |                                 .disabled(!run.status.isTerminal || workspace.savingCollaborationRuns.contains(run.id)
+
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/Runtime/DesktopRecipeRuns.swift:40:127: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+32 |         let id = UUID()
+33 |         operations.insert(DesktopRecipeOperation(id: id, owner: conversationID, name: name), at: 0)
+34 |         running[id] = Task {
+   |                            |- note: 'self' implicitly strongly captured here
+   |                            `- note: add 'self' as a capture list item to silence
+35 |             defer {
+36 |                 running[id] = nil
+   :
+38 |             }
+39 |             do {
+40 |                 _ = try await tasks.begin(id: id, conversationID: conversationID, title: "Recipe · \(name)", cancel: { [weak self] in self?.cancel(id) })
+   |                                                                                                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                                                                                              `- note: explicitly assign the capture list item to silence
+41 |                 try Task.checkCancellation()
+42 |                 let result = await store.run(name: name, inputs: inputs) { [execute] tool, arguments in
+
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/Runtime/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1259 |     }
+1260 | 
+1261 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSImageGenerationRepository.swift:708:13: warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 706 |         diagnosticId: String? = nil
+ 707 |     ) async throws -> String {
+ 708 |         var extraction = Self.codexImageExtraction(from: data)
+     |             `- warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 709 |         if let image = extraction.images.first {
+ 710 |             if let diagnosticId {
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+note: Run script build phase 'Build desktop Shared framework' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'AmberMac' from project 'AmberMac')
+/Users/mi/Downloads/AI/amber-macos/macApp/build/Build/Products/Release/Amber.app/Contents/Frameworks/Shared.framework: replacing existing signature
+/Users/mi/Downloads/AI/amber-macos/macApp/build/Build/Products/Release/Amber.app: replacing existing signature

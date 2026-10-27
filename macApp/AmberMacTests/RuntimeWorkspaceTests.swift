@@ -40,6 +40,28 @@ import XCTest
         XCTAssertFalse(workspace.isGenerating)
     }
 
+    func testCancellationFlushHookPublishesCanonicalPartialBeforeCancelled() throws {
+        let run = DesktopGeneration()
+        let responseID = UUID()
+        let canonical = Self.canonicalMessage(id: responseID)
+        run.installCancellation({}, flushBeforeCancellation: {
+            run.yield(.snapshot(text: "最后 partial", reasoning: "思考", canonicalJSON: canonical, unsupportedPartCount: 2))
+            run.yield(.complete)
+        })
+
+        run.cancel()
+        let events = run.drain()
+        XCTAssertEqual(events.count, 2)
+        guard case .snapshot(let text, let reasoning, let payload, let unsupported) = events[0] else {
+            return XCTFail("Cancellation must flush the accepted partial first")
+        }
+        XCTAssertEqual(text, "最后 partial")
+        XCTAssertEqual(reasoning, "思考")
+        XCTAssertEqual(payload, canonical)
+        XCTAssertEqual(unsupported, 2)
+        guard case .cancelled = events[1] else { return XCTFail("Cancellation must remain terminal") }
+    }
+
     func testTerminalAlreadyQueuedWinsOverStop() async throws {
         let (workspace, provider, _) = try setup()
         workspace.draft = "问题"
@@ -67,7 +89,9 @@ import XCTest
         workspace.draft = "第二份草稿"
         provider.runs[0].yield(.snapshot(text: "属于第一个会话", reasoning: ""))
         provider.runs[0].yield(.complete)
-        for _ in 0..<20 { await Task.yield() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while workspace.isGenerating, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertFalse(workspace.isGenerating)
         _ = await workspace.flush()
         XCTAssertEqual(workspace.selectedID, second.id)
         XCTAssertEqual(workspace.selectedConversation?.messages.count, 0)
@@ -233,7 +257,9 @@ import XCTest
         workspace.send()
         workspace.select(second.id)
         provider.runs[0].yield(.failed("服务商失败"))
-        for _ in 0..<20 { await Task.yield() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while workspace.isGenerating, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertFalse(workspace.isGenerating)
         XCTAssertNil(workspace.errorMessage)
         workspace.select(original)
         XCTAssertEqual(workspace.errorMessage, "服务商失败")

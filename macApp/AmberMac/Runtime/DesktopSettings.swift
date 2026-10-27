@@ -88,8 +88,11 @@ struct DesktopKeychain: DesktopCredentialStore {
 
 @MainActor @Observable
 final class DesktopSettings {
+    private static let persistedSettingsKey = "desktop.settings.v1"
+    private static let recoverySettingsKey = "desktop.settings.recovery.v1"
+
     private(set) var providers: [DesktopProviderConfiguration]
-    var selectedProviderID: UUID? { didSet { persist() } }
+    var selectedProviderID: UUID? { didSet { if !isInitializing { persist() } } }
     var systemPrompt: String { didSet { persist() } }
     var appearance: String { didSet { persist() } }
     var messageFontFamily: DesktopMessageFontFamily { didSet { persist() } }
@@ -123,8 +126,11 @@ final class DesktopSettings {
         }
     }
     private(set) var auxiliaryModelIDs: [String: UUID]
+    private(set) var settingsRecoveryMessage: String?
+    private(set) var hasSettingsRecoveryCopy: Bool
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let credentials: any DesktopCredentialStore
+    @ObservationIgnored private var isInitializing = true
 
     private struct Record: Codable {
         var providers: [DesktopProviderConfiguration]
@@ -148,7 +154,16 @@ final class DesktopSettings {
     init(defaults: UserDefaults = .standard, credentials: any DesktopCredentialStore = DesktopKeychain()) {
         self.defaults = defaults
         self.credentials = credentials
-        let record = defaults.data(forKey: "desktop.settings.v1").flatMap { try? JSONDecoder().decode(Record.self, from: $0) }
+        let persistedData = defaults.data(forKey: Self.persistedSettingsKey)
+        hasSettingsRecoveryCopy = defaults.data(forKey: Self.recoverySettingsKey) != nil
+        let record = persistedData.flatMap { try? JSONDecoder().decode(Record.self, from: $0) }
+        if let persistedData, record == nil {
+            defaults.set(persistedData, forKey: Self.recoverySettingsKey)
+            hasSettingsRecoveryCopy = true
+            settingsRecoveryMessage = "设置文件无法读取，已保留恢复副本。当前使用默认设置；保存新设置后即可继续使用。"
+        } else {
+            settingsRecoveryMessage = nil
+        }
         let initial = DesktopProviderConfiguration(name: "OpenAI", kind: .openAI,
             baseURL: "https://api.openai.com/v1", modelID: "")
         let loadedProviders = record?.providers ?? [initial]
@@ -169,8 +184,13 @@ final class DesktopSettings {
         storedSpeechRate = min(0.6, max(0.2, record?.speechRate ?? 0.5))
         auxiliaryModelIDs = record?.auxiliaryModelIDs ?? [:]
         repairSelection()
+        isInitializing = false
         // Also commits the one-time legacy single-model -> stable model UUID migration.
-        persist()
+        if record != nil || persistedData == nil { persist() }
+    }
+
+    func unreadableSettingsRecoveryData() -> Data? {
+        defaults.data(forKey: Self.recoverySettingsKey)
     }
 
     var selectedProvider: DesktopProviderConfiguration? {
@@ -331,7 +351,10 @@ final class DesktopSettings {
             reasoningExpandedByDefault: reasoningExpandedByDefault, autoExpandThinking: autoExpandThinking,
             automaticallyFollowGeneration: automaticallyFollowGeneration, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
             speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate)
-        if let data = try? JSONEncoder().encode(record) { defaults.set(data, forKey: "desktop.settings.v1") }
+        if let data = try? JSONEncoder().encode(record) {
+            defaults.set(data, forKey: Self.persistedSettingsKey)
+            settingsRecoveryMessage = nil
+        }
     }
 
     private func repairSelection() {

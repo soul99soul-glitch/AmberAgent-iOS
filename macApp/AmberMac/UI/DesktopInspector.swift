@@ -75,6 +75,8 @@ struct DesktopInspector: View {
                 .frame(maxHeight: collapsed ? 0 : nil, alignment: .top)
                 .opacity(collapsed ? 0 : 1)
                 .clipped()
+                .disabled(collapsed)
+                .accessibilityHidden(collapsed)
         }
         .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.hairline))
@@ -85,7 +87,9 @@ struct DesktopInspector: View {
     private var contextBadge: String? {
         guard let conversation else { return nil }
         let prepared = workspace.insights.prepare(messages: conversation.messages, conversationID: conversation.id)
-        let tokens = DesktopConversationInsights.estimatedTokens(prepared, extraText: workspace.settings.systemPrompt + workspace.draft)
+        let extraText = workspace.settings.systemPrompt + workspace.draft
+            + workspace.pendingAttachments.map(\.text).joined()
+        let tokens = DesktopConversationInsights.estimatedTokens(prepared, extraText: extraText)
         return tokens >= 1_000 ? String(format: "%.1fk", Double(tokens) / 1_000) : "\(tokens)"
     }
 
@@ -105,7 +109,18 @@ struct DesktopInspector: View {
 
     private var files: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if workspace.selectedFiles.isEmpty {
+            if let error = workspace.fileErrorMessage {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("打开会话文件…", action: onOpenFiles)
+                    .buttonStyle(.link).font(.system(size: 12))
+            } else if workspace.isLoadingFiles {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.small)
+                    Text("正在读取文件…").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                }
+            } else if workspace.selectedFiles.isEmpty {
                 Text("工具写入或导入的文件会出现在这里。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             } else {
                 ForEach(workspace.selectedFiles.prefix(8)) { file in
@@ -124,13 +139,19 @@ struct DesktopInspector: View {
                     .buttonStyle(DesktopQuietButtonStyle())
                 }
             }
-            Button("打开会话文件…", action: onOpenFiles).buttonStyle(.link).font(.system(size: 12)).padding(.top, 4)
+            if workspace.fileErrorMessage == nil {
+                Button("打开会话文件…", action: onOpenFiles).buttonStyle(.link).font(.system(size: 12)).padding(.top, 4)
+            }
         }
     }
 
     private var tasks: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if ownerTasks.isEmpty {
+            if let error = workspace.agentTasks.errorMessage {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if ownerTasks.isEmpty {
                 Text("开启「工具」后，模型调用工具的记录会出现在这里。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             } else {
                 ForEach(ownerTasks.prefix(6)) { task in

@@ -69,14 +69,22 @@ internal fun isValidBlobName(name: String): Boolean = BLOB_NAME_PATTERN.matches(
  * no meaningful memory.
  */
 internal class BlobRefMemo {
-    private val buckets = HashMap<Long, MutableList<Pair<String, String>>>()
+    internal data class Entry(
+        val ref: String,
+        /** The file version whose bytes were verified against [ref]. */
+        val validatedVersion: ConversationFileVersion?,
+    )
 
-    fun get(url: String): String? =
+    private val buckets = HashMap<Long, MutableList<Pair<String, Entry>>>()
+
+    fun getEntry(url: String): Entry? =
         buckets[fingerprint(url)]?.firstOrNull { it.first == url }?.second
 
-    fun put(url: String, ref: String) {
+    fun put(url: String, ref: String, validatedVersion: ConversationFileVersion? = null) {
         val bucket = buckets.getOrPut(fingerprint(url)) { ArrayList(1) }
-        if (bucket.none { it.first == url }) bucket += url to ref
+        val index = bucket.indexOfFirst { it.first == url }
+        val entry = url to Entry(ref, validatedVersion)
+        if (index < 0) bucket += entry else bucket[index] = entry
     }
 
     private fun fingerprint(value: String): Long {
@@ -140,9 +148,25 @@ internal class ConversationBlobCodec(private val baseDir: ConversationFile) {
         var containsPlaceholder = false
         val knownPlaceholders = placeholderRefs[conversation.id]
 
+        data class BlobValidation(
+            val matches: Boolean,
+            val version: ConversationFileVersion?,
+        )
+
         fun keepReference(part: UIMessagePart.Image, ref: String, metadata: JsonObject?): UIMessagePart.Image {
             ref.removePrefix(BLOB_URL_SCHEME).takeIf(::isValidBlobName)?.let { referenced += it }
             return part.copy(url = ref, metadata = metadata)
+        }
+
+        fun validateBlob(file: ConversationFile, ref: String, expectedSize: Int? = null): BlobValidation {
+            val name = ref.removePrefix(BLOB_URL_SCHEME)
+            if (!isValidBlobName(name)) return BlobValidation(false, null)
+            val before = file.fileVersion() ?: return BlobValidation(false, null)
+            val bytes = file.readBytesOrNull() ?: return BlobValidation(false, null)
+            val after = file.fileVersion()
+            if (after == null || before != after) return BlobValidation(false, null)
+            if (expectedSize != null && bytes.size != expectedSize) return BlobValidation(false, after)
+            return BlobValidation(sha256Hex(bytes) == name.substringBeforeLast('.'), after)
         }
 
         fun externalizeImage(part: UIMessagePart.Image, position: String): UIMessagePart.Image {
@@ -174,13 +198,23 @@ internal class ConversationBlobCodec(private val baseDir: ConversationFile) {
             }
             if (url.length < INLINE_DATA_URL_THRESHOLD_CHARS || !url.startsWith("data:")) return part
 
-            val knownRef = previousMemo?.get(url) ?: memo.get(url)
-            if (knownRef != null) {
+            val knownEntry = memo.getEntry(url) ?: previousMemo?.getEntry(url)
+            if (knownEntry != null) {
+                val knownRef = knownEntry.ref
                 val name = knownRef.removePrefix(BLOB_URL_SCHEME)
                 val file = directory.child(name)
-                val present = (file.fileVersion()?.size ?: 0L) > 0L
-                if (present || writeBlob(file, url) != null) {
-                    memo.put(url, knownRef)
+                val currentVersion = file.fileVersion()
+                val verifiedByMemo = currentVersion != null
+                    && currentVersion.size > 0L
+                    && knownEntry.validatedVersion != null
+                    && currentVersion == knownEntry.validatedVersion
+                val validation = if (verifiedByMemo) {
+                    BlobValidation(true, currentVersion)
+                } else {
+                    validateBlob(file, knownRef)
+                }
+                if (validation.matches || writeBlob(file, url) != null) {
+                    memo.put(url, knownRef, if (validation.matches) validation.version else file.fileVersion())
                     referenced += name
                     return part.copy(url = knownRef)
                 }
@@ -197,14 +231,14 @@ internal class ConversationBlobCodec(private val baseDir: ConversationFile) {
             val name = "${sha256Hex(bytes)}.$ext"
             val file = directory.child(name)
             val ok = runCatching {
-                if (file.fileVersion()?.size != bytes.size.toLong()) {
+                if (!validateBlob(file, BLOB_URL_SCHEME + name, bytes.size).matches) {
                     directory.mkdirs()
                     file.writeBytesDurably(bytes)
                 }
             }.isSuccess
             if (!ok) return part
             val ref = BLOB_URL_SCHEME + name
-            memo.put(url, ref)
+            memo.put(url, ref, file.fileVersion())
             referenced += name
             return part.copy(url = ref)
         }
@@ -256,11 +290,14 @@ internal class ConversationBlobCodec(private val baseDir: ConversationFile) {
             if (valid) diskRefs += name
             val mime = if (valid) MIME_BY_EXTENSION[name.substringAfterLast('.')] else null
             val file = directory.child(name)
+            val beforeVersion = file.fileVersion()
             val bytes = mime?.let { file.readBytesOrNull() }
             if (mime != null && bytes != null) {
                 if (sha256Hex(bytes) == name.substringBeforeLast('.')) {
                     val dataUrl = "data:$mime$BASE64_MARKER${Base64.encode(bytes)}"
-                    memo.put(dataUrl, url)
+                    val afterVersion = file.fileVersion()
+                    val validatedVersion = beforeVersion?.takeIf { it == afterVersion }
+                    memo.put(dataUrl, url, validatedVersion)
                     return part.copy(url = dataUrl)
                 }
                 if (failOnUnreadable) {

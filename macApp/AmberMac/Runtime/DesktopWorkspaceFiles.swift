@@ -7,6 +7,11 @@ struct DesktopWorkspaceFile: Identifiable, Equatable, Sendable {
     let modifiedAt: Date
 }
 
+struct DesktopWorkspaceTextRead: Equatable, Sendable {
+    let text: String
+    let truncated: Bool
+}
+
 actor DesktopWorkspaceFiles {
     private let root: URL
     private let manager = FileManager.default
@@ -40,6 +45,36 @@ actor DesktopWorkspaceFiles {
         return try Data(contentsOf: url)
     }
 
+    /// Reads a bounded UTF-8 byte prefix. Extended grapheme clusters can use more than four bytes,
+    /// so the returned String may contain fewer than maxCharacters for such text.
+    func readUTF8Prefix(conversationID: UUID, path: String, maxCharacters: Int) throws -> DesktopWorkspaceTextRead {
+        guard maxCharacters >= 0, maxCharacters <= (Int.max - 4) / 4 else { throw failure("文本读取范围无效。") }
+        let url = try location(conversationID, path: path, createParents: false)
+        guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { throw failure("请选择普通文件。") }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        let byteLimit = maxCharacters * 4 + 4
+        let data = try handle.read(upToCount: byteLimit) ?? Data()
+        let endOfFile = data.count < byteLimit
+        var hasMore = false
+        if !endOfFile {
+            hasMore = !(try handle.read(upToCount: 3) ?? Data()).isEmpty
+        }
+        if let text = String(data: data, encoding: .utf8) {
+            return DesktopWorkspaceTextRead(text: String(text.prefix(maxCharacters)),
+                truncated: text.count > maxCharacters || hasMore)
+        }
+        guard hasMore else { throw failure("文件不是 UTF-8 文本。") }
+        for count in 1...min(3, data.count) {
+            let candidate = data.dropLast(count)
+            if let text = String(data: candidate, encoding: .utf8) {
+                return DesktopWorkspaceTextRead(text: String(text.prefix(maxCharacters)), truncated: true)
+            }
+        }
+        throw failure("文件不是 UTF-8 文本。")
+    }
+
     @discardableResult
     func write(conversationID: UUID, path: String, data: Data, overwrite: Bool = true) throws -> DesktopWorkspaceFile {
         let url = try location(conversationID, path: path, createParents: true)
@@ -54,7 +89,17 @@ actor DesktopWorkspaceFiles {
         defer { if granted { source.stopAccessingSecurityScopedResource() } }
         guard try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { throw failure("请选择普通文件。") }
         let name = try unusedName(conversationID, name: source.lastPathComponent)
-        return try write(conversationID: conversationID, path: name, data: Data(contentsOf: source))
+        let destination = try location(conversationID, path: name, createParents: true)
+        guard !manager.fileExists(atPath: destination.path) else { throw failure("文件已存在；请使用新文件名。") }
+        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".amber-import-" + UUID().uuidString)
+        do {
+            try manager.copyItem(at: source, to: temporary)
+            try manager.moveItem(at: temporary, to: destination)
+            return try entry(destination, path: name)
+        } catch {
+            try? manager.removeItem(at: temporary)
+            throw error
+        }
     }
 
     @discardableResult
@@ -69,12 +114,42 @@ actor DesktopWorkspaceFiles {
     }
 
     func temporaryURL(conversationID: UUID, path: String) throws -> URL {
-        let data = try read(conversationID: conversationID, path: path)
+        let source = try location(conversationID, path: path, createParents: false)
+        guard try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { throw failure("请选择普通文件。") }
         let directory = manager.temporaryDirectory.appendingPathComponent("amber-share-" + UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent)
-        try data.write(to: url, options: .atomic)
-        return url
+        do {
+            try manager.copyItem(at: source, to: url)
+            return url
+        } catch {
+            try? manager.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    func copy(conversationID: UUID, path: String, to destination: URL, overwrite: Bool = true) throws {
+        let source = try location(conversationID, path: path, createParents: false)
+        guard try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { throw failure("请选择普通文件。") }
+        let granted = destination.startAccessingSecurityScopedResource()
+        defer { if granted { destination.stopAccessingSecurityScopedResource() } }
+        guard overwrite || !manager.fileExists(atPath: destination.path) else {
+            throw failure("目标文件已存在，请选择新文件名。")
+        }
+
+        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".amber-export-" + UUID().uuidString)
+        do {
+            try manager.copyItem(at: source, to: temporary)
+            if manager.fileExists(atPath: destination.path) {
+                guard overwrite else { throw failure("目标文件已存在，请选择新文件名。") }
+                _ = try manager.replaceItemAt(destination, withItemAt: temporary, backupItemName: nil, options: [])
+            } else {
+                try manager.moveItem(at: temporary, to: destination)
+            }
+        } catch {
+            try? manager.removeItem(at: temporary)
+            throw error
+        }
     }
 
     func commandDirectory(conversationID: UUID) throws -> URL {

@@ -58,9 +58,62 @@ class ProviderHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def openai(self, body):
-        def chunk(delta, finish=None):
-            return {"id": "chatcmpl-mac-test", "object": "chat.completion.chunk", "created": 1,
-                    "model": body["model"], "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+        def chunk(delta, finish=None, usage=None):
+            result = {"id": "chatcmpl-mac-test", "object": "chat.completion.chunk", "created": 1,
+                      "model": body["model"], "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+            if usage is not None:
+                result["usage"] = usage
+            return result
+        if body["model"] == "mock-agent-scope":
+            tool_names = {
+                tool.get("function", {}).get("name")
+                for tool in body.get("tools", [])
+                if isinstance(tool, dict)
+            }
+            allowed = {"tool_search", "subagent_dispatch", "list_agents", "interrupt_agent"}
+            has_tool_output = any(
+                isinstance(message, dict) and message.get("role") == "tool"
+                for message in body.get("messages", [])
+            )
+            if tool_names - allowed:
+                self.event(chunk({"role": "assistant", "content": "tool-scope-leak"}, "stop"))
+            elif has_tool_output:
+                self.event(chunk({"role": "assistant", "content": "scope-safe"}, "stop"))
+            else:
+                self.event(chunk({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "scope-hidden-call",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_file_write",
+                            "arguments": '{"path":"forbidden.txt","content":"must-not-write","overwrite":true}',
+                        },
+                    }],
+                }, "tool_calls"))
+            self.event("[DONE]")
+            return
+        if body["model"].startswith("mock-burst-"):
+            try:
+                count = int(body["model"].removeprefix("mock-burst-"))
+            except ValueError:
+                self.send_error(400)
+                return
+            self.event(chunk({"role": "assistant", "content": ""}))
+            for _ in range(count):
+                self.event(chunk({"content": "x"}))
+            self.event(chunk({}, "stop", usage={
+                "prompt_tokens": 11,
+                "completion_tokens": count,
+                "total_tokens": count + 11,
+            }))
+            self.event("[DONE]")
+            return
+        if body["model"] == "mock-stream-error":
+            self.event(chunk({"role": "assistant", "content": "partial"}))
+            self.event({"error": {"message": "fixture stream error"}})
+            return
         self.event(chunk({"role": "assistant", "content": ""}))
         self.event(chunk({"reasoning_content": "先确认顺序。"}))
         pieces = ["partial", " should not arrive"] if body["model"] == "mock-cancel" else ["你", "好", "，Amber"]

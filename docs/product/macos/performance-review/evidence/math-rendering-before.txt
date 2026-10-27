@@ -1,0 +1,2 @@
+MATH inline iterations=500 cold_ms=485.19 one_entry_cache_ms=1.02
+MATH inline iterations=500 cold_ms=502.34 one_entry_cache_ms=1.12

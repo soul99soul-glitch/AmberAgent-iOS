@@ -165,14 +165,16 @@ final class IOSImageGenerationHistoryStore {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let key: String
-    @ObservationIgnored private let limit = 80
+    @ObservationIgnored private let limit: Int?
 
     init(
         userDefaults: UserDefaults = .standard,
-        key: String = "app.amber.ios.imageGeneration.history.v1"
+        key: String = "app.amber.ios.imageGeneration.history.v1",
+        limit: Int? = 80
     ) {
         self.defaults = userDefaults
         self.key = key
+        self.limit = limit
         if let data = userDefaults.data(forKey: key),
            let decoded = try? JSONDecoder().decode([IOSImageGenerationRecord].self, from: data) {
             self.records = decoded
@@ -184,7 +186,7 @@ final class IOSImageGenerationHistoryStore {
     func insert(_ record: IOSImageGenerationRecord) {
         records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)
-        if records.count > limit {
+        if let limit, records.count > limit {
             records = Array(records.prefix(limit))
         }
         persist()

@@ -20,7 +20,8 @@ import XCTest
             begin(messages, responseID: responseID, context: context)
         }
     }
-    private func setup(_ conversation: DesktopConversation) throws -> (DesktopWorkspace, Provider, DesktopMemoryConversationStorage) {
+    private func setup(_ conversation: DesktopConversation, toolsEnabled: Bool = true,
+        subagentsEnabled: Bool = false) throws -> (DesktopWorkspace, Provider, DesktopMemoryConversationStorage) {
         let defaults = UserDefaults(suiteName: "amber.agent-transcript.\(UUID().uuidString)")!
         let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
         var config = settings.selectedProvider!
@@ -29,7 +30,8 @@ import XCTest
         let provider = Provider()
         let storage = DesktopMemoryConversationStorage([conversation])
         let tasks = DesktopAgentTasks(defaults: defaults)
-        tasks.toolsEnabled = true
+        tasks.toolsEnabled = toolsEnabled
+        tasks.subagentsEnabled = subagentsEnabled
         return (DesktopWorkspace(settings: settings, storage: storage, provider: provider,
             initialConversations: [conversation], agentTasks: tasks), provider, storage)
     }
@@ -54,6 +56,21 @@ import XCTest
         XCTAssertEqual(saved.messages.last?.state, .complete)
         XCTAssertEqual(saved.messages.last?.canonicalJSON, "final-payload")
         XCTAssertFalse(workspace.isGenerating)
+    }
+
+    func testSubagentOnlyGenerationKeepsOrdinaryToolsOffButEnablesEngine() async throws {
+        let original = DesktopConversation(messages: [DesktopMessage(role: .user, text: "old")])
+        let (workspace, provider, _) = try setup(original, toolsEnabled: false, subagentsEnabled: true)
+        workspace.draft = "dispatch a read-only sub-agent"
+        workspace.send()
+
+        let context = try XCTUnwrap(provider.contexts.first ?? nil)
+        XCTAssertFalse(context.toolsEnabled)
+        XCTAssertTrue(context.subagentsEnabled)
+        XCTAssertTrue(context.engineEnabled)
+
+        workspace.stop()
+        _ = await workspace.flush()
     }
 
     func testStopDrainsAcceptedTranscriptAndRejectsLateReplacement() async throws {

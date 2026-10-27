@@ -72,6 +72,42 @@ import XCTest
         XCTAssertEqual(try restored.apiKey(for: config.id), "working-secret")
     }
 
+    func testUnreadableSettingsKeepOriginalBytesForRecovery() throws {
+        let defaults = UserDefaults(suiteName: "amber.settings.tests.\(UUID().uuidString)")!
+        let providerID = UUID()
+        let raw = try JSONSerialization.data(withJSONObject: [
+            "appearance": "dark",
+            "providers": [[
+                "authMode": "future_oauth",
+                "baseURL": "https://example.com/v1",
+                "id": providerID.uuidString,
+                "kind": "openai",
+                "models": [],
+                "name": "Future provider"
+            ]],
+            "selectedProviderID": providerID.uuidString,
+            "systemPrompt": "keep this"
+        ], options: [.sortedKeys])
+        defaults.set(raw, forKey: "desktop.settings.v1")
+
+        let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+
+        XCTAssertEqual(defaults.data(forKey: "desktop.settings.v1"), raw)
+        XCTAssertEqual(defaults.data(forKey: "desktop.settings.recovery.v1"), raw)
+        XCTAssertNotNil(settings.settingsRecoveryMessage)
+
+        var recovered = try XCTUnwrap(settings.selectedProvider)
+        recovered.modelID = "recovered-model"
+        try settings.saveProvider(recovered, apiKey: "recovered-secret")
+        XCTAssertNil(settings.settingsRecoveryMessage)
+        let restored = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        XCTAssertEqual(restored.selectedProvider?.modelID, "recovered-model")
+        XCTAssertEqual(defaults.data(forKey: "desktop.settings.recovery.v1"), raw)
+        XCTAssertNil(restored.settingsRecoveryMessage)
+        XCTAssertTrue(restored.hasSettingsRecoveryCopy)
+        XCTAssertEqual(restored.unreadableSettingsRecoveryData(), raw)
+    }
+
     func testDeletingSelectedProviderRestoresRemainingSelectionAndRemovesCredential() throws {
         let defaults = UserDefaults(suiteName: "amber.settings.tests.\(UUID().uuidString)")!
         let credentials = DesktopMemoryCredentials()

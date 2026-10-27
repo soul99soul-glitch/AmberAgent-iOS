@@ -71,6 +71,19 @@ enum DesktopToolRegistry {
 extension DesktopToolRegistry {
     static var collaborationDeclarations: [DesktopToolDeclaration] { collaborationDeclarations(subagents: true) }
 
+    /// Returns the declarations for one chat run. Sub-agent-only mode gets the
+    /// read-only dispatch controls, while council remains behind the ordinary
+    /// tools switch (or both switches together).
+    static func agentDeclarations(toolsEnabled: Bool, subagentsEnabled: Bool) -> [DesktopToolDeclaration] {
+        if toolsEnabled {
+            return declarations + knowledgeDeclarations
+                + collaborationDeclarations(subagents: subagentsEnabled) + DesktopMCPManager.declarations
+        }
+        guard subagentsEnabled else { return [] }
+        let allowed = Set(["subagent_dispatch", "list_agents", "interrupt_agent"])
+        return allCollaborationDeclarations.filter { allowed.contains($0.name) }
+    }
+
     /// Council and run management stay available with tools; sub-agent dispatch only when its switch is on.
     static func collaborationDeclarations(subagents: Bool) -> [DesktopToolDeclaration] {
         allCollaborationDeclarations.filter { subagents || $0.name != "subagent_dispatch" }

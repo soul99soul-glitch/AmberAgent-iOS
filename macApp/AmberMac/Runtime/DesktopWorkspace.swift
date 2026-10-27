@@ -639,7 +639,7 @@ final class DesktopWorkspace {
         do {
             let run = try provider.start(configuration: configuration, apiKey: apiKey,
                 messages: messages, responseID: replyID, context: DesktopRunContext(
-                    conversationID: conversationID, toolsEnabled: generationUsesTools, subagentsEnabled: agentTasks.subagentsEnabled,
+                    conversationID: conversationID, toolsEnabled: agentTasks.toolsEnabled, subagentsEnabled: agentTasks.subagentsEnabled,
                     persistTurns: { [weak self] turns in
                         guard let self else { return false }
                         return await self.persistAgentTurns(turns, owner: conversationID, token: token)
@@ -822,9 +822,12 @@ final class DesktopWorkspace {
                 self.fileErrors[id] = nil
                 self.fileReadFailures.remove(id)
                 self.insights.remove(id)
-                self.artifactShelf.removeConversation(id)
+                var cleanupFailed = !self.artifactShelf.removeConversation(id)
                 do { try await self.files.removeConversation(id) }
-                catch { self.recordError("会话已删除，但工作区文件清理失败，请检查文件夹权限。", owner: nil) }
+                catch { cleanupFailed = true }
+                if cleanupFailed {
+                    self.recordError("会话已删除，但产物架或工作区文件清理失败，请检查文件夹权限。", owner: nil)
+                }
             } catch {
                 if let recoverable { self.conversations.append(recoverable) }
                 self.summaries = DesktopConversationSummary.ordered(self.summaries + [summary])
@@ -864,14 +867,26 @@ final class DesktopWorkspace {
         enqueue(ownerID: value.id) {
             let saved = try await self.storage.save(value)
             guard let index = self.conversations.firstIndex(where: { $0.id == value.id }) else { return }
-            let durableIDs = Set(saved.messages.map(\.id))
+            // Keep first-match semantics from the old linear searches without paying O(N²)
+            // when a long conversation is checkpointed during streaming.
+            var previousByID: [UUID: DesktopMessage] = [:]
+            previousByID.reserveCapacity(value.messages.count)
+            for message in value.messages where previousByID[message.id] == nil {
+                previousByID[message.id] = message
+            }
+            var savedByID: [UUID: DesktopMessage] = [:]
+            savedByID.reserveCapacity(saved.messages.count)
+            for message in saved.messages where savedByID[message.id] == nil {
+                savedByID[message.id] = message
+            }
+            let durableIDs = Set(savedByID.keys)
             self.instructionQueue.removeAll { $0.conversationID == value.id && durableIDs.contains($0.id) }
             // The saved full document is the next base; newer visible messages remain owned by their run.
             self.conversations[index].canonicalJSON = saved.canonicalJSON
             for messageIndex in self.conversations[index].messages.indices {
                 let current = self.conversations[index].messages[messageIndex]
-                guard let previous = value.messages.first(where: { $0.id == current.id }), current == previous,
-                      let actual = saved.messages.first(where: { $0.id == current.id }) else { continue }
+                guard let previous = previousByID[current.id], current == previous,
+                      let actual = savedByID[current.id] else { continue }
                 self.conversations[index].messages[messageIndex].canonicalJSON = actual.canonicalJSON
                 self.conversations[index].messages[messageIndex].unsupportedPartCount = actual.unsupportedPartCount
                 self.conversations[index].messages[messageIndex].variantIDs = actual.variantIDs
@@ -1125,8 +1140,7 @@ final class DesktopWorkspace {
         guard let owner = selectedID else { return nil }
         return performFileTask { [self] in
             do {
-                let data = try await files.read(conversationID: owner, path: path)
-                try await Task.detached { try DesktopFileIO.exportData(data, to: url) }.value
+                try await files.copy(conversationID: owner, path: path, to: url)
                 recordFileError(nil, owner: owner)
             } catch { recordFileError("导出文件失败，请检查目标文件夹权限。", owner: owner) }
         }

@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct DesktopSettingsView: View {
     @Bindable var settings: DesktopSettings
@@ -35,6 +37,7 @@ struct DesktopSettingsView: View {
     @State private var presetPickerPresented = false
     @State private var advancedConnection = false
     @State private var pendingPreset: (DesktopProviderPreset, Bool)?
+    @State private var recoveryExportMessage: String?
 
     private enum Destination { case provider(UUID?), tab(Int), preset(DesktopProviderPreset, Bool) }
     private struct ModelParameters: Equatable {
@@ -157,6 +160,28 @@ struct DesktopSettingsView: View {
             .padding(.horizontal, 28)
             .padding(.top, 22)
             .padding(.bottom, 18)
+            if settings.hasSettingsRecoveryCopy {
+                HStack(alignment: .top, spacing: 10) {
+                    Label(
+                        settings.settingsRecoveryMessage ?? "已保留原始设置恢复副本。",
+                        systemImage: settings.settingsRecoveryMessage == nil ? "archivebox" : "exclamationmark.triangle"
+                    )
+                        .font(.system(size: 12))
+                        .foregroundStyle(settings.settingsRecoveryMessage == nil ? DesktopTheme.inkTertiary : DesktopTheme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("导出原始设置…", action: exportRecoverySettings)
+                        .buttonStyle(.borderless)
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, 12)
+                if let recoveryExportMessage {
+                    Text(recoveryExportMessage)
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 12)
+                }
+            }
             Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
             ZStack {
                 switch tab {
@@ -548,6 +573,22 @@ struct DesktopSettingsView: View {
         Label(message, systemImage: failed ? "exclamationmark.circle" : "info.circle")
             .font(.system(size: 13)).foregroundStyle(failed ? DesktopTheme.danger : DesktopTheme.inkTertiary)
             .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+    }
+    private func exportRecoverySettings() {
+        guard let data = settings.unreadableSettingsRecoveryData() else {
+            recoveryExportMessage = "恢复副本不存在。"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "amber-settings-recovery.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try data.write(to: url, options: .atomic)
+            recoveryExportMessage = "已导出原始设置数据。"
+        } catch {
+            recoveryExportMessage = "导出失败：\(error.localizedDescription)"
+        }
     }
     private func modelBinding<Value>(_ id: UUID, _ path: WritableKeyPath<DesktopModelConfiguration, Value>, fallback: Value) -> Binding<Value> {
         Binding(get: { draft.models.first(where: { $0.id == id })?[keyPath: path] ?? fallback }, set: { value in

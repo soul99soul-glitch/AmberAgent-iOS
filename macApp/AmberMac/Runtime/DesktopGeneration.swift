@@ -18,6 +18,7 @@ final class DesktopGeneration: @unchecked Sendable {
     private var cancellationRequested = false
     private let cancellationCompletesAsynchronously: Bool
     private var cancellation: (@Sendable () -> Void)?
+    private var cancellationFlush: (@Sendable () -> Void)?
 
     init(cancellationCompletesAsynchronously: Bool = false) {
         self.cancellationCompletesAsynchronously = cancellationCompletesAsynchronously
@@ -27,9 +28,13 @@ final class DesktopGeneration: @unchecked Sendable {
         signal = stream.continuation
     }
 
-    func installCancellation(_ action: @escaping @Sendable () -> Void) {
+    func installCancellation(_ action: @escaping @Sendable () -> Void,
+                             flushBeforeCancellation: (@Sendable () -> Void)? = nil) {
         lock.lock()
-        if !terminal { cancellation = action }
+        if !terminal {
+            cancellation = action
+            cancellationFlush = flushBeforeCancellation
+        }
         let didFinish = terminal
         lock.unlock()
         if didFinish { action() }
@@ -40,7 +45,7 @@ final class DesktopGeneration: @unchecked Sendable {
         defer { lock.unlock() }
         guard !terminal else { return }
         let accepted: DesktopProviderEvent
-        if cancellationRequested, cancellationCompletesAsynchronously {
+        if cancellationRequested {
             switch event {
             case .complete, .failed: accepted = .cancelled
             default: accepted = event
@@ -52,6 +57,7 @@ final class DesktopGeneration: @unchecked Sendable {
         case .complete, .failed, .cancelled:
             terminal = true
             cancellation = nil
+            cancellationFlush = nil
         }
         signal.yield(())
         if terminal { signal.finish() }
@@ -70,8 +76,11 @@ final class DesktopGeneration: @unchecked Sendable {
         guard !terminal, !cancellationRequested else { lock.unlock(); return }
         cancellationRequested = true
         let action = cancellation
+        let flush = cancellationFlush
         cancellation = nil
+        cancellationFlush = nil
         lock.unlock()
+        flush?()
         if !cancellationCompletesAsynchronously { yield(.cancelled) }
         action?()
     }
@@ -89,6 +98,7 @@ struct DesktopRunContext: Sendable {
     let conversationID: UUID
     let toolsEnabled: Bool
     let subagentsEnabled: Bool
+    var engineEnabled: Bool { toolsEnabled || subagentsEnabled }
     /// nil = the global auto-approve switches; scheduled/unattended runs pass their own.
     let approvalPolicy: DesktopApprovalPolicy?
     let persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)?
@@ -97,7 +107,7 @@ struct DesktopRunContext: Sendable {
     init(conversationID: UUID, toolsEnabled: Bool, subagentsEnabled: Bool = false, approvalPolicy: DesktopApprovalPolicy? = nil,
         persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)? = nil,
         drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])? = nil) {
-        self.conversationID = conversationID; self.toolsEnabled = toolsEnabled || subagentsEnabled
+        self.conversationID = conversationID; self.toolsEnabled = toolsEnabled
         self.subagentsEnabled = subagentsEnabled; self.approvalPolicy = approvalPolicy; self.persistTurns = persistTurns
         self.drainSteer = drainSteer
     }

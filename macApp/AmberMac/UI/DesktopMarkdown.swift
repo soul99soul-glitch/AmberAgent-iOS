@@ -50,7 +50,7 @@ private struct DesktopMarkdownBlocks: View {
                 let tail = streaming && index == blocks.count - 1
                 switch block {
                 case .paragraph(let text):
-                    DesktopMathText.render(text, fontSize: fontSize, scheme: scheme)
+                    DesktopMathTextView(source: text, fontSize: fontSize)
                         .desktopStreamingText(text, active: tail)
                         .textSelection(.enabled)
                         .lineSpacing(fontSize * 0.5)
@@ -58,7 +58,7 @@ private struct DesktopMarkdownBlocks: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .heading(let text, let level):
                     // Editorial headings: Songti serif, regardless of body font choice.
-                    DesktopMathText.render(text, fontSize: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2), scheme: scheme)
+                    DesktopMathTextView(source: text, fontSize: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2))
                         .font(DesktopTheme.serif(size: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2), weight: level <= 2 ? .semibold : .medium))
                         .foregroundStyle(DesktopTheme.ink)
                         .textSelection(.enabled)
@@ -113,7 +113,7 @@ private struct DesktopMarkdownList: View {
                         .font(item.marker.first?.isNumber == true ? DesktopTheme.serif(size: fontSize, weight: .medium) : .system(size: fontSize + 4, weight: .bold))
                         .foregroundStyle(DesktopTheme.inkTertiary)
                         .frame(width: markerWidth, alignment: .trailing)
-                    DesktopMathText.render(item.text, fontSize: fontSize, scheme: scheme)
+                    DesktopMathTextView(source: item.text, fontSize: fontSize)
                         .font(fontFamily.swiftUIFont(size: fontSize))
                         .desktopStreamingText(item.text, active: streaming && itemIndex == items.count - 1)
                         .textSelection(.enabled)
@@ -126,6 +126,27 @@ private struct DesktopMarkdownList: View {
     }
 }
 
+private final class DesktopCodeHighlightCache {
+    private struct Key: Equatable {
+        let source: String
+        let language: String
+        let fontSize: Double
+        let dark: Bool
+    }
+
+    private var key: Key?
+    private var highlighted: AttributedString?
+
+    func value(text: String, language: String, fontSize: Double, dark: Bool) -> AttributedString {
+        let next = Key(source: text, language: language, fontSize: fontSize, dark: dark)
+        if key == next, let highlighted { return highlighted }
+        let value = DesktopCodeHighlights.highlight(text, language: language, fontSize: fontSize)
+        key = next
+        highlighted = value
+        return value
+    }
+}
+
 private struct DesktopCodeBlock: View {
     let text: String
     let language: String
@@ -133,6 +154,7 @@ private struct DesktopCodeBlock: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.desktopCodePinning) private var pinning
     @State private var copied = false
+    @State private var highlightCache = DesktopCodeHighlightCache()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -164,8 +186,10 @@ private struct DesktopCodeBlock: View {
             .padding(.leading, 16)
             .padding(.trailing, 8)
             .frame(height: 32)
+            let highlighted = highlightCache.value(text: text.isEmpty ? " " : text,
+                language: language, fontSize: fontSize - 2, dark: scheme == .dark)
             ScrollView(.horizontal) {
-                Text(DesktopCodeHighlights.highlight(text.isEmpty ? " " : text, language: language, fontSize: fontSize - 2))
+                Text(highlighted)
                     .lineSpacing(3)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
@@ -193,7 +217,7 @@ private struct DesktopMarkdownTable: View {
             DesktopMarkdownTableLayout(widths: widths) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                         ForEach(0..<(rows.map(\.count).max() ?? 0), id: \.self) { column in
-                            DesktopMathText.render(column < row.count ? row[column] : "", fontSize: fontSize - 1, scheme: scheme)
+                            DesktopMathTextView(source: column < row.count ? row[column] : "", fontSize: fontSize - 1)
                                 .font(fontFamily.swiftUIFont(size: fontSize - 1, weight: rowIndex == 0 ? .semibold : .regular))
                                 .textSelection(.enabled)
                                 .multilineTextAlignment(textAlignment(column))

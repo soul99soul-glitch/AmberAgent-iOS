@@ -20,6 +20,9 @@ import SwiftUI
                 try await capture("empty-1440-light", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, false)
                 try await capture("empty-1440-dark", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, true)
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PANELS"] != nil { try await panels(chat) }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_RECOVERY"] != nil { try await reviewRecovery() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PHASE3_UI"] != nil { try await reviewPhase3UI() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PERF3_CACHE"] != nil { try await reviewPerf3Cache() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
@@ -140,7 +143,170 @@ import SwiftUI
         }
     }
 
-    @MainActor static func capture<V: View>(_ name: String, _ view: V, _ width: CGFloat, _ height: CGFloat, _ dark: Bool) async throws {
+    /// Phase 1 UI review states. This is opt-in so the normal snapshot set is unchanged.
+    @MainActor static func reviewRecovery() async throws {
+        let defaults = UserDefaults(suiteName: "amber.review.recovery.\(UUID().uuidString)")!
+        let raw = Data("{\"broken_settings\":true}".utf8)
+        defaults.set(raw, forKey: "desktop.settings.v1")
+        let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        let conversation = DesktopConversation(title: "恢复提示示例", messages: [DesktopMessage(role: .assistant, text: "用于产物架保存失败状态的示例消息。")])
+        let workspace = DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage([conversation]),
+            provider: ReplayProvider(), initialConversations: [conversation])
+        await workspace.agentTasks.waitUntilLoaded()
+        for dark in [false, true] {
+            try await capture("review-recovery-settings-\(dark ? "dark" : "light")",
+                AnyView(PreviewSettingsView(workspace: workspace)), 880, 760, dark)
+        }
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("amber-review-shelf-\(UUID().uuidString)", isDirectory: true)
+        let shelfDirectory = root.appendingPathComponent("shelf", isDirectory: true)
+        let shelfURL = shelfDirectory.appendingPathComponent("artifact-shelf.json")
+        try FileManager.default.createDirectory(at: shelfDirectory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: shelfURL)
+        let shelf = DesktopArtifactShelf(fileURL: shelfURL)
+        try FileManager.default.removeItem(at: shelfDirectory)
+        try Data("blocked".utf8).write(to: shelfDirectory)
+        shelf.pin(messageID: conversation.messages[0].id, kind: .message, text: "保存失败后仍保留在本次运行", in: conversation.id)
+        let shelfWorkspace = DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage([conversation]),
+            provider: ReplayProvider(), initialConversations: [conversation], artifactShelf: shelf)
+        for dark in [false, true] {
+            try await capture("review-shelf-save-error-\(dark ? "dark" : "light")",
+                AnyView(DesktopArtifactShelfView(workspace: shelfWorkspace, onLocate: { _ in })), 440, 480, dark)
+        }
+    }
+
+    /// Phase 3 UI states. This is opt-in and uses isolated fixture workspaces only.
+    @MainActor static func reviewPhase3UI() async throws {
+        UserDefaults.standard.set(true, forKey: "desktop.inspector.visible")
+        UserDefaults.standard.set("", forKey: "desktop.inspector.collapsed")
+
+        let fixture = DesktopWorkspace.uiFixture()
+        await fixture.agentTasks.waitUntilLoaded()
+        guard let conversation = fixture.selectedConversation else { throw DesktopRuntimeError.message("fixture conversation") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("amber-review-phase3-\(UUID().uuidString)", isDirectory: true)
+        let attachmentURL = root.appendingPathComponent("budget.txt")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(String(repeating: "待发送附件文字，用于核对上下文预算。", count: 120).utf8).write(to: attachmentURL)
+        await fixture.addAttachments([attachmentURL])?.value
+        for dark in [false, true] {
+            try await capture("review-inspector-attachment-1440-\(dark ? "dark" : "light")",
+                DesktopWorkspaceView(workspace: fixture, searchRequest: 0), 1440, 900, dark)
+            try await capture("review-inspector-attachment-860-\(dark ? "dark" : "light")",
+                DesktopWorkspaceView(workspace: fixture, searchRequest: 0), 860, 600, dark)
+        }
+
+        func workspace(files: DesktopWorkspaceFiles? = nil, tasks: DesktopAgentTasks? = nil) -> DesktopWorkspace {
+            DesktopWorkspace(settings: fixture.settings, storage: DesktopMemoryConversationStorage([conversation]),
+                provider: ReplayProvider(), initialConversations: [conversation], files: files ?? DesktopWorkspaceFiles(),
+                agentTasks: tasks ?? DesktopAgentTasks(defaults: UserDefaults(suiteName: "amber.review.phase3.tasks.\(UUID().uuidString)")!))
+        }
+
+        let loadingRoot = root.appendingPathComponent("loading-files", isDirectory: true)
+        try FileManager.default.createDirectory(at: loadingRoot, withIntermediateDirectories: true)
+        for index in 0..<3_000 {
+            FileManager.default.createFile(atPath: loadingRoot.appendingPathComponent("file-\(index).txt").path,
+                contents: Data("loading".utf8))
+        }
+        let loading = workspace(files: DesktopWorkspaceFiles(directory: loadingRoot))
+        for dark in [false, true] {
+            let inspector = DesktopInspector(workspace: loading, onLocate: { _ in }, onOpenFiles: {}, onOpenTasks: {})
+            try await capture("review-inspector-files-loading-1440-\(dark ? "dark" : "light")",
+                inspector.frame(width: 300, height: 760), 300, 760, dark, settle: .milliseconds(5))
+        }
+
+        let fileErrorTarget = root.appendingPathComponent("file-error-target", isDirectory: true)
+        let fileErrorLink = root.appendingPathComponent("file-error-link", isDirectory: true)
+        try FileManager.default.createDirectory(at: fileErrorTarget, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: fileErrorLink, withDestinationURL: fileErrorTarget)
+        let fileErrorWorkspace = workspace(files: DesktopWorkspaceFiles(directory: fileErrorLink))
+        await fileErrorWorkspace.reloadFiles()?.value
+        for dark in [false, true] {
+            try await capture("review-inspector-files-error-1440-\(dark ? "dark" : "light")",
+                DesktopWorkspaceView(workspace: fileErrorWorkspace, searchRequest: 0), 1440, 900, dark)
+            try await capture("review-files-error-760-\(dark ? "dark" : "light")",
+                AnyView(DesktopWorkspaceFilesView(workspace: fileErrorWorkspace)), 760, 560, dark)
+        }
+
+        let blockedTasks = root.appendingPathComponent("blocked-tasks")
+        try Data("blocked".utf8).write(to: blockedTasks)
+        let taskJournal = DesktopAgentTasks(directory: blockedTasks,
+            defaults: UserDefaults(suiteName: "amber.review.phase3.task-error.\(UUID().uuidString)")!)
+        await taskJournal.waitUntilLoaded()
+        let taskErrorWorkspace = workspace(tasks: taskJournal)
+        for dark in [false, true] {
+            try await capture("review-inspector-task-error-1440-\(dark ? "dark" : "light")",
+                DesktopWorkspaceView(workspace: taskErrorWorkspace, searchRequest: 0), 1440, 900, dark)
+        }
+
+        UserDefaults.standard.set("context,files,tasks", forKey: "desktop.inspector.collapsed")
+        for dark in [false, true] {
+            try await capture("review-inspector-collapsed-1440-\(dark ? "dark" : "light")",
+                DesktopWorkspaceView(workspace: fixture, searchRequest: 0), 1440, 900, dark)
+        }
+        fixture.settings.sendShortcut = .returnKey
+        for dark in [false, true] {
+            try await capture("review-composer-shortcut-860-\(dark ? "dark" : "light")",
+                DesktopWorkspaceView(workspace: fixture, searchRequest: 0), 860, 600, dark)
+        }
+        UserDefaults.standard.set("", forKey: "desktop.inspector.collapsed")
+    }
+
+    /// Reuses one live Markdown view while changing font, appearance and source to exercise cache invalidation.
+    @MainActor static func reviewPerf3Cache() async throws {
+        NSApp.appearance = NSAppearance(named: .aqua)
+        let host = Perf3MarkdownHost(text: """
+        # Cache review
+
+        ```swift
+        let answer = 42
+        return answer
+        ```
+
+        Inline math $E=mc^2$ and $\\frac{a+b}{c}$ should remain readable.
+
+        $$
+        \\frac{a+b}{c}
+        $$
+        """, fontSize: 15, dark: false)
+        let controller = NSHostingController(rootView: Perf3MarkdownPreview(host: host))
+        let window = NSWindow(contentViewController: controller)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.appearance = NSAppearance(named: .aqua)
+        window.setContentSize(NSSize(width: 760, height: 520))
+        window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+        window.orderFront(nil)
+
+        func shot(_ name: String) throws {
+            controller.view.layoutSubtreeIfNeeded()
+            guard let frameView = window.contentView?.superview,
+                  let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { throw DesktopRuntimeError.message("bitmap") }
+            frameView.cacheDisplay(in: frameView.bounds, to: bitmap)
+            let out = ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_OUT"] ?? "/tmp"
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out + "/" + name + ".png"))
+            print("CAPTURE", name)
+        }
+
+        try await Task.sleep(for: .milliseconds(900))
+        try shot("review-perf3-cache-stable-light")
+        host.fontSize = 17
+        try await Task.sleep(for: .milliseconds(200))
+        try shot("review-perf3-cache-font-light")
+        host.dark = true
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: .darkAqua)
+        try await Task.sleep(for: .milliseconds(200))
+        try shot("review-perf3-cache-appearance-dark")
+        host.text = host.text
+            .replacingOccurrences(of: "let answer = 42", with: "let answer = 43")
+            .replacingOccurrences(of: "$E=mc^2$", with: "$E=mc^3$")
+            .replacingOccurrences(of: "\\frac{a+b}{c}", with: "\\frac{a-b}{c}")
+        try await Task.sleep(for: .milliseconds(200))
+        try shot("review-perf3-cache-content-dark")
+        window.orderOut(nil)
+    }
+
+    @MainActor static func capture<V: View>(_ name: String, _ view: V, _ width: CGFloat, _ height: CGFloat, _ dark: Bool,
+                                            settle: Duration = .milliseconds(900)) async throws {
         NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let root = view.frame(width: width, height: height)
             .environment(\.colorScheme, dark ? .dark : .light)
@@ -154,7 +320,7 @@ import SwiftUI
         window.setContentSize(NSSize(width: width, height: height))
         window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
         window.orderFront(nil)
-        try await Task.sleep(for: .milliseconds(900))
+        try await Task.sleep(for: settle)
         controller.view.layoutSubtreeIfNeeded()
         guard let frameView = window.contentView?.superview,
               let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { throw DesktopRuntimeError.message("bitmap") }
@@ -163,6 +329,31 @@ import SwiftUI
         try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out + "/" + name + ".png"))
         print("CAPTURE", name)
         window.orderOut(nil)
+    }
+}
+
+@MainActor @Observable final class Perf3MarkdownHost {
+    var text: String
+    var fontSize: Double
+    var dark: Bool
+
+    init(text: String, fontSize: Double, dark: Bool) {
+        self.text = text
+        self.fontSize = fontSize
+        self.dark = dark
+    }
+}
+
+struct Perf3MarkdownPreview: View {
+    let host: Perf3MarkdownHost
+
+    var body: some View {
+        ScrollView {
+            DesktopMarkdown(text: host.text, fontSize: host.fontSize)
+                .padding(28)
+        }
+        .environment(\.colorScheme, host.dark ? .dark : .light)
+        .background(DesktopTheme.paper)
     }
 }
 

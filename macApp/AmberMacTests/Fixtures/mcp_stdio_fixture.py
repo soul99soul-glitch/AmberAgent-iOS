@@ -32,7 +32,14 @@ for line in sys.stdin:
         result = {"content": [{"type": "text", "text": text + " " + os.environ.get("AMBER_MCP_FIXTURE_VALUE", "")}], "structuredContent": {"pid": os.getpid(), "childPID": descendant.pid if descendant else None}}
     else:
         result = {}
-    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    response = json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+    if os.environ.get("AMBER_MCP_FIXTURE_FRAGMENTS"):
+        wire = ("\n" + response + "\n\n").encode()
+        for offset in range(0, len(wire), 1024):
+            sys.stdout.buffer.write(wire[offset:offset + 1024])
+            sys.stdout.buffer.flush()
+    else:
+        print(response, flush=True)
     if method == "tools/call" and request.get("params", {}).get("name") == "exit":
         break
 if os.environ.get("AMBER_MCP_FIXTURE_IGNORE_TERM"):

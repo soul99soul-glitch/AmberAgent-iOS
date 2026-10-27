@@ -30,7 +30,7 @@ struct DesktopWorkspaceFilesView: View {
                 HStack(alignment: .top) {
                     Label(error, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
                     Spacer()
-                    Button("重试") { workspace.reloadFiles() }
+                    Button("刷新文件列表") { workspace.reloadFiles() }
                 }
             }
             if let status = workspace.fileStatusMessage {
@@ -78,7 +78,7 @@ struct DesktopWorkspaceFilesView: View {
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
             .overlay {
                 if workspace.isLoadingFiles { ProgressView("正在读取文件…") }
-                else if workspace.selectedFiles.isEmpty {
+                else if workspace.fileErrorMessage == nil && workspace.selectedFiles.isEmpty {
                     ContentUnavailableView("还没有文件", systemImage: "folder", description: Text("导入附件或让工具生成文件后，可在这里查看与导出。"))
                 }
             }

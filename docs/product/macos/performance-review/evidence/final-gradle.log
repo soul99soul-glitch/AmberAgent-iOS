@@ -1,0 +1,240 @@
+
+> Configure project :core:native
+w: [33m[1m⚠️ CInterop Commonization Disabled[0m[0m
+The project is using Kotlin Multiplatform with hierarchical structure and disabled 'cinterop commonization'
+
+'cinterop commonization' can be enabled in your 'gradle.properties'
+kotlin.mpp.enableCInteropCommonization=true
+
+To hide this message, add to your 'gradle.properties'
+kotlin.mpp.enableCInteropCommonization.nowarn=true 
+
+The following source sets are affected: 
+[appleMain, iosMain, nativeMain]
+
+The following cinterops are affected: 
+[cinterop:compilation/compileKotlinIosArm64/AmberNative, cinterop:compilation/compileKotlinIosSimulatorArm64/AmberNative]
+[32m[1mSolution:[0m[0m
+[32m[3mPlease enable 'cinterop commonization' in your 'gradle.properties'[0m[0m
+[36mSee: [0m[34mhttps://kotlinlang.org/docs/mpp-share-on-platforms.html#use-native-libraries-in-the-hierarchical-structure[0m[36m[0m
+
+
+> Task :ai-core:kmpPartiallyResolvedDependenciesChecker
+> Task :ai-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:agent-runtime:kmpPartiallyResolvedDependenciesChecker
+> Task :core:agent-runtime:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:agent-runtime:compileKotlinJvm UP-TO-DATE
+> Task :core:agent-runtime:compileJvmMainJava NO-SOURCE
+> Task :core:agent-runtime:jvmProcessResources NO-SOURCE
+> Task :core:agent-runtime:processJvmMainResources SKIPPED
+> Task :core:agent-runtime:jvmMainClasses UP-TO-DATE
+> Task :core:agent-runtime:jvmJar UP-TO-DATE
+> Task :core:agent-utils:kmpPartiallyResolvedDependenciesChecker
+> Task :core:agent-utils:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:agent-utils:compileKotlinJvm UP-TO-DATE
+> Task :core:agent-utils:compileJvmMainJava NO-SOURCE
+> Task :core:agent-utils:jvmProcessResources NO-SOURCE
+> Task :core:agent-utils:processJvmMainResources SKIPPED
+> Task :core:agent-utils:jvmMainClasses UP-TO-DATE
+> Task :core:agent-utils:jvmJar UP-TO-DATE
+> Task :ai-core:compileKotlinJvm UP-TO-DATE
+> Task :ai-core:compileJvmMainJava NO-SOURCE
+> Task :ai-core:jvmProcessResources NO-SOURCE
+> Task :ai-core:processJvmMainResources SKIPPED
+> Task :ai-core:jvmMainClasses UP-TO-DATE
+> Task :ai-core:jvmJar UP-TO-DATE
+> Task :core:ai-prompts:kmpPartiallyResolvedDependenciesChecker
+> Task :core:ai-prompts:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:ai-prompts:compileKotlinJvm UP-TO-DATE
+> Task :core:ai-prompts:compileJvmMainJava NO-SOURCE
+> Task :core:ai-prompts:jvmProcessResources NO-SOURCE
+> Task :core:ai-prompts:processJvmMainResources SKIPPED
+> Task :core:ai-prompts:jvmMainClasses UP-TO-DATE
+> Task :core:ai-prompts:jvmJar UP-TO-DATE
+> Task :core:conversation-storage:kmpPartiallyResolvedDependenciesChecker
+> Task :core:conversation-storage:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:types:kmpPartiallyResolvedDependenciesChecker
+> Task :core:types:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:ai:api:kmpPartiallyResolvedDependenciesChecker
+> Task :core:ai:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:ai:api:compileKotlinJvm UP-TO-DATE
+> Task :core:ai:api:compileJvmMainJava NO-SOURCE
+> Task :core:ai:api:jvmProcessResources NO-SOURCE
+> Task :core:ai:api:processJvmMainResources SKIPPED
+> Task :core:ai:api:jvmMainClasses UP-TO-DATE
+> Task :core:ai:api:jvmJar UP-TO-DATE
+> Task :core:context:api:kmpPartiallyResolvedDependenciesChecker
+> Task :core:context:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:context:api:compileKotlinJvm UP-TO-DATE
+> Task :core:context:api:compileJvmMainJava NO-SOURCE
+> Task :core:context:api:jvmProcessResources NO-SOURCE
+> Task :core:context:api:processJvmMainResources SKIPPED
+> Task :core:context:api:jvmMainClasses UP-TO-DATE
+> Task :core:context:api:jvmJar UP-TO-DATE
+> Task :core:sync:api:kmpPartiallyResolvedDependenciesChecker
+> Task :core:sync:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:sync:api:compileKotlinJvm UP-TO-DATE
+> Task :core:sync:api:compileJvmMainJava NO-SOURCE
+> Task :core:sync:api:jvmProcessResources NO-SOURCE
+> Task :core:sync:api:processJvmMainResources SKIPPED
+> Task :core:sync:api:jvmMainClasses UP-TO-DATE
+> Task :core:sync:api:jvmJar UP-TO-DATE
+> Task :feature:board:api:kmpPartiallyResolvedDependenciesChecker
+> Task :feature:board:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:board:api:compileKotlinJvm UP-TO-DATE
+> Task :feature:board:api:compileJvmMainJava NO-SOURCE
+> Task :feature:board:api:jvmProcessResources NO-SOURCE
+> Task :feature:board:api:processJvmMainResources SKIPPED
+> Task :feature:board:api:jvmMainClasses UP-TO-DATE
+> Task :feature:board:api:jvmJar UP-TO-DATE
+> Task :feature:live:api:kmpPartiallyResolvedDependenciesChecker
+> Task :feature:live:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:live:api:compileKotlinJvm UP-TO-DATE
+> Task :feature:live:api:compileJvmMainJava NO-SOURCE
+> Task :feature:live:api:jvmProcessResources NO-SOURCE
+> Task :feature:live:api:processJvmMainResources SKIPPED
+> Task :feature:live:api:jvmMainClasses UP-TO-DATE
+> Task :feature:live:api:jvmJar UP-TO-DATE
+> Task :feature:modelcouncil:api:kmpPartiallyResolvedDependenciesChecker
+> Task :feature:modelcouncil:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:modelcouncil:api:compileKotlinJvm UP-TO-DATE
+> Task :feature:modelcouncil:api:compileJvmMainJava NO-SOURCE
+> Task :feature:modelcouncil:api:jvmProcessResources NO-SOURCE
+> Task :feature:modelcouncil:api:processJvmMainResources SKIPPED
+> Task :feature:modelcouncil:api:jvmMainClasses UP-TO-DATE
+> Task :feature:modelcouncil:api:jvmJar UP-TO-DATE
+> Task :feature:office:api:kmpPartiallyResolvedDependenciesChecker
+> Task :feature:office:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:office:api:compileKotlinJvm UP-TO-DATE
+> Task :feature:office:api:compileJvmMainJava NO-SOURCE
+> Task :feature:office:api:jvmProcessResources NO-SOURCE
+> Task :feature:office:api:processJvmMainResources SKIPPED
+> Task :feature:office:api:jvmMainClasses UP-TO-DATE
+> Task :feature:office:api:jvmJar UP-TO-DATE
+> Task :feature:subagent:api:kmpPartiallyResolvedDependenciesChecker
+> Task :feature:subagent:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:subagent:api:compileKotlinJvm UP-TO-DATE
+> Task :feature:subagent:api:compileJvmMainJava NO-SOURCE
+> Task :feature:subagent:api:jvmProcessResources NO-SOURCE
+> Task :feature:subagent:api:processJvmMainResources SKIPPED
+> Task :feature:subagent:api:jvmMainClasses UP-TO-DATE
+> Task :feature:subagent:api:jvmJar UP-TO-DATE
+> Task :feature:terminal:api:kmpPartiallyResolvedDependenciesChecker
+> Task :feature:terminal:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:terminal:api:compileKotlinJvm UP-TO-DATE
+> Task :feature:terminal:api:compileJvmMainJava NO-SOURCE
+> Task :feature:terminal:api:jvmProcessResources NO-SOURCE
+> Task :feature:terminal:api:processJvmMainResources SKIPPED
+> Task :feature:terminal:api:jvmMainClasses UP-TO-DATE
+> Task :feature:terminal:api:jvmJar UP-TO-DATE
+> Task :core:types:compileKotlinJvm UP-TO-DATE
+> Task :core:types:compileJvmMainJava NO-SOURCE
+> Task :core:types:jvmProcessResources NO-SOURCE
+> Task :core:types:processJvmMainResources SKIPPED
+> Task :core:types:jvmMainClasses UP-TO-DATE
+> Task :core:types:jvmJar UP-TO-DATE
+> Task :core:conversation-storage:compileKotlinJvm UP-TO-DATE
+> Task :core:conversation-storage:compileJvmMainJava NO-SOURCE
+> Task :core:conversation-storage:jvmProcessResources NO-SOURCE
+> Task :core:conversation-storage:processJvmMainResources SKIPPED
+> Task :core:conversation-storage:jvmMainClasses UP-TO-DATE
+> Task :core:conversation-storage:jvmJar UP-TO-DATE
+> Task :core:conversation-storage:compileTestKotlinJvm UP-TO-DATE
+> Task :core:conversation-storage:compileJvmTestJava NO-SOURCE
+> Task :core:conversation-storage:jvmTestProcessResources NO-SOURCE
+> Task :core:conversation-storage:processJvmTestResources SKIPPED
+> Task :core:conversation-storage:jvmTestClasses UP-TO-DATE
+> Task :core:conversation-storage:jvmTest
+> Task :ai-provider-claude:kmpPartiallyResolvedDependenciesChecker
+> Task :ai-provider-claude:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :ai-provider-claude:compileKotlinJvm UP-TO-DATE
+> Task :ai-provider-claude:compileJvmMainJava NO-SOURCE
+> Task :ai-provider-claude:jvmProcessResources NO-SOURCE
+> Task :ai-provider-claude:processJvmMainResources SKIPPED
+> Task :ai-provider-claude:jvmMainClasses UP-TO-DATE
+> Task :ai-provider-claude:jvmJar UP-TO-DATE
+> Task :ai-provider-openai:kmpPartiallyResolvedDependenciesChecker
+> Task :ai-provider-openai:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :ai-provider-openai:compileKotlinJvm UP-TO-DATE
+> Task :ai-provider-openai:compileJvmMainJava NO-SOURCE
+> Task :ai-provider-openai:jvmProcessResources NO-SOURCE
+> Task :ai-provider-openai:processJvmMainResources SKIPPED
+> Task :ai-provider-openai:jvmMainClasses UP-TO-DATE
+> Task :ai-provider-openai:jvmJar UP-TO-DATE
+> Task :desktop-shared:kmpPartiallyResolvedDependenciesChecker
+> Task :desktop-shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:tools:api:kmpPartiallyResolvedDependenciesChecker
+> Task :feature:tools:api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:tools:api:compileKotlinJvm UP-TO-DATE
+> Task :feature:tools:api:compileJvmMainJava NO-SOURCE
+> Task :feature:tools:api:jvmProcessResources NO-SOURCE
+> Task :feature:tools:api:processJvmMainResources SKIPPED
+> Task :feature:tools:api:jvmMainClasses UP-TO-DATE
+> Task :feature:tools:api:jvmJar UP-TO-DATE
+> Task :desktop-shared:compileKotlinJvm UP-TO-DATE
+> Task :desktop-shared:compileJvmMainJava NO-SOURCE
+> Task :desktop-shared:jvmProcessResources NO-SOURCE
+> Task :desktop-shared:processJvmMainResources SKIPPED
+> Task :desktop-shared:jvmMainClasses UP-TO-DATE
+> Task :desktop-shared:jvmJar UP-TO-DATE
+> Task :desktop-shared:compileTestKotlinJvm UP-TO-DATE
+> Task :desktop-shared:compileJvmTestJava NO-SOURCE
+> Task :desktop-shared:jvmTestProcessResources NO-SOURCE
+> Task :desktop-shared:processJvmTestResources SKIPPED
+> Task :desktop-shared:jvmTestClasses UP-TO-DATE
+> Task :desktop-shared:jvmTest UP-TO-DATE
+> Task :ai-core:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:agent-runtime:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:agent-runtime:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:agent-runtime:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :core:agent-utils:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:agent-utils:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:agent-utils:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :ai-core:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:ai-prompts:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:ai-prompts:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :ai-core:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :core:ai-prompts:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :core:conversation-storage:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:types:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:ai:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:ai:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:ai:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :core:context:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:context:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:context:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :core:sync:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :core:sync:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:sync:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :feature:board:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :feature:board:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :feature:board:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :feature:live:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :feature:live:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :feature:live:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :feature:modelcouncil:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :feature:modelcouncil:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :feature:modelcouncil:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :feature:office:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :feature:office:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :feature:office:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :feature:subagent:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :feature:subagent:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :feature:subagent:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :feature:terminal:api:downloadKotlinNativeDistribution UP-TO-DATE
+> Task :feature:terminal:api:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :feature:terminal:api:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :core:types:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:types:exportCrossCompilationMetadataForIosSimulatorArm64ApiElements UP-TO-DATE
+> Task :core:conversation-storage:compileKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:conversation-storage:iosSimulatorArm64ProcessResources NO-SOURCE
+> Task :core:conversation-storage:iosSimulatorArm64MainKlibrary UP-TO-DATE
+> Task :core:conversation-storage:compileTestKotlinIosSimulatorArm64 UP-TO-DATE
+> Task :core:conversation-storage:linkDebugTestIosSimulatorArm64 UP-TO-DATE
+> Task :core:conversation-storage:iosSimulatorArm64Test UP-TO-DATE
+
+[Incubating] Problems report is available at: file:///Users/mi/Downloads/AI/amber-macos/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 6s
+108 actionable tasks: 20 executed, 88 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html

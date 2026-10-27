@@ -1,0 +1,2 @@
+PRODUCTION_CODE_CACHE source_chars=6379 iterations=1000 hit_ms=18.33 alternating_miss_ms=2848.82
+PRODUCTION_MATH_CACHE iterations=500 hit_ms=21.20 alternating_miss_ms=533.25

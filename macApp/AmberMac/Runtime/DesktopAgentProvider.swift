@@ -99,7 +99,7 @@ import CryptoKit
 
     func start(configuration: DesktopProviderConfiguration, apiKey: String,
         messages: [DesktopMessage], responseID: UUID, context: DesktopRunContext) throws -> DesktopGeneration {
-        guard context.toolsEnabled else { return try start(configuration: configuration, apiKey: apiKey, messages: messages, responseID: responseID) }
+        guard context.engineEnabled else { return try start(configuration: configuration, apiKey: apiKey, messages: messages, responseID: responseID) }
         guard let persistTurns = context.persistTurns else { throw DesktopRuntimeError.message("工具任务必须关联可保存的会话。") }
         guard let model = configuration.selectedModel else { throw DesktopRuntimeError.message("请先选择模型。") }
         let bridge = DesktopProviderBridge.shared
@@ -108,8 +108,8 @@ import CryptoKit
         let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue, id: configuration.id.uuidString,
             name: configuration.name, baseUrl: baseURL, apiKey: apiKey, authMode: configuration.authMode.rawValue)
         var input = try bridge.agentRequestHistory(messages: bridge.messages(json: DesktopJSON.encode(messages)))
-        let declarations = DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations
-            + DesktopToolRegistry.collaborationDeclarations(subagents: context.subagentsEnabled) + DesktopMCPManager.declarations
+        let declarations = DesktopToolRegistry.agentDeclarations(toolsEnabled: context.toolsEnabled,
+            subagentsEnabled: context.subagentsEnabled)
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
         let exposure = IosToolExposureBridge(tools: tools)
         let guidance = exposure.discoveryGuidance()
@@ -435,9 +435,9 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                 let values = try await files.list(conversationID: owner)
                 output = try Self.json(values.map { ["path": $0.id, "bytes": $0.byteCount] as [String: Any] })
             case "workspace_file_read":
-                let data = try await files.read(conversationID: owner, path: try Self.string("path", args))
-                guard let text = String(data: data, encoding: .utf8) else { return .failed("文件不是UTF8文本，请在工作区中预览。") }
-                output = try Self.json(["ok": true, "path": try Self.string("path", args), "content": String(text.prefix(48_000)), "truncated": text.count > 48_000])
+                let path = try Self.string("path", args)
+                let result = try await files.readUTF8Prefix(conversationID: owner, path: path, maxCharacters: 48_000)
+                output = try Self.json(["ok": true, "path": path, "content": result.text, "truncated": result.truncated])
             case "workspace_file_write":
                 let path = try Self.string("path", args), text = try Self.string("content", args, allowEmpty: true)
                 let value = try await files.write(conversationID: owner, path: path, data: Data(text.utf8), overwrite: args["overwrite"] as? Bool == true)

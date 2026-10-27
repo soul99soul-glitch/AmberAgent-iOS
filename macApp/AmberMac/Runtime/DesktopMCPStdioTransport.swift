@@ -16,6 +16,7 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
     private var output: FileHandle?
     private var errors: FileHandle?
     private var buffer = Data()
+    private var scanOffset = 0
     private var generation: UUID?
     private var pending: [Int: CheckedContinuation<IOSMcpHTTPResponse, Error>] = [:]
     private let writer = DispatchQueue(label: "app.amber.mcp.stdin")
@@ -23,7 +24,7 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
     init(configuration: DesktopMCPServer) { self.configuration = configuration }
 
     func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
-        try startIfNeeded(initializing: payload["method"] as? String == "initialize")
+        try await startIfNeeded(initializing: payload["method"] as? String == "initialize")
         let generation = self.generation
         guard let id = payload["id"] as? Int else { throw IOSMcpClientError.invalidResponse }
         let data = try frame(payload)
@@ -48,7 +49,7 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
     }
 
     func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
-        try startIfNeeded(initializing: false)
+        try await startIfNeeded(initializing: false)
         let data = try frame(payload)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             write(data) { error in
@@ -61,10 +62,14 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
 
     func disconnect(config: IOSMcpServerConfig) { close(error: CancellationError()) }
 
-    private func startIfNeeded(initializing: Bool) throws {
+    private func startIfNeeded(initializing: Bool) async throws {
+        try Task.checkCancellation()
         if let process, process.isRunning { return }
         guard initializing else { throw DesktopRuntimeError.message("MCP 进程已断开，请先重新连接服务。") }
         try configuration.validate()
+        let loginPath = await DesktopLoginEnvironment.path.value
+        try Task.checkCancellation()
+        if let process, process.isRunning { return }
         let child = Process()
         let generation = UUID()
         self.generation = generation
@@ -72,7 +77,7 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
         // GUI apps inherit only /usr/bin:/bin; bare commands (npx, uvx) resolve through the user's login PATH.
         // The command is spawned directly so login-shell banners can never reach the JSON-RPC stdout.
         var environment = ProcessInfo.processInfo.environment
-        if let path = DesktopLoginEnvironment.path { environment["PATH"] = path }
+        if let loginPath { environment["PATH"] = loginPath }
         if configuration.command.hasPrefix("/") {
             child.executableURL = URL(fileURLWithPath: configuration.command)
             child.arguments = configuration.arguments
@@ -124,9 +129,10 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
             close(error: DesktopMCPTransportError(message: "MCP 响应超过 16 MB，请缩小工具结果后重试。"))
             return
         }
-        while let newline = buffer.firstIndex(of: 10) {
+        while let newline = buffer[(buffer.startIndex + scanOffset)...].firstIndex(of: 10) {
             let line = Data(buffer[..<newline])
             buffer.removeSubrange(...newline)
+            scanOffset = 0
             guard !line.isEmpty else { continue }
             guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
                 close(error: IOSMcpClientError.invalidResponse)
@@ -141,6 +147,7 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
                 if let data = try? frame(response) { write(data) { _ in } }
             }
         }
+        scanOffset = buffer.count
     }
 
     private func frame(_ payload: [String: Any]) throws -> Data {
@@ -170,6 +177,7 @@ struct DesktopMCPTransportError: LocalizedError, Sendable {
         try? errors?.close()
         input = nil; output = nil; errors = nil
         buffer.removeAll(keepingCapacity: false)
+        scanOffset = 0
         let waiting = Array(pending.values)
         pending.removeAll()
         for continuation in waiting { continuation.resume(throwing: error) }
@@ -211,22 +219,16 @@ private final class DesktopMCPReadQueue: @unchecked Sendable {
     }
 }
 
-/// The user's login-shell PATH, read once (banners in .zprofile go to a discarded pipe, not to MCP stdout).
+/// Read once off the UI actor: a slow login script must not block the connection controls.
 enum DesktopLoginEnvironment {
-    static let path: String? = {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-l", "-c", "printf '\\n__AMBER_PATH__%s' \"$PATH\""]
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(decoding: data, as: UTF8.self)
+    static let path: Task<String?, Never> = Task.detached(priority: .userInitiated) {
+        // Reuse the bounded process-group runner so a stuck profile cannot poison every connection.
+        guard let result = try? await DesktopCommandRunner.run("printf '\\n__AMBER_PATH__%s' \"$PATH\"",
+            directory: FileManager.default.temporaryDirectory, timeout: .seconds(5)),
+              result.exitCode == 0, !result.timedOut, !result.cancelled, !result.truncated else { return nil }
+        let text = result.output
         guard let range = text.range(of: "__AMBER_PATH__", options: .backwards) else { return nil }
         let path = text[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
         return path.isEmpty ? nil : path
-    }()
+    }
 }

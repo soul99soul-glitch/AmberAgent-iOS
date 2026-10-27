@@ -6,6 +6,7 @@ import XCTest
         let memory: DesktopMemoryConversationStorage
         var saves = 0
         var failAtSave: Int?
+        var beforeSaveFailure: (() -> Void)?
         var holdFirstSave = false
         var saveGate: CheckedContinuation<Void, Never>?
         var memoryMappings: [[Int: Int]] = []
@@ -13,7 +14,10 @@ import XCTest
         func loadAll() async throws -> [DesktopConversation] { memory.values }
         func save(_ value: DesktopConversation) async throws -> DesktopConversation {
             saves += 1
-            if saves == failAtSave { throw DesktopRuntimeError.message("disk failure") }
+            if saves == failAtSave {
+                beforeSaveFailure?()
+                throw DesktopRuntimeError.message("disk failure")
+            }
             let saved = try await memory.save(value)
             if holdFirstSave, saves == 1 { await withCheckedContinuation { saveGate = $0 } }
             return saved
@@ -37,11 +41,12 @@ import XCTest
                 files: [.init(path: "outputs/result.txt", data: Data("original file".utf8))])
         })
     }
-    private func coordinator(_ storage: Storage, directory: URL) -> DesktopBackupCoordinator {
+    private func coordinator(_ storage: Storage, directory: URL,
+                             artifactShelf: DesktopArtifactShelf = DesktopArtifactShelf()) -> DesktopBackupCoordinator {
         let settings = DesktopSettings(defaults: UserDefaults(suiteName: "amber.backup.\(UUID().uuidString)")!, credentials: DesktopMemoryCredentials())
         return DesktopBackupCoordinator(storage: storage, files: DesktopWorkspaceFiles(directory: directory.appendingPathComponent("files")),
             insights: DesktopConversationInsights(directory: directory.appendingPathComponent("insights")), settings: settings,
-            knowledge: DesktopKnowledgeStore(directory: directory.appendingPathComponent("knowledge")))
+            knowledge: DesktopKnowledgeStore(directory: directory.appendingPathComponent("knowledge")), artifactShelf: artifactShelf)
     }
 
     func testEncryptedAndPlainRoundTripAndWrongPassword() throws {
@@ -99,15 +104,22 @@ import XCTest
     func testFailedRestoreRollsBackOnlyNewRecordsAndFiles() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let original = DesktopConversation(title: "untouched")
+        let original = DesktopConversation(title: "untouched", messages: [DesktopMessage(role: .assistant, text: "existing pin")])
         let storage = Storage([original])
         storage.failAtSave = 2
-        let service = coordinator(storage, directory: directory)
+        let shelfURL = directory.appendingPathComponent("artifact-shelf.json")
+        let shelf = DesktopArtifactShelf(fileURL: shelfURL)
+        shelf.pin(messageID: original.messages[0].id, kind: .message, text: "existing pin", in: original.id)
+        let service = coordinator(storage, directory: directory, artifactShelf: shelf)
         let existingMemory = try service.knowledge.saveMemory(DesktopMemoryRecord(content: "keep this memory"))
         var incoming = DesktopMemoryRecord(content: "must roll back")
         incoming.id = existingMemory.id
-        var value = try payload([DesktopConversation(title: "copy one"), DesktopConversation(title: "copy two")])
+        let copyOne = DesktopConversation(title: "copy one", messages: [DesktopMessage(role: .assistant, text: "copy one pin")])
+        let copyTwo = DesktopConversation(title: "copy two", messages: [DesktopMessage(role: .assistant, text: "copy two pin")])
+        var value = try payload([copyOne, copyTwo])
         value.memories = [incoming]
+        value.conversations[0].pins = [.init(messageID: copyOne.messages[0].id, kind: .message, text: "copy one pin")]
+        value.conversations[1].pins = [.init(messageID: copyTwo.messages[0].id, kind: .message, text: "copy two pin")]
         do {
             _ = try await service.restore(value)
             XCTFail("Second write must fail")
@@ -120,6 +132,68 @@ import XCTest
         let fileRoot = directory.appendingPathComponent("files")
         let owners = FileManager.default.fileExists(atPath: fileRoot.path) ? try FileManager.default.contentsOfDirectory(atPath: fileRoot.path) : []
         XCTAssertTrue(owners.isEmpty)
+        let reopenedShelf = DesktopArtifactShelf(fileURL: shelfURL)
+        XCTAssertEqual(reopenedShelf.pinsByConversation.count, 1)
+        XCTAssertEqual(reopenedShelf.pins(for: original.id).map(\.text), ["existing pin"])
+    }
+
+    func testRestoreRollsBackWhenArtifactShelfPersistenceFails() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let blockedParent = directory.appendingPathComponent("blocked-shelf")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a directory".utf8).write(to: blockedParent)
+        let shelf = DesktopArtifactShelf(fileURL: blockedParent.appendingPathComponent("artifact-shelf.json"))
+        let original = DesktopConversation(title: "untouched", messages: [DesktopMessage(role: .assistant, text: "pinned")])
+        let storage = Storage([original])
+        let service = coordinator(storage, directory: directory, artifactShelf: shelf)
+        var value = try payload([original])
+        value.conversations[0].pins = [.init(messageID: original.messages[0].id, kind: .message, text: "pinned")]
+
+        do {
+            _ = try await service.restore(value)
+            XCTFail("Shelf persistence failure must fail restore")
+        } catch {}
+
+        XCTAssertEqual(storage.memory.values, [original])
+        XCTAssertTrue(shelf.pinsByConversation.isEmpty)
+        let fileRoot = directory.appendingPathComponent("files")
+        let owners = FileManager.default.fileExists(atPath: fileRoot.path)
+            ? try FileManager.default.contentsOfDirectory(atPath: fileRoot.path) : []
+        XCTAssertTrue(owners.isEmpty)
+    }
+
+    func testRestoreReportsShelfCleanupFailureAfterLaterRestoreFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let shelfDirectory = directory.appendingPathComponent("shelf", isDirectory: true)
+        try FileManager.default.createDirectory(at: shelfDirectory, withIntermediateDirectories: true)
+        let shelfURL = shelfDirectory.appendingPathComponent("artifact-shelf.json")
+        let shelf = DesktopArtifactShelf(fileURL: shelfURL)
+        let original = DesktopConversation(title: "untouched")
+        let first = DesktopConversation(title: "copy one", messages: [DesktopMessage(role: .assistant, text: "one")])
+        let second = DesktopConversation(title: "copy two", messages: [DesktopMessage(role: .assistant, text: "two")])
+        let storage = Storage([original])
+        storage.failAtSave = 2
+        let service = coordinator(storage, directory: directory, artifactShelf: shelf)
+        var value = try payload([first, second])
+        value.conversations[0].pins = [.init(messageID: first.messages[0].id, kind: .message, text: "one")]
+        value.conversations[1].pins = [.init(messageID: second.messages[0].id, kind: .message, text: "two")]
+        storage.beforeSaveFailure = {
+            try? FileManager.default.removeItem(at: shelfURL)
+            try? FileManager.default.removeItem(at: shelfDirectory)
+            try? Data("blocked".utf8).write(to: shelfDirectory)
+        }
+
+        do {
+            _ = try await service.restore(value)
+            XCTFail("Second conversation failure must fail restore")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("部分本次副本清理失败"))
+        }
+
+        XCTAssertEqual(storage.memory.values, [original])
+        XCTAssertTrue(shelf.pinsByConversation.isEmpty)
     }
 
     func testFreshUnconfiguredProviderIsPreservedAsMaterialAndDoesNotBreakRestore() async throws {

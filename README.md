@@ -154,7 +154,7 @@ xcodebuild -project iosApp/AmberAgent.xcodeproj \
 
 ### macOS 原生客户端（开发中）
 
-新增 `macApp/`，采用原生 SwiftUI 桌面界面，通过本仓 `desktop-shared` 复用 KMP provider、完整消息与会话存储及原工具引擎。目标为 Apple Silicon、macOS 15+；同源原生 Preview 已构建和签名，最新共用 Swift Runtime 253 项通过；此前 KMP/JVM 82 项通过，本轮未重跑。正式 Mac Shared、真实 provider 验收仍未完成；打开方式和明确差距见 [macApp/README.md](macApp/README.md)，最新证据见[全面复核与修复](docs/product/macos/comprehensive-review/review.md)。
+`macApp/` 采用原生 SwiftUI 桌面界面，通过本仓 `desktop-shared` 复用 KMP provider、完整消息与会话存储及原工具引擎，目标为 Apple Silicon、macOS 15+。本机已能构建正式 Shared/Native 应用，测试和性能证据见[最新审查](docs/product/macos/performance-review/review.md)；打开方式、系统能力验证与产品边界见 [macApp/README.md](macApp/README.md)。
 
 ### 仓库结构
 

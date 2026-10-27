@@ -1,0 +1,2 @@
+PERF provider_burst chunks=1000 snapshots=1002 elapsed_ms=170 final_text_chars=1000 usage_completion=1000
+PERF provider_burst chunks=5000 snapshots=5002 elapsed_ms=1333 final_text_chars=5000 usage_completion=5000

@@ -20,6 +20,7 @@ final class DesktopArtifactShelf {
     private(set) var pinsByConversation: [UUID: [DesktopPinnedSnippet]] = [:]
     private(set) var errorMessage: String?
     @ObservationIgnored private let fileURL: URL?
+    @ObservationIgnored private var unreadableOriginalRetained = false
 
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL
@@ -28,10 +29,11 @@ final class DesktopArtifactShelf {
             pinsByConversation = try JSONDecoder().decode([UUID: [DesktopPinnedSnippet]].self, from: Data(contentsOf: fileURL))
         } catch {
             // Keep the unreadable file aside so new pins never overwrite it.
-            let aside = fileURL.deletingPathExtension().appendingPathExtension("unreadable-\(Int(Date().timeIntervalSince1970)).json")
+            let aside = fileURL.deletingPathExtension().appendingPathExtension("unreadable-\(UUID().uuidString).json")
             let moved = (try? FileManager.default.moveItem(at: fileURL, to: aside)) != nil
+            unreadableOriginalRetained = !moved
             errorMessage = moved ? "产物架记录无法读取，原文件已另存为 \(aside.lastPathComponent)。"
-                : "产物架记录无法读取，新的固定内容会覆盖原文件。"
+                : "产物架记录无法读取，原文件已保留。请先备份并移走原文件，再重新启动；新的固定内容仅在本次运行中保留。"
         }
     }
 
@@ -55,23 +57,32 @@ final class DesktopArtifactShelf {
         save()
     }
 
-    func removeConversation(_ conversationID: UUID) {
-        guard pinsByConversation.removeValue(forKey: conversationID) != nil else { return }
-        save()
+    @discardableResult func removeConversation(_ conversationID: UUID) -> Bool {
+        guard pinsByConversation.removeValue(forKey: conversationID) != nil else { return true }
+        return save()
     }
 
-    func restore(_ pins: [DesktopPinnedSnippet], for conversationID: UUID) {
+    func restore(_ pins: [DesktopPinnedSnippet], for conversationID: UUID) throws {
         guard !pins.isEmpty else { return }
+        let previous = pinsByConversation[conversationID]
         pinsByConversation[conversationID] = pins
-        save()
+        guard save() else {
+            pinsByConversation[conversationID] = previous
+            throw DesktopRuntimeError.message(errorMessage ?? "产物架恢复失败。")
+        }
     }
 
-    private func save() {
-        guard let fileURL else { return }
+    @discardableResult private func save() -> Bool {
+        guard !unreadableOriginalRetained else { return false }
+        guard let fileURL else { return true }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(pinsByConversation).write(to: fileURL, options: .atomic)
             errorMessage = nil
-        } catch { errorMessage = "产物架保存失败，固定内容仅在本次运行中保留。请检查磁盘空间或文件权限。" }
+            return true
+        } catch {
+            errorMessage = "产物架保存失败，固定内容仅在本次运行中保留。请检查磁盘空间或文件权限。"
+            return false
+        }
     }
 }

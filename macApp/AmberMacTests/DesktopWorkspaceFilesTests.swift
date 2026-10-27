@@ -56,6 +56,52 @@ final class DesktopWorkspaceFilesTests: XCTestCase {
         try await files.delete(conversationID: owner, path: first.id)
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "one")
         do { _ = try await files.read(conversationID: owner, path: first.id); XCTFail("Deleted file") } catch {}
+
+        let exported = root.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".txt")
+        try await files.copy(conversationID: owner, path: second.id, to: exported)
+        try await files.write(conversationID: owner, path: second.id, data: Data("changed".utf8), overwrite: true)
+        XCTAssertEqual(try String(contentsOf: exported, encoding: .utf8), "two")
+        do {
+            try await files.copy(conversationID: owner, path: second.id, to: exported, overwrite: false)
+            XCTFail("Export must preserve an existing destination unless overwrite is allowed")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: exported, encoding: .utf8), "two")
+        try await files.copy(conversationID: owner, path: second.id, to: exported)
+        XCTAssertEqual(try String(contentsOf: exported, encoding: .utf8), "changed")
+        try? FileManager.default.removeItem(at: exported)
+    }
+
+    func testBoundedUTF8ReadKeepsCharacterBoundaryAndReportsTruncation() async throws {
+        let root = directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let owner = UUID()
+        let files = DesktopWorkspaceFiles(directory: root)
+        let source = String(repeating: "汉🙂", count: 24_001)
+        _ = try await files.write(conversationID: owner, path: "long.txt", data: Data(source.utf8))
+
+        let result = try await files.readUTF8Prefix(conversationID: owner, path: "long.txt", maxCharacters: 48_000)
+        XCTAssertEqual(result.text, String(source.prefix(48_000)))
+        XCTAssertEqual(result.text.count, 48_000)
+        XCTAssertTrue(result.truncated)
+
+        _ = try await files.write(conversationID: owner, path: "short.txt", data: Data("é🙂中文".utf8))
+        let short = try await files.readUTF8Prefix(conversationID: owner, path: "short.txt", maxCharacters: 4)
+        XCTAssertEqual(short.text, "é🙂中文")
+        XCTAssertFalse(short.truncated)
+    }
+
+    func testBoundedUTF8ReadRejectsInvalidBytes() async throws {
+        let root = directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let owner = UUID()
+        let files = DesktopWorkspaceFiles(directory: root)
+        var invalid = Data([0xFF])
+        invalid.append(Data(repeating: 0, count: 2 * 1_024 * 1_024))
+        _ = try await files.write(conversationID: owner, path: "invalid.txt", data: invalid)
+        do {
+            _ = try await files.readUTF8Prefix(conversationID: owner, path: "invalid.txt", maxCharacters: 48_000)
+            XCTFail("Invalid UTF-8 must be rejected")
+        } catch {}
     }
 
     func testDeletedOwnerRejectsLateToolWriteAndMissingReadIsReported() async throws {

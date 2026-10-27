@@ -52,6 +52,25 @@ import XCTest
         do { _ = try await invalid.listResources(); XCTFail("Malformed XML must not publish partial snapshots") } catch {}
     }
 
+    func testDirectoryPathCannotEscapeBaseAndLiteralPercentNamesStayEncoded() throws {
+        for path in ["..", "../private", "snapshots/../private", "./snapshots", "snapshots\\private", "snapshots\0private"] {
+            var configuration = DesktopWebDAVConfiguration()
+            configuration.baseURL = "https://dav.example.com/dav"
+            configuration.path = path
+            XCTAssertThrowsError(try configuration.validate(), path)
+            let client = IOSWebDAVClient(config: .init(baseURL: configuration.baseURL, path: path))
+            XCTAssertThrowsError(try client.makeRequest(method: "GET", fileName: "backup.ambermacbackup"), path)
+        }
+        for (path, expected) in [
+            ("", "https://dav.example.com/dav/backup.ambermacbackup"),
+            ("中文/100%", "https://dav.example.com/dav/%E4%B8%AD%E6%96%87/100%25/backup.ambermacbackup"),
+            ("%2e%2E", "https://dav.example.com/dav/%252e%252E/backup.ambermacbackup"),
+        ] {
+            let client = IOSWebDAVClient(config: .init(baseURL: "https://dav.example.com/dav", path: path))
+            XCTAssertEqual(try client.makeRequest(method: "GET", fileName: "backup.ambermacbackup").url?.absoluteString, expected)
+        }
+    }
+
     func testMacManagerPersistsPasswordSeparatelyAndUsesUniqueCreateOnlySnapshots() async throws {
         let defaults = UserDefaults(suiteName: "amber.webdav.tests.\(UUID().uuidString)")!
         let credentials = DesktopMemoryCredentials()

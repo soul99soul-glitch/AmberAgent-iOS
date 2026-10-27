@@ -1,0 +1,1981 @@
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/AgentActivityControlIntents.swift:167:9: warning: code after 'throw' will never be executed
+165 |         throw AgentActivityControlIntentError.unavailable
+166 |         #endif
+167 |         return .result()
+    |         `- warning: code after 'throw' will never be executed
+168 |     }
+169 | }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/AgentActivityControlIntents.swift:194:9: warning: code after 'throw' will never be executed
+192 |         throw AgentActivityControlIntentError.unavailable
+193 |         #endif
+194 |         return .result()
+    |         `- warning: code after 'throw' will never be executed
+195 |     }
+196 | }
+/Users/mi/Downloads/AI/amber-macos/iosApp/WatchApp/WatchTaskViewModel.swift:520:15: warning: 'WKExtension' was deprecated in watchOS 9.2: renamed to 'WKApplication' [#DeprecatedDeclaration]
+518 |         guard store.settings.hapticsEnabled else { return }
+519 |         #if os(watchOS)
+520 |         guard WKExtension.shared().applicationState == .active else { return }
+    |               |- warning: 'WKExtension' was deprecated in watchOS 9.2: renamed to 'WKApplication' [#DeprecatedDeclaration]
+    |               `- note: use 'WKApplication' instead
+521 |         WKInterfaceDevice.current().play(kind == .success ? .success : kind == .failure ? .failure : .notification)
+522 |         #endif
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/mi/Downloads/AI/amber-macos/iosApp/WatchApp/WatchTaskViewModel.swift:520:15: warning: 'WKExtension' was deprecated in watchOS 9.2: renamed to 'WKApplication' [#DeprecatedDeclaration]
+518 |         guard store.settings.hapticsEnabled else { return }
+519 |         #if os(watchOS)
+520 |         guard WKExtension.shared().applicationState == .active else { return }
+    |               |- warning: 'WKExtension' was deprecated in watchOS 9.2: renamed to 'WKApplication' [#DeprecatedDeclaration]
+    |               `- note: use 'WKApplication' instead
+521 |         WKInterfaceDevice.current().play(kind == .success ? .success : kind == .failure ? .failure : .notification)
+522 |         #endif
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/vendor/SwiftStreamingMarkdown/Sources/MarkdownText/UI/CodeBlockView.swift (in target 'SwiftStreamingMarkdown' from project 'SwiftStreamingMarkdown')
+/Users/mi/Downloads/AI/amber-macos/iosApp/vendor/SwiftStreamingMarkdown/Sources/MarkdownText/UI/CodeBlockView.swift:217:9: warning: unstructured throwing task created by 'init(name:priority:operation:)' is not used, which may accidentally ignore errors thrown inside the task [#NoUseUnstructuredThrowingTask]
+215 |     }.onChange(of: copied, perform: { isCopied in
+216 |       if isCopied {
+217 |         Task {
+    |         |- warning: unstructured throwing task created by 'init(name:priority:operation:)' is not used, which may accidentally ignore errors thrown inside the task [#NoUseUnstructuredThrowingTask]
+    |         `- note: to silence this warning, handle the error inside the task, or store/discard the task value explicitly
+218 |           try await Task.sleep(seconds: 3)
+219 |           copied = false
+
+[#NoUseUnstructuredThrowingTask]: <https://docs.swift.org/compiler/documentation/diagnostics/no-use-throwing-unstructured-task>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/BackgroundGenerationKeepAlive.swift:128:89: warning: passing non-Sendable parameter 'expiration' to function expecting a '@Sendable' closure
+125 | 
+126 |     init(
+127 |         beginBackgroundTask: @escaping BeginBackgroundTask = { name, expiration in
+    |                                                                      `- note: parameter 'expiration' is implicitly non-Sendable
+128 |             UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expiration)
+    |                                                                                         `- warning: passing non-Sendable parameter 'expiration' to function expecting a '@Sendable' closure
+129 |         },
+130 |         endBackgroundTask: @escaping EndBackgroundTask = { identifier in
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Session/ChatConversationMutations.swift:447:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+445 |     /// 生成激活期间把 composer 内容入队（文本 / 图 / 选中文件）；队列满返回 false。
+446 |     /// 与 appendUserMessage 的输入收尾一致：清空输入框、建议与附件预览。
+447 |     @discardableResult
+    |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+448 |     func approvePendingMemoryTool() {
+449 |         kernelRunHost.approvePendingMemoryTool()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/NovelCreationAmberBridge.swift:3:1: warning: conformance to 'Sendable' must occur in the same source file as class 'ChatToolRuntime'; use '@unchecked Sendable' for retroactive conformance; this will be an error in a future Swift language mode
+1 | // Amber-only glue: the chat tool runtime serves the novel discussion agent.
+2 | // Kept outside NovelCreation/ so the standalone Novel app does not link it.
+3 | extension ChatToolRuntime: NovelDiscussionToolHost {}
+  | `- warning: conformance to 'Sendable' must occur in the same source file as class 'ChatToolRuntime'; use '@unchecked Sendable' for retroactive conformance; this will be an error in a future Swift language mode
+4 | 
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/NovelCreation/NovelPresentationSupport.swift:1109:14: warning: result of call to 'withLock' is unused [#NoUsage]
+1107 | 
+1108 |     func clear(pendingID: NovelPendingOperationID) {
+1109 |         lock.withLock { streamedCharacters.removeValue(forKey: pendingID) }
+     |              `- warning: result of call to 'withLock' is unused [#NoUsage]
+1110 |     }
+1111 | }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/NovelCreation/NovelProjectLifecycle.swift:218:19: warning: value 'branch' was defined but never used; consider replacing with boolean test [#NoUsage]
+216 |         chapterContent: String
+217 |     ) async throws -> NovelProjectDocumentV1 {
+218 |         guard let branch = document.branches.first(where: { $0.id == branchID }) else {
+    |                   `- warning: value 'branch' was defined but never used; consider replacing with boolean test [#NoUsage]
+219 |             throw NovelError.branchNotFound(branchID)
+220 |         }
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/Users/mi/Downloads/AI/amber-macos/iosApp/PhoneControlRuntime/PhoneControlServiceInspection.swift:119:9: warning: result of call to 'withUnsafeMutableBytes(of:_:)' is unused [#NoUsage]
+117 | 
+118 |         var header = sockaddr()
+119 |         withUnsafeMutableBytes(of: &header) { destination in
+    |         `- warning: result of call to 'withUnsafeMutableBytes(of:_:)' is unused [#NoUsage]
+120 |             data.copyBytes(to: destination, count: MemoryLayout<sockaddr>.size)
+121 |         }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/PhoneControlRuntime/PhoneControlServiceInspection.swift:139:9: warning: result of call to 'withUnsafeMutableBytes(of:_:)' is unused [#NoUsage]
+137 |         var storage = sockaddr_storage()
+138 |         let copyCount = min(addressLength, MemoryLayout<sockaddr_storage>.size)
+139 |         withUnsafeMutableBytes(of: &storage) { destination in
+    |         `- warning: result of call to 'withUnsafeMutableBytes(of:_:)' is unused [#NoUsage]
+140 |             data.copyBytes(to: destination, count: copyCount)
+141 |         }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/PhoneControlRuntime/PhoneControlServiceInspection.swift:300:21: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+298 | 
+299 |     private static func normalize(_ host: [CChar]) -> String {
+300 |         let value = String(cString: host)
+    |                     `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+301 |             .trimmingCharacters(in: .whitespacesAndNewlines)
+302 |             .lowercased()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ProviderDetailView.swift:1139:43: warning: passing non-Sendable parameter 'action' to function expecting a '@Sendable' closure
+1130 |     }
+1131 | 
+1132 |     private func commitPendingTextInput(then action: @escaping () -> Void) {
+     |                                              `- note: parameter 'action' is implicitly non-Sendable
+1133 |         UIApplication.shared.sendAction(
+1134 |             #selector(UIResponder.resignFirstResponder),
+     :
+1137 |             for: nil
+1138 |         )
+1139 |         DispatchQueue.main.async(execute: action)
+     |                                           `- warning: passing non-Sendable parameter 'action' to function expecting a '@Sendable' closure
+1140 |     }
+1141 | 
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Timeline/NativeChatTimelineView.swift:168:21: warning: capture of 'projection' with non-Sendable type 'NativeTimelineProjection' in a '@Sendable' closure [#SendableClosureCaptures]
+ 166 |                 .scrollTargetLayout()
+ 167 |                 .onGeometryChange(for: String?.self) { _ in
+ 168 |                     projection.entries.first(where: { $0.kind == .message })?.messageId
+     |                     `- warning: capture of 'projection' with non-Sendable type 'NativeTimelineProjection' in a '@Sendable' closure [#SendableClosureCaptures]
+ 169 |                 } action: { firstMessageID in
+ 170 |                     laidOutHistoryFirstMessageID = firstMessageID
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift:62:8: note: consider making struct 'NativeTimelineProjection' conform to the 'Sendable' protocol
+ 60 | }
+ 61 | 
+ 62 | struct NativeTimelineProjection: Equatable {
+    |        `- note: consider making struct 'NativeTimelineProjection' conform to the 'Sendable' protocol
+ 63 |     let entries: [NativeTimelineEntry]
+ 64 |     let latestRenderToken: String
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSThreadOrchestrationToolService.swift:942:24: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 940 |         let targetId: KotlinUuid
+ 941 |         do {
+ 942 |             targetId = try KotlinUuid.companion.parse(uuidString: target.hex)
+     |                        `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 943 |         } catch {
+ 944 |             return Self.errorJSON(
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSThreadOrchestrationToolService.swift:943:11: warning: 'catch' block is unreachable because no errors are thrown in 'do' block
+ 941 |         do {
+ 942 |             targetId = try KotlinUuid.companion.parse(uuidString: target.hex)
+ 943 |         } catch {
+     |           `- warning: 'catch' block is unreachable because no errors are thrown in 'do' block
+ 944 |             return Self.errorJSON(
+ 945 |                 toolName: "followup_task",
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/NovelCreationAmberBridge.swift:3:1: warning: conformance to 'Sendable' must occur in the same source file as class 'ChatToolRuntime'; use '@unchecked Sendable' for retroactive conformance; this will be an error in a future Swift language mode
+1 | // Amber-only glue: the chat tool runtime serves the novel discussion agent.
+2 | // Kept outside NovelCreation/ so the standalone Novel app does not link it.
+3 | extension ChatToolRuntime: NovelDiscussionToolHost {}
+  | `- warning: conformance to 'Sendable' must occur in the same source file as class 'ChatToolRuntime'; use '@unchecked Sendable' for retroactive conformance; this will be an error in a future Swift language mode
+4 | 
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/AccountView.swift (in target 'iosApp' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/AntigravityLoginView.swift (in target 'iosApp' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/BackgroundGenerationKeepAlive.swift (in target 'iosApp' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/AccountView.swift:110:17: warning: main actor-isolated property 'avatarCircle' can not be referenced from a Sendable closure
+108 |         VStack(spacing: 10) {
+109 |             PhotosPicker(selection: $avatarItem, matching: .images) {
+110 |                 avatarCircle
+    |                 `- warning: main actor-isolated property 'avatarCircle' can not be referenced from a Sendable closure
+111 |             }
+112 |             .buttonStyle(.plain)
+    :
+136 |     }
+137 | 
+138 |     private var avatarCircle: some View {
+    |                 `- note: property declared here
+139 |         ZStack(alignment: .bottomTrailing) {
+140 |             Group {
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/AntigravityLoginView.swift:212:16: warning: 'init()' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+210 |             return window
+211 |         }
+212 |         return UIWindow()
+    |                `- warning: 'init()' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+213 |     }
+214 | }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/BackgroundGenerationKeepAlive.swift:128:89: warning: passing non-Sendable parameter 'expiration' to function expecting a '@Sendable' closure
+125 | 
+126 |     init(
+127 |         beginBackgroundTask: @escaping BeginBackgroundTask = { name, expiration in
+    |                                                                      `- note: parameter 'expiration' is implicitly non-Sendable
+128 |             UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expiration)
+    |                                                                                         `- warning: passing non-Sendable parameter 'expiration' to function expecting a '@Sendable' closure
+129 |         },
+130 |         endBackgroundTask: @escaping EndBackgroundTask = { identifier in
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Council/CouncilRoomSheets.swift:532:9: warning: application of result builder 'ViewBuilder' disabled by explicit 'return' statement
+525 |     }
+526 | 
+527 |     @ViewBuilder
+    |     `- note: remove the attribute to explicitly disable the result builder
+528 |     /// 预制角色里尚未添加的部分(按 id 和名称去重),供「添加席位」菜单展示。
+529 |     private var availablePresets: [IOSCouncilSeatPreset] {
+530 |         let addedIds = Set(roomSettingsStore.settings.seats.map(\.id))
+531 |         let addedNames = Set(roomSettingsStore.settings.seats.map { $0.name.lowercased() })
+532 |         return IOSCouncilSeatPreset.all.filter {
+    |         |- warning: application of result builder 'ViewBuilder' disabled by explicit 'return' statement
+    |         `- note: remove 'return' statements to apply the result builder
+533 |             !addedIds.contains($0.id) && !addedNames.contains($0.name.lowercased())
+534 |         }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/GrokWebLoginView.swift:237:16: warning: 'init()' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+235 |             return window
+236 |         }
+237 |         return UIWindow()
+    |                `- warning: 'init()' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+238 |         #endif
+239 |     }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatVideoView.swift:306:52: warning: 'weak' ownership of capture 'item' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+301 |             failureObservation = NotificationCenter.default.addObserver(
+302 |                 forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
+303 |             ) { [weak self] notification in
+    |               |- note: 'item' implicitly strongly captured here
+    |               `- note: add 'item' as a capture list item to silence
+304 |                 let reason = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
+305 |                     ?? "视频播放中断，请重试"
+306 |                 Task { @MainActor [weak self, weak item] in
+    |                                                    |- warning: 'weak' ownership of capture 'item' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+    |                                                    `- note: explicitly assign the capture list item to silence
+307 |                     guard let self, let item, self.player?.currentItem === item else { return }
+308 |                     self.stop()
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Session/ChatConversationRecovery.swift:63:31: warning: immutable value 'self' was never used; consider replacing with '_' or removing it [#NoUsage]
+ 61 |                 steerQueueLoadTask = Task { @MainActor [weak self] in
+ 62 |                     let loaded = await queueIO.loadQueueOffMain(conversationId: conversationId)
+ 63 |                     guard let self, state.steerQueueRevision == revision else { return }
+    |                               `- warning: immutable value 'self' was never used; consider replacing with '_' or removing it [#NoUsage]
+ 64 |                     state.steerQueue = loaded
+ 65 |                     state.steerQueueLoaded = true
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Session/ChatConversationMutations.swift:447:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+445 |     /// 生成激活期间把 composer 内容入队（文本 / 图 / 选中文件）；队列满返回 false。
+446 |     /// 与 appendUserMessage 的输入收尾一致：清空输入框、建议与附件预览。
+447 |     @discardableResult
+    |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+448 |     func approvePendingMemoryTool() {
+449 |         kernelRunHost.approvePendingMemoryTool()
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/WebMount/IOSWebMountWKRuntime.swift:28:49: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+  26 |         // Give those sessions a real viewport; a mounted view will replace this
+  27 |         // frame through its normal layout pass.
+  28 |         let webView = WKWebView(frame: UIScreen.main.bounds, configuration: configuration)
+     |                                                 `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+  29 |         webViewStorage = webView
+  30 |         webView.navigationDelegate = self
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSWorkoutKit.swift:429:58: warning: non-Sendable type 'WorkoutScheduler.AuthorizationState' of nonisolated property 'authorizationState' cannot be sent to main actor-isolated context
+427 | 
+428 |     func authorizationState() async -> IOSWorkoutAuthorization {
+429 |         Self.authorization(await WorkoutScheduler.shared.authorizationState)
+    |                                                          `- warning: non-Sendable type 'WorkoutScheduler.AuthorizationState' of nonisolated property 'authorizationState' cannot be sent to main actor-isolated context
+430 |     }
+431 | 
+
+WorkoutKit.WorkoutScheduler.AuthorizationState:3:15: note: enum 'AuthorizationState' does not conform to the 'Sendable' protocol
+ 1 | class WorkoutScheduler {
+ 2 | @available(iOS 17.0, macCatalyst 18.0, macOS 15.0, watchOS 10.0, *)
+ 3 |   public enum AuthorizationState : Int {
+   |               `- note: enum 'AuthorizationState' does not conform to the 'Sendable' protocol
+ 4 |     case notDetermined
+ 5 |     case restricted
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSJevClient.swift:546:20: warning: immutable value 'http' was never used; consider replacing with '_' or removing it [#NoUsage]
+544 | 
+545 |         let startedAt = now()
+546 |         let (data, http) = try await executeWithRetry(
+    |                    `- warning: immutable value 'http' was never used; consider replacing with '_' or removing it [#NoUsage]
+547 |             request: request,
+548 |             deadline: startedAt.addingTimeInterval(deadline)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSJsCellRegistry.swift:232:27: warning: immutable value 'value' was never used; consider replacing with '_' or removing it [#NoUsage]
+230 |         let record: IOSJsCellRecord
+231 |         switch result {
+232 |         case .success(let value, let logs):
+    |                           `- warning: immutable value 'value' was never used; consider replacing with '_' or removing it [#NoUsage]
+233 |             record = IOSJsCellRecord(
+234 |                 cellId: cellId,
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSJsSandboxEngine.swift:876:23: warning: value 'storeDelivered' was defined but never used; consider replacing with boolean test [#NoUsage]
+874 |         if let resume {
+875 |             resume.resume(returning: result)
+876 |         } else if let storeDelivered {
+    |                       `- warning: value 'storeDelivered' was defined but never used; consider replacing with boolean test [#NoUsage]
+877 |             lock.lock()
+878 |             delivered = result
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSSkillFileStore.swift:106:14: warning: result of call to 'withLock' is unused [#NoUsage]
+ 104 | 
+ 105 |     func invalidateListing(directoryPath: String) {
+ 106 |         lock.withLock { listings.removeValue(forKey: directoryPath) }
+     |              `- warning: result of call to 'withLock' is unused [#NoUsage]
+ 107 |     }
+ 108 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSSkillFileStore.swift:121:14: warning: result of call to 'withLock' is unused [#NoUsage]
+ 119 | 
+ 120 |     func invalidateMarkdown(filePath: String) {
+ 121 |         lock.withLock { markdown.removeValue(forKey: filePath) }
+     |              `- warning: result of call to 'withLock' is unused [#NoUsage]
+ 122 |     }
+ 123 | }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Infrastructure/Permissions/IOSSystemPermissionRequests.swift:835:56: warning: non-Sendable type 'WorkoutScheduler.AuthorizationState' of nonisolated property 'authorizationState' cannot be sent to main actor-isolated context
+ 833 |                 return result(capability, .unavailableOnDevice, "WorkoutKit scheduled workouts require a supported Apple Watch.", now)
+ 834 |             }
+ 835 |             let status = await WorkoutScheduler.shared.authorizationState
+     |                                                        `- warning: non-Sendable type 'WorkoutScheduler.AuthorizationState' of nonisolated property 'authorizationState' cannot be sent to main actor-isolated context
+ 836 |             return result(capability, mapWorkoutAuthorization(status), "WorkoutKit scheduler authorization status.", Date())
+ 837 |         }
+
+WorkoutKit.WorkoutScheduler.AuthorizationState:3:15: note: enum 'AuthorizationState' does not conform to the 'Sendable' protocol
+ 1 | class WorkoutScheduler {
+ 2 | @available(iOS 17.0, macCatalyst 18.0, macOS 15.0, watchOS 10.0, *)
+ 3 |   public enum AuthorizationState : Int {
+   |               `- note: enum 'AuthorizationState' does not conform to the 'Sendable' protocol
+ 4 |     case notDetermined
+ 5 |     case restricted
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSHealthSummaryView.swift (in target 'iosApp' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSImageGenerationRepository.swift (in target 'iosApp' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSHealthSummaryView.swift:386:45: warning: 'totalEnergyBurned' was deprecated in iOS 18.0: Use statisticsForType: passing the HKQuantityType for HKQuantityTypeIdentifierActiveEnergyBurned [#DeprecatedDeclaration]
+384 |                 startedAt: workout.startDate,
+385 |                 durationMinutes: workout.duration / 60,
+386 |                 energyKilocalories: workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()),
+    |                                             `- warning: 'totalEnergyBurned' was deprecated in iOS 18.0: Use statisticsForType: passing the HKQuantityType for HKQuantityTypeIdentifierActiveEnergyBurned [#DeprecatedDeclaration]
+387 |                 distanceKilometers: workout.totalDistance?.doubleValue(for: .meterUnit(with: .kilo))
+388 |             )
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSImageGenerationRepository.swift:708:13: warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 706 |         diagnosticId: String? = nil
+ 707 |     ) async throws -> String {
+ 708 |         var extraction = Self.codexImageExtraction(from: data)
+     |             `- warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 709 |         if let image = extraction.images.first {
+ 710 |             if let diagnosticId {
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift (in target 'iosApp' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:49:13: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated context
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 47 |     ///   过期风险，不需要额外改成点击时按 id 现查。
+ 48 |     nonisolated static func == (lhs: ConversationSummaryRow, rhs: ConversationSummaryRow) -> Bool {
+ 49 |         lhs.summary.id == rhs.summary.id
+    |             `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated context
+ 50 |             && lhs.summary.title == rhs.summary.title
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:49:31: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated context
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 47 |     ///   过期风险，不需要额外改成点击时按 id 现查。
+ 48 |     nonisolated static func == (lhs: ConversationSummaryRow, rhs: ConversationSummaryRow) -> Bool {
+ 49 |         lhs.summary.id == rhs.summary.id
+    |                               `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated context
+ 50 |             && lhs.summary.title == rhs.summary.title
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:50:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 48 |     nonisolated static func == (lhs: ConversationSummaryRow, rhs: ConversationSummaryRow) -> Bool {
+ 49 |         lhs.summary.id == rhs.summary.id
+ 50 |             && lhs.summary.title == rhs.summary.title
+    |                    `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:50:41: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 48 |     nonisolated static func == (lhs: ConversationSummaryRow, rhs: ConversationSummaryRow) -> Bool {
+ 49 |         lhs.summary.id == rhs.summary.id
+ 50 |             && lhs.summary.title == rhs.summary.title
+    |                                         `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:51:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 49 |         lhs.summary.id == rhs.summary.id
+ 50 |             && lhs.summary.title == rhs.summary.title
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+    |                    `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+ 53 |             && lhs.summary.updateAt == rhs.summary.updateAt
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:51:44: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 49 |         lhs.summary.id == rhs.summary.id
+ 50 |             && lhs.summary.title == rhs.summary.title
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+    |                                            `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+ 53 |             && lhs.summary.updateAt == rhs.summary.updateAt
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:52:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 50 |             && lhs.summary.title == rhs.summary.title
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+    |                    `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 53 |             && lhs.summary.updateAt == rhs.summary.updateAt
+ 54 |             && lhs.isCurrent == rhs.isCurrent
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:52:48: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 50 |             && lhs.summary.title == rhs.summary.title
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+    |                                                `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 53 |             && lhs.summary.updateAt == rhs.summary.updateAt
+ 54 |             && lhs.isCurrent == rhs.isCurrent
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:53:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+ 53 |             && lhs.summary.updateAt == rhs.summary.updateAt
+    |                    `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 54 |             && lhs.isCurrent == rhs.isCurrent
+ 55 |             && lhs.isGenerating == rhs.isGenerating
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:53:44: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+  6 | 
+  7 | struct ConversationSummaryRow: View, Equatable {
+  8 |     let summary: ConversationSummary
+    |         `- note: property declared here
+  9 |     let isCurrent: Bool
+ 10 |     let isGenerating: Bool
+    :
+ 51 |             && lhs.summary.isPinned == rhs.summary.isPinned
+ 52 |             && lhs.summary.messageCount == rhs.summary.messageCount
+ 53 |             && lhs.summary.updateAt == rhs.summary.updateAt
+    |                                            `- warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
+ 54 |             && lhs.isCurrent == rhs.isCurrent
+ 55 |             && lhs.isGenerating == rhs.isGenerating
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:380:53: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 378 |                         )
+ 379 |                     },
+ 380 |                     onAssistantTurnStarted: { [weak self] in
+     |                                                     |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                                     `- note: explicitly assign the capture list item to silence
+ 381 |                         guard let self, !self.isStoppedByHost else { return }
+ 382 |                         // 换轮是 provisional epoch 边界：先使上一轮已排队但尚未
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:391:55: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 389 |                         self.callbacks.onAssistantTurnStarted()
+ 390 |                     },
+ 391 |                     onAssistantTurnCompleted: { [weak self] messages in
+     |                                                       |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                                       `- note: explicitly assign the capture list item to silence
+ 392 |                         let box = UncheckedMessagesBox(messages)
+ 393 |                         return await MainActor.run {
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:403:53: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 401 |                         }
+ 402 |                     },
+ 403 |                     onToolExecutionStarted: { [weak self] toolName, input in
+     |                                                     |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                                     `- note: explicitly assign the capture list item to silence
+ 404 |                         guard let self, !self.isStoppedByHost else { return }
+ 405 |                         self.isExecutingTool = true
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:408:47: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 406 |                         self.callbacks.onToolExecutionStarted(toolName, input)
+ 407 |                     },
+ 408 |                     onAssistantStage: { [weak self] stage in
+     |                                               |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                               `- note: explicitly assign the capture list item to silence
+ 409 |                         // 引擎从 KMP 流协程串行回调;盒跨边界回 MainActor。
+ 410 |                         let box = UncheckedStageBox(stage)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:417:46: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 415 |                         }
+ 416 |                     },
+ 417 |                     onAssistantText: { [weak self] text in
+     |                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                              `- note: explicitly assign the capture list item to silence
+ 418 |                         guard let self else { return }
+ 419 |                         if hasFirstVisibleDeltaCallback,
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:437:51: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 435 |                         }
+ 436 |                     },
+ 437 |                     onAssistantReasoning: { [weak self] text in
+     |                                                   |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                                   `- note: explicitly assign the capture list item to silence
+ 438 |                         guard let self else { return }
+ 439 |                         if hasFirstVisibleDeltaCallback,
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:457:57: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 455 |                         }
+ 456 |                     },
+ 457 |                     onAssistantMessageSnapshot: { [weak self] message in
+     |                                                         |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                                         `- note: explicitly assign the capture list item to silence
+ 458 |                         // UIMessage 非 Sendable——与 onMessagesUpdated 同款盒装跳
+ 459 |                         // 主 actor;引擎串行回调保证盒无并发访问。
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ChatRunKernelAdapter.swift:472:48: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 312 |             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
+ 313 |             // 命中 gated transport),适配器自身任务存活以完成收口。
+ 314 |             let driver = Task {
+     |                               |- note: 'self' implicitly strongly captured here
+     |                               `- note: add 'self' as a capture list item to silence
+ 315 |                 await engine.run(
+ 316 |                     providerSetting: request.providerSetting,
+     :
+ 470 |                         }
+ 471 |                     },
+ 472 |                     onMessagesUpdated: { [weak self] messages in
+     |                                                |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                                `- note: explicitly assign the capture list item to silence
+ 473 |                         // 引擎在非 MainActor 上下文串行回调;序号在此同步递增
+ 474 |                         // (nonisolated(unsafe),与 working 同一纪律),消息经盒
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Presentation/ChatScreenValues.swift:167:14: warning: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+165 |         let signal = viewModel.messageUpdateSignal
+166 |         content(signal)
+167 |             .onChange(of: signal, perform: onSignalChange)
+    |              `- warning: 'onChange(of:perform:)' was deprecated in iOS 17.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+168 |     }
+169 | }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlockParser.swift:149:13: warning: variable 'renderedEndIndex' was written to, but never read
+147 |         var renderedLines: [String] = [lines[start], lines[start + 1]]
+148 |         var index = start + 2
+149 |         var renderedEndIndex = start + 2
+    |             `- warning: variable 'renderedEndIndex' was written to, but never read
+150 |         let headerUsesLeadingPipe = lines[start]
+151 |             .trimmingCharacters(in: .whitespacesAndNewlines)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/NovelCreation/NovelWorkspaceImporter.swift (in target 'iosApp' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/NovelCreation/NovelWorkspaceImporter.swift:581:13: warning: variable 'projectExtensionLines' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 579 |         var opaqueFiles: [String: String] = [:]
+ 580 |         var hasPlotFiles = false
+ 581 |         var projectExtensionLines = NovelWorkspaceMarkdown.extensionLines(
+     |             `- warning: variable 'projectExtensionLines' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 582 |             in: byPath["project.md"] ?? "",
+ 583 |             knownKeys: Self.projectKnownFrontmatterKeys
+
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Background/IOSChatBackgroundResponseResumer.swift:99:53: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 90 |                     startingAfter: 0,
+ 91 |                     customHeaders: job.params.customHeaders,
+ 92 |                     onChunk: { chunk in
+    |                              |- note: 'self' implicitly strongly captured here
+    |                              `- note: add 'self' as a capture list item to silence
+ 93 |                         if ChatGenerationSpeedClock.chunkHasVisibleContent(chunk) {
+ 94 |                             Self.noteVisibleProgress(runState, job: job)
+    :
+ 97 |                         if let candidate = Self.resumePresentationStage(for: chunk),
+ 98 |                            let stage = runState.nextPresentationStage(candidate) {
+ 99 |                             Task { @MainActor [weak self] in
+    |                                                     |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+    |                                                     `- note: explicitly assign the capture list item to silence
+100 |                                 guard let self else { return }
+101 |                                 guard runState.shouldPublishPresentationStage(stage) else { return }
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 (in target 'iosAppTests' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneControlHandoffExecutorTests.swift:1042:66: warning: 'HandoffHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+1040 | }
+1041 | 
+1042 | private final class HandoffHTTPProtocol: URLProtocol, @unchecked Sendable {
+     |                     |                                            `- warning: 'HandoffHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+     |                     `- note: 'HandoffHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+1043 |     private final class Registry: @unchecked Sendable {
+1044 |         let lock = NSLock()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift:1192:70: warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+1190 | }
+1191 | 
+1192 | private final class GoalLoopFailureProtocol: URLProtocol, @unchecked Sendable {
+     |                     |                                                `- warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+     |                     `- note: 'GoalLoopFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+1193 |     override class func canInit(with request: URLRequest) -> Bool { true }
+1194 |     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalToolIntegrationTests.swift:899:63: warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+897 | }
+898 | 
+899 | private final class GoalHTTPProtocol: URLProtocol, @unchecked Sendable {
+    |                     |                                         `- warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+    |                     `- note: 'GoalHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+900 |     private final class Registry: @unchecked Sendable {
+901 |         let lock = NSLock()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneScrollSearchTests.swift:215:74: warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+213 | }
+214 | 
+215 | private final class ScrollSearchFailureProtocol: URLProtocol, @unchecked Sendable {
+    |                     |                                                    `- warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+    |                     `- note: 'ScrollSearchFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+216 |     override class func canInit(with request: URLRequest) -> Bool { true }
+217 |     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelInjectionPlannerTests.swift:1299:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1297 |     }
+1298 | 
+1299 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1300 |     func testCurrentStateWarnsWhenLaterPlotModulesAreStale() throws {
+1301 |         var document = try NovelTestFixtures.document()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift:90:68: warning: 'ReadinessHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+ 88 | }
+ 89 | 
+ 90 | private final class ReadinessHTTPProtocol: URLProtocol, @unchecked Sendable {
+    |                     |                                              `- warning: 'ReadinessHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+    |                     `- note: 'ReadinessHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+ 91 |     private final class Registry: @unchecked Sendable {
+ 92 |         let lock = NSLock()
+
+[#UnavailableSendableConformance]: <https://docs.swift.org/compiler/documentation/diagnostics/unavailable-sendable-conformance>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountToolTestSupport.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NativeTimelineScrollCoreTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountToolTestSupport.swift:14:29: warning: call to main actor-isolated static method 'resetSessionCounter()' in a synchronous nonisolated context [#ActorIsolatedCall]
+12 |         // deterministic base (prevents the cross-test pollution that made
+13 |         // testWebMountTabLifecycleAndClosedSessionFailure order-dependent).
+14 |         MockWebMountRuntime.resetSessionCounter()
+   |                             `- warning: call to main actor-isolated static method 'resetSessionCounter()' in a synchronous nonisolated context [#ActorIsolatedCall]
+15 |     }
+16 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountRuntimeTestDoubles.swift:40:17: note: calls to static method 'resetSessionCounter()' from outside of its actor context are implicitly asynchronous
+ 38 |     /// which made `testWebMountTabLifecycleAndClosedSessionFailure` pass in
+ 39 |     /// isolation but fail in the full suite (order-dependent test pollution).
+ 40 |     static func resetSessionCounter() { nextId = 0 }
+    |                 `- note: calls to static method 'resetSessionCounter()' from outside of its actor context are implicitly asynchronous
+ 41 | 
+ 42 |     var snapshot: IOSWebMountRuntimeSnapshot
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift:214:54: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+212 |         XCTAssertGreaterThan(webView.bounds.width, 0)
+213 |         XCTAssertGreaterThan(webView.bounds.height, 0)
+214 |         XCTAssertEqual(webView.bounds.size, UIScreen.main.bounds.size)
+    |                                                      `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+215 | 
+216 |         webView.loadHTMLString(
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NativeTimelineScrollCoreTests.swift:675:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 673 |     func testExplicitBottomNeverScrollsPastUIKitBottomIntoBlankSpace() {
+ 674 |         let driver = NativeTimelineScrollDriver()
+ 675 |         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+     |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 676 |         let viewController = UIViewController()
+ 677 |         window.rootViewController = viewController
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:12:9: warning: main actor-isolated property 'suite' can not be mutated from a nonisolated context
+  5 | final class IOSSubAgentActivityStoreTests: XCTestCase {
+  6 |     private var defaults: UserDefaults!
+  7 |     private var suite: String!
+    |                 `- note: mutation of this property is only permitted within the actor
+  8 |     private let launch = Date(timeIntervalSince1970: 1_000)
+  9 | 
+ 10 |     override func setUp() {
+ 11 |         super.setUp()
+ 12 |         suite = "IOSSubAgentActivityTests.\(UUID().uuidString)"
+    |         `- warning: main actor-isolated property 'suite' can not be mutated from a nonisolated context
+ 13 |         defaults = UserDefaults(suiteName: suite)!
+ 14 |     }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:13:9: warning: main actor-isolated property 'defaults' can not be mutated from a nonisolated context
+  4 | @MainActor
+  5 | final class IOSSubAgentActivityStoreTests: XCTestCase {
+  6 |     private var defaults: UserDefaults!
+    |                 `- note: mutation of this property is only permitted within the actor
+  7 |     private var suite: String!
+  8 |     private let launch = Date(timeIntervalSince1970: 1_000)
+    :
+ 11 |         super.setUp()
+ 12 |         suite = "IOSSubAgentActivityTests.\(UUID().uuidString)"
+ 13 |         defaults = UserDefaults(suiteName: suite)!
+    |         `- warning: main actor-isolated property 'defaults' can not be mutated from a nonisolated context
+ 14 |     }
+ 15 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:13:44: warning: main actor-isolated property 'suite' can not be referenced from a nonisolated context
+  5 | final class IOSSubAgentActivityStoreTests: XCTestCase {
+  6 |     private var defaults: UserDefaults!
+  7 |     private var suite: String!
+    |                 `- note: property declared here
+  8 |     private let launch = Date(timeIntervalSince1970: 1_000)
+  9 | 
+    :
+ 11 |         super.setUp()
+ 12 |         suite = "IOSSubAgentActivityTests.\(UUID().uuidString)"
+ 13 |         defaults = UserDefaults(suiteName: suite)!
+    |                                            `- warning: main actor-isolated property 'suite' can not be referenced from a nonisolated context
+ 14 |     }
+ 15 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:17:9: warning: main actor-isolated property 'defaults' can not be referenced from a nonisolated context
+  4 | @MainActor
+  5 | final class IOSSubAgentActivityStoreTests: XCTestCase {
+  6 |     private var defaults: UserDefaults!
+    |                 `- note: property declared here
+  7 |     private var suite: String!
+  8 |     private let launch = Date(timeIntervalSince1970: 1_000)
+    :
+ 15 | 
+ 16 |     override func tearDown() {
+ 17 |         defaults.removePersistentDomain(forName: suite)
+    |         `- warning: main actor-isolated property 'defaults' can not be referenced from a nonisolated context
+ 18 |         defaults = nil
+ 19 |         super.tearDown()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:17:50: warning: main actor-isolated property 'suite' can not be referenced from a nonisolated context
+  5 | final class IOSSubAgentActivityStoreTests: XCTestCase {
+  6 |     private var defaults: UserDefaults!
+  7 |     private var suite: String!
+    |                 `- note: property declared here
+  8 |     private let launch = Date(timeIntervalSince1970: 1_000)
+  9 | 
+    :
+ 15 | 
+ 16 |     override func tearDown() {
+ 17 |         defaults.removePersistentDomain(forName: suite)
+    |                                                  `- warning: main actor-isolated property 'suite' can not be referenced from a nonisolated context
+ 18 |         defaults = nil
+ 19 |         super.tearDown()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:18:9: warning: main actor-isolated property 'defaults' can not be mutated from a nonisolated context
+  4 | @MainActor
+  5 | final class IOSSubAgentActivityStoreTests: XCTestCase {
+  6 |     private var defaults: UserDefaults!
+    |                 `- note: mutation of this property is only permitted within the actor
+  7 |     private var suite: String!
+  8 |     private let launch = Date(timeIntervalSince1970: 1_000)
+    :
+ 16 |     override func tearDown() {
+ 17 |         defaults.removePersistentDomain(forName: suite)
+ 18 |         defaults = nil
+    |         `- warning: main actor-isolated property 'defaults' can not be mutated from a nonisolated context
+ 19 |         super.tearDown()
+ 20 |     }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSThreadMessagingTests.swift:1310:9: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+1308 | 
+1309 |     private func childIdFromHex(_ hex: String) -> KotlinUuid {
+1310 |         try! KotlinUuid.companion.parse(uuidString: hex)
+     |         `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+1311 |     }
+1312 | 
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelInjectionPlannerTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelInjectionPlannerTests.swift:1299:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1297 |     }
+1298 | 
+1299 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1300 |     func testCurrentStateWarnsWhenLaterPlotModulesAreStale() throws {
+1301 |         var document = try NovelTestFixtures.document()
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/SubAgentConcurrencyPerfTests.swift:112:20: warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
+109 |     private struct Fixture {
+110 |         let window: UIWindow
+111 |         func tearDown() {
+    |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
+112 |             window.isHidden = true
+    |                    `- warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
+113 |             window.rootViewController = nil
+114 |         }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIView.h:325:56: note: mutation of this property is only permitted within the actor
+323 | @property(nonatomic,getter=isOpaque) BOOL              opaque;                     // default is YES. opaque views must fill their entire bounds or the results are undefined. the active CGContext in drawRect: will not have been cleared and may have non-zeroed pixels
+324 | @property(nonatomic)                 BOOL              clearsContextBeforeDrawing; // default is YES. ignored for opaque views. for non-opaque views causes the active CGContext in drawRect: to be pre-filled with transparent pixels
+325 | @property(nonatomic,getter=isHidden) BOOL              hidden;                     // default is NO. doesn't check superviews
+    |                                                        `- note: mutation of this property is only permitted within the actor
+326 | @property(nonatomic)                 UIViewContentMode contentMode;                // default is UIViewContentModeScaleToFill
+327 | @property(nonatomic)                 CGRect            contentStretch API_DEPRECATED("", ios(3.0, 6.0)) API_UNAVAILABLE(tvos) API_UNAVAILABLE(visionos, watchos); // animatable. default is unit rectangle {{0,0} {1,1}}. Now deprecated: please use -[UIImage resizableImageWithCapInsets:] to achieve the same effect.
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/SubAgentConcurrencyPerfTests.swift:113:20: warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
+109 |     private struct Fixture {
+110 |         let window: UIWindow
+111 |         func tearDown() {
+    |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
+112 |             window.isHidden = true
+113 |             window.rootViewController = nil
+    |                    `- warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
+114 |         }
+115 |     }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIWindow.h:69:57: note: mutation of this property is only permitted within the actor
+ 67 | - (void)makeKeyAndVisible;
+ 68 | 
+ 69 | @property(nullable, nonatomic,strong) UIViewController *rootViewController API_AVAILABLE(ios(4.0));  // default is nil
+    |                                                         `- note: mutation of this property is only permitted within the actor
+ 70 | 
+ 71 | - (void)sendEvent:(UIEvent *)event;                    // called by UIApplication to dispatch events to views inside the window
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/SubAgentConcurrencyPerfTests.swift:141:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+139 |             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+140 |         } else {
+141 |             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+142 |         }
+143 |         window.rootViewController = host
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/WatchColdStartTests.swift:57:17: warning: 'suspend' mutated after capture by sendable closure
+ 36 |         let oldStarted = expectation(description: "old refresh suspended")
+ 37 |         let newStarted = expectation(description: "new refresh suspended")
+ 38 |         var suspend = false
+    |             `- note: variable defined here
+ 39 |         var pending: [CheckedContinuation<WatchLibrarySnapshot, Never>] = []
+ 40 |         let coordinator = WatchTaskCoordinator(
+    :
+ 42 |             companionService: IOSWatchCompanionService(baseDirectory: fixture.root.appendingPathComponent("watch"), defaults: fixture.defaults),
+ 43 |             deepLinkInbox: IOSDeepLinkInbox(defaults: fixture.defaults),
+ 44 |             librarySnapshotProvider: { _, _, _ in
+    |                                      `- note: variable captured by sendable closure
+ 45 |                 guard suspend else {
+    |                       `- note: capturing use
+ 46 |                     initialReady.fulfill()
+ 47 |                     return library("initial")
+    :
+ 55 |         coordinator.attach(chatViewModel: fixture.chatViewModel, sharedSettings: fixture.sharedSettings)
+ 56 |         await fulfillment(of: [initialReady], timeout: 5)
+ 57 |         suspend = true
+    |                 `- warning: 'suspend' mutated after capture by sendable closure
+ 58 |         let oldRefresh = Task { await coordinator.refreshWatchSnapshot() }
+ 59 |         await fulfillment(of: [oldStarted], timeout: 5)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionQuickStartTests.swift:491:26: warning: expression of type 'Bool' is unused [#NoUsage]
+489 | 
+490 |         await gate.resumeBlockedPerform()
+491 |         await renameTask.value
+    |                          `- warning: expression of type 'Bool' is unused [#NoUsage]
+492 |         XCTAssertFalse(harness.workspace.isPerforming)
+493 |     }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionSelectionTests.swift:138:26: warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
+136 |         await gate.failNextProjectSnapshots(1)
+137 |         await gate.resumeBlockedInterruptReturn()
+138 |         await switchTask.value
+    |                          `- warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
+139 | 
+140 |         XCTAssertEqual(harness.workspace.selectedBranchID, sourceBranchID)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionSelectionTests.swift:198:26: warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
+196 |         await gate.failNextBranchSnapshots(1)
+197 |         await gate.resumeBlockedInterruptReturn()
+198 |         await switchTask.value
+    |                          `- warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
+199 | 
+200 |         XCTAssertEqual(harness.workspace.selectedBranchID, destinationBranchID)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionSelectionTests.swift:256:26: warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
+254 |         XCTAssertTrue(projectSelectionBlocked)
+255 |         await gate.resumeBlockedSnapshot()
+256 |         await switchTask.value
+    |                          `- warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
+257 |         await gate.resumeBlockedProjectSnapshot()
+258 |         let didSelectProject = await projectSelectionTask.value
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionViewModelTestCase.swift:56:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 54 |             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+ 55 |         } else {
+ 56 |             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 57 |         }
+ 58 |         window.rootViewController = rootViewController
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelWorkspaceRepositoryTests.swift:250:13: warning: initialization of immutable value 'checkout' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 248 | 
+ 249 |         // Hand-edit ONLY the fork branch's copy of the shared chapter.
+ 250 |         let checkout = NovelWorkspaceProjectStore.checkoutDirectory(in: project)
+     |             `- warning: initialization of immutable value 'checkout' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 251 |         let forkSlug = NovelWorkspaceBackup.slug("b-line")
+ 252 |         let allChapters = try chapterFiles(in: project)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelWorkspaceRepositoryTests.swift:998:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 996 |         // Blank-book creation goes through the production cast: the project
+ 997 |         // is workspace-native from birth.
+ 998 |         let command = try NovelTestFixtures.createCommand()
+     |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 999 |         _ = try await creation.perform(.createProject(command))
+1000 |         let project = projectDirectory(root, command.projectID)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:113:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 111 |         let engine = IOSJsSandboxEngine()
+ 112 |         let result = await engine.evaluate(code: "1 + 2", timeoutMs: 5000, maxOutputChars: 10000)
+ 113 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 114 |             return XCTFail("expected success, got \(result)")
+ 115 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:123:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 121 |         let engine = IOSJsSandboxEngine()
+ 122 |         let result = await engine.evaluate(code: #"const x = {a: 1, b: [2, 3]}; x"#, timeoutMs: 5000, maxOutputChars: 10000)
+ 123 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 124 |             return XCTFail("expected success, got \(result)")
+ 125 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:138:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 136 |             timeoutMs: 5000, maxOutputChars: 10000
+ 137 |         )
+ 138 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 139 |             return XCTFail("expected success, got \(result)")
+ 140 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:151:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 149 |             timeoutMs: 5000, maxOutputChars: 10000
+ 150 |         )
+ 151 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 152 |             return XCTFail("expected success, got \(result)")
+ 153 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:164:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 162 |             maxOutputChars: 10000
+ 163 |         )
+ 164 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 165 |             return XCTFail("expected success, got \(result)")
+ 166 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:173:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 171 |         let engine = IOSJsSandboxEngine()
+ 172 |         let result = await engine.evaluate(code: "const x = 1", timeoutMs: 5000, maxOutputChars: 10000)
+ 173 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 174 |             return XCTFail("expected success, got \(result)")
+ 175 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:188:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 186 |             maxOutputChars: 10000
+ 187 |         )
+ 188 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 189 |             return XCTFail("expected success, got \(result)")
+ 190 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:206:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 204 |             maxOutputChars: 64
+ 205 |         )
+ 206 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 207 |             return XCTFail("expected success, got \(result)")
+ 208 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:241:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 239 |             maxOutputChars: 10000
+ 240 |         )
+ 241 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 242 |             return XCTFail("expected success, got \(result)")
+ 243 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:254:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 252 |             maxOutputChars: 10000
+ 253 |         )
+ 254 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 255 |             return XCTFail("expected success, got \(result)")
+ 256 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:276:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 274 |         // The abandoned context is never reused; a fresh evaluation still works.
+ 275 |         let next = await engine.evaluate(code: "2 + 2", timeoutMs: 5000, maxOutputChars: 10000)
+ 276 |         guard case .success(let output) = next else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 277 |             return XCTFail("subsequent evaluation must work after abandon: \(next)")
+ 278 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:432:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 430 |             )
+ 431 |         )
+ 432 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 433 |             return XCTFail("expected success, got \(result)")
+ 434 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:455:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 453 |             )
+ 454 |         )
+ 455 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 456 |             return XCTFail("expected success, got \(result)")
+ 457 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:479:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 477 |             )
+ 478 |         )
+ 479 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 480 |             return XCTFail("expected success, got \(result)")
+ 481 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:502:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 500 |             )
+ 501 |         )
+ 502 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 503 |             return XCTFail("expected success, got \(result)")
+ 504 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:550:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 548 |             )
+ 549 |         )
+ 550 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 551 |             return XCTFail("expected success, got \(result)")
+ 552 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:579:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 577 |             )
+ 578 |         )
+ 579 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 580 |             return XCTFail("expected success, got \(result)")
+ 581 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:612:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 610 |             )
+ 611 |         )
+ 612 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 613 |             return XCTFail("expected success, got \(result)")
+ 614 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:642:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 640 |             )
+ 641 |         )
+ 642 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 643 |             return XCTFail("expected success, got \(result)")
+ 644 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:658:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 656 |             maxOutputChars: 10000
+ 657 |         )
+ 658 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 659 |             return XCTFail("expected success, got \(result)")
+ 660 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:796:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 794 |             maxOutputChars: 10000
+ 795 |         )
+ 796 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 797 |             return XCTFail("expected success, got \(result)")
+ 798 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:828:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 826 |             )
+ 827 |         )
+ 828 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 829 |             return XCTFail("expected success, got \(result)")
+ 830 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:866:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 864 |         )
+ 865 |         let elapsed = Date().timeIntervalSince(started)
+ 866 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 867 |             return XCTFail("expected success, got \(result)")
+ 868 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:899:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 897 |             )
+ 898 |         )
+ 899 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 900 |             return XCTFail("expected success, got \(result)")
+ 901 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:931:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 929 |             )
+ 930 |         )
+ 931 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 932 |             return XCTFail("expected success, got \(result)")
+ 933 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:947:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 945 |             restrictedPluginMode: true
+ 946 |         )
+ 947 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 948 |             return XCTFail("expected success, got \(result)")
+ 949 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:974:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 972 |             })
+ 973 |         )
+ 974 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+ 975 |             return XCTFail("expected success, got \(result)")
+ 976 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSJsSandboxEngineTests.swift:1004:29: warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+1002 |         let engine = IOSJsSandboxEngine()
+1003 |         let result = await engine.evaluate(code: #"typeof jev"#, timeoutMs: 5000, maxOutputChars: 10000)
+1004 |         guard case .success(let output) = result else {
+     |                             `- warning: enum case 'success' has 2 associated values; matching them as a tuple is deprecated [#deprecation]
+1005 |             return XCTFail("expected success, got \(result)")
+1006 |         }
+
+<unknown>:0: note: 'success(result:logs:)' declared here
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountSemanticTargetTests.swift:474:13: warning: initialization of immutable value 'currentSnapshot' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+472 |             logicalSessionId: "snapshot-session"
+473 |         )
+474 |         let currentSnapshot = try XCTUnwrap(try jsonObject(observed)["snapshot_id"] as? String)
+    |             `- warning: initialization of immutable value 'currentSnapshot' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+475 |         let stale = await adapter.execute(
+476 |             toolName: "wm_click",
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSMiniAppVisualEvidenceTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSNativeGenerationMotionTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSNovelCreationWiringTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationListInterruptTerminalTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationPoolRoutingTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationToolTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSParityRedLightCredentialTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationListInterruptTerminalTests.swift:407:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+405 | 
+406 |         // fork 源是 A（含 q1），不是 B（不含「B 内容」）。
+407 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
+    |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+408 |         let childUserTexts = (await store.messages(for: childId) ?? [])
+409 |             .filter { $0.role == MessageRole.user }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationPoolRoutingTests.swift:403:47: warning: result of call to 'next()' is unused [#NoUsage]
+401 |         let coordinator = IOSJevDecisionCoordinator(deps: .init(
+402 |             client: IOSJevClient(transport: transport),
+403 |             settingsProvider: { settingsReads.next(); return currentCoordinatorSettings },
+    |                                               `- warning: result of call to 'next()' is unused [#NoUsage]
+404 |             apiKeyProvider: { "test-key" },
+405 |             now: { Date() }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationToolTests.swift:98:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 96 | 
+ 97 |         // 子会话含 NEW_TASK 渲染消息（bootstrap 直接持久化）。
+ 98 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
+    |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 99 |         let childMessages = await store.messages(for: childId) ?? []
+100 |         XCTAssertFalse(store.summaries.contains { $0.id == childId })
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationToolTests.swift:218:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+216 | 
+217 |         // 子会话 assistantId = role（fork 后应用并保存）。
+218 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
+    |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+219 |         let loadedChild = try? await store.loadConversationForOrchestration(childId)
+220 |         let childConversation = try XCTUnwrap(loadedChild, "子会话必须已持久化")
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationToolTests.swift:308:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+306 |         XCTAssertEqual(result["ok"] as? Bool, true)
+307 |         let childHex = try XCTUnwrap(result["child_thread_id"] as? String)
+308 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
+    |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+309 | 
+310 |         let childUserTexts = (await store.messages(for: childId) ?? [])
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSParityRedLightCredentialTests.swift:103:42: warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
+101 |         let fullJson = (defaults.string(forKey: "app.amber.ios.sharedSettingsJson") ?? "")
+102 |         let legacyEntries = (defaults.array(forKey: "app.amber.ios.customSearchProviders") as? [[String: Any]]) ?? []
+103 |         let legacyMirror = legacyEntries.flatMap { $0["apiKey"] as? String }.joined()
+    |                                          |- warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
+    |                                          `- note: use 'compactMap(_:)' instead
+104 | 
+105 |         XCTAssertFalse(
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSParityRedLightCredentialTests.swift:166:42: warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
+164 |         let fullJson = (defaults.string(forKey: "app.amber.ios.sharedSettingsJson") ?? "")
+165 |         let legacyEntries = (defaults.array(forKey: "app.amber.ios.customTtsEngines") as? [[String: Any]]) ?? []
+166 |         let legacyMirror = legacyEntries.flatMap { $0["apiKey"] as? String }.joined()
+    |                                          |- warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
+    |                                          `- note: use 'compactMap(_:)' instead
+167 | 
+168 |         XCTAssertFalse(
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSNovelCreationWiringTests.swift:299:32: warning: 'protectedLeaseIsActive' mutated after capture by sendable closure
+ 283 |     func testLateProtectedLeaseSupersedesTheLegacySceneCycleBeforeExpiration() async {
+ 284 |         var expirationHandler: (() -> Void)?
+ 285 |         var protectedLeaseIsActive = false
+     |             `- note: variable defined here
+ 286 |         var endedLeaseIds: [String] = []
+ 287 |         var interruptionCount = 0
+     :
+ 290 |             beginKeepAlive: { _, onExpire in expirationHandler = onExpire },
+ 291 |             endKeepAlive: { endedLeaseIds.append($0) },
+ 292 |             hasProtectedGenerationLease: { protectedLeaseIsActive }
+     |                                          | `- note: capturing use
+     |                                          `- note: variable captured by sendable closure
+ 293 |         )
+ 294 | 
+     :
+ 297 |             interrupt: { _ in interruptionCount += 1 }
+ 298 |         )
+ 299 |         protectedLeaseIsActive = true
+     |                                `- warning: 'protectedLeaseIsActive' mutated after capture by sendable closure
+ 300 |         expirationHandler?()
+ 301 | 
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSCodexProviderResolverTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSCodexProviderResolverTests.swift:203:23: warning: capture of 'self' with non-Sendable type 'CodexRefreshURLProtocol?' in a '@Sendable' closure [#SendableClosureCaptures]
+201 | 
+202 |         DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(150)) { [weak self] in
+203 |             guard let self, let url = self.request.url else { return }
+    |                       `- warning: capture of 'self' with non-Sendable type 'CodexRefreshURLProtocol?' in a '@Sendable' closure [#SendableClosureCaptures]
+204 |             let response = HTTPURLResponse(
+205 |                 url: url,
+
+Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Sendable' protocol
+1 | @frozen public enum Optional<Wrapped> : ~Copyable, ~Escapable where Wrapped : ~Copyable, Wrapped : ~Escapable {
+  |                     `- note: generic enum 'Optional' does not conform to the 'Sendable' protocol
+2 |     case none
+3 |     case some(Wrapped)
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessagePresentationTests.swift:120:30: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+118 |         let host = UIHostingController(rootView: SuggestionComposerHarness(model: model))
+119 |         let window = UIWindow(windowScene: scene)
+120 |         window.frame = scene.coordinateSpace.bounds
+    |                              `- warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+121 |         window.rootViewController = host
+122 |         window.backgroundColor = .systemBackground
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:75:56: warning: main actor-isolated static property 'fixturePath' can not be referenced from a nonisolated context
+ 31 |     private static let screenSize = CGSize(width: 393, height: 852)
+ 32 | 
+ 33 |     private static let fixturePath =
+    |                        `- note: static property declared here
+ 34 |         "/private/tmp/claude-501/-Users-mi-Downloads-AI-AmberAgent-iOS/75dbf062-21b6-4935-a9b8-7fc5177e47eb/scratchpad/broken-message.md"
+ 35 |     private static let pngDir =
+    :
+ 73 |     override func setUpWithError() throws {
+ 74 |         try super.setUpWithError()
+ 75 |         if let text = try? String(contentsOfFile: Self.fixturePath, encoding: .utf8),
+    |                                                        `- warning: main actor-isolated static property 'fixturePath' can not be referenced from a nonisolated context
+ 76 |            !text.isEmpty {
+ 77 |             markdown = text
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:77:13: warning: main actor-isolated property 'markdown' can not be mutated from a nonisolated context
+ 36 |         "/private/tmp/claude-501/-Users-mi-Downloads-AI-AmberAgent-iOS/75dbf062-21b6-4935-a9b8-7fc5177e47eb/scratchpad"
+ 37 | 
+ 38 |     private var markdown = ""
+    |                 `- note: mutation of this property is only permitted within the actor
+ 39 | 
+ 40 |     /// 内嵌的病态样本(2026-07-02 真机"雷祖"溢出会话的代表性子集:长 CJK 表格 +
+    :
+ 75 |         if let text = try? String(contentsOfFile: Self.fixturePath, encoding: .utf8),
+ 76 |            !text.isEmpty {
+ 77 |             markdown = text
+    |             `- warning: main actor-isolated property 'markdown' can not be mutated from a nonisolated context
+ 78 |         } else {
+ 79 |             markdown = Self.embeddedFixture
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:79:13: warning: main actor-isolated property 'markdown' can not be mutated from a nonisolated context
+ 36 |         "/private/tmp/claude-501/-Users-mi-Downloads-AI-AmberAgent-iOS/75dbf062-21b6-4935-a9b8-7fc5177e47eb/scratchpad"
+ 37 | 
+ 38 |     private var markdown = ""
+    |                 `- note: mutation of this property is only permitted within the actor
+ 39 | 
+ 40 |     /// 内嵌的病态样本(2026-07-02 真机"雷祖"溢出会话的代表性子集:长 CJK 表格 +
+    :
+ 77 |             markdown = text
+ 78 |         } else {
+ 79 |             markdown = Self.embeddedFixture
+    |             `- warning: main actor-isolated property 'markdown' can not be mutated from a nonisolated context
+ 80 |         }
+ 81 |     }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:79:29: warning: main actor-isolated static property 'embeddedFixture' can not be referenced from a nonisolated context
+ 40 |     /// 内嵌的病态样本(2026-07-02 真机"雷祖"溢出会话的代表性子集:长 CJK 表格 +
+ 41 |     /// 多级标题 + 列表),保证测试在任何机器可跑;fixturePath 存在时优先用完整原文。
+ 42 |     private static let embeddedFixture = """
+    |                        `- note: static property declared here
+ 43 |     太好了!资料很丰富了。下面我给你做一个**全面的创作规划**,可以直接当写作框架用。
+ 44 | 
+    :
+ 77 |             markdown = text
+ 78 |         } else {
+ 79 |             markdown = Self.embeddedFixture
+    |                             `- warning: main actor-isolated static property 'embeddedFixture' can not be referenced from a nonisolated context
+ 80 |         }
+ 81 |     }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:220:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+218 |             window = UIWindow(windowScene: scene)
+219 |         } else {
+220 |             window = UIWindow(frame: .zero)
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+221 |         }
+222 |         window.backgroundColor = .clear
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:477:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+475 |             window.frame = CGRect(origin: .zero, size: Self.screenSize)
+476 |         } else {
+477 |             window = UIWindow(frame: CGRect(origin: .zero, size: Self.screenSize))
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+478 |         }
+479 |         window.rootViewController = host
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayPerformanceTests.swift:285:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+283 |         )
+284 |         .frame(width: 353, alignment: .leading))
+285 |         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+286 |         window.rootViewController = host
+287 |         window.makeKeyAndVisible()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:92:42: warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
+ 90 | 
+ 91 |         var scrollView: UIScrollView? {
+ 92 |             Self.findScrollView(in: host.view)
+    |                                          `- warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
+ 93 |         }
+ 94 | 
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIViewController.h:118:54: note: property declared here
+116 | - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+117 | 
+118 | @property(null_resettable, nonatomic,strong) UIView *view; // The getter first invokes [self loadView] if the view hasn't been set yet. Subclasses must call super if they override the setter or getter.
+    |                                                      `- note: property declared here
+119 | - (void)loadView; // This is where subclasses should create their custom view hierarchy if they aren't using a nib. Should never be called directly.
+120 | - (void)loadViewIfNeeded API_AVAILABLE(ios(9.0)); // Loads the view controller's view if it has not already been set.
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:97:33: warning: main actor-isolated property 'subviews' can not be referenced from a nonisolated context
+ 93 |         }
+ 94 | 
+ 95 |         static func findScrollView(in view: UIView) -> UIScrollView? {
+    |                     `- note: add '@MainActor' to make static method 'findScrollView(in:)' part of global actor 'MainActor'
+ 96 |             if let scrollView = view as? UIScrollView { return scrollView }
+ 97 |             for subview in view.subviews {
+    |                                 `- warning: main actor-isolated property 'subviews' can not be referenced from a nonisolated context
+ 98 |                 if let found = findScrollView(in: subview) { return found }
+ 99 |             }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIView.h:230:64: note: property declared here
+228 | 
+229 | @property(nullable, nonatomic,readonly) UIView       *superview;
+230 | @property(nonatomic,readonly,copy) NSArray<__kindof UIView *> *subviews;
+    |                                                                `- note: property declared here
+231 | @property(nullable, nonatomic,readonly) UIWindow     *window;
+232 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:104:20: warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
+101 |         }
+102 | 
+103 |         func tearDown() {
+    |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
+104 |             window.isHidden = true
+    |                    `- warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
+105 |             window.rootViewController = nil
+106 |         }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIView.h:325:56: note: mutation of this property is only permitted within the actor
+323 | @property(nonatomic,getter=isOpaque) BOOL              opaque;                     // default is YES. opaque views must fill their entire bounds or the results are undefined. the active CGContext in drawRect: will not have been cleared and may have non-zeroed pixels
+324 | @property(nonatomic)                 BOOL              clearsContextBeforeDrawing; // default is YES. ignored for opaque views. for non-opaque views causes the active CGContext in drawRect: to be pre-filled with transparent pixels
+325 | @property(nonatomic,getter=isHidden) BOOL              hidden;                     // default is NO. doesn't check superviews
+    |                                                        `- note: mutation of this property is only permitted within the actor
+326 | @property(nonatomic)                 UIViewContentMode contentMode;                // default is UIViewContentModeScaleToFill
+327 | @property(nonatomic)                 CGRect            contentStretch API_DEPRECATED("", ios(3.0, 6.0)) API_UNAVAILABLE(tvos) API_UNAVAILABLE(visionos, watchos); // animatable. default is unit rectangle {{0,0} {1,1}}. Now deprecated: please use -[UIImage resizableImageWithCapInsets:] to achieve the same effect.
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:105:20: warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
+101 |         }
+102 | 
+103 |         func tearDown() {
+    |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
+104 |             window.isHidden = true
+105 |             window.rootViewController = nil
+    |                    `- warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
+106 |         }
+107 |     }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIWindow.h:69:57: note: mutation of this property is only permitted within the actor
+ 67 | - (void)makeKeyAndVisible;
+ 68 | 
+ 69 | @property(nullable, nonatomic,strong) UIViewController *rootViewController API_AVAILABLE(ios(4.0));  // default is nil
+    |                                                         `- note: mutation of this property is only permitted within the actor
+ 70 | 
+ 71 | - (void)sendEvent:(UIEvent *)event;                    // called by UIApplication to dispatch events to views inside the window
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:341:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+339 |             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+340 |         } else {
+341 |             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+342 |         }
+343 |         window.rootViewController = host
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatParagraphLeadingInsetProbeTests.swift:113:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+111 |             window = UIWindow(windowScene: scene)
+112 |         } else {
+113 |             window = UIWindow(frame: .zero)
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+114 |         }
+115 |         window.frame = CGRect(origin: .zero, size: Self.screenSize)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatReasoningCardTests.swift:925:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 923 |             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+ 924 |         } else {
+ 925 |             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+     |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 926 |         }
+ 927 |         window.rootViewController = host
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStreamingPerfBaselineTests.swift:141:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+139 |             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+140 |         } else {
+141 |             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+142 |         }
+143 |         window.rootViewController = host
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:81:42: warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
+ 79 | 
+ 80 |         var scrollView: UIScrollView? {
+ 81 |             Self.findScrollView(in: host.view)
+    |                                          `- warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
+ 82 |         }
+ 83 | 
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIViewController.h:118:54: note: property declared here
+116 | - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+117 | 
+118 | @property(null_resettable, nonatomic,strong) UIView *view; // The getter first invokes [self loadView] if the view hasn't been set yet. Subclasses must call super if they override the setter or getter.
+    |                                                      `- note: property declared here
+119 | - (void)loadView; // This is where subclasses should create their custom view hierarchy if they aren't using a nib. Should never be called directly.
+120 | - (void)loadViewIfNeeded API_AVAILABLE(ios(9.0)); // Loads the view controller's view if it has not already been set.
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:86:33: warning: main actor-isolated property 'subviews' can not be referenced from a nonisolated context
+ 82 |         }
+ 83 | 
+ 84 |         static func findScrollView(in view: UIView) -> UIScrollView? {
+    |                     `- note: add '@MainActor' to make static method 'findScrollView(in:)' part of global actor 'MainActor'
+ 85 |             if let scrollView = view as? UIScrollView { return scrollView }
+ 86 |             for subview in view.subviews {
+    |                                 `- warning: main actor-isolated property 'subviews' can not be referenced from a nonisolated context
+ 87 |                 if let found = findScrollView(in: subview) { return found }
+ 88 |             }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIView.h:230:64: note: property declared here
+228 | 
+229 | @property(nullable, nonatomic,readonly) UIView       *superview;
+230 | @property(nonatomic,readonly,copy) NSArray<__kindof UIView *> *subviews;
+    |                                                                `- note: property declared here
+231 | @property(nullable, nonatomic,readonly) UIWindow     *window;
+232 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:93:20: warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
+ 90 |         }
+ 91 | 
+ 92 |         func tearDown() {
+    |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
+ 93 |             window.isHidden = true
+    |                    `- warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
+ 94 |             window.rootViewController = nil
+ 95 |         }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIView.h:325:56: note: mutation of this property is only permitted within the actor
+323 | @property(nonatomic,getter=isOpaque) BOOL              opaque;                     // default is YES. opaque views must fill their entire bounds or the results are undefined. the active CGContext in drawRect: will not have been cleared and may have non-zeroed pixels
+324 | @property(nonatomic)                 BOOL              clearsContextBeforeDrawing; // default is YES. ignored for opaque views. for non-opaque views causes the active CGContext in drawRect: to be pre-filled with transparent pixels
+325 | @property(nonatomic,getter=isHidden) BOOL              hidden;                     // default is NO. doesn't check superviews
+    |                                                        `- note: mutation of this property is only permitted within the actor
+326 | @property(nonatomic)                 UIViewContentMode contentMode;                // default is UIViewContentModeScaleToFill
+327 | @property(nonatomic)                 CGRect            contentStretch API_DEPRECATED("", ios(3.0, 6.0)) API_UNAVAILABLE(tvos) API_UNAVAILABLE(visionos, watchos); // animatable. default is unit rectangle {{0,0} {1,1}}. Now deprecated: please use -[UIImage resizableImageWithCapInsets:] to achieve the same effect.
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:94:20: warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
+ 90 |         }
+ 91 | 
+ 92 |         func tearDown() {
+    |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
+ 93 |             window.isHidden = true
+ 94 |             window.rootViewController = nil
+    |                    `- warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
+ 95 |         }
+ 96 |     }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIWindow.h:69:57: note: mutation of this property is only permitted within the actor
+ 67 | - (void)makeKeyAndVisible;
+ 68 | 
+ 69 | @property(nullable, nonatomic,strong) UIViewController *rootViewController API_AVAILABLE(ios(4.0));  // default is nil
+    |                                                         `- note: mutation of this property is only permitted within the actor
+ 70 | 
+ 71 | - (void)sendEvent:(UIEvent *)event;                    // called by UIApplication to dispatch events to views inside the window
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:129:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+127 |             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+128 |         } else {
+129 |             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    |                      `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+130 |         }
+131 |         window.rootViewController = host
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift:173:13: warning: initialization of immutable value 'intermediateOffsets' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 171 |         let finalOffsetY = scrollView.contentOffset.y
+ 172 |         let finalContentHeight = scrollView.contentSize.height
+ 173 |         let intermediateOffsets = Set(samples.compactMap { sample -> Int? in
+     |             `- warning: initialization of immutable value 'intermediateOffsets' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 174 |             guard sample.offsetY > initialOffsetY + 0.5,
+ 175 |                   sample.offsetY < finalOffsetY - 0.5 else { return nil }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift:181:13: warning: initialization of immutable value 'transitionSamples' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 179 |             max(current, pair.0.offsetY - pair.1.offsetY)
+ 180 |         }
+ 181 |         let transitionSamples = samples.filter {
+     |             `- warning: initialization of immutable value 'transitionSamples' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 182 |             $0.offsetY > initialOffsetY + 0.5 && $0.offsetY < finalOffsetY - 0.5
+ 183 |         }.prefix(12)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift:550:13: warning: initialization of immutable value 'visiblyAnimatedGrowthCount' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 548 |             medianPublishGap = publishGaps[publishGaps.count / 2]
+ 549 |         }
+ 550 |         let visiblyAnimatedGrowthCount = growthEvents.enumerated().reduce(into: 0) { count, entry in
+     |             `- warning: initialization of immutable value 'visiblyAnimatedGrowthCount' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 551 |             let eventIndex = entry.offset
+ 552 |             let growth = entry.element
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatSwiftUIStreamReplayTests.swift:799:13: warning: initialization of immutable value 'offsetAdvanceSteps' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 797 |             .map { $1.contentHeight - $0.contentHeight }
+ 798 |             .filter { $0 > 0.5 }
+ 799 |         let offsetAdvanceSteps = zip(settledSamples, settledSamples.dropFirst())
+     |             `- warning: initialization of immutable value 'offsetAdvanceSteps' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 800 |             .map { $1.contentOffsetY - $0.contentOffsetY }
+ 801 |             .filter { $0 > 0.5 }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/AmberThemePackTests.swift:1239:40: warning: result of 'try?' is unused [#NoUsage]
+1237 |             runtime.discardTryOn()
+1238 |             _ = try? library.remove(ids: Set(library.installed.map(\.id)))
+1239 |             for document in previous { try? library.upsert(document) }
+     |                                        `- warning: result of 'try?' is unused [#NoUsage]
+1240 |         }
+1241 |         _ = try library.remove(ids: Set(library.installed.map(\.id)))
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactActionsTests.swift:241:48: warning: call to main actor-isolated static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+238 |     }
+239 | 
+240 |     func testListHeightIgnoresFooterAfterLeavingSelectMode() {
+    |          `- note: add '@MainActor' to make instance method 'testListHeightIgnoresFooterAfterLeavingSelectMode()' part of global actor 'MainActor'
+241 |         let selecting = ChatArtifactShelfPanel.scrollHeight(
+    |                                                `- warning: call to main actor-isolated static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+242 |             maxHeight: 500, headerHeight: 44, footerHeight: 90, sectionsHeight: 1_000, isSelecting: true
+243 |         )
+
+iosApp.ChatArtifactShelfPanel.scrollHeight:2:33: note: calls to static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' from outside of its actor context are implicitly asynchronous
+1 | struct ChatArtifactShelfPanel {
+2 | @MainActor internal static func scrollHeight(maxHeight: CGFloat?, headerHeight: CGFloat, footerHeight: CGFloat, sectionsHeight: CGFloat?, isSelecting: Bool, sectionSpacing: CGFloat = 14, contentPadding: CGFloat = 16) -> CGFloat?}
+  |                                 `- note: calls to static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' from outside of its actor context are implicitly asynchronous
+3 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactActionsTests.swift:244:45: warning: call to main actor-isolated static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+238 |     }
+239 | 
+240 |     func testListHeightIgnoresFooterAfterLeavingSelectMode() {
+    |          `- note: add '@MainActor' to make instance method 'testListHeightIgnoresFooterAfterLeavingSelectMode()' part of global actor 'MainActor'
+241 |         let selecting = ChatArtifactShelfPanel.scrollHeight(
+242 |             maxHeight: 500, headerHeight: 44, footerHeight: 90, sectionsHeight: 1_000, isSelecting: true
+243 |         )
+244 |         let normal = ChatArtifactShelfPanel.scrollHeight(
+    |                                             `- warning: call to main actor-isolated static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+245 |             maxHeight: 500, headerHeight: 44, footerHeight: 90, sectionsHeight: 1_000, isSelecting: false
+246 |         )
+
+iosApp.ChatArtifactShelfPanel.scrollHeight:2:33: note: calls to static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' from outside of its actor context are implicitly asynchronous
+1 | struct ChatArtifactShelfPanel {
+2 | @MainActor internal static func scrollHeight(maxHeight: CGFloat?, headerHeight: CGFloat, footerHeight: CGFloat, sectionsHeight: CGFloat?, isSelecting: Bool, sectionSpacing: CGFloat = 14, contentPadding: CGFloat = 16) -> CGFloat?}
+  |                                 `- note: calls to static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' from outside of its actor context are implicitly asynchronous
+3 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactAnchorLayoutTests.swift:189:58: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+187 |         let previousWindow = scene.windows.first(where: \.isKeyWindow)
+188 |         let window = UIWindow(windowScene: scene)
+189 |         window.frame = CGRect(origin: .zero, size: scene.coordinateSpace.bounds.size)
+    |                                                          `- warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+190 |         window.rootViewController = UIHostingController(rootView: FixtureView(
+191 |             model: model,
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactAnchorLayoutTests.swift:198:32: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+196 |             appliesMeasuredInset: appliesMeasuredInset,
+197 |             showsProbeMarker: probeMode,
+198 |             panelHeight: scene.coordinateSpace.bounds.height * 0.55
+    |                                `- warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+199 |         ))
+200 |         window.makeKeyAndVisible()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactIntegrationTests.swift:75:30: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+ 73 |         let previous = scene.windows.first(where: \.isKeyWindow)
+ 74 |         let window = UIWindow(windowScene: scene)
+ 75 |         window.frame = scene.coordinateSpace.bounds
+    |                              `- warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+ 76 |         window.overrideUserInterfaceStyle = .light
+ 77 |         window.rootViewController = UIHostingController(rootView: NavigationStack {
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMarkdownCJKEmphasisTests.swift:65:46: warning: call to main actor-isolated static method 'repairRejectedStrong(inAdjacentTextFragments:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 49 |     }
+ 50 | 
+ 51 |     func testNativeQuotedTitleHasNoLiteralDelimitersAfterRender() {
+    |          `- note: add '@MainActor' to make instance method 'testNativeQuotedTitleHasNoLiteralDelimitersAfterRender()' part of global actor 'MainActor'
+ 52 |         let samples = [
+ 53 |             "掀起了**“大宋风雅”热潮**：",
+    :
+ 63 |                 "预期原生 AST 把 ** 拆成单星号节点：\(nodes) —— \(sample)"
+ 64 |             )
+ 65 |             let repaired = AmberMarkdownView.repairRejectedStrong(inAdjacentTextFragments: nodes)
+    |                                              `- warning: call to main actor-isolated static method 'repairRejectedStrong(inAdjacentTextFragments:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 66 |             let repairedText = String(repaired.characters)
+ 67 |             XCTAssertFalse(
+
+iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method 'repairRejectedStrong(inAdjacentTextFragments:)' from outside of its actor context are implicitly asynchronous
+1 | struct AmberMarkdownView {
+2 | @MainActor internal static func repairRejectedStrong(inAdjacentTextFragments fragments: [String]) -> AttributedString}
+  |                                 `- note: calls to static method 'repairRejectedStrong(inAdjacentTextFragments:)' from outside of its actor context are implicitly asynchronous
+3 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMarkdownCJKEmphasisTests.swift:162:42: warning: call to main actor-isolated static method 'repairRejectedStrong(in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+152 |     /// flanking 拒绝的形态：AST 里只剩字面定界符（这是解析器事实，不在测试里
+153 |     /// 否认它），渲染层 `repairRejectedStrong` 必须把它们修复成 strong 意图。
+154 |     func testNativeRenderRepairFixesRejectedStrongForms() {
+    |          `- note: add '@MainActor' to make instance method 'testNativeRenderRepairFixesRejectedStrongForms()' part of global actor 'MainActor'
+155 |         let variants: [(name: String, textNodeContent: String, expectedBold: String)] = [
+156 |             ("全角括号包裹", "**（重点）**说明", "（重点）"),
+    :
+160 |         ]
+161 |         for variant in variants {
+162 |             let attr = AmberMarkdownView.repairRejectedStrong(in: variant.textNodeContent)
+    |                                          `- warning: call to main actor-isolated static method 'repairRejectedStrong(in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+163 |             var bolded = ""
+164 |             for run in attr.runs {
+
+iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method 'repairRejectedStrong(in:)' from outside of its actor context are implicitly asynchronous
+1 | struct AmberMarkdownView {
+2 | @MainActor internal static func repairRejectedStrong(in raw: String) -> AttributedString}
+  |                                 `- note: calls to static method 'repairRejectedStrong(in:)' from outside of its actor context are implicitly asynchronous
+3 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMarkdownCJKEmphasisTests.swift:182:42: warning: call to main actor-isolated static method 'repairRejectedStrong(in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+177 |     /// 渲染修复的自限性：没有字面成对定界符的文本必须原样通过，
+178 |     /// `** 后跟空白`这类非粗体语义不得误伤。
+179 |     func testNativeRenderRepairLeavesNonBoldTextUntouched() {
+    |          `- note: add '@MainActor' to make instance method 'testNativeRenderRepairLeavesNonBoldTextUntouched()' part of global actor 'MainActor'
+180 |         let samples = ["普通文本没有星号", "用 ** 来强调的说明", "a ** b ** c"]
+181 |         for sample in samples {
+182 |             let attr = AmberMarkdownView.repairRejectedStrong(in: sample)
+    |                                          `- warning: call to main actor-isolated static method 'repairRejectedStrong(in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+183 |             XCTAssertEqual(String(attr.characters), sample)
+184 |             for run in attr.runs {
+
+iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method 'repairRejectedStrong(in:)' from outside of its actor context are implicitly asynchronous
+1 | struct AmberMarkdownView {
+2 | @MainActor internal static func repairRejectedStrong(in raw: String) -> AttributedString}
+  |                                 `- note: calls to static method 'repairRejectedStrong(in:)' from outside of its actor context are implicitly asynchronous
+3 | 
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/AgentLiveActivityControllerPendingStartTests.swift:254:17: warning: 'handoff' mutated after capture by sendable closure
+232 |         let gate = PendingGate()
+233 |         let recorder = CardRecorder()
+234 |         var handoff: IOSPhoneControlHandoffState = .pausing
+    |             `- note: variable defined here
+235 |         let controller = makeController(gate: gate, recorder: recorder, phoneHandoffState: {
+    |                                                                                            `- note: variable captured by sendable closure
+236 |             $0 == "phone-run" ? handoff : nil
+    |                                 `- note: capturing use
+237 |         })
+238 |         controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.typing))
+    :
+252 |         XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .resuming)
+253 |         XCTAssertEqual(recorder.deliveredPresentations.last?.stage, .preparing)
+254 |         handoff = .automated
+    |                 `- warning: 'handoff' mutated after capture by sendable closure
+255 |         await controller.updatePhoneControl(runID: "phone-run", phase: .waitingForModel)
+256 |         XCTAssertEqual(recorder.deliveredPresentations.last?.phoneControlPhase, .waitingForModel,
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/AgentLiveActivityControllerPendingStartTests.swift:278:17: warning: 'handoff' mutated after capture by sendable closure
+268 |         let requestGate = PendingGate()
+269 |         let recorder = CardRecorder()
+270 |         var handoff: IOSPhoneControlHandoffState = .automated
+    |             `- note: variable defined here
+271 |         let controller = makeController(gate: gate, recorder: recorder, beforeRequestReturns: {
+272 |             await requestGate.markEntered()
+273 |             await requestGate.waitForRelease()
+274 |         }, phoneHandoffState: { $0 == "phone-run" ? handoff : nil })
+    |                               |                     `- note: capturing use
+    |                               `- note: variable captured by sendable closure
+275 |         controller.start(runId: "phone-run", conversationId: "conv-1", presentation: .phoneControl(.observing))
+276 |         await gate.release()
+277 |         await requestGate.waitUntilEntered()
+278 |         handoff = .paused
+    |                 `- warning: 'handoff' mutated after capture by sendable closure
+279 |         await requestGate.release()
+280 |         await waitUntil { recorder.deliveredPresentations.last?.phoneControlPhase == .paused }
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSConversationStoreConcurrencyTests.swift:311:30: warning: expression of type 'Bool' is unused [#NoUsage]
+309 |         store.beforePersistForTesting = nil
+310 |         allowPersist?.resume()
+311 |         await completionTask.value
+    |                              `- warning: expression of type 'Bool' is unused [#NoUsage]
+312 | 
+313 |         let restarted = IOSConversationStore(baseDirectory: baseDirectory)
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSConversationStoreConcurrencyTests.swift:481:30: warning: expression of type 'Bool' is unused [#NoUsage]
+479 |         await store.save(messages: baseMessages + [UIMessage.companion.user(prompt: "new foreground message")], to: convId)
+480 |         allowPersist?.resume()
+481 |         await completionTask.value
+    |                              `- warning: expression of type 'Bool' is unused [#NoUsage]
+482 | 
+483 |         XCTAssertEqual(
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSCouncilRunnerMechanicsTests.swift:187:13: warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+185 | 
+186 |         drainTask.cancel()
+187 |         _ = await drainTask
+    |             `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+188 |     }
+189 | 
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalToolIntegrationTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneScrollSearchTests.swift (in target 'iosAppTests' from project 'AmberAgent')
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift:1192:70: warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+1190 | }
+1191 | 
+1192 | private final class GoalLoopFailureProtocol: URLProtocol, @unchecked Sendable {
+     |                     |                                                `- warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+     |                     `- note: 'GoalLoopFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+1193 |     override class func canInit(with request: URLRequest) -> Bool { true }
+1194 |     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalToolIntegrationTests.swift:899:63: warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+897 | }
+898 | 
+899 | private final class GoalHTTPProtocol: URLProtocol, @unchecked Sendable {
+    |                     |                                         `- warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+    |                     `- note: 'GoalHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+900 |     private final class Registry: @unchecked Sendable {
+901 |         let lock = NSLock()
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalToolIntegrationTests.swift:472:13: warning: initialization of immutable value 'completion' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+470 |         ))
+471 | 
+472 |         let completion = IOSPhoneGoalExpectation(
+    |             `- warning: initialization of immutable value 'completion' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+473 |             kind: .visible,
+474 |             target: .init(label: "Continue", type: "XCUIElementTypeButton",
+
+/Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneScrollSearchTests.swift:215:74: warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+213 | }
+214 | 
+215 | private final class ScrollSearchFailureProtocol: URLProtocol, @unchecked Sendable {
+    |                     |                                                    `- warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
+    |                     `- note: 'ScrollSearchFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
+216 |     override class func canInit(with request: URLRequest) -> Bool { true }
+217 |     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[#UnavailableSendableConformance]: <https://docs.swift.org/compiler/documentation/diagnostics/unavailable-sendable-conformance>
+note: Run script build phase 'Process Python libraries' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'iosApp' from project 'AmberAgent')
+note: Run script build phase 'Build Shared KMP Framework' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'iosApp' from project 'AmberAgent')
+note: Run script build phase 'Validate Entitlement Diagnostics' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'iosApp' from project 'AmberAgent')
+note: Run script build phase 'Validate Release Readiness' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'iosApp' from project 'AmberAgent')
+note: Run script build phase 'Validate CPython artifact' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'iosApp' from project 'AmberAgent')
+note: Run script build phase 'Embed Shared KMP Framework' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'iosApp' from project 'AmberAgent')
+note: Run script build phase 'Build iPhone control bridge' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'iosApp' from project 'AmberAgent')
+2026-10-26 19:33:13.744 xcodebuild[87148:19895711] [MT] IDETestOperationsObserverDebug: 15.826 elapsed -- Testing started completed.
+2026-10-26 19:33:13.745 xcodebuild[87148:19895711] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-10-26 19:33:13.745 xcodebuild[87148:19895711] [MT] IDETestOperationsObserverDebug: 15.826 sec, +15.826 sec -- end
+Testing started

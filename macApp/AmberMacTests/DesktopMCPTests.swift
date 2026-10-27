@@ -159,7 +159,8 @@ import XCTest
         server.transport = .stdio
         server.command = python
         server.arguments = ["-u", fixture.path]
-        server.environment = ["AMBER_MCP_FIXTURE_VALUE": "environment-present", "AMBER_MCP_FIXTURE_MARKER": marker.path]
+        server.environment = ["AMBER_MCP_FIXTURE_VALUE": "environment-present", "AMBER_MCP_FIXTURE_MARKER": marker.path,
+            "AMBER_MCP_FIXTURE_FRAGMENTS": "1"]
         try store.upsert(server)
         let manager = DesktopMCPManager(store: store)
         defer { manager.disconnect(id: server.id) }
@@ -167,7 +168,7 @@ import XCTest
         let output = try await manager.perform(name: "mcp_call_tool", argumentsJSON: arguments(server.id, extra: ["text": "real pipe"]))
         XCTAssertTrue(output.contains("real pipe"))
         XCTAssertTrue(output.contains("environment-present"))
-        let fragmentedText = String(repeating: "中文与换行\n", count: 20_000)
+        let fragmentedText = String(repeating: "中文与换行\n", count: 100_000)
         let fragmented = try await manager.perform(name: "mcp_call_tool", argumentsJSON: arguments(server.id, extra: ["text": fragmentedText]))
         let fragmentedResult = try JSONSerialization.jsonObject(with: Data(fragmented.utf8)) as! [String: Any]
         XCTAssertEqual((fragmentedResult["content"] as? [[String: Any]])?.first?["text"] as? String, fragmentedText + " environment-present")
@@ -222,6 +223,32 @@ import XCTest
         try await manager.connect(id: server.id)
         _ = try await manager.perform(name: "mcp_call_tool", argumentsJSON: arguments(server.id))
         XCTAssertEqual(try String(contentsOf: starts, encoding: .utf8).split(separator: "\n").count, 2)
+    }
+
+    func testCancelledInitializeCannotLaunchStdioProcess() async throws {
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle(for: Self.self)
+        #endif
+        let fixture = try XCTUnwrap(bundle.url(forResource: "mcp_stdio_fixture", withExtension: "py"))
+        let starts = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: starts) }
+        var server = configuration()
+        server.transport = .stdio
+        server.command = python
+        server.arguments = ["-u", fixture.path]
+        server.environment = ["AMBER_MCP_FIXTURE_STARTS": starts.path]
+        let transport = DesktopMCPStdioTransport(configuration: server)
+        let request = Task {
+            try await transport.sendJSONRPC(["jsonrpc": "2.0", "id": 1, "method": "initialize"], to: server.clientConfiguration)
+        }
+        request.cancel()
+        do { _ = try await request.value; XCTFail("Cancelled initialization must fail") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: starts.path))
+        transport.disconnect(config: server.clientConfiguration)
+        await transport.terminationTask?.value
     }
 
     func testShutdownReapsAnOwnedProcessGroupThatIgnoresSIGTERM() async throws {
@@ -327,8 +354,8 @@ extension DesktopUserToolchainTests {
 }
 
 extension DesktopUserToolchainTests {
-    func testLoginPATHIsResolvedWithoutShellOutputLeakingIntoIt() {
-        let path = DesktopLoginEnvironment.path
+    func testLoginPATHIsResolvedWithoutShellOutputLeakingIntoIt() async {
+        let path = await DesktopLoginEnvironment.path.value
         XCTAssertNotNil(path)
         XCTAssertFalse(path?.contains("\n") ?? true)
         XCTAssertTrue(path?.split(separator: ":").contains("/usr/bin") ?? false)

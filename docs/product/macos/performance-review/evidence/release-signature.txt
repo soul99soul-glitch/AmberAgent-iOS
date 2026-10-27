@@ -1,0 +1,4 @@
+--prepared:/Users/mi/Downloads/AI/amber-macos/macApp/build/Build/Products/Release/Amber.app/Contents/Frameworks/Shared.framework/Versions/Current/.
+--validated:/Users/mi/Downloads/AI/amber-macos/macApp/build/Build/Products/Release/Amber.app/Contents/Frameworks/Shared.framework/Versions/Current/.
+macApp/build/Build/Products/Release/Amber.app: valid on disk
+macApp/build/Build/Products/Release/Amber.app: satisfies its Designated Requirement

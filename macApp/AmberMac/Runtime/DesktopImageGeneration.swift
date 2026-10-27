@@ -26,7 +26,8 @@ import Observation
         #else
         self.enabled = enabled
         #endif
-        self.history = history ?? IOSImageGenerationHistoryStore(key: "app.amber.macos.imageGeneration.staging.v1")
+        self.history = history ?? IOSImageGenerationHistoryStore(
+            key: "app.amber.macos.imageGeneration.staging.v1", limit: nil)
         self.stagingDirectory = stagingDirectory ?? URL.applicationSupportDirectory
             .appendingPathComponent("Amber/image-staging", isDirectory: true)
         self.transport = transport

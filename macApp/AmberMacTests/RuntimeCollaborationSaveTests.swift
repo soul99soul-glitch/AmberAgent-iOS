@@ -93,7 +93,29 @@ import XCTest
         XCTAssertFalse(DesktopToolRegistry.collaborationDeclarations(subagents: false).contains { $0.name == "subagent_dispatch" })
         XCTAssertTrue(DesktopToolRegistry.collaborationDeclarations(subagents: false).contains { $0.name == "model_council_run" })
         let context = DesktopRunContext(conversationID: UUID(), toolsEnabled: false, subagentsEnabled: true)
-        XCTAssertTrue(context.toolsEnabled, "sub-agents run through the tool loop even when general tools are off")
+        XCTAssertFalse(context.toolsEnabled, "the context keeps the real ordinary-tools switch")
+        XCTAssertTrue(context.engineEnabled, "sub-agents still need the tool engine")
+    }
+
+    func testAgentDeclarationsStayWithinEachCapabilitySwitch() {
+        let base = Set(DesktopToolRegistry.declarations.map(\.name))
+        let knowledge = Set(DesktopToolRegistry.knowledgeDeclarations.map(\.name))
+        let mcp = Set(DesktopMCPManager.declarations.map(\.name))
+        let council = Set(["list_agents", "interrupt_agent", "model_council_run"])
+        let subagents = Set(["subagent_dispatch", "list_agents", "interrupt_agent"])
+
+        let none = Set(DesktopToolRegistry.agentDeclarations(toolsEnabled: false, subagentsEnabled: false).map(\.name))
+        let toolsOnly = Set(DesktopToolRegistry.agentDeclarations(toolsEnabled: true, subagentsEnabled: false).map(\.name))
+        let subagentsOnly = Set(DesktopToolRegistry.agentDeclarations(toolsEnabled: false, subagentsEnabled: true).map(\.name))
+        let both = Set(DesktopToolRegistry.agentDeclarations(toolsEnabled: true, subagentsEnabled: true).map(\.name))
+
+        XCTAssertTrue(none.isEmpty)
+        XCTAssertEqual(toolsOnly, base.union(knowledge).union(mcp).union(council))
+        XCTAssertEqual(subagentsOnly, subagents)
+        XCTAssertEqual(both, base.union(knowledge).union(mcp).union(council).union(["subagent_dispatch"]))
+        XCTAssertFalse(subagentsOnly.contains("model_council_run"), "sub-agent-only mode must not grant council")
+        XCTAssertFalse(subagentsOnly.contains("terminal_exec"), "sub-agent-only mode must not grant ordinary tools")
+        XCTAssertFalse(subagentsOnly.contains("mcp_call_tool"), "sub-agent-only mode must not grant MCP")
     }
 
     func testFailedMessageSaveKeepsArtifactAndDoesNotPublishSuccess() async throws {

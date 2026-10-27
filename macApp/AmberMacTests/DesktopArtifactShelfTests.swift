@@ -42,6 +42,41 @@ import XCTest
         XCTAssertEqual(siblings.count, 1)
     }
 
+    func testUnreadableRecoveryCopiesCannotCollideWithinOneSecond() throws {
+        let url = temporaryFile()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data("recoverable original".utf8)
+        let now = Int(Date().timeIntervalSince1970)
+        for offset in -1...2 {
+            try Data("older recovery".utf8).write(to: url.deletingPathExtension()
+                .appendingPathExtension("unreadable-\(now + offset).json"))
+        }
+        try original.write(to: url)
+        let shelf = DesktopArtifactShelf(fileURL: url)
+        shelf.pin(messageID: UUID(), kind: .message, text: "new pin", in: UUID())
+        let copies = try FileManager.default.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+            .filter { $0 != url }
+        XCTAssertTrue(try copies.contains { try Data(contentsOf: $0) == original })
+    }
+
+    func testFailedRecoveryMoveNeverOverwritesOriginal() throws {
+        let url = temporaryFile()
+        let parent = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let original = Data("recoverable original".utf8)
+        try original.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: parent.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path) }
+        let shelf = DesktopArtifactShelf(fileURL: url)
+        // Once the directory becomes writable, later edits must still preserve the unreadable original.
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path)
+        let owner = UUID()
+        shelf.pin(messageID: UUID(), kind: .message, text: "new pin", in: owner)
+        XCTAssertEqual(try Data(contentsOf: url), original)
+        XCTAssertNotNil(shelf.errorMessage)
+        XCTAssertEqual(shelf.pins(for: owner).map(\.text), ["new pin"])
+    }
+
     func testDeletingConversationRemovesItsPins() async throws {
         let settings = DesktopSettings(defaults: UserDefaults(suiteName: "amber.shelf.\(UUID().uuidString)")!, credentials: DesktopMemoryCredentials())
         let kept = DesktopConversation(title: "保留", messages: [DesktopMessage(role: .assistant, text: "保留内容")])
@@ -76,6 +111,26 @@ import XCTest
         let restored = try XCTUnwrap(result.conversations.first { $0.title == "原会话" })
         XCTAssertNotEqual(restored.id, original.id)
         XCTAssertEqual(shelf.pins(for: restored.id).map(\.messageID), [original.messages[0].id])
+    }
+
+    func testDeletingConversationReportsShelfCleanupFailure() async throws {
+        let settings = DesktopSettings(defaults: UserDefaults(suiteName: "amber.shelf.delete.\(UUID().uuidString)")!, credentials: DesktopMemoryCredentials())
+        let conversation = DesktopConversation(messages: [DesktopMessage(role: .assistant, text: "pinned")])
+        let url = temporaryFile()
+        let shelf = DesktopArtifactShelf(fileURL: url)
+        shelf.pin(messageID: conversation.messages[0].id, kind: .message, text: "pinned", in: conversation.id)
+        let parent = url.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: parent.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path) }
+        let workspace = DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage([conversation]),
+            provider: NoProvider(), initialConversations: [conversation], artifactShelf: shelf)
+
+        workspace.delete(conversation.id)
+        _ = await workspace.flush()
+
+        XCTAssertFalse(workspace.summaries.contains { $0.id == conversation.id })
+        XCTAssertTrue(workspace.errorMessage?.contains("清理失败") == true)
+        XCTAssertTrue(shelf.pins(for: conversation.id).isEmpty)
     }
 
     func testFindMatchesVisibleTextCaseInsensitivelyAndWraps() {

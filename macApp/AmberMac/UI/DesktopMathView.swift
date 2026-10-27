@@ -5,10 +5,10 @@ import SwiftUI
 struct DesktopMathBlock: View {
     let source: String
     let fontSize: Double
+    @State private var validityCache = DesktopMathBlockValidityCache()
+
     var body: some View {
-        let parsed = MTMathUILabel()
-        let _ = { parsed.latex = source }()
-        if parsed.error != nil {
+        if !validityCache.isValid(source) {
             Text(verbatim: "$$\n" + source + "\n$$")
                 .font(.system(size: fontSize - 2, design: .monospaced))
                 .textSelection(.enabled)
@@ -24,10 +24,23 @@ struct DesktopMathView: NSViewRepresentable {
     let fontSize: Double
     @Environment(\.colorScheme) private var scheme
 
+    final class Coordinator {
+        var source: String?
+        var fontSize: Double?
+        var dark: Bool?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> MTMathUILabel { MTMathUILabel() }
     func updateNSView(_ view: MTMathUILabel, context: Context) {
+        let dark = scheme == .dark
+        guard context.coordinator.source != source || context.coordinator.fontSize != fontSize
+            || context.coordinator.dark != dark else { return }
+        context.coordinator.source = source
+        context.coordinator.fontSize = fontSize
+        context.coordinator.dark = dark
         view.fontSize = fontSize
-        view.textColor = scheme == .dark ? .white : .black
+        view.textColor = dark ? .white : .black
         view.labelMode = .display
         view.latex = source
         view.setAccessibilityLabel("公式：" + source)
@@ -36,6 +49,52 @@ struct DesktopMathView: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: MTMathUILabel, context: Context) -> CGSize? {
         let size = nsView.intrinsicContentSize
         return CGSize(width: ceil(size.width), height: ceil(size.height) + 1)
+    }
+}
+
+private final class DesktopMathBlockValidityCache {
+    private var source: String?
+    private var valid = false
+
+    @MainActor func isValid(_ source: String) -> Bool {
+        if self.source == source { return valid }
+        let parsed = MTMathUILabel()
+        parsed.latex = source
+        self.source = source
+        valid = parsed.error == nil
+        return valid
+    }
+}
+
+private final class DesktopMathTextCache {
+    private struct Key: Equatable {
+        let source: String
+        let fontSize: Double
+        let dark: Bool
+    }
+
+    private var key: Key?
+    private var value: Text?
+
+    @MainActor
+    func render(source: String, fontSize: Double, dark: Bool) -> Text {
+        let next = Key(source: source, fontSize: fontSize, dark: dark)
+        if key == next, let value { return value }
+        let rendered = DesktopMathText.render(source, fontSize: fontSize, scheme: dark ? .dark : .light)
+        key = next
+        value = rendered
+        return rendered
+    }
+}
+
+struct DesktopMathTextView: View {
+    let source: String
+    let fontSize: Double
+    @Environment(\.colorScheme) private var scheme
+    @State private var cache = DesktopMathTextCache()
+
+    var body: some View {
+        cache.render(source: source, fontSize: fontSize, dark: scheme == .dark)
     }
 }
 
