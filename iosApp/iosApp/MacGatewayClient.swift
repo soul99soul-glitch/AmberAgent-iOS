@@ -103,6 +103,38 @@ struct MacGatewaySchedule: Decodable, Equatable, Sendable, Identifiable {
     var autoApprovesHighRisk: Bool
 }
 
+/// One card on the Mac's task board (`/v1/amber/board`). Grouped and ordered on the Mac; the phone renders it as is.
+struct MacGatewayBoardItem: Decodable, Equatable, Sendable, Identifiable {
+    enum Kind: String, Decodable, Sendable { case schedule, run, agentSession }
+    enum Column: String, Decodable, Sendable, CaseIterable { case needsYou, running, scheduled, done }
+    struct Approval: Decodable, Equatable, Sendable {
+        var sessionKey: String
+        var toolCallId: String
+        var tool: String
+        var detail: String?
+        /// High-risk calls are only approved on the Mac; the phone can still deny.
+        var highRisk: Bool
+    }
+
+    var id: String
+    var kind: Kind
+    var column: Column
+    var title: String
+    var detail: String
+    var updatedAt: Date
+    var scheduleId: String?
+    var nextRunAt: Date?
+    var waitingForReply: Bool
+    var failed: Bool
+    var approval: Approval?
+
+    /// Gateway session key of an agent session card (`session:<key>`).
+    var sessionKey: String? {
+        guard kind == .agentSession, id.hasPrefix("session:") else { return nil }
+        return String(id.dropFirst("session:".count))
+    }
+}
+
 /// What the phone can set on a new task. Approval rules are Mac-only: remote tasks start with nothing auto-approved.
 struct MacGatewayScheduleDraft: Equatable, Sendable {
     enum Rule: String, CaseIterable, Sendable { case daily, weekdays, weekly, interval }
@@ -263,6 +295,12 @@ actor MacGatewayClient {
         struct Response: Decodable { var schedules: [MacGatewaySchedule] }
         let response: Response = try decode(await send("GET", "/v1/amber/schedules", slow: true))
         return response.schedules
+    }
+
+    func board() async throws -> [MacGatewayBoardItem] {
+        struct Response: Decodable { var board: [MacGatewayBoardItem] }
+        let response: Response = try decode(await send("GET", "/v1/amber/board", slow: true))
+        return response.board
     }
 
     func createSchedule(_ draft: MacGatewayScheduleDraft) async throws {

@@ -60,7 +60,7 @@ struct MacGatewayTests {
     }
 
     @Test func approvalNotificationActionsMapToDecisions() {
-        let info: [AnyHashable: Any] = ["sessionKey": "amber:run-1", "toolCallId": "c1", "deepLink": "amber://settings/mac-gateway"]
+        let info: [AnyHashable: Any] = ["sessionKey": "amber:run-1", "toolCallId": "c1", "deepLink": "amber://tasks"]
         #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.approveAction, userInfo: info)
                 == .init(sessionKey: "amber:run-1", toolCallId: "c1", allow: true))
         #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.denyAction, userInfo: info)?.allow == false)
@@ -97,10 +97,76 @@ struct MacGatewayTests {
         #expect(list.first?.autoApprovesHighRisk == true && list.first?.nextRunAt == nil)
     }
 
-    @Test func macGatewaySettingsDeepLinkRoundTrips() throws {
-        let url = try #require(URL(string: "amber://settings/mac-gateway"))
-        #expect(IOSAppDeepLink.parse(url) == .macGateway)
-        #expect(IOSAppDeepLink.url(for: .macGateway) == url)
+    @Test func tasksDeepLinkRoundTripsAndLegacyPushLinkLandsOnBoard() throws {
+        let url = try #require(URL(string: "amber://tasks"))
+        #expect(IOSAppDeepLink.parse(url) == .macTasks)
+        #expect(IOSAppDeepLink.url(for: .macTasks) == url)
+        // Gateway pushes still carry the Settings link; it opens the board now.
+        let legacy = try #require(URL(string: "amber://settings/mac-gateway"))
+        #expect(IOSAppDeepLink.parse(legacy) == .macTasks)
+        for text in ["amber://tasks/x", "amber://tasks?x=1"] {
+            let other = try #require(URL(string: text))
+            #expect(IOSAppDeepLink.parse(other) == nil, "\(text)")
+        }
+    }
+
+    private static let boardJSON = #"{"status":200,"board":[{"id":"run:A","kind":"run","column":"needsYou","title":"每日汇总","detail":"等你确认 · workspace_file_write","updatedAt":1800000000,"scheduleId":"A","conversationId":"C","waitingForReply":false,"failed":false,"approval":{"sessionKey":"amber:r1","toolCallId":"c1","tool":"workspace_file_write","detail":"path a.txt","highRisk":false}},{"id":"session:claude:s1","kind":"agentSession","column":"running","title":"重构看板","detail":"Claude Code · 运行中","updatedAt":1800000100,"waitingForReply":false,"failed":false},{"id":"schedule:B","kind":"schedule","column":"scheduled","title":"清理","detail":"每天 03:00","updatedAt":1800003600,"scheduleId":"B","nextRunAt":1800003600,"waitingForReply":false,"failed":false},{"id":"done:R","kind":"run","column":"done","title":"清理","detail":"删了 3 个文件","updatedAt":1799990000,"scheduleId":"B","waitingForReply":false,"failed":true}]}"#
+
+    private static func decodeBoard() throws -> [MacGatewayBoardItem] {
+        struct Response: Decodable { var board: [MacGatewayBoardItem] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode(Response.self, from: Data(boardJSON.utf8)).board
+    }
+
+    @Test func boardDecodesGatewayItems() throws {
+        let board = try Self.decodeBoard()
+        #expect(board.map(\.column) == [.needsYou, .running, .scheduled, .done])
+        #expect(board[0].approval?.sessionKey == "amber:r1" && board[0].approval?.highRisk == false)
+        #expect(board[1].sessionKey == "claude:s1" && board[0].sessionKey == nil)
+        #expect(board[2].nextRunAt == Date(timeIntervalSince1970: 1_800_003_600))
+        #expect(board[3].failed && board[3].approval == nil)
+    }
+
+    @Test func boardLayoutKeepsMacOrderSkipsEmptyGroupsAndAddsDisabledSchedules() throws {
+        let board = try Self.decodeBoard()
+        let schedule = MacGatewaySchedule(id: "B", name: "清理", rule: "每天 03:00", enabled: true, running: false,
+                                          autoApprovesHighRisk: false)
+        var off = schedule
+        off.id = "D"; off.name = "周报"; off.enabled = false
+        let groups = MacTasksBoardLayout.groups(items: board, schedules: [schedule, off])
+        #expect(groups.map(\.column) == [.needsYou, .running, .scheduled, .done])
+        #expect(groups[2].rows.map(\.id) == ["schedule:B", "schedule-off:D"])
+        #expect(groups[2].rows.allSatisfy { $0.showsScheduleControls })
+        #expect(!groups[0].rows[0].showsScheduleControls, "runs get no run-now/enable controls")
+        #expect(groups[3].rows[0].icon == "exclamationmark.triangle")
+
+        // Just switched on, before the board lists it: shown once, not dropped.
+        var justOn = off
+        justOn.enabled = true
+        let pending = MacTasksBoardLayout.groups(items: board, schedules: [schedule, justOn])
+        #expect(pending[2].rows.map(\.id) == ["schedule:B", "schedule-off:D"])
+        // Just switched off while the board still lists it: not duplicated.
+        var justOff = schedule
+        justOff.enabled = false
+        #expect(MacTasksBoardLayout.groups(items: board, schedules: [justOff])[2].rows.map(\.id) == ["schedule:B"])
+
+        let onlyRunning = MacTasksBoardLayout.groups(items: board.filter { $0.column == .running }, schedules: nil)
+        #expect(onlyRunning.map(\.column) == [.running], "empty groups are not shown")
+    }
+
+    @Test @MainActor func fallbackBoardGroupsGatewaySessionsWithoutAmber() throws {
+        let json = #"{"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[{"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","abnormal":false,"monitored":true,"updatedAt":1800000000},{"key":"amber:r2","agent":"amber","subject":"清理","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1799999000,"pendingApproval":{"toolCallId":"c9","tool":"shell_run","highRisk":true}},{"key":"codex:a","agent":"codex","subject":"p","summary":"修 bug","origin":"interactive","state":"stopped","abnormal":true,"monitored":true,"updatedAt":1800000000},{"key":"claude:b","agent":"claude","subject":"q","origin":"interactive","state":"waiting","waitReason":"input","abnormal":false,"monitored":true,"updatedAt":1800000050},{"key":"claude:c","agent":"claude","subject":"r","origin":"interactive","state":"stalled","abnormal":false,"monitored":true,"updatedAt":1800000010}]}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let status = try decoder.decode(MacGatewayStatus.self, from: Data(json.utf8))
+        let board = MacGatewayStore.fallbackBoard(sessions: status.sessions)
+        #expect(board.map(\.id) == ["session:claude:b", "run:amber:r2", "session:claude:c", "session:codex:a"],
+                "Amber runs appear only while a tool call waits on the phone")
+        #expect(board.map(\.column) == [.needsYou, .needsYou, .running, .done])
+        #expect(board[0].waitingForReply && board[0].detail.hasPrefix("Claude Code"))
+        #expect(board[1].approval == .init(sessionKey: "amber:r2", toolCallId: "c9", tool: "shell_run", detail: nil, highRisk: true))
+        #expect(board[3].title == "修 bug" && board[3].failed)
     }
 
     @Test func gatewayPairDeepLinkRoundTrips() throws {

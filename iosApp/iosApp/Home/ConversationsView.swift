@@ -22,6 +22,7 @@ struct ConversationsView: View {
     @Namespace private var homeSearchNamespace
     @State private var deepReadStore = IOSDeepReadStore.shared
     @State private var miniAppRepository = IOSMiniAppRepository.shared
+    @State private var macGateway = MacGatewayStore.shared
     @State private var renamingConversationId: KotlinUuid?
     @State private var renameDraft: String = ""
     @State private var deletingConversationId: KotlinUuid?
@@ -171,6 +172,11 @@ struct ConversationsView: View {
             Task { await novelCreationViewModel?.loadProjects(restoresSelection: false) }
             guard !cascadeComplete else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { cascadeComplete = true }
+        }
+        // 首页只在出现时拉一次 Mac 任务看板（徽标 + 继续卡），不轮询。
+        .task {
+            guard macGateway.connection != nil else { return }
+            await macGateway.refresh()
         }
         .task(id: homeImageGenerationScanSignature) {
             let context = await chatViewModel.latestImageGenerationResumeContext()
@@ -566,12 +572,16 @@ struct ConversationsView: View {
             )
         }
 
+        // Empty while unpaired or unreachable, so stale board items never surface.
+        let macTasks = macGateway.needsYouItems.map(HomeMacTaskRef.init)
+
         return HomeContinueCardModel.resolve(
             novelProjects: novelProjects,
             councilTask: councilTask,
             deepReadTasks: deepReadTasks,
             miniApps: miniApps,
-            imageGeneration: imageGeneration
+            imageGeneration: imageGeneration,
+            macTasks: macTasks
         )
     }
 
@@ -588,6 +598,7 @@ struct ConversationsView: View {
                         case .miniAppRunner(let id): router.navigate(to: .miniAppRunner(appId: id))
                         case .generatedImage(let anchor):
                             openGeneratedImage(anchor)
+                        case .macTasks: router.navigate(to: .macTasks)
                         }
                     }
                     Rectangle().fill(AmberTheme.separator).frame(height: 1 / displayScale).padding(.horizontal, 16)
@@ -617,12 +628,13 @@ struct ConversationsView: View {
     private var shortcutRow: some View {
         if dynamicTypeSize.isAccessibilitySize {
             ScrollView(.horizontal) {
+                // Vertical padding inside the scroll view so the shortcut badge isn't clipped.
                 HStack(spacing: 0) { shortcutButtons }
                     .padding(.horizontal, 8)
+                    .padding(.vertical, 9)
+                    .padding(.bottom, 2)
             }
             .scrollIndicators(.hidden)
-            .padding(.vertical, 9)
-            .padding(.bottom, 2)
         } else {
             HStack(spacing: 0) { shortcutButtons }
                 .padding(.vertical, 9)
@@ -634,7 +646,7 @@ struct ConversationsView: View {
     private var shortcutButtons: some View {
         HomeShortcut(entry: .deepRead) { router.navigate(to: .board) }
             .accessibilityFocused($deepReadShortcutFocused)
-        HomeShortcut(entry: .novel) { router.navigate(to: .novelCreation) }
+        HomeShortcut(entry: .tasks, badge: macGateway.needsYouCount) { router.navigate(to: .macTasks) }
         HomeShortcut(entry: .council) { router.navigate(to: .council) }
         HomeShortcut(entry: .miniApps) { router.navigate(to: .miniApps) }
         HomeShortcut(entry: .webMount) { router.navigate(to: .webMount) }

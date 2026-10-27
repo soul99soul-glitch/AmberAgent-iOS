@@ -185,7 +185,7 @@ enum AmberPageSurface: Hashable {
 /// Semantic home shortcut entry — layout/identity fixed; glyph skin is style-swappable.
 enum HomeShortcutEntry: String, CaseIterable, Identifiable {
     case deepRead
-    case novel
+    case tasks
     case council
     case miniApps
     case webMount
@@ -195,7 +195,7 @@ enum HomeShortcutEntry: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .deepRead: "深度阅读"
-        case .novel: "小说创作"
+        case .tasks: "任务"
         case .council: "模型议会"
         case .miniApps: "小应用"
         case .webMount: "WebMount"
@@ -206,7 +206,7 @@ enum HomeShortcutEntry: String, CaseIterable, Identifiable {
     var phosphor: HomePhosphor {
         switch self {
         case .deepRead: .bookOpen
-        case .novel: .notebook
+        case .tasks: .listChecks
         case .council: .chatCircleDots
         case .miniApps: .squaresFour
         case .webMount: .globe
@@ -1339,7 +1339,7 @@ struct HomeShortcutIconView: View {
     private var outlineSymbol: String {
         switch entry {
         case .deepRead: "book"
-        case .novel: "pencil.and.outline"
+        case .tasks: "checklist"
         case .council: "bubble.left.and.bubble.right"
         case .miniApps: "square.grid.2x2"
         case .webMount: "globe"
@@ -1391,7 +1391,7 @@ enum HomePixelSitGlyph {
     static func bits(for entry: HomeShortcutEntry) -> [UInt16] {
         switch entry {
         case .deepRead: book
-        case .novel: notebook
+        case .tasks: checklist
         case .council: chat
         case .miniApps: grid
         case .webMount: globe
@@ -1418,22 +1418,22 @@ enum HomePixelSitGlyph {
         0b0000000000000000,
     ]
 
-    // Notebook with spine (novel)
-    private static let notebook: [UInt16] = [
+    // Checklist: three check marks + bars (tasks)
+    private static let checklist: [UInt16] = [
         0b0000000000000000,
-        0b0011111111111100,
-        0b0011000000001100,
-        0b0011011111101100,
-        0b0011000000001100,
-        0b0011011111101100,
-        0b0011000000001100,
-        0b0011011111101100,
-        0b0011000000001100,
-        0b0011011111101100,
-        0b0011000000001100,
-        0b0011011111101100,
-        0b0011000000001100,
-        0b0011111111111100,
+        0b0000000000000000,
+        0b0000010000000000,
+        0b0000100000000000,
+        0b1001000111111110,
+        0b0110000111111110,
+        0b0000010000000000,
+        0b0000100000000000,
+        0b1001000111111110,
+        0b0110000111111110,
+        0b0000010000000000,
+        0b0000100000000000,
+        0b1001000111111110,
+        0b0110000111111110,
         0b0000000000000000,
         0b0000000000000000,
     ]

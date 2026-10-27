@@ -17,8 +17,9 @@ enum IOSAppDeepLink {
         case deepReadTask(id: String)
         /// `amber://gateway/pair?p=<base64url>` from the `amber-gateway pair` QR code.
         case gatewayPair(payload: String)
-        /// Settings › Mac Gateway; where Mac Gateway pushes about Amber scheduled tasks land.
-        case macGateway
+        /// Task board of the paired Mac: `amber://tasks`. Mac Gateway pushes still carry the older
+        /// `amber://settings/mac-gateway`, which lands here too.
+        case macTasks
     }
 
     static func parse(
@@ -58,7 +59,9 @@ enum IOSAppDeepLink {
         case ("settings", ["apple-integrations"]) where queryItems.isEmpty:
             return .appleIntegrations
         case ("settings", ["mac-gateway"]) where queryItems.isEmpty:
-            return .macGateway
+            return .macTasks
+        case ("tasks", []) where queryItems.isEmpty:
+            return .macTasks
         case (AgentActivityDeepLink.deepReadHost, let parts) where parts.count == 1 && queryItems.isEmpty:
             guard isSafeIdentifier(parts[0], maxLength: 64) else { return nil }
             return .deepReadTask(id: parts[0])
@@ -105,9 +108,8 @@ enum IOSAppDeepLink {
         case .appleIntegrations:
             components.host = "settings"
             components.path = "/apple-integrations"
-        case .macGateway:
-            components.host = "settings"
-            components.path = "/mac-gateway"
+        case .macTasks:
+            components.host = "tasks"
         case .gatewayPair(let payload):
             guard isSafeIdentifier(payload, maxLength: MacGatewayPairingPayload.maximumLinkLength) else { return nil }
             components.host = "gateway"

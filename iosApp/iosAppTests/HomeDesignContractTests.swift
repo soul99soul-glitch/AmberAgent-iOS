@@ -318,6 +318,59 @@ final class HomeDesignContractTests: XCTestCase {
         XCTAssertTrue(selected.meta.contains("同步失败"))
     }
 
+    func testNeedsYouMacTaskBeatsActiveDeepReadAndDraftNovel() throws {
+        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let novel = HomeNovelProjectRef(
+            id: NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000020")!),
+            name: "雾城",
+            updatedAt: now,
+            isDegraded: false
+        )
+        let runningRead = HomeDeepReadTaskRef(
+            id: "read-running",
+            title: "Agent 趋势",
+            status: .running,
+            updatedAt: now,
+            workspaceSyncFailed: nil
+        )
+        let approval = HomeMacTaskRef(
+            id: "run:1",
+            title: "每日汇总",
+            waitingForReply: false,
+            updatedAt: now.addingTimeInterval(-600)
+        )
+
+        let selected = try XCTUnwrap(HomeContinueCardModel.resolve(
+            novelProjects: [novel],
+            deepReadTasks: [runningRead],
+            macTasks: [approval],
+            now: now
+        ))
+        XCTAssertEqual(selected.feature, .macTask)
+        XCTAssertEqual(selected.destination, .macTasks)
+        XCTAssertEqual(selected.title, "每日汇总")
+        XCTAssertTrue(selected.meta.contains("Mac"))
+        XCTAssertTrue(selected.meta.contains("等你确认"))
+        XCTAssertFalse(selected.meta.contains("等你回复"))
+        XCTAssertEqual(selected.ctaTitle, "处理")
+
+        let reply = HomeMacTaskRef(
+            id: "session:abc",
+            title: "修复构建",
+            waitingForReply: true,
+            updatedAt: now.addingTimeInterval(-300)
+        )
+        let replySelected = try XCTUnwrap(HomeContinueCardModel.resolve(
+            novelProjects: [novel],
+            deepReadTasks: [runningRead],
+            macTasks: [reply],
+            now: now
+        ))
+        XCTAssertEqual(replySelected.title, "修复构建")
+        XCTAssertTrue(replySelected.meta.contains("等你回复"))
+        XCTAssertFalse(replySelected.meta.contains("等你确认"))
+    }
+
     func testCompletedImageResultBeatsDraftButNotRecoverableWork() throws {
         let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
         let image = HomeImageGenerationRef(
