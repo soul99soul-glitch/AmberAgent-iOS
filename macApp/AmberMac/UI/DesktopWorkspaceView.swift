@@ -46,6 +46,13 @@ struct DesktopWorkspaceView: View {
             GeometryReader { geometry in
             let docked = inspectorVisible && geometry.size.width >= Self.inspectorDockWidth
             HStack(spacing: 0) {
+            if workspace.showsTaskBoard, let scheduler = workspace.scheduler {
+                DesktopBoardView(workspace: workspace, scheduler: scheduler) { conversation in
+                    workspace.showsTaskBoard = false
+                    workspace.select(conversation)
+                }
+                .transition(.opacity)
+            } else {
             VStack(spacing: 0) {
                 if workspace.isLoading {
                     ProgressView("正在读取会话…").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -90,7 +97,8 @@ struct DesktopWorkspaceView: View {
             }
             .animation(.spring(response: 0.38, dampingFraction: 0.86), value: workspace.selectedID)
             .background(DesktopTheme.paper)
-            if docked {
+            }
+            if docked, !workspace.showsTaskBoard {
                 DesktopInspector(workspace: workspace,
                     onLocate: { messageID in
                         guard let conversationID = workspace.selectedID else { return }
@@ -104,7 +112,7 @@ struct DesktopWorkspaceView: View {
             .animation(.smooth(duration: 0.3), value: docked)
             .onChange(of: docked, initial: true) { _, value in inspectorDocked = value }
             }
-            .navigationTitle(workspace.selectedConversationTitle)
+            .navigationTitle(workspace.showsTaskBoard ? "任务" : workspace.selectedConversationTitle)
             .toolbar { toolbar }
             .toolbarBackground(DesktopTheme.paper, for: .windowToolbar)
             .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
@@ -121,10 +129,6 @@ struct DesktopWorkspaceView: View {
             }
         }
         .sheet(isPresented: $recipesPresented) { DesktopRecipesView(workspace: workspace) }
-        .sheet(isPresented: Binding(get: { workspace.showsScheduledTasks && workspace.scheduler != nil },
-            set: { workspace.showsScheduledTasks = $0 })) {
-            if let scheduler = workspace.scheduler { DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler) }
-        }
         .sheet(isPresented: $searchSettingsPresented) { DesktopSearchSettingsView(settings: workspace.searchSettings) }
         .sheet(item: $imageGenerationOwner) { owner in
             DesktopImageGenerationView(workspace: workspace, ownerID: owner.id)
@@ -178,6 +182,8 @@ struct DesktopWorkspaceView: View {
             .padding(.trailing, 12)
             .padding(.top, 8)
             .padding(.bottom, 12)
+
+            if workspace.scheduler != nil { tasksRow }
 
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
@@ -289,7 +295,7 @@ struct DesktopWorkspaceView: View {
                         .disabled(workspace.selectedID == nil || workspace.selectedConversationUnavailable)
                     Button("Recipe 自动流程", systemImage: "list.number") { recipesPresented = true }
                     if workspace.scheduler != nil {
-                        Button("定时任务", systemImage: "clock") { workspace.showsScheduledTasks = true }
+                        Button("任务看板", systemImage: "clock") { workspace.showsTaskBoard = true }
                     }
                     Button("图片生成", systemImage: "photo.badge.plus") {
                         if let owner = workspace.imageGeneration.isRunning ? workspace.imageGeneration.ownerID : workspace.selectedID {
@@ -336,7 +342,34 @@ struct DesktopWorkspaceView: View {
         return .handled
     }
 
+    /// 「任务」: opens the task board in the main area; the badge counts items waiting for the user.
+    private var tasksRow: some View {
+        DesktopSelectableRow(selected: workspace.showsTaskBoard, action: { workspace.showsTaskBoard = true }) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).frame(width: 18)
+                    .accessibilityHidden(true)
+                Text("任务").font(.system(size: 13, weight: .medium)).foregroundStyle(DesktopTheme.ink)
+                Spacer(minLength: 0)
+                if workspace.boardNeedsYouCount > 0 {
+                    Text("\(workspace.boardNeedsYouCount)").font(.system(size: 11, weight: .semibold)).foregroundStyle(DesktopTheme.paper)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(DesktopTheme.accent, in: Capsule())
+                        .accessibilityLabel("\(workspace.boardNeedsYouCount) 项等你处理")
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+        .task {
+            while !Task.isCancelled {
+                workspace.refreshBoardBadge()
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
     private func selectResult(_ result: DesktopConversationSearchResult) {
+        workspace.showsTaskBoard = false
         if let messageID = result.messageID {
             transcriptFocus = DesktopTranscriptFocus(conversationID: result.conversationID, messageID: messageID)
         } else {
@@ -458,10 +491,12 @@ struct DesktopWorkspaceView: View {
             .help(workspace.settings.selectedModelID == nil ? "在设置中添加服务商与模型"
                 : workspace.settings.selectedProvider.map { "\($0.name) · \($0.modelID)" } ?? "在设置中添加服务商与模型")
             .accessibilityLabel("选择服务商与模型")
+            if !workspace.showsTaskBoard {
             Button { withAnimation(.smooth(duration: 0.3)) { inspectorVisible.toggle() } } label: { Image(systemName: "sidebar.right") }
                 .help(inspectorVisible ? "隐藏右侧面板" : "显示右侧面板（窗口足够宽时常驻）")
                 .accessibilityLabel("右侧面板")
-            if !inspectorDocked {
+            }
+            if !inspectorDocked, !workspace.showsTaskBoard {
             Button { insightsPresented.toggle() } label: { Image(systemName: "text.bubble") }
                 .disabled(workspace.selectedConversation == nil || workspace.isLoading)
                 .help("上下文与回顾")

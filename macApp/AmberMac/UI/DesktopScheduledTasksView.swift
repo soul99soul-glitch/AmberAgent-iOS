@@ -4,7 +4,11 @@ import SwiftUI
 struct DesktopScheduledTasksView: View {
     let workspace: DesktopWorkspace
     let scheduler: DesktopScheduler
+    /// Task to open first; `newTaskMarker` starts a new one; nil selects the first task.
+    var initialSelection: UUID?
     var onOpenConversation: ((UUID) -> Void)?
+
+    static let newTaskMarker = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedID: UUID?
@@ -62,7 +66,9 @@ struct DesktopScheduledTasksView: View {
         .tint(DesktopTheme.accent)
         .task {
             await scheduler.waitUntilLoaded()
-            if selectedID == nil, let first = scheduler.tasks.first { select(first) }
+            if initialSelection == Self.newTaskMarker { newTask() }
+            else if let id = initialSelection, let task = scheduler.tasks.first(where: { $0.id == id }) { select(task) }
+            else if selectedID == nil, let first = scheduler.tasks.first { select(first) }
         }
         .confirmationDialog("删除这个定时任务？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
             titleVisibility: .visible) {

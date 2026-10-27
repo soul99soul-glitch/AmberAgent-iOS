@@ -27,8 +27,8 @@ struct DesktopScheduleMenu: View {
         Divider()
         Button("打开 Amber") { openMain() }
             .keyboardShortcut("o")
-        Button("定时任务…") {
-            workspace.showsScheduledTasks = true
+        Button("任务看板…") {
+            workspace.showsTaskBoard = true
             openMain()
         }
         Toggle("暂停所有定时任务", isOn: Binding(get: { scheduler.isPaused }, set: { scheduler.isPaused = $0 }))

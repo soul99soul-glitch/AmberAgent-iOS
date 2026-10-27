@@ -172,7 +172,14 @@ import ServiceManagement
         _ = scheduler.runNow(daily.id)
         try await Task.sleep(for: .milliseconds(100))
         let view = DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler)
+        let board = DesktopBoardView(workspace: workspace, scheduler: scheduler, onOpenConversation: { _ in })
+        workspace.showsTaskBoard = true
         for dark in [false, true] {
+            try await capture("board-window-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: workspace, searchRequest: 0), 1440, 860, dark, settle: .milliseconds(1600))
+        }
+        for dark in [false, true] {
+            try await capture("board-wide-\(dark ? "dark" : "light")", board, 1280, 720, dark, settle: .milliseconds(1400))
+            try await capture("board-narrow-\(dark ? "dark" : "light")", board, 760, 900, dark, settle: .milliseconds(1400))
             try await capture("schedules-\(dark ? "dark" : "light")", view.background(DesktopTheme.paper), 900, 700, dark)
             // Full-height editor so the approval section and run history are visible too.
             try await capture("schedules-full-\(dark ? "dark" : "light")", view.frame(height: 1500).background(DesktopTheme.paper), 900, 1500, dark)

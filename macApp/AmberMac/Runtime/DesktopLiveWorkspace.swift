@@ -65,3 +65,8 @@ import Foundation
         }
     }
 }
+
+@MainActor extension DesktopWorkspace {
+    /// The tool-running provider in the live app (and agent tests); nil for previews and plain-text fakes.
+    var agentProvider: DesktopAgentProvider? { provider as? DesktopAgentProvider }
+}

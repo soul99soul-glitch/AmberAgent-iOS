@@ -53,6 +53,18 @@ final class DesktopWorkspace {
     var gatewayReporter: DesktopGatewayReporter?
     var gatewayControl: DesktopGatewayControl?
 
+    @ObservationIgnored private var registryCache: (modified: Date, sessions: [SessionRecord])?
+
+    /// The gateway's sessions, re-read only when registry.json changed (the board and badge poll every few seconds).
+    private func gatewaySessions() -> [SessionRecord] {
+        let url = GatewayPaths.resolve().registry
+        let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        if let registryCache, registryCache.modified == modified { return registryCache.sessions }
+        let sessions = Array(RegistryStore(url: url).load().sessions.values)
+        registryCache = (modified, sessions)
+        return sessions
+    }
+
     /// The task board: scheduled tasks, their runs, and the gateway's Claude Code / Codex sessions.
     func boardItems(now: Date = Date()) -> [AmberControl.BoardItem] {
         guard let scheduler else { return [] }
@@ -61,11 +73,17 @@ final class DesktopWorkspace {
                 approval: agentTasks.records.first { $0.conversationID == conversation && $0.status == .waiting }?.approval,
                 conversationID: conversation)
         }
-        let sessions = gateway?.isEnabled == true ? Array(RegistryStore(url: GatewayPaths.resolve().registry).load().sessions.values) : []
+        let sessions = gateway?.isEnabled == true ? gatewaySessions() : []
         return DesktopBoard.build(tasks: scheduler.tasks, live: live, paused: scheduler.isPaused, sessions: sessions, now: now)
     }
-    /// Opens the scheduled-tasks page (menu bar item, notifications).
-    var showsScheduledTasks = false
+    /// The main window shows the task board instead of a conversation (sidebar 「任务」, menu bar, notifications).
+    var showsTaskBoard = false
+    /// Items that need the user, for the sidebar badge; refreshed by the board and the sidebar poll.
+    private(set) var boardNeedsYouCount = 0
+
+    func refreshBoardBadge(from items: [AmberControl.BoardItem]? = nil) {
+        boardNeedsYouCount = (items ?? boardItems()).filter { $0.column == .needsYou }.count
+    }
     private(set) var savingCollaborationRuns: Set<UUID> = []
     private(set) var savedCollaborationRuns: Set<UUID> = []
     private(set) var collaborationSaveErrors: [UUID: String] = [:]
@@ -84,9 +102,7 @@ final class DesktopWorkspace {
     @ObservationIgnored private var fileReadFailures: Set<UUID> = []
 
     @ObservationIgnored private let storage: any DesktopConversationStorage
-    @ObservationIgnored private let provider: any DesktopTextProvider
-    /// The tool-running provider in the live app (and agent tests); nil for previews and plain-text fakes.
-    var agentProvider: DesktopAgentProvider? { provider as? DesktopAgentProvider }
+    @ObservationIgnored let provider: any DesktopTextProvider
     @ObservationIgnored private var persistence: Task<Void, Never>?
     @ObservationIgnored private var generation: DesktopGeneration?
     @ObservationIgnored private var generationID: UUID?
@@ -309,6 +325,7 @@ final class DesktopWorkspace {
 
     func createConversation() {
         guard !isLoading else { return }
+        showsTaskBoard = false
         saveDraft()
         let conversation = DesktopConversation()
         conversations.insert(conversation, at: 0)
@@ -322,6 +339,7 @@ final class DesktopWorkspace {
 
     func select(_ id: UUID) {
         guard summaries.contains(where: { $0.id == id }) else { return }
+        showsTaskBoard = false
         if selectedID != id {
             saveDraft()
             selectedID = id
@@ -1528,6 +1546,7 @@ final class DesktopWorkspace {
                 conversations.insert(saved, at: 0)
                 updateSummary(saved)
                 selectedID = saved.id
+                showsTaskBoard = false
                 reloadFiles()
                 insights.load(saved.id)
                 draft = ""
