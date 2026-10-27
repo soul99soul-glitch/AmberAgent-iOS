@@ -23,6 +23,11 @@ import Foundation
         self.paths = paths; self.isEnabled = isEnabled; self.process = process
     }
 
+    /// Conversation of a reported run, from its gateway session key (`amber:<run id>`).
+    func conversation(forSessionKey key: String) -> UUID? {
+        runs.first { "amber:" + $0.value.session == key }?.key
+    }
+
     /// Whether a run is reported is decided once, here: a run the gateway saw start always gets its end,
     /// even if the gateway is switched off meanwhile, so no session is left open on the phone.
     func runStarted(runID: UUID, conversationID: UUID, taskName: String) {

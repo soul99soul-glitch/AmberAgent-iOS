@@ -34,4 +34,6 @@ xcodebuild -quiet -project AmberMac.xcodeproj -scheme AmberMac \
   "AMBER_MAC_PROVIDER_TEST_URL=http://127.0.0.1:$fixture_port" \
   "AMBER_MAC_PERFORMANCE_BENCHMARK=${AMBER_MAC_PERFORMANCE_BENCHMARK:-}" \
   "AMBER_MAC_GATEWAY_LIVE=${AMBER_MAC_GATEWAY_LIVE:-}" \
+  "AMBER_MAC_GATEWAY_PHONE=${AMBER_MAC_GATEWAY_PHONE:-}" \
+  "AMBER_MAC_GATEWAY_SCHEDULES=${AMBER_MAC_GATEWAY_SCHEDULES:-}" \
   -only-testing:AmberMacTests/KMPProviderIntegrationTests test

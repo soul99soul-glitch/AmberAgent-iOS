@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import Testing
+import UserNotifications
 @testable import iosApp
 
 @Suite("Mac Gateway")
@@ -49,6 +50,50 @@ struct MacGatewayTests {
         #expect(status.sessions[0].pendingApproval?.toolCallId == "c1")
         #expect(status.sessions[0].pendingApproval?.highRisk == false)
         #expect(status.sessions[1].pendingApproval == nil, "older gateways and agent sessions omit the field")
+    }
+
+    @Test func approvalNotificationActionsMapToDecisions() {
+        let info: [AnyHashable: Any] = ["sessionKey": "amber:run-1", "toolCallId": "c1", "deepLink": "amber://settings/mac-gateway"]
+        #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.approveAction, userInfo: info)
+                == .init(sessionKey: "amber:run-1", toolCallId: "c1", allow: true))
+        #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.denyAction, userInfo: info)?.allow == false)
+        #expect(MacGatewayApprovalNotification.decision(actionIdentifier: "com.apple.UNNotificationDefaultActionIdentifier", userInfo: info) == nil,
+                "tapping the banner opens the app instead")
+        #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.approveAction,
+                                                        userInfo: ["sessionKey": "claude:s", "toolCallId": "c1"]) == nil)
+        #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.approveAction,
+                                                        userInfo: ["sessionKey": "amber:run-1"]) == nil, "high-risk pushes carry no call id")
+        let category = MacGatewayApprovalNotification.categories.first
+        #expect(category?.identifier == "amber.gateway.approval")
+        #expect(category?.actions.first { $0.identifier == MacGatewayApprovalNotification.approveAction }?.options.contains(.authenticationRequired) == true)
+    }
+
+    @Test func scheduleDraftSendsOnlyNamePromptAndTime() throws {
+        var draft = MacGatewayScheduleDraft()
+        #expect(!draft.isComplete)
+        draft.name = "周报"; draft.prompt = "写周报"
+        draft.rule = .weekly; draft.weekdays = [6, 2]
+        draft.time = try #require(Calendar.current.date(bySettingHour: 17, minute: 30, second: 0, of: Date()))
+        #expect(draft.isComplete)
+        let body = draft.body
+        #expect(body["rule"] as? String == "weekly")
+        #expect(body["hour"] as? Int == 17 && body["minute"] as? Int == 30)
+        #expect(body["weekdays"] as? [Int] == [2, 6])
+        #expect(Set(body.keys) == ["name", "prompt", "rule", "hour", "minute", "weekdays"], "no approval fields leave the phone")
+        draft.weekdays = []
+        #expect(!draft.isComplete)
+        draft.rule = .interval
+        #expect(draft.body["intervalMinutes"] as? Int == 60 && draft.body["hour"] == nil)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let list = try decoder.decode([MacGatewaySchedule].self, from: Data(#"[{"id":"s1","name":"清理","rule":"每天 03:00","enabled":true,"running":false,"autoApprovesHighRisk":true}]"#.utf8))
+        #expect(list.first?.autoApprovesHighRisk == true && list.first?.nextRunAt == nil)
+    }
+
+    @Test func macGatewaySettingsDeepLinkRoundTrips() throws {
+        let url = try #require(URL(string: "amber://settings/mac-gateway"))
+        #expect(IOSAppDeepLink.parse(url) == .macGateway)
+        #expect(IOSAppDeepLink.url(for: .macGateway) == url)
     }
 
     @Test func gatewayPairDeepLinkRoundTrips() throws {

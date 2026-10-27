@@ -23,10 +23,16 @@ public enum UnixSocketClient {
     public static let ack = Data("ok\n".utf8)
 
     public static func send(_ payload: Data, to path: String, timeout: TimeInterval) -> Bool {
+        request(payload, to: path, timeout: timeout, maxResponse: ack.count) == ack
+    }
+
+    /// Request/response over one connection: write, half-close, read until the peer closes (or `maxResponse`).
+    /// nil on connect failure, timeout or an empty reply.
+    public static func request(_ payload: Data, to path: String, timeout: TimeInterval, maxResponse: Int = UnixSocketServer.maxMessageSize) -> Data? {
         let deadline = Date().addingTimeInterval(timeout)
-        guard var addr = UnixAddress.make(path) else { return false }
+        guard var addr = UnixAddress.make(path) else { return nil }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
+        guard fd >= 0 else { return nil }
         defer { close(fd) }
         var on: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
@@ -36,10 +42,10 @@ public enum UnixSocketClient {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         if rc != 0 {
-            guard errno == EINPROGRESS || errno == EAGAIN, wait(fd, events: Int16(POLLOUT), until: deadline) else { return false }
+            guard errno == EINPROGRESS || errno == EAGAIN, wait(fd, events: Int16(POLLOUT), until: deadline) else { return nil }
             var err: Int32 = 0
             var len = socklen_t(MemoryLayout<Int32>.size)
-            guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0, err == 0 else { return false }
+            guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0, err == 0 else { return nil }
         }
 
         var offset = 0
@@ -48,30 +54,30 @@ public enum UnixSocketClient {
             if n > 0 {
                 offset += n
             } else if n < 0 && errno == EAGAIN {
-                guard wait(fd, events: Int16(POLLOUT), until: deadline) else { return false }
+                guard wait(fd, events: Int16(POLLOUT), until: deadline) else { return nil }
             } else if n < 0 && errno == EINTR {
                 continue
             } else {
-                return false
+                return nil
             }
         }
         shutdown(fd, SHUT_WR)
 
         var response = Data()
-        var buffer = [UInt8](repeating: 0, count: 16)
-        while response.count < ack.count {
+        var buffer = [UInt8](repeating: 0, count: min(4096, maxResponse))
+        while response.count < maxResponse {
             let n = read(fd, &buffer, buffer.count)
             if n > 0 {
                 response.append(contentsOf: buffer[0..<n])
             } else if n < 0 && errno == EAGAIN {
-                guard wait(fd, events: Int16(POLLIN), until: deadline) else { return false }
+                guard wait(fd, events: Int16(POLLIN), until: deadline) else { return nil }
             } else if n < 0 && errno == EINTR {
                 continue
             } else {
                 break
             }
         }
-        return response == ack
+        return response.isEmpty ? nil : response
     }
 
     private static func wait(_ fd: Int32, events: Int16, until deadline: Date) -> Bool {
@@ -88,20 +94,27 @@ public enum UnixSocketClient {
 }
 
 /// Accepts one message per connection (client half-closes), passes it to `handler` and acks when the
-/// handler accepts it. Runs entirely on `queue`.
+/// handler accepts it. Runs entirely on `queue`. With `respond`, the handler's reply is written instead of the
+/// ack (request/response channel, e.g. the Amber app's control socket).
 public final class UnixSocketServer {
     public static let maxMessageSize = 64 * 1024
 
     private let path: String
     private let queue: DispatchQueue
-    private let handler: (Data) -> Bool
+    private let handler: (Data) -> Data?
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
 
     public init(path: String, queue: DispatchQueue, handler: @escaping (Data) -> Bool) {
         self.path = path
         self.queue = queue
-        self.handler = handler
+        self.handler = { handler($0) ? UnixSocketClient.ack : nil }
+    }
+
+    public init(path: String, queue: DispatchQueue, respond: @escaping (Data) -> Data?) {
+        self.path = path
+        self.queue = queue
+        self.handler = respond
     }
 
     public func start() throws {
@@ -166,7 +179,12 @@ public final class UnixSocketServer {
                 return
             }
         }
-        guard message.count <= Self.maxMessageSize, handler(message) else { return }
-        _ = UnixSocketClient.ack.withUnsafeBytes { write(client, $0.baseAddress!, $0.count) }
+        guard message.count <= Self.maxMessageSize, let reply = handler(message) else { return }
+        var offset = 0
+        while offset < reply.count {
+            let n = reply.withUnsafeBytes { write(client, $0.baseAddress! + offset, reply.count - offset) }
+            guard n > 0 else { return }
+            offset += n
+        }
     }
 }

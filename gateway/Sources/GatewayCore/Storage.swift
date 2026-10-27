@@ -6,6 +6,8 @@ public struct GatewayPaths: Sendable {
 
     public let stateDir: URL
     public var socket: URL { stateDir.appendingPathComponent("gateway.sock") }
+    /// Served by the Amber Mac app while it runs; the daemon forwards phone requests about scheduled tasks here.
+    public var amberSocket: URL { stateDir.appendingPathComponent("amber-app.sock") }
     public var spoolDir: URL { stateDir.appendingPathComponent("spool", isDirectory: true) }
     public var registry: URL { stateDir.appendingPathComponent("registry.json") }
     public var outbox: URL { stateDir.appendingPathComponent("outbox.jsonl") }

@@ -253,35 +253,43 @@ final class DesktopAgentTasks {
         } onCancel: { Task { @MainActor [weak self] in self?.waiters.removeValue(forKey: runID)?.resume(returning: false) } }
     }
 
-    func decide(runID: UUID, allow: Bool) {
+    /// The task's value is whether this decision was the one applied (false: already answered, run gone, or unsaved).
+    @discardableResult
+    func decide(runID: UUID, allow: Bool) -> Task<Bool, Never>? {
         guard let approval = records.first(where: { $0.id == runID })?.approval,
               !invalidated.contains(runID),
-              deciding.insert(runID).inserted else { return }
-        Task {
+              deciding.insert(runID).inserted else { return nil }
+        return Task {
             defer { deciding.remove(runID) }
             do {
                 let record = try await journal.change(runID) {
                     guard $0.status == .waiting, $0.approval?.id == approval.id else { throw DesktopRuntimeError.message("此审批已经结束。") }
                     $0.approval = nil; $0.status = .running
                 }
-                guard cancellations[runID] != nil else { return }
+                guard cancellations[runID] != nil else { return false }
                 // Only the exact call id receives this one-use decision. Another call must ask again.
                 decisions[runID, default: [:]][approval.id] = allow
                 publish(record)
                 notifications?.clearApproval(runID: runID)
                 if unattendedConversations[record.conversationID] != nil { onUnattendedApproval?(record.conversationID, nil) }
                 waiters.removeValue(forKey: runID)?.resume(returning: allow)
-            } catch { errorMessage = "无法保存审批决定，工具尚未执行，请重试。" }
+                return true
+            } catch {
+                errorMessage = "无法保存审批决定，工具尚未执行，请重试。"
+                return false
+            }
         }
     }
 
     /// 「批准」/「拒绝」from a notification. Only answers the exact pending call it was sent for, and never a
     /// high-risk one (those notifications have no approve button; this guards a stale or forged response too).
-    func decideFromNotification(runID: UUID, toolID: String, allow: Bool) async {
+    @discardableResult
+    func decideFromNotification(runID: UUID, toolID: String, allow: Bool) async -> Bool {
         await loading?.value
-        guard let approval = records.first(where: { $0.id == runID })?.approval, approval.id == toolID else { return }
-        if allow, DesktopToolRegistry.isHighRisk(approval.name) { return }
-        decide(runID: runID, allow: allow)
+        guard let approval = records.first(where: { $0.id == runID })?.approval, approval.id == toolID else { return false }
+        if allow, DesktopToolRegistry.isHighRisk(approval.name) { return false }
+        // Waits for the decision to be written, so a remote caller's next status read already reflects it.
+        return await decide(runID: runID, allow: allow)?.value ?? false
     }
 
     func finish(_ runID: UUID, status: DesktopAgentStatus, error: String? = nil) async {

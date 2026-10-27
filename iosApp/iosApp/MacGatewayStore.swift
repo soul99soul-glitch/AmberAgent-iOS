@@ -32,6 +32,12 @@ final class MacGatewayStore {
     private(set) var isBusy = false
     private(set) var isSendingTestPush = false
     private(set) var pushError: String?
+    /// Approvals being sent, by tool call id; their buttons show progress.
+    private(set) var decidingCalls: Set<String> = []
+    /// Amber scheduled tasks on the Mac; nil until fetched, or when Amber isn't running there.
+    private(set) var schedules: [MacGatewaySchedule]?
+    private(set) var schedulesError: String?
+    private(set) var busySchedules: Set<String> = []
     var pendingPairing: MacGatewayPairingPayload?
     var notice: Notice?
 
@@ -135,6 +141,7 @@ final class MacGatewayStore {
             let latest = try await client.status()
             status = latest
             isReachable = true
+            await refreshSchedules()
             if latest.device.pushRegistered {
                 pushError = nil
             } else if let apnsToken {
@@ -168,6 +175,78 @@ final class MacGatewayStore {
         } catch {
             if !forgetIfRevoked(error) { notice = Notice(text: error.localizedDescription, isError: true) }
         }
+    }
+
+    /// Phone-side answer to an Amber scheduled run's tool call. The Mac re-checks the call and the risk class.
+    @discardableResult
+    func decide(sessionKey: String, toolCallId: String, allow: Bool) async -> Bool {
+        guard let client else {
+            notice = Notice(text: localized("未与 Mac 配对"), isError: true)
+            return false
+        }
+        guard decidingCalls.insert(toolCallId).inserted else { return false }
+        defer { decidingCalls.remove(toolCallId) }
+        do {
+            try await client.decide(sessionKey: sessionKey, toolCallId: toolCallId, allow: allow)
+            notice = Notice(text: localized(allow ? "已批准，Mac 上的任务继续运行" : "已拒绝这次调用"), isError: false)
+            await refresh()
+            return true
+        } catch {
+            if !forgetIfRevoked(error) { notice = Notice(text: error.localizedDescription, isError: true) }
+            await refresh()
+            return false
+        }
+    }
+
+    // MARK: - Amber scheduled tasks
+
+    func refreshSchedules() async {
+        guard let client else { return }
+        do {
+            schedules = try await client.schedules()
+            schedulesError = nil
+        } catch is CancellationError {
+        } catch {
+            if forgetIfRevoked(error) { return }
+            schedules = nil
+            schedulesError = error.localizedDescription
+        }
+    }
+
+    func setScheduleEnabled(_ schedule: MacGatewaySchedule, _ enabled: Bool) async {
+        // Show the new position at once; the refresh after the call corrects it if the Mac refused.
+        if let i = schedules?.firstIndex(where: { $0.id == schedule.id }) { schedules?[i].enabled = enabled }
+        await scheduleAction(schedule.id) { try await $0.setScheduleEnabled(id: schedule.id, enabled: enabled) }
+    }
+
+    func runSchedule(_ schedule: MacGatewaySchedule) async {
+        await scheduleAction(schedule.id, success: localized("已在 Mac 上开始运行")) { try await $0.runSchedule(id: schedule.id) }
+    }
+
+    /// Returns whether the Mac accepted the task; the sheet stays open on failure so nothing typed is lost.
+    func createSchedule(_ draft: MacGatewayScheduleDraft) async -> String? {
+        guard let client else { return localized("未与 Mac 配对") }
+        do {
+            try await client.createSchedule(draft)
+            notice = Notice(text: localized("已在 Mac 上创建定时任务"), isError: false)
+            await refreshSchedules()
+            return nil
+        } catch {
+            if forgetIfRevoked(error) { return MacGatewayError.unauthorized.localizedDescription }
+            return error.localizedDescription
+        }
+    }
+
+    private func scheduleAction(_ id: String, success: String? = nil, _ body: (MacGatewayClient) async throws -> Void) async {
+        guard let client, busySchedules.insert(id).inserted else { return }
+        defer { busySchedules.remove(id) }
+        do {
+            try await body(client)
+            if let success { notice = Notice(text: success, isError: false) }
+        } catch {
+            if !forgetIfRevoked(error) { notice = Notice(text: error.localizedDescription, isError: true) }
+        }
+        await refreshSchedules()
     }
 
     func enablePush() async {
@@ -208,6 +287,8 @@ final class MacGatewayStore {
         connection = nil
         client = nil
         status = nil
+        schedules = nil
+        schedulesError = nil
         isReachable = nil
         pushError = nil
     }

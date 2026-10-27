@@ -13,6 +13,8 @@ enum DesktopSchedule: Codable, Equatable, Sendable {
     case interval(minutes: Int, anchor: Date)
 
     static let minimumIntervalMinutes = 15
+    /// Rules arrive from phones too; an unbounded interval would overflow the date arithmetic.
+    static let maximumIntervalMinutes = 7 * 24 * 60
 
     var validationError: String? {
         switch self {
@@ -24,7 +26,8 @@ enum DesktopSchedule: Codable, Equatable, Sendable {
             if days.contains(where: { !(1...7).contains($0) }) { return "星期取值无效。" }
             return Self.clockError(hour, minute)
         case .interval(let minutes, _):
-            return minutes < Self.minimumIntervalMinutes ? "间隔不能小于 \(Self.minimumIntervalMinutes) 分钟。" : nil
+            if minutes < Self.minimumIntervalMinutes { return "间隔不能小于 \(Self.minimumIntervalMinutes) 分钟。" }
+            return minutes > Self.maximumIntervalMinutes ? "间隔不能超过 7 天。" : nil
         }
     }
 
@@ -45,7 +48,7 @@ enum DesktopSchedule: Codable, Equatable, Sendable {
         case .weekly(let days, let hour, let minute):
             return Self.nextWeekly(after: date, calendar: calendar, days: Set(days), hour: hour, minute: minute)
         case .interval(let minutes, let anchor):
-            let step = TimeInterval(minutes * 60)
+            let step = TimeInterval(minutes) * 60
             guard date >= anchor else { return anchor }
             let elapsed = (date.timeIntervalSince(anchor) / step).rounded(.down) + 1
             return anchor.addingTimeInterval(elapsed * step)

@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @preconcurrency import GatewayCore
+@preconcurrency import GatewayTransport
 @testable import AmberMac
 
 @MainActor
@@ -273,7 +274,15 @@ final class KMPProviderIntegrationTests: XCTestCase {
         XCTAssertEqual(live?.waitingTool, "workspace_file_write")
         XCTAssertEqual(live?.waitingToolCallId, run.approval?.id)
         let key = try XCTUnwrap(live?.key)
-        workspace.agentTasks.decide(runID: run.id, allow: true)
+        // Answer as the phone would: through the daemon's control socket path into this app's control socket.
+        let control = DesktopGatewayControl(paths: paths, tasks: workspace.agentTasks, reporter: reporter, scheduler: nil)
+        control.start()
+        defer { control.stop() }
+        let request = try GatewayJSON.encoder().encode(AmberControl.Request(action: .decide, sessionKey: key,
+            toolCallId: try XCTUnwrap(run.approval?.id), allow: true, deviceName: "live test"))
+        let socket = paths.amberSocket.path
+        let reply = await Task.detached { UnixSocketClient.request(request, to: socket, timeout: 3) }.value
+        XCTAssertEqual(try GatewayJSON.decoder().decode(AmberControl.Response.self, from: try XCTUnwrap(reply)).status, 200)
         let record = try await withTimeout { await running.value }
         XCTAssertEqual(record.status, .completed, record.error ?? "")
         var final: SessionRecord?
@@ -283,6 +292,60 @@ final class KMPProviderIntegrationTests: XCTestCase {
         }
         XCTAssertEqual(final?.state, .completed)
         print("GATEWAY_LIVE session=\(key) final=\(final?.state.rawValue ?? "nil")")
+    }
+
+    /// Opt-in manual phone check (AMBER_MAC_GATEWAY_PHONE=1): a run waits until the paired phone approves it via
+    /// the real daemon, within 3 minutes. The app's control socket answers like the shipped app.
+    func testScheduledRunWaitsForThePhoneToApprove() async throws {
+        guard ProcessInfo.processInfo.environment["AMBER_MAC_GATEWAY_PHONE"] == "1" else { throw XCTSkip("Set AMBER_MAC_GATEWAY_PHONE=1 to approve from a paired phone.") }
+        let paths = GatewayPaths.resolve()
+        guard paths.daemonRunning else { throw XCTSkip("Mac Gateway daemon is not running.") }
+        let (workspace, files, task, root) = try scheduledWorkspace(approval: DesktopUnattendedApproval())
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reporter = DesktopGatewayReporter(paths: paths, isEnabled: { true })
+        workspace.gatewayReporter = reporter
+        workspace.agentTasks.onUnattendedApproval = { reporter.approval(conversationID: $0, $1) }
+        let control = DesktopGatewayControl(paths: paths, tasks: workspace.agentTasks, reporter: reporter, scheduler: nil)
+        control.start()
+        defer { control.stop() }
+        print("GATEWAY_PHONE waiting for approval on the phone…")
+        let record = try await withTimeout(seconds: 180) { await workspace.runScheduled(task) }
+        XCTAssertEqual(record.status, .completed, record.error ?? "")
+        let written = try await files.list(conversationID: try XCTUnwrap(record.conversationID))
+        XCTAssertEqual(written.map(\.id), ["summary.txt"], "the write ran only after the phone approved it")
+        print("GATEWAY_PHONE completed")
+    }
+
+    /// Opt-in manual phone check (AMBER_MAC_GATEWAY_SCHEDULES=1): serves the control socket with a throwaway scheduler
+    /// holding one task, and passes once the phone has switched it off and created a task named 手机新建.
+    func testPhoneManagesSchedulesThroughTheLiveGateway() async throws {
+        guard ProcessInfo.processInfo.environment["AMBER_MAC_GATEWAY_SCHEDULES"] == "1" else { throw XCTSkip("Set AMBER_MAC_GATEWAY_SCHEDULES=1 to manage tasks from a paired phone.") }
+        let paths = GatewayPaths.resolve()
+        guard paths.daemonRunning else { throw XCTSkip("Mac Gateway daemon is not running.") }
+        let tasks = DesktopAgentTasks(defaults: UserDefaults(suiteName: "amber.phone-schedules.\(UUID().uuidString)")!)
+        let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: nil),
+            defaults: UserDefaults(suiteName: "amber.phone-schedules.s.\(UUID().uuidString)")!,
+            runner: { _, slot in
+                try? await Task.sleep(for: .seconds(3))
+                return DesktopScheduleRunRecord(scheduledFor: slot, startedAt: Date(), finishedAt: Date(), status: .completed)
+            }, timerEnabled: false)
+        var seeded = DesktopScheduledTask(name: "每日汇总", prompt: "汇总新文件", schedule: .daily(hour: 9, minute: 0))
+        seeded.approval.autoApproveOrdinary = true
+        _ = await scheduler.save(task: seeded)
+        let reporter = DesktopGatewayReporter(paths: paths, isEnabled: { false })
+        let control = DesktopGatewayControl(paths: paths, tasks: tasks, reporter: reporter, scheduler: scheduler)
+        control.start()
+        defer { control.stop() }
+        print("GATEWAY_SCHEDULES ready")
+        for _ in 0..<360 {
+            if scheduler.tasks.contains(where: { $0.name == "手机新建" }), scheduler.tasks.first(where: { $0.id == seeded.id })?.enabled == false { break }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        let created = try XCTUnwrap(scheduler.tasks.first { $0.name == "手机新建" })
+        XCTAssertEqual(created.approval, DesktopUnattendedApproval())
+        XCTAssertEqual(scheduler.tasks.first { $0.id == seeded.id }?.enabled, false)
+        XCTAssertNotNil(scheduler.tasks.first { $0.id == seeded.id }?.lastRun, "run now from the phone")
+        print("GATEWAY_SCHEDULES done rule=\(created.schedule)")
     }
 
     private func withTimeout<T: Sendable>(seconds: Double = 15, _ body: @escaping @MainActor () async -> T) async throws -> T {

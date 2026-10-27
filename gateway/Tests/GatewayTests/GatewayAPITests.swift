@@ -128,6 +128,63 @@ final class GatewayAPITests {
         #expect(code == 401, "slots are released once the idle sockets close")
     }
 
+    /// Phone → daemon → Amber app socket. A stand-in app answers; without it the daemon says Amber isn't running.
+    @Test func amberRequestsAreForwardedToTheAppSocketAndRelayed() async throws {
+        try startDaemon()
+        let payload = try pairingPayload()
+        let client = PinnedClient(fingerprint: payload.fp)
+        let base = URL(string: "https://127.0.0.1:\(payload.port)")!
+        let (_, paired) = try await client.call("POST", base.appendingPathComponent("v1/pair"),
+                                                body: ["secret": payload.s, "platform": "ios", "deviceName": "测试 iPhone"])
+        let token = try #require(paired["token"] as? String)
+        let decision = base.appendingPathComponent("v1/amber/decision")
+        let body: [String: Any] = ["sessionKey": "amber:run-1", "toolCallId": "c1", "allow": true]
+
+        var (code, json) = try await client.call("POST", decision, token: token, body: body)
+        #expect(code == 503)
+        #expect((json["error"] as? String)?.contains("Amber 未运行") == true)
+        #expect(try await client.call("POST", decision, body: body).0 == 401, "unpaired callers never reach the app")
+        #expect(try await client.call("POST", decision, token: token, body: ["sessionKey": "claude:x", "toolCallId": "c", "allow": true]).0 == 400)
+
+        let received = Locked<[AmberControl.Request]>([])
+        let queue = DispatchQueue(label: "fake-amber")
+        let app = UnixSocketServer(path: paths.amberSocket.path, queue: queue) { data in
+            guard let request = try? GatewayJSON.decoder().decode(AmberControl.Request.self, from: data) else { return nil }
+            received.mutate { $0.append(request) }
+            let response: AmberControl.Response = switch request.action {
+            case .decide: request.toolCallId == "c1" ? .init(status: 200) : .failure(409, "这次审批已经结束")
+            case .listSchedules: .init(status: 200, schedules: [.init(id: "s1", name: "每日汇总", rule: "每天 09:00", enabled: true, running: false,
+                                                                       nextRunAt: nil, lastStatus: "completed", lastRunAt: nil, autoApprovesHighRisk: false)])
+            default: .init(status: 200)
+            }
+            return try? GatewayJSON.encoder().encode(response)
+        }
+        try app.start()
+        defer { app.stop() }
+
+        (code, _) = try await client.call("POST", decision, token: token, body: body)
+        #expect(code == 200)
+        (code, json) = try await client.call("POST", decision, token: token, body: ["sessionKey": "amber:run-1", "toolCallId": "old", "allow": false])
+        #expect(code == 409)
+        #expect(json["error"] as? String == "这次审批已经结束")
+        (code, json) = try await client.call("GET", base.appendingPathComponent("v1/amber/schedules"), token: token)
+        #expect(code == 200)
+        #expect(((json["schedules"] as? [[String: Any]])?.first?["name"] as? String) == "每日汇总")
+        (code, _) = try await client.call("POST", base.appendingPathComponent("v1/amber/schedules/s1/enabled"), token: token, body: ["enabled": false])
+        #expect(code == 200)
+        (code, _) = try await client.call("POST", base.appendingPathComponent("v1/amber/schedules"), token: token,
+                                          body: ["name": "周报", "prompt": "写周报", "rule": "weekly", "hour": 17, "minute": 0, "weekdays": [6]])
+        #expect(code == 200)
+
+        let requests = received.value
+        #expect(requests.map(\.action) == [.decide, .decide, .listSchedules, .setScheduleEnabled, .createSchedule])
+        #expect(requests[0].sessionKey == "amber:run-1" && requests[0].allow == true && requests[0].deviceName == "测试 iPhone")
+        #expect(requests[3].scheduleId == "s1" && requests[3].enabled == false)
+        #expect(requests[4].draft?.weekdays == [6])
+        let audit = try String(contentsOf: paths.audit, encoding: .utf8)
+        #expect(audit.contains("amber-decision") && audit.contains("amber-schedule-create"))
+    }
+
     @Test func pairStatusMonitorPushTokenRevoke() async throws {
         try startDaemon()
         let payload = try pairingPayload()

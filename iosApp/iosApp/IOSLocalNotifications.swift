@@ -546,6 +546,48 @@ enum IOSWatchDecisionNotification {
     }
 }
 
+/// Every actionable notification category the app registers. Registration replaces the whole set, so all callers
+/// (launch, language change) must pass this.
+enum AmberNotificationCategories {
+    static var all: Set<UNNotificationCategory> {
+        IOSWatchDecisionNotification.categories.union(MacGatewayApprovalNotification.categories)
+    }
+}
+
+/// Lock-screen buttons on a Mac Gateway push for an Amber scheduled run waiting on an ordinary tool call.
+/// The gateway only attaches this category (and `toolCallId`) to non-high-risk calls; the Mac checks again.
+enum MacGatewayApprovalNotification {
+    static let category = "amber.gateway.approval"
+    static let approveAction = "amber.gateway.approve"
+    static let denyAction = "amber.gateway.deny"
+
+    struct Decision: Equatable {
+        var sessionKey: String
+        var toolCallId: String
+        var allow: Bool
+    }
+
+    static var categories: Set<UNNotificationCategory> {
+        let approve = UNNotificationAction(identifier: approveAction, title: IOSAppLocalization.string("批准", defaultValue: "批准"),
+                                           options: [.authenticationRequired])
+        let deny = UNNotificationAction(identifier: denyAction, title: IOSAppLocalization.string("拒绝", defaultValue: "拒绝"),
+                                        options: [.destructive])
+        return [UNNotificationCategory(identifier: category, actions: [deny, approve], intentIdentifiers: [])]
+    }
+
+    static func decision(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> Decision? {
+        let allow: Bool
+        switch actionIdentifier {
+        case approveAction: allow = true
+        case denyAction: allow = false
+        default: return nil
+        }
+        guard let key = userInfo["sessionKey"] as? String, key.hasPrefix("amber:"),
+              let call = userInfo["toolCallId"] as? String, !call.isEmpty else { return nil }
+        return Decision(sessionKey: key, toolCallId: call, allow: allow)
+    }
+}
+
 @MainActor
 final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     func application(
@@ -555,7 +597,7 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         IOSJevMetricsStore.setApplicationBackgroundState(application.applicationState == .background)
         IOSBackgroundLifecycleLog.bootstrap()
         UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().setNotificationCategories(IOSWatchDecisionNotification.categories)
+        UNUserNotificationCenter.current().setNotificationCategories(AmberNotificationCategories.all)
         WatchConnectivityBridge.shared.startReceiving(
             actionHandler: WatchTaskCoordinator.shared
         )
@@ -594,6 +636,18 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
                 content.title = IOSAppLocalization.string("操作未完成", defaultValue: "操作未完成")
                 content.body = message
                 try? await center.add(UNNotificationRequest(identifier: "amber.watch-decision-result", content: content, trigger: nil))
+            }
+            return
+        }
+        if let decision = MacGatewayApprovalNotification.decision(actionIdentifier: response.actionIdentifier,
+                                                                    userInfo: response.notification.request.content.userInfo) {
+            let delivered = await MacGatewayStore.shared.decide(sessionKey: decision.sessionKey, toolCallId: decision.toolCallId,
+                                                                allow: decision.allow)
+            if !delivered, let message = MacGatewayStore.shared.notice.flatMap({ $0.isError ? $0.text : nil }) {
+                let content = UNMutableNotificationContent()
+                content.title = IOSAppLocalization.string("操作未完成", defaultValue: "操作未完成")
+                content.body = message
+                try? await center.add(UNNotificationRequest(identifier: "amber.gateway-decision-result", content: content, trigger: nil))
             }
             return
         }

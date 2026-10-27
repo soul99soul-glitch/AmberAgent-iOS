@@ -84,6 +84,52 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
     var sessions: [Session]
 }
 
+/// An Amber scheduled task as the Mac reports it (`/v1/amber/schedules`).
+struct MacGatewaySchedule: Decodable, Equatable, Sendable, Identifiable {
+    var id: String
+    var name: String
+    var rule: String
+    var enabled: Bool
+    var running: Bool
+    var paused: Bool?
+    var nextRunAt: Date?
+    var lastStatus: String?
+    var lastRunAt: Date?
+    var autoApprovesHighRisk: Bool
+}
+
+/// What the phone can set on a new task. Approval rules are Mac-only: remote tasks start with nothing auto-approved.
+struct MacGatewayScheduleDraft: Equatable, Sendable {
+    enum Rule: String, CaseIterable, Sendable { case daily, weekdays, weekly, interval }
+    var name = ""
+    var prompt = ""
+    var rule = Rule.daily
+    var time = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+    /// Calendar weekdays, 1 = Sunday.
+    var weekdays: Set<Int> = [2]
+    var intervalMinutes = 60
+
+    var body: [String: Any] {
+        let calendar = Calendar.current
+        var value: [String: Any] = ["name": name, "prompt": prompt, "rule": rule.rawValue]
+        switch rule {
+        case .daily, .weekdays, .weekly:
+            value["hour"] = calendar.component(.hour, from: time)
+            value["minute"] = calendar.component(.minute, from: time)
+            if rule == .weekly { value["weekdays"] = weekdays.sorted() }
+        case .interval:
+            value["intervalMinutes"] = intervalMinutes
+        }
+        return value
+    }
+
+    var isComplete: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (rule != .weekly || !weekdays.isEmpty)
+    }
+}
+
 enum MacGatewayError: LocalizedError, Equatable {
     case unreachable
     /// The Mac answered with a different certificate than the one pinned at pairing.
@@ -200,6 +246,32 @@ actor MacGatewayClient {
 
     func testPush() async throws {
         _ = try await send("POST", "/v1/test-push", slow: true)
+    }
+
+    /// Approve or deny the tool call an Amber scheduled run is waiting on. The Mac answers within ~5 s (it reports
+    /// "busy" rather than going silent), so the long timeout keeps a slow answer from being re-sent to another address.
+    func decide(sessionKey: String, toolCallId: String, allow: Bool) async throws {
+        _ = try await send("POST", "/v1/amber/decision", body: ["sessionKey": sessionKey, "toolCallId": toolCallId, "allow": allow], slow: true)
+    }
+
+    func schedules() async throws -> [MacGatewaySchedule] {
+        struct Response: Decodable { var schedules: [MacGatewaySchedule] }
+        let response: Response = try decode(await send("GET", "/v1/amber/schedules", slow: true))
+        return response.schedules
+    }
+
+    func createSchedule(_ draft: MacGatewayScheduleDraft) async throws {
+        _ = try await send("POST", "/v1/amber/schedules", body: draft.body, slow: true)
+    }
+
+    func setScheduleEnabled(id: String, enabled: Bool) async throws {
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? id
+        _ = try await send("POST", "/v1/amber/schedules/\(encoded)/enabled", body: ["enabled": enabled], slow: true)
+    }
+
+    func runSchedule(id: String) async throws {
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? id
+        _ = try await send("POST", "/v1/amber/schedules/\(encoded)/run", slow: true)
     }
 
     func unpair() async throws {

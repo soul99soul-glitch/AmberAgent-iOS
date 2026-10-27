@@ -62,6 +62,7 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
         workspace.recipes.cancelAll()
         workspace.scheduler?.cancelAll(reason: "应用退出，本次运行已中断。")
         workspace.cancelScheduledRuns()
+        workspace.gatewayControl?.stop()
         workspace.agentTasks.cancelAll()
         for server in workspace.mcp.store.servers { workspace.mcp.disconnect(id: server.id) }
         workspace.insights.cancelAll()

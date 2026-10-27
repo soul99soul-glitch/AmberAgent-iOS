@@ -50,6 +50,7 @@ final class DesktopWorkspace {
     var scheduler: DesktopScheduler?
     var gateway: DesktopGateway?
     var gatewayReporter: DesktopGatewayReporter?
+    var gatewayControl: DesktopGatewayControl?
     /// Opens the scheduled-tasks page (menu bar item, notifications).
     var showsScheduledTasks = false
     private(set) var savingCollaborationRuns: Set<UUID> = []

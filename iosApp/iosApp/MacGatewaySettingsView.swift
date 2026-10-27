@@ -5,6 +5,7 @@ struct MacGatewaySettingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.openURL) private var openURL
     @State private var confirmsUnpair = false
+    @State private var creatingSchedule = false
 
     private let store = MacGatewayStore.shared
     private static let refreshInterval: Duration = .seconds(10)
@@ -23,6 +24,7 @@ struct MacGatewaySettingsView: View {
                             macSection(connection)
                             if let health = store.status?.health { healthSection(health) }
                             tasksSection
+                            schedulesSection
                             unpairSection
                         } else {
                             pairSection
@@ -43,6 +45,7 @@ struct MacGatewaySettingsView: View {
                 try? await Task.sleep(for: Self.refreshInterval)
             }
         }
+        .sheet(isPresented: $creatingSchedule) { MacGatewayScheduleSheet(store: store) }
         .confirmationDialog(L("取消与这台 Mac 的配对？"), isPresented: $confirmsUnpair, titleVisibility: .visible) {
             Button(L("取消配对"), role: .destructive) { Task { await store.unpair() } }
             Button(L("保留"), role: .cancel) {}
@@ -203,13 +206,85 @@ struct MacGatewaySettingsView: View {
                         .tint(AmberTheme.accent)
                         .accessibilityLabel(Text(verbatim: L("推送") + " " + session.subject))
                     }
-                    if let approval = session.pendingApproval { approvalRow(approval) }
+                    if let approval = session.pendingApproval { approvalRow(approval, sessionKey: session.key) }
                 }
             }
             if !sessions.isEmpty {
                 sectionFooter(L("关闭开关后，该任务不再推送。"))
             }
         }
+    }
+
+    /// Amber scheduled tasks on the Mac: see, switch on/off, run now, add. Approval rules stay on the Mac.
+    private var schedulesSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "定时任务")
+            AmberFormGroup {
+                if let schedules = store.schedules {
+                    ForEach(Array(schedules.enumerated()), id: \.element.id) { index, schedule in
+                        if index > 0 { rowDivider }
+                        settingsRow(icon: schedule.autoApprovesHighRisk ? "exclamationmark.shield" : "clock",
+                                    title: schedule.name, detail: scheduleDetail(schedule)) {
+                            HStack(spacing: 6) {
+                                if store.busySchedules.contains(schedule.id) || schedule.running {
+                                    ProgressView().frame(width: 44, height: 44)
+                                } else {
+                                    Button { Task { await store.runSchedule(schedule) } } label: {
+                                        Image(systemName: "play.fill")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .frame(width: 44, height: 44)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(AmberTheme.accent)
+                                    .accessibilityLabel(Text(verbatim: L("立即运行") + " " + schedule.name))
+                                }
+                                Toggle("", isOn: Binding(
+                                    get: { schedule.enabled },
+                                    set: { value in Task { await store.setScheduleEnabled(schedule, value) } }
+                                ))
+                                .labelsHidden()
+                                .tint(AmberTheme.accent)
+                                .disabled(store.busySchedules.contains(schedule.id))
+                                .accessibilityLabel(Text(verbatim: L("启用") + " " + schedule.name))
+                            }
+                        }
+                    }
+                    if !schedules.isEmpty { rowDivider }
+                    settingsRow(icon: "plus", title: L("新建定时任务"), detail: L("在 Mac 上按时运行提示词"),
+                                action: { creatingSchedule = true }) {
+                        chevron
+                    }
+                } else {
+                    settingsRow(icon: "clock", title: L("暂不可用"),
+                                detail: store.schedulesError ?? L("正在读取…")) {
+                        EmptyView()
+                    }
+                }
+            }
+            if store.schedules != nil {
+                sectionFooter(L("在手机上新建的任务不会自动批准任何工具；审批规则只能在 Mac 上修改。"))
+            }
+        }
+    }
+
+    private func scheduleDetail(_ schedule: MacGatewaySchedule) -> String {
+        var parts = [schedule.rule]
+        if schedule.running {
+            parts.append(L("运行中"))
+        } else if schedule.paused == true {
+            parts.append(L("已暂停"))
+        } else if !schedule.enabled {
+            parts.append(L("已停用"))
+        } else if let next = schedule.nextRunAt {
+            parts.append(L("下次") + " " + next.formatted(.relative(presentation: .named)))
+        }
+        switch schedule.lastStatus {
+        case "completed": parts.append(L("上次已完成"))
+        case "failed": parts.append(L("上次未完成"))
+        default: break
+        }
+        if schedule.autoApprovesHighRisk { parts.append(L("高风险自动批准")) }
+        return parts.joined(separator: " · ")
     }
 
     private var unpairSection: some View {
@@ -277,8 +352,8 @@ struct MacGatewaySettingsView: View {
     // MARK: - Rows
 
     /// The tool call an Amber scheduled run is waiting on, under its task row.
-    private func approvalRow(_ approval: MacGatewayStatus.PendingApproval) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func approvalRow(_ approval: MacGatewayStatus.PendingApproval, sessionKey: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(verbatim: approval.tool)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(approval.highRisk ? AmberTheme.accentRed : AmberTheme.accent)
@@ -287,6 +362,26 @@ struct MacGatewaySettingsView: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+            }
+            HStack(spacing: 10) {
+                if store.decidingCalls.contains(approval.toolCallId) {
+                    ProgressView().frame(minHeight: 44)
+                } else {
+                    capsuleButton(L("拒绝")) {
+                        Task { await store.decide(sessionKey: sessionKey, toolCallId: approval.toolCallId, allow: false) }
+                    }
+                    if !approval.highRisk {
+                        capsuleButton(L("批准")) {
+                            Task { await store.decide(sessionKey: sessionKey, toolCallId: approval.toolCallId, allow: true) }
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            if approval.highRisk {
+                Text(verbatim: L("高风险操作，请在 Mac 上核对后批准"))
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -412,6 +507,93 @@ struct MacGatewaySettingsView: View {
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 2)
+    }
+}
+
+/// New Amber scheduled task, created on the Mac. Name, prompt and time only.
+private struct MacGatewayScheduleSheet: View {
+    let store: MacGatewayStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = MacGatewayScheduleDraft()
+    @State private var error: String?
+    @State private var saving = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(L("名称"), text: $draft.name)
+                    TextField(L("到点后发给模型的内容"), text: $draft.prompt, axis: .vertical)
+                        .lineLimit(3...8)
+                }
+                Section(L("时间")) {
+                    Picker(L("规则"), selection: $draft.rule) {
+                        Text(verbatim: L("每天")).tag(MacGatewayScheduleDraft.Rule.daily)
+                        Text(verbatim: L("工作日")).tag(MacGatewayScheduleDraft.Rule.weekdays)
+                        Text(verbatim: L("每周")).tag(MacGatewayScheduleDraft.Rule.weekly)
+                        Text(verbatim: L("间隔")).tag(MacGatewayScheduleDraft.Rule.interval)
+                    }
+                    if draft.rule == .interval {
+                        Picker(L("每隔"), selection: $draft.intervalMinutes) {
+                            ForEach([15, 30, 60, 120, 180, 360, 720], id: \.self) { value in
+                                Text(verbatim: value < 60 ? "\(value) " + L("分钟") : "\(value / 60) " + L("小时")).tag(value)
+                            }
+                        }
+                    } else {
+                        DatePicker(L("时刻"), selection: $draft.time, displayedComponents: .hourAndMinute)
+                    }
+                    if draft.rule == .weekly {
+                        HStack(spacing: 6) {
+                            ForEach([2, 3, 4, 5, 6, 7, 1], id: \.self) { day in
+                                let on = draft.weekdays.contains(day)
+                                Button {
+                                    if on { draft.weekdays.remove(day) } else { draft.weekdays.insert(day) }
+                                } label: {
+                                    Text(verbatim: Calendar.current.veryShortWeekdaySymbols[day - 1])
+                                        .font(.subheadline.weight(on ? .semibold : .regular))
+                                        .frame(maxWidth: .infinity, minHeight: 36)
+                                        .background(on ? AmberTheme.accentTint : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? AmberTheme.accent.opacity(0.4) : AmberTheme.borderSoft))
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(on ? AmberTheme.accent : AmberTheme.foreground)
+                                .accessibilityLabel(Text(verbatim: Calendar.current.weekdaySymbols[day - 1]))
+                                .accessibilityAddTraits(on ? [.isSelected] : [])
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Text(verbatim: L("任务运行时不会自动批准任何工具，需要批准时会推送到手机。要调整审批规则，请在 Mac 上编辑。"))
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                    if let error {
+                        Text(verbatim: error).font(.footnote).foregroundStyle(.orange)
+                    }
+                }
+            }
+            .navigationTitle(Text(verbatim: L("新建定时任务")))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button(L("取消")) { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    if saving {
+                        ProgressView()
+                    } else {
+                        Button(L("创建")) {
+                            saving = true
+                            Task {
+                                error = await store.createSchedule(draft)
+                                saving = false
+                                if error == nil { dismiss() }
+                            }
+                        }
+                        .disabled(!draft.isComplete)
+                    }
+                }
+            }
+        }
+        .tint(AmberTheme.accent)
     }
 }
 

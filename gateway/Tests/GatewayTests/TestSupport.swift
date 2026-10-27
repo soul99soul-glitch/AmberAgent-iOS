@@ -106,3 +106,12 @@ enum TestSupport {
         return url
     }
 }
+
+/// Value shared between a test and a callback running on another queue.
+final class Locked<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T
+    init(_ value: T) { stored = value }
+    var value: T { lock.withLock { stored } }
+    func mutate(_ body: (inout T) -> Void) { lock.withLock { body(&stored) } }
+}

@@ -46,5 +46,9 @@ import Foundation
         let reporter = DesktopGatewayReporter { gateway.isEnabled }
         gatewayReporter = reporter
         tasks.onUnattendedApproval = { reporter.approval(conversationID: $0, $1) }
+        let control = DesktopGatewayControl(tasks: tasks, reporter: reporter, scheduler: scheduler)
+        gatewayControl = control
+        // Listening is harmless when the gateway is off (nobody connects), and it means enabling needs no restart.
+        control.start()
     }
 }

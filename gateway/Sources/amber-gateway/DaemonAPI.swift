@@ -86,6 +86,34 @@ extension Daemon {
                 case nil: respond(.error(500, "no result"))
                 }
             }
+        case ("POST", "/v1/amber/decision"):
+            guard let key = body["sessionKey"] as? String, key.hasPrefix("amber:"), let call = body["toolCallId"] as? String,
+                  let allow = body["allow"] as? Bool
+            else { return respond(.error(400, "需要 sessionKey、toolCallId 与 allow")) }
+            audit.record("amber-decision", ["device": device.id, "task": key, "allow": String(allow)])
+            forwardToAmber(.init(action: .decide, sessionKey: key, toolCallId: call, allow: allow, deviceName: device.name), respond: respond)
+        case ("GET", "/v1/amber/schedules"):
+            forwardToAmber(.init(action: .listSchedules, deviceName: device.name), respond: respond)
+        case ("POST", "/v1/amber/schedules"):
+            guard let data = try? JSONSerialization.data(withJSONObject: body),
+                  let draft = try? GatewayJSON.decoder().decode(AmberControl.ScheduleDraft.self, from: data)
+            else { return respond(.error(400, "需要 name、prompt 与 rule")) }
+            audit.record("amber-schedule-create", ["device": device.id, "name": draft.name])
+            forwardToAmber(.init(action: .createSchedule, draft: draft, deviceName: device.name), respond: respond)
+        case ("POST", let path) where path.hasPrefix("/v1/amber/schedules/"):
+            let parts = path.dropFirst("/v1/amber/schedules/".count).split(separator: "/").map(String.init)
+            guard parts.count == 2, let id = parts[0].removingPercentEncoding else { return respond(.error(404, "not found")) }
+            switch parts[1] {
+            case "enabled":
+                guard let enabled = body["enabled"] as? Bool else { return respond(.error(400, "需要 enabled 布尔值")) }
+                audit.record("amber-schedule-enabled", ["device": device.id, "schedule": id, "enabled": String(enabled)])
+                forwardToAmber(.init(action: .setScheduleEnabled, scheduleId: id, enabled: enabled, deviceName: device.name), respond: respond)
+            case "run":
+                audit.record("amber-schedule-run", ["device": device.id, "schedule": id])
+                forwardToAmber(.init(action: .runSchedule, scheduleId: id, deviceName: device.name), respond: respond)
+            default:
+                respond(.error(404, "not found"))
+            }
         case ("POST", let path) where path.hasPrefix("/v1/tasks/") && path.hasSuffix("/monitor"):
             let raw = path.dropFirst("/v1/tasks/".count).dropLast("/monitor".count)
             guard let key = String(raw).removingPercentEncoding, let monitored = body["monitored"] as? Bool else {
@@ -146,6 +174,24 @@ extension Daemon {
         )
         guard let data = try? GatewayJSON.encoder().encode(response) else { return .error(500, "encode failed") }
         return HTTPResponse(status: 200, body: data)
+    }
+
+    /// The Amber app owns scheduled tasks; it answers on its own socket while running. Done off the daemon queue
+    /// so a slow app never stalls hooks, then the reply is relayed as-is.
+    private func forwardToAmber(_ request: AmberControl.Request, respond: @escaping (HTTPResponse) -> Void) {
+        let socket = paths.amberSocket.path
+        let queue = queue
+        DispatchQueue.global(qos: .userInitiated).async {
+            let reply = (try? GatewayJSON.encoder().encode(request))
+                .flatMap { UnixSocketClient.request($0, to: socket, timeout: AmberControl.timeout) }
+            queue.async {
+                guard let reply, let decoded = try? GatewayJSON.decoder().decode(AmberControl.Response.self, from: reply) else {
+                    return respond(.error(503, "Amber 未运行：在 Mac 上打开 Amber 后重试"))
+                }
+                guard decoded.status < 300 else { return respond(.error(decoded.status, decoded.error ?? "操作未完成")) }
+                respond(HTTPResponse(status: decoded.status, body: reply))
+            }
+        }
     }
 
     static func pendingApproval(_ rec: SessionRecord) -> StatusResponse.PendingApproval? {
