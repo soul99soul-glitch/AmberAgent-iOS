@@ -12,6 +12,9 @@ import Foundation
     private let queue = DispatchQueue(label: "amber.gateway.control")
     private var server: UnixSocketServer?
 
+    /// The task board as the phone sees it; set by the live app (it knows the scheduled runs in flight).
+    var board: (@MainActor () -> [AmberControl.BoardItem])?
+
     init(paths: GatewayPaths = .resolve(), tasks: DesktopAgentTasks, reporter: DesktopGatewayReporter, scheduler: DesktopScheduler?) {
         self.paths = paths; self.tasks = tasks; self.reporter = reporter; self.scheduler = scheduler
     }
@@ -71,6 +74,10 @@ import Foundation
     func handle(_ request: AmberControl.Request) async -> AmberControl.Response {
         switch request.action {
         case .decide: return await decide(request)
+        case .board:
+            guard let board, let scheduler else { return .failure(503, "任务看板不可用") }
+            await scheduler.waitUntilLoaded()
+            return AmberControl.Response(status: 200, board: board())
         case .listSchedules, .createSchedule, .setScheduleEnabled, .runSchedule:
             guard let scheduler else { return .failure(503, "定时任务不可用") }
             await scheduler.waitUntilLoaded()
@@ -102,7 +109,7 @@ import Foundation
             }
             if let error = scheduler.runNow(id) { return .failure(409, error) }
             return AmberControl.Response(status: 200, schedule: scheduler.tasks.first { $0.id == id }.map { Self.summary($0, scheduler) })
-        case .decide:
+        case .decide, .board:
             return .failure(400, "无法识别的请求")
         }
     }

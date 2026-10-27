@@ -94,6 +94,8 @@ extension Daemon {
             else { return respond(.error(400, "需要 sessionKey、toolCallId 与 allow")) }
             audit.record("amber-decision", ["device": device.id, "task": key, "allow": String(allow)])
             forwardToAmber(.init(action: .decide, sessionKey: key, toolCallId: call, allow: allow, deviceName: device.name), respond: respond)
+        case ("GET", "/v1/amber/board"):
+            forwardToAmber(.init(action: .board, deviceName: device.name), respond: respond)
         case ("GET", "/v1/amber/schedules"):
             forwardToAmber(.init(action: .listSchedules, deviceName: device.name), respond: respond)
         case ("POST", "/v1/amber/schedules"):

@@ -110,6 +110,8 @@ struct DesktopScheduleRunRecord: Identifiable, Codable, Equatable, Sendable {
     var error: String?
     /// Tool calls that ran without a human approving them, for after-the-fact review.
     var autoApprovedTools: [String] = []
+    /// One line written by the title model after the run (see DesktopBoardWriter); nil when none is configured.
+    var summary: String?
 }
 
 struct DesktopScheduledTask: Identifiable, Codable, Equatable, Sendable {

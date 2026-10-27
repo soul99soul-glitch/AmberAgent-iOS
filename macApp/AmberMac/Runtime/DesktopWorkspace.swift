@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+@preconcurrency import GatewayCore
 
 @MainActor @Observable
 final class DesktopWorkspace {
@@ -51,6 +52,18 @@ final class DesktopWorkspace {
     var gateway: DesktopGateway?
     var gatewayReporter: DesktopGatewayReporter?
     var gatewayControl: DesktopGatewayControl?
+
+    /// The task board: scheduled tasks, their runs, and the gateway's Claude Code / Codex sessions.
+    func boardItems(now: Date = Date()) -> [AmberControl.BoardItem] {
+        guard let scheduler else { return [] }
+        let live = scheduledRunTaskConversations.map { taskID, conversation in
+            DesktopBoard.LiveRun(taskID: taskID, sessionKey: gatewayReporter?.sessionKey(forConversation: conversation),
+                approval: agentTasks.records.first { $0.conversationID == conversation && $0.status == .waiting }?.approval,
+                conversationID: conversation)
+        }
+        let sessions = gateway?.isEnabled == true ? Array(RegistryStore(url: GatewayPaths.resolve().registry).load().sessions.values) : []
+        return DesktopBoard.build(tasks: scheduler.tasks, live: live, paused: scheduler.isPaused, sessions: sessions, now: now)
+    }
     /// Opens the scheduled-tasks page (menu bar item, notifications).
     var showsScheduledTasks = false
     private(set) var savingCollaborationRuns: Set<UUID> = []
@@ -96,6 +109,8 @@ final class DesktopWorkspace {
     @ObservationIgnored private var branchGenerationCancelled = false
     /// Conversations a scheduled task is writing into right now; the composer and branch edits stay off them.
     private(set) var scheduledRunConversationIDs: Set<UUID> = []
+    /// Scheduled runs in flight: task id → the conversation it writes into (task board).
+    private(set) var scheduledRunTaskConversations: [UUID: UUID] = [:]
     @ObservationIgnored private var scheduledGenerations: [UUID: DesktopGeneration] = [:]
 
     @ObservationIgnored private var conversationLoads: [UUID: Task<Void, Never>] = [:]
@@ -1569,10 +1584,12 @@ extension DesktopWorkspace {
         }
         record.conversationID = conversationID
         scheduledRunConversationIDs.insert(conversationID)
+        scheduledRunTaskConversations[task.id] = conversationID
         agentTasks.unattendedConversations[conversationID] = task.name
         gatewayReporter?.runStarted(runID: record.id, conversationID: conversationID, taskName: task.name)
         defer {
             scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
+            scheduledRunTaskConversations[task.id] = nil
             agentTasks.unattendedConversations[conversationID] = nil
             gatewayReporter?.runFinished(conversationID: conversationID, succeeded: record.status == .completed)
         }

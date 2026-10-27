@@ -155,6 +155,8 @@ final class GatewayAPITests {
             case .decide: request.toolCallId == "c1" ? .init(status: 200) : .failure(409, "这次审批已经结束")
             case .listSchedules: .init(status: 200, schedules: [.init(id: "s1", name: "每日汇总", rule: "每天 09:00", enabled: true, running: false,
                                                                        nextRunAt: nil, lastStatus: "completed", lastRunAt: nil, autoApprovesHighRisk: false)])
+            case .board: .init(status: 200, board: [.init(id: "b1", kind: .schedule, column: .scheduled, title: "每日汇总", detail: "每天 09:00",
+                                                          updatedAt: Date(timeIntervalSince1970: 1_800_000_000))])
             default: .init(status: 200)
             }
             return try? GatewayJSON.encoder().encode(response)
@@ -176,8 +178,12 @@ final class GatewayAPITests {
                                           body: ["name": "周报", "prompt": "写周报", "rule": "weekly", "hour": 17, "minute": 0, "weekdays": [6]])
         #expect(code == 200)
 
+        (code, json) = try await client.call("GET", base.appendingPathComponent("v1/amber/board"), token: token)
+        #expect(code == 200)
+        #expect(((json["board"] as? [[String: Any]])?.first?["column"] as? String) == "scheduled")
+
         let requests = received.value
-        #expect(requests.map(\.action) == [.decide, .decide, .listSchedules, .setScheduleEnabled, .createSchedule])
+        #expect(requests.map(\.action) == [.decide, .decide, .listSchedules, .setScheduleEnabled, .createSchedule, .board])
         #expect(requests[0].sessionKey == "amber:run-1" && requests[0].allow == true && requests[0].deviceName == "测试 iPhone")
         #expect(requests[3].scheduleId == "s1" && requests[3].enabled == false)
         #expect(requests[4].draft?.weekdays == [6])

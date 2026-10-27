@@ -23,6 +23,11 @@ import Foundation
         self.paths = paths; self.isEnabled = isEnabled; self.process = process
     }
 
+    /// Gateway session key of a run in flight, if the gateway saw it start.
+    func sessionKey(forConversation conversation: UUID) -> String? {
+        runs[conversation].map { "amber:" + $0.session }
+    }
+
     /// Conversation of a reported run, from its gateway session key (`amber:<run id>`).
     func conversation(forSessionKey key: String) -> UUID? {
         runs.first { "amber:" + $0.value.session == key }?.key

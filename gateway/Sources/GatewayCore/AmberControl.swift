@@ -6,7 +6,7 @@ public enum AmberControl {
     public static let timeout: TimeInterval = 5
 
     public enum Action: String, Codable, Sendable {
-        case decide, listSchedules, createSchedule, setScheduleEnabled, runSchedule
+        case decide, listSchedules, createSchedule, setScheduleEnabled, runSchedule, board
     }
 
     public struct Request: Codable, Sendable, Equatable {
@@ -73,15 +73,58 @@ public enum AmberControl {
         }
     }
 
+    /// One card on the task board. Built on the Mac (scheduled tasks, their runs, agent sessions) so the Mac and the
+    /// phone show the same grouping; the phone only renders.
+    public struct BoardItem: Codable, Sendable, Equatable, Identifiable {
+        public enum Kind: String, Codable, Sendable { case schedule, run, agentSession }
+        public enum Column: String, Codable, Sendable, CaseIterable { case needsYou, running, scheduled, done }
+        public struct Approval: Codable, Sendable, Equatable {
+            public var sessionKey: String
+            public var toolCallId: String
+            public var tool: String
+            public var detail: String?
+            public var highRisk: Bool
+            public init(sessionKey: String, toolCallId: String, tool: String, detail: String?, highRisk: Bool) {
+                self.sessionKey = sessionKey; self.toolCallId = toolCallId; self.tool = tool; self.detail = detail; self.highRisk = highRisk
+            }
+        }
+
+        public var id: String
+        public var kind: Kind
+        public var column: Column
+        public var title: String
+        /// One line under the title: source and state, or a run's result summary.
+        public var detail: String
+        public var updatedAt: Date
+        public var scheduleId: String?
+        /// Mac-side conversation of a run (opens it on the Mac; the phone ignores it).
+        public var conversationId: String?
+        public var nextRunAt: Date?
+        /// Waiting for a reply rather than a tool approval (agent sessions).
+        public var waitingForReply: Bool
+        public var failed: Bool
+        public var approval: Approval?
+
+        public init(id: String, kind: Kind, column: Column, title: String, detail: String, updatedAt: Date, scheduleId: String? = nil,
+                    conversationId: String? = nil, nextRunAt: Date? = nil, waitingForReply: Bool = false, failed: Bool = false,
+                    approval: Approval? = nil) {
+            self.id = id; self.kind = kind; self.column = column; self.title = title; self.detail = detail; self.updatedAt = updatedAt
+            self.scheduleId = scheduleId; self.conversationId = conversationId; self.nextRunAt = nextRunAt
+            self.waitingForReply = waitingForReply; self.failed = failed; self.approval = approval
+        }
+    }
+
     public struct Response: Codable, Sendable, Equatable {
         /// HTTP status the daemon returns to the phone.
         public var status: Int
         public var error: String?
         public var schedules: [ScheduleSummary]?
         public var schedule: ScheduleSummary?
+        public var board: [BoardItem]?
 
-        public init(status: Int, error: String? = nil, schedules: [ScheduleSummary]? = nil, schedule: ScheduleSummary? = nil) {
-            self.status = status; self.error = error; self.schedules = schedules; self.schedule = schedule
+        public init(status: Int, error: String? = nil, schedules: [ScheduleSummary]? = nil, schedule: ScheduleSummary? = nil,
+                    board: [BoardItem]? = nil) {
+            self.status = status; self.error = error; self.schedules = schedules; self.schedule = schedule; self.board = board
         }
 
         public static func failure(_ status: Int, _ message: String) -> Response { Response(status: status, error: message) }
