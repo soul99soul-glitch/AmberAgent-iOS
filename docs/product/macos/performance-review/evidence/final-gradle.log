@@ -7,12 +7,12 @@ The project is using Kotlin Multiplatform with hierarchical structure and disabl
 kotlin.mpp.enableCInteropCommonization=true
 
 To hide this message, add to your 'gradle.properties'
-kotlin.mpp.enableCInteropCommonization.nowarn=true 
+kotlin.mpp.enableCInteropCommonization.nowarn=true
 
-The following source sets are affected: 
+The following source sets are affected:
 [appleMain, iosMain, nativeMain]
 
-The following cinterops are affected: 
+The following cinterops are affected:
 [cinterop:compilation/compileKotlinIosArm64/AmberNative, cinterop:compilation/compileKotlinIosSimulatorArm64/AmberNative]
 [32m[1mSolution:[0m[0m
 [32m[3mPlease enable 'cinterop commonization' in your 'gradle.properties'[0m[0m

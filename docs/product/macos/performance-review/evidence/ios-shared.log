@@ -48,7 +48,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/vendor/Swift
 error: the following command failed with exit code 0 but produced no further output
 SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/BackgroundGenerationKeepAlive.swift:128:89: warning: passing non-Sendable parameter 'expiration' to function expecting a '@Sendable' closure
-125 | 
+125 |
 126 |     init(
 127 |         beginBackgroundTask: @escaping BeginBackgroundTask = { name, expiration in
     |                                                                      `- note: parameter 'expiration' is implicitly non-Sendable
@@ -70,9 +70,9 @@ SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 2 | // Kept outside NovelCreation/ so the standalone Novel app does not link it.
 3 | extension ChatToolRuntime: NovelDiscussionToolHost {}
   | `- warning: conformance to 'Sendable' must occur in the same source file as class 'ChatToolRuntime'; use '@unchecked Sendable' for retroactive conformance; this will be an error in a future Swift language mode
-4 | 
+4 |
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/NovelCreation/NovelPresentationSupport.swift:1109:14: warning: result of call to 'withLock' is unused [#NoUsage]
-1107 | 
+1107 |
 1108 |     func clear(pendingID: NovelPendingOperationID) {
 1109 |         lock.withLock { streamedCharacters.removeValue(forKey: pendingID) }
      |              `- warning: result of call to 'withLock' is unused [#NoUsage]
@@ -89,7 +89,7 @@ SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 
 [#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
 /Users/mi/Downloads/AI/amber-macos/iosApp/PhoneControlRuntime/PhoneControlServiceInspection.swift:119:9: warning: result of call to 'withUnsafeMutableBytes(of:_:)' is unused [#NoUsage]
-117 | 
+117 |
 118 |         var header = sockaddr()
 119 |         withUnsafeMutableBytes(of: &header) { destination in
     |         `- warning: result of call to 'withUnsafeMutableBytes(of:_:)' is unused [#NoUsage]
@@ -105,7 +105,7 @@ SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 141 |         }
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/PhoneControlRuntime/PhoneControlServiceInspection.swift:300:21: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
-298 | 
+298 |
 299 |     private static func normalize(_ host: [CChar]) -> String {
 300 |         let value = String(cString: host)
     |                     `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
@@ -114,7 +114,7 @@ SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/ProviderDetailView.swift:1139:43: warning: passing non-Sendable parameter 'action' to function expecting a '@Sendable' closure
 1130 |     }
-1131 | 
+1131 |
 1132 |     private func commitPendingTextInput(then action: @escaping () -> Void) {
      |                                              `- note: parameter 'action' is implicitly non-Sendable
 1133 |         UIApplication.shared.sendAction(
@@ -125,7 +125,7 @@ SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 1139 |         DispatchQueue.main.async(execute: action)
      |                                           `- warning: passing non-Sendable parameter 'action' to function expecting a '@Sendable' closure
 1140 |     }
-1141 | 
+1141 |
 
 [#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
 [#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
@@ -139,7 +139,7 @@ SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift:62:8: note: consider making struct 'NativeTimelineProjection' conform to the 'Sendable' protocol
  60 | }
- 61 | 
+ 61 |
  62 | struct NativeTimelineProjection: Equatable {
     |        `- note: consider making struct 'NativeTimelineProjection' conform to the 'Sendable' protocol
  63 |     let entries: [NativeTimelineEntry]
@@ -168,7 +168,7 @@ SwiftCompile normal arm64 (in target 'iosApp' from project 'AmberAgent')
 2 | // Kept outside NovelCreation/ so the standalone Novel app does not link it.
 3 | extension ChatToolRuntime: NovelDiscussionToolHost {}
   | `- warning: conformance to 'Sendable' must occur in the same source file as class 'ChatToolRuntime'; use '@unchecked Sendable' for retroactive conformance; this will be an error in a future Swift language mode
-4 | 
+4 |
 error: the following command failed with exit code 0 but produced no further output
 SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/AccountView.swift (in target 'iosApp' from project 'AmberAgent')
 error: the following command failed with exit code 0 but produced no further output
@@ -184,7 +184,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Backg
 112 |             .buttonStyle(.plain)
     :
 136 |     }
-137 | 
+137 |
 138 |     private var avatarCircle: some View {
     |                 `- note: property declared here
 139 |         ZStack(alignment: .bottomTrailing) {
@@ -199,7 +199,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Backg
 214 | }
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/BackgroundGenerationKeepAlive.swift:128:89: warning: passing non-Sendable parameter 'expiration' to function expecting a '@Sendable' closure
-125 | 
+125 |
 126 |     init(
 127 |         beginBackgroundTask: @escaping BeginBackgroundTask = { name, expiration in
     |                                                                      `- note: parameter 'expiration' is implicitly non-Sendable
@@ -211,7 +211,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Backg
 [#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Council/CouncilRoomSheets.swift:532:9: warning: application of result builder 'ViewBuilder' disabled by explicit 'return' statement
 525 |     }
-526 | 
+526 |
 527 |     @ViewBuilder
     |     `- note: remove the attribute to explicitly disable the result builder
 528 |     /// 预制角色里尚未添加的部分(按 id 和名称去重),供「添加席位」菜单展示。
@@ -273,12 +273,12 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Backg
   30 |         webView.navigationDelegate = self
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSWorkoutKit.swift:429:58: warning: non-Sendable type 'WorkoutScheduler.AuthorizationState' of nonisolated property 'authorizationState' cannot be sent to main actor-isolated context
-427 | 
+427 |
 428 |     func authorizationState() async -> IOSWorkoutAuthorization {
 429 |         Self.authorization(await WorkoutScheduler.shared.authorizationState)
     |                                                          `- warning: non-Sendable type 'WorkoutScheduler.AuthorizationState' of nonisolated property 'authorizationState' cannot be sent to main actor-isolated context
 430 |     }
-431 | 
+431 |
 
 WorkoutKit.WorkoutScheduler.AuthorizationState:3:15: note: enum 'AuthorizationState' does not conform to the 'Sendable' protocol
  1 | class WorkoutScheduler {
@@ -290,7 +290,7 @@ WorkoutKit.WorkoutScheduler.AuthorizationState:3:15: note: enum 'AuthorizationSt
 
 [#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSJevClient.swift:546:20: warning: immutable value 'http' was never used; consider replacing with '_' or removing it [#NoUsage]
-544 | 
+544 |
 545 |         let startedAt = now()
 546 |         let (data, http) = try await executeWithRetry(
     |                    `- warning: immutable value 'http' was never used; consider replacing with '_' or removing it [#NoUsage]
@@ -315,15 +315,15 @@ WorkoutKit.WorkoutScheduler.AuthorizationState:3:15: note: enum 'AuthorizationSt
 
 [#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSSkillFileStore.swift:106:14: warning: result of call to 'withLock' is unused [#NoUsage]
- 104 | 
+ 104 |
  105 |     func invalidateListing(directoryPath: String) {
  106 |         lock.withLock { listings.removeValue(forKey: directoryPath) }
      |              `- warning: result of call to 'withLock' is unused [#NoUsage]
  107 |     }
- 108 | 
+ 108 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSSkillFileStore.swift:121:14: warning: result of call to 'withLock' is unused [#NoUsage]
- 119 | 
+ 119 |
  120 |     func invalidateMarkdown(filePath: String) {
  121 |         lock.withLock { markdown.removeValue(forKey: filePath) }
      |              `- warning: result of call to 'withLock' is unused [#NoUsage]
@@ -372,7 +372,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/IOSIm
 error: the following command failed with exit code 0 but produced no further output
 SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift (in target 'iosApp' from project 'AmberAgent')
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:49:13: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated context
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -387,7 +387,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  51 |             && lhs.summary.isPinned == rhs.summary.isPinned
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:49:31: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated context
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -402,7 +402,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  51 |             && lhs.summary.isPinned == rhs.summary.isPinned
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:50:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -417,7 +417,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  52 |             && lhs.summary.messageCount == rhs.summary.messageCount
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:50:41: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -432,7 +432,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  52 |             && lhs.summary.messageCount == rhs.summary.messageCount
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:51:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -447,7 +447,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  53 |             && lhs.summary.updateAt == rhs.summary.updateAt
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:51:44: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -462,7 +462,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  53 |             && lhs.summary.updateAt == rhs.summary.updateAt
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:52:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -477,7 +477,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  54 |             && lhs.isCurrent == rhs.isCurrent
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:52:48: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -492,7 +492,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  54 |             && lhs.isCurrent == rhs.isCurrent
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:53:20: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -507,7 +507,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/
  55 |             && lhs.isGenerating == rhs.isGenerating
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosApp/Home/ConversationSummaryRow.swift:53:44: warning: main actor-isolated property 'summary' can not be referenced from a nonisolated autoclosure
-  6 | 
+  6 |
   7 | struct ConversationSummaryRow: View, Equatable {
   8 |     let summary: ConversationSummary
     |         `- note: property declared here
@@ -716,7 +716,7 @@ error: the following command failed with exit code 0 but produced no further out
 SwiftCompile normal arm64 (in target 'iosAppTests' from project 'AmberAgent')
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneControlHandoffExecutorTests.swift:1042:66: warning: 'HandoffHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
 1040 | }
-1041 | 
+1041 |
 1042 | private final class HandoffHTTPProtocol: URLProtocol, @unchecked Sendable {
      |                     |                                            `- warning: 'HandoffHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
      |                     `- note: 'HandoffHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
@@ -725,7 +725,7 @@ SwiftCompile normal arm64 (in target 'iosAppTests' from project 'AmberAgent')
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift:1192:70: warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
 1190 | }
-1191 | 
+1191 |
 1192 | private final class GoalLoopFailureProtocol: URLProtocol, @unchecked Sendable {
      |                     |                                                `- warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
      |                     `- note: 'GoalLoopFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
@@ -734,7 +734,7 @@ SwiftCompile normal arm64 (in target 'iosAppTests' from project 'AmberAgent')
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalToolIntegrationTests.swift:899:63: warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
 897 | }
-898 | 
+898 |
 899 | private final class GoalHTTPProtocol: URLProtocol, @unchecked Sendable {
     |                     |                                         `- warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
     |                     `- note: 'GoalHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
@@ -743,7 +743,7 @@ SwiftCompile normal arm64 (in target 'iosAppTests' from project 'AmberAgent')
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneScrollSearchTests.swift:215:74: warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
 213 | }
-214 | 
+214 |
 215 | private final class ScrollSearchFailureProtocol: URLProtocol, @unchecked Sendable {
     |                     |                                                    `- warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
     |                     `- note: 'ScrollSearchFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
@@ -752,7 +752,7 @@ SwiftCompile normal arm64 (in target 'iosAppTests' from project 'AmberAgent')
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelInjectionPlannerTests.swift:1299:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1297 |     }
-1298 | 
+1298 |
 1299 |     @discardableResult
      |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1300 |     func testCurrentStateWarnsWhenLaterPlotModulesAreStale() throws {
@@ -760,7 +760,7 @@ SwiftCompile normal arm64 (in target 'iosAppTests' from project 'AmberAgent')
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/PhoneControlReadinessTestSupport.swift:90:68: warning: 'ReadinessHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
  88 | }
- 89 | 
+ 89 |
  90 | private final class ReadinessHTTPProtocol: URLProtocol, @unchecked Sendable {
     |                     |                                              `- warning: 'ReadinessHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
     |                     `- note: 'ReadinessHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
@@ -780,14 +780,14 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 14 |         MockWebMountRuntime.resetSessionCounter()
    |                             `- warning: call to main actor-isolated static method 'resetSessionCounter()' in a synchronous nonisolated context [#ActorIsolatedCall]
 15 |     }
-16 | 
+16 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountRuntimeTestDoubles.swift:40:17: note: calls to static method 'resetSessionCounter()' from outside of its actor context are implicitly asynchronous
  38 |     /// which made `testWebMountTabLifecycleAndClosedSessionFailure` pass in
  39 |     /// isolation but fail in the full suite (order-dependent test pollution).
  40 |     static func resetSessionCounter() { nextId = 0 }
     |                 `- note: calls to static method 'resetSessionCounter()' from outside of its actor context are implicitly asynchronous
- 41 | 
+ 41 |
  42 |     var snapshot: IOSWebMountRuntimeSnapshot
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSWebMountWKRuntimeTests.swift:214:54: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
@@ -795,7 +795,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 213 |         XCTAssertGreaterThan(webView.bounds.height, 0)
 214 |         XCTAssertEqual(webView.bounds.size, UIScreen.main.bounds.size)
     |                                                      `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
-215 | 
+215 |
 216 |         webView.loadHTMLString(
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NativeTimelineScrollCoreTests.swift:675:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
@@ -814,7 +814,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
   7 |     private var suite: String!
     |                 `- note: mutation of this property is only permitted within the actor
   8 |     private let launch = Date(timeIntervalSince1970: 1_000)
-  9 | 
+  9 |
  10 |     override func setUp() {
  11 |         super.setUp()
  12 |         suite = "IOSSubAgentActivityTests.\(UUID().uuidString)"
@@ -835,7 +835,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
  13 |         defaults = UserDefaults(suiteName: suite)!
     |         `- warning: main actor-isolated property 'defaults' can not be mutated from a nonisolated context
  14 |     }
- 15 | 
+ 15 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:13:44: warning: main actor-isolated property 'suite' can not be referenced from a nonisolated context
   5 | final class IOSSubAgentActivityStoreTests: XCTestCase {
@@ -843,14 +843,14 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
   7 |     private var suite: String!
     |                 `- note: property declared here
   8 |     private let launch = Date(timeIntervalSince1970: 1_000)
-  9 | 
+  9 |
     :
  11 |         super.setUp()
  12 |         suite = "IOSSubAgentActivityTests.\(UUID().uuidString)"
  13 |         defaults = UserDefaults(suiteName: suite)!
     |                                            `- warning: main actor-isolated property 'suite' can not be referenced from a nonisolated context
  14 |     }
- 15 | 
+ 15 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSSubAgentActivityStoreTests.swift:17:9: warning: main actor-isolated property 'defaults' can not be referenced from a nonisolated context
   4 | @MainActor
@@ -860,7 +860,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
   7 |     private var suite: String!
   8 |     private let launch = Date(timeIntervalSince1970: 1_000)
     :
- 15 | 
+ 15 |
  16 |     override func tearDown() {
  17 |         defaults.removePersistentDomain(forName: suite)
     |         `- warning: main actor-isolated property 'defaults' can not be referenced from a nonisolated context
@@ -873,9 +873,9 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
   7 |     private var suite: String!
     |                 `- note: property declared here
   8 |     private let launch = Date(timeIntervalSince1970: 1_000)
-  9 | 
+  9 |
     :
- 15 | 
+ 15 |
  16 |     override func tearDown() {
  17 |         defaults.removePersistentDomain(forName: suite)
     |                                                  `- warning: main actor-isolated property 'suite' can not be referenced from a nonisolated context
@@ -898,19 +898,19 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
  20 |     }
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSThreadMessagingTests.swift:1310:9: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
-1308 | 
+1308 |
 1309 |     private func childIdFromHex(_ hex: String) -> KotlinUuid {
 1310 |         try! KotlinUuid.companion.parse(uuidString: hex)
      |         `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
 1311 |     }
-1312 | 
+1312 |
 
 [#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
 error: the following command failed with exit code 0 but produced no further output
 SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelInjectionPlannerTests.swift (in target 'iosAppTests' from project 'AmberAgent')
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelInjectionPlannerTests.swift:1299:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1297 |     }
-1298 | 
+1298 |
 1299 |     @discardableResult
      |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1300 |     func testCurrentStateWarnsWhenLaterPlotModulesAreStale() throws {
@@ -946,10 +946,10 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 
 /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIWindow.h:69:57: note: mutation of this property is only permitted within the actor
  67 | - (void)makeKeyAndVisible;
- 68 | 
+ 68 |
  69 | @property(nullable, nonatomic,strong) UIViewController *rootViewController API_AVAILABLE(ios(4.0));  // default is nil
     |                                                         `- note: mutation of this property is only permitted within the actor
- 70 | 
+ 70 |
  71 | - (void)sendEvent:(UIEvent *)event;                    // called by UIApplication to dispatch events to views inside the window
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/SubAgentConcurrencyPerfTests.swift:141:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
@@ -986,7 +986,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 
 [#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionQuickStartTests.swift:491:26: warning: expression of type 'Bool' is unused [#NoUsage]
-489 | 
+489 |
 490 |         await gate.resumeBlockedPerform()
 491 |         await renameTask.value
     |                          `- warning: expression of type 'Bool' is unused [#NoUsage]
@@ -998,7 +998,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 137 |         await gate.resumeBlockedInterruptReturn()
 138 |         await switchTask.value
     |                          `- warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
-139 | 
+139 |
 140 |         XCTAssertEqual(harness.workspace.selectedBranchID, sourceBranchID)
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionSelectionTests.swift:198:26: warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
@@ -1006,7 +1006,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 197 |         await gate.resumeBlockedInterruptReturn()
 198 |         await switchTask.value
     |                          `- warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
-199 | 
+199 |
 200 |         XCTAssertEqual(harness.workspace.selectedBranchID, destinationBranchID)
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelSessionSelectionTests.swift:256:26: warning: expression of type 'NovelBranchSelectionResult' is unused [#NoUsage]
@@ -1026,7 +1026,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
  58 |         window.rootViewController = rootViewController
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/NovelWorkspaceRepositoryTests.swift:250:13: warning: initialization of immutable value 'checkout' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
- 248 | 
+ 248 |
  249 |         // Hand-edit ONLY the fork branch's copy of the shared chapter.
  250 |         let checkout = NovelWorkspaceProjectStore.checkoutDirectory(in: project)
      |             `- warning: initialization of immutable value 'checkout' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
@@ -1320,7 +1320,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 error: the following command failed with exit code 0 but produced no further output
 SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSParityRedLightCredentialTests.swift (in target 'iosAppTests' from project 'AmberAgent')
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationListInterruptTerminalTests.swift:407:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
-405 | 
+405 |
 406 |         // fork 源是 A（含 q1），不是 B（不含「B 内容」）。
 407 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
     |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
@@ -1336,7 +1336,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 405 |             now: { Date() }
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationToolTests.swift:98:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
- 96 | 
+ 96 |
  97 |         // 子会话含 NEW_TASK 渲染消息（bootstrap 直接持久化）。
  98 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
     |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
@@ -1344,7 +1344,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 100 |         XCTAssertFalse(store.summaries.contains { $0.id == childId })
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSOrchestrationToolTests.swift:218:23: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
-216 | 
+216 |
 217 |         // 子会话 assistantId = role（fork 后应用并保存）。
 218 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
     |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
@@ -1356,7 +1356,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 307 |         let childHex = try XCTUnwrap(result["child_thread_id"] as? String)
 308 |         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
     |                       `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
-309 | 
+309 |
 310 |         let childUserTexts = (await store.messages(for: childId) ?? [])
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSParityRedLightCredentialTests.swift:103:42: warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
@@ -1365,7 +1365,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 103 |         let legacyMirror = legacyEntries.flatMap { $0["apiKey"] as? String }.joined()
     |                                          |- warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
     |                                          `- note: use 'compactMap(_:)' instead
-104 | 
+104 |
 105 |         XCTAssertFalse(
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSParityRedLightCredentialTests.swift:166:42: warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
@@ -1374,7 +1374,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 166 |         let legacyMirror = legacyEntries.flatMap { $0["apiKey"] as? String }.joined()
     |                                          |- warning: 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value [#DeprecatedDeclaration]
     |                                          `- note: use 'compactMap(_:)' instead
-167 | 
+167 |
 168 |         XCTAssertFalse(
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSNovelCreationWiringTests.swift:299:32: warning: 'protectedLeaseIsActive' mutated after capture by sendable closure
@@ -1391,14 +1391,14 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
      |                                          | `- note: capturing use
      |                                          `- note: variable captured by sendable closure
  293 |         )
- 294 | 
+ 294 |
      :
  297 |             interrupt: { _ in interruptionCount += 1 }
  298 |         )
  299 |         protectedLeaseIsActive = true
      |                                `- warning: 'protectedLeaseIsActive' mutated after capture by sendable closure
  300 |         expirationHandler?()
- 301 | 
+ 301 |
 
 [#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
 [#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
@@ -1407,7 +1407,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 error: the following command failed with exit code 0 but produced no further output
 SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSCodexProviderResolverTests.swift (in target 'iosAppTests' from project 'AmberAgent')
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSCodexProviderResolverTests.swift:203:23: warning: capture of 'self' with non-Sendable type 'CodexRefreshURLProtocol?' in a '@Sendable' closure [#SendableClosureCaptures]
-201 | 
+201 |
 202 |         DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(150)) { [weak self] in
 203 |             guard let self, let url = self.request.url else { return }
     |                       `- warning: capture of 'self' with non-Sendable type 'CodexRefreshURLProtocol?' in a '@Sendable' closure [#SendableClosureCaptures]
@@ -1431,7 +1431,7 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:75:56: warning: main actor-isolated static property 'fixturePath' can not be referenced from a nonisolated context
  31 |     private static let screenSize = CGSize(width: 393, height: 852)
- 32 | 
+ 32 |
  33 |     private static let fixturePath =
     |                        `- note: static property declared here
  34 |         "/private/tmp/claude-501/-Users-mi-Downloads-AI-AmberAgent-iOS/75dbf062-21b6-4935-a9b8-7fc5177e47eb/scratchpad/broken-message.md"
@@ -1446,10 +1446,10 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:77:13: warning: main actor-isolated property 'markdown' can not be mutated from a nonisolated context
  36 |         "/private/tmp/claude-501/-Users-mi-Downloads-AI-AmberAgent-iOS/75dbf062-21b6-4935-a9b8-7fc5177e47eb/scratchpad"
- 37 | 
+ 37 |
  38 |     private var markdown = ""
     |                 `- note: mutation of this property is only permitted within the actor
- 39 | 
+ 39 |
  40 |     /// 内嵌的病态样本(2026-07-02 真机"雷祖"溢出会话的代表性子集:长 CJK 表格 +
     :
  75 |         if let text = try? String(contentsOfFile: Self.fixturePath, encoding: .utf8),
@@ -1461,10 +1461,10 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMessageWidthOverflowTests.swift:79:13: warning: main actor-isolated property 'markdown' can not be mutated from a nonisolated context
  36 |         "/private/tmp/claude-501/-Users-mi-Downloads-AI-AmberAgent-iOS/75dbf062-21b6-4935-a9b8-7fc5177e47eb/scratchpad"
- 37 | 
+ 37 |
  38 |     private var markdown = ""
     |                 `- note: mutation of this property is only permitted within the actor
- 39 | 
+ 39 |
  40 |     /// 内嵌的病态样本(2026-07-02 真机"雷祖"溢出会话的代表性子集:长 CJK 表格 +
     :
  77 |             markdown = text
@@ -1480,7 +1480,7 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
  42 |     private static let embeddedFixture = """
     |                        `- note: static property declared here
  43 |     太好了!资料很丰富了。下面我给你做一个**全面的创作规划**,可以直接当写作框架用。
- 44 | 
+ 44 |
     :
  77 |             markdown = text
  78 |         } else {
@@ -1514,16 +1514,16 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 287 |         window.makeKeyAndVisible()
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:92:42: warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
- 90 | 
+ 90 |
  91 |         var scrollView: UIScrollView? {
  92 |             Self.findScrollView(in: host.view)
     |                                          `- warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
  93 |         }
- 94 | 
+ 94 |
 
 /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIViewController.h:118:54: note: property declared here
 116 | - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
-117 | 
+117 |
 118 | @property(null_resettable, nonatomic,strong) UIView *view; // The getter first invokes [self loadView] if the view hasn't been set yet. Subclasses must call super if they override the setter or getter.
     |                                                      `- note: property declared here
 119 | - (void)loadView; // This is where subclasses should create their custom view hierarchy if they aren't using a nib. Should never be called directly.
@@ -1531,7 +1531,7 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:97:33: warning: main actor-isolated property 'subviews' can not be referenced from a nonisolated context
  93 |         }
- 94 | 
+ 94 |
  95 |         static func findScrollView(in view: UIView) -> UIScrollView? {
     |                     `- note: add '@MainActor' to make static method 'findScrollView(in:)' part of global actor 'MainActor'
  96 |             if let scrollView = view as? UIScrollView { return scrollView }
@@ -1541,16 +1541,16 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
  99 |             }
 
 /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIView.h:230:64: note: property declared here
-228 | 
+228 |
 229 | @property(nullable, nonatomic,readonly) UIView       *superview;
 230 | @property(nonatomic,readonly,copy) NSArray<__kindof UIView *> *subviews;
     |                                                                `- note: property declared here
 231 | @property(nullable, nonatomic,readonly) UIWindow     *window;
-232 | 
+232 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:104:20: warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
 101 |         }
-102 | 
+102 |
 103 |         func tearDown() {
     |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
 104 |             window.isHidden = true
@@ -1568,7 +1568,7 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:105:20: warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
 101 |         }
-102 | 
+102 |
 103 |         func tearDown() {
     |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
 104 |             window.isHidden = true
@@ -1579,10 +1579,10 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIWindow.h:69:57: note: mutation of this property is only permitted within the actor
  67 | - (void)makeKeyAndVisible;
- 68 | 
+ 68 |
  69 | @property(nullable, nonatomic,strong) UIViewController *rootViewController API_AVAILABLE(ios(4.0));  // default is nil
     |                                                         `- note: mutation of this property is only permitted within the actor
- 70 | 
+ 70 |
  71 | - (void)sendEvent:(UIEvent *)event;                    // called by UIApplication to dispatch events to views inside the window
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatNativeTimelineReplayTestCase.swift:341:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
@@ -1618,16 +1618,16 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 143 |         window.rootViewController = host
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:81:42: warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
- 79 | 
+ 79 |
  80 |         var scrollView: UIScrollView? {
  81 |             Self.findScrollView(in: host.view)
     |                                          `- warning: main actor-isolated property 'view' can not be referenced from a nonisolated context
  82 |         }
- 83 | 
+ 83 |
 
 /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIViewController.h:118:54: note: property declared here
 116 | - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
-117 | 
+117 |
 118 | @property(null_resettable, nonatomic,strong) UIView *view; // The getter first invokes [self loadView] if the view hasn't been set yet. Subclasses must call super if they override the setter or getter.
     |                                                      `- note: property declared here
 119 | - (void)loadView; // This is where subclasses should create their custom view hierarchy if they aren't using a nib. Should never be called directly.
@@ -1635,7 +1635,7 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:86:33: warning: main actor-isolated property 'subviews' can not be referenced from a nonisolated context
  82 |         }
- 83 | 
+ 83 |
  84 |         static func findScrollView(in view: UIView) -> UIScrollView? {
     |                     `- note: add '@MainActor' to make static method 'findScrollView(in:)' part of global actor 'MainActor'
  85 |             if let scrollView = view as? UIScrollView { return scrollView }
@@ -1645,16 +1645,16 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
  88 |             }
 
 /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIView.h:230:64: note: property declared here
-228 | 
+228 |
 229 | @property(nullable, nonatomic,readonly) UIView       *superview;
 230 | @property(nonatomic,readonly,copy) NSArray<__kindof UIView *> *subviews;
     |                                                                `- note: property declared here
 231 | @property(nullable, nonatomic,readonly) UIWindow     *window;
-232 | 
+232 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:93:20: warning: main actor-isolated property 'isHidden' can not be mutated from a nonisolated context
  90 |         }
- 91 | 
+ 91 |
  92 |         func tearDown() {
     |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
  93 |             window.isHidden = true
@@ -1672,7 +1672,7 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:94:20: warning: main actor-isolated property 'rootViewController' can not be mutated from a nonisolated context
  90 |         }
- 91 | 
+ 91 |
  92 |         func tearDown() {
     |              `- note: add '@MainActor' to make instance method 'tearDown()' part of global actor 'MainActor'
  93 |             window.isHidden = true
@@ -1683,10 +1683,10 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIWindow.h:69:57: note: mutation of this property is only permitted within the actor
  67 | - (void)makeKeyAndVisible;
- 68 | 
+ 68 |
  69 | @property(nullable, nonatomic,strong) UIViewController *rootViewController API_AVAILABLE(ios(4.0));  // default is nil
     |                                                         `- note: mutation of this property is only permitted within the actor
- 70 | 
+ 70 |
  71 | - (void)sendEvent:(UIEvent *)event;                    // called by UIApplication to dispatch events to views inside the window
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatStructuralRetypeReplayTests.swift:129:22: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
@@ -1741,7 +1741,7 @@ Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Send
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactActionsTests.swift:241:48: warning: call to main actor-isolated static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' in a synchronous nonisolated context [#ActorIsolatedCall]
 238 |     }
-239 | 
+239 |
 240 |     func testListHeightIgnoresFooterAfterLeavingSelectMode() {
     |          `- note: add '@MainActor' to make instance method 'testListHeightIgnoresFooterAfterLeavingSelectMode()' part of global actor 'MainActor'
 241 |         let selecting = ChatArtifactShelfPanel.scrollHeight(
@@ -1753,11 +1753,11 @@ iosApp.ChatArtifactShelfPanel.scrollHeight:2:33: note: calls to static method 's
 1 | struct ChatArtifactShelfPanel {
 2 | @MainActor internal static func scrollHeight(maxHeight: CGFloat?, headerHeight: CGFloat, footerHeight: CGFloat, sectionsHeight: CGFloat?, isSelecting: Bool, sectionSpacing: CGFloat = 14, contentPadding: CGFloat = 16) -> CGFloat?}
   |                                 `- note: calls to static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' from outside of its actor context are implicitly asynchronous
-3 | 
+3 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactActionsTests.swift:244:45: warning: call to main actor-isolated static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' in a synchronous nonisolated context [#ActorIsolatedCall]
 238 |     }
-239 | 
+239 |
 240 |     func testListHeightIgnoresFooterAfterLeavingSelectMode() {
     |          `- note: add '@MainActor' to make instance method 'testListHeightIgnoresFooterAfterLeavingSelectMode()' part of global actor 'MainActor'
 241 |         let selecting = ChatArtifactShelfPanel.scrollHeight(
@@ -1772,7 +1772,7 @@ iosApp.ChatArtifactShelfPanel.scrollHeight:2:33: note: calls to static method 's
 1 | struct ChatArtifactShelfPanel {
 2 | @MainActor internal static func scrollHeight(maxHeight: CGFloat?, headerHeight: CGFloat, footerHeight: CGFloat, sectionsHeight: CGFloat?, isSelecting: Bool, sectionSpacing: CGFloat = 14, contentPadding: CGFloat = 16) -> CGFloat?}
   |                                 `- note: calls to static method 'scrollHeight(maxHeight:headerHeight:footerHeight:sectionsHeight:isSelecting:sectionSpacing:contentPadding:)' from outside of its actor context are implicitly asynchronous
-3 | 
+3 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatArtifactAnchorLayoutTests.swift:189:58: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
 187 |         let previousWindow = scene.windows.first(where: \.isKeyWindow)
@@ -1800,7 +1800,7 @@ iosApp.ChatArtifactShelfPanel.scrollHeight:2:33: note: calls to static method 's
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMarkdownCJKEmphasisTests.swift:65:46: warning: call to main actor-isolated static method 'repairRejectedStrong(inAdjacentTextFragments:)' in a synchronous nonisolated context [#ActorIsolatedCall]
  49 |     }
- 50 | 
+ 50 |
  51 |     func testNativeQuotedTitleHasNoLiteralDelimitersAfterRender() {
     |          `- note: add '@MainActor' to make instance method 'testNativeQuotedTitleHasNoLiteralDelimitersAfterRender()' part of global actor 'MainActor'
  52 |         let samples = [
@@ -1817,7 +1817,7 @@ iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method
 1 | struct AmberMarkdownView {
 2 | @MainActor internal static func repairRejectedStrong(inAdjacentTextFragments fragments: [String]) -> AttributedString}
   |                                 `- note: calls to static method 'repairRejectedStrong(inAdjacentTextFragments:)' from outside of its actor context are implicitly asynchronous
-3 | 
+3 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMarkdownCJKEmphasisTests.swift:162:42: warning: call to main actor-isolated static method 'repairRejectedStrong(in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
 152 |     /// flanking 拒绝的形态：AST 里只剩字面定界符（这是解析器事实，不在测试里
@@ -1838,7 +1838,7 @@ iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method
 1 | struct AmberMarkdownView {
 2 | @MainActor internal static func repairRejectedStrong(in raw: String) -> AttributedString}
   |                                 `- note: calls to static method 'repairRejectedStrong(in:)' from outside of its actor context are implicitly asynchronous
-3 | 
+3 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/ChatMarkdownCJKEmphasisTests.swift:182:42: warning: call to main actor-isolated static method 'repairRejectedStrong(in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
 177 |     /// 渲染修复的自限性：没有字面成对定界符的文本必须原样通过，
@@ -1856,7 +1856,7 @@ iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method
 1 | struct AmberMarkdownView {
 2 | @MainActor internal static func repairRejectedStrong(in raw: String) -> AttributedString}
   |                                 `- note: calls to static method 'repairRejectedStrong(in:)' from outside of its actor context are implicitly asynchronous
-3 | 
+3 |
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/AgentLiveActivityControllerPendingStartTests.swift:254:17: warning: 'handoff' mutated after capture by sendable closure
 232 |         let gate = PendingGate()
@@ -1904,7 +1904,7 @@ iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method
 310 |         allowPersist?.resume()
 311 |         await completionTask.value
     |                              `- warning: expression of type 'Bool' is unused [#NoUsage]
-312 | 
+312 |
 313 |         let restarted = IOSConversationStore(baseDirectory: baseDirectory)
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSConversationStoreConcurrencyTests.swift:481:30: warning: expression of type 'Bool' is unused [#NoUsage]
@@ -1912,16 +1912,16 @@ iosApp.AmberMarkdownView.repairRejectedStrong:2:33: note: calls to static method
 480 |         allowPersist?.resume()
 481 |         await completionTask.value
     |                              `- warning: expression of type 'Bool' is unused [#NoUsage]
-482 | 
+482 |
 483 |         XCTAssertEqual(
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSCouncilRunnerMechanicsTests.swift:187:13: warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
-185 | 
+185 |
 186 |         drainTask.cancel()
 187 |         _ = await drainTask
     |             `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
 188 |     }
-189 | 
+189 |
 
 [#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
 [#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
@@ -1933,7 +1933,7 @@ error: the following command failed with exit code 0 but produced no further out
 SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneScrollSearchTests.swift (in target 'iosAppTests' from project 'AmberAgent')
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalLoopTests.swift:1192:70: warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
 1190 | }
-1191 | 
+1191 |
 1192 | private final class GoalLoopFailureProtocol: URLProtocol, @unchecked Sendable {
      |                     |                                                `- warning: 'GoalLoopFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
      |                     `- note: 'GoalLoopFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
@@ -1942,7 +1942,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalToolIntegrationTests.swift:899:63: warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
 897 | }
-898 | 
+898 |
 899 | private final class GoalHTTPProtocol: URLProtocol, @unchecked Sendable {
     |                     |                                         `- warning: 'GoalHTTPProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
     |                     `- note: 'GoalHTTPProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here
@@ -1951,7 +1951,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneGoalToolIntegrationTests.swift:472:13: warning: initialization of immutable value 'completion' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
 470 |         ))
-471 | 
+471 |
 472 |         let completion = IOSPhoneGoalExpectation(
     |             `- warning: initialization of immutable value 'completion' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
 473 |             kind: .visible,
@@ -1959,7 +1959,7 @@ SwiftCompile normal arm64 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/
 
 /Users/mi/Downloads/AI/amber-macos/iosApp/iosAppTests/IOSPhoneScrollSearchTests.swift:215:74: warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
 213 | }
-214 | 
+214 |
 215 | private final class ScrollSearchFailureProtocol: URLProtocol, @unchecked Sendable {
     |                     |                                                    `- warning: 'ScrollSearchFailureProtocol' inherits an unavailable 'Sendable' conformance; conforming here risks data races [#UnavailableSendableConformance]
     |                     `- note: 'ScrollSearchFailureProtocol' inherits unavailable conformance to protocol 'Sendable' from superclass here

@@ -21,6 +21,8 @@
 
 这些是指定输入的本机测量，不是全部界面的帧率、真实模型网速或整体 App 提速倍数。原型缓存数字未用于上表。原始测量及可复现基准保存在 [evidence](evidence/)；provider 前后数据分别见 [before](evidence/provider-before.txt)、[after](evidence/provider-after.txt)。
 
+提交中的日志仅规范化了行尾空白，测试结果、诊断内容与测量数值未改。
+
 ## 已完成的性能改动
 
 - **P1 · MCP framing**：维护已扫描偏移，只搜索新增字节；消费完整行和断开后归零。跨分片、多行、空行、16 MiB 限额、FIFO 与 generation 保护保留。实际子进程 fixture 使用 1 KiB 分片及 100,000 行中文回归。

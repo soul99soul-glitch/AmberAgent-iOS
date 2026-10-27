@@ -44,7 +44,7 @@ Building for production...
 
 /private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.m9nrvV/Sources/AmberMac/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1259 |     }
-1260 | 
+1260 |
 1261 |     @discardableResult
      |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the

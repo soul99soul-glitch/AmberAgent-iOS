@@ -6,14 +6,14 @@ error: the following command failed with exit code 0 but produced no further out
 SwiftCompile normal arm64 (in target 'AmberMac' from project 'AmberMac')
 /Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/Runtime/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1259 |     }
-1260 | 
+1260 |
 1261 |     @discardableResult
      |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
 1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
 /Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopMathView.swift:61:22: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
  57 |     private var valid = false
- 58 | 
+ 58 |
  59 |     func isValid(_ source: String) -> Bool {
     |          `- note: add '@MainActor' to make instance method 'isValid' part of global actor 'MainActor'
  60 |         if self.source == source { return valid }
@@ -24,16 +24,16 @@ SwiftCompile normal arm64 (in target 'AmberMac' from project 'AmberMac')
 
 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSResponder.h:23:1: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
  21 | @interface NSResponder : NSObject <NSCoding>
- 22 | 
+ 22 |
  23 | - (instancetype)init NS_DESIGNATED_INITIALIZER;
     | |- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
     | `- note: main actor isolation inferred from inheritance from class 'NSView'
  24 | - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
- 25 | 
+ 25 |
 
 /Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopMathView.swift:62:16: warning: main actor-isolated property 'latex' can not be mutated from a nonisolated context
  57 |     private var valid = false
- 58 | 
+ 58 |
  59 |     func isValid(_ source: String) -> Bool {
     |          `- note: add '@MainActor' to make instance method 'isValid' part of global actor 'MainActor'
  60 |         if self.source == source { return valid }
@@ -48,12 +48,12 @@ SwiftCompile normal arm64 (in target 'AmberMac' from project 'AmberMac')
  74 |  @see error */
  75 | @property (nonatomic, nullable) IBInspectable NSString* latex;
     |                                                         `- note: mutation of this property is only permitted within the actor
- 76 | 
+ 76 |
  77 | /** This contains any error that occurred when parsing the latex. */
 
 /Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopMathView.swift:64:24: warning: main actor-isolated property 'error' can not be referenced from a nonisolated context
  57 |     private var valid = false
- 58 | 
+ 58 |
  59 |     func isValid(_ source: String) -> Bool {
     |          `- note: add '@MainActor' to make instance method 'isValid' part of global actor 'MainActor'
  60 |         if self.source == source { return valid }
@@ -66,11 +66,11 @@ SwiftCompile normal arm64 (in target 'AmberMac' from project 'AmberMac')
  66 |     }
 
 /Users/mi/Downloads/AI/amber-macos/macApp/build/SourcePackages/checkouts/iosMath/iosMath/include/MTMathUILabel.h:78:52: note: property declared here
- 76 | 
+ 76 |
  77 | /** This contains any error that occurred when parsing the latex. */
  78 | @property (nonatomic, readonly, nullable) NSError* error;
     |                                                    `- note: property declared here
- 79 | 
+ 79 |
  80 | /** If true, if there is an error it displays the error message inline. Default true. */
 
 [#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>

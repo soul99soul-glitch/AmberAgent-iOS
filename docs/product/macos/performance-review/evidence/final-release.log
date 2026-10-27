@@ -31,7 +31,7 @@ SwiftCompile normal arm64 (in target 'AmberMac' from project 'AmberMac')
 
 /Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/Runtime/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1259 |     }
-1260 | 
+1260 |
 1261 |     @discardableResult
      |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
 1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
