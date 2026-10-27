@@ -63,7 +63,16 @@ extension SMAppService: DesktopGatewayService {}
         // The app may have moved or been rebuilt since it registered: hooks only know the stable symlink, and
         // launchd keeps the old bundle's registration (it refuses to spawn a re-signed binary, EX_CONFIG).
         if installation.linkTarget?.path != bundledBinary.path { try? installation.linkBinary(bundledBinary) }
-        if !paths.daemonRunning { Task { await reregister() } }
+        // A daemon still running the binary from before an update keeps serving the old API; restart it.
+        if !paths.daemonRunning || daemonPredatesBinary { Task { await reregister() } }
+    }
+
+    /// The running daemon started before the bundled binary was last written (Amber was updated meanwhile).
+    private var daemonPredatesBinary: Bool {
+        let fm = FileManager.default
+        guard let started = (try? fm.attributesOfItem(atPath: paths.pidFile.path))?[.modificationDate] as? Date,
+              let built = (try? fm.attributesOfItem(atPath: bundledBinary.path))?[.modificationDate] as? Date else { return false }
+        return built > started
     }
 
     /// launchd pins the code signature it saw at registration and refuses a rebuilt binary (EX_CONFIG) until the
