@@ -165,6 +165,94 @@ final class KMPProviderIntegrationTests: XCTestCase {
         XCTAssertTrue(ownerFiles.isEmpty)
     }
 
+    /// Scheduled run end to end: DesktopWorkspace.runScheduled → real DesktopAgentProvider/engine → loopback fixture.
+    private func scheduledWorkspace(approval: DesktopUnattendedApproval) throws
+        -> (DesktopWorkspace, DesktopWorkspaceFiles, DesktopScheduledTask, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("amber-scheduled-e2e-" + UUID().uuidString, isDirectory: true)
+        let defaults = UserDefaults(suiteName: "amber-scheduled-e2e.\(UUID().uuidString)")!
+        let credentials = DesktopMemoryCredentials()
+        let settings = DesktopSettings(defaults: defaults, credentials: credentials)
+        var config = try XCTUnwrap(settings.selectedProvider)
+        config.kind = .openAI
+        config.baseURL = try configuration(kind: .openAI).baseURL
+        config.modelID = "mock-scheduled-write"
+        try settings.saveProvider(config, apiKey: fixtureKey)
+        let tasks = DesktopAgentTasks(directory: root.appendingPathComponent("agent-runs"), defaults: defaults)
+        // The conversation-level switches say "approve everything"; the task's own policy must win.
+        tasks.autoApprove = true
+        tasks.autoApproveHighRisk = true
+        let files = DesktopWorkspaceFiles(directory: root.appendingPathComponent("workspaces"))
+        let knowledge = DesktopKnowledgeStore(directory: root.appendingPathComponent("knowledge"))
+        let mcp = DesktopMCPManager(store: DesktopMCPStore(defaults: defaults, credentials: credentials))
+        let text = DesktopKMPProvider()
+        let collaborations = DesktopCollaborations(settings: settings, provider: text)
+        let search = DesktopSearchSettings(defaults: defaults, credentials: credentials)
+        let provider = DesktopAgentProvider(text: text, tasks: tasks, files: files, knowledge: knowledge, mcp: mcp,
+            collaborations: collaborations, searchSettings: search)
+        let workspace = DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage(), provider: provider,
+            initialConversations: [], files: files, agentTasks: tasks, knowledge: knowledge, mcp: mcp, collaborations: collaborations,
+            searchSettings: search)
+        var task = DesktopScheduledTask(name: "写摘要", prompt: "写一份摘要文件", schedule: .daily(hour: 9, minute: 0))
+        task.approval = approval
+        return (workspace, files, task, root)
+    }
+
+    func testScheduledRunAutoApprovesAllowListedToolWithItsOwnPolicy() async throws {
+        let (workspace, files, task, root) = try scheduledWorkspace(approval: DesktopUnattendedApproval(
+            autoApproveOrdinary: true, allowedTools: ["workspace_file_write"]))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let record = try await withTimeout { await workspace.runScheduled(task) }
+        XCTAssertEqual(record.status, .completed, record.error ?? "")
+        let owner = try XCTUnwrap(record.conversationID)
+        let written = try await files.list(conversationID: owner)
+        XCTAssertEqual(written.map(\.id), ["summary.txt"])
+        XCTAssertEqual(record.autoApprovedTools, ["workspace_file_write"])
+        let reply = workspace.conversations.first { $0.id == owner }?.messages.last
+        XCTAssertTrue(reply?.text.hasPrefix("scheduled-result:") == true, reply?.text ?? "")
+    }
+
+    func testScheduledRunDeniesToolOutsideAllowListDespiteGlobalAutoApprove() async throws {
+        let (workspace, files, task, root) = try scheduledWorkspace(approval: DesktopUnattendedApproval(
+            autoApproveOrdinary: true, autoApproveHighRisk: true, allowedTools: ["workspace_file_list"]))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let record = try await withTimeout { await workspace.runScheduled(task) }
+        XCTAssertEqual(record.status, .completed, record.error ?? "")
+        let owner = try XCTUnwrap(record.conversationID)
+        let written = try await files.list(conversationID: owner)
+        XCTAssertTrue(written.isEmpty)
+        XCTAssertTrue(record.autoApprovedTools.isEmpty)
+        let reply = workspace.conversations.first { $0.id == owner }?.messages.last?.text ?? ""
+        XCTAssertTrue(reply.contains("不在定时任务允许的工具范围内"), reply)
+        XCTAssertNil(workspace.agentTasks.records.first { $0.conversationID == owner }?.approval)
+    }
+
+    func testScheduledRunWithoutAutoApproveWaitsForApprovalAndContinuesWhenAllowed() async throws {
+        let (workspace, files, task, root) = try scheduledWorkspace(approval: DesktopUnattendedApproval())
+        defer { try? FileManager.default.removeItem(at: root) }
+        let running = Task { await workspace.runScheduled(task) }
+        var waiting: DesktopAgentTask?
+        for _ in 0..<400 where waiting == nil {
+            waiting = workspace.agentTasks.records.first { $0.status == .waiting }
+            if waiting == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let run = try XCTUnwrap(waiting, "the global auto-approve switch must not let the scheduled write through")
+        XCTAssertEqual(run.approval?.name, "workspace_file_write")
+        workspace.agentTasks.decide(runID: run.id, allow: true)
+        let record = try await withTimeout { await running.value }
+        XCTAssertEqual(record.status, .completed, record.error ?? "")
+        let written = try await files.list(conversationID: try XCTUnwrap(record.conversationID))
+        XCTAssertEqual(written.map(\.id), ["summary.txt"])
+        XCTAssertTrue(record.autoApprovedTools.isEmpty)
+    }
+
+    private func withTimeout<T: Sendable>(seconds: Double = 15, _ body: @escaping @MainActor () async -> T) async throws -> T {
+        let work = Task { @MainActor in await body() }
+        let watchdog = Task { try await Task.sleep(for: .seconds(seconds)); work.cancel() }
+        let value = await work.value
+        watchdog.cancel()
+        return value
+    }
+
     private func collect(_ run: DesktopGeneration, cancelAfterPartial: Bool = false,
                          maxWaitMilliseconds: Int = 8_000) async throws -> [DesktopProviderEvent] {
         var events: [DesktopProviderEvent] = []

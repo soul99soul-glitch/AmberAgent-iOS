@@ -85,6 +85,9 @@ final class DesktopWorkspace {
     @ObservationIgnored private var branchMutationTask: Task<Void, Never>?
     @ObservationIgnored private var branchMutationOwner: UUID?
     @ObservationIgnored private var branchGenerationCancelled = false
+    /// Conversations a scheduled task is writing into right now; the composer and branch edits stay off them.
+    private(set) var scheduledRunConversationIDs: Set<UUID> = []
+    @ObservationIgnored private var scheduledGenerations: [UUID: DesktopGeneration] = [:]
 
     @ObservationIgnored private var conversationLoads: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var searchTask: Task<Void, Never>?
@@ -314,6 +317,9 @@ final class DesktopWorkspace {
     }
 
     func send() {
+        if let selectedID, scheduledRunConversationIDs.contains(selectedID) {
+            errorMessage = "定时任务正在这条会话中运行，请等它结束后再发送。"; return
+        }
         if isSelectedConversationGenerating { queueInstruction(); return }
         guard !isLoading, !isGenerating, !isMutatingBranch, !isManagingBackup, !selectedConversationUnavailable else { return }
         guard !isReadingAttachments else { errorMessage = "附件正在读取，请稍候再发送。"; return }
@@ -484,6 +490,7 @@ final class DesktopWorkspace {
         completion: (@MainActor (Bool) -> Void)? = nil,
         action: @escaping @MainActor (DesktopConversation, UUID) async throws -> DesktopConversation) -> Task<Void, Never>? {
         guard !isLoading, !isGenerating, !isMutatingBranch, !isManagingBackup, let owner = selectedID,
+              !scheduledRunConversationIDs.contains(owner),
               selectedConversation?.messages.contains(where: { $0.id == messageID }) == true else {
             completion?(false); return nil
         }
@@ -541,6 +548,10 @@ final class DesktopWorkspace {
             configuration = try DesktopAuxiliaryRouting.chatConfiguration(settings: settings, hasImages: hasImages)
         }
         guard let config = configuration else { throw DesktopRuntimeError.message("请先在设置中添加并选择服务商。") }
+        return try validatedRequest(config)
+    }
+
+    private func validatedRequest(_ config: DesktopProviderConfiguration) throws -> (DesktopProviderConfiguration, String) {
         try DesktopSettings.validateEndpoint(config.baseURL)
         guard !config.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DesktopRuntimeError.message("请先在服务商设置中填写 Model ID。")
@@ -611,18 +622,13 @@ final class DesktopWorkspace {
             persist(conversations[index])
         }
         let prefixIDs = messages.map(\.id)
-        let localContext: String
-        do { localContext = try knowledge.requestContext(query: messages.last(where: { $0.role == .user })?.text ?? "") }
+        do { messages = try requestMessages(messages, conversationID: conversationID) }
         catch {
             conversations[index].messages[conversations[index].messages.count - 1].state = .failed
             persist(conversations[index])
             recordError("读取本地知识上下文失败。\(error.localizedDescription)", owner: conversationID)
             return
         }
-        messages = insights.prepare(messages: messages, conversationID: conversationID)
-        let system = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), localContext]
-            .filter { !$0.isEmpty }.joined(separator: "\n\n")
-        if !system.isEmpty { messages.insert(DesktopMessage(role: .system, text: system), at: 0) }
         if !unsavedConversationIDs.contains(conversationID), !unsavedMetadataIDs.contains(conversationID) {
             if selectedID == conversationID { errorMessage = nil }
             conversationErrors[conversationID] = nil
@@ -661,6 +667,16 @@ final class DesktopWorkspace {
             persist(conversations[index])
             recordError("无法开始生成，请检查服务商设置后重试。", owner: conversationID)
         }
+    }
+
+    /// History as the model sees it: compaction applied, then the system prompt and local knowledge context.
+    private func requestMessages(_ history: [DesktopMessage], conversationID: UUID) throws -> [DesktopMessage] {
+        let localContext = try knowledge.requestContext(query: history.last(where: { $0.role == .user })?.text ?? "")
+        var messages = insights.prepare(messages: history, conversationID: conversationID)
+        let system = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), localContext]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        if !system.isEmpty { messages.insert(DesktopMessage(role: .system, text: system), at: 0) }
+        return messages
     }
 
     private func apply(_ events: [DesktopProviderEvent], checkpoint: Bool = true) {
@@ -783,6 +799,7 @@ final class DesktopWorkspace {
         guard branchMutationOwner != id else { recordError("正在保存消息更改，请稍候再删除会话。", owner: id); return }
         guard let summary = summaries.first(where: { $0.id == id }) else { return }
         if imageGeneration.ownerID == id { imageGeneration.cancel() }
+        scheduledGenerations[id]?.cancel()
         if generationConversationID == id {
             stop()
             if generationConversationID == id {
@@ -1503,6 +1520,217 @@ final class DesktopWorkspace {
         }
         fileTasks[token] = task
         return task
+    }
+}
+
+// MARK: - Scheduled runs
+// Headless: never reads or changes selectedID, draft, attachments or the composer's generation slot, so a
+// scheduled task can run next to the user's own chat (the scheduler caps how many run at once).
+extension DesktopWorkspace {
+    func runScheduled(_ task: DesktopScheduledTask, scheduledFor: Date? = nil,
+        clock: @escaping @MainActor () -> Date = Date.init,
+        approvalPollInterval: Duration = .seconds(30)) async -> DesktopScheduleRunRecord {
+        let startedAt = clock()
+        var record = DesktopScheduleRunRecord(scheduledFor: scheduledFor, startedAt: startedAt, status: .running)
+        func failed(_ message: String) -> DesktopScheduleRunRecord {
+            record.status = .failed; record.error = message; record.finishedAt = clock(); return record
+        }
+        await waitUntilLoaded()
+        if let error = task.validationError { return failed(error) }
+        guard !isManagingBackup else { return failed("正在备份或恢复，本次未运行。") }
+
+        let conversationID: UUID
+        let isNew: Bool
+        switch task.output {
+        case .newConversation:
+            var conversation = DesktopConversation()
+            conversation.title = Self.scheduledTitle(task.name, at: startedAt)
+            conversations.insert(conversation, at: 0)
+            conversationID = conversation.id
+            isNew = true
+        case .appendTo(let id):
+            guard summaries.contains(where: { $0.id == id }) else { return failed("结果会话已删除，请编辑任务重新选择。") }
+            await loadConversation(id)?.value
+            guard conversations.contains(where: { $0.id == id }) else { return failed("无法读取结果会话。") }
+            guard generationConversationID != id, branchMutationOwner != id, !scheduledRunConversationIDs.contains(id) else {
+                return failed("结果会话正在生成或保存，本次未运行。")
+            }
+            conversationID = id
+            isNew = false
+        }
+        record.conversationID = conversationID
+        scheduledRunConversationIDs.insert(conversationID)
+        defer { scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil }
+
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return failed("结果会话已删除。") }
+        let request: (DesktopProviderConfiguration, String)
+        let user: DesktopMessage
+        do {
+            let hasImages = conversations[index].messages.contains { !$0.images.isEmpty }
+            let configuration: DesktopProviderConfiguration?
+            if let modelID = task.modelID {
+                configuration = settings.configuration(forModelID: modelID)
+                guard configuration != nil else { throw DesktopRuntimeError.message("任务指定的模型已删除或停用，请编辑任务重新选择。") }
+            } else { configuration = try DesktopAuxiliaryRouting.chatConfiguration(settings: settings, hasImages: hasImages) }
+            guard let configuration else { throw DesktopRuntimeError.message("请先在设置中添加并选择服务商。") }
+            request = try validatedRequest(configuration)
+            user = try provider.userMessage(id: UUID(), text: task.prompt, attachments: [])
+        } catch {
+            if isNew { conversations.removeAll { $0.id == conversationID } }
+            return failed(error.localizedDescription)
+        }
+        conversations[index].messages.append(user)
+        let prefixIDs = conversations[index].messages.map(\.id)
+        let history = conversations[index].messages
+        let reply = DesktopMessage(role: .assistant, text: "", state: .streaming)
+        conversations[index].messages.append(reply)
+        conversations[index].updatedAt = clock()
+        persist(conversations[index])
+        if isNew { persistMetadata(conversations[index]) }
+
+        let run: DesktopGeneration
+        do {
+            let messages = try requestMessages(history, conversationID: conversationID)
+            run = try provider.start(configuration: request.0, apiKey: request.1, messages: messages, responseID: reply.id,
+                context: DesktopRunContext(conversationID: conversationID, toolsEnabled: task.toolsEnabled,
+                    subagentsEnabled: task.subagentsEnabled, approvalPolicy: task.approval.policy,
+                    persistTurns: { [weak self] turns in
+                        await self?.persistScheduledTurns(turns, owner: conversationID, prefixIDs: prefixIDs) ?? false
+                    }))
+        } catch {
+            finishScheduledReply(owner: conversationID, replyID: reply.id, state: .failed)
+            await persistence?.value
+            return failed("无法开始运行：\(error.localizedDescription)")
+        }
+        scheduledGenerations[conversationID] = run
+
+        // Unanswered approvals fail the run once the task's timeout passes.
+        let timeout = TimeInterval(task.approval.approvalTimeoutHours * 3600)
+        let watchdog = Task { [weak self] () -> Bool in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: approvalPollInterval)
+                guard let self, !Task.isCancelled else { return false }
+                if let waiting = self.agentTasks.records.first(where: {
+                    $0.conversationID == conversationID && $0.status == .waiting && $0.createdAt >= startedAt.addingTimeInterval(-1)
+                }), clock().timeIntervalSince(waiting.updatedAt) >= timeout {
+                    self.agentTasks.cancel(waiting.id)
+                    run.cancel()
+                    return true
+                }
+            }
+            return false
+        }
+        let outcome = await withTaskCancellationHandler {
+            await consumeScheduled(run, owner: conversationID, prefixIDs: prefixIDs, replyID: reply.id)
+        } onCancel: { run.cancel() }
+        watchdog.cancel()
+        let timedOut = await watchdog.value
+        await persistence?.value
+
+        let agentRun = agentTasks.records.first { $0.conversationID == conversationID && $0.createdAt >= startedAt.addingTimeInterval(-1) }
+        record.agentRunID = agentRun?.id
+        record.autoApprovedTools = agentRun?.transactions.filter { $0.autoApproved == true }.map(\.name) ?? []
+        record.finishedAt = clock()
+        if timedOut {
+            record.status = .failed
+            record.error = "审批等待超过 \(task.approval.approvalTimeoutHours) 小时未处理，本次运行记为失败。"
+        } else if outcome.state == .complete {
+            record.status = .completed
+        } else {
+            record.status = .failed
+            record.error = outcome.state == .cancelled ? "运行已取消。" : outcome.error ?? "运行未完成。"
+        }
+        if unsavedConversationIDs.contains(conversationID) || !conversations.contains(where: { $0.id == conversationID }) {
+            record.status = .failed
+            record.error = record.error ?? "运行结果未能保存，请检查磁盘空间或文件权限。"
+        }
+        return record
+    }
+
+    /// Stops every scheduled run (quit, pause all). Each run records itself as cancelled.
+    func cancelScheduledRuns() {
+        for run in scheduledGenerations.values { run.cancel() }
+    }
+
+    static func scheduledTitle(_ name: String, at date: Date) -> String {
+        "⏱ \(name) · " + date.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month().day().hour().minute())
+    }
+
+    private func consumeScheduled(_ run: DesktopGeneration, owner: UUID, prefixIDs: [UUID],
+        replyID: UUID) async -> (state: DesktopMessageState, error: String?) {
+        var assistantID: UUID? = replyID
+        var lastCheckpoint = Date()
+        var result: (state: DesktopMessageState, error: String?)?
+        func apply(_ events: [DesktopProviderEvent]) {
+            guard result == nil else { return }
+            for event in events {
+                guard let index = conversations.firstIndex(where: { $0.id == owner }) else { result = (.failed, "结果会话已删除。"); return }
+                switch event {
+                case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount):
+                    guard let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == assistantID }) else { continue }
+                    conversations[index].messages[messageIndex].text = text
+                    conversations[index].messages[messageIndex].reasoning = reasoning
+                    conversations[index].messages[messageIndex].canonicalJSON = canonicalJSON
+                    conversations[index].messages[messageIndex].unsupportedPartCount = unsupportedPartCount
+                case .transcript(let turns):
+                    guard !turns.isEmpty, replaceScheduledSuffix(turns, owner: owner, prefixIDs: prefixIDs) else { continue }
+                    assistantID = turns.last?.role == .assistant ? turns.last?.id : nil
+                case .complete: result = (.complete, nil)
+                case .cancelled: result = (.cancelled, nil)
+                case .failed(let message): result = (.failed, message); recordError(message, owner: owner)
+                }
+                if result != nil { break }
+            }
+            if let result {
+                if assistantID == nil, result.state != .complete,
+                   conversations.first(where: { $0.id == owner })?.messages.last?.role == .user {
+                    let reply = DesktopMessage(role: .assistant, text: "", state: result.state)
+                    if let index = conversations.firstIndex(where: { $0.id == owner }) { conversations[index].messages.append(reply) }
+                    assistantID = reply.id
+                }
+                finishScheduledReply(owner: owner, replyID: assistantID, state: result.state)
+            } else if Date().timeIntervalSince(lastCheckpoint) >= 1,
+                      let value = conversations.first(where: { $0.id == owner }) {
+                lastCheckpoint = Date()
+                persist(value)
+            }
+        }
+        for await _ in run.signals {
+            apply(run.drain())
+            if result != nil { break }
+        }
+        apply(run.drain())
+        if let result { return result }
+        finishScheduledReply(owner: owner, replyID: assistantID, state: .failed)
+        return (.failed, "运行意外结束。")
+    }
+
+    @discardableResult
+    private func replaceScheduledSuffix(_ turns: [DesktopMessage], owner: UUID, prefixIDs: [UUID]) -> Bool {
+        guard let index = conversations.firstIndex(where: { $0.id == owner }) else { return false }
+        let prefix = Array(conversations[index].messages.prefix(prefixIDs.count))
+        guard prefix.map(\.id) == prefixIDs else { return false }
+        conversations[index].messages = prefix + turns
+        return true
+    }
+
+    private func finishScheduledReply(owner: UUID, replyID: UUID?, state: DesktopMessageState) {
+        guard let index = conversations.firstIndex(where: { $0.id == owner }) else { return }
+        if let replyID, let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == replyID }) {
+            conversations[index].messages[messageIndex].state = state
+        }
+        conversations[index].updatedAt = Date()
+        persist(conversations[index])
+    }
+
+    private func persistScheduledTurns(_ turns: [DesktopMessage], owner: UUID, prefixIDs: [UUID]) async -> Bool {
+        guard scheduledRunConversationIDs.contains(owner), replaceScheduledSuffix(turns, owner: owner, prefixIDs: prefixIDs),
+              let value = conversations.first(where: { $0.id == owner }) else { return false }
+        persist(value)
+        let writer = persistence
+        await writer?.value
+        return scheduledRunConversationIDs.contains(owner) && conversations.contains(where: { $0.id == owner })
+            && !unsavedConversationIDs.contains(owner)
     }
 }
 

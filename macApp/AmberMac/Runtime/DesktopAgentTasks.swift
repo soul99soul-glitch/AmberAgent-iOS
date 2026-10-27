@@ -21,6 +21,8 @@ struct DesktopToolTransaction: Codable, Equatable, Sendable {
     var outcome: String?
     var resultPayload: String?
     var canonicalInvocation: String?
+    /// Set when a run's own policy let this call through without a human; unattended runs list these afterwards.
+    var autoApproved: Bool?
 }
 
 struct DesktopAgentTask: Identifiable, Codable, Equatable, Sendable {
@@ -127,9 +129,17 @@ struct DesktopApprovalPolicy: Codable, Equatable, Sendable {
     var autoApproveHighRisk: Bool
     /// When set, only these tools may auto-run; anything else still asks (and an unattended run will wait).
     var allowedTools: Set<String>?
+    /// Unattended runs: approval-gated tools outside `allowedTools` are refused instead of waiting for someone.
+    var deniesOutsideAllowList: Bool
 
-    init(autoApproveOrdinary: Bool, autoApproveHighRisk: Bool, allowedTools: Set<String>? = nil) {
+    init(autoApproveOrdinary: Bool, autoApproveHighRisk: Bool, allowedTools: Set<String>? = nil, deniesOutsideAllowList: Bool = false) {
         self.autoApproveOrdinary = autoApproveOrdinary; self.autoApproveHighRisk = autoApproveHighRisk; self.allowedTools = allowedTools
+        self.deniesOutsideAllowList = deniesOutsideAllowList
+    }
+
+    func denies(_ toolName: String) -> Bool {
+        guard deniesOutsideAllowList, let allowedTools else { return false }
+        return !allowedTools.contains(toolName)
     }
 
     func autoApproves(_ toolName: String) -> Bool {

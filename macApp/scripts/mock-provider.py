@@ -94,6 +94,30 @@ class ProviderHandler(BaseHTTPRequestHandler):
                 }, "tool_calls"))
             self.event("[DONE]")
             return
+        if body["model"] == "mock-scheduled-write":
+            # One workspace write, then echo the tool result so tests can tell executed / denied apart.
+            tool_outputs = [
+                message.get("content") for message in body.get("messages", [])
+                if isinstance(message, dict) and message.get("role") == "tool"
+            ]
+            if tool_outputs:
+                text = tool_outputs[-1] if isinstance(tool_outputs[-1], str) else json.dumps(tool_outputs[-1], ensure_ascii=False)
+                self.event(chunk({"role": "assistant", "content": "scheduled-result:" + text[:300]}, "stop"))
+            else:
+                self.event(chunk({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "scheduled-write-call",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_file_write",
+                            "arguments": '{"path":"summary.txt","content":"scheduled","overwrite":true}',
+                        },
+                    }],
+                }, "tool_calls"))
+            self.event("[DONE]")
+            return
         if body["model"].startswith("mock-burst-"):
             try:
                 count = int(body["model"].removeprefix("mock-burst-"))

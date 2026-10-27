@@ -88,7 +88,7 @@ struct DesktopUnattendedApproval: Codable, Equatable, Sendable {
 
     var policy: DesktopApprovalPolicy {
         DesktopApprovalPolicy(autoApproveOrdinary: autoApproveOrdinary, autoApproveHighRisk: autoApproveHighRisk,
-            allowedTools: allowedTools.map(Set.init))
+            allowedTools: allowedTools.map(Set.init), deniesOutsideAllowList: true)
     }
 }
 
@@ -117,8 +117,8 @@ struct DesktopScheduledTask: Identifiable, Codable, Equatable, Sendable {
     var name: String
     var prompt: String
     var schedule: DesktopSchedule
-    /// nil = the default model at run time.
-    var providerID: UUID?
+    /// A model ID from DesktopSettings (DesktopModelConfiguration.id); nil = the default chat model at run time.
+    var modelID: UUID?
     var toolsEnabled = true
     var subagentsEnabled = false
     var approval = DesktopUnattendedApproval()

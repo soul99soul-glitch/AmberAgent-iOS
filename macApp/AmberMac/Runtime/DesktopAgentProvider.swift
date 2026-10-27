@@ -409,10 +409,19 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
         }
         let exposed = await MainActor.run { exposure.visibleTools().contains { $0.name == tool.toolName } }
         guard exposed else { return .failed("此工具尚未暴露，请先通过tool_search发现后再调用。") }
+        let policy = approvalPolicy
+        if let policy, !["tool_search", "tools_list"].contains(tool.toolName), policy.denies(tool.toolName) {
+            return .denied("此工具不在定时任务允许的工具范围内，未执行。")
+        }
         let effect = DesktopToolRegistry.effect(for: tool.toolName, arguments: tool.input)
         let approval = effect == .sideEffect || effect == .idempotent
-        let policy = approvalPolicy
         let autoApproved = approval ? await MainActor.run { tasks.autoApproves(tool.toolName, policy: policy) } : false
+        if approval, autoApproved, policy != nil {
+            let callID = tool.toolCallId
+            if let record = try? await tasks.journal.change(runID, {
+                if let index = $0.transactions.firstIndex(where: { $0.id == callID }) { $0.transactions[index].autoApproved = true }
+            }) { await tasks.publish(record) }
+        }
         if approval, !autoApproved {
             if let decision = await tasks.decision(runID: runID, toolID: tool.toolCallId) {
                 if !decision { return .denied("用户拒绝了这一次工具调用。") }
