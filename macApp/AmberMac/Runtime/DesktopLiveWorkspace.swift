@@ -51,6 +51,13 @@ import Foundation
         let control = DesktopGatewayControl(tasks: tasks, reporter: reporter, scheduler: scheduler)
         control.board = { [weak self] in self?.boardItems() ?? [] }
         gatewayControl = control
+        boardWriter = DesktopBoardWriter(provider: text) { [weak self] in self?.boardWriterRequest() }
+        // Not as a test host: the title model's key is a Keychain read, which prompts an unsigned test build.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            Task { @MainActor [weak self] in
+                while true { try? await Task.sleep(for: .seconds(20)); self?.writeBoardTitles() }
+            }
+        }
         // Listening is harmless when the gateway is off (nobody connects), and it means enabling needs no restart.
         control.start()
         // The phone can only reach Amber through this socket; take the path back whenever Amber comes to front.

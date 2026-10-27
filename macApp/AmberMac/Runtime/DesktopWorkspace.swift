@@ -52,6 +52,7 @@ final class DesktopWorkspace {
     var gateway: DesktopGateway?
     var gatewayReporter: DesktopGatewayReporter?
     var gatewayControl: DesktopGatewayControl?
+    var boardWriter: DesktopBoardWriter?
 
     @ObservationIgnored private var registryCache: (modified: Date, sessions: [SessionRecord])?
 
@@ -64,6 +65,15 @@ final class DesktopWorkspace {
         registryCache = (modified, sessions)
         return sessions
     }
+
+    /// Queues titles for the gateway's untitled sessions (polled by the live app while the gateway is on).
+    func writeBoardTitles() {
+        guard gateway?.isEnabled == true else { return }
+        boardWriter?.queueTitles(gatewaySessions())
+    }
+
+    /// The 「生成会话标题」 model and key for DesktopBoardWriter; nil when none resolves.
+    func boardWriterRequest() -> (DesktopProviderConfiguration, String)? { try? requestConfiguration(.title) }
 
     /// The task board: scheduled tasks, their runs, and the gateway's Claude Code / Codex sessions.
     func boardItems(now: Date = Date()) -> [AmberControl.BoardItem] {
@@ -1694,6 +1704,13 @@ extension DesktopWorkspace {
         if unsavedConversationIDs.contains(conversationID) || !conversations.contains(where: { $0.id == conversationID }) {
             record.status = .failed
             record.error = record.error ?? "运行结果未能保存，请检查磁盘空间或文件权限。"
+        }
+        // Failed runs notify anyway; a completed one gets a line and a noteworthy flag (B6 reads it).
+        if record.status == .completed, let boardWriter,
+           let reply = conversations.first(where: { $0.id == conversationID })?.messages.last(where: { $0.role == .assistant })?.text,
+           let result = await boardWriter.summarize(reply) {
+            record.summary = result.summary
+            record.noteworthy = result.noteworthy
         }
         return record
     }
