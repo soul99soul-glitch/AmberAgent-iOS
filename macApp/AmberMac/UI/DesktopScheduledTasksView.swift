@@ -105,7 +105,7 @@ struct DesktopScheduledTasksView: View {
                                 .overlay(Capsule().strokeBorder(DesktopTheme.danger.opacity(0.6)))
                         }
                     }
-                    Text(Self.ruleText(task.schedule)).font(.system(size: 12)).foregroundStyle(secondary).lineLimit(1)
+                    Text(Self.ruleText(task)).font(.system(size: 12)).foregroundStyle(secondary).lineLimit(1)
                     Text(nextText(task)).font(.system(size: 12)).foregroundStyle(secondary).lineLimit(1)
                     if let last = task.lastRun { lastRunLabel(last).font(.system(size: 12)) }
                 }
@@ -128,6 +128,7 @@ struct DesktopScheduledTasksView: View {
         if scheduler.queued.contains(task.id) { return "等待空闲后运行" }
         guard task.enabled else { return "已停用" }
         if scheduler.isPaused { return "已暂停" }
+        if task.trigger != nil { return "等待事件" }
         return task.nextRunAt.map { "下次：" + DesktopScheduleMenu.format($0) } ?? "没有下次运行"
     }
 
@@ -159,7 +160,7 @@ struct DesktopScheduledTasksView: View {
                 TextField("到点后发给模型的内容", text: binding.prompt, axis: .vertical)
                     .textFieldStyle(.desktop).lineLimit(3...8)
             }
-            DesktopScheduleRuleEditor(schedule: binding.schedule)
+            DesktopScheduleRuleEditor(schedule: binding.schedule, trigger: binding.trigger)
             section("运行方式") {
                 Picker("模型", selection: binding.modelID) {
                     Text("当前默认模型").tag(UUID?.none)
@@ -177,9 +178,11 @@ struct DesktopScheduledTasksView: View {
                         Text("追加到「\(summary.title)」").lineLimit(1).tag(UUID?.some(summary.id))
                     }
                 }
-                Picker("错过运行时", selection: binding.missedRun) {
-                    Text("醒来后补跑一次").tag(DesktopMissedRunPolicy.runOnceOnWake)
-                    Text("跳过，等下一次").tag(DesktopMissedRunPolicy.skip)
+                if draft?.trigger == nil {
+                    Picker("错过运行时", selection: binding.missedRun) {
+                        Text("醒来后补跑一次").tag(DesktopMissedRunPolicy.runOnceOnWake)
+                        Text("跳过，等下一次").tag(DesktopMissedRunPolicy.skip)
+                    }
                 }
             }
             section("无人值守审批") {
@@ -230,8 +233,12 @@ struct DesktopScheduledTasksView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     lastRunLabel(run).labelStyle(.iconOnly).font(.system(size: 12))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(DesktopScheduleMenu.format(run.startedAt) + (run.scheduledFor == nil ? " · 手动运行" : ""))
+                        Text(DesktopScheduleMenu.format(run.startedAt)
+                            + (run.triggerContext != nil ? " · 事件触发" : run.scheduledFor == nil ? " · 手动运行" : ""))
                             .font(.system(size: 12)).foregroundStyle(DesktopTheme.ink)
+                        if let context = run.triggerContext {
+                            Text(context).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkSecondary).lineLimit(2)
+                        }
                         if let error = run.error {
                             Text(error).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(2)
                         }
@@ -318,6 +325,15 @@ struct DesktopScheduledTasksView: View {
         dismiss()
     }
 
+    static func ruleText(_ task: DesktopScheduledTask) -> String {
+        switch task.trigger {
+        case nil: return ruleText(task.schedule)
+        case .folder(let path): return "文件夹 \(URL(fileURLWithPath: path).lastPathComponent) 有新文件时"
+        case .agentSession(.ended): return "Claude Code / Codex 会话结束时"
+        case .agentSession(.needsYou): return "Claude Code / Codex 会话等你处理时"
+        }
+    }
+
     static func ruleText(_ schedule: DesktopSchedule) -> String {
         func clock(_ hour: Int, _ minute: Int) -> String { String(format: "%02d:%02d", hour, minute) }
         switch schedule {
@@ -333,13 +349,14 @@ struct DesktopScheduledTasksView: View {
     }
 }
 
-/// Picks one of the five rules.
+/// Picks one of the five time rules, or an event (Mac only: the folder comes from a Finder panel).
 struct DesktopScheduleRuleEditor: View {
     @Binding var schedule: DesktopSchedule
+    @Binding var trigger: DesktopScheduleTrigger?
     @Environment(\.colorScheme) private var colorScheme
 
     private enum Kind: String, CaseIterable, Identifiable {
-        case once, daily, weekdays, weekly, interval
+        case once, daily, weekdays, weekly, interval, event
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -348,12 +365,34 @@ struct DesktopScheduleRuleEditor: View {
             case .weekdays: "工作日"
             case .weekly: "每周"
             case .interval: "间隔"
+            case .event: "事件"
             }
         }
     }
 
+    private enum Event: String, CaseIterable, Identifiable {
+        case folder, ended, needsYou
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .folder: "文件夹有新文件"
+            case .ended: "Claude Code / Codex 会话结束"
+            case .needsYou: "会话等你处理"
+            }
+        }
+    }
+
+    private var event: Event {
+        switch trigger {
+        case .agentSession(.ended): .ended
+        case .agentSession(.needsYou): .needsYou
+        case .folder, nil: .folder
+        }
+    }
+
     private var kind: Kind {
-        switch schedule {
+        if trigger != nil { return .event }
+        return switch schedule {
         case .once: .once
         case .daily: .daily
         case .weekdays: .weekdays
@@ -373,12 +412,12 @@ struct DesktopScheduleRuleEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("时间").font(.system(size: 13, weight: .semibold))
+            Text("何时运行").font(.system(size: 13, weight: .semibold))
             Picker("规则", selection: Binding(get: { kind }, set: { change(to: $0) })) {
                 ForEach(Kind.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented).labelsHidden()
-            switch schedule {
+            if let trigger { eventEditor(trigger) } else { switch schedule {
             case .once(let date):
                 DatePicker("运行时间", selection: Binding(get: { date }, set: { schedule = .once($0) }), in: Date()...)
             case .daily, .weekdays:
@@ -410,8 +449,8 @@ struct DesktopScheduleRuleEditor: View {
                     }
                 }
                 Text("从保存时开始计时。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-            }
-            if let error = schedule.validationError {
+            } }
+            if let error = trigger?.validationError ?? (trigger == nil ? schedule.validationError : nil) {
                 Text(error).font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
             }
         }
@@ -419,6 +458,45 @@ struct DesktopScheduleRuleEditor: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
+    }
+
+    @ViewBuilder private func eventEditor(_ trigger: DesktopScheduleTrigger) -> some View {
+        Picker("事件", selection: Binding(get: { event }, set: { value in
+            switch value {
+            case .folder: if event != .folder { self.trigger = .folder(path: "") }
+            case .ended: self.trigger = .agentSession(.ended)
+            case .needsYou: self.trigger = .agentSession(.needsYou)
+            }
+        })) {
+            ForEach(Event.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.radioGroup).labelsHidden()
+        if case .folder(let path) = trigger {
+            HStack(spacing: 8) {
+                Text(path.isEmpty ? "还没有选择文件夹" : (path as NSString).abbreviatingWithTildeInPath)
+                    .font(.system(size: 12, design: path.isEmpty ? .default : .monospaced))
+                    .foregroundStyle(path.isEmpty ? DesktopTheme.inkTertiary : DesktopTheme.ink)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                Button(path.isEmpty ? "选择文件夹…" : "更换…") { chooseFolder() }.controlSize(.small)
+            }
+            Text("出现新文件后等 30 秒再运行，新文件名会附在提示词后面。隐藏文件、删除和修改不算。")
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text("需要开启 Mac Gateway。同一个会话只触发一次，会话标题和来源会附在提示词后面。")
+                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
+        }
+        Text("两次事件触发至少间隔 \(DesktopSchedule.minimumIntervalMinutes) 分钟，期间的事件记为跳过。")
+            .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "监听此文件夹"
+        if panel.runModal() == .OK, let url = panel.url { trigger = .folder(path: url.path) }
     }
 
     private var timePicker: some View {
@@ -437,6 +515,11 @@ struct DesktopScheduleRuleEditor: View {
     }
 
     private func change(to kind: Kind) {
+        if kind == .event {
+            if trigger == nil { trigger = .folder(path: "") }
+            return
+        }
+        trigger = nil
         let (hour, minute) = clock
         switch kind {
         case .once:
@@ -446,6 +529,7 @@ struct DesktopScheduleRuleEditor: View {
         case .weekdays: schedule = .weekdays(hour: hour, minute: minute)
         case .weekly: schedule = .weekly(days: [2], hour: hour, minute: minute)
         case .interval: schedule = .interval(minutes: 60, anchor: Date())
+        case .event: break
         }
     }
 }

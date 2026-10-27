@@ -42,6 +42,9 @@ import Foundation
         }
         scheduler.startObservingSystem()
         self.scheduler = scheduler
+        let triggers = DesktopScheduleTriggers(scheduler: scheduler)
+        Task { await scheduler.waitUntilLoaded(); triggers.start() }
+        scheduleTriggers = triggers
         agentProvider?.scheduler = scheduler
         let gateway = DesktopGateway()
         self.gateway = gateway

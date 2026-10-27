@@ -36,7 +36,7 @@ import Foundation
             } else if task.enabled {
                 let next = paused ? nil : task.nextRunAt
                 items.append(.init(id: "schedule:\(task.id.uuidString)", kind: .schedule, column: .scheduled, title: task.name,
-                    detail: DesktopScheduledTasksView.ruleText(task.schedule) + (paused ? " · 已暂停" : ""),
+                    detail: DesktopScheduledTasksView.ruleText(task) + (paused ? " · 已暂停" : ""),
                     updatedAt: next ?? task.createdAt, scheduleId: task.id.uuidString, nextRunAt: next))
             }
             for run in task.recentRuns.filter({ $0.status == .completed || $0.status == .failed })
