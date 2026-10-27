@@ -112,7 +112,9 @@ final class IOSSettingsWiringTests: XCTestCase {
         let picker = try source("iosApp/PhoneControl/IOSPhoneControlAppPicker.swift")
         XCTAssertTrue(picker.contains("controller.loadInstalledApplications()"))
         XCTAssertTrue(picker.contains("controller.addInstalledApplication(bundleID:"))
-        XCTAssertTrue(owner.contains("let endpoint = IOSPhoneControlLoopbackRoute.endpoint"))
+        // The RemotePairing port is resolved per connection (it changes; 49152 is only the fallback).
+        XCTAssertTrue(owner.contains("let port = await localTunnel.resolveRemotePairingPort()"))
+        XCTAssertTrue(owner.contains("let endpoint = \"\\(IOSPhoneControlLoopbackRoute.peer):\\(port)\""))
         XCTAssertFalse(owner.contains("services.uniqueLocalIPv4Endpoint"))
         let pairing = try source("PhoneControlRuntime/PhoneControlPairingSession.swift")
         XCTAssertTrue(pairing.contains("IOSPhoneControlLoopbackRoute.endpoint.withCString"))
