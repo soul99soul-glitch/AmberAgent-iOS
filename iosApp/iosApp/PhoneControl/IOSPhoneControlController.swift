@@ -468,6 +468,8 @@ final class IOSPhoneControlController {
             do {
                 if connectionMode == .embedded { try await localTunnel.start(owner: id) }
                 try Task.checkCancellation()
+                _ = await localTunnel.resolveRemotePairingPort()
+                try Task.checkCancellation()
                 let data = try await pairingSession.prepare(id: id, connectionMode: connectionMode) { [weak self] status in
                     await self?.recordPairingProgress(status, id: id)
                 }
@@ -806,7 +808,6 @@ final class IOSPhoneControlController {
                 try Task.checkCancellation()
                 _ = try activeOwner(runID: runID, sessionID: context.sessionID)
                 let validatedPairing = try IOSPhoneControlCredentials.validatedPairing(pairing)
-                let endpoint = IOSPhoneControlLoopbackRoute.endpoint
                 if readinessRunID == runID { readinessReport?.stage = .connection }
                 if connectionMode == .embedded {
                     owner?.requestedTunnel = true
@@ -814,8 +815,12 @@ final class IOSPhoneControlController {
                 }
                 try Task.checkCancellation()
                 _ = try activeOwner(runID: runID, sessionID: context.sessionID)
+                let port = await localTunnel.resolveRemotePairingPort()
+                try Task.checkCancellation()
+                _ = try activeOwner(runID: runID, sessionID: context.sessionID)
+                let endpoint = "\(IOSPhoneControlLoopbackRoute.peer):\(port)"
                 IOSBackgroundLifecycleLog.record("phoneControlResolvedEndpoint",
-                    detail: "source=\(connectionMode.rawValue) port=49152")
+                    detail: "source=\(connectionMode.rawValue) port=\(port)")
                 let configuration = PhoneControlLaunchConfiguration(pairing: validatedPairing,
                                                                     endpoint: endpoint,
                                                                     connectionMode: connectionMode,
@@ -916,6 +921,9 @@ final class IOSPhoneControlController {
             let applications: [PhoneControlInstalledApp]
             do {
                 if connectionMode == .embedded { try await localTunnel.start(owner: queryID) }
+                try Task.checkCancellation()
+                if let context { _ = try activeOwner(runID: context.runID, sessionID: context.sessionID) }
+                _ = await localTunnel.resolveRemotePairingPort()
                 try Task.checkCancellation()
                 if let context { _ = try activeOwner(runID: context.runID, sessionID: context.sessionID) }
                 applications = try await applicationDiscoverer.installedApplications(pairing: pairing, connectionMode: connectionMode)

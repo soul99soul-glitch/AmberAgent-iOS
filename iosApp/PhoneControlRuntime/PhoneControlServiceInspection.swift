@@ -98,6 +98,16 @@ struct IOSPhoneControlServiceInspectionSummary: Equatable, Sendable {
         }
     }
 
+    /// Port of this phone's own RemotePairing service. iOS assigns it
+    /// dynamically (often, but not always, 49152).
+    var uniqueLocalRemotePairingPort: Int? {
+        let ports = Set(services
+            .filter { $0.type == IOSPhoneControlServiceInspection.serviceType && $0.identity == .possibleSelf }
+            .map(\.port))
+        guard ports.count == 1, let port = ports.first, (1...65_535).contains(port) else { return nil }
+        return port
+    }
+
     func uniqueLocalWiFiIPv4LockdownEndpoint(
         localWiFiIPv4Addresses: Set<String> = IOSPhoneControlServiceAddressCodec.localWiFiIPv4Addresses()
     ) throws -> String {
@@ -338,7 +348,7 @@ final class IOSPhoneControlServiceInspection {
     }
 
     @discardableResult
-    func inspect() async -> IOSPhoneControlServiceInspectionSummary {
+    func inspect(stopAtFirstLocalService: Bool = false) async -> IOSPhoneControlServiceInspectionSummary {
         guard !Task.isCancelled else { return summary ?? .unknown }
         cancel()
         let id = UUID()
@@ -347,7 +357,7 @@ final class IOSPhoneControlServiceInspection {
 
         let result = await withTaskCancellationHandler(operation: {
             await withCheckedContinuation { (continuation: CheckedContinuation<IOSPhoneControlServiceInspectionSummary, Never>) in
-                let run = IOSPhoneControlServiceInspectionRun { [weak self] result in
+                let run = IOSPhoneControlServiceInspectionRun(stopAtFirstLocalService: stopAtFirstLocalService) { [weak self] result in
                     Task { @MainActor [weak self] in
                         continuation.resume(returning: result)
                         guard let self, self.inspectionID == id else { return }
@@ -384,6 +394,7 @@ final class IOSPhoneControlServiceInspection {
 @MainActor
 private final class IOSPhoneControlServiceInspectionRun: NSObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
     private let completion: (IOSPhoneControlServiceInspectionSummary) -> Void
+    private let stopAtFirstLocalService: Bool
     private let localAddresses: Set<IOSPhoneControlServiceAddress>
     private let wifiInterfaceIndex: UInt32
     private let browser = NetServiceBrowser()
@@ -392,8 +403,10 @@ private final class IOSPhoneControlServiceInspectionRun: NSObject, @preconcurren
     private var finished = false
     private var timeoutTimer: Timer?
 
-    init(completion: @escaping (IOSPhoneControlServiceInspectionSummary) -> Void) {
+    init(stopAtFirstLocalService: Bool = false,
+         completion: @escaping (IOSPhoneControlServiceInspectionSummary) -> Void) {
         self.completion = completion
+        self.stopAtFirstLocalService = stopAtFirstLocalService
         localAddresses = IOSPhoneControlServiceAddressCodec.localAddresses()
         wifiInterfaceIndex = if_nametoindex("en0")
         super.init()
@@ -499,6 +512,7 @@ private final class IOSPhoneControlServiceInspectionRun: NSObject, @preconcurren
         )
         let key = "\(sender.name)\u{0000}\(sender.domain)"
         resolvedByService[key] = record
+        if stopAtFirstLocalService, identity == .possibleSelf { finish() }
     }
 
     func netServiceDidStop(_ sender: NetService) {}

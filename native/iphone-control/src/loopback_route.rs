@@ -27,8 +27,9 @@ impl TryFrom<u32> for RouteMode {
 
 impl RouteMode {
     pub(super) fn validate_endpoint(self, endpoint: SocketAddr) -> Result<SocketAddr, Failure> {
-        if self == Self::ExistingVpn && (endpoint.ip() != IpAddr::V4(VPN_PEER) || endpoint.port() != 49152) {
-            return Err(Failure::new("invalid_endpoint", "现有 VPN 仅支持本机开发地址 10.7.0.1:49152。"));
+        // iOS assigns the RemotePairing port dynamically; only the peer is fixed.
+        if self == Self::ExistingVpn && (endpoint.ip() != IpAddr::V4(VPN_PEER) || endpoint.port() == 0) {
+            return Err(Failure::new("invalid_endpoint", "现有 VPN 仅支持本机开发地址 10.7.0.1。"));
         }
         Ok(endpoint)
     }
@@ -223,7 +224,9 @@ mod tests {
         assert_eq!(RouteMode::try_from(2).err().unwrap().code, "invalid_route_mode");
         assert_eq!(RouteMode::try_from(u32::MAX).err().unwrap().code, "invalid_route_mode");
         assert!(RouteMode::ExistingVpn.validate_endpoint("10.7.0.1:49152".parse().unwrap()).is_ok());
-        for endpoint in ["127.0.0.1:49152", "192.0.2.1:49152", "10.7.0.1:49153", "[::1]:49152"] {
+        assert!(RouteMode::ExistingVpn.validate_endpoint("10.7.0.1:62043".parse().unwrap()).is_ok(),
+            "RemotePairing ports are assigned dynamically");
+        for endpoint in ["127.0.0.1:49152", "192.0.2.1:49152", "10.7.0.1:0", "[::1]:49152"] {
             let endpoint = endpoint.parse().unwrap();
             assert_eq!(RouteMode::ExistingVpn.validate_endpoint(endpoint).err().unwrap().code, "invalid_endpoint");
             assert!(RouteMode::Embedded.validate_endpoint(endpoint).is_ok(), "existing diagnostic endpoints remain available");

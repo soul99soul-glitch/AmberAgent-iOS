@@ -13,6 +13,7 @@ actor ReadinessSessionStub: IOSPhoneControlSessionServing {
     private var blocked: CheckedContinuation<Void, Never>?
     private(set) var startedScopes: [Set<String>] = []
     private(set) var connectionModes: [IOSPhoneControlConnectionMode] = []
+    private(set) var endpoints: [String] = []
 
     init(fixture: ReadinessHTTPFixture, failStartup: Bool = false, blockStartup: Bool = false) {
         self.fixture = fixture
@@ -23,6 +24,7 @@ actor ReadinessSessionStub: IOSPhoneControlSessionServing {
     func start(runID: UUID, configuration: PhoneControlLaunchConfiguration) async throws -> PhoneRunnerStatus {
         startedScopes.append(configuration.allowedBundleIDs)
         connectionModes.append(configuration.connectionMode)
+        endpoints.append(configuration.endpoint)
         started?.resume()
         started = nil
         if blockStartup { await withCheckedContinuation { blocked = $0 } }
