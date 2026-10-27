@@ -1,0 +1,27 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'amber-audit-data-proof': failed storing manifest for 'amber-audit-data-proof' in cache: attempt to write a readonly database
+Building for debugging...
+[Planning deferred tasks]
+[6 / 15] AmberMacTests-product
+[8 / 17] AmberMacTests-product
+[12 / 16] AmberMacTests-product
+[14 / 16] AmberMacTests-product
+Build complete! (1.66秒)
+Test Suite 'Selected tests' started at 2026-10-23 22:58:56.554.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-23 22:58:56.554.
+Test Suite 'ImageSaveFailureProof' started at 2026-10-23 22:58:56.554.
+Test Case '-[AmberMacTests.ImageSaveFailureProof testSuccessfulRemoteImageRemainsRecoverableIfWorkspaceSaveFails]' started.
+/private/tmp/amber-audit-data-proof/Tests/AmberMacTests/ImageSaveFailureProof.swift:39: error: -[AmberMacTests.ImageSaveFailureProof testSuccessfulRemoteImageRemainsRecoverableIfWorkspaceSaveFails] : XCTAssertEqual failed: ("0") is not equal to ("1") - Completed remote image must remain recoverable after local workspace-save failure
+/private/tmp/amber-audit-data-proof/Tests/AmberMacTests/ImageSaveFailureProof.swift:40: error: -[AmberMacTests.ImageSaveFailureProof testSuccessfulRemoteImageRemainsRecoverableIfWorkspaceSaveFails] : XCTAssertTrue failed - The only generated image copy was deleted on save failure
+Test Case '-[AmberMacTests.ImageSaveFailureProof testSuccessfulRemoteImageRemainsRecoverableIfWorkspaceSaveFails]' failed (0.124 seconds).
+Test Suite 'ImageSaveFailureProof' failed at 2026-10-23 22:58:56.678.
+	 Executed 1 test, with 2 failures (0 unexpected) in 0.124 (0.124) seconds
+Test Suite 'AmberMacTests.xctest' failed at 2026-10-23 22:58:56.678.
+	 Executed 1 test, with 2 failures (0 unexpected) in 0.124 (0.124) seconds
+Test Suite 'Selected tests' failed at 2026-10-23 22:58:56.678.
+	 Executed 1 test, with 2 failures (0 unexpected) in 0.124 (0.125) seconds
+PROOF remote_requests=1 history_records=0 staging_exists=false artifacts=0
+Note: Some test targets reported failures:
+  - AmberMacTests (XCTest)

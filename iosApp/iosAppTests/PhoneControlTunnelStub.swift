@@ -15,6 +15,10 @@ final class PhoneControlTunnelStub: IOSPhoneControlLocalTunneling {
     private(set) var startOwners: [UUID] = []
     private(set) var stopOwners: [UUID] = []
 
+    var remotePairingPort = IOSPhoneControlLoopbackRoute.defaultPort
+
+    func resolveRemotePairingPort() async -> Int { remotePairingPort }
+
     func refresh() async {
         refreshCount += 1
         await refreshOperation?()

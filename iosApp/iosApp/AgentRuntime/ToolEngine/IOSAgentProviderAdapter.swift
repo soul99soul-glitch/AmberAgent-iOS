@@ -197,9 +197,5 @@ public struct OpenAIKmpProviderAdapter: IOSAgentTextProvider, IOSAgentStreamingP
 
 /// The final state of an engine run.
 
-struct UncheckedUIMessageBox: @unchecked Sendable {
-    let value: [UIMessage]
-    init(_ value: [UIMessage]) { self.value = value }
-}
 
 /// Carries the canonical in-flight turn when streaming exits without complete.

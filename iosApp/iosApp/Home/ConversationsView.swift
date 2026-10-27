@@ -40,6 +40,8 @@ struct ConversationsView: View {
     @State private var searchFocusTask: Task<Void, Never>?
     /// 入场级联只播放一次：最晚一级 delay .22 + 时长 .48，0.9s 后全部按已入场处理。
     @State private var cascadeComplete = false
+    /// iPhone Duo 外屏：搜索 / 设置 / 账户 / 新对话 搬到右侧竖条，顶栏与右下胶囊让位。
+    @State private var sideRailActive = false
     @ScaledMetric(relativeTo: .subheadline) private var sectionLabelSize: CGFloat = 15
 
     /// 本地标题过滤后的会话摘要（summaries 已按 updateAt 倒序/置顶优先）。
@@ -150,6 +152,7 @@ struct ConversationsView: View {
             // 右下拇指区：内容贴合胶囊浮在内容上（局部琥珀；非满幅条）。
             // trailing 28（非卡边 16）：相对会话外框内缩 12pt，避免胶囊右缘与卡边相切。
             // 视觉位置不变：外扩的热区从 inset 里扣回。
+            if !sideRailActive {
             homeNewChatCapsule
                 .padding(.trailing, homeNewChatCapsuleTrailingInset - homeNewChatCapsuleHitSlop)
                 .padding(
@@ -160,8 +163,10 @@ struct ConversationsView: View {
                         - homeNewChatCapsuleHitSlop
                 )
                 .homeCascade(delay: 0.22, enabled: !cascadeComplete)
+            }
         }
         }
+        .amberSideRail(isActive: $sideRailActive, top: homeSideRailTopItems, bottom: homeSideRailBottomItems)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onReceive(NotificationCenter.default.publisher(for: .amberChatBackgroundJobDidTerminate)) { _ in
@@ -331,7 +336,7 @@ struct ConversationsView: View {
 
             Spacer(minLength: 8)
 
-            if !isSearchExpanded {
+            if !isSearchExpanded, !sideRailActive {
                 homeSearchCapsuleButton
                     .modifier(HomeOptionalGlassEffectID(
                         id: useGlassEffectID ? "homeSearch" : nil,
@@ -340,6 +345,7 @@ struct ConversationsView: View {
                     .padding(.trailing, 8)
             }
 
+            if !sideRailActive {
             homeSettingsGlassButton
                 .modifier(HomeOptionalGlassEffectID(
                     id: useGlassEffectID ? "homeSettings" : nil,
@@ -355,9 +361,35 @@ struct ConversationsView: View {
             }
             .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
             .accessibilityLabel("我的账户")
+            }
         }
         .frame(minHeight: 38)
         .padding(.horizontal, 16)
+    }
+
+    // MARK: - iPhone Duo 外屏右侧竖条
+
+    private var homeSideRailTopItems: [AmberSideRailItem] {
+        [
+            AmberSideRailItem(id: "search", systemImage: "magnifyingglass", accessibilityLabel: "搜索") {
+                AmberHaptics.trigger(.lightImpact)
+                isSearchExpanded ? collapseSearch() : expandSearch()
+            },
+            AmberSideRailItem(id: "settings", systemImage: "gearshape", accessibilityLabel: "设置") {
+                collapseSearchIfNeeded()
+                router.navigate(to: .settings)
+            },
+            AmberSideRailItem(id: "account", systemImage: "person.crop.circle", accessibilityLabel: "我的账户") {
+                collapseSearchIfNeeded()
+                router.navigate(to: .account)
+            },
+        ]
+    }
+
+    /// 新对话放在竖条底部：外屏单手握持时拇指最容易够到。
+    private var homeSideRailBottomItems: [AmberSideRailItem] {
+        [AmberSideRailItem(id: "new-chat", systemImage: "square.and.pencil", accessibilityLabel: "新建聊天",
+                           prominent: true, action: triggerHomeNewChat)]
     }
 
     private var homeSearchCapsuleButton: some View {

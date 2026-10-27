@@ -1,5 +1,4 @@
 import Foundation
-import Shared
 
 struct IOSMcpTool: Codable, Equatable, Identifiable {
     let name: String
@@ -181,6 +180,7 @@ enum IOSMcpConnectionStatus: Equatable {
     case error(String)
 
     var title: String {
+        #if os(iOS)
         switch self {
         case .idle:
             IOSAppLocalization.string("未连接", defaultValue: "未连接")
@@ -193,6 +193,15 @@ enum IOSMcpConnectionStatus: Equatable {
         case .error:
             IOSAppLocalization.string("连接失败", defaultValue: "连接失败")
         }
+        #else
+        switch self {
+        case .idle: "未连接"
+        case .connecting: "连接中"
+        case .connected: "已连接"
+        case .reconnecting: "重连中"
+        case .error: "连接失败"
+        }
+        #endif
     }
 }
 
@@ -617,52 +626,27 @@ private final class LegacySSEMcpSession {
     }
 }
 
-struct IOSMcpToolOutput {
-    let text: String
-    let parts: [UIMessagePart]
-
-    init(text: String, parts: [UIMessagePart]? = nil) {
-        self.text = text
-        self.parts = parts ?? [UIMessagePart.Text(text: text, metadata: nil)]
-    }
-}
-
 @MainActor
-protocol IOSMcpClienting: AnyObject {
-    func connect(config: IOSMcpServerConfig) async throws -> Bool
-    // Replace the session without invalidating requests already in the queue.
-    func reconnect(config: IOSMcpServerConfig) async throws -> Bool
-    func listTools() async throws -> [IOSMcpTool]
-    func callTool(name: String, arguments: [String: Any]) async throws -> String
-    func callToolOutput(name: String, arguments: [String: Any]) async throws -> IOSMcpToolOutput
-    func disconnect()
-}
-
-extension IOSMcpClienting {
-    func reconnect(config: IOSMcpServerConfig) async throws -> Bool {
-        disconnect()
-        return try await connect(config: config)
-    }
-
-    func callToolOutput(name: String, arguments: [String: Any]) async throws -> IOSMcpToolOutput {
-        IOSMcpToolOutput(text: try await callTool(name: name, arguments: arguments))
-    }
-}
-
-final class IOSMcpClient: IOSMcpClienting {
+final class IOSMcpClient {
     private let transport: IOSMcpHTTPTransport
     private let requestTimeoutSeconds: TimeInterval
+    private let preferredProtocolVersion: String?
+    private let clientName: String
     private var config: IOSMcpServerConfig?
     private var sessionID: String?
+    private var negotiatedProtocolVersion: String?
     private var nextId = 1
     private var requestInProgress = false
     private var requestWaiters: [IOSMcpRequestWaiter] = []
 
     private(set) var status: IOSMcpConnectionStatus = .idle
 
-    init(transport: IOSMcpHTTPTransport = URLSessionMcpHTTPTransport(), requestTimeoutSeconds: TimeInterval = 120) {
+    init(transport: IOSMcpHTTPTransport = URLSessionMcpHTTPTransport(), requestTimeoutSeconds: TimeInterval = 120,
+         preferredProtocolVersion: String? = nil, clientName: String = "AmberAgent iOS") {
         self.transport = transport
         self.requestTimeoutSeconds = requestTimeoutSeconds
+        self.preferredProtocolVersion = preferredProtocolVersion
+        self.clientName = clientName
     }
 
     func connect(config: IOSMcpServerConfig) async throws -> Bool {
@@ -689,11 +673,12 @@ final class IOSMcpClient: IOSMcpClienting {
         status = .connecting
         self.config = config
         sessionID = nil
+        negotiatedProtocolVersion = nil
         _ = try await sendWithoutRequestSlot(method: "initialize", params: [
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": preferredProtocolVersion ?? "2024-11-05",
             "capabilities": [:],
             "clientInfo": [
-                "name": "AmberAgent iOS",
+                "name": clientName,
                 "version": "1.0"
             ]
         ])
@@ -736,114 +721,8 @@ final class IOSMcpClient: IOSMcpClienting {
         return text
     }
 
-    func callTool(name: String, arguments: [String: Any]) async throws -> String {
-        try await callToolOutput(name: name, arguments: arguments).text
-    }
-
-    func callToolOutput(name: String, arguments: [String: Any]) async throws -> IOSMcpToolOutput {
-        let result = try await send(method: "tools/call", params: [
-            "name": name,
-            "arguments": arguments
-        ])
-        return try Self.toolOutput(result: result)
-    }
-
-    static func toolOutput(result: [String: Any]) throws -> IOSMcpToolOutput {
-        let content = result["content"] as? [[String: Any]] ?? []
-        let text = content.compactMap { item -> String? in
-            guard item["type"] as? String == "text" else { return nil }
-            return item["text"] as? String
-        }.joined(separator: "\n")
-        if result["isError"] as? Bool == true {
-            throw IOSMcpClientError.rpcError(text.nilIfBlank ?? "MCP tool returned an error result.")
-        }
-        // Keep the legacy string contract for scripts and non-chat consumers.
-        let legacyText: String
-        if !text.isEmpty {
-            legacyText = text
-        } else if let structured = result["structuredContent"], let serialized = serializedJSON(structured) {
-            legacyText = serialized
-        } else if !content.isEmpty, let serialized = serializedJSON(content) {
-            legacyText = serialized
-        } else {
-            throw IOSMcpClientError.unsupportedContent
-        }
-
-        var parts: [[String: Any]] = []
-        for item in content {
-            switch item["type"] as? String {
-            case "text":
-                if let text = item["text"] as? String { parts.append(["type": "text", "text": text]) }
-            case "image":
-                if let mime = item["mimeType"] as? String, mime.lowercased().hasPrefix("image/"),
-                   let data = item["data"] as? String, !data.isEmpty {
-                    parts.append(["type": "image", "url": "data:\(mime);base64,\(data)"])
-                }
-            case "resource_link":
-                if let part = linkedMediaPart(item) {
-                    parts.append(part)
-                    // Providers consume tool Text/Image, so keep the video URI
-                    // available for the next model step as well as the UI card.
-                    if part["type"] as? String == "video", let uri = part["url"] as? String, !text.contains(uri) {
-                        let title = item["title"] as? String ?? item["name"] as? String ?? "视频"
-                        parts.append(["type": "text", "text": "\(title)\n\(uri)"])
-                    }
-                } else if let uri = item["uri"] as? String {
-                    let title = item["title"] as? String ?? item["name"] as? String ?? "资源"
-                    parts.append(["type": "text", "text": "\(title)\n\(uri)"])
-                }
-            case "resource":
-                guard let resource = item["resource"] as? [String: Any] else { continue }
-                if let embeddedText = resource["text"] as? String {
-                    parts.append(["type": "text", "text": embeddedText])
-                    continue
-                }
-                guard let mime = resource["mimeType"] as? String else { continue }
-                if mime.lowercased().hasPrefix("image/"), let blob = resource["blob"] as? String, !blob.isEmpty {
-                    parts.append([
-                        "type": "image", "url": "data:\(mime);base64,\(blob)",
-                        "metadata": ["app.amber.media.sourceURL": resource["uri"] as? String ?? ""]
-                    ])
-                } else if mime.lowercased().hasPrefix("video/"), resource["blob"] != nil {
-                    let uri = resource["uri"] as? String ?? ""
-                    parts.append(["type": "text", "text": "此 MCP 资源为内嵌视频，暂不支持直接播放。\n\(uri)"])
-                }
-            default:
-                break
-            }
-        }
-        if text.isEmpty, let structured = result["structuredContent"], let serialized = serializedJSON(structured) {
-            parts.append(["type": "text", "text": serialized])
-        }
-        guard !parts.isEmpty else { return IOSMcpToolOutput(text: legacyText) }
-        // Build JSON-owned metadata in Kotlin; Swift dictionaries are not JsonObject.
-        let data = try JSONSerialization.data(withJSONObject: parts)
-        let decoded = try IosToolOutputJsonBridge.shared.decode(json: String(decoding: data, as: UTF8.self))
-        return IOSMcpToolOutput(text: legacyText, parts: decoded)
-    }
-
-    private static func linkedMediaPart(_ item: [String: Any]) -> [String: Any]? {
-        guard let rawURL = item["uri"] as? String, let url = URL(string: rawURL),
-              let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme), url.host != nil,
-              let mime = (item["mimeType"] as? String)?.lowercased() else { return nil }
-        let type: String
-        if mime.hasPrefix("image/") { type = "image" }
-        else if mime.hasPrefix("video/") { type = "video" }
-        else { return nil }
-        return [
-            "type": type,
-            "url": rawURL,
-            "metadata": [
-                "app.amber.media.title": item["title"] as? String ?? item["name"] as? String ?? "",
-                "app.amber.media.sourceURL": rawURL
-            ]
-        ]
-    }
-
-    private static func serializedJSON(_ value: Any) -> String? {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return nil }
-        return String(decoding: data, as: UTF8.self)
+    func callToolResult(name: String, arguments: [String: Any], onDispatched: (@MainActor () -> Void)? = nil) async throws -> [String: Any] {
+        try await send(method: "tools/call", params: ["name": name, "arguments": arguments], onDispatched: onDispatched)
     }
 
     func disconnect() {
@@ -852,16 +731,17 @@ final class IOSMcpClient: IOSMcpClienting {
         }
         config = nil
         sessionID = nil
+        negotiatedProtocolVersion = nil
         status = .idle
     }
 
-    private func send(method: String, params: [String: Any]) async throws -> [String: Any] {
+    private func send(method: String, params: [String: Any], onDispatched: (@MainActor () -> Void)? = nil) async throws -> [String: Any] {
         try await withRequestSlot {
-            try await self.sendWithoutRequestSlot(method: method, params: params)
+            try await self.sendWithoutRequestSlot(method: method, params: params, onDispatched: onDispatched)
         }
     }
 
-    private func sendWithoutRequestSlot(method: String, params: [String: Any]) async throws -> [String: Any] {
+    private func sendWithoutRequestSlot(method: String, params: [String: Any], onDispatched: (@MainActor () -> Void)? = nil) async throws -> [String: Any] {
         guard let config else { throw IOSMcpClientError.invalidResponse }
         let id = nextId
         nextId += 1
@@ -872,7 +752,7 @@ final class IOSMcpClient: IOSMcpClienting {
             "params": params
         ]
         let requestConfig = requestConfig(for: config)
-        let response = try await sendJSONRPCWithTimeout(payload, to: requestConfig, method: method)
+        let response = try await sendJSONRPCWithTimeout(payload, to: requestConfig, method: method, onDispatched: onDispatched)
         try validate(response, for: requestConfig)
         guard let object = Self.jsonObject(from: response.body, matchingRequestID: id) else {
             throw IOSMcpClientError.invalidResponse
@@ -887,6 +767,13 @@ final class IOSMcpClient: IOSMcpClienting {
             throw IOSMcpClientError.invalidResponse
         }
         if method == "initialize" {
+            if preferredProtocolVersion != nil {
+                guard let version = result["protocolVersion"] as? String,
+                      ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"].contains(version) else {
+                    throw IOSMcpClientError.rpcError("MCP server selected an unsupported protocol version.")
+                }
+                negotiatedProtocolVersion = version
+            }
             captureSessionID(from: response, for: requestConfig)
         }
         return result
@@ -918,6 +805,12 @@ final class IOSMcpClient: IOSMcpClienting {
         // Mcp-Session-Id is server-issued: never replay a user-configured or
         // stale value, and only add the id captured from initialize.
         var headers = config.headers
+        if preferredProtocolVersion != nil {
+            for key in headers.keys.filter({ $0.caseInsensitiveCompare("MCP-Protocol-Version") == .orderedSame }) {
+                headers.removeValue(forKey: key)
+            }
+            if let negotiatedProtocolVersion { headers["MCP-Protocol-Version"] = negotiatedProtocolVersion }
+        }
         for key in headers.keys.filter({ $0.caseInsensitiveCompare("Mcp-Session-Id") == .orderedSame }) {
             headers.removeValue(forKey: key)
         }
@@ -1004,12 +897,15 @@ final class IOSMcpClient: IOSMcpClienting {
     private func sendJSONRPCWithTimeout(
         _ payload: [String: Any],
         to config: IOSMcpServerConfig,
-        method: String
+        method: String,
+        onDispatched: (@MainActor () -> Void)? = nil
     ) async throws -> IOSMcpHTTPResponse {
         let timeout = max(0.001, requestTimeoutSeconds)
         let timeoutText = Self.formatTimeout(timeout)
         return try await raceAgainstTimeout(method: method, timeout: timeout, timeoutText: timeoutText) {
-            try await self.transport.sendJSONRPC(payload, to: config)
+            try Task.checkCancellation()
+            onDispatched?()
+            return try await self.transport.sendJSONRPC(payload, to: config)
         }
     }
 
@@ -1172,27 +1068,5 @@ private final class IOSMcpOperationTaskBox: @unchecked Sendable {
         let task = storedTask
         lock.unlock()
         task?.cancel()
-    }
-}
-
-extension IOSMcpServerConfig {
-    init?(_ sharedConfig: McpServerConfig) {
-        let options = sharedConfig.commonOptions
-        let headers = Dictionary(uniqueKeysWithValues: options.headers.compactMap { pair -> (String, String)? in
-            guard let first = pair.first as? String, let second = pair.second as? String else { return nil }
-            return (first, second)
-        })
-
-        let tools = options.tools.map {
-            IOSMcpTool(name: $0.name, description: $0.description_, enabled: $0.enable)
-        }
-
-        if let http = sharedConfig as? McpServerConfig.StreamableHTTPServer {
-            self = .streamableHTTP(name: options.name, url: http.url, headers: headers, enabled: options.enable, tools: tools)
-        } else if let sse = sharedConfig as? McpServerConfig.SseTransportServer {
-            self = .sse(name: options.name, url: sse.url, headers: headers, enabled: options.enable, tools: tools)
-        } else {
-            return nil
-        }
     }
 }

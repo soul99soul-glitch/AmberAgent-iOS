@@ -1,0 +1,61 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'swiftpm-preview': failed storing manifest for 'swiftpm-preview' in cache: attempt to write a readonly database
+warning: 'iosmath': failed storing manifest for 'iosmath' in cache: attempt to write a readonly database
+Building for debugging...
+[1 / 5] AmberPreview-product
+[2 / 5] AmberPreview-product
+[4 / 11] AmberPreview-product
+[6 / 11] AmberPreview-product
+[8 / 11] AmberPreview-product
+[10 / 12] AmberPreview-product
+[11 / 22] AmberPreview-product
+[12 / 25] AmberPreview-product
+/Users/mi/Downloads/AI/AmberAgent/ios/macApp/build/swiftpm-preview/Sources/AmberMacPreview/DesktopRecipeRuns.swift:40:127: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+32 |         let id = UUID()
+33 |         operations.insert(DesktopRecipeOperation(id: id, owner: conversationID, name: name), at: 0)
+34 |         running[id] = Task {
+   |                            |- note: 'self' implicitly strongly captured here
+   |                            `- note: add 'self' as a capture list item to silence
+35 |             defer {
+36 |                 running[id] = nil
+   :
+38 |             }
+39 |             do {
+40 |                 _ = try await tasks.begin(id: id, conversationID: conversationID, title: "Recipe · \(name)", cancel: { [weak self] in self?.cancel(id) })
+   |                                                                                                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                                                                                              `- note: explicitly assign the capture list item to silence
+41 |                 try Task.checkCancellation()
+42 |                 let result = await store.run(name: name, inputs: inputs) { [execute] tool, arguments in
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[14 / 25] AmberPreview-product
+[15 / 25] AmberPreview-product
+[17 / 25] AmberPreview-product
+[20 / 25] AmberPreview-product
+[21 / 25] AmberPreview-product
+[22 / 25] AmberPreview-product
+[23 / 25] AmberPreview-product
+[25 / 27] AmberPreview-product
+Build complete! (11.89秒)
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+2026-10-23 23:19:29.695 ibtoold[12427:10321907] CoreSimulatorService connection became invalid.  Simulator services will no longer be available.
+2026-10-23 23:19:29.911 ibtoold[12427:10321907] Logging connecton invalid: <OS_xpc_error: <dictionary: 0x1eb158b60> { count = 1, transaction: 0, voucher = 0x0, contents =
+	"XPCErrorDescription" => <string: 0x1eb158ca0> { string cache = 0x0, length = 18, contents = "Connection invalid" }
+}>
+2026-10-23 23:19:29.912 ibtoold[12427:10321907] Error opening log file (/Users/mi/Library/Logs/CoreSimulator/CoreSimulator.com.apple.ibtool.log): Operation not permitted
+[-[SimServiceContext initWithDeveloperDir:connectionType:error:]:499] WARN  : Unable to discover any Simulator runtimes. Developer Directory is /Applications/Xcode.app/Contents/Developer.
+[-[SimDiskImageManager _onQueue_checkConnection:]:290] ERROR : simdiskimaged returned error (invalid), marking disconnected.
+[-[SimDiskImageManager init]:226] ERROR : Could not kickstart simdiskimaged; SimDiskImageManager services will not be available: Error Domain=NSPOSIXErrorDomain Code=53 "Software caused connection abort" UserInfo={NSLocalizedDescription=Error returned in reply from CoreSimulatorService: Connection invalid}
+[-[SimServiceContext initWithDeveloperDir:connectionType:error:]_block_invoke:556] ERROR : Could not get list of trusted mount directories: Error Domain=com.apple.CoreSimulator.SimError Code=409 "Cannot talk to the service used to manage runtime disk images (simdiskimaged) because its launchd job is not registered or was unloaded" UserInfo={NSLocalizedDescription=Cannot talk to the service used to manage runtime disk images (simdiskimaged) because its launchd job is not registered or was unloaded}
+[-[SimServiceContext sendRequest:reply:error:]:2074] ERROR : Unable to deliver request ({
+    request = "notification_subscription";
+    "set_path" = "/Users/mi/Library/Developer/CoreSimulator/Devices";
+}) because we are not connected to CoreSimulatorService.
+2026-10-23 23:19:29.912 ibtoold[12427:10321906] Error Domain=NSPOSIXErrorDomain Code=61 "Connection refused" UserInfo={NSLocalizedDescription=CoreSimulatorService connection became invalid.  Simulator services will no longer be available.}
+[-[SimDiskImageManager _onQueue_checkConnection:]:270] ERROR : simdiskimaged connection is currently unavailable because connection became invalid
+/Users/mi/Downloads/AI/AmberAgent/ios/macApp/build/swiftpm-preview/AmberPreview.app: replacing existing signature
+/Users/mi/Downloads/AI/AmberAgent/ios/macApp/build/swiftpm-preview/AmberPreview.app

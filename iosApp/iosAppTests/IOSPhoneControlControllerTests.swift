@@ -1024,6 +1024,25 @@ final class IOSPhoneControlControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testStartupUsesTheDynamicallyResolvedRemotePairingPort() async throws {
+        let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let http = ReadinessHTTPFixture(bundleID: try XCTUnwrap(Bundle.main.bundleIdentifier))
+        defer { http.unregister() }
+        let session = ReadinessSessionStub(fixture: http)
+        let tunnel = PhoneControlTunnelStub()
+        // iOS may move RemotePairing off 49152 when that port is taken.
+        tunnel.remotePairingPort = 62_043
+        let controller = IOSPhoneControlController(defaults: defaults,
+            credentials: MemoryPairingStore(data: try pairingData()), session: session, localTunnel: tunnel)
+        controller.enabled = true
+        try await controller.checkReadiness()
+        let endpoints = await session.endpoints
+        XCTAssertEqual(endpoints, ["10.7.0.1:62043"])
+    }
+
+    @MainActor
     func testExternalStartupFailureAndCancellationLeaveVPNUntouched() async throws {
         for cancel in [false, true] {
             let suite = "IOSPhoneControlControllerTests.\(UUID().uuidString)"

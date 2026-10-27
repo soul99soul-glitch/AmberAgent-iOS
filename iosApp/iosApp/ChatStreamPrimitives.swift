@@ -236,21 +236,3 @@ enum StreamPresentationPacingPolicy {
         return CGFloat(min(1, Double(remainingBacklog) / Double(drainStartBacklog)))
     }
 }
-
-extension TextGenerationParams {
-    /// P0-a: a copy of these params carrying a different tool declaration list.
-    /// Kotlin data-class default args don't bridge to Swift, so rebuild all
-    /// fields explicitly (same shape makeTextGenerationParams uses).
-    func replacingTools(_ tools: [Tool]) -> TextGenerationParams {
-        TextGenerationParams(
-            model: model,
-            temperature: temperature,
-            topP: topP,
-            maxTokens: maxTokens,
-            tools: tools,
-            reasoningLevel: reasoningLevel,
-            customHeaders: customHeaders,
-            customBody: customBody
-        )
-    }
-}

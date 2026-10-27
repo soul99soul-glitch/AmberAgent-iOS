@@ -202,10 +202,13 @@ struct IOSAgentToolBatchExecutor {
             // foreground/background writer either replays the stored terminal
             // result or gets a resolved failure; it never reaches the executor.
             if let ledger, let ledgerRunId {
+                #if os(iOS)
                 let effectClass = IOSToolEffectClassMapping.forToolName(
-                    tool.toolName,
-                    input: tool.input
+                    tool.toolName, input: tool.input
                 )
+                #else
+                let effectClass = DesktopToolRegistry.effectClass(for: tool.toolName, arguments: tool.input)
+                #endif
                 let argsDigest = chatInputDigest(for: tool.input)
                 switch await ledger.recordToolCallPrepared(
                     runId: ledgerRunId,
@@ -432,13 +435,13 @@ struct IOSAgentToolBatchExecutor {
                     return part
                 }
                 didChange = true
-                return PromptTranscript.shared.doCopyTool(
-                    tool: toolPart,
-                    input: IOSProviderConfigToolCatalog.toolNames.contains(toolPart.toolName)
-                        ? IOSProviderConfigToolCatalog.redactedArgumentsJSON(toolPart.input)
-                        : toolPart.input,
-                    output: newOutput
-                )
+                #if os(iOS)
+                let input = IOSProviderConfigToolCatalog.toolNames.contains(toolPart.toolName)
+                    ? IOSProviderConfigToolCatalog.redactedArgumentsJSON(toolPart.input) : toolPart.input
+                #else
+                let input = toolPart.input
+                #endif
+                return PromptTranscript.shared.doCopyTool(tool: toolPart, input: input, output: newOutput)
             }
             guard didChange else { return message }
             return UIMessage(

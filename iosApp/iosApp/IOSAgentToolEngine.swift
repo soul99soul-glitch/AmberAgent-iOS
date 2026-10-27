@@ -72,6 +72,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     private func phoneRequestParams(
         _ params: TextGenerationParams, providerSetting: ProviderSetting
     ) async -> TextGenerationParams {
+        #if os(iOS)
         guard phoneAutomaticReasoning, let runId = ledgerRunId else { return params }
         let active = await MainActor.run {
             self.phoneSessionIsActive?(runId) ?? false
@@ -80,6 +81,9 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             params, provider: providerSetting,
             automaticReasoning: phoneAutomaticReasoning, activePhoneSession: active
         )
+        #else
+        return params
+        #endif
     }
 
     /// B2 前台内核投影:按节拍推送在途 assistant 的累加器快照。快照只在
@@ -200,10 +204,15 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         steps: Int,
         onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)?
     ) -> IOSAgentToolEngineResult {
+        #if os(iOS)
+        let message = error.localizedDescription
+        #else
+        let message = "模型请求失败，请检查网络、认证与模型配置后重试。"
+        #endif
         let failureMessage = UIMessage(
             id: KotlinUuid.companion.random(),
             role: MessageRole.assistant,
-            parts: [UIMessagePart.Text(text: "[engine] provider error: \(error.localizedDescription)", metadata: nil)],
+            parts: [UIMessagePart.Text(text: "[engine] provider error: \(message)", metadata: nil)],
             annotations: [],
             createdAt: Self.nowLocalDateTime(),
             finishedAt: Self.nowLocalDateTime(),
@@ -218,7 +227,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             stepsExecuted: steps,
             pendingApproval: nil,
             hitStepLimit: false,
-            providerFailureMessage: error.localizedDescription
+            providerFailureMessage: message
         )
     }
 
@@ -358,9 +367,13 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 // → presentStreamError 的引擎侧等价)。
                 // Add guidance before the existing upload budget/compaction hook, so
                 // its fixed overhead is included without changing canonical messages.
+                #if os(iOS)
                 let plannedMessages = IOSPhoneAutomationRequestPolicy.requestMessages(
                     working, tools: effectiveParams.tools
                 )
+                #else
+                let plannedMessages = working
+                #endif
                 var requestMessages = try await prepareRequestMessages?(plannedMessages) ?? plannedMessages
                 let requestParams = await phoneRequestParams(effectiveParams, providerSetting: providerSetting)
                 let preparedRequest = try await providerStep.prepareStepRequest(
@@ -693,7 +706,9 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             // P0-2 hook: steer drain 与 mailbox 同点、紧随其后——顺序对齐前台
             // CGC 的轮边界消费（先 mailbox 后 steer）。drained steer 消息折入
             // 下一轮 upload；不传 = 零影响（SubAgent/Novel 现状）。
-            if let drainSteer {
+            if let drainSteer,
+               !batchResult.guardStopped,
+               steps + 1 < configuration.maxSteps {
                 let steered = await drainSteer()
                 if !steered.isEmpty {
                     working.append(contentsOf: steered)
@@ -768,7 +783,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             await onAssistantTurnStarted?()
             try Task.checkCancellation()
 
+            #if os(iOS)
             let summaryMessages = IOSPhoneAutomationRequestPolicy.requestMessages(messages, tools: [])
+            #else
+            let summaryMessages = messages
+            #endif
             let preparedMessages = try await prepareRequestMessages?(summaryMessages) ?? summaryMessages
             var requestMessages = [Self.toolLoopGuardFinalizationInstruction()] + preparedMessages
             let preparedRequest = try await providerStep.prepareStepRequest(

@@ -1,0 +1,178 @@
+name: AmberMac
+options:
+  bundleIdPrefix: app.amber.macos
+  deploymentTarget:
+    macOS: '15.0'
+  xcodeVersion: '27.0'
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    MACOSX_DEPLOYMENT_TARGET: '15.0'
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CODE_SIGN_IDENTITY: '-'
+    CODE_SIGN_STYLE: Manual
+  configs:
+    Debug:
+      SHARED_FRAMEWORK_CONFIGURATION: debugFramework
+    Release:
+      SHARED_FRAMEWORK_CONFIGURATION: releaseFramework
+configs:
+  Debug: debug
+  Release: release
+packages:
+  iosMath:
+    url: https://github.com/maitbayev/iosMath
+    revision: 066ba2f8353782a644889efe9ceb884ea844180b
+targets:
+  AmberMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: AmberMac
+        excludes:
+          - Info.plist
+      - path: ../iosApp/iosApp/IOSGeminiProvider.swift
+      - path: ../iosApp/iosApp/IOSAntigravityOAuthClient.swift
+      - path: ../iosApp/iosApp/IOSCodexOAuthClient.swift
+      - path: ../iosApp/iosApp/IOSImageGenerationModels.swift
+      - path: ../iosApp/iosApp/IOSImageGenerationRepository.swift
+      - path: ../iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift
+      - path: ../iosApp/iosApp/IOSCodexProviderResolver.swift
+      - path: ../iosApp/iosApp/AgentResponseStage.swift
+      - path: ../iosApp/iosApp/IOSAgentToolEngine.swift
+      - path: ../iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolContracts.swift
+      - path: ../iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentProviderStep.swift
+      - path: ../iosApp/iosApp/AgentRuntime/ToolEngine/IOSAgentToolBatchExecutor.swift
+      - path: ../iosApp/iosApp/IOSAgentRunLedgerTypes.swift
+      - path: ../iosApp/iosApp/IOSMemoryCitationStripper.swift
+      - path: ../iosApp/iosApp/IOSToolLoopGuard.swift
+      - path: ../iosApp/iosApp/IOSToolFailurePayload.swift
+      - path: ../iosApp/iosApp/IOSSearchExecutor.swift
+      - path: ../iosApp/iosApp/IOSToolOutputLimits.swift
+      - path: ../iosApp/iosApp/IOSMcpClient.swift
+      - path: ../iosApp/iosApp/IOSMcpToolOutput.swift
+      - path: ../iosApp/iosApp/IOSSharedExtensions.swift
+      - path: ../iosApp/iosApp/IOSWebDAVClient.swift
+      - path: ../iosApp/iosApp/IOSSyncBackupError.swift
+      - path: ../iosApp/iosApp/IOSFreeSearchAggregator.swift
+      - path: ../iosApp/iosApp/Search/IOSSearchHTTPProtocol.swift
+      - path: ../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
+      - path: ../iosApp/iosApp/IOSCredentialRedactor.swift
+    settings:
+      base:
+        PRODUCT_NAME: Amber
+        PRODUCT_MODULE_NAME: AmberMac
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.macos
+        INFOPLIST_FILE: AmberMac/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
+        ENABLE_USER_SELECTED_FILES: readwrite
+        LD_RUNPATH_SEARCH_PATHS:
+          - '$(inherited)'
+          - '@executable_path/../Frameworks'
+        FRAMEWORK_SEARCH_PATHS:
+          - '$(inherited)'
+          - '$(SRCROOT)/../desktop-shared/build/bin/macosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)'
+        ARCHS: arm64
+    preBuildScripts:
+      - name: Build desktop Shared framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          if [ -z "${JAVA_HOME:-}" ]; then
+            for candidate in /opt/homebrew/opt/openjdk@17 /opt/homebrew/opt/openjdk@21 /usr/local/opt/openjdk@17 /usr/local/opt/openjdk@21; do
+              if [ -x "$candidate/bin/java" ]; then
+                export JAVA_HOME="$candidate"
+                export PATH="$JAVA_HOME/bin:$PATH"
+                break
+              fi
+            done
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew ":desktop-shared:link${CONFIGURATION}FrameworkMacosArm64"
+    dependencies:
+      - package: iosMath
+        product: iosMath
+      - framework: ../desktop-shared/build/bin/macosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)/Shared.framework
+        embed: true
+        codeSign: true
+  AmberMacPreview:
+    type: application
+    platform: macOS
+    dependencies:
+      - package: iosMath
+        product: iosMath
+    sources:
+      - path: AmberMac
+        excludes:
+          - Info.plist
+          - AmberMacApp.swift
+          - Runtime/DesktopProvider.swift
+          - Runtime/DesktopAgentProvider.swift
+          - Runtime/DesktopConversationStorage.swift
+          - Runtime/DesktopLiveWorkspace.swift
+          - Runtime/DesktopKMPModelCatalog.swift
+          - Runtime/DesktopGeminiPrimitives.swift
+          - Runtime/DesktopSearchTransport.swift
+          - Runtime/DesktopAgentProvider.swift
+          - Runtime/DesktopEngineLedger.swift
+      - path: Preview
+        excludes:
+          - Info.plist
+      - path: ../iosApp/iosApp/IOSCodexOAuthClient.swift
+      - path: ../iosApp/iosApp/IOSImageGenerationModels.swift
+      - path: ../iosApp/iosApp/IOSImageGenerationRepository.swift
+      - path: ../iosApp/iosApp/Chat/Media/ChatGeneratedImageURL.swift
+      - path: ../iosApp/iosApp/IOSMcpClient.swift
+      - path: ../iosApp/iosApp/IOSCredentialRedactor.swift
+      - path: ../iosApp/iosApp/IOSWebDAVClient.swift
+      - path: ../iosApp/iosApp/IOSSyncBackupError.swift
+      - path: ../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
+    settings:
+      base:
+        PRODUCT_NAME: AmberPreview
+        PRODUCT_MODULE_NAME: AmberMacPreview
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.macos.preview
+        CODE_SIGN_ENTITLEMENTS: Preview/AmberPreview.entitlements
+        INFOPLIST_FILE: Preview/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
+        ENABLE_USER_SELECTED_FILES: readwrite
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) AMBER_MAC_PREVIEW'
+        ARCHS: arm64
+  AmberMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - AmberMacTests
+    dependencies:
+      - target: AmberMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.macos.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: '$(BUILT_PRODUCTS_DIR)/Amber.app/Contents/MacOS/Amber'
+        BUNDLE_LOADER: '$(TEST_HOST)'
+        FRAMEWORK_SEARCH_PATHS:
+          - '$(inherited)'
+          - '$(SRCROOT)/../desktop-shared/build/bin/macosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)'
+        ARCHS: arm64
+schemes:
+  AmberMac:
+    build:
+      targets:
+        AmberMac: all
+        AmberMacTests: [test]
+    test:
+      environmentVariables:
+        AMBER_MAC_PROVIDER_TEST_URL: '$(AMBER_MAC_PROVIDER_TEST_URL)'
+      targets:
+        - AmberMacTests
+      parallelizable: false
+  AmberMacPreview:
+    build:
+      targets:
+        AmberMacPreview: all

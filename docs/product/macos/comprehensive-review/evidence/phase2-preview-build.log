@@ -1,0 +1,54 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'swiftpm-preview': failed storing manifest for 'swiftpm-preview' in cache: attempt to write a readonly database
+warning: 'iosmath': failed storing manifest for 'iosmath' in cache: attempt to write a readonly database
+Building for debugging...
+[Planning deferred tasks]
+[6 / 11] AmberPreview-product
+[9 / 19] AmberPreview-product
+[10 / 29] AmberPreview-product
+[11 / 29] AmberPreview-product
+[14 / 29] AmberPreview-product
+/Users/mi/Downloads/AI/AmberAgent/ios/macApp/build/swiftpm-preview/Sources/AmberMacPreview/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[16 / 29] AmberPreview-product
+[18 / 29] AmberPreview-product
+[19 / 29] AmberPreview-product
+[22 / 30] AmberPreview-product
+[23 / 30] AmberPreview-product
+[25 / 30] AmberPreview-product
+[26 / 30] AmberPreview-product
+[28 / 30] AmberPreview-product
+Build complete! (12.85秒)
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+2026-10-23 23:16:35.437 ibtoold[10458:10312615] CoreSimulatorService connection became invalid.  Simulator services will no longer be available.
+2026-10-23 23:16:35.440 ibtoold[10458:10312666] Logging connecton invalid: <OS_xpc_error: <dictionary: 0x1eb158b60> { count = 1, transaction: 0, voucher = 0x0, contents =
+	"XPCErrorDescription" => <string: 0x1eb158ca0> { string cache = 0x0, length = 18, contents = "Connection invalid" }
+}>
+2026-10-23 23:16:35.441 ibtoold[10458:10312615] Error opening log file (/Users/mi/Library/Logs/CoreSimulator/CoreSimulator.com.apple.ibtool.log): Operation not permitted
+[-[SimServiceContext sendRequest:]:2053] ERROR : Unable to deliver request ({
+    "developer_dir" = "/Applications/Xcode.app/Contents/Developer";
+    request = "set_developer_dir";
+}) because we are not connected to CoreSimulatorService.
+[-[SimServiceContext initWithDeveloperDir:connectionType:error:]:499] WARN  : Unable to discover any Simulator runtimes. Developer Directory is /Applications/Xcode.app/Contents/Developer.
+[-[SimDiskImageManager init]:226] ERROR : Could not kickstart simdiskimaged; SimDiskImageManager services will not be available: Error Domain=NSPOSIXErrorDomain Code=53 "Software caused connection abort" UserInfo={NSLocalizedDescription=Error returned in reply from CoreSimulatorService: Connection invalid}
+[-[SimDiskImageManager _onQueue_checkConnection:]:290] ERROR : simdiskimaged returned error (invalid), marking disconnected.
+[-[SimServiceContext initWithDeveloperDir:connectionType:error:]_block_invoke:556] ERROR : Could not get list of trusted mount directories: Error Domain=com.apple.CoreSimulator.SimError Code=409 "Cannot talk to the service used to manage runtime disk images (simdiskimaged) because its launchd job is not registered or was unloaded" UserInfo={NSLocalizedDescription=Cannot talk to the service used to manage runtime disk images (simdiskimaged) because its launchd job is not registered or was unloaded}
+[-[SimDiskImageManager _onQueue_checkConnection:]:270] ERROR : simdiskimaged connection is currently unavailable because connection became invalid
+[-[SimServiceContext sendRequest:reply:error:]:2074] ERROR : Unable to deliver request ({
+    request = "notification_subscription";
+    "set_path" = "/Users/mi/Library/Developer/CoreSimulator/Devices";
+}) because we are not connected to CoreSimulatorService.
+2026-10-23 23:16:35.640 ibtoold[10458:10312614] Error Domain=NSPOSIXErrorDomain Code=61 "Connection refused" UserInfo={NSLocalizedDescription=CoreSimulatorService connection became invalid.  Simulator services will no longer be available.}
+/Users/mi/Downloads/AI/AmberAgent/ios/macApp/build/swiftpm-preview/AmberPreview.app: replacing existing signature
+/Users/mi/Downloads/AI/AmberAgent/ios/macApp/build/swiftpm-preview/AmberPreview.app

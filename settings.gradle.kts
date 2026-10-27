@@ -76,3 +76,5 @@ include(":feature:modelcouncil")
 include(":ai-provider-openai")
 include(":ai-provider-claude")
 include(":shared")
+
+include(":desktop-shared")

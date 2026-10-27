@@ -27,6 +27,11 @@ struct ChatTopBarView: View {
     let loadPreview: (String) async -> String?
     let previewRevision: (String) -> String?
     var artifacts = ConversationArtifactIndex(images: [], files: [], webPages: [])
+    /// 双栏详情根（iPhone Duo 展开）没有上一页，返回键改为切换会话侧栏。
+    var backSystemImage = "chevron.left"
+    var backAccessibilityLabel = "返回"
+    /// iPhone Duo 外屏：返回已搬到右侧竖条时隐藏顶栏的返回键。
+    var showsBackButton = true
     var snippets: [IOSPinnedSnippet] = []
     var adoptedVersions: [String: String] = [:]
     var conversationTitle = "对话成果"
@@ -89,11 +94,13 @@ struct ChatTopBarView: View {
             ZStack(alignment: .bottom) {
                 // 两侧玻璃与岛保持独立，避免系统合并玻璃后穿透正文。
                 HStack {
+                    if showsBackButton {
                     ChatToolbarIconButton(
-                        systemImage: "chevron.left", accessibilityLabel: "返回",
+                        systemImage: backSystemImage, accessibilityLabel: backAccessibilityLabel,
                         size: ChatTopBarLayout.toolbarButtonDiameter, symbolSize: 18, action: onBack
                     )
                     .accessibilityIdentifier("topbar-back")
+                    }
                     Spacer()
                     ChatTopBarTrailingDock(
                         state: dockState, onTap: tapDock, onDismiss: onDismiss,

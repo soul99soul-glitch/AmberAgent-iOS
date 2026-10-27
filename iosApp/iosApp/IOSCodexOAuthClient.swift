@@ -578,3 +578,28 @@ private extension Optional where Wrapped == String {
         return self
     }
 }
+
+/// 合并同一 provider 的在途 token 刷新。调用者先在
+/// `getValidAccessToken()` 判断缓存是否需要刷新，普通缓存命中不会进入这里。
+///
+/// 非 private 且不与 OAuth 网络逻辑耦合，是为了让
+/// `IOSRunSnapshotTests` 能直接实例化一份、注入可计数的闭包验证合并语义，不需要
+/// 真的触发 Codex OAuth 网络请求。
+actor IOSCodexResolveCoordinator {
+    static let shared = IOSCodexResolveCoordinator()
+
+    private var inFlight: [String: Task<String, Error>] = [:]
+
+    func resolve(
+        key: String,
+        _ operation: @escaping @Sendable () async throws -> String
+    ) async throws -> String {
+        if let existing = inFlight[key] {
+            return try await existing.value
+        }
+        let task = Task { try await operation() }
+        inFlight[key] = task
+        defer { inFlight[key] = nil }
+        return try await task.value
+    }
+}
