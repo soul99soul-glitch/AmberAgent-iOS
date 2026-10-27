@@ -46,6 +46,8 @@ final class DesktopWorkspace {
     let speech: DesktopSpeechPlayer
     let searchSettings: DesktopSearchSettings
     let titles = DesktopTitleGeneration()
+    /// Set by the live app; previews and tests run without one.
+    var scheduler: DesktopScheduler?
     private(set) var savingCollaborationRuns: Set<UUID> = []
     private(set) var savedCollaborationRuns: Set<UUID> = []
     private(set) var collaborationSaveErrors: [UUID: String] = [:]

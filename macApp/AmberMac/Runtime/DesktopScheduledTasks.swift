@@ -127,7 +127,18 @@ struct DesktopScheduledTask: Identifiable, Codable, Equatable, Sendable {
     var enabled = true
     var createdAt: Date
     var lastRun: DesktopScheduleRunRecord?
+    /// Newest first, capped at `historyLimit`; includes skipped slots.
+    var recentRuns: [DesktopScheduleRunRecord] = []
     var nextRunAt: Date?
+
+    static let historyLimit = 20
+
+    mutating func record(_ run: DesktopScheduleRunRecord) {
+        if run.status != .skipped { lastRun = run }
+        recentRuns.removeAll { $0.id == run.id }
+        recentRuns.insert(run, at: 0)
+        if recentRuns.count > Self.historyLimit { recentRuns.removeLast(recentRuns.count - Self.historyLimit) }
+    }
 
     init(id: UUID = UUID(), name: String, prompt: String, schedule: DesktopSchedule, createdAt: Date = Date()) {
         self.id = id; self.name = name; self.prompt = prompt; self.schedule = schedule; self.createdAt = createdAt

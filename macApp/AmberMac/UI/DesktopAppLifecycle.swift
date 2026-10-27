@@ -39,6 +39,8 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
         workspace.webDAV.cancel()
         workspace.collaborations.cancelAll()
         workspace.recipes.cancelAll()
+        workspace.scheduler?.cancelAll(reason: "应用退出，本次运行已中断。")
+        workspace.cancelScheduledRuns()
         workspace.agentTasks.cancelAll()
         for server in workspace.mcp.store.servers { workspace.mcp.disconnect(id: server.id) }
         workspace.insights.cancelAll()
@@ -49,6 +51,8 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
             await workspace.titles.flush()
             await workspace.waitUntilBackupFinished()
             await workspace.recipes.flush()
+            await workspace.scheduler?.flush()
+            await workspace.scheduler?.flushWrites()
             let collaborationsSaved = await workspace.collaborations.flush()
             await workspace.insights.flush()
             let conversationsSaved = await workspace.flush()

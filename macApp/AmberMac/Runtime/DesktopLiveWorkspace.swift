@@ -29,5 +29,14 @@ import Foundation
                 amberRoot: directory, knowledgeDirectory: knowledge.directory),
             imageGeneration: imageGeneration, searchSettings: searchSettings,
             artifactShelf: DesktopArtifactShelf(fileURL: directory.appendingPathComponent("artifact-shelf.json")))
+        let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: directory.appendingPathComponent("schedules", isDirectory: true)),
+            runner: { [weak self] task, slot in
+                guard let self else {
+                    return DesktopScheduleRunRecord(scheduledFor: slot, startedAt: Date(), finishedAt: Date(), status: .failed, error: "应用正在退出。")
+                }
+                return await self.runScheduled(task, scheduledFor: slot)
+            })
+        scheduler.startObservingSystem()
+        self.scheduler = scheduler
     }
 }
