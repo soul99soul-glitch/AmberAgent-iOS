@@ -23,6 +23,7 @@ import SwiftUI
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_RECOVERY"] != nil { try await reviewRecovery() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PHASE3_UI"] != nil { try await reviewPhase3UI() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PERF3_CACHE"] != nil { try await reviewPerf3Cache() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_SCHEDULES"] != nil { try await schedules() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
@@ -140,6 +141,37 @@ import SwiftUI
         ]
         for (name, view, w, h) in shots {
             for dark in [false, true] { try await capture("\(name)-\(dark ? "dark" : "light")", view.background(DesktopTheme.paper), w, h, dark) }
+        }
+    }
+
+    /// 定时任务 page with a few representative tasks (editing, high-risk badge, history, failures).
+    @MainActor static func schedules() async throws {
+        let workspace = DesktopWorkspace.uiFixture()
+        let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: nil),
+            defaults: UserDefaults(suiteName: "amber.snapshot.schedules.\(UUID().uuidString)")!,
+            runner: { _, slot in DesktopScheduleRunRecord(scheduledFor: slot, startedAt: Date(), status: .completed) }, timerEnabled: false)
+        workspace.scheduler = scheduler
+        await scheduler.waitUntilLoaded()
+        let owner = workspace.selectedID
+        var daily = DesktopScheduledTask(name: "每日汇总", prompt: "列出会话文件夹里昨天以来新增的文件，按类型分组并写一段两三句的概述。",
+            schedule: .daily(hour: 9, minute: 0))
+        daily.approval.autoApproveOrdinary = true
+        daily.approval.allowedTools = ["workspace_file_list", "workspace_file_read"]
+        var weekly = DesktopScheduledTask(name: "周报草稿", prompt: "根据本周对话整理周报草稿。", schedule: .weekly(days: [2, 6], hour: 17, minute: 30))
+        if let owner { weekly.output = .appendTo(owner) }
+        var cleanup = DesktopScheduledTask(name: "清理构建产物", prompt: "删除 build 目录下超过 7 天的文件。", schedule: .interval(minutes: 360, anchor: Date()))
+        cleanup.approval.autoApproveHighRisk = true
+        let off = DesktopScheduledTask(name: "季度回顾", prompt: "回顾。", schedule: .weekdays(hour: 8, minute: 15))
+        for task in [daily, weekly, cleanup, off] { _ = await scheduler.save(task: task) }
+        await scheduler.setEnabled(off.id, false)
+        // Seed history through the public run path so the list shows last results.
+        _ = scheduler.runNow(daily.id)
+        try await Task.sleep(for: .milliseconds(100))
+        let view = DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler)
+        for dark in [false, true] {
+            try await capture("schedules-\(dark ? "dark" : "light")", view.background(DesktopTheme.paper), 900, 700, dark)
+            // Full-height editor so the approval section and run history are visible too.
+            try await capture("schedules-full-\(dark ? "dark" : "light")", view.frame(height: 1500).background(DesktopTheme.paper), 900, 1500, dark)
         }
     }
 

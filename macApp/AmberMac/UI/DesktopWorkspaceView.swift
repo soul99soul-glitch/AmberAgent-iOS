@@ -121,6 +121,10 @@ struct DesktopWorkspaceView: View {
             }
         }
         .sheet(isPresented: $recipesPresented) { DesktopRecipesView(workspace: workspace) }
+        .sheet(isPresented: Binding(get: { workspace.showsScheduledTasks && workspace.scheduler != nil },
+            set: { workspace.showsScheduledTasks = $0 })) {
+            if let scheduler = workspace.scheduler { DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler) }
+        }
         .sheet(isPresented: $searchSettingsPresented) { DesktopSearchSettingsView(settings: workspace.searchSettings) }
         .sheet(item: $imageGenerationOwner) { owner in
             DesktopImageGenerationView(workspace: workspace, ownerID: owner.id)
@@ -284,6 +288,9 @@ struct DesktopWorkspaceView: View {
                     Button("多模型协作", systemImage: "person.3") { collaborationsPresented = true }
                         .disabled(workspace.selectedID == nil || workspace.selectedConversationUnavailable)
                     Button("Recipe 自动流程", systemImage: "list.number") { recipesPresented = true }
+                    if workspace.scheduler != nil {
+                        Button("定时任务", systemImage: "clock") { workspace.showsScheduledTasks = true }
+                    }
                     Button("图片生成", systemImage: "photo.badge.plus") {
                         if let owner = workspace.imageGeneration.isRunning ? workspace.imageGeneration.ownerID : workspace.selectedID {
                             imageGenerationOwner = ImageGenerationOwner(id: owner)

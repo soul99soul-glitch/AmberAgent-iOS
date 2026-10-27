@@ -44,7 +44,7 @@ struct DesktopScheduleMenu: View {
 
     static func format(_ date: Date) -> String {
         let calendar = Calendar.current
-        let time = date.formatted(date: .omitted, time: .shortened)
+        let time = String(format: "%02d:%02d", calendar.component(.hour, from: date), calendar.component(.minute, from: date))
         if calendar.isDateInToday(date) { return "今天 " + time }
         if calendar.isDateInTomorrow(date) { return "明天 " + time }
         return date.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month().day().weekday(.abbreviated)) + " " + time
