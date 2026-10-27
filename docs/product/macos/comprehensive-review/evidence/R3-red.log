@@ -1,0 +1,100 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'amber-audit-data-proof': failed storing manifest for 'amber-audit-data-proof' in cache: attempt to write a readonly database
+Building for debugging...
+[Planning deferred tasks]
+[27 / 50]
+[28 / 51] AmberMac
+[31 / 140]
+[35 / 140]
+[39 / 140]
+[41 / 140]
+[44 / 140]
+[47 / 140]
+[49 / 140]
+[51 / 140]
+[53 / 140]
+[55 / 140]
+[58 / 140]
+[59 / 140]
+[60 / 140]
+[62 / 140]
+[63 / 140]
+[65 / 140]
+[69 / 140]
+[71 / 140]
+[74 / 140]
+[76 / 140]
+[77 / 140]
+[79 / 140]
+[82 / 140]
+[85 / 140]
+[87 / 140]
+[91 / 140]
+[93 / 140]
+[96 / 140]
+[97 / 140]
+[99 / 140]
+[103 / 140]
+[104 / 140]
+[106 / 140]
+[109 / 140] AmberMac
+/private/tmp/amber-audit-data-proof/Sources/AmberMac/IOSImageGenerationRepository.swift:706:13: warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 704 |         diagnosticId: String? = nil
+ 705 |     ) async throws -> String {
+ 706 |         var extraction = Self.codexImageExtraction(from: data)
+     |             `- warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 707 |         if let image = extraction.images.first {
+ 708 |             if let diagnosticId {
+
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[111 / 140] AmberMac
+[117 / 140] AmberMac
+[118 / 140] AmberMacTests-product
+[119 / 140] AmberMacTests-product
+[120 / 140] AmberMac
+[122 / 140] AmberMac
+/private/tmp/amber-audit-data-proof/Sources/AmberMac/DesktopRecipeRuns.swift:40:127: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+32 |         let id = UUID()
+33 |         operations.insert(DesktopRecipeOperation(id: id, owner: conversationID, name: name), at: 0)
+34 |         running[id] = Task {
+   |                            |- note: 'self' implicitly strongly captured here
+   |                            `- note: add 'self' as a capture list item to silence
+35 |             defer {
+36 |                 running[id] = nil
+   :
+38 |             }
+39 |             do {
+40 |                 _ = try await tasks.begin(id: id, conversationID: conversationID, title: "Recipe · \(name)", cancel: { [weak self] in self?.cancel(id) })
+   |                                                                                                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                                                                                              `- note: explicitly assign the capture list item to silence
+41 |                 try Task.checkCancellation()
+42 |                 let result = await store.run(name: name, inputs: inputs) { [execute] tool, arguments in
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[125 / 140] AmberMac
+[127 / 140] AmberMac
+[130 / 141] AmberMacTests-product
+[132 / 149]
+[134 / 149]
+[135 / 149]
+[138 / 149] AmberMacTests-product
+[143 / 149] AmberMacTests-product
+[145 / 149] AmberMacTests-product
+[147 / 149] AmberMacTests-product
+Build complete! (35.48秒)
+Test Suite 'Selected tests' started at 2026-10-23 22:55:27.309.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-23 22:55:27.310.
+Test Suite 'AuditDataProof' started at 2026-10-23 22:55:27.310.
+Test Case '-[AmberMacTests.AuditDataProof testFlushWaitsForAcceptedWorkspaceImport]' started.
+/private/tmp/amber-audit-data-proof/Tests/AmberMacTests/AuditDataProof.swift:25: error: -[AmberMacTests.AuditDataProof testFlushWaitsForAcceptedWorkspaceImport] : XCTAssertTrue failed - flush returned while accepted workspace import was still pending
+Test Case '-[AmberMacTests.AuditDataProof testFlushWaitsForAcceptedWorkspaceImport]' failed (0.140 seconds).
+Test Suite 'AuditDataProof' failed at 2026-10-23 22:55:27.450.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.140 (0.140) seconds
+Test Suite 'AmberMacTests.xctest' failed at 2026-10-23 22:55:27.451.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.140 (0.140) seconds
+Test Suite 'Selected tests' failed at 2026-10-23 22:55:27.451.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.140 (0.141) seconds
+Note: Some test targets reported failures:
+  - AmberMacTests (XCTest)

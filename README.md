@@ -152,6 +152,10 @@ xcodebuild -project iosApp/AmberAgent.xcodeproj \
 ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64
 ```
 
+### macOS 原生客户端（开发中）
+
+`macApp/` 采用原生 SwiftUI 桌面界面，通过本仓 `desktop-shared` 复用 KMP provider、完整消息与会话存储及原工具引擎，目标为 Apple Silicon、macOS 15+。本机已能构建正式 Shared/Native 应用，测试和性能证据见[最新审查](docs/product/macos/performance-review/review.md)；打开方式、系统能力验证与产品边界见 [macApp/README.md](macApp/README.md)。
+
 ### 仓库结构
 
 | 路径 | 内容 |

@@ -1,0 +1,91 @@
+⚙️  Generating plists...
+⚙️  Generating project...
+⚙️  Writing project...
+Created project at /Users/mi/Downloads/AI/amber-macos/macApp/AmberMac.xcodeproj
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 (in target 'AmberMac' from project 'AmberMac')
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/Runtime/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1259 |     }
+1260 |
+1261 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopMathView.swift:61:22: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 57 |     private var valid = false
+ 58 |
+ 59 |     func isValid(_ source: String) -> Bool {
+    |          `- note: add '@MainActor' to make instance method 'isValid' part of global actor 'MainActor'
+ 60 |         if self.source == source { return valid }
+ 61 |         let parsed = MTMathUILabel()
+    |                      `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 62 |         parsed.latex = source
+ 63 |         self.source = source
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSResponder.h:23:1: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+ 21 | @interface NSResponder : NSObject <NSCoding>
+ 22 |
+ 23 | - (instancetype)init NS_DESIGNATED_INITIALIZER;
+    | |- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+    | `- note: main actor isolation inferred from inheritance from class 'NSView'
+ 24 | - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+ 25 |
+
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopMathView.swift:62:16: warning: main actor-isolated property 'latex' can not be mutated from a nonisolated context
+ 57 |     private var valid = false
+ 58 |
+ 59 |     func isValid(_ source: String) -> Bool {
+    |          `- note: add '@MainActor' to make instance method 'isValid' part of global actor 'MainActor'
+ 60 |         if self.source == source { return valid }
+ 61 |         let parsed = MTMathUILabel()
+ 62 |         parsed.latex = source
+    |                `- warning: main actor-isolated property 'latex' can not be mutated from a nonisolated context
+ 63 |         self.source = source
+ 64 |         valid = parsed.error == nil
+
+/Users/mi/Downloads/AI/amber-macos/macApp/build/SourcePackages/checkouts/iosMath/iosMath/include/MTMathUILabel.h:75:57: note: mutation of this property is only permitted within the actor
+ 73 |  `mathList` that is set.
+ 74 |  @see error */
+ 75 | @property (nonatomic, nullable) IBInspectable NSString* latex;
+    |                                                         `- note: mutation of this property is only permitted within the actor
+ 76 |
+ 77 | /** This contains any error that occurred when parsing the latex. */
+
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopMathView.swift:64:24: warning: main actor-isolated property 'error' can not be referenced from a nonisolated context
+ 57 |     private var valid = false
+ 58 |
+ 59 |     func isValid(_ source: String) -> Bool {
+    |          `- note: add '@MainActor' to make instance method 'isValid' part of global actor 'MainActor'
+ 60 |         if self.source == source { return valid }
+ 61 |         let parsed = MTMathUILabel()
+ 62 |         parsed.latex = source
+ 63 |         self.source = source
+ 64 |         valid = parsed.error == nil
+    |                        `- warning: main actor-isolated property 'error' can not be referenced from a nonisolated context
+ 65 |         return valid
+ 66 |     }
+
+/Users/mi/Downloads/AI/amber-macos/macApp/build/SourcePackages/checkouts/iosMath/iosMath/include/MTMathUILabel.h:78:52: note: property declared here
+ 76 |
+ 77 | /** This contains any error that occurred when parsing the latex. */
+ 78 | @property (nonatomic, readonly, nullable) NSError* error;
+    |                                                    `- note: property declared here
+ 79 |
+ 80 | /** If true, if there is an error it displays the error message inline. Default true. */
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+/Users/mi/Downloads/AI/amber-macos/macApp/AmberMac/UI/DesktopCollaborationsView.swift:82:47: warning: result of call to 'saveCollaborationResult(runID:)' is unused [#NoUsage]
+ 80 |                                 if workspace.savingCollaborationRuns.contains(run.id) { ProgressView().controlSize(.small) }
+ 81 |                                 Button(workspace.savedCollaborationRuns.contains(run.id) ? "已保存到原会话" : "保存到原会话") {
+ 82 |                                     workspace.saveCollaborationResult(runID: run.id)
+    |                                               `- warning: result of call to 'saveCollaborationResult(runID:)' is unused [#NoUsage]
+ 83 |                                 }
+ 84 |                                 .disabled(!run.status.isTerminal || workspace.savingCollaborationRuns.contains(run.id)
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+note: Disabling hardened runtime with ad-hoc codesigning. (in target 'AmberMac' from project 'AmberMac')
+note: Run script build phase 'Build desktop Shared framework' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'AmberMac' from project 'AmberMac')
+2026-10-27 10:30:46.923 xcodebuild[66578:21828683] [MT] IDETestOperationsObserverDebug: 30.241 elapsed -- Testing started completed.
+2026-10-27 10:30:46.924 xcodebuild[66578:21828683] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-10-27 10:30:46.924 xcodebuild[66578:21828683] [MT] IDETestOperationsObserverDebug: 30.241 sec, +30.241 sec -- end
+Testing started

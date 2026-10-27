@@ -7,6 +7,7 @@ kotlin {
     jvm()
     iosArm64()
     iosSimulatorArm64()
+    macosArm64()
 
     compilerOptions {
         optIn.add("kotlin.uuid.ExperimentalUuidApi")

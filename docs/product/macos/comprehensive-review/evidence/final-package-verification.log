@@ -1,0 +1,5 @@
+Archive SHA256: 5381458bc63d70257be6e948caa1711f92af87b31fcff8af1613f570c6247bea
+Archive bytes: 6150780
+Source copies: 79; mismatches: 0
+Bundle files compared after extraction: 21; mismatches: 0
+Extracted codesign --verify --deep --strict exit: 0

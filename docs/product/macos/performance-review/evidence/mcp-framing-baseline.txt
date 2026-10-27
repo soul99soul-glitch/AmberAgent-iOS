@@ -1,0 +1,7 @@
+2026-10-27, Apple Silicon, swiftc -O, standalone framing microbenchmark.
+Input: 8 MiB ASCII line, delivered in 1024 chunks of 8 KiB, no newline until the end.
+Existing repeated scan: 17.797366375 seconds.
+Incremental scan: 0.025839167 seconds.
+This isolates delimiter scanning, not JSON decoding, process I/O, or total app latency.
+Reproduce: swiftc -O MCPFraming.swift -o /tmp/amber-mcp-framing-benchmark
+           /tmp/amber-mcp-framing-benchmark

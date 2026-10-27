@@ -84,7 +84,7 @@ struct LanguageSettingsView: View {
             Task { @MainActor in
                 await AgentLiveActivityController.shared.refreshLanguage()
                 WatchTaskCoordinator.shared.refreshLanguage()
-                UNUserNotificationCenter.current().setNotificationCategories(IOSWatchDecisionNotification.categories)
+                UNUserNotificationCenter.current().setNotificationCategories(AmberNotificationCategories.all)
             }
         } label: {
             HStack(spacing: 12) {

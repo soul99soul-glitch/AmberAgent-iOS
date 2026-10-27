@@ -7,6 +7,28 @@ import XCTest
 final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
     // MARK: - Tests
 
+    func testLastAllowedToolRoundLeavesSteerQueuedForTheNextRun() async {
+        actor DrainCounter {
+            var count = 0
+            func hit() { count += 1 }
+        }
+        let counter = DrainCounter()
+        let queued = IOSMailboxDrainResult(values: [userMessage("queued instruction")])
+        let provider = ScriptedProvider([toolCallMessage(toolCallId: "last-step", toolName: "echo", input: "{}")])
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["echo": RecordingExecutor(.filled("done"))],
+            configuration: .init(maxSteps: 1))
+        let result = await engine.run(providerSetting: makeProviderSetting(), messages: [userMessage("start")],
+            params: makeParams(tools: ["echo"]), drainSteer: {
+                await counter.hit()
+                return queued.values
+            })
+        let drainCount = await counter.count
+        XCTAssertEqual(drainCount, 0)
+        XCTAssertEqual(provider.callCount, 1)
+        XCTAssertTrue(result.hitStepLimit)
+        XCTAssertFalse(result.messages.contains(where: { $0.id == queued.values[0].id }))
+    }
+
     func testLoopExecutesThenTerminatesWhenNoToolCallsRemain() async {
         // script: [tool_call(echo, "{}"), text("done")]
         let provider = ScriptedProvider([

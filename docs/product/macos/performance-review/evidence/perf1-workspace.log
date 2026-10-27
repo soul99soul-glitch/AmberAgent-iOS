@@ -1,0 +1,123 @@
+Building for production...
+[Planning deferred tasks]
+[40 / 60]
+[41 / 61] AmberMac
+[50 / 140]
+[53 / 140]
+[59 / 140]
+[63 / 140]
+[66 / 140]
+[68 / 140]
+[73 / 140]
+[75 / 140]
+[77 / 140]
+[80 / 140]
+[85 / 140]
+[87 / 140]
+[90 / 140]
+[91 / 140]
+[98 / 140]
+[104 / 140]
+[106 / 140]
+[107 / 140]
+[112 / 140]
+[117 / 140]
+[118 / 140]
+[119 / 140]
+[120 / 140]
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.m9nrvV/Sources/AmberMac/DesktopRecipeRuns.swift:40:127: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+32 |         let id = UUID()
+33 |         operations.insert(DesktopRecipeOperation(id: id, owner: conversationID, name: name), at: 0)
+34 |         running[id] = Task {
+   |                            |- note: 'self' implicitly strongly captured here
+   |                            `- note: add 'self' as a capture list item to silence
+35 |             defer {
+36 |                 running[id] = nil
+   :
+38 |             }
+39 |             do {
+40 |                 _ = try await tasks.begin(id: id, conversationID: conversationID, title: "Recipe · \(name)", cancel: { [weak self] in self?.cancel(id) })
+   |                                                                                                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                                                                                              `- note: explicitly assign the capture list item to silence
+41 |                 try Task.checkCancellation()
+42 |                 let result = await store.run(name: name, inputs: inputs) { [execute] tool, arguments in
+
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.m9nrvV/Sources/AmberMac/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1259 |     }
+1260 |
+1261 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.m9nrvV/Sources/AmberMac/IOSImageGenerationRepository.swift:708:13: warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 706 |         diagnosticId: String? = nil
+ 707 |     ) async throws -> String {
+ 708 |         var extraction = Self.codexImageExtraction(from: data)
+     |             `- warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 709 |         if let image = extraction.images.first {
+ 710 |             if let diagnosticId {
+
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.m9nrvV/Sources/AmberMac/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[121 / 140] AmberMac
+[131 / 141] AmberMacTests-product
+[134 / 147]
+[136 / 147]
+[137 / 147]
+[138 / 147] AmberMacTests-product
+[143 / 147] AmberMacTests-product
+[145 / 147] AmberMacTests-product
+Build complete! (46.69秒)
+Test Suite 'Selected tests' started at 2026-10-27 10:08:06.077.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-27 10:08:06.078.
+Test Suite 'RuntimeWorkspaceTests' started at 2026-10-27 10:08:06.078.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testCanonicalMessageSurvivesStreamStopPersistenceAndNextRequest]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testCanonicalMessageSurvivesStreamStopPersistenceAndNextRequest]' passed (0.012 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testConcurrentAttachmentLoadsMergeAndSendWaitsForRead]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testConcurrentAttachmentLoadsMergeAndSendWaitsForRead]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testDeleteRunningConversationDoesNotRecreateItFromLateEvents]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testDeleteRunningConversationDoesNotRecreateItFromLateEvents]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testExportKeepsCurrentEnvelopeWhenSaveFailsAndCanBeReimported]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testExportKeepsCurrentEnvelopeWhenSaveFailsAndCanBeReimported]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailedDeletionRestoresConversationAndDraft]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailedDeletionRestoresConversationAndDraft]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailureRemainsOwnedByOriginalConversation]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailureRemainsOwnedByOriginalConversation]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFirstMessageTitleSurvivesRestartThroughMetadataOwner]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFirstMessageTitleSurvivesRestartThroughMetadataOwner]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFlushReportsUnrecoverableWriteFailure]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFlushReportsUnrecoverableWriteFailure]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testImportKeepsInnerMessageIdentityAndPublishesOnlyAfterSave]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testImportKeepsInnerMessageIdentityAndPublishesOnlyAfterSave]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testLegacyMessageDefaultsDoNotRequireNewCanonicalKeys]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testLegacyMessageDefaultsDoNotRequireNewCanonicalKeys]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRestoringStreamingCheckpointRetainsPartialText]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRestoringStreamingCheckpointRetainsPartialText]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryDoesNotUploadCancelledCanonicalAssistant]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryDoesNotUploadCancelledCanonicalAssistant]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryReusesUserTurnAndMetadataSurvivesCheckpoint]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryReusesUserTurnAndMetadataSurvivesCheckpoint]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testStopDrainsAcceptedChunkAndIgnoresLaterCallbacks]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testStopDrainsAcceptedChunkAndIgnoresLaterCallbacks]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSuccessfulDeleteClearsEarlierUnsavedCheckpoint]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSuccessfulDeleteClearsEarlierUnsavedCheckpoint]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSwitchConversationKeepsStreamAndDraftWithOriginalOwner]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSwitchConversationKeepsStreamAndDraftWithOriginalOwner]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testTerminalAlreadyQueuedWinsOverStop]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testTerminalAlreadyQueuedWinsOverStop]' passed (0.002 seconds).
+Test Suite 'RuntimeWorkspaceTests' passed at 2026-10-27 10:08:06.146.
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.067 (0.068) seconds
+Test Suite 'AmberMacTests.xctest' passed at 2026-10-27 10:08:06.146.
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.067 (0.068) seconds
+Test Suite 'Selected tests' passed at 2026-10-27 10:08:06.146.
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.067 (0.069) seconds

@@ -1,0 +1,838 @@
+Building for debugging...
+[Planning deferred tasks]
+[45 / 69]
+[46 / 70] AmberMac
+[50 / 159]
+[56 / 159]
+[59 / 159]
+[66 / 159]
+[70 / 159]
+[72 / 159]
+[77 / 159]
+[79 / 159]
+[81 / 159]
+[84 / 159]
+[88 / 159]
+[89 / 159]
+[92 / 159]
+[94 / 159]
+[95 / 159]
+[101 / 159]
+[105 / 159]
+[109 / 159]
+[111 / 159]
+[112 / 159]
+[116 / 159]
+[121 / 159]
+[122 / 159]
+[123 / 159]
+[124 / 159]
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.oIU1jl/Sources/AmberMac/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1259 |     }
+1260 |
+1261 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+[129 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.oIU1jl/Sources/AmberMac/DesktopRecipeRuns.swift:40:127: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+32 |         let id = UUID()
+33 |         operations.insert(DesktopRecipeOperation(id: id, owner: conversationID, name: name), at: 0)
+34 |         running[id] = Task {
+   |                            |- note: 'self' implicitly strongly captured here
+   |                            `- note: add 'self' as a capture list item to silence
+35 |             defer {
+36 |                 running[id] = nil
+   :
+38 |             }
+39 |             do {
+40 |                 _ = try await tasks.begin(id: id, conversationID: conversationID, title: "Recipe · \(name)", cancel: { [weak self] in self?.cancel(id) })
+   |                                                                                                                              |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                                                                                              `- note: explicitly assign the capture list item to silence
+41 |                 try Task.checkCancellation()
+42 |                 let result = await store.run(name: name, inputs: inputs) { [execute] tool, arguments in
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[132 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.oIU1jl/Sources/AmberMac/IOSImageGenerationRepository.swift:708:13: warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 706 |         diagnosticId: String? = nil
+ 707 |     ) async throws -> String {
+ 708 |         var extraction = Self.codexImageExtraction(from: data)
+     |             `- warning: variable 'extraction' was never mutated; consider changing to 'let' constant [#VariableNeverMutated]
+ 709 |         if let image = extraction.images.first {
+ 710 |             if let diagnosticId {
+
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[139 / 159] AmberMacTests-product
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.oIU1jl/Sources/AmberMac/IOSPublicURLPolicy.swift:97:38: warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 95 |                     NI_NUMERICHOST
+ 96 |                 ) == 0 {
+ 97 |                     addresses.append(String(cString: buffer))
+    |                                      `- warning: 'init(cString:)' is deprecated: Use String(decoding: array, as: UTF8.self) instead, after truncating the null termination. [#DeprecatedDeclaration]
+ 98 |                 }
+ 99 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[140 / 159] AmberMac
+[141 / 159]
+[143 / 159] AmberMac
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.oIU1jl/Sources/AmberMac/DesktopWorkspace.swift:1261:5: warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1259 |     }
+1260 |
+1261 |     @discardableResult
+     |     `- warning: '@discardableResult' declared on a function returning 'Void' is unnecessary
+1262 |     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
+1263 |     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
+[149 / 160] AmberMacTests-product
+[153 / 176]
+[154 / 176]
+[159 / 176] AmberMacTests-product
+[161 / 176] AmberMacTests-product
+[167 / 176] AmberMacTests-product
+[169 / 176] AmberMacTests-product
+[170 / 176] AmberMacTests-product
+[170 / 176] AllIncludingTests
+[170 / 176] AmberMacTests-product
+[172 / 176] AmberMacTests-product
+Build complete! (24.06秒)
+Test Suite 'All tests' started at 2026-10-27 10:30:25.640.
+Test Suite 'AmberMacTests.xctest' started at 2026-10-27 10:30:25.642.
+Test Suite 'DesktopAgentTaskTests' started at 2026-10-27 10:30:25.642.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testApprovalPersistsBeforeDecisionAndBelongsToExactRun]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testApprovalPersistsBeforeDecisionAndBelongsToExactRun]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testCancelledApprovalCannotBeGrantedLaterAndSkillScopeCannotGrantTools]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testCancelledApprovalCannotBeGrantedLaterAndSkillScopeCannotGrantTools]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testCommandReturnsActualExitOutputAndKillsBackgroundDescendants]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testCommandReturnsActualExitOutputAndKillsBackgroundDescendants]' passed (0.014 seconds).
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testCommandTimeoutCancellationAndLargeOutputAreBounded]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testCommandTimeoutCancellationAndLargeOutputAreBounded]' passed (1.154 seconds).
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testDeferredCancellationAcceptsFinalCanonicalSnapshotThenCancels]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testDeferredCancellationAcceptsFinalCanonicalSnapshotThenCancels]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testJournalRejectsReusingStartedCallAndReplaysOnlyMatchingFinishedResult]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testJournalRejectsReusingStartedCallAndReplaysOnlyMatchingFinishedResult]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testReopenClosesApprovalThatWasStillWaiting]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testReopenClosesApprovalThatWasStillWaiting]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testReopenNeverReplaysStartedEffectAndKeepsOtherRunOwners]' started.
+Test Case '-[AmberMacTests.DesktopAgentTaskTests testReopenNeverReplaysStartedEffectAndKeepsOtherRunOwners]' passed (0.002 seconds).
+Test Suite 'DesktopAgentTaskTests' passed at 2026-10-27 10:30:26.822.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 1.179 (1.180) seconds
+Test Suite 'DesktopApprovalPolicyTests' started at 2026-10-27 10:30:26.822.
+Test Case '-[AmberMacTests.DesktopApprovalPolicyTests testInjectedPolicyOverridesGlobalSwitchesAndRespectsAllowList]' started.
+Test Case '-[AmberMacTests.DesktopApprovalPolicyTests testInjectedPolicyOverridesGlobalSwitchesAndRespectsAllowList]' passed (0.002 seconds).
+Test Suite 'DesktopApprovalPolicyTests' passed at 2026-10-27 10:30:26.824.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'DesktopArtifactShelfTests' started at 2026-10-27 10:30:26.824.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testBackupCarriesPinsToRestoredCopy]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testBackupCarriesPinsToRestoredCopy]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testDeletingConversationRemovesItsPins]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testDeletingConversationRemovesItsPins]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testDeletingConversationReportsShelfCleanupFailure]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testDeletingConversationReportsShelfCleanupFailure]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testFailedRecoveryMoveNeverOverwritesOriginal]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testFailedRecoveryMoveNeverOverwritesOriginal]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testFindMatchesVisibleTextCaseInsensitivelyAndWraps]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testFindMatchesVisibleTextCaseInsensitivelyAndWraps]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testPinsPersistPerConversationAndReload]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testPinsPersistPerConversationAndReload]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testSingleMessageMarkdownExport]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testSingleMessageMarkdownExport]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testUnreadableFileIsKeptAside]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testUnreadableFileIsKeptAside]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testUnreadableRecoveryCopiesCannotCollideWithinOneSecond]' started.
+Test Case '-[AmberMacTests.DesktopArtifactShelfTests testUnreadableRecoveryCopiesCannotCollideWithinOneSecond]' passed (0.002 seconds).
+Test Suite 'DesktopArtifactShelfTests' passed at 2026-10-27 10:30:26.853.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.028 (0.029) seconds
+Test Suite 'DesktopAutoApprovalTests' started at 2026-10-27 10:30:26.853.
+Test Case '-[AmberMacTests.DesktopAutoApprovalTests testGlobalCoversOrdinaryToolsOnlyAndHighRiskCoversEverythingAndPersists]' started.
+Test Case '-[AmberMacTests.DesktopAutoApprovalTests testGlobalCoversOrdinaryToolsOnlyAndHighRiskCoversEverythingAndPersists]' passed (0.002 seconds).
+Test Suite 'DesktopAutoApprovalTests' passed at 2026-10-27 10:30:26.855.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'DesktopAuxiliaryRuntimeTests' started at 2026-10-27 10:30:26.855.
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testSearchPreferencesKeepKeyInCredentialStoreAndReachRequestSnapshot]' started.
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testSearchPreferencesKeepKeyInCredentialStoreAndReachRequestSnapshot]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testTitleUsesProvidedModelAndLeavesMetadataUntilAcceptedCompleteOutput]' started.
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testTitleUsesProvidedModelAndLeavesMetadataUntilAcceptedCompleteOutput]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testVisualRoutingUsesConfiguredModelAndItsProviderWithoutChangingChatSelection]' started.
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testVisualRoutingUsesConfiguredModelAndItsProviderWithoutChangingChatSelection]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testWorkspaceImageRequestConsumesTheVisionProviderKeyWithoutChangingSelection]' started.
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testWorkspaceImageRequestConsumesTheVisionProviderKeyWithoutChangingSelection]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testWorkspaceTitlePersistsToCapturedOwnerAndCannotOverwriteManualRename]' started.
+Test Case '-[AmberMacTests.DesktopAuxiliaryRuntimeTests testWorkspaceTitlePersistsToCapturedOwnerAndCannotOverwriteManualRename]' passed (0.003 seconds).
+Test Suite 'DesktopAuxiliaryRuntimeTests' passed at 2026-10-27 10:30:26.864.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.009 (0.009) seconds
+Test Suite 'DesktopBackupTests' started at 2026-10-27 10:30:26.864.
+Test Case '-[AmberMacTests.DesktopBackupTests testCancellationAfterFirstDurableWriteRollsBackNewOwner]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testCancellationAfterFirstDurableWriteRollsBackNewOwner]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testCancelledRestoreDoesNotWriteAnything]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testCancelledRestoreDoesNotWriteAnything]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testCorruptDuplicateAndTraversalArchivesAreRejected]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testCorruptDuplicateAndTraversalArchivesAreRejected]' passed (0.031 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testEncryptedAndPlainRoundTripAndWrongPassword]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testEncryptedAndPlainRoundTripAndWrongPassword]' passed (0.157 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testFailedRestoreRollsBackOnlyNewRecordsAndFiles]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testFailedRestoreRollsBackOnlyNewRecordsAndFiles]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testFreshUnconfiguredProviderIsPreservedAsMaterialAndDoesNotBreakRestore]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testFreshUnconfiguredProviderIsPreservedAsMaterialAndDoesNotBreakRestore]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testInvalidInsightRecordIsRejectedBeforeAnyWrite]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testInvalidInsightRecordIsRejectedBeforeAnyWrite]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoreCreatesNewOwnerAndKeepsOriginalAndFiles]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoreCreatesNewOwnerAndKeepsOriginalAndFiles]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoredMemoryIDsAndSourcesUseCopiedConversationNamespace]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoredMemoryIDsAndSourcesUseCopiedConversationNamespace]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoreReportsShelfCleanupFailureAfterLaterRestoreFailure]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoreReportsShelfCleanupFailureAfterLaterRestoreFailure]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoreRollsBackWhenArtifactShelfPersistenceFails]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testRestoreRollsBackWhenArtifactShelfPersistenceFails]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopBackupTests testSnapshotAndRestoreKeepActualInsightRecordWithCopiedConversation]' started.
+Test Case '-[AmberMacTests.DesktopBackupTests testSnapshotAndRestoreKeepActualInsightRecordWithCopiedConversation]' passed (0.006 seconds).
+Test Suite 'DesktopBackupTests' passed at 2026-10-27 10:30:27.097.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.232 (0.233) seconds
+Test Suite 'DesktopCatalogRequestTests' started at 2026-10-27 10:30:27.097.
+Test Case '-[AmberMacTests.DesktopCatalogRequestTests testChangedModelCanInvalidateCapturedConnectionTestWithoutAcceptingLateSuccess]' started.
+Test Case '-[AmberMacTests.DesktopCatalogRequestTests testChangedModelCanInvalidateCapturedConnectionTestWithoutAcceptingLateSuccess]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopCatalogRequestTests testFailureHidesRemoteBodyAndGenerateTestUsesSeparateConsumer]' started.
+Test Case '-[AmberMacTests.DesktopCatalogRequestTests testFailureHidesRemoteBodyAndGenerateTestUsesSeparateConsumer]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopCatalogRequestTests testLateCatalogResponseCannotOverwriteNewDraftRequest]' started.
+Test Case '-[AmberMacTests.DesktopCatalogRequestTests testLateCatalogResponseCannotOverwriteNewDraftRequest]' passed (0.000 seconds).
+Test Suite 'DesktopCatalogRequestTests' passed at 2026-10-27 10:30:27.098.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DesktopCodeHighlightsTests' started at 2026-10-27 10:30:27.098.
+Test Case '-[AmberMacTests.DesktopCodeHighlightsTests testSupportedLanguagesAndUnknownFallbackPreserveEveryCharacter]' started.
+Test Case '-[AmberMacTests.DesktopCodeHighlightsTests testSupportedLanguagesAndUnknownFallbackPreserveEveryCharacter]' passed (0.012 seconds).
+Test Case '-[AmberMacTests.DesktopCodeHighlightsTests testSwiftHighlightsKeepSourceAndDoNotTreatCommentMarkersInsideStringAsComments]' started.
+Test Case '-[AmberMacTests.DesktopCodeHighlightsTests testSwiftHighlightsKeepSourceAndDoNotTreatCommentMarkersInsideStringAsComments]' passed (0.001 seconds).
+Test Suite 'DesktopCodeHighlightsTests' passed at 2026-10-27 10:30:27.112.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.013 (0.013) seconds
+Test Suite 'DesktopCollaborationTests' started at 2026-10-27 10:30:27.112.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCancelledCollaborationDoesNotSendCompletionNotification]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCancelledCollaborationDoesNotSendCompletionNotification]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCompletedRunRestoresOwnerAndOutputWithoutReplayingProvider]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCompletedRunRestoresOwnerAndOutputWithoutReplayingProvider]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCouncilNotifiesOnlyOnceForDurableParentRun]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCouncilNotifiesOnlyOnceForDurableParentRun]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCouncilRoundsSpeakSequentiallyWithHostCommentaryBetweenRounds]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCouncilRoundsSpeakSequentiallyWithHostCommentaryBetweenRounds]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCouncilRunsSeatsThenSynthesizesTheirActualOutputs]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testCouncilRunsSeatsThenSynthesizesTheirActualOutputs]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testDebateModeChangesSeatPromptWording]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testDebateModeChangesSeatPromptWording]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testEmptyCouncilSeatsAreHostPlanned]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testEmptyCouncilSeatsAreHostPlanned]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testFailedStartPersistenceDoesNotReachProvider]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testFailedStartPersistenceDoesNotReachProvider]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testGlobalConcurrencyAndCancellationDoNotMixReusedMemberIDsAcrossParents]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testGlobalConcurrencyAndCancellationDoNotMixReusedMemberIDsAcrossParents]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testInterruptedRunRestoresAsCancelledPreservingPartialAndOwner]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testInterruptedRunRestoresAsCancelledPreservingPartialAndOwner]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testOldRunsDecodeWithDefaultModeRoundsAndSteps]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testOldRunsDecodeWithDefaultModeRoundsAndSteps]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testPlannedSeatsSkipDistractorObjectsAndResolveNamedModels]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testPlannedSeatsSkipDistractorObjectsAndResolveNamedModels]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSeatFailureCanProduceMarkedPartialCouncilButNeverFalseSuccess]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSeatFailureCanProduceMarkedPartialCouncilButNeverFalseSuccess]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentReportArgumentsBecomeOutputText]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentReportArgumentsBecomeOutputText]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentsUseFrozenSelectedModelsAndReturnToOriginalParent]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentsUseFrozenSelectedModelsAndReturnToOriginalParent]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentsUseInjectedToolRunnerWithRoleScopeAndRecordSteps]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentsUseInjectedToolRunnerWithRoleScopeAndRecordSteps]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentToolPolicyIsReadOnlyAndRoleScoped]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testSubagentToolPolicyIsReadOnlyAndRoleScoped]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testTimeoutPreservesPartialOutputAndCancelsGeneration]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testTimeoutPreservesPartialOutputAndCancelsGeneration]' passed (1.008 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testUnknownOrDisabledModelFailsBeforeStartingAnyChild]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testUnknownOrDisabledModelFailsBeforeStartingAnyChild]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.DesktopCollaborationTests testUnreadableHistoryIsPreservedAndBlocksUnrecordedRuns]' started.
+Test Case '-[AmberMacTests.DesktopCollaborationTests testUnreadableHistoryIsPreservedAndBlocksUnrecordedRuns]' passed (0.008 seconds).
+Test Suite 'DesktopCollaborationTests' passed at 2026-10-27 10:30:28.160.
+	 Executed 20 tests, with 0 failures (0 unexpected) in 1.047 (1.048) seconds
+Test Suite 'DesktopConversationInsightsTests' started at 2026-10-27 10:30:28.160.
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testChangedBranchRejectsRecapResultAndLeavesOriginalMessagesAlone]' started.
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testChangedBranchRejectsRecapResultAndLeavesOriginalMessagesAlone]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testCompactionRetainsRecentTurnsAndDoesNotChangeStoredTranscript]' started.
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testCompactionRetainsRecentTurnsAndDoesNotChangeStoredTranscript]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testEstimateUsesFullMessageProjectionWhenAvailableAndCJKFallbackOtherwise]' started.
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testEstimateUsesFullMessageProjectionWhenAvailableAndCJKFallbackOtherwise]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testFailedSidecarWriteDoesNotPublishSuccessfulResult]' started.
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testFailedSidecarWriteDoesNotPublishSuccessfulResult]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testPersistedRecapReopensAndDeletionRejectsLateGeneration]' started.
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testPersistedRecapReopensAndDeletionRejectsLateGeneration]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testSuggestionsRequireStructuredResponseAndPreserveOwner]' started.
+Test Case '-[AmberMacTests.DesktopConversationInsightsTests testSuggestionsRequireStructuredResponseAndPreserveOwner]' passed (0.001 seconds).
+Test Suite 'DesktopConversationInsightsTests' passed at 2026-10-27 10:30:28.173.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.012 (0.013) seconds
+Test Suite 'DesktopConversationPresentationTests' started at 2026-10-27 10:30:28.173.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testChineseEmojiAndNormalizedWhitespaceHighlightsUseSnippetStringIndices]' started.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testChineseEmojiAndNormalizedWhitespaceHighlightsUseSnippetStringIndices]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testLongQueryProducesBoundedHighlightedSnippetAndSystemTextIsNotSearchable]' started.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testLongQueryProducesBoundedHighlightedSnippetAndSystemTextIsNotSearchable]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testRecentSummarySkipsEmptyAndSystemMessages]' started.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testRecentSummarySkipsEmptyAndSystemMessages]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testSummaryHandlesUnfinishedFenceWhitespaceAndCharacterLimit]' started.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testSummaryHandlesUnfinishedFenceWhitespaceAndCharacterLimit]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testSummaryRemovesMarkdownSyntaxButPreservesCodeAndTableContent]' started.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testSummaryRemovesMarkdownSyntaxButPreservesCodeAndTableContent]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testTitleMatchesSortBeforeMessageMatchesAndLatestMatchingMessageWins]' started.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testTitleMatchesSortBeforeMessageMatchesAndLatestMatchingMessageWins]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testWhitespaceQueryReturnsPinnedThenRecentWithStableTieBreak]' started.
+Test Case '-[AmberMacTests.DesktopConversationPresentationTests testWhitespaceQueryReturnsPinnedThenRecentWithStableTieBreak]' passed (0.000 seconds).
+Test Suite 'DesktopConversationPresentationTests' passed at 2026-10-27 10:30:28.177.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'DesktopDocumentImportTests' started at 2026-10-27 10:30:28.177.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testCorruptPPTXReturnsReadableFailure]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testCorruptPPTXReturnsReadableFailure]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testGeneratedImageArtifactsKeepCapturedOwnerAndActualImageEncoding]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testGeneratedImageArtifactsKeepCapturedOwnerAndActualImageEncoding]' passed (0.012 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testHTMLExtractsReadableBlocksWithoutScriptOrStyle]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testHTMLExtractsReadableBlocksWithoutScriptOrStyle]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testImageOnlyAndMixedMessagesKeepActualMarkdownImagesAndExplicitPDFLinks]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testImageOnlyAndMixedMessagesKeepActualMarkdownImagesAndExplicitPDFLinks]' passed (0.020 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testImagePreservesOriginalPNGAndConvertsTIFFWithRealThumbnail]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testImagePreservesOriginalPNGAndConvertsTIFFWithRealThumbnail]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testNativeRTFAndDOCXTextExtraction]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testNativeRTFAndDOCXTextExtraction]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testPDFTextExtractionAndScannedDocumentFailure]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testPDFTextExtractionAndScannedDocumentFailure]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testPPTXStoredAndDeflatedArchivesUsePresentationOrder]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testPPTXStoredAndDeflatedArchivesUsePresentationOrder]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testReadableExportsKeepSelectedPathAndPaginateRealPDF]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testReadableExportsKeepSelectedPathAndPaginateRealPDF]' passed (0.022 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testReadablePDFEmbedsRealImagePixelsAndKeepsFollowingText]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testReadablePDFEmbedsRealImagePixelsAndKeepsFollowingText]' passed (0.213 seconds).
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testTextEncodingAndSourceMetadata]' started.
+Test Case '-[AmberMacTests.DesktopDocumentImportTests testTextEncodingAndSourceMetadata]' passed (0.001 seconds).
+Test Suite 'DesktopDocumentImportTests' passed at 2026-10-27 10:30:28.459.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.282 (0.282) seconds
+Test Suite 'DesktopImageGenerationTests' started at 2026-10-27 10:30:28.459.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualCodexSSEParserReturnsToolImage]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualCodexSSEParserReturnsToolImage]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRequestSavesAnImageToTheCapturedOwnerAndCleansStaging]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRequestSavesAnImageToTheCapturedOwnerAndCleansStaging]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRollsBackEarlierImagesWhenLaterDataIsInvalid]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testActualRepositoryRollsBackEarlierImagesWhenLaterDataIsInvalid]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testBusyReentryPreservesTheRunningOwnerAndStatus]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testBusyReentryPreservesTheRunningOwnerAndStatus]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancelAfterFirstLocalSaveKeepsRemainingImagesRecoverable]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancelAfterFirstLocalSaveKeepsRemainingImagesRecoverable]' passed (0.008 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancellationStopsTheActualTransportAndDoesNotPublishFiles]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testCancellationStopsTheActualTransportAndDoesNotPublishFiles]' passed (0.008 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testDefaultHistoryStoreKeepsIOSRecordLimitAt80]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testDefaultHistoryStoreKeepsIOSRecordLimitAt80]' passed (0.018 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testFailedWorkspaceSaveRetainsRemoteImageAndRetriesWithoutAnotherRequest]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testFailedWorkspaceSaveRetainsRemoteImageAndRetriesWithoutAnotherRequest]' passed (0.007 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testMacStagingHistoryRetains81FileRecordsAcrossRestart]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testMacStagingHistoryRetains81FileRecordsAcrossRestart]' passed (0.019 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testOriginalCodexRequestBodyAndPendingResultPollingAreReused]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testOriginalCodexRequestBodyAndPendingResultPollingAreReused]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPartialLocalSaveRetriesOnlyRemainingImages]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPartialLocalSaveRetriesOnlyRemainingImages]' passed (0.009 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPreviewAndMissingExplicitImageModelCannotDispatchNetwork]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testPreviewAndMissingExplicitImageModelCannotDispatchNetwork]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testReopenRecoversOriginalOwnerAndDoesNotCleanAnotherOwnersPendingImage]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testReopenRecoversOriginalOwnerAndDoesNotCleanAnotherOwnersPendingImage]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testRetryValidationReplacesThePreviousProviderFailureWithoutAnotherRequest]' started.
+Test Case '-[AmberMacTests.DesktopImageGenerationTests testRetryValidationReplacesThePreviousProviderFailureWithoutAnotherRequest]' passed (0.002 seconds).
+Test Suite 'DesktopImageGenerationTests' passed at 2026-10-27 10:30:28.556.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.096 (0.097) seconds
+Test Suite 'DesktopKnowledgeTests' started at 2026-10-27 10:30:28.556.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testBackupMemoryMergeRemapsNumericLinksAndRollsBackOnlyRestoredCopies]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testBackupMemoryMergeRemapsNumericLinksAndRollsBackOnlyRestoredCopies]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testChineseRecallFiltersExpiredArchivedAndUnrelatedRecords]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testChineseRecallFiltersExpiredArchivedAndUnrelatedRecords]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testDeletedMemoryIDsAreNeverReusedAfterRestartOrRestore]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testDeletedMemoryIDsAreNeverReusedAfterRestartOrRestore]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testExistingIOSMemoryJSONKeepsAllProvenanceAndWireFields]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testExistingIOSMemoryJSONKeepsAllProvenanceAndWireFields]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testFailedPersistenceDoesNotPublishAndCorruptStoreIsPreserved]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testFailedPersistenceDoesNotPublishAndCorruptStoreIsPreserved]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testIOSAggregateTopicAndToolScopeFilteringBeforeLimit]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testIOSAggregateTopicAndToolScopeFilteringBeforeLimit]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testMemoryToolActuallyCreatesEditsSearchesAndDeletes]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testMemoryToolActuallyCreatesEditsSearchesAndDeletes]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testSkillImportEditEnableDeleteSurvivesRestart]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testSkillImportEditEnableDeleteSurvivesRestart]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testSoulTextAndSourcePersistWithoutStaleProvenance]' started.
+Test Case '-[AmberMacTests.DesktopKnowledgeTests testSoulTextAndSourcePersistWithoutStaleProvenance]' passed (0.006 seconds).
+Test Suite 'DesktopKnowledgeTests' passed at 2026-10-27 10:30:28.590.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.033 (0.033) seconds
+Test Suite 'DesktopMCPTests' started at 2026-10-27 10:30:28.590.
+Test Case '-[AmberMacTests.DesktopMCPTests testActualStdioProcessHandshakeCallsAndCancelTermination]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testActualStdioProcessHandshakeCallsAndCancelTermination]' passed (0.250 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testCancelledInitializeCannotLaunchStdioProcess]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testCancelledInitializeCannotLaunchStdioProcess]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testCredentialsStayInIndependentVaultAndToolTogglesSurviveDiscovery]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testCredentialsStayInIndependentVaultAndToolTogglesSurviveDiscovery]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testExitedStdioServerCannotRestartWithoutANewInitializeHandshake]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testExitedStdioServerCannotRestartWithoutANewInitializeHandshake]' passed (0.117 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testImportValidatesWholeBatchBeforePersistingAndRestoresStdioArguments]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testImportValidatesWholeBatchBeforePersistingAndRestoresStdioArguments]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testMissingCredentialsCanBeRepairedWithoutKeepingStaleLoadError]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testMissingCredentialsCanBeRepairedWithoutKeepingStaleLoadError]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testOnlyUnconfirmedDispatchedCallsBecomeUnknownWithoutReplay]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testOnlyUnconfirmedDispatchedCallsBecomeUnknownWithoutReplay]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testOriginalSSEParserMatchesResponseIDAndRejectsCrossOriginEndpoint]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testOriginalSSEParserMatchesResponseIDAndRejectsCrossOriginEndpoint]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testRealSharedHTTPClientInitializesPaginatesUsesSessionAndCallsOnce]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testRealSharedHTTPClientInitializesPaginatesUsesSessionAndCallsOnce]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testShutdownReapsAnOwnedProcessGroupThatIgnoresSIGTERM]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testShutdownReapsAnOwnedProcessGroupThatIgnoresSIGTERM]' passed (0.635 seconds).
+Test Case '-[AmberMacTests.DesktopMCPTests testUnreadablePersistedConfigurationCannotBeOverwritten]' started.
+Test Case '-[AmberMacTests.DesktopMCPTests testUnreadablePersistedConfigurationCannotBeOverwritten]' passed (0.007 seconds).
+Test Suite 'DesktopMCPTests' passed at 2026-10-27 10:30:29.610.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 1.019 (1.020) seconds
+Test Suite 'DesktopMarkdownTests' started at 2026-10-27 10:30:29.610.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testDividersAndNumericProseAreNotLists]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testDividersAndNumericProseAreNotLists]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testEmptyTextHasNoEmptyBlocks]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testEmptyTextHasNoEmptyBlocks]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testFencedCodeKeepsWhitespaceAndUnfinishedStream]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testFencedCodeKeepsWhitespaceAndUnfinishedStream]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testFoundationInlineParserCarriesEmphasisCodeAndRealLinks]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testFoundationInlineParserCarriesEmphasisCodeAndRealLinks]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testHashAndPipeInProseDoNotCreateFalseHeadingsOrTables]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testHashAndPipeInProseDoNotCreateFalseHeadingsOrTables]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testListsPreserveNestedItemsContinuationAndOrderedStart]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testListsPreserveNestedItemsContinuationAndOrderedStart]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testLongFenceCanContainShortFenceAndLanguageLikeContent]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testLongFenceCanContainShortFenceAndLanguageLikeContent]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testParagraphAfterClosedCodeRemainsVisible]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testParagraphAfterClosedCodeRemainsVisible]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testQuotedBlocksRetainListsAndNestedQuoteStructure]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testQuotedBlocksRetainListsAndNestedQuoteStructure]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testTableAlignmentAndMultipleBacktickDelimiters]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testTableAlignmentAndMultipleBacktickDelimiters]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testTablesRetainEscapedAndInlineCodePipes]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testTablesRetainEscapedAndInlineCodePipes]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMarkdownTests testUnclosedInlineCodeDoesNotConsumeFollowingTableColumns]' started.
+Test Case '-[AmberMacTests.DesktopMarkdownTests testUnclosedInlineCodeDoesNotConsumeFollowingTableColumns]' passed (0.000 seconds).
+Test Suite 'DesktopMarkdownTests' passed at 2026-10-27 10:30:29.617.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.005 (0.007) seconds
+Test Suite 'DesktopMathTokenizerTests' started at 2026-10-27 10:30:29.617.
+Test Case '-[AmberMacTests.DesktopMathTokenizerTests testBlockMathUsesRealDelimitersAndNeverConsumesFencedCode]' started.
+Test Case '-[AmberMacTests.DesktopMathTokenizerTests testBlockMathUsesRealDelimitersAndNeverConsumesFencedCode]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopMathTokenizerTests testInlineMathPreservesCodeCurrencyEscapesAndStreamingDelimiters]' started.
+Test Case '-[AmberMacTests.DesktopMathTokenizerTests testInlineMathPreservesCodeCurrencyEscapesAndStreamingDelimiters]' passed (0.001 seconds).
+Test Suite 'DesktopMathTokenizerTests' passed at 2026-10-27 10:30:29.618.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DesktopModelSettingsTests' started at 2026-10-27 10:30:29.618.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testBackupProviderCopiesUseNewIDsPreserveSelectionAndNeverTouchCredentials]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testBackupProviderCopiesUseNewIDsPreserveSelectionAndNeverTouchCredentials]' passed (0.008 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testCatalogMergeKeepsExistingUUIDAliasAndParameters]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testCatalogMergeKeepsExistingUUIDAliasAndParameters]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testDisabledAndDeletedModelRepairSelectionAndAuxiliaryMapping]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testDisabledAndDeletedModelRepairSelectionAndAuxiliaryMapping]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testDisplayPreferencesPersistAndRestoreActualValues]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testDisplayPreferencesPersistAndRestoreActualValues]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testDisplaySizeBoundsAndEmptyNamesHaveExplicitDefaults]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testDisplaySizeBoundsAndEmptyNamesHaveExplicitDefaults]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testExistingModelRecordWithoutNewFieldsSurvivesSettingsReopen]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testExistingModelRecordWithoutNewFieldsSurvivesSettingsReopen]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testExplicitVisionTitleAndImageRolesPersistWithoutImplicitImageFallback]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testExplicitVisionTitleAndImageRolesPersistWithoutImplicitImageFallback]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testInvalidModelAndAuthDoNotOverwriteCredentials]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testInvalidModelAndAuthDoNotOverwriteCredentials]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testLegacySingleModelMigrationCommitsStableIndependentUUID]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testLegacySingleModelMigrationCommitsStableIndependentUUID]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testModelOverridesValidateAndPersistWithoutReplacingCredentialsOnInvalidJSON]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testModelOverridesValidateAndPersistWithoutReplacingCredentialsOnInvalidJSON]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testMultipleModelsKeepStableParametersAndGlobalSelection]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testMultipleModelsKeepStableParametersAndGlobalSelection]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testOAuthCanBeSavedBeforeFetchingModelsAndPreservesEndpoint]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testOAuthCanBeSavedBeforeFetchingModelsAndPreservesEndpoint]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testUnconfiguredInitialTemplateIsNotOfferedAsCallableModel]' started.
+Test Case '-[AmberMacTests.DesktopModelSettingsTests testUnconfiguredInitialTemplateIsNotOfferedAsCallableModel]' passed (0.001 seconds).
+Test Suite 'DesktopModelSettingsTests' passed at 2026-10-27 10:30:29.653.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.034 (0.035) seconds
+Test Suite 'DesktopNotificationRoutingTests' started at 2026-10-27 10:30:29.653.
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testDeletedTargetOpensWindowAndPreservesCurrentConversation]' started.
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testDeletedTargetOpensWindowAndPreservesCurrentConversation]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testLatestTargetWinsWhileWorkspaceLoads]' started.
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testLatestTargetWinsWhileWorkspaceLoads]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testPreviouslyDeliveredTargetStillOpensWithNotificationsDisabled]' started.
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testPreviouslyDeliveredTargetStillOpensWithNotificationsDisabled]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testRebindingCannotLetOldLoadOpenThePreviousWorkspace]' started.
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testRebindingCannotLetOldLoadOpenThePreviousWorkspace]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testTargetReceivedAfterBindingOpensOriginalConversation]' started.
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testTargetReceivedAfterBindingOpensOriginalConversation]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testTargetReceivedBeforeBindingOpensOriginalConversationOnce]' started.
+Test Case '-[AmberMacTests.DesktopNotificationRoutingTests testTargetReceivedBeforeBindingOpensOriginalConversationOnce]' passed (0.003 seconds).
+Test Suite 'DesktopNotificationRoutingTests' passed at 2026-10-27 10:30:29.671.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.017 (0.017) seconds
+Test Suite 'DesktopNotificationTests' started at 2026-10-27 10:30:29.671.
+Test Case '-[AmberMacTests.DesktopNotificationTests testConcurrentDuplicateRunOnlyNotifiesOriginalOwnerOnce]' started.
+Test Case '-[AmberMacTests.DesktopNotificationTests testConcurrentDuplicateRunOnlyNotifiesOriginalOwnerOnce]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationTests testDefaultOffDoesNotRequestAuthorizationOrDeliver]' started.
+Test Case '-[AmberMacTests.DesktopNotificationTests testDefaultOffDoesNotRequestAuthorizationOrDeliver]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationTests testDeliveryFailureKeepsTaskOutputOutOfNotificationAndDoesNotChangePreference]' started.
+Test Case '-[AmberMacTests.DesktopNotificationTests testDeliveryFailureKeepsTaskOutputOutOfNotificationAndDoesNotChangePreference]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationTests testDeniedPermissionLeavesPreferenceOffAndShowsState]' started.
+Test Case '-[AmberMacTests.DesktopNotificationTests testDeniedPermissionLeavesPreferenceOffAndShowsState]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationTests testExplicitEnableRequestsAuthorizationAndPreferenceRestores]' started.
+Test Case '-[AmberMacTests.DesktopNotificationTests testExplicitEnableRequestsAuthorizationAndPreferenceRestores]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopNotificationTests testRevokedSystemAuthorizationNeverPromptsOnTaskCompletion]' started.
+Test Case '-[AmberMacTests.DesktopNotificationTests testRevokedSystemAuthorizationNeverPromptsOnTaskCompletion]' passed (0.001 seconds).
+Test Suite 'DesktopNotificationTests' passed at 2026-10-27 10:30:29.677.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'DesktopOAuthTests' started at 2026-10-27 10:30:29.677.
+Test Case '-[AmberMacTests.DesktopOAuthTests testCredentialRemovalWaitsForPollEvenIfViewCancelsPresentation]' started.
+Test Case '-[AmberMacTests.DesktopOAuthTests testCredentialRemovalWaitsForPollEvenIfViewCancelsPresentation]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopOAuthTests testLogoutAwaitsEvenPreviouslyCancelledPollingBeforeRemovingTokens]' started.
+Test Case '-[AmberMacTests.DesktopOAuthTests testLogoutAwaitsEvenPreviouslyCancelledPollingBeforeRemovingTokens]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopOAuthTests testPollingOrCredentialFailureCannotPresentLoggedInSuccess]' started.
+Test Case '-[AmberMacTests.DesktopOAuthTests testPollingOrCredentialFailureCannotPresentLoggedInSuccess]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopOAuthTests testProviderSwitchDiscardsOldLoginPresentation]' started.
+Test Case '-[AmberMacTests.DesktopOAuthTests testProviderSwitchDiscardsOldLoginPresentation]' passed (0.000 seconds).
+Test Suite 'DesktopOAuthTests' passed at 2026-10-27 10:30:29.679.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DesktopProviderPresetTests' started at 2026-10-27 10:30:29.679.
+Test Case '-[AmberMacTests.DesktopProviderPresetTests testCodingPlanPresetPinsPlanEndpointAndSurvivesSave]' started.
+Test Case '-[AmberMacTests.DesktopProviderPresetTests testCodingPlanPresetPinsPlanEndpointAndSurvivesSave]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopProviderPresetTests testEveryPresetMatchesItself]' started.
+Test Case '-[AmberMacTests.DesktopProviderPresetTests testEveryPresetMatchesItself]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopProviderPresetTests testPlanRequiresOpenAICompatibleProtocol]' started.
+Test Case '-[AmberMacTests.DesktopProviderPresetTests testPlanRequiresOpenAICompatibleProtocol]' passed (0.001 seconds).
+Test Suite 'DesktopProviderPresetTests' passed at 2026-10-27 10:30:29.681.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'DesktopPublicSearchURLTests' started at 2026-10-27 10:30:29.681.
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testDNSResolutionFailureIsPropagated]' started.
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testDNSResolutionFailureIsPropagated]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testEmptyPrivateLoopbackFakeIPAndMixedDNSAnswersAreRejected]' started.
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testEmptyPrivateLoopbackFakeIPAndMixedDNSAnswersAreRejected]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testFakeIPAnswerIsAcceptedOnlyWhenPublicDNSConfirmsAPublicHost]' started.
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testFakeIPAnswerIsAcceptedOnlyWhenPublicDNSConfirmsAPublicHost]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testNonHTTPEmbeddedCredentialsAndLiteralPrivateHostsAreRejectedBeforeDNS]' started.
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testNonHTTPEmbeddedCredentialsAndLiteralPrivateHostsAreRejectedBeforeDNS]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testPublicResolvedAddressesAllowTheURLAndRemoveItsFragment]' started.
+Test Case '-[AmberMacTests.DesktopPublicSearchURLTests testPublicResolvedAddressesAllowTheURLAndRemoveItsFragment]' passed (0.000 seconds).
+Test Suite 'DesktopPublicSearchURLTests' passed at 2026-10-27 10:30:29.682.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DesktopRecipeTests' started at 2026-10-27 10:30:29.682.
+Test Case '-[AmberMacTests.DesktopRecipeTests testCancellationStopsTheActivePrimitiveAndNeverRunsTheNext]' started.
+Test Case '-[AmberMacTests.DesktopRecipeTests testCancellationStopsTheActivePrimitiveAndNeverRunsTheNext]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopRecipeTests testConfirmedPrimitiveOutputIsKeptWhenCancellationArrivesBeforeTheNextStep]' started.
+Test Case '-[AmberMacTests.DesktopRecipeTests testConfirmedPrimitiveOutputIsKeptWhenCancellationArrivesBeforeTheNextStep]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopRecipeTests testFirstPrimitiveFailureNeverDispatchesLaterSteps]' started.
+Test Case '-[AmberMacTests.DesktopRecipeTests testFirstPrimitiveFailureNeverDispatchesLaterSteps]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopRecipeTests testIOSWireRecipeBindsInputsAndPreviousOutputAndWritesActualFile]' started.
+Test Case '-[AmberMacTests.DesktopRecipeTests testIOSWireRecipeBindsInputsAndPreviousOutputAndWritesActualFile]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopRecipeTests testMissingRuntimeBindingAndBadInputsDoNotReachNextPrimitive]' started.
+Test Case '-[AmberMacTests.DesktopRecipeTests testMissingRuntimeBindingAndBadInputsDoNotReachNextPrimitive]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopRecipeTests testStepTimeoutStopsWithoutDispatchingLaterSteps]' started.
+Test Case '-[AmberMacTests.DesktopRecipeTests testStepTimeoutStopsWithoutDispatchingLaterSteps]' passed (1.046 seconds).
+Test Case '-[AmberMacTests.DesktopRecipeTests testValidationRejectsForwardMissingMalformedRecursiveAndUnregisteredCalls]' started.
+Test Case '-[AmberMacTests.DesktopRecipeTests testValidationRejectsForwardMissingMalformedRecursiveAndUnregisteredCalls]' passed (0.002 seconds).
+Test Suite 'DesktopRecipeTests' passed at 2026-10-27 10:30:30.745.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 1.062 (1.063) seconds
+Test Suite 'DesktopSearchResultLimitTests' started at 2026-10-27 10:30:30.745.
+Test Case '-[AmberMacTests.DesktopSearchResultLimitTests testResultCountAllowsUpToFiftyAndPersists]' started.
+Test Case '-[AmberMacTests.DesktopSearchResultLimitTests testResultCountAllowsUpToFiftyAndPersists]' passed (0.006 seconds).
+Test Suite 'DesktopSearchResultLimitTests' passed at 2026-10-27 10:30:30.751.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.006 (0.006) seconds
+Test Suite 'DesktopSendShortcutTests' started at 2026-10-27 10:30:30.751.
+Test Case '-[AmberMacTests.DesktopSendShortcutTests testSendShortcutDefaultsToCommandReturnAndPersists]' started.
+Test Case '-[AmberMacTests.DesktopSendShortcutTests testSendShortcutDefaultsToCommandReturnAndPersists]' passed (0.004 seconds).
+Test Suite 'DesktopSendShortcutTests' passed at 2026-10-27 10:30:30.755.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'DesktopSpeechPlayerTests' started at 2026-10-27 10:30:30.756.
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testDefaultVoiceAndRateBoundsHaveRealConsumer]' started.
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testDefaultVoiceAndRateBoundsHaveRealConsumer]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testLateCompletionForSameMessageCannotStopReplacementUtterance]' started.
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testLateCompletionForSameMessageCannotStopReplacementUtterance]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testSavedVoiceAndRateAreConsumedByActualPlayerAfterReopen]' started.
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testSavedVoiceAndRateAreConsumedByActualPlayerAfterReopen]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testStopClearsOwnerAndLateCallbackDoesNotReviveIt]' started.
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testStopClearsOwnerAndLateCallbackDoesNotReviveIt]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testUnavailableBackendFailsVisiblyWithoutLeakingDetails]' started.
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testUnavailableBackendFailsVisiblyWithoutLeakingDetails]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testVoiceDiscoveryAndEmptyTextDoNotStartAudio]' started.
+Test Case '-[AmberMacTests.DesktopSpeechPlayerTests testVoiceDiscoveryAndEmptyTextDoNotStartAudio]' passed (0.002 seconds).
+Test Suite 'DesktopSpeechPlayerTests' passed at 2026-10-27 10:30:30.769.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.013 (0.013) seconds
+Test Suite 'DesktopStorageUsageTests' started at 2026-10-27 10:30:30.769.
+Test Case '-[AmberMacTests.DesktopStorageUsageTests testActualFilesAreCountedAndMemoryConversationIsNotEstimatedAsDisk]' started.
+Test Case '-[AmberMacTests.DesktopStorageUsageTests testActualFilesAreCountedAndMemoryConversationIsNotEstimatedAsDisk]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.DesktopStorageUsageTests testCancelledMeasurementThrowsInsteadOfPublishingEmptySuccess]' started.
+Test Case '-[AmberMacTests.DesktopStorageUsageTests testCancelledMeasurementThrowsInsteadOfPublishingEmptySuccess]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopStorageUsageTests testSymlinksAreNotFollowedAndDuplicateRootsAreNotDoubleCounted]' started.
+Test Case '-[AmberMacTests.DesktopStorageUsageTests testSymlinksAreNotFollowedAndDuplicateRootsAreNotDoubleCounted]' passed (0.003 seconds).
+Test Suite 'DesktopStorageUsageTests' passed at 2026-10-27 10:30:30.776.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'DesktopUserToolchainTests' started at 2026-10-27 10:30:30.776.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testBareNpxStdioServerConnectsThroughLoginShell]' started.
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.oIU1jl/Tests/AmberMacTests/DesktopMCPTests.swift:340: -[AmberMacTests.DesktopUserToolchainTests testBareNpxStdioServerConnectsThroughLoginShell] : Test skipped - Live toolchain check runs with the live E2E environment.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testBareNpxStdioServerConnectsThroughLoginShell]' skipped (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testLoginPATHIsResolvedWithoutShellOutputLeakingIntoIt]' started.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testLoginPATHIsResolvedWithoutShellOutputLeakingIntoIt]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testShellToolResolvesUserLoginPATH]' started.
+Test Case '-[AmberMacTests.DesktopUserToolchainTests testShellToolResolvesUserLoginPATH]' passed (0.012 seconds).
+Test Suite 'DesktopUserToolchainTests' passed at 2026-10-27 10:30:30.790.
+	 Executed 3 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.013 (0.013) seconds
+Test Suite 'DesktopWebDAVTests' started at 2026-10-27 10:30:30.790.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testActualSharedWebDAVClientParsesAndBuildsEveryNetworkOperation]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testActualSharedWebDAVClientParsesAndBuildsEveryNetworkOperation]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testAlreadyCancelledCallerCannotStartAnUpload]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testAlreadyCancelledCallerCannotStartAnUpload]' passed (0.035 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testCancelStopsTheOwnedNetworkTaskWithoutPublishingSnapshots]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testCancelStopsTheOwnedNetworkTaskWithoutPublishingSnapshots]' passed (0.014 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testDirectoryPathCannotEscapeBaseAndLiteralPercentNamesStayEncoded]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testDirectoryPathCannotEscapeBaseAndLiteralPercentNamesStayEncoded]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testHTTPSCredentialBoundaryAndMalformedXMLAreExplicitFailures]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testHTTPSCredentialBoundaryAndMalformedXMLAreExplicitFailures]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testMacManagerPersistsPasswordSeparatelyAndUsesUniqueCreateOnlySnapshots]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testMacManagerPersistsPasswordSeparatelyAndUsesUniqueCreateOnlySnapshots]' passed (0.064 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testMalformedSavedConfigCannotBeReplacedAndPreconditionFailureDoesNotOverwrite]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testMalformedSavedConfigCannotBeReplacedAndPreconditionFailureDoesNotOverwrite]' passed (0.033 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testRemoteIdentityComesFromHrefAndPercentDecodesExactlyOnce]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testRemoteIdentityComesFromHrefAndPercentDecodesExactlyOnce]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopWebDAVTests testRemoteUploadRejectsUnencryptedOrNonBackupBytesBeforeNetwork]' started.
+Test Case '-[AmberMacTests.DesktopWebDAVTests testRemoteUploadRejectsUnencryptedOrNonBackupBytesBeforeNetwork]' passed (0.001 seconds).
+Test Suite 'DesktopWebDAVTests' passed at 2026-10-27 10:30:30.943.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.152 (0.153) seconds
+Test Suite 'DesktopWorkspaceFilesTests' started at 2026-10-27 10:30:30.943.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testBoundedUTF8ReadKeepsCharacterBoundaryAndReportsTruncation]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testBoundedUTF8ReadKeepsCharacterBoundaryAndReportsTruncation]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testBoundedUTF8ReadRejectsInvalidBytes]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testBoundedUTF8ReadRejectsInvalidBytes]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testDeletedOwnerRejectsLateToolWriteAndMissingReadIsReported]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testDeletedOwnerRejectsLateToolWriteAndMissingReadIsReported]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testImportsAvoidOverwriteAndTemporaryExportIsAnIndependentCopy]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testImportsAvoidOverwriteAndTemporaryExportIsAnIndependentCopy]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testOverwriteRequiresExplicitPermissionWhenRequestedByTool]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testOverwriteRequiresExplicitPermissionWhenRequestedByTool]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testRejectsAbsoluteTraversalAndSymlinkPaths]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testRejectsAbsoluteTraversalAndSymlinkPaths]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testWriteFailureDoesNotPublishSuccess]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testWriteFailureDoesNotPublishSuccess]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testWriteReopenAndOwnerIsolation]' started.
+Test Case '-[AmberMacTests.DesktopWorkspaceFilesTests testWriteReopenAndOwnerIsolation]' passed (0.002 seconds).
+Test Suite 'DesktopWorkspaceFilesTests' passed at 2026-10-27 10:30:30.965.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.022 (0.023) seconds
+Test Suite 'RuntimeAgentDurabilityTests' started at 2026-10-27 10:30:30.965.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testMessageWriteFailureDoesNotAcknowledgeToolDispatch]' started.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testMessageWriteFailureDoesNotAcknowledgeToolDispatch]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testSelectedConversationChangesDoNotRedirectDurableCheckpointAndMetadataErrorDoesNotBlockAck]' started.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testSelectedConversationChangesDoNotRedirectDurableCheckpointAndMetadataErrorDoesNotBlockAck]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testStoppedOrDeletedRunDoesNotAcknowledgeOrWriteLateTurn]' started.
+Test Case '-[AmberMacTests.RuntimeAgentDurabilityTests testStoppedOrDeletedRunDoesNotAcknowledgeOrWriteLateTurn]' passed (0.002 seconds).
+Test Suite 'RuntimeAgentDurabilityTests' passed at 2026-10-27 10:30:30.973.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'RuntimeAgentTranscriptTests' started at 2026-10-27 10:30:30.973.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAgentProjectionOnlyMarksTrailingAssistantAsStreaming]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAgentProjectionOnlyMarksTrailingAssistantAsStreaming]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAsyncStopWaitsForFinalCanonicalTranscriptBeforeFlush]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testAsyncStopWaitsForFinalCanonicalTranscriptBeforeFlush]' passed (0.040 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCancellingAfterDurableSteerKeepsCompletedTurnAndRetryableReply]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCancellingAfterDurableSteerKeepsCompletedTurnAndRetryableReply]' passed (0.041 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCompactedInputNeverReplacesCanonicalHistoryDuringToolTurns]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testCompactedInputNeverReplacesCanonicalHistoryDuringToolTurns]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testDeletingAsynchronouslyStoppingOwnerDoesNotBlockNextConversation]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testDeletingAsynchronouslyStoppingOwnerDoesNotBlockNextConversation]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testKnowledgeContextIsInjectedAndUnreadableStorePreventsProviderCall]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testKnowledgeContextIsInjectedAndUnreadableStorePreventsProviderCall]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testMultipleToolTurnsReplaceOnlyRunSuffixAndTerminalTargetsLastAssistant]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testMultipleToolTurnsReplaceOnlyRunSuffixAndTerminalTargetsLastAssistant]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testStopDrainsAcceptedTranscriptAndRejectsLateReplacement]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testStopDrainsAcceptedTranscriptAndRejectsLateReplacement]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testSubagentOnlyGenerationKeepsOrdinaryToolsOffButEnablesEngine]' started.
+Test Case '-[AmberMacTests.RuntimeAgentTranscriptTests testSubagentOnlyGenerationKeepsOrdinaryToolsOffButEnablesEngine]' passed (0.002 seconds).
+Test Suite 'RuntimeAgentTranscriptTests' passed at 2026-10-27 10:30:31.072.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.099 (0.099) seconds
+Test Suite 'RuntimeBackupLifecycleTests' started at 2026-10-27 10:30:31.072.
+Test Case '-[AmberMacTests.RuntimeBackupLifecycleTests testQuitCancellationReachesAcceptedSnapshotBeforeRemoteUpload]' started.
+Test Case '-[AmberMacTests.RuntimeBackupLifecycleTests testQuitCancellationReachesAcceptedSnapshotBeforeRemoteUpload]' passed (0.002 seconds).
+Test Suite 'RuntimeBackupLifecycleTests' passed at 2026-10-27 10:30:31.074.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'RuntimeBranchTests' started at 2026-10-27 10:30:31.074.
+Test Case '-[AmberMacTests.RuntimeBranchTests testChatStopDoesNotCancelIndependentInsightRequest]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testChatStopDoesNotCancelIndependentInsightRequest]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testCompactFacadePreparesNextRequestWithoutRemovingOriginalHistory]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testCompactFacadePreparesNextRequestWithoutRemovingOriginalHistory]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeleteRemovesOnlyTargetNodeAndPersistsNextRequestContext]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeleteRemovesOnlyTargetNodeAndPersistsNextRequestContext]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeletingOnlyUserThenRegeneratingOrphanReplyDoesNotChangeBranchOrLaunch]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testDeletingOnlyUserThenRegeneratingOrphanReplyDoesNotChangeBranchOrLaunch]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitConfigurationFailureKeepsOriginalMessage]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitConfigurationFailureKeepsOriginalMessage]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitRejectsInvalidMessageAndEmptyInputExactlyOnce]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitRejectsInvalidMessageAndEmptyInputExactlyOnce]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitRemainsAcceptedWhenProviderCannotStart]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitRemainsAcceptedWhenProviderCannotStart]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitReportsSuccessAfterDurablePublish]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitReportsSuccessAfterDurablePublish]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitWriteFailureKeepsOriginalAndReportsToOriginalOwnerOnce]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditCommitWriteFailureKeepsOriginalAndReportsToOriginalOwnerOnce]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditResendsNewUserCandidateWithoutOldReplyOrTrailingTurns]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testEditResendsNewUserCandidateWithoutOldReplyOrTrailingTurns]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testFailedMutationDoesNotPublishOrGenerateAndErrorStaysWithOwner]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testFailedMutationDoesNotPublishOrGenerateAndErrorStaysWithOwner]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testRegeneratePreservesOriginalCandidateAndRequestsOnlyEarlierContext]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testRegeneratePreservesOriginalCandidateAndRequestsOnlyEarlierContext]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testSelectingCandidateKeepsLaterNodesAndNextRequestUsesSelectedContent]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testSelectingCandidateKeepsLaterNodesAndNextRequestUsesSelectedContent]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testStopWhileBranchSaveIsPendingPreventsGenerationAndFlushesCancelledPlaceholder]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testStopWhileBranchSaveIsPendingPreventsGenerationAndFlushesCancelledPlaceholder]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeBranchTests testSuccessfulBranchAndGenerationDoNotHideConcurrentMetadataWriteFailure]' started.
+Test Case '-[AmberMacTests.RuntimeBranchTests testSuccessfulBranchAndGenerationDoNotHideConcurrentMetadataWriteFailure]' passed (0.002 seconds).
+Test Suite 'RuntimeBranchTests' passed at 2026-10-27 10:30:31.108.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 0.033 (0.034) seconds
+Test Suite 'RuntimeCanonicalEnvelopeTests' started at 2026-10-27 10:30:31.108.
+Test Case '-[AmberMacTests.RuntimeCanonicalEnvelopeTests testActualKMPFixtureCarriesVariantsPartsModelUsageAndAnnotations]' started.
+Test Case '-[AmberMacTests.RuntimeCanonicalEnvelopeTests testActualKMPFixtureCarriesVariantsPartsModelUsageAndAnnotations]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.RuntimeCanonicalEnvelopeTests testActualKMPSerializerEnvelopeRetainsOpaqueDocumentsAcrossSwiftCodable]' started.
+Test Case '-[AmberMacTests.RuntimeCanonicalEnvelopeTests testActualKMPSerializerEnvelopeRetainsOpaqueDocumentsAcrossSwiftCodable]' passed (0.001 seconds).
+Test Suite 'RuntimeCanonicalEnvelopeTests' passed at 2026-10-27 10:30:31.110.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'RuntimeCollaborationSaveTests' started at 2026-10-27 10:30:31.110.
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testAgentDeclarationsStayWithinEachCapabilitySwitch]' started.
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testAgentDeclarationsStayWithinEachCapabilitySwitch]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testComposerCouncilModePlansSeatsAndWritesResultBackToConversation]' started.
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testComposerCouncilModePlansSeatsAndWritesResultBackToConversation]' passed (0.015 seconds).
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testFailedMessageSaveKeepsArtifactAndDoesNotPublishSuccess]' started.
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testFailedMessageSaveKeepsArtifactAndDoesNotPublishSuccess]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testSaveUsesParentOwnerAndPublishesOnceAfterDurableWrite]' started.
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testSaveUsesParentOwnerAndPublishesOnceAfterDurableWrite]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testSubagentSwitchExposesDispatchToolOnlyWhenOn]' started.
+Test Case '-[AmberMacTests.RuntimeCollaborationSaveTests testSubagentSwitchExposesDispatchToolOnlyWhenOn]' passed (0.000 seconds).
+Test Suite 'RuntimeCollaborationSaveTests' passed at 2026-10-27 10:30:31.134.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.024 (0.024) seconds
+Test Suite 'RuntimeFileFacadeTests' started at 2026-10-27 10:30:31.134.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAcceptedConversationExportsFinishWithoutWaitingOnThemselves]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAcceptedConversationExportsFinishWithoutWaitingOnThemselves]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAttachmentCopyStaysWithOriginalOwnerAndSurvivesSourceDeletion]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testAttachmentCopyStaysWithOriginalOwnerAndSurvivesSourceDeletion]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFileFailureIsRetainedWithOriginalOwnerAfterSwitching]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFileFailureIsRetainedWithOriginalOwnerAfterSwitching]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedAttachmentCopy]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedAttachmentCopy]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceDeleteAndExport]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceDeleteAndExport]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceImportWithOriginalOwner]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForAcceptedWorkspaceImportWithOriginalOwner]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForKnowledgeAndConversationImport]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testFlushWaitsForKnowledgeAndConversationImport]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testOldFileOperationErrorDoesNotPreventSuccessfulFlush]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testOldFileOperationErrorDoesNotPreventSuccessfulFlush]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testWorkspacePreviewDoesNotExposeDeletedTemporarySourceURL]' started.
+Test Case '-[AmberMacTests.RuntimeFileFacadeTests testWorkspacePreviewDoesNotExposeDeletedTemporarySourceURL]' passed (0.004 seconds).
+Test Suite 'RuntimeFileFacadeTests' passed at 2026-10-27 10:30:31.168.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.033 (0.034) seconds
+Test Suite 'RuntimeHistoryTests' started at 2026-10-27 10:30:31.168.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testFailedReadRetainsSummaryAndCanReload]' started.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testFailedReadRetainsSummaryAndCanReload]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeHistoryTests testInterruptedStreamingIsRecoveredOnlyWhenDocumentOpens]' started.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testInterruptedStreamingIsRecoveredOnlyWhenDocumentOpens]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeHistoryTests testLateSearchCannotReplaceCurrentQueryOrClearedResults]' started.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testLateSearchCannotReplaceCurrentQueryOrClearedResults]' passed (0.375 seconds).
+Test Case '-[AmberMacTests.RuntimeHistoryTests testPendingReadCannotSendOrResurrectDeletedConversation]' started.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testPendingReadCannotSendOrResurrectDeletedConversation]' passed (0.011 seconds).
+Test Case '-[AmberMacTests.RuntimeHistoryTests testSearchFindsUnloadedBodyAndLiveCacheOverridesStoredTitle]' started.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testSearchFindsUnloadedBodyAndLiveCacheOverridesStoredTitle]' passed (0.200 seconds).
+Test Case '-[AmberMacTests.RuntimeHistoryTests testStartupReadsSummaryAndOnlySelectedDocument]' started.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testStartupReadsSummaryAndOnlySelectedDocument]' passed (0.012 seconds).
+Test Case '-[AmberMacTests.RuntimeHistoryTests testUnloadedMetadataFailureRetriesWithoutLoadingBody]' started.
+Test Case '-[AmberMacTests.RuntimeHistoryTests testUnloadedMetadataFailureRetriesWithoutLoadingBody]' passed (0.008 seconds).
+Test Suite 'RuntimeHistoryTests' passed at 2026-10-27 10:30:31.779.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.611 (0.612) seconds
+Test Suite 'RuntimeInstructionQueueTests' started at 2026-10-27 10:30:31.779.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testDeleteFailureRestoresQueueAndAttachmentQueueRejectionKeepsDraft]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testDeleteFailureRestoresQueueAndAttachmentQueueRejectionKeepsDraft]' passed (0.006 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testExplicitSendRetriesOriginalResponseSaveBeforeSendingPendingQueueOnce]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testExplicitSendRetriesOriginalResponseSaveBeforeSendingPendingQueueOnce]' passed (0.008 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testFailedRunRetainsQueueForExplicitSendAndStaleRunCannotDrain]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testFailedRunRetainsQueueForExplicitSendAndStaleRunCannotDrain]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testStopPreservesPendingQueueAndWithdrawalAppendsToDraft]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testStopPreservesPendingQueueAndWithdrawalAppendsToDraft]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testSubmittedInstructionWriteFailureShowsAwaitingSaveWithoutResending]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testSubmittedInstructionWriteFailureShowsAwaitingSaveWithoutResending]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testTextQueueStartsNewRequestAfterCompletionForOriginalOwner]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testTextQueueStartsNewRequestAfterCompletionForOriginalOwner]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testToolBoundaryLeasesOnceAndOnlyDurableCanonicalAckRemovesQueue]' started.
+Test Case '-[AmberMacTests.RuntimeInstructionQueueTests testToolBoundaryLeasesOnceAndOnlyDurableCanonicalAckRemovesQueue]' passed (0.003 seconds).
+Test Suite 'RuntimeInstructionQueueTests' passed at 2026-10-27 10:30:31.811.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.031 (0.031) seconds
+Test Suite 'RuntimeNotificationConsumerTests' started at 2026-10-27 10:30:31.811.
+Test Case '-[AmberMacTests.RuntimeNotificationConsumerTests testCancellationAndPersistenceFailureDoNotSendCompletionNotice]' started.
+Test Case '-[AmberMacTests.RuntimeNotificationConsumerTests testCancellationAndPersistenceFailureDoNotSendCompletionNotice]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeNotificationConsumerTests testFailedProviderNotifiesFailedAfterResultIsDurable]' started.
+Test Case '-[AmberMacTests.RuntimeNotificationConsumerTests testFailedProviderNotifiesFailedAfterResultIsDurable]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeNotificationConsumerTests testPlainCompletionKeepsOriginalOwnerAndCapturedToolsMode]' started.
+Test Case '-[AmberMacTests.RuntimeNotificationConsumerTests testPlainCompletionKeepsOriginalOwnerAndCapturedToolsMode]' passed (0.003 seconds).
+Test Suite 'RuntimeNotificationConsumerTests' passed at 2026-10-27 10:30:31.820.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.009 (0.009) seconds
+Test Suite 'RuntimePerformanceTests' started at 2026-10-27 10:30:31.820.
+Test Case '-[AmberMacTests.RuntimePerformanceTests testPersistenceSaveMedianByMessageCount]' started.
+/private/var/folders/6c/yw_72rl51c94p8tqc5h9l69m0000gn/T/amber-mac-runtime.oIU1jl/Tests/AmberMacTests/RuntimePerformanceTests.swift:50: -[AmberMacTests.RuntimePerformanceTests testPersistenceSaveMedianByMessageCount] : Test skipped - Set AMBER_MAC_PERFORMANCE_BENCHMARK=1 to run performance measurements
+Test Case '-[AmberMacTests.RuntimePerformanceTests testPersistenceSaveMedianByMessageCount]' skipped (0.000 seconds).
+Test Suite 'RuntimePerformanceTests' passed at 2026-10-27 10:30:31.820.
+	 Executed 1 test, with 1 test skipped and 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'RuntimeRecipeFacadeTests' started at 2026-10-27 10:30:31.820.
+Test Case '-[AmberMacTests.RuntimeRecipeFacadeTests testDeletingOwnerCancelsOnlyItsAcceptedRecipe]' started.
+Test Case '-[AmberMacTests.RuntimeRecipeFacadeTests testDeletingOwnerCancelsOnlyItsAcceptedRecipe]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeRecipeFacadeTests testRecipeKeepsCapturedOwnerAfterSelectionChanges]' started.
+Test Case '-[AmberMacTests.RuntimeRecipeFacadeTests testRecipeKeepsCapturedOwnerAfterSelectionChanges]' passed (0.004 seconds).
+Test Suite 'RuntimeRecipeFacadeTests' passed at 2026-10-27 10:30:31.830.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.009 (0.009) seconds
+Test Suite 'RuntimeSettingsTests' started at 2026-10-27 10:30:31.830.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testCredentialsStayOutOfPersistedJSONAndModelSelectionRestores]' started.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testCredentialsStayOutOfPersistedJSONAndModelSelectionRestores]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.RuntimeSettingsTests testDeletingSelectedProviderRestoresRemainingSelectionAndRemovesCredential]' started.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testDeletingSelectedProviderRestoresRemainingSelectionAndRemovesCredential]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeSettingsTests testEditedProviderAndCredentialReplacePersistedValuesTogether]' started.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testEditedProviderAndCredentialReplacePersistedValuesTogether]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.RuntimeSettingsTests testEndpointValidationAllowsLocalModelsAndRejectsCredentialURLs]' started.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testEndpointValidationAllowsLocalModelsAndRejectsCredentialURLs]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.RuntimeSettingsTests testFailedCredentialWritePreservesConfig]' started.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testFailedCredentialWritePreservesConfig]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.RuntimeSettingsTests testInvalidModelDoesNotReplaceExistingConfigOrCredential]' started.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testInvalidModelDoesNotReplaceExistingConfigOrCredential]' passed (0.001 seconds).
+Test Case '-[AmberMacTests.RuntimeSettingsTests testUnreadableSettingsKeepOriginalBytesForRecovery]' started.
+Test Case '-[AmberMacTests.RuntimeSettingsTests testUnreadableSettingsKeepOriginalBytesForRecovery]' passed (0.001 seconds).
+Test Suite 'RuntimeSettingsTests' passed at 2026-10-27 10:30:31.838.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.008 (0.008) seconds
+Test Suite 'RuntimeWorkspaceTests' started at 2026-10-27 10:30:31.838.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testCancellationFlushHookPublishesCanonicalPartialBeforeCancelled]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testCancellationFlushHookPublishesCanonicalPartialBeforeCancelled]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testCanonicalMessageSurvivesStreamStopPersistenceAndNextRequest]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testCanonicalMessageSurvivesStreamStopPersistenceAndNextRequest]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testConcurrentAttachmentLoadsMergeAndSendWaitsForRead]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testConcurrentAttachmentLoadsMergeAndSendWaitsForRead]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testDeleteRunningConversationDoesNotRecreateItFromLateEvents]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testDeleteRunningConversationDoesNotRecreateItFromLateEvents]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testExportKeepsCurrentEnvelopeWhenSaveFailsAndCanBeReimported]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testExportKeepsCurrentEnvelopeWhenSaveFailsAndCanBeReimported]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailedDeletionRestoresConversationAndDraft]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailedDeletionRestoresConversationAndDraft]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailureRemainsOwnedByOriginalConversation]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFailureRemainsOwnedByOriginalConversation]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFirstMessageTitleSurvivesRestartThroughMetadataOwner]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFirstMessageTitleSurvivesRestartThroughMetadataOwner]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFlushReportsUnrecoverableWriteFailure]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testFlushReportsUnrecoverableWriteFailure]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testImportKeepsInnerMessageIdentityAndPublishesOnlyAfterSave]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testImportKeepsInnerMessageIdentityAndPublishesOnlyAfterSave]' passed (0.005 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testLegacyMessageDefaultsDoNotRequireNewCanonicalKeys]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testLegacyMessageDefaultsDoNotRequireNewCanonicalKeys]' passed (0.000 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRestoringStreamingCheckpointRetainsPartialText]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRestoringStreamingCheckpointRetainsPartialText]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryDoesNotUploadCancelledCanonicalAssistant]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryDoesNotUploadCancelledCanonicalAssistant]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryReusesUserTurnAndMetadataSurvivesCheckpoint]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testRetryReusesUserTurnAndMetadataSurvivesCheckpoint]' passed (0.002 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testStopDrainsAcceptedChunkAndIgnoresLaterCallbacks]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testStopDrainsAcceptedChunkAndIgnoresLaterCallbacks]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSuccessfulDeleteClearsEarlierUnsavedCheckpoint]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSuccessfulDeleteClearsEarlierUnsavedCheckpoint]' passed (0.003 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSwitchConversationKeepsStreamAndDraftWithOriginalOwner]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testSwitchConversationKeepsStreamAndDraftWithOriginalOwner]' passed (0.004 seconds).
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testTerminalAlreadyQueuedWinsOverStop]' started.
+Test Case '-[AmberMacTests.RuntimeWorkspaceTests testTerminalAlreadyQueuedWinsOverStop]' passed (0.002 seconds).
+Test Suite 'RuntimeWorkspaceTests' passed at 2026-10-27 10:30:31.888.
+	 Executed 18 tests, with 0 failures (0 unexpected) in 0.049 (0.050) seconds
+Test Suite 'AmberMacTests.xctest' passed at 2026-10-27 10:30:31.888.
+	 Executed 297 tests, with 2 tests skipped and 0 failures (0 unexpected) in 6.222 (6.246) seconds
+Test Suite 'All tests' passed at 2026-10-27 10:30:31.888.
+	 Executed 297 tests, with 2 tests skipped and 0 failures (0 unexpected) in 6.222 (6.248) seconds
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

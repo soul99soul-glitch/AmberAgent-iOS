@@ -1,0 +1,85 @@
+{
+  "createdAt": "2026-10-23T23:30:25+08:00",
+  "scope": "macOS comprehensive review R1-R6; excludes novel writing, deep reading, mini apps, WebMount",
+  "artifact": "macApp/build/AmberPreview.zip",
+  "artifactBytes": 6150780,
+  "artifactSHA256": "5381458bc63d70257be6e948caa1711f92af87b31fcff8af1613f570c6247bea",
+  "app": "macApp/build/swiftpm-preview/AmberPreview.app",
+  "bundleFileCount": 21,
+  "extractedBundleMatchesOriginal": true,
+  "extractedStrictSignatureExitCode": 0,
+  "previewSourceCount": 79,
+  "macSourceCount": 70,
+  "referencedIOSSourceCount": 9,
+  "sourceMismatches": 0,
+  "iosMathRevision": "066ba2f8353782a644889efe9ceb884ea844180b",
+  "runtimeTests": {
+    "total": 253,
+    "failures": 0,
+    "newRegressionTests": 26,
+    "log": "evidence/final-runtime.log",
+    "doesNotIncludeSharedAdapters": true
+  },
+  "formalSyntaxParse": {
+    "fileCount": 104,
+    "exitCode": 0,
+    "log": "evidence/final-formal-parse.log",
+    "typecheckOrLinking": false
+  },
+  "previewBuild": {
+    "exitCode": 0,
+    "log": "evidence/final-preview-build.log"
+  },
+  "formalXcode": {
+    "exitCode": 74,
+    "log": "evidence/final-native-local-cache.log",
+    "stage": "SwiftPM manifest diagnostics cache write permission; before Shared link"
+  },
+  "formalGradleNative": {
+    "exitCode": 1,
+    "log": "evidence/final-gradle-local-cache.log",
+    "stage": "FileLockContentionHandler SocketException Operation not permitted; project-local cache attempted"
+  },
+  "ui": {
+    "before": "ui-review.md",
+    "after": "ui-after/review.md",
+    "finalAppWindowVerified": false,
+    "reason": "CUA Transport closed; final LaunchServices launch attempt did not succeed",
+    "componentScreenshots": 9,
+    "productionSourceManifestCount": 78,
+    "componentSourceMismatches": 0,
+    "editorShortcutChainPassed": true,
+    "busyDisabledTextRenderingVerifiedInFinalApp": false,
+    "independentComponentReviewPassed": true
+  },
+  "finalLaunchAttempt": {
+    "openExitCode": 1,
+    "launchServicesCode": -10827,
+    "executablePresent": true,
+    "executableMode": "0755",
+    "directExecutableExitCode": 134,
+    "diagnosticLogBytes": 0,
+    "processInventoryUnavailable": true,
+    "result": "unverified; no production crash diagnosis from this restricted execution context"
+  },
+  "fullProductAccepted": false,
+  "remainingAcceptance": [
+    "formal Shared/Swift integration",
+    "real providers and Keychain",
+    "system notification cold launch click",
+    "final Preview real-window replay"
+  ],
+  "generatedProject": {
+    "path": "macApp/AmberMac.xcodeproj/project.pbxproj",
+    "sha256": "afc081c49a1e13c5b4f146923a0e440f2019bbdae0f2dcefe315029d60db8276",
+    "generationExitCode": 0,
+    "log": "evidence/final-xcodegen.log"
+  },
+  "independentReviews": {
+    "phases1To3Passed": true,
+    "finalCodeReviewPassed": true,
+    "generatedProjectReviewPassed": true,
+    "uiComponentReviewPassed": true,
+    "fullProductAcceptance": false
+  }
+}

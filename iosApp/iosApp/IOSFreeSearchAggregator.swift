@@ -60,13 +60,17 @@ enum IOSFreeSearchAggregator {
         googleFallbackEnabled: Bool,
         transport: any IOSSearchHTTPTransport,
         googleFallback: (String, Int) async throws -> [IOSSearchResult] = { query, maxResults in
+            #if os(iOS)
             try await IOSGoogleWebViewSearch.search(query: query, maxResults: maxResults)
+            #else
+            throw IOSSearchExecutorError.unsupportedProvider("Google WebView 搜索仅在 iOS 可用。")
+            #endif
         },
         now: () -> Date = Date.init
     ) async throws -> [IOSSearchResult] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw IOSSearchExecutorError.missingQuery }
-        let limit = min(max(maxResults, 1), 10)
+        let limit = min(max(maxResults, 1), IOSSearchExecutor.maxResultsLimit)
         let engines = engines(for: trimmed, now: now())
 
         var perEngine: [IOSFreeSearchEngine: [IOSSearchResult]] = [:]
@@ -184,7 +188,7 @@ enum IOSFreeSearchAggregator {
             let html = try await fetchHTML(
                 "https://www.bing.com/search", query: [("q", query)], engine: engine, transport: transport
             )
-            let results = IOSSearchExecutor.parseBingHTML(html: html, maxResults: 10)
+            let results = IOSSearchExecutor.parseBingHTML(html: html, maxResults: IOSSearchExecutor.maxResultsLimit)
             if results.isEmpty, looksBlocked(html) { throw IOSFreeSearchEngineError.blocked }
             return results
         case .duckDuckGo:

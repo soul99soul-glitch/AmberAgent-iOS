@@ -1,0 +1,26 @@
+{
+  "verified_at_utc": "2026-10-23T13:08:02.730149+00:00",
+  "source_manifest_count": 76,
+  "changed_ui_files_in_manifest": [
+    "macApp/AmberMac/UI/DesktopAgentTasksView.swift",
+    "macApp/AmberMac/UI/DesktopBackupView.swift",
+    "macApp/AmberMac/UI/DesktopCollaborationsView.swift",
+    "macApp/AmberMac/UI/DesktopComposer.swift",
+    "macApp/AmberMac/UI/DesktopKnowledgeView.swift",
+    "macApp/AmberMac/UI/DesktopMarkdown.swift",
+    "macApp/AmberMac/UI/DesktopRecipesView.swift",
+    "macApp/AmberMac/UI/DesktopSettingsView.swift",
+    "macApp/AmberMac/UI/DesktopStorageUsageView.swift",
+    "macApp/AmberMac/UI/DesktopTheme.swift",
+    "macApp/AmberMac/UI/DesktopTranscript.swift",
+    "macApp/AmberMac/UI/DesktopWorkspaceFilesView.swift",
+    "macApp/AmberMac/UI/DesktopWorkspaceView.swift",
+    "macApp/Preview/PreviewSettingsView.swift"
+  ],
+  "runtime_changes": 0,
+  "preview_app_source_matches": true,
+  "archive_bytes": 6100144,
+  "archive_sha256": "6f80d221f0675c301d2e4ef387ca9795ba20d843271dbbb63acb7d261957dd32",
+  "extracted_signature": "passed",
+  "build_log": "build.log"
+}

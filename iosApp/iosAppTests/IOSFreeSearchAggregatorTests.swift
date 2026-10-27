@@ -246,6 +246,134 @@ final class IOSFreeSearchAggregatorTests: XCTestCase {
         } catch {}
     }
 
+    func testScrapeJinaFallbackUsesVerifiedTransportAndExplicitGET() async throws {
+        let defaults = UserDefaults(suiteName: "FreeSearch-\(UUID().uuidString)")!
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        store.setSearchBuiltinJinaEnabled(true)
+        let transport = ScriptedScrapeTransport(
+            primaryStatus: 403,
+            readerBody: "Title: Reader\n\nMarkdown Content:\n通过验证路径读取"
+        )
+
+        let output = try await IOSSearchExecutor.execute(
+            toolName: "scrape_web",
+            toolInput: #"{"url":"https://example.com/private"}"#,
+            settings: store.snapshot,
+            transport: transport
+        )
+
+        XCTAssertTrue(output.contains("通过验证路径读取"))
+        XCTAssertEqual(transport.verifiedRequests.count, 2)
+        XCTAssertTrue(transport.publicRequests.isEmpty)
+        XCTAssertEqual(transport.verifiedRequests.first?.httpMethod, "GET")
+        XCTAssertEqual(transport.verifiedRequests.last?.httpMethod, "GET")
+        XCTAssertEqual(transport.verifiedRequests.last?.url?.host, "r.jina.ai")
+    }
+
+    func testScrapeDoesNotUseJinaForNonFallbackErrors() async {
+        let failures: [Error] = [
+            IOSSearchExecutorError.responseTooLarge(512 * 1_024),
+            IOSSearchExecutorError.disallowedURL("host resolves to a non-public address"),
+            IOSSearchExecutorError.httpStatus("scrape_web", 500),
+            IOSSearchExecutorError.httpStatus("scrape_web", 404),
+            IOSSearchExecutorError.emptyResponse("scrape_web"),
+            CancellationError(),
+            URLError(.cancelled),
+        ]
+
+        for primaryError in failures {
+            let defaults = UserDefaults(suiteName: "FreeSearch-\(UUID().uuidString)")!
+            let store = IOSSharedSettingsStore(userDefaults: defaults)
+            store.setSearchBuiltinJinaEnabled(true)
+            let transport = ScriptedScrapeTransport(primaryError: primaryError)
+
+            do {
+                _ = try await IOSSearchExecutor.execute(
+                    toolName: "scrape_web",
+                    toolInput: #"{"url":"https://example.com/failure"}"#,
+                    settings: store.snapshot,
+                    transport: transport
+                )
+                XCTFail("Expected the primary scrape error to propagate: \(primaryError)")
+            } catch is CancellationError {
+                XCTAssertTrue(primaryError is CancellationError)
+            } catch let actual as IOSSearchExecutorError {
+                if let expected = primaryError as? IOSSearchExecutorError {
+                    XCTAssertEqual(actual, expected)
+                } else {
+                    XCTFail("Unexpectedly converted \(primaryError) to \(actual)")
+                }
+            } catch let actual as URLError {
+                XCTAssertEqual((primaryError as? URLError)?.code, actual.code)
+            } catch {
+                XCTFail("Unexpected error \(error) for primary error \(primaryError)")
+            }
+
+            XCTAssertEqual(transport.verifiedRequests.count, 1)
+            XCTAssertTrue(transport.publicRequests.isEmpty)
+        }
+    }
+
+    func testScrapeJinaFallbackFailurePreservesBothErrors() async {
+        let defaults = UserDefaults(suiteName: "FreeSearch-\(UUID().uuidString)")!
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        store.setSearchBuiltinJinaEnabled(true)
+        let readerError = IOSSearchExecutorError.disallowedURL("host resolves to a non-public address")
+        let transport = ScriptedScrapeTransport(primaryStatus: 403, readerError: readerError)
+
+        do {
+            _ = try await IOSSearchExecutor.execute(
+                toolName: "scrape_web",
+                toolInput: #"{"url":"https://example.com/private"}"#,
+                settings: store.snapshot,
+                transport: transport
+            )
+            XCTFail("Expected the fallback failure to preserve both errors")
+        } catch let error as IOSSearchExecutorError {
+            guard case .scrapeFallbackFailed(let primaryReason, let actualReaderReason) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(primaryReason, IOSSearchExecutorError.httpStatus("scrape_web", 403).localizedDescription)
+            XCTAssertEqual(actualReaderReason, readerError.localizedDescription)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(transport.verifiedRequests.count, 2)
+        XCTAssertTrue(transport.publicRequests.isEmpty)
+    }
+
+    func testScrapeJinaFallbackPropagatesCancellationErrors() async {
+        let cancellationErrors: [Error] = [CancellationError(), URLError(.cancelled)]
+
+        for cancellationError in cancellationErrors {
+            let defaults = UserDefaults(suiteName: "FreeSearch-\(UUID().uuidString)")!
+            let store = IOSSharedSettingsStore(userDefaults: defaults)
+            store.setSearchBuiltinJinaEnabled(true)
+            let transport = ScriptedScrapeTransport(
+                primaryStatus: 403,
+                readerError: cancellationError
+            )
+
+            do {
+                _ = try await IOSSearchExecutor.execute(
+                    toolName: "scrape_web",
+                    toolInput: #"{"url":"https://example.com/private"}"#,
+                    settings: store.snapshot,
+                    transport: transport
+                )
+                XCTFail("Expected cancellation to propagate")
+            } catch let error as URLError {
+                XCTAssertEqual((cancellationError as? URLError)?.code, error.code)
+            } catch {
+                XCTAssertTrue(error is CancellationError, "Unexpected cancellation error: \(error)")
+            }
+
+            XCTAssertEqual(transport.verifiedRequests.count, 2)
+            XCTAssertTrue(transport.publicRequests.isEmpty)
+        }
+    }
+
     // MARK: - Live checks (opt-in; real network)
 
     func testLiveEachFreeEngineReturnsResultsWhenEnabled() async throws {
@@ -303,5 +431,70 @@ private final class HostMockTransport: IOSSearchHTTPTransport {
             headerFields: ["Content-Type": "text/html; charset=utf-8"]
         )!
         return (http, Data(response.body.utf8))
+    }
+}
+
+@MainActor
+private final class ScriptedScrapeTransport: IOSSearchHTTPTransport, IOSVerifiedHTTPScrapeTransport {
+    let primaryError: Error?
+    let primaryStatus: Int
+    let readerError: Error?
+    let readerBody: String
+    var publicRequests: [URLRequest] = []
+    var verifiedRequests: [URLRequest] = []
+
+    init(
+        primaryStatus: Int = 200,
+        primaryError: Error? = nil,
+        readerError: Error? = nil,
+        readerBody: String = "Title: Reader\n\nMarkdown Content:\nreader body"
+    ) {
+        self.primaryStatus = primaryStatus
+        self.primaryError = primaryError
+        self.readerError = readerError
+        self.readerBody = readerBody
+    }
+
+    func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        try await sendPublic(request, maximumResponseBytes: Int.max)
+    }
+
+    func sendPublic(_ request: URLRequest, maximumResponseBytes: Int) async throws -> (HTTPURLResponse, Data) {
+        publicRequests.append(request)
+        throw IOSSearchExecutorError.disallowedURL("host resolves to a non-public address")
+    }
+
+    func sendVerifiedHTTPSGET(
+        _ request: URLRequest,
+        maximumResponseBytes: Int
+    ) async throws -> (HTTPURLResponse, Data) {
+        verifiedRequests.append(request)
+        if request.url?.host == "r.jina.ai" {
+            if let readerError {
+                throw readerError
+            }
+            return try makeResponse(for: request, status: 200, body: readerBody)
+        }
+        if let primaryError {
+            throw primaryError
+        }
+        return try makeResponse(for: request, status: primaryStatus, body: "forbidden")
+    }
+
+    private func makeResponse(
+        for request: URLRequest,
+        status: Int,
+        body: String
+    ) throws -> (HTTPURLResponse, Data) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: status,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "text/plain; charset=utf-8"]
+              ) else {
+            throw IOSSearchExecutorError.invalidHTTPResponse
+        }
+        return (response, Data(body.utf8))
     }
 }

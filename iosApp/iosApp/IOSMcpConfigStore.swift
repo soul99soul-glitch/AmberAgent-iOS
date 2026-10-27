@@ -210,3 +210,25 @@ final class IOSMcpConfigStore {
         }
     }
 }
+
+extension IOSMcpServerConfig {
+    init?(_ sharedConfig: McpServerConfig) {
+        let options = sharedConfig.commonOptions
+        let headers = Dictionary(uniqueKeysWithValues: options.headers.compactMap { pair -> (String, String)? in
+            guard let first = pair.first as? String, let second = pair.second as? String else { return nil }
+            return (first, second)
+        })
+
+        let tools = options.tools.map {
+            IOSMcpTool(name: $0.name, description: $0.description_, enabled: $0.enable)
+        }
+
+        if let http = sharedConfig as? McpServerConfig.StreamableHTTPServer {
+            self = .streamableHTTP(name: options.name, url: http.url, headers: headers, enabled: options.enable, tools: tools)
+        } else if let sse = sharedConfig as? McpServerConfig.SseTransportServer {
+            self = .sse(name: options.name, url: sse.url, headers: headers, enabled: options.enable, tools: tools)
+        } else {
+            return nil
+        }
+    }
+}

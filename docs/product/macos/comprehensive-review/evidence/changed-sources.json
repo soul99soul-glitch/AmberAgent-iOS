@@ -1,0 +1,24 @@
+{
+  "changedSinceReviewBaseline": [
+    "macApp/AmberMac/UI/DesktopTranscript.swift",
+    "macApp/AmberMac/UI/DesktopImageGenerationView.swift",
+    "macApp/AmberMac/UI/DesktopMessageActions.swift",
+    "macApp/AmberMac/UI/DesktopAppLifecycle.swift",
+    "macApp/AmberMac/Runtime/DesktopNotifications.swift",
+    "macApp/AmberMac/Runtime/DesktopModels.swift",
+    "macApp/AmberMac/Runtime/DesktopImageGeneration.swift",
+    "macApp/AmberMac/Runtime/DesktopStorageUsage.swift",
+    "macApp/AmberMac/Runtime/DesktopAgentProvider.swift",
+    "macApp/AmberMac/Runtime/DesktopWorkspace.swift",
+    "macApp/AmberMac/Runtime/DesktopSearchTransport.swift",
+    "macApp/AmberMacTests/RuntimeFileFacadeTests.swift",
+    "macApp/AmberMacTests/RuntimeAgentTranscriptTests.swift",
+    "macApp/AmberMacTests/RuntimeBranchTests.swift",
+    "macApp/AmberMacTests/DesktopImageGenerationTests.swift"
+  ],
+  "addedSinceReviewBaseline": [
+    "macApp/AmberMac/Runtime/DesktopPublicSearchURL.swift",
+    "macApp/AmberMacTests/DesktopNotificationRoutingTests.swift",
+    "macApp/AmberMacTests/DesktopPublicSearchURLTests.swift"
+  ]
+}

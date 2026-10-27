@@ -243,7 +243,9 @@ struct IOSAgentProviderStep: Sendable {
     private static let assistantSnapshotPublishInterval: Duration = .milliseconds(48)
 
     enum PreparedStepMode {
+        #if os(iOS)
         case grokWeb
+        #endif
         case gemini
         case blocking
         case streaming
@@ -262,10 +264,12 @@ struct IOSAgentProviderStep: Sendable {
         providerSetting: ProviderSetting,
         params: TextGenerationParams
     ) async throws -> PreparedStepRequest {
+        #if os(iOS)
         if let openAI = providerSetting as? ProviderSetting.OpenAI,
            IOSGrokWebProviderResolver.isGrokWebConfiguration(openAI) {
             return PreparedStepRequest(providerSetting: providerSetting, params: params, mode: .grokWeb)
         }
+        #endif
         if let google = providerSetting as? ProviderSetting.Google,
            IOSGeminiProviderResolver.supportsChat(google) {
             return PreparedStepRequest(providerSetting: providerSetting, params: params, mode: .gemini)
@@ -320,6 +324,7 @@ struct IOSAgentProviderStep: Sendable {
         // ordinary system/user text is never treated as an authorization source.
         citationTracker?.allowCitationIds(from: messages)
         switch request.mode {
+        #if os(iOS)
         case .grokWeb:
             guard let openAI = request.providerSetting as? ProviderSetting.OpenAI else {
                 throw NSError(domain: "IOSAgentToolEngine.PreparedRequest", code: 1)
@@ -334,6 +339,7 @@ struct IOSAgentProviderStep: Sendable {
                 onAssistantReasoning: onAssistantReasoning,
                 onAssistantMessageSnapshot: onAssistantMessageSnapshot
             )
+        #endif
         case .gemini:
             guard let google = request.providerSetting as? ProviderSetting.Google else {
                 throw NSError(domain: "IOSAgentToolEngine.PreparedRequest", code: 2)
@@ -455,6 +461,7 @@ struct IOSAgentProviderStep: Sendable {
         }
     }
 
+    #if os(iOS)
     private func streamGrokWebStep(
         provider: ProviderSetting.OpenAI,
         messages: [UIMessage],
@@ -529,6 +536,8 @@ struct IOSAgentProviderStep: Sendable {
             usage: nil
         )
     }
+
+    #endif
 
     private func streamGeminiStep(
         provider: ProviderSetting.Google,

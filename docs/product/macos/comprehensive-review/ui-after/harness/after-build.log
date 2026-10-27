@@ -1,0 +1,11 @@
+warning: /Users/mi/Library/org.swift.swiftpm/configuration is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/org.swift.swiftpm/security is not accessible or not writable, disabling user-level cache features.
+warning: /Users/mi/Library/Caches/org.swift.swiftpm is not accessible or not writable, disabling user-level cache features.
+warning: 'amber-comprehensive-ui-review': failed storing manifest for 'amber-comprehensive-ui-review' in cache: attempt to write a readonly database
+warning: 'iosmath': failed storing manifest for 'iosmath' in cache: attempt to write a readonly database
+Building for debugging...
+[1 / 8] iosMath
+[2 / 5] AmberOffscreenReview-product
+[4 / 7] AmberOffscreenReview-product
+[7 / 9] AmberOffscreenReview-product
+Build complete! (3.38秒)

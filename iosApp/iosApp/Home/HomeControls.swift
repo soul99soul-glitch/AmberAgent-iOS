@@ -85,6 +85,8 @@ struct HomeEmptyCard: View {
 
 struct HomeShortcut: View {
     let entry: HomeShortcutEntry
+    /// Count of items waiting on the user; > 0 overlays a red badge on the icon.
+    var badge: Int = 0
     let action: () -> Void
     @State private var hovering = false
     @State private var pressed = false
@@ -95,6 +97,22 @@ struct HomeShortcut: View {
             VStack(spacing: 6) {
                 // Icon skin from theme pack; VStack layout frozen.
                 HomeShortcutIconView(entry: entry, size: 20)
+                    // Overlay so the badge never changes the button's size.
+                    .overlay(alignment: .topTrailing) {
+                        if badge > 0 {
+                            Text(verbatim: badge > 99 ? "99+" : "\(badge)")
+                                .font(.caption2.bold())
+                                .dynamicTypeSize(...DynamicTypeSize.xLarge)
+                                .monospacedDigit()
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .frame(minWidth: 16, minHeight: 16)
+                                .background(Capsule().fill(AmberTheme.accentRed))
+                                .fixedSize()
+                                .offset(x: 10, y: -8)
+                                .accessibilityHidden(true)
+                        }
+                    }
                 Text(
                     verbatim: IOSAppLocalization.string(
                         entry.title,
@@ -121,6 +139,17 @@ struct HomeShortcut: View {
         }
         .buttonStyle(HomePressStateStyle(pressed: $pressed, scale: 0.92, haptic: .selection))
         .onHover { hovering = $0 }
+        .accessibilityLabel(accessibilityTitle)
+    }
+
+    private var accessibilityTitle: String {
+        let title = IOSAppLocalization.string(entry.title, defaultValue: entry.title)
+        guard badge > 0 else { return title }
+        return IOSAppLocalization.formatted(
+            "%@，%lld 项等你处理",
+            defaultValue: "%@，%lld 项等你处理",
+            arguments: [title, Int64(badge)]
+        )
     }
 }
 

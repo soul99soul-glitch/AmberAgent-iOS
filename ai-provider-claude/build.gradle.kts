@@ -7,6 +7,7 @@ kotlin {
     jvm()
     iosArm64()
     iosSimulatorArm64()
+    macosArm64()
 
     sourceSets {
         all {
@@ -26,6 +27,10 @@ kotlin {
 
         jvmMain.dependencies {
             implementation(libs.ktor.client.okhttp)
+        }
+
+        macosArm64Main.dependencies {
+            implementation(libs.ktor.client.darwin)
         }
 
         iosArm64Main.dependencies {

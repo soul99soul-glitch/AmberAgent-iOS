@@ -313,6 +313,42 @@ class ConversationBlobStorageTest {
         assertEquals(listOf(shot), allImageUrls(JsonConversationStorage(dir).loadConversation(id)!!))
     }
 
+    @Test
+    fun saveRepairsSameSizeCorruptMemoizedBlobFromInMemoryDataUrl() = runTest {
+        val id = Uuid.random()
+        val shot = pngDataUrl(26)
+        val conversation = conversation(id, listOf(screenshotTool("t", shot)))
+        storage.saveConversation(conversation)
+        val loaded = storage.loadConversation(id)!!
+        val blob = File(root, "$id.blobs").listFiles()!!.single()
+        val original = blob.readBytes()
+        val corrupt = original.copyOf().apply {
+            this[0] = (this[0].toInt() xor 1).toByte()
+        }
+        assertEquals(original.size, corrupt.size)
+        blob.writeBytes(corrupt)
+
+        storage.saveConversation(loaded.copy(title = "repair"))
+
+        assertContentEquals(original, blob.readBytes(), "a same-size corrupt blob must be rewritten")
+        assertEquals(listOf(shot), allImageUrls(storage.loadConversation(id)!!))
+    }
+
+    @Test
+    fun saveRepairsSameSizeCorruptHashNamedBlobWithoutMemo() = runTest {
+        val id = Uuid.random()
+        val shot = pngDataUrl(27)
+        val bytes = Base64.decode(shot.substringAfter("base64,"))
+        val blobDirectory = File(root, "$id.blobs").apply { mkdirs() }
+        val blob = File(blobDirectory, blobNameOf(shot))
+        blob.writeBytes(bytes.copyOf().apply { this[0] = (this[0].toInt() xor 1).toByte() })
+
+        storage.saveConversation(conversation(id, listOf(screenshotTool("t", shot))))
+
+        assertContentEquals(bytes, blob.readBytes(), "an existing hash-named blob must be hash-checked")
+        assertEquals(listOf(shot), allImageUrls(storage.loadConversation(id)!!))
+    }
+
     // ---- review fixes ----
 
     @Test
