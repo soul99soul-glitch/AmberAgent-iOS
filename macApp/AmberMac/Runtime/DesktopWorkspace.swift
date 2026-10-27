@@ -48,6 +48,8 @@ final class DesktopWorkspace {
     let titles = DesktopTitleGeneration()
     /// Set by the live app; previews and tests run without one.
     var scheduler: DesktopScheduler?
+    /// Opens the scheduled-tasks page (menu bar item, notifications).
+    var showsScheduledTasks = false
     private(set) var savingCollaborationRuns: Set<UUID> = []
     private(set) var savedCollaborationRuns: Set<UUID> = []
     private(set) var collaborationSaveErrors: [UUID: String] = [:]

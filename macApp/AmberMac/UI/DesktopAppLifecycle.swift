@@ -6,11 +6,22 @@ import SwiftUI
 final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     weak var workspace: DesktopWorkspace?
     var openMainWindow: (@MainActor () -> Void)?
+    var backgroundMode: DesktopBackgroundMode?
     private var isTerminating = false
     private let notificationRouter = DesktopNotificationRouter()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// SwiftUI quits a single-Window app when its window closes; keep running in the menu bar instead when asked to.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !(backgroundMode?.keepsRunning ?? false)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { backgroundMode?.showDockIcon(); openMainWindow?() }
+        return true
     }
 
     func bind(workspace: DesktopWorkspace, openMainWindow: @escaping @MainActor () -> Void) {
@@ -79,7 +90,14 @@ struct DesktopWindowLifecycleView: View {
     var body: some View {
         DesktopWorkspaceView(workspace: workspace, searchRequest: searchRequest, findRequest: findRequest)
             .task {
-                delegate.bind(workspace: workspace) { openWindow(id: windowID) }
+                delegate.bind(workspace: workspace) {
+                    delegate.backgroundMode?.showDockIcon()
+                    openWindow(id: windowID)
+                }
+            }
+            .onDisappear {
+                // The window closed but the app stays for scheduled tasks: drop the Dock icon, keep the menu bar item.
+                if let mode = delegate.backgroundMode, mode.keepsRunning { mode.enterMenuBarOnly() }
             }
     }
 }

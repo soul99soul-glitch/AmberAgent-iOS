@@ -11,6 +11,7 @@ struct DesktopSettingsView: View {
     private let notifications: DesktopNotifications?
     private let onOpenStorage: (() -> Void)?
     private let speech: DesktopSpeechPlayer?
+    private let backgroundMode: DesktopBackgroundMode?
     @State private var speechPreviewID = UUID()
     @State private var login: DesktopCodexLogin
     @State private var catalogRequest = DesktopCatalogRequest()
@@ -58,7 +59,8 @@ struct DesktopSettingsView: View {
 
     init(settings: DesktopSettings, catalog: any DesktopModelCatalog, oauth: any DesktopCodexAuthorizer,
         onOpenBackup: (() -> Void)? = nil, mcp: DesktopMCPManager? = nil, syncWorkspace: DesktopWorkspace? = nil,
-        notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil) {
+        notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil,
+        backgroundMode: DesktopBackgroundMode? = nil) {
         self.settings = settings
         self.catalog = catalog
         self.onOpenBackup = onOpenBackup
@@ -67,6 +69,7 @@ struct DesktopSettingsView: View {
         self.notifications = notifications
         self.onOpenStorage = onOpenStorage
         self.speech = speech
+        self.backgroundMode = backgroundMode
         _login = State(initialValue: DesktopCodexLogin(authorizer: oauth))
     }
     /// Changes whenever a new preset draft becomes fetchable (key typed, or keyless local server).
@@ -559,6 +562,19 @@ struct DesktopSettingsView: View {
                     Text("默认关闭。启用后会向系统请求权限；通知不包含会话内容。")
                         .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }.task { await notifications.refreshAuthorization() }
+            }
+            if let backgroundMode {
+                Section("后台运行") {
+                    Toggle("关闭窗口后继续在菜单栏运行", isOn: Binding(get: { backgroundMode.keepsRunning },
+                        set: { backgroundMode.setKeepsRunning($0) }))
+                    Toggle("登录时启动", isOn: Binding(get: { backgroundMode.launchAtLogin },
+                        set: { backgroundMode.setLaunchAtLogin($0) }))
+                    if let message = backgroundMode.loginItemMessage {
+                        Text(message).font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
+                    }
+                    Text("定时任务只在 Amber 运行时执行。有启用中的定时任务时默认留在菜单栏；Mac 睡眠时不会运行，醒来后按任务设置补跑。")
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                }.onAppear { backgroundMode.refreshLoginItem() }
             }
             Section("数据与凭证") {
                 Text("会话保存在这台 Mac。API Key 和登录凭证保存在系统钥匙串，不包含在会话导出文件里。")

@@ -5,19 +5,25 @@ import SwiftUI
 struct AmberMacApp: App {
     @NSApplicationDelegateAdaptor(AmberMacAppDelegate.self) private var appDelegate
     @State private var workspace: DesktopWorkspace
+    @State private var backgroundMode: DesktopBackgroundMode
     @State private var searchRequest = 0
     @State private var findRequest = 0
     @State private var backupPresented = false
     @State private var storagePresented = false
 
     init() {
+        let workspace: DesktopWorkspace
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-amber-mac-ui-fixture") {
-            _workspace = State(initialValue: DesktopWorkspace.uiFixture())
-            return
-        }
+        if ProcessInfo.processInfo.arguments.contains("-amber-mac-ui-fixture") { workspace = DesktopWorkspace.uiFixture() }
+        else { workspace = DesktopWorkspace() }
+        #else
+        workspace = DesktopWorkspace()
         #endif
-        _workspace = State(initialValue: DesktopWorkspace())
+        _workspace = State(initialValue: workspace)
+        _backgroundMode = State(initialValue: DesktopBackgroundMode { [weak workspace] in
+            guard let scheduler = workspace?.scheduler else { return false }
+            return scheduler.enabledCount > 0 || !scheduler.running.isEmpty
+        })
     }
 
     var body: some Scene {
@@ -26,6 +32,7 @@ struct AmberMacApp: App {
                 .frame(minWidth: 860, minHeight: 600)
                 .tint(DesktopTheme.accent)
                 .preferredColorScheme(DesktopTheme.colorScheme(for: workspace.settings.appearance))
+                .onAppear { appDelegate.backgroundMode = backgroundMode }
         }
         .defaultSize(width: 1180, height: 800)
         .windowResizability(.contentMinSize)
@@ -51,10 +58,19 @@ struct AmberMacApp: App {
             }
             SidebarCommands()
         }
+        MenuBarExtra(isInserted: Binding(get: { workspace.scheduler != nil && backgroundMode.keepsRunning }, set: { _ in })) {
+            if let scheduler = workspace.scheduler {
+                DesktopScheduleMenu(scheduler: scheduler, workspace: workspace, backgroundMode: backgroundMode)
+            }
+        } label: {
+            Image(systemName: (workspace.scheduler?.running.isEmpty ?? true) ? "clock" : "clock.badge.checkmark")
+                .accessibilityLabel("Amber 定时任务")
+        }
         Settings {
             DesktopSettingsView(settings: workspace.settings, catalog: DesktopKMPModelCatalog(),
                 oauth: DesktopMacCodexAuthorizer(), onOpenBackup: { backupPresented = true }, mcp: workspace.mcp,
-                syncWorkspace: workspace, notifications: workspace.notifications, onOpenStorage: { storagePresented = true }, speech: workspace.speech)
+                syncWorkspace: workspace, notifications: workspace.notifications, onOpenStorage: { storagePresented = true }, speech: workspace.speech,
+                backgroundMode: workspace.scheduler == nil ? nil : backgroundMode)
                 .sheet(isPresented: $backupPresented) { DesktopBackupView(workspace: workspace) }
                 .sheet(isPresented: $storagePresented) {
                     DesktopStorageUsageView(sources: workspace.storageUsageSources, conversationCount: workspace.summaries.count)
