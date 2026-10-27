@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import GatewayCore
@@ -110,5 +111,30 @@ public struct CredentialStore: Sendable {
 
     public func delete(_ kind: CredentialKind) throws {
         try FileManager.default.removeItem(at: url(kind))
+    }
+}
+
+/// Validates and stores credentials from their source files. Shared by `creds import` and Amber.
+public enum CredentialImport {
+    public static func apns(keyPEM: Data, keyId: String, teamId: String, topic: String, into store: CredentialStore) throws {
+        let pem = String(decoding: keyPEM, as: UTF8.self)
+        do {
+            _ = try P256.Signing.PrivateKey(pemRepresentation: pem)
+        } catch {
+            throw CredentialError.invalid(".p8 不是 P-256 私钥")
+        }
+        try store.save(APNsCredentials(keyId: keyId, teamId: teamId, topic: topic, privateKeyPEM: pem), as: .apns)
+    }
+
+    public static func fcm(serviceAccount data: Data, into store: CredentialStore) throws {
+        let creds = try FCMCredentials(serviceAccount: data)
+        _ = try JWT.rsaPrivateKey(pem: creds.privateKeyPEM)
+        try store.save(creds, as: .fcm)
+    }
+
+    public static func huawei(serviceAccount data: Data, projectId: String?, category: String, into store: CredentialStore) throws {
+        let creds = try HuaweiCredentials(serviceAccount: data, projectId: projectId, category: category)
+        _ = try JWT.rsaPrivateKey(pem: creds.privateKeyPEM)
+        try store.save(creds, as: .huawei)
     }
 }

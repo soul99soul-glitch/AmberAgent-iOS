@@ -62,16 +62,7 @@ enum StatusCommand {
         return 0
     }
 
-    static func daemonRunning(_ paths: GatewayPaths) -> Bool {
-        let fd = open(paths.pidFile.path, O_RDONLY)
-        guard fd >= 0 else { return false }
-        defer { close(fd) }
-        if flock(fd, LOCK_SH | LOCK_NB) == 0 {
-            flock(fd, LOCK_UN)
-            return false
-        }
-        return true
-    }
+    static func daemonRunning(_ paths: GatewayPaths) -> Bool { paths.daemonRunning }
 
     static func originLabel(_ origin: SessionOrigin) -> String {
         switch origin {

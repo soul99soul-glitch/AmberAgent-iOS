@@ -24,8 +24,8 @@ cat > "$work/Package.swift" <<PKG
 // swift-tools-version: 6.0
 import PackageDescription
 let package = Package(name: "AmberSnapshot", platforms: [.macOS(.v15)],
-  dependencies: [.package(path: "$iosmath")],
-  targets: [.executableTarget(name: "AmberSnapshot", dependencies: [.product(name: "iosMath", package: "iosMath")],
+  dependencies: [.package(path: "$iosmath"), .package(path: "$project_dir/../gateway")],
+  targets: [.executableTarget(name: "AmberSnapshot", dependencies: [.product(name: "iosMath", package: "iosMath"), .product(name: "GatewayKit", package: "gateway")],
     resources: [], swiftSettings: [.define("AMBER_MAC_PREVIEW"), .define("DEBUG")])])
 PKG
 cd "$work"

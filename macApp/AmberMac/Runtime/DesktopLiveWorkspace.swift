@@ -41,5 +41,6 @@ import Foundation
         }
         scheduler.startObservingSystem()
         self.scheduler = scheduler
+        gateway = DesktopGateway()
     }
 }

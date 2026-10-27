@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct GatewayPaths: Sendable {
@@ -28,6 +29,18 @@ public struct GatewayPaths: Sendable {
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
         return GatewayPaths(stateDir: home.appendingPathComponent("Library/Application Support/AmberAgent/Gateway", isDirectory: true))
+    }
+
+    /// The daemon holds an exclusive flock on its pid file for its whole lifetime.
+    public var daemonRunning: Bool {
+        let fd = open(pidFile.path, O_RDONLY)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        if flock(fd, LOCK_SH | LOCK_NB) == 0 {
+            flock(fd, LOCK_UN)
+            return false
+        }
+        return true
     }
 
     /// State dir is 700: the hook socket's only access control is filesystem permissions.

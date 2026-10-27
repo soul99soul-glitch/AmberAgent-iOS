@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import GatewayCore
 import GatewayPush
@@ -66,17 +65,12 @@ enum CredsCommand {
             switch kind {
             case .apns:
                 guard let keyId = value("--key-id"), let teamId = value("--team-id"), let topic = value("--topic") else { return usage() }
-                let pem = String(decoding: data, as: UTF8.self)
-                _ = try P256.Signing.PrivateKey(pemRepresentation: pem)
-                try store.save(APNsCredentials(keyId: keyId, teamId: teamId, topic: topic, privateKeyPEM: pem), as: .apns)
+                try CredentialImport.apns(keyPEM: data, keyId: keyId, teamId: teamId, topic: topic, into: store)
             case .fcm:
-                let creds = try FCMCredentials(serviceAccount: data)
-                _ = try JWT.rsaPrivateKey(pem: creds.privateKeyPEM)
-                try store.save(creds, as: .fcm)
+                try CredentialImport.fcm(serviceAccount: data, into: store)
             case .huawei:
-                let creds = try HuaweiCredentials(serviceAccount: data, projectId: value("--project-id"), category: value("--category") ?? "MARKETING")
-                _ = try JWT.rsaPrivateKey(pem: creds.privateKeyPEM)
-                try store.save(creds, as: .huawei)
+                try CredentialImport.huawei(serviceAccount: data, projectId: value("--project-id"),
+                                            category: value("--category") ?? "MARKETING", into: store)
             }
         } catch {
             return fail("导入失败: \(error)")

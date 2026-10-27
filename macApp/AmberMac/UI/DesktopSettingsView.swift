@@ -12,6 +12,7 @@ struct DesktopSettingsView: View {
     private let onOpenStorage: (() -> Void)?
     private let speech: DesktopSpeechPlayer?
     private let backgroundMode: DesktopBackgroundMode?
+    private let gateway: DesktopGateway?
     @State private var speechPreviewID = UUID()
     @State private var login: DesktopCodexLogin
     @State private var catalogRequest = DesktopCatalogRequest()
@@ -60,7 +61,7 @@ struct DesktopSettingsView: View {
     init(settings: DesktopSettings, catalog: any DesktopModelCatalog, oauth: any DesktopCodexAuthorizer,
         onOpenBackup: (() -> Void)? = nil, mcp: DesktopMCPManager? = nil, syncWorkspace: DesktopWorkspace? = nil,
         notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil,
-        backgroundMode: DesktopBackgroundMode? = nil) {
+        backgroundMode: DesktopBackgroundMode? = nil, gateway: DesktopGateway? = nil) {
         self.settings = settings
         self.catalog = catalog
         self.onOpenBackup = onOpenBackup
@@ -70,6 +71,7 @@ struct DesktopSettingsView: View {
         self.onOpenStorage = onOpenStorage
         self.speech = speech
         self.backgroundMode = backgroundMode
+        self.gateway = gateway
         _login = State(initialValue: DesktopCodexLogin(authorizer: oauth))
     }
     /// Changes whenever a new preset draft becomes fetchable (key typed, or keyless local server).
@@ -156,7 +158,7 @@ struct DesktopSettingsView: View {
             HStack(spacing: 24) {
                 Text("设置").font(DesktopTheme.serif(size: 22, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
                 Spacer()
-                DesktopSegmented(options: [(0, "服务商"), (1, "通用")] + (mcp != nil ? [(2, "MCP")] : []) + (syncWorkspace != nil ? [(3, "同步")] : []),
+                DesktopSegmented(options: [(0, "服务商"), (1, "通用")] + (mcp != nil ? [(2, "MCP")] : []) + (syncWorkspace != nil ? [(3, "同步")] : []) + (gateway != nil ? [(4, "Mac Gateway")] : []),
                     selection: Binding(get: { tab }, set: { request(.tab($0)) }))
                     .accessibilityLabel("设置分类")
             }
@@ -191,6 +193,7 @@ struct DesktopSettingsView: View {
                 case 1: general.modifier(DesktopTabTransition(forward: tab > previousTab))
                 case 2: if let mcp { DesktopMCPSettingsView(manager: mcp).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 case 3: if let syncWorkspace { DesktopWebDAVSettingsView(workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
+                case 4: if let gateway { DesktopGatewaySettingsView(gateway: gateway).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 default: providers.modifier(DesktopTabTransition(forward: tab > previousTab))
                 }
             }

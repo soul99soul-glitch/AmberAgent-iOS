@@ -143,6 +143,8 @@ targets:
     dependencies:
       - package: iosMath
         product: iosMath
+      - package: AmberGateway
+        product: GatewayKit
     sources:
       - path: AmberMac
         excludes:
@@ -190,6 +192,9 @@ targets:
       - AmberMacTests
     dependencies:
       - target: AmberMac
+      - package: AmberGateway
+        product: GatewayKit
+        link: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.macos.tests

@@ -136,3 +136,52 @@ public enum TerminalQR {
         return out
     }
 }
+
+/// Issues a one-time pairing ticket and the QR payload for it. Shared by `amber-gateway pair` and Amber.
+public enum PairingIssuer {
+    public static let ticketLifetime: TimeInterval = 5 * 60
+
+    public struct Issued: Sendable {
+        public var payload: PairingPayload
+        public var expiresAt: Date
+        /// Devices already paired when the ticket was issued; the new one is whichever appears next.
+        public var knownDeviceIds: Set<String>
+    }
+
+    public enum Failure: Error, CustomStringConvertible {
+        case identityUnreadable(String)
+        case ticketWrite(String)
+        public var description: String {
+            switch self {
+            case .identityUnreadable(let path): "读取 TLS 身份失败：\(path)"
+            case .ticketWrite(let detail): "无法写入配对票据: \(detail)"
+            }
+        }
+    }
+
+    public static func issue(paths: GatewayPaths, now: Date = Date()) throws -> Issued {
+        guard let p12 = try? Data(contentsOf: paths.tlsIdentity), let tls = try? TLSIdentity.load(p12),
+              let idData = try? Data(contentsOf: paths.identity),
+              let identity = try? GatewayJSON.decoder().decode(GatewayIdentity.self, from: idData)
+        else { throw Failure.identityUnreadable(paths.tlsIdentity.path) }
+        let known = Set(DeviceStore(url: paths.devices).load().map(\.id))
+        let secret = Secrets.random(bytes: 16)
+        let ticket = PairingTicket(secretHash: Secrets.sha256(secret), expiresAt: now.addingTimeInterval(ticketLifetime))
+        do {
+            let data = try GatewayJSON.encoder().encode(ticket)
+            guard FileManager.default.createFile(atPath: paths.pairing.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+                throw Failure.ticketWrite(paths.pairing.path)
+            }
+        } catch let failure as Failure {
+            throw failure
+        } catch {
+            throw Failure.ticketWrite("\(error)")
+        }
+        AuditLog(url: paths.audit).record("pair-code")
+        let config = GatewayConfig.load(from: paths.config)
+        let payload = PairingPayload(id: identity.id, name: identity.name,
+                                     addrs: CandidateAddresses.current(publicAddresses: config.publicAddresses),
+                                     port: config.port, fp: tls.fingerprint, s: secret)
+        return Issued(payload: payload, expiresAt: ticket.expiresAt, knownDeviceIds: known)
+    }
+}

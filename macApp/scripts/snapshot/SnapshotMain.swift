@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+import ServiceManagement
+@preconcurrency import GatewayCore
+@preconcurrency import GatewayPush
 
 // Offscreen snapshots of the real workspace view; not a production entry point.
 @main struct AmberSnapshotMain {
@@ -24,6 +27,7 @@ import SwiftUI
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PHASE3_UI"] != nil { try await reviewPhase3UI() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PERF3_CACHE"] != nil { try await reviewPerf3Cache() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_SCHEDULES"] != nil { try await schedules() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_GATEWAY"] != nil { try await gatewaySettings() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
@@ -173,6 +177,33 @@ import SwiftUI
             // Full-height editor so the approval section and run history are visible too.
             try await capture("schedules-full-\(dark ? "dark" : "light")", view.frame(height: 1500).background(DesktopTheme.paper), 900, 1500, dark)
         }
+    }
+
+    /// Mac Gateway settings tab and pairing sheet against a throwaway state dir (the SMAppService is not registered).
+    @MainActor static func gatewaySettings() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("amber-snapshot-gateway-\(UUID().uuidString)")
+        let paths = GatewayPaths(stateDir: dir)
+        try paths.ensureDirectories()
+        var phone = PairedDevice(id: "a1b2c3d4-0000", name: "iPhone 17 Pro", platform: .ios, tokenHash: "x", pairedAt: Date().addingTimeInterval(-86_400 * 3))
+        phone.pushToken = "token"; phone.lastSeenAt = Date().addingTimeInterval(-120)
+        let pad = PairedDevice(id: "e5f6-0000", name: "iPad Air", platform: .ios, tokenHash: "y", pairedAt: Date().addingTimeInterval(-86_400 * 20))
+        try DeviceStore(url: paths.devices).update { $0 = [phone, pad] }
+        try CredentialStore(dir: paths.secretsDir).save(["x": 1], as: .apns)
+        let gateway = DesktopGateway(paths: paths, installation: GatewayInstallation(home: dir), service: SMAppService.agent(plistName: "snapshot.plist"),
+            bundledBinary: dir.appendingPathComponent("amber-gateway"))
+        gateway.snapshotStatus(.running)
+        for dark in [false, true] {
+            try await capture("gateway-\(dark ? "dark" : "light")", DesktopGatewaySettingsView(gateway: gateway).background(DesktopTheme.paper), 880, 640, dark)
+        }
+        gateway.snapshotPairing(DesktopGateway.PairingSession(url: "amber://gateway/pair?p=" + String(repeating: "eyJhZGRycyI6WyJNSWRlaU1hYy5sb2NhbCJd", count: 8),
+            fingerprint: "dRYQr6unJIiHVKILDj8xsjVhbVkkP56Zh+fdphYGReg=", addresses: ["MIdeiMac.local", "192.168.31.49"],
+            expiresAt: Date().addingTimeInterval(272), knownDeviceIds: []))
+        for dark in [false, true] {
+            try await capture("gateway-pair-\(dark ? "dark" : "light")", DesktopGatewayPairingSheet(gateway: gateway), 420, 600, dark)
+        }
+        gateway.snapshotStatus(.off)
+        try await capture("gateway-off-light", DesktopGatewaySettingsView(gateway: gateway).background(DesktopTheme.paper), 880, 640, false)
+        try? FileManager.default.removeItem(at: dir)
     }
 
     /// Phase 1 UI review states. This is opt-in so the normal snapshot set is unchanged.
