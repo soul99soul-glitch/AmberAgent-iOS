@@ -264,7 +264,8 @@ struct DesktopReasoningCard: View {
     let autoExpand: Bool
     let defaultExpanded: Bool
     let font: Font
-    @State private var expanded: Bool?
+    /// Owned by the transcript per message, so the choice survives the row being swapped for a placeholder.
+    @Binding var expanded: Bool?
     @State private var hovering = false
 
     private var isExpanded: Bool { expanded ?? (thinking ? autoExpand : defaultExpanded) }
@@ -293,7 +294,7 @@ struct DesktopReasoningCard: View {
 
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
-                    Text(reasoning)
+                    Text(streaming ? Self.visibleTail(reasoning) : reasoning)
                         .font(font)
                         .foregroundStyle(DesktopTheme.inkTertiary)
                         .lineSpacing(4)
@@ -327,6 +328,18 @@ struct DesktopReasoningCard: View {
                 withAnimation(.smooth(duration: 0.32)) { expanded = false }
             }
         }
+    }
+}
+
+extension DesktopReasoningCard {
+    /// While streaming, the card is a 180pt bottom-anchored window that re-scrolls to the end on every chunk, so only
+    /// the tail can ever be seen. Laying out just the tail keeps each chunk's cost flat instead of growing with the
+    /// whole chain of thought; the full text returns when the stream ends. Cuts at a line break so wrapping matches.
+    static func visibleTail(_ reasoning: String, limit: Int = 2400) -> String {
+        guard reasoning.count > limit else { return reasoning }
+        let tail = reasoning.suffix(limit)
+        guard let newline = tail.firstIndex(of: "\n") else { return String(tail) }
+        return String(tail[tail.index(after: newline)...])
     }
 }
 

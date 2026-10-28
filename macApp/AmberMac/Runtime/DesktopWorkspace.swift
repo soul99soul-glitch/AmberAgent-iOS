@@ -4,7 +4,21 @@ import Observation
 
 @MainActor @Observable
 final class DesktopWorkspace {
-    private(set) var conversations: [DesktopConversation] = []
+    private(set) var conversations: [DesktopConversation] = [] {
+        // Views outside the transcript only need membership; publishing it separately keeps a streaming chunk
+        // (which rewrites `conversations`) from re-rendering the composer, toolbar and window chrome.
+        didSet {
+            let loaded = Set(conversations.map(\.id))
+            if loaded != loadedConversationIDs { loadedConversationIDs = loaded }
+            let nonEmpty = Set(conversations.lazy.filter { !$0.messages.isEmpty }.map(\.id))
+            if nonEmpty != nonEmptyConversationIDs { nonEmptyConversationIDs = nonEmpty }
+        }
+    }
+    /// Set by the transcript while the reader drags or flicks it. Snapshots then reach the UI ~4×/s instead of ~30×/s
+    /// so scrolling keeps the main thread; drain() still delivers every event, and normal pace resumes on release.
+    @ObservationIgnored var transcriptIsUserScrolling = false
+    private(set) var loadedConversationIDs: Set<UUID> = []
+    private(set) var nonEmptyConversationIDs: Set<UUID> = []
     var selectedID: UUID?
     var draft = ""
     /// Composer mode: plain chat, or send the draft to the model council, which reports back into this conversation.
@@ -206,7 +220,9 @@ final class DesktopWorkspace {
     }
     var isSelectedConversationGenerating: Bool { isGenerating && generationConversationID == selectedID }
     var isLoadingSelectedConversation: Bool { selectedID.map { loadingConversationIDs.contains($0) } ?? false }
-    var selectedConversationUnavailable: Bool { selectedID != nil && selectedConversation == nil }
+    var selectedConversationUnavailable: Bool { selectedID.map { !loadedConversationIDs.contains($0) } ?? false }
+    var hasSelectedConversation: Bool { selectedID.map(loadedConversationIDs.contains) ?? false }
+    var selectedConversationHasMessages: Bool { selectedID.map(nonEmptyConversationIDs.contains) ?? false }
     var selectedConversationTitle: String {
         selectedConversation?.title ?? summaries.first { $0.id == selectedID }?.title ?? "Amber"
     }
@@ -711,7 +727,7 @@ final class DesktopWorkspace {
                     guard let self, self.generationID == token else { return }
                     self.apply(run.drain())
                     // Coalesce token bursts into ~30 layout passes a second; drain() returns everything that arrived.
-                    try? await Task.sleep(for: .milliseconds(33))
+                    try? await Task.sleep(for: .milliseconds(self.transcriptIsUserScrolling ? 250 : 33))
                 }
             }
         } catch {

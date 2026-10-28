@@ -47,52 +47,65 @@ private struct DesktopMarkdownBlocks: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                let tail = streaming && index == blocks.count - 1
-                switch block {
-                case .paragraph(let text):
-                    DesktopMathTextView(source: text, fontSize: fontSize)
-                        .desktopStreamingText(text, active: tail)
-                        .textSelection(.enabled)
-                        .lineSpacing(fontSize * 0.5)
-                        .foregroundStyle(DesktopTheme.ink)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                case .heading(let text, let level):
-                    // Editorial headings: Songti serif, regardless of body font choice.
-                    DesktopMathTextView(source: text, fontSize: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2))
-                        .font(DesktopTheme.serif(size: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2), weight: level <= 2 ? .semibold : .medium))
-                        .foregroundStyle(DesktopTheme.ink)
-                        .textSelection(.enabled)
-                        .padding(.top, level <= 2 ? 12 : 6)
-                case .code(let text, let language):
-                    DesktopCodeBlock(text: text, language: language, fontSize: fontSize)
-                case .math(let source):
-                    ScrollView(.horizontal) {
-                        DesktopMathBlock(source: source, fontSize: fontSize + 3)
-                            .fixedSize()
-                            .padding(.vertical, 4)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                case .table(let rows, let alignments):
-                    DesktopMarkdownTable(rows: rows, alignments: alignments, fontFamily: fontFamily, fontSize: fontSize)
-                case .list(let items):
-                    DesktopMarkdownList(items: items, fontFamily: fontFamily, fontSize: fontSize, streaming: tail)
-                case .quote(let blocks):
-                    DesktopMarkdownBlocks(blocks: blocks, fontFamily: .serif, fontSize: fontSize + 1)
-                        .foregroundStyle(DesktopTheme.inkSecondary)
-                        .padding(.leading, 18)
-                        .padding(.vertical, 2)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(DesktopTheme.accent.opacity(0.55)).frame(width: 1.5)
-                        }
-                case .divider:
-                    HStack(spacing: 10) {
-                        Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
-                        Text("·  ·  ·").font(DesktopTheme.serif(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-                        Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
-                    }
-                    .padding(.vertical, 8)
-                }
+                // Settled blocks compare equal and keep their rendering while the reply grows; only the tail changes.
+                DesktopMarkdownBlockView(block: block, fontFamily: fontFamily, fontSize: fontSize,
+                    tail: streaming && index == blocks.count - 1)
+                    .equatable()
             }
+        }
+    }
+}
+
+private struct DesktopMarkdownBlockView: View, Equatable {
+    let block: DesktopMarkdownBlock
+    let fontFamily: DesktopMessageFontFamily
+    let fontSize: Double
+    let tail: Bool
+
+    var body: some View {
+        switch block {
+        case .paragraph(let text):
+            DesktopMathTextView(source: text, fontSize: fontSize)
+                .desktopStreamingText(text, active: tail)
+                .textSelection(.enabled)
+                .lineSpacing(fontSize * 0.5)
+                .foregroundStyle(DesktopTheme.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .heading(let text, let level):
+            // Editorial headings: Songti serif, regardless of body font choice.
+            DesktopMathTextView(source: text, fontSize: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2))
+                .font(DesktopTheme.serif(size: fontSize + (level == 1 ? 8 : level == 2 ? 5 : 2), weight: level <= 2 ? .semibold : .medium))
+                .foregroundStyle(DesktopTheme.ink)
+                .textSelection(.enabled)
+                .padding(.top, level <= 2 ? 12 : 6)
+        case .code(let text, let language):
+            DesktopCodeBlock(text: text, language: language, fontSize: fontSize)
+        case .math(let source):
+            ScrollView(.horizontal) {
+                DesktopMathBlock(source: source, fontSize: fontSize + 3)
+                    .fixedSize()
+                    .padding(.vertical, 4)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        case .table(let rows, let alignments):
+            DesktopMarkdownTable(rows: rows, alignments: alignments, fontFamily: fontFamily, fontSize: fontSize)
+        case .list(let items):
+            DesktopMarkdownList(items: items, fontFamily: fontFamily, fontSize: fontSize, streaming: tail)
+        case .quote(let blocks):
+            DesktopMarkdownBlocks(blocks: blocks, fontFamily: .serif, fontSize: fontSize + 1)
+                .foregroundStyle(DesktopTheme.inkSecondary)
+                .padding(.leading, 18)
+                .padding(.vertical, 2)
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(DesktopTheme.accent.opacity(0.55)).frame(width: 1.5)
+                }
+        case .divider:
+            HStack(spacing: 10) {
+                Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
+                Text("·  ·  ·").font(DesktopTheme.serif(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
+            }
+            .padding(.vertical, 8)
         }
     }
 }

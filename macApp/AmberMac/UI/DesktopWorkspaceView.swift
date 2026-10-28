@@ -66,9 +66,9 @@ struct DesktopWorkspaceView: View {
                     } actions: {
                         Button("重新读取") { workspace.reloadSelectedConversation() }
                     }
-                } else if let conversation = workspace.selectedConversation, !conversation.messages.isEmpty {
-                    DesktopTranscript(conversation: conversation, workspace: workspace, focusRequest: transcriptFocus, findRequest: findRequest)
-                        .id(conversation.id)
+                } else if workspace.selectedConversationHasMessages {
+                    DesktopSelectedTranscript(workspace: workspace, focusRequest: transcriptFocus, findRequest: findRequest)
+                        .id(workspace.selectedID)
                         .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity))
                 } else {
                     welcome
@@ -314,7 +314,7 @@ struct DesktopWorkspaceView: View {
                     Button("导入会话…", systemImage: "square.and.arrow.down") { DesktopFileActions.importConversation(workspace) }
                         .disabled(workspace.isLoading)
                     Menu("导出当前会话", systemImage: "square.and.arrow.up") { exportActions }
-                        .disabled(workspace.selectedConversation == nil)
+                        .disabled(!workspace.hasSelectedConversation)
                 } label: {
                     Image(systemName: "ellipsis.circle").frame(width: 30, height: 30)
                 }
@@ -498,14 +498,14 @@ struct DesktopWorkspaceView: View {
             }
             if !inspectorDocked, !workspace.showsTaskBoard {
             Button { insightsPresented.toggle() } label: { Image(systemName: "text.bubble") }
-                .disabled(workspace.selectedConversation == nil || workspace.isLoading)
+                .disabled(!workspace.hasSelectedConversation || workspace.isLoading)
                 .help("上下文与回顾")
                 .accessibilityLabel("上下文与回顾")
                 .popover(isPresented: $insightsPresented, arrowEdge: .bottom) {
                     DesktopConversationInsightsView(workspace: workspace)
                 }
             Button { shelfPresented.toggle() } label: { Image(systemName: "pin") }
-                .disabled(workspace.selectedConversation == nil || workspace.isLoading)
+                .disabled(!workspace.hasSelectedConversation || workspace.isLoading)
                 .help("产物架")
                 .accessibilityLabel("产物架")
                 .popover(isPresented: $shelfPresented, arrowEdge: .bottom) {
@@ -674,6 +674,19 @@ enum DesktopFileActions {
         panel.nameFieldStringValue = "\(String(name.prefix(80))).\(format.fileExtension)"
         if panel.runModal() == .OK, let url = panel.url {
             workspace.exportReadableConversation(to: url, format: format)
+        }
+    }
+}
+
+/// Only this view reads the live conversation, so streaming chunks re-render the transcript, not the window around it.
+private struct DesktopSelectedTranscript: View {
+    @Bindable var workspace: DesktopWorkspace
+    let focusRequest: DesktopTranscriptFocus?
+    let findRequest: Int
+
+    var body: some View {
+        if let conversation = workspace.selectedConversation {
+            DesktopTranscript(conversation: conversation, workspace: workspace, focusRequest: focusRequest, findRequest: findRequest)
         }
     }
 }

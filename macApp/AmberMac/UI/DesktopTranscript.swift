@@ -45,27 +45,58 @@ struct DesktopTranscript: View {
     /// The one writer of the transcript offset while following (iOS「仲裁者」): see DesktopScrollFollower.
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var follower = DesktopScrollFollower()
+    /// Rows far outside the viewport render as fixed-height placeholders using their last exact measurement, so a
+    /// streaming snapshot only lays out the rows near the reader (lazy-stack estimates would make the bottom jump).
+    @State private var rowHeights = DesktopRowHeights()
+    @State private var reasoningExpansion = DesktopReasoningExpansion()
+    @State private var liveRows: DesktopLiveRows?
+    @State private var layoutWidth = 0
+    @State private var visibleRect = CGRect.zero
 
     var body: some View {
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
             if findPresented { findBar }
             ScrollView {
-                DesktopTranscriptStack(eager: conversation.messages.count <= 120) {
-                    ForEach(conversation.messages, id: \.rowIdentity) { message in
+                DesktopTranscriptStack(eager: windowed) {
+                    ForEach(Array(conversation.messages.enumerated()), id: \.element.rowIdentity) { index, message in
+                        let following = conversation.messages.count - index - 1
+                        let highlighted = findPresented && find.currentMessageID == message.id
+                        let layout = rowLayout(message)
+                        // A streaming reply out of the window keeps its last height until the reader comes back
+                        // (growth below the viewport is invisible), so history reading costs no per-chunk layout.
+                        // Lazy stacks virtualize themselves; image rows reload (and change height) when remounted.
+                        if windowed, message.images.isEmpty, !highlighted, !(liveRows?.contains(index) ?? true),
+                           let height = message.state == .streaming ? rowHeights.anyHeight(message.rowIdentity)
+                            : rowHeights.height(message.rowIdentity, layout: layout) {
+                            Color.clear.frame(maxWidth: .infinity).frame(height: height)
+                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.contentSpace)) } action: {
+                                    rowHeights.place(message.rowIdentity, $0)
+                                }
+                                .id(message.rowIdentity)
+                        } else {
                         DesktopMessageRow(message: message, conversationID: conversation.id, settings: workspace.settings,
-                            speech: workspace.speech, shelf: workspace.artifactShelf, mutationsDisabled: mutationsDisabled,
-                            highlighted: findPresented && find.currentMessageID == message.id,
+                            speech: workspace.speech, shelf: workspace.artifactShelf, reasoningExpansion: reasoningExpansion,
+                            mutationsDisabled: mutationsDisabled, highlighted: highlighted, followingCount: following,
                             onExport: { DesktopFileActions.exportMessage(workspace, messageID: message.id) },
                             onEdit: { editingMessage = MessageEditDraft(id: message.id, ownerID: conversation.id,
-                                text: message.textForEditing, followingCount: followingCount(after: message.id)) },
-                            onRegenerate: { requestRegeneration(message) },
+                                text: message.textForEditing, followingCount: following) },
+                            onRegenerate: { requestRegeneration(message, followingCount: following) },
                             onDelete: { confirmation = .delete(message.id, ownerID: conversation.id, variants: message.variantCount) },
                             onSelectVariant: { workspace.selectVariant(message.id, index: $0) })
+                            // Each snapshot rebuilds these closures; without this every history row re-renders per chunk.
+                            .equatable()
                             .modifier(DesktopRiseIn(enabled: message.id == conversation.messages.last?.id
                                 && message.state == .streaming && message.text.isEmpty))
                             .modifier(DesktopStreamingEdge(active: message.state == .streaming))
+                            .onGeometryChange(for: DesktopRowHeights.Measurement.self) {
+                                .init(layout: layout, frame: $0.frame(in: .named(Self.contentSpace)))
+                            } action: {
+                                // A height change moves every row below it: the window must follow the real layout.
+                                if rowHeights.record(message.rowIdentity, $0) { repickLiveRows() }
+                            }
                             .id(message.rowIdentity)
+                        }
                     }
                     if !mutationsDisabled, let last = conversation.messages.last, last.role == .assistant,
                        last.state == .cancelled || last.state == .failed {
@@ -75,6 +106,7 @@ struct DesktopTranscript: View {
                     }
                     Color.clear.frame(height: 1).id("conversation-bottom")
                 }
+                .coordinateSpace(.named(Self.contentSpace))
                 .frame(maxWidth: DesktopTheme.contentWidth)
                 .padding(.horizontal, 24)
                 .padding(.top, 32)
@@ -96,17 +128,29 @@ struct DesktopTranscript: View {
                     following: followsBottom && workspace.settings.automaticallyFollowGeneration && !userScrolling,
                     streaming: workspace.isSelectedConversationGenerating) { position.scrollTo(y: $0) }
             }
+            .onScrollGeometryChange(for: DesktopLiveRows.Viewport.self) { geometry in
+                .init(visible: geometry.visibleRect, width: Int(geometry.containerSize.width.rounded()))
+            } action: { _, viewport in
+                if layoutWidth != viewport.width { layoutWidth = viewport.width; liveRows = nil; return }
+                visibleRect = viewport.visible
+                updateLiveRows(viewport.visible)
+            }
             .onScrollPhaseChange { _, phase in
                 userScrolling = phase == .interacting || phase == .decelerating
+                workspace.transcriptIsUserScrolling = userScrolling
                 if phase == .interacting { followsBottom = false; follower.stop() }
                 if phase == .idle, nearBottom { followsBottom = workspace.settings.automaticallyFollowGeneration }
             }
             .onChange(of: conversation.messages.count) {
+                // Row indices shifted: the window must be re-picked now, not on the next scroll.
+                repickLiveRows()
                 if followsBottom, workspace.settings.automaticallyFollowGeneration {
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
                 }
             }
             .onChange(of: conversation.id, initial: true) {
+                rowHeights = DesktopRowHeights()
+                liveRows = nil
                 if let focusRequest, focusRequest.conversationID == conversation.id {
                     followsBottom = false
                     proxy.scrollTo(rowID(for: focusRequest.messageID), anchor: .center)
@@ -129,6 +173,8 @@ struct DesktopTranscript: View {
                 if !nearBottom {
                     Button {
                         followsBottom = workspace.settings.automaticallyFollowGeneration
+                        // Render everything for the jump: a placeholder streaming reply would end the scroll mid-reply.
+                        liveRows = nil
                         withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
                     } label: {
                         Image(systemName: "arrow.down").font(.system(size: 13, weight: .medium))
@@ -154,6 +200,7 @@ struct DesktopTranscript: View {
         }
         .onChange(of: findQuery) { updateFind() }
         .onChange(of: conversation.messages) { if findPresented { updateFind() } }
+        .onDisappear { workspace.transcriptIsUserScrolling = false }
         .accessibilityIdentifier("conversation-transcript")
         .sheet(item: $editingMessage) { draft in
             DesktopMessageEditor(initialText: draft.text, followingCount: draft.followingCount,
@@ -226,6 +273,32 @@ struct DesktopTranscript: View {
         .padding(.top, 12)
     }
 
+    private func rowLayout(_ message: DesktopMessage) -> DesktopRowHeights.Layout {
+        let settings = workspace.settings
+        return .init(message: message, width: layoutWidth, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize,
+            reasoningExpanded: reasoningExpansion[message.id], autoExpandThinking: settings.autoExpandThinking,
+            reasoningExpandedByDefault: settings.reasoningExpandedByDefault)
+    }
+
+    /// Re-picks the live rows only once the viewport nears the edge of the current window, so scrolling within it
+    /// never re-evaluates the transcript.
+    private func updateLiveRows(_ visible: CGRect) {
+        guard windowed else { if liveRows != nil { liveRows = nil }; return }
+        if let liveRows, liveRows.covers(visible) { return }
+        let next = DesktopLiveRows(visible: visible, rowIDs: conversation.messages.map(\.rowIdentity), heights: rowHeights)
+        if next != liveRows { liveRows = next }
+    }
+
+    private func repickLiveRows() {
+        guard windowed, liveRows != nil else { return }
+        let next = DesktopLiveRows(visible: visibleRect, rowIDs: conversation.messages.map(\.rowIdentity), heights: rowHeights)
+        if next != liveRows { liveRows = next }
+    }
+
+    /// Normal conversations use the eager stack (exact heights, stable bottom) plus windowing; long ones stay lazy.
+    private var windowed: Bool { conversation.messages.count <= 120 }
+    private static let contentSpace = "desktop-transcript-content"
+
     private func updateFind() { find.update(findQuery, messages: conversation.messages) }
 
     private func closeFind() {
@@ -242,13 +315,7 @@ struct DesktopTranscript: View {
         withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(rowID(for: messageID), anchor: .center) }
     }
 
-    private func followingCount(after messageID: UUID) -> Int {
-        guard let index = conversation.messages.firstIndex(where: { $0.id == messageID }) else { return 0 }
-        return conversation.messages.count - index - 1
-    }
-
-    private func requestRegeneration(_ message: DesktopMessage) {
-        let count = followingCount(after: message.id)
+    private func requestRegeneration(_ message: DesktopMessage, followingCount count: Int) {
         if count > 0 { confirmation = .regenerate(message.id, ownerID: conversation.id, followingCount: count) }
         else { workspace.regenerate(message.id) }
     }
@@ -272,14 +339,18 @@ struct DesktopTranscript: View {
     }
 }
 
-private struct DesktopMessageRow: View {
+/// Equatable over the values the row renders and its actions read; the closures are rebuilt from the same values,
+/// so a row whose inputs are unchanged keeps its previous closures. Observable settings/shelf/speech track themselves.
+private struct DesktopMessageRow: View, Equatable {
     let message: DesktopMessage
     let conversationID: UUID
     let settings: DesktopSettings
     let speech: DesktopSpeechPlayer
     let shelf: DesktopArtifactShelf
+    let reasoningExpansion: DesktopReasoningExpansion
     let mutationsDisabled: Bool
     let highlighted: Bool
+    let followingCount: Int
     let onExport: () -> Void
     let onEdit: () -> Void
     let onRegenerate: () -> Void
@@ -293,13 +364,26 @@ private struct DesktopMessageRow: View {
     @State private var shareAnchor = DesktopShareAnchor()
 
     init(message: DesktopMessage, conversationID: UUID, settings: DesktopSettings, speech: DesktopSpeechPlayer,
-         shelf: DesktopArtifactShelf, mutationsDisabled: Bool, highlighted: Bool, onExport: @escaping () -> Void,
+         shelf: DesktopArtifactShelf, reasoningExpansion: DesktopReasoningExpansion,
+         mutationsDisabled: Bool, highlighted: Bool, followingCount: Int, onExport: @escaping () -> Void,
          onEdit: @escaping () -> Void, onRegenerate: @escaping () -> Void,
          onDelete: @escaping () -> Void, onSelectVariant: @escaping (Int) -> Void) {
         self.message = message; self.conversationID = conversationID; self.settings = settings; self.speech = speech
-        self.shelf = shelf; self.mutationsDisabled = mutationsDisabled; self.highlighted = highlighted; self.onExport = onExport
+        self.shelf = shelf; self.reasoningExpansion = reasoningExpansion
+        self.mutationsDisabled = mutationsDisabled; self.highlighted = highlighted
+        self.followingCount = followingCount; self.onExport = onExport
         self.onEdit = onEdit; self.onRegenerate = onRegenerate; self.onDelete = onDelete
         self.onSelectVariant = onSelectVariant
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        MainActor.assumeIsolated {
+            lhs.message == rhs.message && lhs.conversationID == rhs.conversationID
+                && lhs.mutationsDisabled == rhs.mutationsDisabled && lhs.highlighted == rhs.highlighted
+                && lhs.followingCount == rhs.followingCount
+                && lhs.settings === rhs.settings && lhs.speech === rhs.speech && lhs.shelf === rhs.shelf
+                && lhs.reasoningExpansion === rhs.reasoningExpansion
+        }
     }
 
     private var roleTitle: String {
@@ -334,7 +418,8 @@ private struct DesktopMessageRow: View {
                     thinking: message.state == .streaming && message.text.isEmpty,
                     streaming: message.state == .streaming,
                     autoExpand: settings.autoExpandThinking, defaultExpanded: settings.reasoningExpandedByDefault,
-                    font: settings.messageFontFamily.swiftUIFont(size: max(12, settings.messageFontSize - 2)))
+                    font: settings.messageFontFamily.swiftUIFont(size: max(12, settings.messageFontSize - 2)),
+                    expanded: Binding(get: { reasoningExpansion[message.id] }, set: { reasoningExpansion[message.id] = $0 }))
             }
             if message.role == .user, !message.text.isEmpty {
                 HStack(alignment: .bottom, spacing: 8) {
@@ -489,4 +574,92 @@ extension DesktopMessage {
     /// A regenerated reply is a new message ID but the same slot (same variant group): keep its row, so the
     /// version switcher and surrounding layout never get torn down and re-inserted mid-stream.
     var rowIdentity: UUID { variantIDs.first ?? id }
+}
+
+/// Per-message thinking-card choice (nil = follow settings), kept outside the row so placeholders don't reset it.
+@MainActor @Observable final class DesktopReasoningExpansion {
+    private var values: [UUID: Bool] = [:]
+    subscript(id: UUID) -> Bool? {
+        get { values[id] }
+        set { values[id] = newValue }
+    }
+}
+
+/// Last exact height of each row, valid only for the inputs it was measured with. Reference type held in @State:
+/// recording a measurement must not invalidate the transcript (that would turn layout into a feedback loop).
+@MainActor final class DesktopRowHeights {
+    struct Layout: Equatable {
+        let message: DesktopMessage
+        let width: Int
+        let fontFamily: DesktopMessageFontFamily
+        let fontSize: Double
+        let reasoningExpanded: Bool?
+        let autoExpandThinking: Bool
+        let reasoningExpandedByDefault: Bool
+    }
+
+    struct Measurement: Equatable {
+        let layout: Layout
+        /// In the transcript content's own coordinate space, so scrolling never changes it.
+        let frame: CGRect
+    }
+
+    private var values: [UUID: Measurement] = [:]
+    private var frames: [UUID: CGRect] = [:]
+
+    /// Returns true when the row's height changed, i.e. everything below it moved.
+    @discardableResult
+    func record(_ rowID: UUID, _ measurement: Measurement) -> Bool {
+        guard measurement.frame.height > 0 else { return false }
+        let previous = values[rowID]?.frame.height
+        values[rowID] = measurement
+        frames[rowID] = measurement.frame
+        return previous.map { abs($0 - measurement.frame.height) > 0.5 } ?? true
+    }
+
+    /// Placeholders keep reporting where they are, so positions stay real after rows above them change.
+    func place(_ rowID: UUID, _ frame: CGRect) { frames[rowID] = frame }
+
+    func height(_ rowID: UUID, layout: Layout) -> CGFloat? {
+        guard let value = values[rowID], value.layout == layout else { return nil }
+        return value.frame.height
+    }
+
+    /// Last height regardless of inputs (a streaming reply out of view keeps it until the reader returns).
+    func anyHeight(_ rowID: UUID) -> CGFloat? { values[rowID]?.frame.height }
+
+    func frame(_ rowID: UUID) -> CGRect? { frames[rowID] }
+}
+
+/// The rows rendered for real: every row whose measured frame lies within 1.5 viewports of what the reader sees,
+/// plus any row not laid out yet. The window is re-picked when the viewport nears its edge or a row's height changes.
+struct DesktopLiveRows: Equatable {
+    struct Viewport: Equatable {
+        let visible: CGRect
+        let width: Int
+    }
+
+    /// The scroll view's content starts with the transcript's 32pt top padding.
+    private static let topInset: CGFloat = 32
+    private let window: ClosedRange<CGFloat>
+    private let rows: Set<Int>
+
+    @MainActor init(visible: CGRect, rowIDs: [UUID], heights: DesktopRowHeights) {
+        let margin = max(visible.height, 1) * 1.5
+        window = (visible.minY - margin)...(visible.maxY + margin)
+        var rows = Set<Int>()
+        for (index, id) in rowIDs.enumerated() {
+            guard let frame = heights.frame(id) else { rows.insert(index); continue }
+            let top = frame.minY + Self.topInset, bottom = frame.maxY + Self.topInset
+            if bottom >= window.lowerBound, top <= window.upperBound { rows.insert(index) }
+        }
+        self.rows = rows
+    }
+
+    func contains(_ index: Int) -> Bool { rows.contains(index) }
+
+    func covers(_ visible: CGRect) -> Bool {
+        let slack = visible.height * 0.5
+        return visible.minY - slack >= window.lowerBound && visible.maxY + slack <= window.upperBound
+    }
 }
