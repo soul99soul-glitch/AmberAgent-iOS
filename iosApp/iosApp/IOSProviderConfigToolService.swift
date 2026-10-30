@@ -129,14 +129,8 @@ final class IOSProviderConfigToolService {
             !baseUrl.isEmpty else {
             return fail("provider_config_create", "需要 base_url。")
         }
-        guard let url = URL(string: baseUrl), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
-            return fail("provider_config_create", "base_url 必须是合法的 http(s) URL。")
-        }
-        let host = (url.host ?? "").lowercased()
-        let isLocal = host == "localhost" || host == "127.0.0.1" || host.hasPrefix("192.168.")
-        if scheme != "https", !isLocal {
-            return fail("provider_config_create", "非本机 base_url 必须使用 https。")
+        guard IOSProviderEndpointPolicy.isValidBaseURL(baseUrl) else {
+            return fail("provider_config_create", "base_url 必须是带有主机的合法 https URL；http 仅支持 IP 地址。")
         }
         let path = (args["chat_completions_path"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -224,12 +218,8 @@ final class IOSProviderConfigToolService {
 
         var willChangeEndpoint = false
         if let baseUrl, !baseUrl.isEmpty {
-            guard let url = URL(string: baseUrl), let scheme = url.scheme?.lowercased(),
-                  scheme == "https" || scheme == "http" else {
-                return fail("provider_config_apply", "base_url 必须是合法的 http(s) URL。")
-            }
-            if scheme == "http", url.host != "localhost", url.host != "127.0.0.1" {
-                return fail("provider_config_apply", "非本机 base_url 必须使用 https。")
+            guard IOSProviderEndpointPolicy.isValidBaseURL(baseUrl) else {
+                return fail("provider_config_apply", "base_url 必须是带有主机的合法 https URL；http 仅支持 IP 地址。")
             }
             willChangeEndpoint = true
         }

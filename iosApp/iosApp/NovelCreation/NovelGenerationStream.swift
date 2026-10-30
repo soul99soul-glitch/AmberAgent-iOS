@@ -233,9 +233,17 @@ extension DefaultNovelCreation {
             throw NovelError.idempotencyConflict(request.operationID)
         }
 
+        return try await observeExistingRun(run, projectID: request.projectID, document: document)
+    }
+
+    func observeExistingRun(
+        _ run: NovelActiveRunRecord,
+        projectID: NovelProjectID,
+        document: NovelProjectDocumentV1
+    ) async throws -> NovelRun {
         if run.status == .running {
             guard generationRuntimes[run.id] != nil else {
-                throw NovelError.projectBusy(request.projectID)
+                throw NovelError.projectBusy(projectID)
             }
             return attachSubscriber(to: run)
         }
@@ -243,7 +251,7 @@ extension DefaultNovelCreation {
         let pair = AsyncStream<NovelRunEvent>.makeStream(bufferingPolicy: .unbounded)
         pair.continuation.yield(.started(NovelRunReceipt(
             runID: run.id,
-            projectID: request.projectID,
+            projectID: projectID,
             branchID: run.branchID,
             receiptID: run.receiptID
         )))

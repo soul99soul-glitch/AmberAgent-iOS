@@ -12,7 +12,7 @@ import kotlin.uuid.Uuid
  * P1-c: fork 纯函数（KMP 共用，iOS/Android 同语义）。
  *
  * - `forkTurns = "none"`：空 messageNodes（新会话只带系统上下文与初始信封）。
- * - `forkTurns = "all"`：完整复制 messageNodes。
+ * - `forkTurns = "all"`：复制全部历史，并裁掉末尾未完成的工具消息。
  * - `forkTurns = "N"`（正整数）：保留**最近 N 个用户轮次**——一个 user 消息节点
  *   与其后连续的 assistant 节点序列算一轮。
  * - 变体折叠：每个 MessageNode 只保留 `selectIndex` 当前选中的消息（messages
@@ -34,7 +34,7 @@ fun forkConversation(
     }
     val messages = when (forkTurns) {
         "none" -> emptyList()
-        "all" -> folded
+        "all" -> trimUnsafeTrailingToolMessages(folded)
         else -> {
             val turns = forkTurns.toIntOrNull()
                 ?: throw IllegalArgumentException("fork_turns 必须是 none/all/正整数，实际: $forkTurns")

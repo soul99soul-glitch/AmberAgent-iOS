@@ -20,6 +20,20 @@ final class IOSPhoneAutomationRequestPolicyTests: XCTestCase {
         XCTAssertTrue(twice.first?.toText().contains("wrong feedback") == true)
     }
 
+    func testPresentationGuidanceOnlyUsesAvailableToolsAndSurvivesCoalescedCleanup() {
+        let tools = IOSPhoneControlToolCatalog.declarations
+        let message = F.userMessage("盯着内容变化，抓到后分析")
+        let newRequest = IOSPhoneAutomationRequestPolicy.requestMessages([message], tools: tools)
+        XCTAssertTrue(newRequest.first?.toText().contains(IOSPhoneAutomationRequestPolicy.presentationPrompt) == true)
+        let merged = ChatRuntimeContextBuilder.coalescingSystemMessages(newRequest)
+        let frozen = IOSPhoneAutomationRequestPolicy.requestMessages(merged,
+            tools: tools.filter { !["phone_return_to_amber", "phone_clipboard", "phone_system"].contains($0.name) })
+        XCTAssertFalse(frozen.contains { $0.toText().contains("phone_return_to_amber") })
+        XCTAssertTrue(frozen.first?.toText().contains(IOSPhoneAutomationRequestPolicy.planningPrompt) == true)
+        let final = IOSPhoneAutomationRequestPolicy.requestMessages(merged, tools: [])
+        XCTAssertEqual(final.map(\.id), [message.id])
+    }
+
     func testFrozenCatalogWithoutFlowAndFinalSummaryRemoveStaleGuidance() {
         let old = PromptTranscript.shared.sectionMessage(name: "phone_execution", text: "old policy")
         let user = F.userMessage("hello")

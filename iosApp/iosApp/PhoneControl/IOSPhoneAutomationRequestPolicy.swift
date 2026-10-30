@@ -14,6 +14,13 @@ enum IOSPhoneAutomationRequestPolicy {
     - Reuse the fresh tree returned by an action; do not add phone_observe unless fresh evidence is missing. Do not repeat task planning or progress narration between routine buttons. Preserve authorization, unknown-result stops and completed-step receipts.
     """
 
+    static let presentationPrompt = """
+    - Keep the user informed at meaningful milestones. After capturing the requested content or detecting a relevant change, use phone_return_to_amber before substantial analysis, writing or presenting results. Write a concise assistant update with the finding and next step, then continue the requested work in the conversation. Do this even when the user is not watching; do not leave the useful output hidden behind another app.
+    - For monitoring, capture the relevant evidence, return to Amber to process and show it, then launch the target app again only when another observation is needed. Choose app switches at task boundaries, not between routine taps. Respect an explicit user request to leave a target app visible: finish phone control with phone_stop(return_to_amber=false) so automatic terminal return will not override it. Do not claim indefinite monitoring: this is a local run subject to iOS background limits.
+    - phone_return_to_amber verifies foreground and opens this run's conversation. Its activation receipt alone is not proof that Amber is visible. After a switch, old refs and screenshots are invalid; use the fresh observation from launch before acting again. An unknown result stops all further phone actions, including app switching.
+    - Use phone_system to inspect system UI or return Home when the task needs it; system permission buttons still require the user's authorization. Read copied text with phone_clipboard only when needed for this task, with Amber in the foreground; a missing value can mean access was denied, not an empty clipboard.
+    """
+
     static func isPlanningMessage(_ message: UIMessage) -> Bool {
         message.role == .system && message.parts.contains {
             IosToolOutputJsonBridge.shared.metadataString(part: $0, key: "amber_prompt_section") == sectionName
@@ -23,7 +30,10 @@ enum IOSPhoneAutomationRequestPolicy {
     static func requestMessages(_ messages: [UIMessage], tools: [Tool]) -> [UIMessage] {
         let retained = messages.compactMap(removingPlanningMessage)
         guard tools.contains(where: { $0.name == "phone_run_flow" }) else { return retained }
-        return [PromptTranscript.shared.sectionMessage(name: sectionName, text: planningPrompt)] + retained
+        let names = Set(tools.map(\.name))
+        let hasPresentationTools = Set(["phone_return_to_amber", "phone_clipboard", "phone_system"]).isSubset(of: names)
+        let text = planningPrompt + (hasPresentationTools ? "\n" + presentationPrompt : "")
+        return [PromptTranscript.shared.sectionMessage(name: sectionName, text: text)] + retained
     }
 
     private static func removingPlanningMessage(_ message: UIMessage) -> UIMessage? {
@@ -36,9 +46,12 @@ enum IOSPhoneAutomationRequestPolicy {
             }
             // Legacy endpoints coalesce system sections before handoff and lose
             // section metadata. Remove only our exact text from that merged part.
-            guard let text = part as? UIMessagePart.Text, text.text.contains(planningPrompt) else { return part }
+            guard let text = part as? UIMessagePart.Text else { return part }
+            let retained = [planningPrompt, presentationPrompt].reduce(text.text) {
+                $0.replacingOccurrences(of: $1, with: "")
+            }
+            guard retained != text.text else { return part }
             changed = true
-            let retained = text.text.replacingOccurrences(of: planningPrompt, with: "")
             return retained.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? nil : PromptTranscript.shared.doCopyText(part: text, text: retained)
         }

@@ -10,10 +10,14 @@ extension NovelSessionViewModel {
 
     func collectionGranularity(for candidateID: NovelCandidateID) -> NovelGenerationGranularity {
         guard let project = workspace.projectSnapshot else { return granularity }
+        let candidate = project.candidates.first(where: { $0.id == candidateID })
+        if let generationGranularity = candidate?.generationGranularity {
+            return generationGranularity
+        }
         if let direct = project.activeRuns.first(where: { $0.candidateID == candidateID })?.granularity {
             return direct
         }
-        guard let candidate = project.candidates.first(where: { $0.id == candidateID }) else {
+        guard let candidate else {
             return project.project.lastGenerationGranularity
         }
         let sourceRunID = project.sessions

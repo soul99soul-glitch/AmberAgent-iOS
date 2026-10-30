@@ -37,6 +37,7 @@ struct AppShell: View {
     @State private var staleBackgroundOutcomeUnknownRunIds = Set<String>()
     @State private var isResolvingThemeTryOn = false
     @State private var themeTryOnError: String?
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
     @AppStorage(IOSAppleIntegrationPreferenceKeys.completionNotificationsEnabled)
@@ -160,32 +161,9 @@ struct AppShell: View {
     }
 
     var body: some View {
-        NavigationStack(path: Binding(get: { rootRouter.path }, set: { rootRouter.path = $0 })) {
-            ConversationsView(
-                sharedSettings: sharedSettings,
-                chatViewModel: chatViewModel,
-                councilChatViewModel: councilChatViewModel,
-                novelCreationViewModel: novelCreationViewModel
-            )
-                .withAppDestinations(
-                    settingsStore: settingsStore,
-                    providerRegistry: providerRegistry,
-                    sharedSettings: sharedSettings,
-                    conversationStore: conversationStore,
-                    mcpConfigStore: mcpConfigStore,
-                    permissionStore: permissionStore,
-                    documentStore: documentAccessStore,
-                    workspaceStore: workspaceStore,
-                    systemPermissionCoordinator: systemPermissionCoordinator,
-                    localToolExecutor: localToolExecutor,
-                    chatViewModel: chatViewModel,
-                    councilChatViewModel: councilChatViewModel,
-                    novelCreationViewModel: novelCreationViewModel,
-                    novelSessionViewModel: novelSessionViewModel,
-                    novelCreationErrorMessage: novelCreationErrorMessage,
-                    storeCoordinator: storeCoordinator,
-                    router: rootRouter
-                )
+        rootNavigation
+        .onChange(of: usesSplitLayout, initial: true) { _, split in
+            rootRouter.chatIsDetailRoot = split
         }
         .sheet(item: Binding(get: { rootRouter.presentedSheet }, set: { rootRouter.presentedSheet = $0 })) { sheet in
             sheetView(sheet)
@@ -252,6 +230,9 @@ struct AppShell: View {
             handleScenePhaseChange(phase)
             if phase == .active {
                 Task { await storeCoordinator.refresh() }
+                if didBootstrapConversations {
+                    Task { await IOSWakeScheduler.shared.applicationBecameActive() }
+                }
                 IOSMemoryExtractionCoordinator.shared.resume()
                 IOSMemoryConsolidationCoordinator.shared.resume()
             }
@@ -291,98 +272,7 @@ struct AppShell: View {
                 )
             }
         }
-        .task {
-            // Attach the state-backed instance. AppShell.init may be re-evaluated
-            // while SwiftUI preserves the existing @State object.
-            AgentActivityControlCenter.shared.attach(chatViewModel: chatViewModel)
-            WatchTaskCoordinator.shared.attach(
-                chatViewModel: chatViewModel,
-                sharedSettings: sharedSettings,
-                reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjections
-            )
-            // 启动时引导会话存储：加载历史摘要，选最近一条或新建。
-            // run recovery 不是幂等操作；在任务的第一个 await 前占位，避免 .task
-            // 重启时把本进程正在运行的前台 run 改写为 interrupted。
-            if !didRunStartupRecovery {
-                didRunStartupRecovery = true
-                let interruptedCouncilTaskIds = IOSAdvancedTaskStore.shared.markInterruptedCouncilTasks()
-                IOSAdvancedTaskStore.shared.markInterruptedRemoteCommandTasks()
-                IOSAdvancedTaskStore.shared.markInterruptedEmbeddedIshTasks()
-                CouncilRoomArchiveStore.shared.markInterrupted(taskIds: interruptedCouncilTaskIds)
-                councilChatViewModel.recoverInterruptedTasks(interruptedCouncilTaskIds)
-                await councilChatViewModel.reconcileDurableRuns()
-                await IOSMiniAppAIRunRecovery.reconcile()
-                let backgroundRunIds = IOSChatBackgroundGenerationCoordinator.shared.restorableRunIds
-                let backgroundRecoveryExclusions = IOSChatBackgroundGenerationCoordinator.shared
-                    .startupRecoveryExclusionRunIds
-                let recoveredPendingApprovals = await IOSRunRecovery.recoverPendingApprovalDescriptors(
-                    excludingRunIds: backgroundRecoveryExclusions
-                )
-                let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
-                let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
-                await conversationStore.bootstrap()
-                IOSBuiltinSkills.installIfMissing(enableWith: sharedSettings)
-                await chatViewModel.reconcilePendingMiniAppMutationsAfterConversationBootstrap()
-                didBootstrapConversations = true
-
-                // A failed approval-owner query makes it unsafe to classify any
-                // unfinished run: an awaiting approval could otherwise be swept
-                // as an ordinary interruption with its tool output still empty.
-                if let recoveredPendingApprovals {
-                    await chatViewModel.terminateRecoveredPendingApprovals(recoveredPendingApprovals)
-                    let pendingApprovalRunIds = Set(recoveredPendingApprovals.map(\.runId))
-                    let excludedFromInterrupted = backgroundRecoveryExclusions.union(pendingApprovalRunIds)
-                    if let interruptedRunConversationPairs = await IOSRunRecovery.unfinishedRunConversationPairs(
-                        candidateRunIds: startupCandidateRunIds,
-                        excludingRunIds: excludedFromInterrupted
-                    ) {
-                        let recoveryResult = await chatViewModel.applyToolCallLedgerRecovery(
-                            forInterruptedRuns: interruptedRunConversationPairs
-                        )
-                        staleBackgroundOutcomeUnknownRunIds.formUnion(
-                            recoveryResult.outcomeUnknownRunIds.intersection(backgroundRunIds)
-                        )
-                        let unreconciledRunIds = Set(interruptedRunConversationPairs.map(\.runId))
-                            .subtracting(recoveryResult.reconciledRunIds)
-                        _ = await IOSRunRecovery.recoverInterruptedRuns(
-                            candidateRunIds: startupCandidateRunIds,
-                            excludingRunIds: excludedFromInterrupted
-                                .union(unreconciledRunIds)
-                                .union(recoveryResult.outcomeUnknownRunIds)
-                        )
-                    }
-                }
-                AgentLiveActivityController.shared.restoreExistingActivity(
-                    ownedRunIds: backgroundRunIds
-                )
-                IOSAlarmService.shared.reconcileOnLaunch()
-                IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
-                if scenePhase == .active {
-                    IOSChatBackgroundGenerationCoordinator.shared
-                        .resumeRecoverableJobsIfNeeded()
-                }
-                finalizeStaleBackgroundJobsIfNeeded()
-                if scenePhase == .active {
-                    if let novelCreationViewModel {
-                        await novelCreationViewModel.resumeDetachedBackgroundGeneration()
-                        _ = await novelSessionViewModel?
-                            .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
-                    }
-                }
-            } else {
-                await conversationStore.bootstrap()
-                didBootstrapConversations = true
-            }
-            sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
-            IOSSubAgentActivityStore.shared.start()
-            conversationActivityCenter.start()
-            await openPendingAgentActivityIfReady()
-            await openPendingAppDeepLinkIfReady()
-            #if DEBUG && targetEnvironment(simulator)
-            // Create the explicit preview after launch recovery has removed orphan cards.
-            await IOSPhoneControlActivityPreview.runIfRequested()
-            #endif
-        }
+        .task { await prepareRuntime() }
         .onOpenURL { url in
             enqueueAppURL(url)
         }
@@ -390,15 +280,195 @@ struct AppShell: View {
         .iosShareActivityOverlay()
     }
 
+    private func prepareRuntime() async {
+        // Attach the state-backed instance. AppShell.init may be re-evaluated
+        // while SwiftUI preserves the existing @State object.
+        AgentActivityControlCenter.shared.attach(chatViewModel: chatViewModel)
+        IOSWakeScheduler.shared.attach(chatViewModel: chatViewModel)
+        WatchTaskCoordinator.shared.attach(
+            chatViewModel: chatViewModel,
+            sharedSettings: sharedSettings,
+            reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjections
+        )
+        // 启动时引导会话存储：加载历史摘要，选最近一条或新建。
+        // run recovery 不是幂等操作；在任务的第一个 await 前占位，避免 .task
+        // 重启时把本进程正在运行的前台 run 改写为 interrupted。
+        if !didRunStartupRecovery {
+            didRunStartupRecovery = true
+            let interruptedCouncilTaskIds = IOSAdvancedTaskStore.shared.markInterruptedCouncilTasks()
+            IOSAdvancedTaskStore.shared.markInterruptedRemoteCommandTasks()
+            IOSAdvancedTaskStore.shared.markInterruptedEmbeddedIshTasks()
+            CouncilRoomArchiveStore.shared.markInterrupted(taskIds: interruptedCouncilTaskIds)
+            councilChatViewModel.recoverInterruptedTasks(interruptedCouncilTaskIds)
+            await councilChatViewModel.reconcileDurableRuns()
+            await IOSMiniAppAIRunRecovery.reconcile()
+            let backgroundRunIds = IOSChatBackgroundGenerationCoordinator.shared.restorableRunIds
+            let backgroundRecoveryExclusions = IOSChatBackgroundGenerationCoordinator.shared
+                .startupRecoveryExclusionRunIds
+            let recoveredPendingApprovals = await IOSRunRecovery.recoverPendingApprovalDescriptors(
+                excludingRunIds: backgroundRecoveryExclusions
+            )
+            let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
+            let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
+            await conversationStore.bootstrap()
+            IOSBuiltinSkills.installIfMissing(enableWith: sharedSettings)
+            await chatViewModel.reconcilePendingMiniAppMutationsAfterConversationBootstrap()
+            didBootstrapConversations = true
+
+            // A failed approval-owner query makes it unsafe to classify any
+            // unfinished run: an awaiting approval could otherwise be swept
+            // as an ordinary interruption with its tool output still empty.
+            if let recoveredPendingApprovals {
+                await chatViewModel.terminateRecoveredPendingApprovals(recoveredPendingApprovals)
+                let pendingApprovalRunIds = Set(recoveredPendingApprovals.map(\.runId))
+                let excludedFromInterrupted = backgroundRecoveryExclusions.union(pendingApprovalRunIds)
+                if let interruptedRunConversationPairs = await IOSRunRecovery.unfinishedRunConversationPairs(
+                    candidateRunIds: startupCandidateRunIds,
+                    excludingRunIds: excludedFromInterrupted
+                ) {
+                    let recoveryResult = await chatViewModel.applyToolCallLedgerRecovery(
+                        forInterruptedRuns: interruptedRunConversationPairs
+                    )
+                    staleBackgroundOutcomeUnknownRunIds.formUnion(
+                        recoveryResult.outcomeUnknownRunIds.intersection(backgroundRunIds)
+                    )
+                    let unreconciledRunIds = Set(interruptedRunConversationPairs.map(\.runId))
+                        .subtracting(recoveryResult.reconciledRunIds)
+                    _ = await IOSRunRecovery.recoverInterruptedRuns(
+                        candidateRunIds: startupCandidateRunIds,
+                        excludingRunIds: excludedFromInterrupted
+                            .union(unreconciledRunIds)
+                            .union(recoveryResult.outcomeUnknownRunIds)
+                    )
+                }
+            }
+            AgentLiveActivityController.shared.restoreExistingActivity(
+                ownedRunIds: backgroundRunIds
+            )
+            IOSAlarmService.shared.reconcileOnLaunch()
+            IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
+            if scenePhase == .active {
+                IOSChatBackgroundGenerationCoordinator.shared
+                    .resumeRecoverableJobsIfNeeded()
+            }
+            finalizeStaleBackgroundJobsIfNeeded()
+            if scenePhase == .active {
+                if let novelCreationViewModel {
+                    await novelCreationViewModel.resumeDetachedBackgroundGeneration()
+                    _ = await novelSessionViewModel?
+                        .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
+                }
+            }
+        } else {
+            await conversationStore.bootstrap()
+            didBootstrapConversations = true
+        }
+        sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
+        IOSSubAgentActivityStore.shared.start()
+        conversationActivityCenter.start()
+        await openPendingAgentActivityIfReady()
+        await openPendingAppDeepLinkIfReady()
+        if scenePhase == .active {
+            await IOSWakeScheduler.shared.applicationBecameActive()
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        // Create the explicit preview after launch recovery has removed orphan cards.
+        await IOSPhoneControlActivityPreview.runIfRequested()
+        #endif
+    }
+
+    // MARK: - Adaptive root (iPhone Duo inner display / iPad)
+
+    /// 宽度为 regular（iPhone Duo 展开、iPad 全屏）时用双栏：左会话列表，右聊天。
+    /// 合上屏幕或 Split View 变窄后回到单栏 NavigationStack，路由由 RouterPath 搬运。
+    private var usesSplitLayout: Bool { horizontalSizeClass == .regular }
+
+    /// 窄于此宽度（Duo 内屏竖持 669pt）时视为侧栏浮层：选中会话后自动收起侧栏。
+    private static let tiledSidebarMinimumWidth: CGFloat = 900
+
+    private var pathBinding: Binding<[Route]> {
+        Binding(get: { rootRouter.path }, set: { rootRouter.path = $0 })
+    }
+
+    private var sidebarVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding(
+            get: { rootRouter.showsSidebar ? .all : .detailOnly },
+            set: { rootRouter.showsSidebar = $0 != .detailOnly }
+        )
+    }
+
+    @ViewBuilder
+    private var rootNavigation: some View {
+        Group {
+            if usesSplitLayout {
+                NavigationSplitView(columnVisibility: sidebarVisibility) {
+                    // 侧栏里的 router.navigate 都落到详情栈（设置等页在右栏打开），侧栏自身不挂目的地。
+                    conversationsList
+                        .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
+                } detail: {
+                    NavigationStack(path: pathBinding) {
+                        ChatView(
+                            settingsStore: settingsStore,
+                            sharedSettings: sharedSettings,
+                            localToolExecutor: localToolExecutor,
+                            documentStore: documentAccessStore,
+                            workspaceStore: workspaceStore,
+                            viewModel: chatViewModel,
+                            initialMessageAnchor: rootRouter.detailChatAnchor
+                        )
+                        .withAppDestinations(destinationDependencies)
+                    }
+                }
+                // 不按宽度切换 style 类型：if/else 会重建 SplitView、丢掉详情栈状态。
+                // .automatic 在较窄的 regular 宽度下侧栏浮层、宽时并排。
+                .navigationSplitViewStyle(.automatic)
+            } else {
+                NavigationStack(path: pathBinding) {
+                    conversationsList
+                        .withAppDestinations(destinationDependencies)
+                }
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            rootRouter.sidebarOverlaysDetail = width < Self.tiledSidebarMinimumWidth
+        }
+    }
+
+    private var conversationsList: some View {
+        ConversationsView(
+            sharedSettings: sharedSettings,
+            chatViewModel: chatViewModel,
+            councilChatViewModel: councilChatViewModel,
+            novelCreationViewModel: novelCreationViewModel
+        )
+    }
+
+    private var destinationDependencies: AppDestinationDependencies {
+        AppDestinationDependencies(
+            settingsStore: settingsStore,
+            providerRegistry: providerRegistry,
+            sharedSettings: sharedSettings,
+            conversationStore: conversationStore,
+            mcpConfigStore: mcpConfigStore,
+            permissionStore: permissionStore,
+            documentStore: documentAccessStore,
+            workspaceStore: workspaceStore,
+            systemPermissionCoordinator: systemPermissionCoordinator,
+            localToolExecutor: localToolExecutor,
+            chatViewModel: chatViewModel,
+            councilChatViewModel: councilChatViewModel,
+            novelCreationViewModel: novelCreationViewModel,
+            novelSessionViewModel: novelSessionViewModel,
+            novelCreationErrorMessage: novelCreationErrorMessage,
+            storeCoordinator: storeCoordinator,
+            router: rootRouter
+        )
+    }
+
     private var shouldShowThemeTryOnBar: Bool {
         guard let session = AmberThemeRuntime.shared.tryOnSession else { return false }
-        guard let last = rootRouter.path.last else { return true }
-        switch last {
-        case .chat, .chatMessage(anchor: _):
-            return session.approval.map { !chatViewModel.isShowingThemeTryOnApproval($0) } ?? true
-        default:
-            return true
-        }
+        guard rootRouter.isShowingChat else { return true }
+        return session.approval.map { !chatViewModel.isShowingThemeTryOnApproval($0) } ?? true
     }
 
     private func commitThemeTryOnFromShell() {
@@ -647,6 +717,33 @@ struct AppShell: View {
             rootRouter.path = [.settings, .weather]
         case .appleIntegrations:
             rootRouter.path = [.settings, .appleIntegrations]
+        case .wakeTasks:
+            rootRouter.path = [.settings, .appleIntegrations]
+        case .wakeDueTasks:
+            let report = await IOSWakeScheduler.shared.runDueTasks()
+            guard pendingAppDeepLinkDestination == destination else { return }
+            if let runID = report.runIDs.first,
+               let task = IOSWakeScheduler.shared.store.tasks.first(where: { $0.executionRunID == runID }) {
+                pendingAppDeepLinkDestination = .conversation(id: task.conversationID)
+                return
+            }
+            rootRouter.path = [.settings, .appleIntegrations]
+        case .wakeTask(let id):
+            guard let task = IOSWakeScheduler.shared.store.task(id: id) else {
+                conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                    title: "无法打开续跑任务", message: "这项任务不存在。", severity: .warning
+                ))
+                rootRouter.path = [.settings, .appleIntegrations]
+                break
+            }
+            if task.status == .scheduled {
+                _ = await IOSWakeScheduler.shared.runDueTasks()
+            }
+            guard pendingAppDeepLinkDestination == destination else { return }
+            // Reuse the conversation router and its stale-selection guards.
+            // A notification is never permission to retry an interrupted run.
+            pendingAppDeepLinkDestination = .conversation(id: task.conversationID)
+            return
         case .gatewayPair(let payload):
             MacGatewayStore.shared.receivePairingLink(payload)
             rootRouter.path = [.settings, .macGateway]
@@ -857,115 +954,51 @@ final class TabRouter {
     }
 }
 
+/// `withAppDestinations` 的依赖包：单栏栈与双栏的侧栏/详情栈各挂一次，共用同一份。
 @MainActor
-@Observable
-final class RouterPath {
-    var path: [Route] = []
-    var presentedSheet: SheetDestination?
-
-    func navigate(to route: Route) {
-        // 防止快速连点堆叠重复页面
-        guard path.last != route else { return }
-        path.append(route)
-    }
-
-    func goBack() {
-        guard !path.isEmpty else { return }
-        path.removeLast()
-    }
-
-    func reset() {
-        path = []
-        presentedSheet = nil
-    }
-}
-
-enum Route: Hashable {
-    case chat
-    case chatMessage(anchor: ChatMessageAnchor)
-    case search(initialQuery: String)
-    case account
-    case settings
-    case appearance
-    case language
-    case displayFont
-    case conversationStorage
-    case syncBackup
-    case healthSummary
-    case weather
-    case appleIntegrations
-    case appleWatch
-    case macGateway
-    /// Task board of the paired Mac (scheduled tasks, their runs, Claude Code / Codex sessions).
-    case macTasks
-    case subscription
-    case capabilities
-    case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)
-    case memoryDocument(relativePath: String, title: String)
-    case memoryRecords
-    case memoryPollutedConversations
-    case skills
-    case skillAdd
-    case mcpServers
-    case mcpImport
-    case mcpAdd
-    case skillDetail(name: String, dirName: String?)
-    case recipes
-    case recipeDetail(name: String)
-    case plugins
-    case pluginDetail(id: String)
-    case execution
-    case phoneControl
-    case phoneSavedTasks
-    case executionTask(id: String)
-    case providers
-    case providerAdd
-    case providerDetail(id: String)
-    case modelDefaults
-    case searchServices
-    case searchProvider
-    case ttsSettings
-    case board
-    case boardSettings
-    case deepReadTask(id: String)
-    case miniApps
-    case miniAppSettings
-    case miniAppRunner(appId: String)
-    case novelCreation
-    case novelCreationSettings
-    case novelProject(id: NovelProjectID)
-    case webMount
-    case webMountSite(site: WebMountSiteRoute)
-    case workspace
-    case memory
-    case council
-    case councilSettings
-    case seatEditor
-    case subagents
-    case subAgentRole(name: String, roleId: String)
-    case subAgentConversation(id: String)
-    case sandbox
-    case conversation(id: String)
-    case assistant(id: String)
-    case workspaceItem(id: String)
-    case settingsPlaceholder(title: String, subtitle: String, systemImage: String)
-    case toolPermissions
-    case promptInjection
-}
-
-enum SheetDestination: Identifiable, Hashable {
-    case modelPicker
-    case toolPermissions
-
-    var id: String {
-        switch self {
-        case .modelPicker: "model-picker"
-        case .toolPermissions: "tool-permissions"
-        }
-    }
+struct AppDestinationDependencies {
+    let settingsStore: SettingsStore
+    let providerRegistry: ProviderRegistryStore
+    let sharedSettings: IOSSharedSettingsStore
+    let conversationStore: IOSConversationStore
+    let mcpConfigStore: IOSMcpConfigStore
+    let permissionStore: IOSPermissionStore
+    let documentStore: DocumentAccessStore
+    let workspaceStore: IOSWorkspaceStore
+    let systemPermissionCoordinator: IOSSystemPermissionCoordinator
+    let localToolExecutor: IOSLocalToolExecutor
+    let chatViewModel: ChatViewModel
+    let councilChatViewModel: CouncilChatViewModel
+    let novelCreationViewModel: NovelCreationViewModel?
+    let novelSessionViewModel: NovelSessionViewModel?
+    let novelCreationErrorMessage: String?
+    let storeCoordinator: IOSStoreCoordinator
+    let router: RouterPath
 }
 
 private extension View {
+    func withAppDestinations(_ deps: AppDestinationDependencies) -> some View {
+        withAppDestinations(
+            settingsStore: deps.settingsStore,
+            providerRegistry: deps.providerRegistry,
+            sharedSettings: deps.sharedSettings,
+            conversationStore: deps.conversationStore,
+            mcpConfigStore: deps.mcpConfigStore,
+            permissionStore: deps.permissionStore,
+            documentStore: deps.documentStore,
+            workspaceStore: deps.workspaceStore,
+            systemPermissionCoordinator: deps.systemPermissionCoordinator,
+            localToolExecutor: deps.localToolExecutor,
+            chatViewModel: deps.chatViewModel,
+            councilChatViewModel: deps.councilChatViewModel,
+            novelCreationViewModel: deps.novelCreationViewModel,
+            novelSessionViewModel: deps.novelSessionViewModel,
+            novelCreationErrorMessage: deps.novelCreationErrorMessage,
+            storeCoordinator: deps.storeCoordinator,
+            router: deps.router
+        )
+    }
+
     func withAppDestinations(
         settingsStore: SettingsStore,
         providerRegistry: ProviderRegistryStore,

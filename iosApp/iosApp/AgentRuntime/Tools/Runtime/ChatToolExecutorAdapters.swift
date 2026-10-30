@@ -22,10 +22,15 @@ extension ChatToolRuntime {
         }
         guard effectiveWebSearchEnabled else { return executors }
         for name in IOSSearchExecutor.supportedToolNames {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, isUserInitiated in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
+                switch self.searchToolPermission(isUserInitiated: isUserInitiated) {
+                case .denied(let reason): return .denied(reason)
+                case .needsApproval(let reason): return .needsApproval(reason)
+                case .allow: break
+                }
                 let call = self.toolCall(name: toolName, input: arguments)
-                return .filled(await self.dispatchSearchToolCall(call))
+                return .filled(await self.dispatchSearchToolCall(call, isUserInitiated: isUserInitiated))
             }
         }
         return executors
@@ -67,9 +72,26 @@ extension ChatToolRuntime {
     ) -> [String: any IOSToolExecutor] {
         var executors: [String: any IOSToolExecutor] = [:]
         let availableToolNames = Set(params.tools.map(\.name))
+        for name in IOSShortcutAuthoringToolCatalog.toolNames where availableToolNames.contains(name) {
+            executors[name] = IOSClosureToolExecutor { _, arguments, _ in
+                .filled(await IOSShortcutAuthoringToolExecutor.execute(input: arguments))
+            }
+        }
         let phoneExecutor = IOSPhoneControlToolExecutor(runID: runId)
         for name in IOSPhoneControlToolCatalog.toolNames where availableToolNames.contains(name) {
             executors[name] = phoneExecutor
+        }
+        for name in IOSWakeToolCatalog.toolNames where availableToolNames.contains(name) {
+            executors[name] = IOSToolCallClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] tool in
+                guard let self else { return .failed("Chat runtime is unavailable.") }
+                return .filled(await IOSWakeToolExecutor.execute(
+                    tool: tool,
+                    runID: runId,
+                    conversationID: conversationId?.toHexDashString(),
+                    messages: messages,
+                    scheduler: self.wakeScheduler
+                ))
+            }
         }
         // Jev 自动批准复核：后台没有审批卡，收紧后各执行器按原逻辑返回"需回到 App 确认"。
         let recentUserTexts = messages.filter { $0.role == MessageRole.user }.suffix(3).map { $0.toText() }
@@ -143,8 +165,11 @@ extension ChatToolRuntime {
         for name in IOSSearchExecutor.supportedToolNames where availableToolNames.contains(name) {
             executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
-                guard self.shouldExecuteSearchInBackground(toolName: toolName, arguments: arguments) else {
+                switch self.searchToolPermission() {
+                case .denied(let reason): return .denied(reason)
+                case .needsApproval:
                     return .denied("后台生成期间需要回到 App 确认网络搜索或网页读取。")
+                case .allow: break
                 }
                 let result = await self.dispatchSearchToolOutput(self.toolCall(name: toolName, input: arguments))
                 // P2-a: 后台 run 标记到 run 锚定会话（conversationId 由 job 传入），
@@ -616,6 +641,8 @@ extension ChatToolRuntime {
             "send_message", "followup_task", "wait_agent",
         ])
         .union(IOSAppleAgentToolCatalog.toolNames)
+        .union(IOSWakeToolCatalog.toolNames)
+        .union(IOSShortcutAuthoringToolCatalog.toolNames)
         .union(IOSSkillToolCatalog.toolNames)
         .union(IOSMcpManagementToolCatalog.toolNames)
         .union(IOSProviderConfigToolCatalog.toolNames)
@@ -653,13 +680,14 @@ extension ChatToolRuntime {
         nestedToolRunner: IosExecNestedToolRunner? = nil,
         nestedOutcomeUnknownProvider: (@MainActor () -> IOSToolOutcomeUnknownSignal?)? = nil,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil,
-        executionPolicy: IOSExecutionPolicySnapshot? = nil
+        executionPolicy: IOSExecutionPolicySnapshot? = nil,
+        phoneControl: IOSPhoneControlController? = nil
     ) -> [String: any IOSToolExecutor] {
         var executors: [String: any IOSToolExecutor] = [:]
         for tool in params.tools {
             let name = tool.name
             if IOSPhoneControlToolCatalog.isPhoneTool(name: name) {
-                executors[name] = IOSPhoneControlToolExecutor(runID: runId)
+                executors[name] = IOSPhoneControlToolExecutor(runID: runId, controller: phoneControl ?? .shared)
                 continue
             }
             let kind = pendingKindForForegroundTool(named: name, executionPolicy: executionPolicy)

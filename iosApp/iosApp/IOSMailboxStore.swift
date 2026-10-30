@@ -2,7 +2,7 @@ import Foundation
 import Shared
 
 /// P1-b: mailbox 信封的 iOS 访问层。Room 即真相（无内存态、无 sidecar）——
-/// 信封明文落库，drain 是事务化「查未投递 + 标投递」一次完成（exactly-once）。
+/// 信封明文落库。聊天消费者先持久化稳定消息 ID，再确认投递，保存失败时信封仍待处理。
 /// 与 steer 队列（VM owner + sidecar）不同：store 不持有状态，多次调用天然幂等。
 ///
 /// `@MainActor`：Kotlin 实体与 `KotlinUuid` 导出为非 Sendable，async 方法若
@@ -35,15 +35,31 @@ final class IOSMailboxStore {
     /// Idle UI may preview reports, but only the run boundary acknowledges
     /// delivery. A user starting a run during this read cannot lose its mail.
     func pendingResults(forConversationId conversationId: KotlinUuid) async throws -> [EnvelopeSnapshot] {
-        try await withCheckedThrowingContinuation { continuation in
+        try await pendingEnvelopes(forConversationId: conversationId).filter { $0.type == "FINAL_ANSWER" }
+    }
+
+    func pendingEnvelopes(forConversationId conversationId: KotlinUuid?) async throws -> [EnvelopeSnapshot] {
+        guard let conversationId else { return [] }
+        return try await withCheckedThrowingContinuation { continuation in
             mailboxDao.pendingForRecipient(recipientId: conversationId.toHexDashString()) { result, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return
                 }
-                continuation.resume(returning: (result ?? []).filter { $0.type == "FINAL_ANSWER" }.map {
+                continuation.resume(returning: (result ?? []).map {
                     EnvelopeSnapshot(id: $0.id, authorThreadId: $0.authorThreadId, type: $0.type, payload: $0.payload)
                 })
+            }
+        }
+    }
+
+    func acknowledge(_ envelopes: [EnvelopeSnapshot]) async throws {
+        guard !envelopes.isEmpty else { return }
+        let deliveredAt = Int64(Date().timeIntervalSince1970 * 1000)
+        let _: Void = try await withCheckedThrowingContinuation { continuation in
+            mailboxDao.markDelivered(ids: envelopes.map(\.id), deliveredAt: deliveredAt) { _, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: ()) }
             }
         }
     }

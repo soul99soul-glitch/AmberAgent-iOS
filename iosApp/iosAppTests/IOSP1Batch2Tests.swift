@@ -15,6 +15,50 @@ final class IOSP1Batch2Tests: XCTestCase {
 
     // MARK: - Workspace tools
 
+    func testFileWriteRequiresStringContentAndPreservesExistingBytesAndRecord() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = await store.executeTool(
+            toolName: "workspace_file_write",
+            input: #"{"path":"keep.txt","content":"DO NOT LOSE","overwrite":true}"#
+        )
+        let originalRecord = try XCTUnwrap(store.fileRecord(idOrPath: "keep.txt"))
+        let url = store.fileURL(for: originalRecord)
+        let originalBytes = try Data(contentsOf: url)
+
+        for invalidInput in [
+            #"{"path":"keep.txt","overwrite":true}"#,
+            #"{"path":"keep.txt","content":42,"overwrite":true}"#,
+            #"{"path":"keep.txt","content":null,"overwrite":true}"#
+        ] {
+            let output = await store.executeTool(toolName: "workspace_file_write", input: invalidInput)
+            let payload = try XCTUnwrap(Self.jsonDict(output))
+            XCTAssertEqual(payload["ok"] as? Bool, false, output)
+            XCTAssertEqual(payload["tool"] as? String, "workspace_file_write")
+            XCTAssertTrue((payload["error"] as? String)?.contains("content") == true)
+            XCTAssertEqual(try Data(contentsOf: url), originalBytes)
+            XCTAssertEqual(store.fileRecord(idOrPath: "keep.txt"), originalRecord)
+        }
+    }
+
+    func testFileWriteStillAllowsExplicitEmptyContent() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = await store.executeTool(
+            toolName: "workspace_file_write",
+            input: #"{"path":"clear.txt","content":"old content","overwrite":true}"#
+        )
+
+        let output = await store.executeTool(
+            toolName: "workspace_file_write",
+            input: #"{"path":"clear.txt","content":"","overwrite":true}"#
+        )
+        let record = try XCTUnwrap(store.fileRecord(idOrPath: "clear.txt"))
+        XCTAssertEqual(Self.jsonDict(output)?["ok"] as? Bool, true, output)
+        XCTAssertEqual(try Data(contentsOf: store.fileURL(for: record)), Data())
+        XCTAssertEqual(record.sizeBytes, 0)
+    }
+
     func testFileEditReplacesSubstring() async throws {
         let (store, dir) = try makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

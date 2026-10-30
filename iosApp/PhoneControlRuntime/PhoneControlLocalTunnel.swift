@@ -285,6 +285,14 @@ protocol IOSPhoneControlLocalTunneling: AnyObject {
     func prepare() async throws
     func start(owner: UUID) async throws
     @discardableResult func stop(owner: UUID) async -> Bool
+    /// The phone's own RemotePairing port, which iOS assigns dynamically.
+    func resolveRemotePairingPort() async -> Int
+}
+
+extension IOSPhoneControlLocalTunnel {
+    func resolveRemotePairingPort() async -> Int {
+        await IOSPhoneControlLoopbackRoute.resolvePort()
+    }
 }
 
 enum IOSPhoneControlLocalTunnelError: LocalizedError, Equatable {

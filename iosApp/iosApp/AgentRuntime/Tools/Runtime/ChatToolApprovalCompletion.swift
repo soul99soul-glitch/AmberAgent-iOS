@@ -73,7 +73,9 @@ extension ChatToolRuntime {
             executionPolicy: pending.executionPolicy
         )
         let result = allow
-            ? await dispatchSearchToolOutput(pending.toolCall)
+            ? await withExecutionPolicy(pending.executionPolicy ?? IOSExecutionPolicyContext.snapshot) {
+                await dispatchSearchToolOutput(pending.toolCall, isUserInitiated: true)
+            }
             : IOSSearchToolOutput(text: ChatToolOutputFormatter.toolFailureJSON(
                 toolName: pending.toolCall.toolName,
                 reason: "User denied network search.",
@@ -781,7 +783,7 @@ extension ChatToolRuntime {
                 denied: true
             )
         }
-        return await dispatchSearchToolCall(toolCall)
+        return await dispatchSearchToolCall(toolCall, isUserInitiated: true)
     }
 #endif
 }

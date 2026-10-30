@@ -65,6 +65,7 @@ final class IOSGoogleWebViewSearch: NSObject, WKNavigationDelegate {
     }
 
     static func search(query: String, maxResults: Int, timeout: TimeInterval = 12) async throws -> [IOSSearchResult] {
+        try Task.checkCancellation()
         var components = URLComponents(string: "https://www.google.com/search")!
         components.queryItems = [
             URLQueryItem(name: "q", value: query),
@@ -75,20 +76,29 @@ final class IOSGoogleWebViewSearch: NSObject, WKNavigationDelegate {
         active.insert(searcher)
         defer { active.remove(searcher) }
         let json = try await searcher.load(components.url!, timeout: timeout)
+        try Task.checkCancellation()
         let extracted = parseExtraction(json, maxResults: maxResults)
         let tasks = extracted.map { result in
             Task { await resolveRedirect(result.url) }
         }
-        var resolved: [IOSSearchResult] = []
-        for (result, task) in zip(extracted, tasks) {
-            guard let url = await task.value else { continue }
-            resolved.append(IOSSearchResult(title: result.title, url: url, snippet: result.snippet))
+        return try await withTaskCancellationHandler {
+            var resolved: [IOSSearchResult] = []
+            for (result, task) in zip(extracted, tasks) {
+                let url = await task.value
+                try Task.checkCancellation()
+                guard let url else { continue }
+                resolved.append(IOSSearchResult(title: result.title, url: url, snippet: result.snippet))
+            }
+            try Task.checkCancellation()
+            return resolved
+        } onCancel: {
+            tasks.forEach { $0.cancel() }
         }
-        return resolved
     }
 
     /// 请求 Google 跳转链接但不跟随重定向，取 302 的 Location 作为真实地址；非跳转链接原样返回。
     nonisolated static func resolveRedirect(_ url: String) async -> String? {
+        guard !Task.isCancelled else { return nil }
         guard let components = URLComponents(string: url),
               components.host?.hasSuffix("google.com") == true else { return url }
         if components.path == "/url",

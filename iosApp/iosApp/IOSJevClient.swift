@@ -208,6 +208,73 @@ final class IOSJevClient {
 
     // MARK: Validation
 
+    private static let zeroWidthScalars: Set<UnicodeScalar> = [
+        "\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}", "\u{2060}"
+    ]
+
+    private static func isIgnorableCredentialScalar(_ scalar: UnicodeScalar) -> Bool {
+        scalar.properties.isWhitespace
+            || CharacterSet.whitespacesAndNewlines.contains(scalar)
+            || CharacterSet.controlCharacters.contains(scalar)
+            || zeroWidthScalars.contains(scalar)
+    }
+
+    private static func trimmingCredentialNoise(_ raw: String) -> String {
+        var scalars = Array(raw.unicodeScalars)
+        while let first = scalars.first, isIgnorableCredentialScalar(first) {
+            scalars.removeFirst()
+        }
+        while let last = scalars.last, isIgnorableCredentialScalar(last) {
+            scalars.removeLast()
+        }
+        return String(String.UnicodeScalarView(scalars))
+    }
+
+    private static func strippingPairedOuterQuotes(_ raw: String) -> String {
+        var current = trimmingCredentialNoise(raw)
+        while current.count >= 2,
+              (current.hasPrefix("\"") && current.hasSuffix("\""))
+                  || (current.hasPrefix("'") && current.hasSuffix("'")) {
+            current.removeFirst()
+            current.removeLast()
+            current = trimmingCredentialNoise(current)
+        }
+        return current
+    }
+
+    /// 规范化清洗 API Key：去首尾空白与成对引号，剥离 `Authorization:` / `Bearer ` 前缀（忽略大小写），
+    /// 并移除字符串内部所有换行符（`\r`、`\n`）、制表符、空白、控制字符及零宽字符。
+    static func sanitizedAPIKey(_ raw: String) -> String {
+        var value = strippingPairedOuterQuotes(raw)
+        if value.lowercased().hasPrefix("authorization:") {
+            value = String(value.dropFirst("authorization:".count))
+            value = strippingPairedOuterQuotes(value)
+        }
+        if value.lowercased().hasPrefix("bearer") {
+            let remainder = value.dropFirst("bearer".count)
+            if remainder.isEmpty {
+                return ""
+            }
+            if let firstScalar = remainder.unicodeScalars.first,
+               isIgnorableCredentialScalar(firstScalar) || firstScalar == ":" {
+                value = String(remainder.drop(while: { ch in
+                    ch == ":" || ch.unicodeScalars.allSatisfy(isIgnorableCredentialScalar)
+                }))
+                value = strippingPairedOuterQuotes(value)
+            }
+        }
+        let filtered = value.unicodeScalars.filter { !isIgnorableCredentialScalar($0) }
+        return String(String.UnicodeScalarView(filtered))
+    }
+
+    /// 规范化清洗模型标识（providerModel / pinnedModelVersion）：去首尾空白与成对引号，
+    /// 并移除内部换行符、空白、控制字符与零宽字符。
+    static func sanitizedModelIdentifier(_ raw: String) -> String {
+        let value = strippingPairedOuterQuotes(raw)
+        let filtered = value.unicodeScalars.filter { !isIgnorableCredentialScalar($0) }
+        return String(String.UnicodeScalarView(filtered))
+    }
+
     /// confidence 必须是有限 0~1 数值，否则视为缺失（不伪造）。
     private static func sanitizedConfidence(_ raw: Double?) -> Double? {
         guard let value = raw, value.isFinite, (0.0...1.0).contains(value) else { return nil }
@@ -360,7 +427,10 @@ final class IOSJevClient {
     /// 与实际出站共用编码，供协调器在并发预算锁内预留精确请求体字节数。
     func requestBodyByteCount(_ input: RequestInput) throws -> Int {
         try Self.encodedRequestBody(
-            model: input.model, state: input.state, questions: input.questions, style: input.style,
+            model: Self.sanitizedModelIdentifier(input.model),
+            state: input.state,
+            questions: input.questions,
+            style: input.style,
             assets: input.assets
         ).count
     }
@@ -489,9 +559,11 @@ final class IOSJevClient {
         deadlineMs: Int? = nil,
         cacheKey: String? = nil
     ) async throws -> IOSJevDecision {
-        guard !input.apiKey.isEmpty else { throw IOSJevRequestError.missingKey }
+        let apiKey = Self.sanitizedAPIKey(input.apiKey)
+        guard !apiKey.isEmpty else { throw IOSJevRequestError.missingKey }
+        let model = Self.sanitizedModelIdentifier(input.model)
         // 空模型 slug 一律出站前拒绝（vercel 未配模型时不发无意义请求）。
-        guard !input.model.isEmpty else {
+        guard !model.isEmpty else {
             throw IOSJevRequestError.invalidRequest("empty model")
         }
         guard input.questions.count <= policy.maxQuestions else {
@@ -510,7 +582,7 @@ final class IOSJevClient {
         }
 
         let bodyData = try Self.encodedRequestBody(
-            model: input.model, state: input.state, questions: input.questions, style: input.style,
+            model: model, state: input.state, questions: input.questions, style: input.style,
             assets: input.assets
         )
         let maxRequestBytes = input.assets.isEmpty ? policy.maxRequestBytes : IOSJevPolicy.maxImageRequestBytes
@@ -525,7 +597,7 @@ final class IOSJevClient {
         request.httpMethod = "POST"
         request.httpBody = bodyData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(input.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         if input.style == .systemone,
            !input.assets.isEmpty || input.questions.contains(where: { $0.type == "box" }) {
             request.setValue("true", forHTTPHeaderField: "TypeSafe-Danger-Zone-Images")
@@ -538,7 +610,7 @@ final class IOSJevClient {
             request.setValue("0.0.1", forHTTPHeaderField: "ai-gateway-protocol-version")
             request.setValue("api-key", forHTTPHeaderField: "ai-gateway-auth-method")
             request.setValue("4", forHTTPHeaderField: "ai-decision-model-specification-version")
-            request.setValue(input.model, forHTTPHeaderField: "ai-model-id")
+            request.setValue(model, forHTTPHeaderField: "ai-model-id")
         }
         request.timeoutInterval = max(deadline + 0.5, 1.0)
 
@@ -560,7 +632,7 @@ final class IOSJevClient {
         let decision = IOSJevDecision(
             answers: answers,
             usage: parsed.usage,
-            modelVersion: parsed.model ?? input.model,
+            modelVersion: parsed.model ?? model,
             latencyMs: latencyMs,
             requestBytes: bodyData.count,
             responseBytes: data.count

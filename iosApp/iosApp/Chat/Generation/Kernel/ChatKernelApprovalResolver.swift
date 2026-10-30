@@ -34,7 +34,8 @@ final class ChatKernelApprovalResolver {
         var recipeExecution: IOSRecipeExecutionState?
     }
 
-    enum ApprovalResolution {
+    // Results stay on MainActor; the owned task transfers this immutable snapshot once.
+    enum ApprovalResolution: @unchecked Sendable {
         /// 回填完成,以返回消息重启引擎循环。
         case resumed([UIMessage])
         /// recipe mutation step 命中下一步暂停:同一 toolCallId 带新请求重进暂停。
@@ -81,6 +82,7 @@ final class ChatKernelApprovalResolver {
         candidates: PreparedApprovalCandidates,
         request: ChatRunKernelAdapter.RunRequest
     ) async -> ApprovalResolution {
+        guard !Task.isCancelled else { return .failed }
         switch prompt {
         case .search, .webMount, .workspace, .ish, .mcp, .council:
             guard let allow = decision.boolValue else { return .failed }
@@ -91,16 +93,7 @@ final class ChatKernelApprovalResolver {
             // resume 录制点对齐 CGC claimRunAfterPermission;失败时账本补
             // Finished(not_executed_permission_claim_failed) 并诚实收口
             // (CG-C :4310-4325——Host 侧已呈现「无法恢复待确认任务」)。
-            guard await onRunResumed() else {
-                if !(await ledger.recordToolCallFinished(
-                    runId: pending.runId,
-                    toolCallId: pending.toolCall.toolCallId,
-                    outcome: "not_executed_permission_claim_failed"
-                )) {
-                    onDurabilityFailure()
-                }
-                return .failed
-            }
+            guard await resumeApprovalExecution(pending: pending) else { return .failed }
             let messages = await finishBoolApproval(
                 prompt: prompt,
                 allow: allow,
@@ -147,16 +140,7 @@ final class ChatKernelApprovalResolver {
                 pending: pending,
                 effectClass: Self.resumeEffectClass(for: prompt, input: pending.toolCall.input)
             ) else { return .failed }
-            guard await onRunResumed() else {
-                if !(await ledger.recordToolCallFinished(
-                    runId: pending.runId,
-                    toolCallId: pending.toolCall.toolCallId,
-                    outcome: "not_executed_permission_claim_failed"
-                )) {
-                    onDurabilityFailure()
-                }
-                return .failed
-            }
+            guard await resumeApprovalExecution(pending: pending) else { return .failed }
             let messages = runtime.finishMemoryApproval(
                 pending: pending,
                 writePolicy: writePolicy,
@@ -175,16 +159,7 @@ final class ChatKernelApprovalResolver {
             guard await recordApprovalAttemptStarted(pending: pending, effectClass: .pure) else {
                 return .failed
             }
-            guard await onRunResumed() else {
-                if !(await ledger.recordToolCallFinished(
-                    runId: pending.runId,
-                    toolCallId: pending.toolCall.toolCallId,
-                    outcome: "not_executed_permission_claim_failed"
-                )) {
-                    onDurabilityFailure()
-                }
-                return .failed
-            }
+            guard await resumeApprovalExecution(pending: pending) else { return .failed }
             let messages = runtime.finishAskUserAnswer(pending: pending, answer: answer)
             guard await recordToolTerminal(
                 runId: pending.runId,
@@ -201,16 +176,7 @@ final class ChatKernelApprovalResolver {
                 guard await recordApprovalAttemptStarted(pending: pending, effectClass: .sideEffect) else {
                     return .failed
                 }
-                guard await onRunResumed() else {
-                    if !(await ledger.recordToolCallFinished(
-                        runId: pending.runId,
-                        toolCallId: pending.toolCall.toolCallId,
-                        outcome: "not_executed_permission_claim_failed"
-                    )) {
-                        onDurabilityFailure()
-                    }
-                    return .failed
-                }
+                guard await resumeApprovalExecution(pending: pending) else { return .failed }
                 let messages: [UIMessage]
                 if recipeRequest.isPluginImport || candidates.pluginImport != nil {
                     messages = await runtime.finishPluginImportApproval(
@@ -239,16 +205,7 @@ final class ChatKernelApprovalResolver {
                     pending: pending,
                     effectClass: payload.effectClass
                 ) else { return .failed }
-                guard await onRunResumed() else {
-                    if !(await ledger.recordToolCallFinished(
-                        runId: pending.runId,
-                        toolCallId: pending.toolCall.toolCallId,
-                        outcome: "not_executed_permission_claim_failed"
-                    )) {
-                        onDurabilityFailure()
-                    }
-                    return .failed
-                }
+                guard await resumeApprovalExecution(pending: pending) else { return .failed }
                 let messages = await runtime.finishPluginInvocationApproval(
                     pending: pending,
                     allow: allow,
@@ -328,16 +285,7 @@ final class ChatKernelApprovalResolver {
                     guard await recordApprovalAttemptStarted(pending: pending, effectClass: .sideEffect) else {
                         return .failed
                     }
-                    guard await onRunResumed() else {
-                        if !(await ledger.recordToolCallFinished(
-                            runId: pending.runId,
-                            toolCallId: pending.toolCall.toolCallId,
-                            outcome: "not_executed_permission_claim_failed"
-                        )) {
-                            onDurabilityFailure()
-                        }
-                        return .failed
-                    }
+                    guard await resumeApprovalExecution(pending: pending) else { return .failed }
                     let result = await runtime.finishRecipeStepApproval(
                         pending: pending,
                         allow: true,
@@ -478,6 +426,29 @@ final class ChatKernelApprovalResolver {
             argsDigest: chatInputDigest(for: pending.toolCall.input),
             effectClass: effectClass
         )
+    }
+
+    /// A cancelled claim has not dispatched the approved action. Close its
+    /// Started attempt without manufacturing an ambiguous side-effect result.
+    private func resumeApprovalExecution(pending: ChatPendingToolApproval) async -> Bool {
+        let notExecutedOutcome: String?
+        do {
+            try Task.checkCancellation()
+            let didResume = await onRunResumed()
+            try Task.checkCancellation()
+            notExecutedOutcome = didResume ? nil : "not_executed_permission_claim_failed"
+        } catch {
+            notExecutedOutcome = "not_executed_cancelled"
+        }
+        guard let notExecutedOutcome else { return true }
+        if !(await ledger.recordToolCallFinished(
+            runId: pending.runId,
+            toolCallId: pending.toolCall.toolCallId,
+            outcome: notExecutedOutcome
+        )) {
+            onDurabilityFailure()
+        }
+        return false
     }
 
     func recordToolTerminal(

@@ -46,8 +46,8 @@ class ClaudeKmpProviderMessageTest {
     )
 
     private fun reasoningModel(): Model = Model(
-        modelId = "claude-sonnet-4-5",
-        displayName = "Claude Sonnet 4.5",
+        modelId = "claude-sonnet-4-6",
+        displayName = "Claude Sonnet 4.6",
         abilities = listOf(ModelAbility.REASONING, ModelAbility.TOOL),
     )
 

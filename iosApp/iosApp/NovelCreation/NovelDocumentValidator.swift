@@ -474,6 +474,7 @@ enum NovelDocumentValidator {
                 updated.content != candidate.content ||
                 updated.sourceChapterVersionID != candidate.sourceChapterVersionID ||
                 updated.clonedFromCandidateID != candidate.clonedFromCandidateID ||
+                updated.generationGranularity != candidate.generationGranularity ||
                 updated.createdAt != candidate.createdAt {
                 issues.append("A project transition rewrote candidate \(candidate.id) identity or content.")
             }

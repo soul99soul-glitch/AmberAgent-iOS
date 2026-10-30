@@ -255,7 +255,9 @@ final class IOSSyncBackupTests: XCTestCase {
         let preview = try IOSSyncBackup.inspectManifest(data: archive)
         let transport = MockWebDAVTransport(responses: [
             .empty(405),
+            .empty(405),
             .xml(207, webDAVListXML(fileName: "remote.amberbackup", etag: "remote-etag", size: archive.count)),
+            .empty(405),
             .empty(405),
             .empty(201, headers: ["ETag": "\"uploaded-etag\""]),
             .payload(200, archive),
@@ -286,15 +288,15 @@ final class IOSSyncBackupTests: XCTestCase {
         XCTAssertEqual(downloaded, archive)
         try await provider.deleteSnapshot(uploaded)
 
-        XCTAssertEqual(transport.requests.map(\.httpMethod), ["MKCOL", "PROPFIND", "MKCOL", "PUT", "GET", "DELETE"])
-        XCTAssertEqual(transport.requests[1].value(forHTTPHeaderField: "Depth"), "1")
-        XCTAssertEqual(transport.requests[3].value(forHTTPHeaderField: "Content-Type"), IOSSyncBackup.mimeType)
+        XCTAssertEqual(transport.requests.map(\.httpMethod), ["MKCOL", "MKCOL", "PROPFIND", "MKCOL", "MKCOL", "PUT", "GET", "DELETE"])
+        XCTAssertEqual(transport.requests[2].value(forHTTPHeaderField: "Depth"), "1")
+        XCTAssertEqual(transport.requests[5].value(forHTTPHeaderField: "Content-Type"), IOSSyncBackup.mimeType)
         XCTAssertEqual(
             transport.requests.first?.value(forHTTPHeaderField: "Authorization"),
             "Basic \(Data("user:pass".utf8).base64EncodedString())"
         )
-        XCTAssertTrue(transport.requests[3].url?.absoluteString.contains("Amber%20Agent/sync/remote.amberbackup") == true)
-        XCTAssertEqual(transport.bodies[3], archive)
+        XCTAssertTrue(transport.requests[5].url?.absoluteString.contains("Amber%20Agent/sync/remote.amberbackup") == true)
+        XCTAssertEqual(transport.bodies[5], archive)
     }
 
     func testWebDAVRejectsBasicCredentialsOverPlainHTTP() {
@@ -309,6 +311,87 @@ final class IOSSyncBackupTests: XCTestCase {
         )
 
         XCTAssertThrowsError(try provider.makeRequest(method: "PROPFIND"))
+    }
+
+    func testWebDAVUploadWithoutPUTETagUsesTheListedRemoteRevision() async throws {
+        let data = Data("snapshot".utf8)
+        let remoteMetadata = webDAVListXML(fileName: "remote.amberbackup", etag: "server-etag", size: data.count, collectionPath: "/dav/AmberAgent")
+        let transport = MockWebDAVTransport(responses: [
+            .empty(405),
+            .empty(201),
+            .xml(207, remoteMetadata),
+            .empty(405),
+            .xml(207, remoteMetadata),
+        ])
+        let provider = IOSWebDAVSyncProvider(
+            config: IOSWebDAVConfig(baseURL: "https://example.com/dav", path: "AmberAgent"),
+            transport: transport
+        )
+
+        let uploaded = try await provider.uploadSnapshot(data: data, fileName: "remote.amberbackup", manifest: webDAVTestManifest())
+        let listed = try await provider.listSnapshots()
+        var status = IOSRemoteSyncStatus()
+        status.setRemoteRevision(uploaded.remoteRevision, for: .webDAV)
+
+        XCTAssertEqual(uploaded.remoteRevision, "server-etag")
+        XCTAssertEqual(uploaded.remoteRevision, listed.first?.remoteRevision)
+        XCTAssertNil(IOSSyncConflictResolver.conflict(status: status.scoped(to: .webDAV), remoteSnapshots: listed))
+        status.setRemoteRevision("older-etag", for: .webDAV)
+        XCTAssertNotNil(IOSSyncConflictResolver.conflict(status: status.scoped(to: .webDAV), remoteSnapshots: listed))
+        XCTAssertEqual(transport.requests.map(\.httpMethod), ["MKCOL", "PUT", "PROPFIND", "MKCOL", "PROPFIND"])
+        XCTAssertEqual(transport.requests[2].url?.lastPathComponent, "remote.amberbackup")
+        XCTAssertEqual(transport.requests[2].value(forHTTPHeaderField: "Depth"), "0")
+    }
+
+    func testWebDAVUploadAndListUseTheSameHrefWhenServerHasNoETag() async throws {
+        let data = Data("snapshot".utf8)
+        let metadata = webDAVListXML(fileName: "remote.amberbackup", etag: "", size: data.count, collectionPath: "/dav/AmberAgent")
+        let transport = MockWebDAVTransport(responses: [
+            .empty(405), .empty(201), .xml(207, metadata), .empty(405), .xml(207, metadata),
+        ])
+        let provider = IOSWebDAVSyncProvider(
+            config: IOSWebDAVConfig(baseURL: "https://example.com/dav", path: "AmberAgent"),
+            transport: transport
+        )
+
+        let uploaded = try await provider.uploadSnapshot(data: data, fileName: "remote.amberbackup", manifest: webDAVTestManifest())
+        let listed = try await provider.listSnapshots()
+
+        XCTAssertEqual(uploaded.remoteRevision, "/dav/AmberAgent/remote.amberbackup")
+        XCTAssertEqual(uploaded.remoteRevision, listed.first?.remoteRevision)
+    }
+
+    func testWebDAVCreatesMissingParentsBeforeTheFinalCollection() async throws {
+        let transport = MockWebDAVTransport(responses: [
+            .empty(201),
+            .empty(201),
+            .xml(207, webDAVListXML(fileName: "remote.amberbackup", etag: "server-etag", size: 8)),
+        ])
+        let provider = IOSWebDAVSyncProvider(
+            config: IOSWebDAVConfig(baseURL: "https://example.com/dav", path: "new/backup"),
+            transport: transport
+        )
+
+        let listed = try await provider.listSnapshots()
+
+        XCTAssertEqual(listed.count, 1)
+        XCTAssertEqual(transport.requests.map(\.httpMethod), ["MKCOL", "MKCOL", "PROPFIND"])
+        XCTAssertEqual(transport.requests.map { $0.url?.path }, ["/dav/new", "/dav/new/backup", "/dav/new/backup"])
+    }
+
+    func testWebDAVEmptyPathUsesTheExistingBaseCollection() async throws {
+        let transport = MockWebDAVTransport(responses: [
+            .xml(207, webDAVListXML(fileName: "remote.amberbackup", etag: "server-etag", size: 8)),
+        ])
+        let provider = IOSWebDAVSyncProvider(
+            config: IOSWebDAVConfig(baseURL: "https://example.com/dav", path: ""),
+            transport: transport
+        )
+
+        let listed = try await provider.listSnapshots()
+        XCTAssertEqual(listed.count, 1)
+        XCTAssertEqual(transport.requests.map(\.httpMethod), ["PROPFIND"])
+        XCTAssertEqual(transport.requests.first?.url?.path, "/dav")
     }
 
     func testConflictDetectionFlagsRemoteRevisionMismatch() throws {
@@ -398,12 +481,12 @@ private func temporaryDirectory() -> URL {
         .appendingPathComponent("IOSSyncBackupTests-\(UUID().uuidString)", isDirectory: true)
 }
 
-private func webDAVListXML(fileName: String, etag: String, size: Int) -> Data {
+private func webDAVListXML(fileName: String, etag: String, size: Int, collectionPath: String = "/dav/Amber%20Agent/sync") -> Data {
     Data("""
     <?xml version="1.0" encoding="utf-8"?>
     <D:multistatus xmlns:D="DAV:">
       <D:response>
-        <D:href>/dav/Amber%20Agent/sync/</D:href>
+        <D:href>\(collectionPath)/</D:href>
         <D:propstat>
           <D:prop>
             <D:displayname>sync</D:displayname>
@@ -412,7 +495,7 @@ private func webDAVListXML(fileName: String, etag: String, size: Int) -> Data {
         </D:propstat>
       </D:response>
       <D:response>
-        <D:href>/dav/Amber%20Agent/sync/\(fileName)</D:href>
+        <D:href>\(collectionPath)/\(fileName)</D:href>
         <D:propstat>
           <D:prop>
             <D:displayname>\(fileName)</D:displayname>
@@ -425,6 +508,14 @@ private func webDAVListXML(fileName: String, etag: String, size: Int) -> Data {
       </D:response>
     </D:multistatus>
     """.utf8)
+}
+
+private func webDAVTestManifest() -> IOSSyncManifest {
+    IOSSyncManifest(
+        appVersionName: "test", appVersionCode: 1, createdAt: 1, deviceId: "test-device", mode: "STANDARD",
+        kdf: IOSSyncKdfInfo(iterations: 210_000, saltBase64: ""),
+        cipher: IOSSyncCipherInfo(ivBase64: ""), payloadSha256: "test-payload"
+    )
 }
 
 private final class MockWebDAVTransport: IOSWebDAVTransport, @unchecked Sendable {

@@ -136,8 +136,44 @@ enum IOSGrokOAuthClients {
 
     static func logout(providerId: String) {
         lock.lock()
+        defer { lock.unlock() }
         generations[providerId, default: 0] += 1
-        lock.unlock()
+        IOSGrokOAuthAuthStore.clear(providerId: providerId)
+    }
+
+    static func persist(
+        providerId: String,
+        tokens: IOSGrokOAuthTokens,
+        generation: Int,
+        replacing expected: IOSGrokOAuthTokens? = nil,
+        startsNewSession: Bool = false
+    ) throws -> IOSGrokOAuthTokens {
+        try Task.checkCancellation()
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == generations[providerId, default: 0] else { throw CancellationError() }
+        var merged = tokens
+        if let expected {
+            guard let latest = IOSGrokOAuthAuthStore.load(providerId: providerId),
+                  latest.accessToken == expected.accessToken,
+                  latest.refreshToken == expected.refreshToken else { throw CancellationError() }
+            merged.providerBackup = merged.providerBackup ?? latest.providerBackup
+        }
+        guard IOSGrokOAuthAuthStore.save(providerId: providerId, tokens: merged) else {
+            throw IOSGrokOAuthError(message: "无法保存 Grok 登录状态，请重试。")
+        }
+        if startsNewSession { generations[providerId, default: 0] += 1 }
+        return merged
+    }
+
+    static func invalidate(providerId: String, generation: Int, expected: IOSGrokOAuthTokens) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == generations[providerId, default: 0],
+              let current = IOSGrokOAuthAuthStore.load(providerId: providerId),
+              current.accessToken == expected.accessToken,
+              current.refreshToken == expected.refreshToken else { return }
+        generations[providerId, default: 0] += 1
         IOSGrokOAuthAuthStore.clear(providerId: providerId)
     }
 
@@ -236,15 +272,21 @@ actor IOSGrokOAuthClient {
     }
 
     @discardableResult
-    func attachProviderBackup(_ backup: IOSGrokWebProviderBackup?) -> IOSGrokOAuthTokens? {
+    func attachProviderBackup(_ backup: IOSGrokWebProviderBackup?) throws -> IOSGrokOAuthTokens? {
+        let generation = IOSGrokOAuthClients.generation(providerId: providerId)
         if let backup {
-            _ = IOSGrokOAuthAuthStore.saveBackup(providerId: providerId, backup: backup)
+            guard IOSGrokOAuthAuthStore.saveBackup(providerId: providerId, backup: backup) else {
+                throw IOSGrokOAuthError(message: "无法保存 Grok 服务商配置备份，请重试。")
+            }
         }
         guard let backup, var current = cached(), current.providerBackup == nil else {
             return cached()
         }
+        let expected = current
         current.providerBackup = backup
-        return persist(current, generation: IOSGrokOAuthClients.generation(providerId: providerId))
+        return try IOSGrokOAuthClients.persist(
+            providerId: providerId, tokens: current, generation: generation, replacing: expected
+        )
     }
 
     func exchangeCode(code: String, codeVerifier: String) async throws -> IOSGrokOAuthTokens {
@@ -260,7 +302,9 @@ actor IOSGrokOAuthClient {
         guard (200..<300).contains(status) else {
             throw oauthError("Grok OAuth 令牌交换失败", status, data)
         }
-        return persist(try parseTokens(data, fallback: cached()), generation: generation)
+        return try IOSGrokOAuthClients.persist(
+            providerId: providerId, tokens: parseTokens(data, fallback: cached()), generation: generation, startsNewSession: true
+        )
     }
 
     func getValidAccessToken(forceRefresh: Bool = false) async throws -> String {
@@ -276,6 +320,7 @@ actor IOSGrokOAuthClient {
 
     @discardableResult
     func refresh() async throws -> IOSGrokOAuthTokens {
+        let generation = IOSGrokOAuthClients.generation(providerId: providerId)
         guard let current = cached() else {
             throw IOSGrokOAuthError(message: "尚未登录 Grok，请先在 xAI 服务商设置里登录。")
         }
@@ -287,21 +332,16 @@ actor IOSGrokOAuthClient {
             "refresh_token": refreshToken,
             "client_id": IOSGrokOAuthConstants.clientId,
         ])
-        let generation = IOSGrokOAuthClients.generation(providerId: providerId)
         let (data, status) = try await postForm(form: form)
         guard (200..<300).contains(status) else {
             if Self.oauthErrorCode(data) == "invalid_grant" {
-                IOSGrokOAuthClients.logout(providerId: providerId)
+                IOSGrokOAuthClients.invalidate(providerId: providerId, generation: generation, expected: current)
             }
             throw oauthError("Grok OAuth 刷新失败", status, data)
         }
-        return persist(try parseTokens(data, fallback: current), generation: generation)
-    }
-
-    private func persist(_ tokens: IOSGrokOAuthTokens, generation: Int) -> IOSGrokOAuthTokens {
-        guard generation == IOSGrokOAuthClients.generation(providerId: providerId) else { return tokens }
-        _ = IOSGrokOAuthAuthStore.save(providerId: providerId, tokens: tokens)
-        return tokens
+        return try IOSGrokOAuthClients.persist(
+            providerId: providerId, tokens: parseTokens(data, fallback: current), generation: generation, replacing: current
+        )
     }
 
     private func parseTokens(_ data: Data, fallback: IOSGrokOAuthTokens?) throws -> IOSGrokOAuthTokens {

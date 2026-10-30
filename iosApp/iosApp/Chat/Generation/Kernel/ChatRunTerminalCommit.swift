@@ -110,7 +110,7 @@ final class ChatRunTerminalCommit {
     /// 空回复分支 :2685-2730)。
     func completed(run: Run) async -> Result {
         let runId = run.runId
-        await phoneControl.stop(runID: runId)
+        await phoneControl.stop(runID: runId, returnToAmber: true)
         projection.discardProvisionalAssistant()
         let startedAt = run.startedAt
         let inputDigest = run.inputDigest
@@ -278,7 +278,7 @@ final class ChatRunTerminalCommit {
     /// :2802-2843 的 Watch/LiveActivity 形状)。
     func failed(run: Run, requiresRecovery: Bool = false) async -> Result {
         let runId = run.runId
-        await phoneControl.stop(runID: runId)
+        await phoneControl.stop(runID: runId, returnToAmber: !requiresRecovery && run.outcomeUnknownSignal == nil)
         projection.discardProvisionalAssistant()
         let startedAt = run.startedAt
         let inputDigest = run.inputDigest

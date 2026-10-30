@@ -28,7 +28,8 @@ final class AgentActivityPresentationTests: XCTestCase {
         let expected: [String: AgentPhoneControlActivityPhase] = [
             "phone_status": .checkingStatus, "phone_apps": .listingApps, "phone_add_app": .addingApp,
             "phone_observe": .observing, "phone_act": .connecting, "phone_stop": .stopping,
-            "phone_run_goal": .deciding,
+            "phone_run_goal": .deciding, "phone_return_to_amber": .openingApp,
+            "phone_system": .observing, "phone_clipboard": .observing,
             "phone_scroll_until": .observing, "phone_collect_list": .observing, "phone_run_flow": .observing,
         ]
         XCTAssertEqual(Set(expected.keys), IOSPhoneControlToolCatalog.toolNames)

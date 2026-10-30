@@ -66,6 +66,12 @@ extension ChatViewModel {
         // makeTextGenerationParams() before this runs — messages are only
         // injected inside a started run, after the bridge exists.
         var uploadableWithGuidance = uploadableMessages
+        uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
+            name: "scheduledWake", text: Self.scheduledWakeContextPrompt
+        )] + uploadableWithGuidance
+        uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
+            name: "shortcutAuthoring", text: IOSShortcutAuthoringToolCatalog.runtimeGuidance
+        )] + uploadableWithGuidance
         if let guidance = state.toolExposureBridge?.discoveryGuidance(),
            !guidance.isEmpty {
             uploadableWithGuidance = [UIMessage.companion.system(prompt: guidance)] + uploadableWithGuidance
@@ -251,7 +257,7 @@ extension ChatViewModel {
 
     /// Keep discoveries and calls through the next five user turns. Rebuilding
     /// params or retrying the same message does not consume another turn.
-    private func recentToolsForExposure() -> [UIMessagePart.Tool] {
+    private func recentToolsForExposure(in messages: [UIMessage]) -> [UIMessagePart.Tool] {
         var userTurns = 0
         var tools: [UIMessagePart.Tool] = []
         for message in messages.reversed() {
@@ -265,7 +271,12 @@ extension ChatViewModel {
         return tools
     }
 
-    func makeTextGenerationParams(includePhoneControlTools: Bool = false) -> TextGenerationParams {
+    func makeTextGenerationParams(
+        includePhoneControlTools: Bool = false,
+        state: ChatConversationRunState? = nil
+    ) -> TextGenerationParams {
+        let state = state ?? currentRun.state
+        let messages = state.messages
         let includesPhoneTools = includePhoneControlTools && phoneControl.enabled
         let modelId = currentModelId
         let modelAbilities = currentModelAbilities
@@ -329,7 +340,7 @@ extension ChatViewModel {
                 for: provider,
                 assistant: assistant.customHeaders,
                 model: currentModel.customHeaders,
-                conversationId: currentConversationId?.toHexDashString()
+                conversationId: state.conversationId?.toHexDashString()
             )
         }()
         let mergedBodies: [CustomBody] = assistant.customBodies + (currentModel?.customBodies ?? [])
@@ -392,6 +403,8 @@ extension ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSAppleAgentToolCatalog.toolNames).sorted()
         ))
+        toolDeclarations.append(contentsOf: IOSWakeToolCatalog.declarations)
+        toolDeclarations.append(contentsOf: IOSShortcutAuthoringToolCatalog.declarations)
         if includesPhoneTools {
             toolDeclarations.append(contentsOf: IOSPhoneControlToolCatalog.declarations)
         }
@@ -480,14 +493,14 @@ extension ChatViewModel {
         if includesPhoneTools {
             exposureBridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
         }
-        exposureBridge.restoreExecutedTools(tools: recentToolsForExposure())
+        exposureBridge.restoreExecutedTools(tools: recentToolsForExposure(in: messages))
         if let provider = makeProviderSetting(),
            PromptTranscriptCapabilities.companion.resolve(setting: provider, model: model).toolAdditions {
             // Native tool additions remain at their historical load point across user turns.
             // Restore names against this run's filtered catalog, never old schemas/executors.
             exposureBridge.exposeToolNames(names: PromptTranscript.shared.currentToolNames(messages: messages))
         }
-        lastAssembledToolExposureBridge = exposureBridge
+        state.toolExposureBridge = exposureBridge
         // Real params: temperature/topP from Assistant, maxTokens from
         // resolveSessionDefaults (Assistant → group default), reasoningLevel
         // resolved, custom headers/bodies merged for the iOS generation runtime.

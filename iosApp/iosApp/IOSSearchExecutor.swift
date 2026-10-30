@@ -244,7 +244,8 @@ struct IOSSearchExecutor {
         if let selectedService {
             let descriptor = providerDescriptor(for: selectedService)
             let selectedId = uuidString(selectedService.id)
-            if enabledIds.contains(selectedId) {
+            let aggregateAllowed = descriptor.route != .freeAggregate || freeAggregateEnabled(settings)
+            if enabledIds.contains(selectedId), aggregateAllowed {
                 if descriptor.route != .unsupported, hasRequiredCredential(selectedService) {
                     return IOSSearchProviderSelection(
                         route: descriptor.route,
@@ -258,6 +259,7 @@ struct IOSSearchExecutor {
                     if let fallback = executableConfiguredFallback(
                         services: services,
                         enabledIds: enabledIds,
+                        freeAggregateAllowed: freeAggregateEnabled(settings),
                         excluding: selectedId,
                         reason: "Selected provider \(descriptor.name) is enabled but has no API key."
                     ) {
@@ -271,6 +273,7 @@ struct IOSSearchExecutor {
                 if let fallback = executableConfiguredFallback(
                     services: services,
                     enabledIds: enabledIds,
+                    freeAggregateAllowed: freeAggregateEnabled(settings),
                     excluding: selectedId,
                     reason: "Selected provider \(descriptor.name) is saved and enabled, but iOS has no native executor for \(descriptor.type) yet."
                 ) {
@@ -281,17 +284,21 @@ struct IOSSearchExecutor {
                     reason: "Selected provider \(descriptor.name) is saved and enabled, but iOS has no native executor for \(descriptor.type) yet."
                 )
             } else {
+                let reason = aggregateAllowed
+                    ? "Selected provider \(descriptor.name) is disabled in searchEnabledServiceIds."
+                    : "免费聚合搜索已关闭。"
                 if let fallback = executableConfiguredFallback(
                     services: services,
                     enabledIds: enabledIds,
+                    freeAggregateAllowed: freeAggregateEnabled(settings),
                     excluding: selectedId,
-                    reason: "Selected provider \(descriptor.name) is disabled in searchEnabledServiceIds."
+                    reason: reason
                 ) {
                     return fallback
                 }
                 return builtInFallback(
                     settings: settings,
-                    reason: "Selected provider \(descriptor.name) is disabled in searchEnabledServiceIds."
+                    reason: reason
                 )
             }
         }
@@ -299,6 +306,7 @@ struct IOSSearchExecutor {
         if let fallback = executableConfiguredFallback(
             services: services,
             enabledIds: enabledIds,
+            freeAggregateAllowed: freeAggregateEnabled(settings),
             excluding: nil,
             reason: "searchServiceSelected does not point at a saved provider."
         ) {
@@ -547,15 +555,11 @@ struct IOSSearchExecutor {
             ? "https://s.jina.ai/"
             : service.searchUrl
         guard let url = URL(string: urlString) else { throw IOSSearchExecutorError.invalidURL }
-        var headers = ["Accept": "application/json"]
-        let apiKey = service.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !apiKey.isEmpty {
-            headers["Authorization"] = "Bearer \(apiKey)"
-        }
+        let apiKey = try requiredAPIKey(service.apiKey, provider: "Jina")
         let httpRequest = try jsonPOST(
             url: url,
             body: ["q": request.query],
-            headers: headers
+            headers: ["Authorization": "Bearer \(apiKey)"]
         )
         let object = try await jsonResponse(httpRequest, provider: "Jina", transport: transport)
         let results = array(object["data"]).compactMap {
@@ -951,6 +955,7 @@ struct IOSSearchExecutor {
     private static func executableConfiguredFallback(
         services: [SearchServiceOptions],
         enabledIds: Set<String>,
+        freeAggregateAllowed: Bool,
         excluding excludedId: String?,
         reason: String
     ) -> IOSSearchProviderSelection? {
@@ -958,6 +963,7 @@ struct IOSSearchExecutor {
             let id = uuidString(service.id)
             guard id != excludedId, enabledIds.contains(id) else { continue }
             let descriptor = providerDescriptor(for: service)
+            guard descriptor.route != .freeAggregate || freeAggregateAllowed else { continue }
             guard descriptor.route != .unsupported, hasRequiredCredential(service) else { continue }
             return IOSSearchProviderSelection(
                 route: descriptor.route,
@@ -999,7 +1005,7 @@ struct IOSSearchExecutor {
         case is SearchServiceOptions.FirecrawlOptions:
             return IOSSearchProviderDescriptor(name: "Firecrawl", type: "firecrawl", route: .unsupported, requiresAPIKey: true)
         case is SearchServiceOptions.JinaOptions:
-            return IOSSearchProviderDescriptor(name: "Jina", type: "jina", route: .jinaAPI, requiresAPIKey: false)
+            return IOSSearchProviderDescriptor(name: "Jina", type: "jina", route: .jinaAPI, requiresAPIKey: true)
         case is SearchServiceOptions.BochaOptions:
             return IOSSearchProviderDescriptor(name: "Bocha", type: "bocha", route: .unsupported, requiresAPIKey: true)
         case is SearchServiceOptions.AmberAgentSearchOptions:

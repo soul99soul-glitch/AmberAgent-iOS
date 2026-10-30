@@ -19,7 +19,7 @@ import app.amber.ai.provider.Provider
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
 import app.amber.ai.provider.OpenCodeRequestHeaders
-import app.amber.ai.provider.shouldDisableClaudeThinking
+import app.amber.ai.provider.claudeThinkingTypeForOff
 import app.amber.ai.provider.providers.PartGroup
 import app.amber.ai.provider.providers.groupPartsByToolBoundary
 import app.amber.ai.ui.ImageGenerationResult
@@ -409,10 +409,13 @@ class ClaudeKmpProvider internal constructor(
             )
             put("max_tokens", params.maxTokens ?: 64_000)
 
-            if (params.temperature != null && !params.reasoningLevel.isEnabled) {
-                put("temperature", params.temperature)
+            // These models use fixed sampling even with thinking disabled.
+            if (!fixedSamplingModelPattern.containsMatchIn(params.model.modelId)) {
+                if (params.temperature != null && !params.reasoningLevel.isEnabled) {
+                    put("temperature", params.temperature)
+                }
+                if (params.topP != null) put("top_p", params.topP)
             }
-            if (params.topP != null) put("top_p", params.topP)
 
             put("stream", stream)
 
@@ -453,12 +456,29 @@ class ClaudeKmpProvider internal constructor(
                 })
             }
 
-            // thinking (Anthropic adaptive mode + output_config.effort)
+            // Claude 4.5 and earlier require a manual budget; adaptive is supported from 4.6.
             if (params.model.abilities.contains(ModelAbility.REASONING)) {
-                when (params.reasoningLevel) {
+                if (params.reasoningLevel != ReasoningLevel.OFF &&
+                    legacyThinkingModelPattern.containsMatchIn(params.model.modelId)
+                ) {
+                    val maxTokens = params.maxTokens ?: 64_000
+                    require(maxTokens > 1_024) {
+                        "Claude extended thinking requires max_tokens greater than 1024."
+                    }
+                    val requestedBudget = if (params.reasoningLevel == ReasoningLevel.AUTO) {
+                        ReasoningLevel.HIGH.budgetTokens
+                    } else {
+                        params.reasoningLevel.budgetTokens
+                    }
+                    put("thinking", buildJsonObject {
+                        put("type", "enabled")
+                        put("budget_tokens", requestedBudget.coerceIn(1_024, maxTokens - 1))
+                    })
+                } else when (params.reasoningLevel) {
                     ReasoningLevel.OFF -> {
-                        if (shouldDisableClaudeThinking(params.model.modelId, params.reasoningLevel)) {
-                            put("thinking", buildJsonObject { put("type", "disabled") })
+                        val offType = claudeThinkingTypeForOff(params.model.modelId)
+                        if (offType != null) {
+                            put("thinking", buildJsonObject { put("type", offType) })
                         } else {
                             put("thinking", buildJsonObject {
                                 put("type", "adaptive")
@@ -830,6 +850,14 @@ class ClaudeKmpProvider internal constructor(
             }
 
     private companion object {
+        private val legacyThinkingModelPattern = Regex(
+            """claude-(?:3[.-]7-sonnet|(?:opus|sonnet|haiku)-4(?:[.-][15])?)(?:-\d{8})?(?=$|:|[.-](?!\d))""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val fixedSamplingModelPattern = Regex(
+            """claude-(?:(?:fable|mythos)-5(?:[.-]1)?|mythos-preview|opus-4[.-][78]|(?:opus|sonnet)-5(?:[.-]5)?|haiku-5[.-]5)(?:-\d{8})?(?=$|:|[.-](?!\d))""",
+            RegexOption.IGNORE_CASE,
+        )
         private val anthropicExecutionErrorStatuses = setOf(
             "failed",
             "denied",

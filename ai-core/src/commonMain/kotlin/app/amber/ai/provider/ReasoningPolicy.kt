@@ -261,7 +261,7 @@ fun Model.reasoningFamily(provider: ProviderSetting?): ReasoningFamily {
         provider.isGrokWebEndpoint() -> ReasoningFamily.NONE
 
         "claude" in id || provider is ProviderSetting.Claude -> when {
-            id.contains("fable") || id.contains("mythos") -> ReasoningFamily.CLAUDE_ALWAYS_FULL
+            id.isClaudeAlwaysThinking() -> ReasoningFamily.CLAUDE_ALWAYS_FULL
             id.isClaudeOpus47() || id.isClaudeCurrentFull() -> ReasoningFamily.CLAUDE_OPUS_47
             id.contains("4-5") || id.contains("4.5") -> ReasoningFamily.CLAUDE_MAX
             id.contains("sonnet") && (id.contains("4-6") || id.contains("4.6")) -> ReasoningFamily.CLAUDE_HIGH
@@ -449,6 +449,12 @@ internal fun String.isClaudeCurrentFull(): Boolean {
     if (id.contains("opus-5") || id.contains("sonnet-5") || id.contains("haiku-5")) return true
     if (id.contains("opus") && (id.contains("4-8") || id.contains("4.8"))) return true
     return false
+}
+
+internal fun String.isClaudeAlwaysThinking(): Boolean {
+    val id = normalizedModelId()
+    return id.contains("fable") || id.contains("mythos") ||
+        id.contains("opus-5-5") || id.contains("opus-5.5")
 }
 
 internal fun String.geminiFamily(): ReasoningFamily {

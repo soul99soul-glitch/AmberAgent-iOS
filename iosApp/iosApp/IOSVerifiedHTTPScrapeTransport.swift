@@ -48,7 +48,10 @@ extension IOSURLSessionSearchHTTPTransport: IOSVerifiedHTTPScrapeTransport {
             resolvePublicHost: resolvePublicHostForVerifiedScrape,
             deadline: deadline
         ) else {
-            return try await sendPublic(request, maximumResponseBytes: maximumResponseBytes)
+            try IOSVerifiedHTTPScrapeDeadline.check(deadline)
+            var remainingRequest = request
+            remainingRequest.timeoutInterval = deadline.timeIntervalSinceNow
+            return try await sendPublic(remainingRequest, maximumResponseBytes: maximumResponseBytes)
         }
 
         let loader = IOSVerifiedHTTPScrapeLoader(

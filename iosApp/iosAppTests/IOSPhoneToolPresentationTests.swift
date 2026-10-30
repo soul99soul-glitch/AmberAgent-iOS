@@ -10,6 +10,22 @@ final class IOSPhoneToolPresentationTests: XCTestCase {
                            approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
     }
 
+    func testReturnToAmberNeedsVerifiedForegroundAndClipboardSummaryDoesNotExposeText() {
+        let pending = ChatToolStepModel(tool: tool("phone_return_to_amber", result:
+            #"{"outcome":"completed","verified":false,"message":"foreground not confirmed"}"#))
+        XCTAssertEqual(pending.state, .cancelled)
+        XCTAssertEqual(pending.title, "返回任务对话 · 待核验")
+        let visible = ChatToolStepModel(tool: tool("phone_return_to_amber", result:
+            #"{"outcome":"completed","verified":true}"#))
+        XCTAssertEqual(visible.state, .done)
+        XCTAssertEqual(visible.detail, "已确认 Amber 在前台")
+        let clipboard = ChatToolStepModel(tool: tool("phone_clipboard", result:
+            #"{"status":"completed","text":"private copied content","returned_chars":22}"#))
+        XCTAssertEqual(clipboard.title, "读取剪贴板")
+        XCTAssertEqual(clipboard.detail, "已读取 22 字符")
+        XCTAssertFalse(clipboard.detail?.contains("private") == true)
+    }
+
     func testActivePhoneCapsuleDoesNotExposeInput() {
         let model = ChatToolStepModel(tool: tool(result: nil))
         XCTAssertEqual(model.title, "操作手机")

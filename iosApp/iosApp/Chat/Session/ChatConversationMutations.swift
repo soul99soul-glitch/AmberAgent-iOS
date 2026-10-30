@@ -891,7 +891,7 @@ extension ChatViewModel {
         baseMessages: [UIMessage]
     ) async -> [UIMessage] {
         let mailboxMessages = await drainMailbox(conversationId: currentConversationId)
-        let steerMessages = drainSteerQueue(conversationId: currentConversationId)
+        let steerMessages = await drainSteerQueue(conversationId: currentConversationId)
         return baseMessages + mailboxMessages + steerMessages
     }
 

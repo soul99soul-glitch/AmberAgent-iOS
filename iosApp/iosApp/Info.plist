@@ -28,6 +28,7 @@
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).chat.*</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).deepread.*</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).keepalive.*</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).wake</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>

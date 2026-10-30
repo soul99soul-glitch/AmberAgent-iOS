@@ -349,7 +349,7 @@ final class IOSJevClientTests: XCTestCase {
         XCTAssertEqual(counter.current, 151)
     }
 
-    // MARK: Missing key
+    // MARK: Missing key & key sanitization
 
     func testMissingKeyFailsFastWithoutNetwork() async {
         let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) }
@@ -366,6 +366,56 @@ final class IOSJevClientTests: XCTestCase {
             XCTFail("unexpected error: \(error)")
         }
         XCTAssertEqual(transport.calls, 0)
+    }
+
+    func testSanitizedAPIKeyStripsEmbeddedNewlinesQuotesAndBearerPrefix() {
+        XCTAssertEqual(
+            IOSJevClient.sanitizedAPIKey("tsk_live_abc\n123\r\n456"),
+            "tsk_live_abc123456"
+        )
+        XCTAssertEqual(
+            IOSJevClient.sanitizedAPIKey("  \"Bearer tsk_live_abc\n\t123\u{200B}\u{FEFF}\"  "),
+            "tsk_live_abc123"
+        )
+        XCTAssertEqual(
+            IOSJevClient.sanitizedAPIKey("Authorization: bearer 'tsk_live_\r\nxyz\u{200C}\u{200D}'"),
+            "tsk_live_xyz"
+        )
+        XCTAssertEqual(IOSJevClient.sanitizedAPIKey("Bearer   \n\r\t\u{200B}"), "")
+        XCTAssertEqual(IOSJevClient.sanitizedAPIKey("  \n\r\t "), "")
+    }
+
+    func testDecideSanitizesAPIKeyAndModelBeforeSendingAuthorizationHeader() async throws {
+        var capturedAuth: String?
+        let transport = JevStubTransport { request in
+            capturedAuth = request.value(forHTTPHeaderField: "Authorization")
+            return (self.scoreResponse(answers: ["t1": 0.8]), self.httpResponse(status: 200))
+        }
+        let client = IOSJevClient(transport: transport)
+        var input = makeInput(
+            transport: transport,
+            questions: makeQuestions(["t1"]),
+            apiKey: "  \"Bearer tsk_live_part1\npart2\r\npart3\u{200B}\"  "
+        )
+        input.model = "jev-1.14.\n0\r\t"
+        let decision = try await client.decide(input, policy: policy)
+        XCTAssertEqual(capturedAuth, "Bearer tsk_live_part1part2part3")
+        let body = try XCTUnwrap(transport.lastBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(object["model"] as? String, "jev-1.14.0")
+        XCTAssertEqual(decision.answers.first?.score, 0.8)
+
+        // 仅含 Bearer 与空白/换行符的无效 Key 在本地按 missingKey 拒绝。
+        do {
+            _ = try await client.decide(
+                makeInput(transport: transport, questions: makeQuestions(["t1"]), apiKey: "Bearer \n\r\t\u{200B}"),
+                policy: policy
+            )
+            XCTFail("expected missingKey for empty bearer token")
+        } catch let error as IOSJevRequestError {
+            XCTAssertEqual(error, .missingKey)
+        }
+        XCTAssertEqual(transport.calls, 1)
     }
 
     // MARK: vercelGateway（Vercel AI Gateway decision-model）

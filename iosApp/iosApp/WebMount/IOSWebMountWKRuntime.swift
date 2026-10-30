@@ -13,6 +13,15 @@ import UIKit
 final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntimeServicing, WKNavigationDelegate, WKUIDelegate {
     static let automationContentWorld = WKContentWorld.world(name: "app.amber.webmount.automation")
 
+    /// 未挂载时的视口：取当前前台窗口场景的屏幕（iPhone Duo 内外屏不同），
+    /// 不用 `UIScreen.main`——双屏设备上它不代表 App 所在的屏幕。
+    private static var detachedViewportFrame: CGRect {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        return scene?.effectiveGeometry.coordinateSpace.bounds
+            ?? CGRect(x: 0, y: 0, width: 402, height: 874)
+    }
+
     private var webViewStorage: WKWebView?
     var webView: WKWebView? {
         if let webViewStorage { return webViewStorage }
@@ -25,7 +34,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         // Agent-owned sessions can stay detached from SwiftUI's foreground layout.
         // Give those sessions a real viewport; a mounted view will replace this
         // frame through its normal layout pass.
-        let webView = WKWebView(frame: UIScreen.main.bounds, configuration: configuration)
+        let webView = WKWebView(frame: Self.detachedViewportFrame, configuration: configuration)
         webViewStorage = webView
         webView.navigationDelegate = self
         webView.uiDelegate = self

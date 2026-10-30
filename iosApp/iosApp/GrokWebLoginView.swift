@@ -187,7 +187,8 @@ final class GrokWebLoginModel: ObservableObject {
         loginTask = Task { [client] in
             do {
                 let tokens = try await client.exchangeCode(code: code, codeVerifier: verifier)
-                _ = await client.attachProviderBackup(self.providerBackup)
+                _ = try await client.attachProviderBackup(self.providerBackup)
+                try Task.checkCancellation()
                 self.phase = .signedIn(email: tokens.email)
                 onSignedIn()
             } catch is CancellationError {

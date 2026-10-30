@@ -44,6 +44,7 @@ final class ChatConversationRunRegistry {
     func retainActive(keeping selected: ChatConversationRun) {
         runs = runs.filter { _, run in
             run === selected || run.host?.isRunning == true
+                || run.state.steerQueueAutoContinueTask != nil
                 || run.state.waitingForChildRunId != nil || !run.state.inputText.isEmpty
         }
     }

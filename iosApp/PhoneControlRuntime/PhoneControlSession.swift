@@ -1,11 +1,33 @@
 import Foundation
+import os
 import AmberPhoneControl
 import AmberIPhoneControl
 
 enum IOSPhoneControlLoopbackRoute {
     // Amber's local tunnel peer. Native sockets bind to its 10.7.1.1 utun
     // interface; an inactive tunnel must never fall through to a LAN route.
-    static let endpoint = "10.7.0.1:49152"
+    static let peer = "10.7.0.1"
+    // RemotePairing's usual port. iOS assigns the real one dynamically, so
+    // this is only the fallback when Bonjour cannot resolve this phone's own.
+    static let defaultPort = 49_152
+    private static let currentPort = OSAllocatedUnfairLock(initialState: defaultPort)
+
+    static var port: Int { currentPort.withLock { $0 } }
+    static var endpoint: String { "\(peer):\(port)" }
+
+    /// Resolves this phone's own `_remotepairing._tcp` port before a connection.
+    /// Keeps the last known port when browsing finds no unique local service.
+    @MainActor
+    @discardableResult
+    static func resolvePort() async -> Int {
+        let summary = await IOSPhoneControlServiceInspection().inspect(stopAtFirstLocalService: true)
+        let resolved = summary.uniqueLocalRemotePairingPort
+        if let resolved { currentPort.withLock { $0 = resolved } }
+        let port = self.port
+        IOSBackgroundLifecycleLog.record("phoneControlResolvedPort",
+            detail: "port=\(port) source=\(resolved == nil ? "fallback" : "bonjour")")
+        return port
+    }
     // Legacy settings URL; unused after embedded-tunnel integration.
     static let appURL = URL(string: "localdevvpn://")!
 }
@@ -21,7 +43,7 @@ enum IOSPhoneControlHandshakeInspection {
         IOSBackgroundLifecycleLog.record("phoneControlHandshakeInspectionStarted")
         guard !Task.isCancelled else { return }
         let endpoint = IOSPhoneControlLoopbackRoute.endpoint
-        IOSBackgroundLifecycleLog.record("phoneControlHandshakeInspectionEndpoint", detail: "source=\(source) family=ipv4 port=49152")
+        IOSBackgroundLifecycleLog.record("phoneControlHandshakeInspectionEndpoint", detail: "source=\(source) family=ipv4 port=\(IOSPhoneControlLoopbackRoute.port)")
         let detail = await Task.detached {
             let handle = endpoint.withCString {
                 inspectCurrentRoute

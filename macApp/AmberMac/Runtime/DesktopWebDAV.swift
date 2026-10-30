@@ -100,7 +100,7 @@ final class DesktopWebDAVManager {
         }
         let resource = IOSWebDAVResource(href: try client.makeRequest(method: "GET", fileName: fileName).url!.absoluteString,
             displayName: fileName, sizeBytes: Int64(data.count), modifiedAt: Int64(Date().timeIntervalSince1970 * 1000),
-            etag: revision ?? "", isCollection: false)
+            etag: revision, isCollection: false)
         snapshots.insert(resource, at: 0)
         status = "新快照已上传"
         return resource

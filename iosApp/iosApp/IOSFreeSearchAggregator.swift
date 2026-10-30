@@ -99,9 +99,10 @@ enum IOSFreeSearchAggregator {
         try Task.checkCancellation()
 
         var merged = roundRobinMerge(perEngine, order: engines, limit: limit)
-        if merged.count < weakResultThreshold, googleFallbackEnabled {
+        if merged.count < min(weakResultThreshold, limit), googleFallbackEnabled {
             do {
                 let google = try await googleFallback(trimmed, limit)
+                try Task.checkCancellation()
                 merged = dedupe(merged + google, limit: limit)
             } catch is CancellationError {
                 throw CancellationError()
@@ -109,6 +110,7 @@ enum IOSFreeSearchAggregator {
                 failures.append("Google WebView：\(describe(error))")
             }
         }
+        try Task.checkCancellation()
 #if DEBUG
         NSLog("[AmberSearch] free-aggregate engines=\(engines.map(\.rawValue)) hits=\(perEngine.mapValues(\.count)) merged=\(merged.count) failures=\(failures)")
 #endif
@@ -157,14 +159,20 @@ enum IOSFreeSearchAggregator {
     }
 
     static func dedupeKey(_ url: String) -> String {
-        var key = url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed), let host = components.host else { return trimmed }
+        components.scheme = components.scheme?.lowercased()
+        components.host = host.lowercased()
+        var path = components.percentEncodedPath
+        while path.hasSuffix("/") { path.removeLast() }
+        components.percentEncodedPath = path
+        var key = components.string ?? trimmed
         for prefix in ["https://", "http://"] where key.hasPrefix(prefix) {
             key.removeFirst(prefix.count)
         }
         for prefix in ["www.", "m."] where key.hasPrefix(prefix) {
             key.removeFirst(prefix.count)
         }
-        while key.hasSuffix("/") { key.removeLast() }
         return key
     }
 
@@ -189,7 +197,7 @@ enum IOSFreeSearchAggregator {
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
             var form = URLComponents()
             form.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "b", value: "")]
-            request.httpBody = Data((form.percentEncodedQuery ?? "").utf8)
+            request.httpBody = Data((form.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
             let html = try await send(request, engine: engine, transport: transport)
             let results = parseDuckDuckGoHTML(html)
             if results.isEmpty, looksBlocked(html) { throw IOSFreeSearchEngineError.blocked }
@@ -333,8 +341,9 @@ enum IOSFreeSearchAggregator {
 
     static func parseBraveHTML(_ html: String) -> [IOSSearchResult] {
         html.components(separatedBy: "data-type=\"web\"").dropFirst().compactMap { block in
-            guard let url = capture(#"<a href="(https?://[^"]+)""#, in: block),
-                  !(URL(string: url)?.host?.hasSuffix("brave.com") ?? true) else { return nil }
+            guard let rawURL = capture(#"<a href="(https?://[^"]+)""#, in: block) else { return nil }
+            let url = IOSSearchExecutor.decodeEntities(rawURL)
+            guard !(URL(string: url)?.host?.hasSuffix("brave.com") ?? true) else { return nil }
             let title = capture(#"class="title[^"]*"[^>]*title="([^"]+)""#, in: block)
                 ?? capture(#"class="title[^"]*"[^>]*>(.*?)</div>"#, in: block)
                 ?? ""

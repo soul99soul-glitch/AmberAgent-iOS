@@ -10,6 +10,88 @@ import XCTest
 
 @MainActor
 final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
+    func testReturnToolUsesCurrentLeaseAndReportsUnknownWithoutRetry() async throws {
+        for unknown in [false, true] {
+            let harness = try await Harness(unknownMutation: unknown)
+            defer { harness.dispose() }
+            _ = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+            let outcome = await harness.executor.execute(name: "phone_return_to_amber", arguments: "{}", isUserInitiated: true)
+            if unknown {
+                guard case .outcomeUnknown(let parts) = outcome,
+                      let text = parts.first as? UIMessagePart.Text else { return XCTFail("Lost activation receipt must remain unknown") }
+                XCTAssertEqual(try object(text.text)["outcome"] as? String, "unknown")
+                _ = await harness.executor.execute(name: "phone_return_to_amber", arguments: "{}", isUserInitiated: true)
+            } else {
+                guard case .filled(let text) = outcome else { return XCTFail("A current return tool lease must be allowed to return") }
+                let fields = try object(text)
+                XCTAssertEqual(fields["verified"] as? Bool, true)
+                XCTAssertEqual(fields["observed_bundle_id"] as? String, Bundle.main.bundleIdentifier)
+                XCTAssertEqual(fields["fresh_observation_available"] as? Bool, false)
+            }
+            XCTAssertEqual(harness.http.mutationPaths, ["/wda/apps/activate"])
+            await harness.controller.stop(runID: harness.runID)
+        }
+    }
+
+    func testSystemToolCanObserveAndGoHomeWithoutPersistingSystemScope() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        _ = await harness.executor.execute(name: "phone_system", arguments: #"{"action":"observe"}"#, isUserInitiated: true)
+        XCTAssertTrue(harness.controller.statusText(runID: harness.runID).contains("com.apple.springboard"))
+        XCTAssertTrue(harness.http.mutationPaths.isEmpty)
+        let outcome = await harness.executor.execute(name: "phone_system", arguments: #"{"action":"home"}"#, isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome else { return XCTFail("Home should return a receipt and the fresh system screen") }
+        XCTAssertTrue(parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.contains { $0.contains("com.apple.springboard") })
+        XCTAssertEqual(harness.http.mutationPaths, ["/wda/homescreen"])
+        XCTAssertEqual(harness.controller.selectedBundleIDs, ["app.test"])
+        await harness.controller.stop(runID: harness.runID)
+    }
+
+    func testHomeCanStartFromAmberWithoutSelectingAnUnrelatedApp() async throws {
+        let harness = try await Harness(selectedBundleIDs: [])
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_system", arguments: #"{"action":"home"}"#, isUserInitiated: true)
+        guard case .filledParts(let parts) = outcome else { return XCTFail("A system-only task needs no installed-app selection") }
+        XCTAssertTrue(parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.contains { $0.contains("com.apple.springboard") })
+        XCTAssertTrue(harness.controller.selectedBundleIDs.isEmpty)
+        XCTAssertEqual(harness.http.mutationPaths, ["/wda/homescreen"])
+        await harness.controller.stop(runID: harness.runID)
+    }
+
+    func testExplicitLockIsVerifiedAndCompletionKeepsPhoneLocked() async throws {
+        let harness = try await Harness()
+        defer { harness.dispose() }
+        let outcome = await harness.executor.execute(name: "phone_system", arguments: #"{"action":"lock"}"#, isUserInitiated: true)
+        guard case .filled(let text) = outcome else { return XCTFail("Lock should return state verification") }
+        XCTAssertEqual(try object(text)["locked"] as? Bool, true)
+        let stopped = await harness.executor.execute(name: "phone_stop", arguments: "{}", isUserInitiated: true)
+        guard case .filled = stopped else { return XCTFail("Cleanup should succeed while preserving the lock") }
+        XCTAssertEqual(harness.http.mutationPaths, ["/wda/lock"])
+    }
+
+    func testStopReportsReturnReceiptRespectsLeaveAppAndPreservesUnknown() async throws {
+        for mode in ["return", "leave", "unknown"] {
+            let harness = try await Harness(unknownMutation: mode == "unknown")
+            defer { harness.dispose() }
+            IOSPhoneControlReturnPreference.set(true, harness.defaults)
+            _ = await harness.executor.execute(name: "phone_observe", arguments: "{}", isUserInitiated: true)
+            let arguments = mode == "leave" ? #"{"return_to_amber":false}"# : "{}"
+            let outcome = await harness.executor.execute(name: "phone_stop", arguments: arguments, isUserInitiated: true)
+            if mode == "unknown" {
+                guard case .outcomeUnknown = outcome else { return XCTFail("Unknown return must reach the engine ledger") }
+            } else {
+                guard case .filled(let text) = outcome else { return XCTFail("Stop should retain cleanup and return receipts") }
+                let fields = try object(text)
+                XCTAssertEqual(fields["cleanup_complete"] as? Bool, true)
+                if mode == "return" {
+                    XCTAssertEqual((fields["return_to_amber"] as? [String: Any])?["verified"] as? Bool, true)
+                } else { XCTAssertNil(fields["return_to_amber"]) }
+            }
+            XCTAssertEqual(harness.http.mutationPaths, mode == "leave" ? [] : ["/wda/apps/activate"])
+            XCTAssertNil(harness.controller.ownerRunID)
+        }
+    }
+
     func testSuccessfulActionWithoutExpectationReturnsReceiptAndFreshTree() async throws {
         let harness = try await Harness()
         defer { harness.dispose() }
@@ -813,7 +895,7 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
         init(postGate: HandoffReplyGate? = nil, sourceGate: HandoffReplyGate? = nil,
              unknownMutation: Bool = false, firstSourceError: URLError.Code? = nil,
              listPages: Bool = false, screenshotPNG: Data? = nil, textInput: Bool = false,
-             flowMode: HandoffFlowMode? = nil,
+             flowMode: HandoffFlowMode? = nil, selectedBundleIDs: Set<String> = ["app.test"],
              onHandoff: @escaping @MainActor (String, IOSPhoneControlHandoffState) -> Void = { _, _ in }) async throws {
             let runID = "handoff-\(UUID().uuidString)"
             let suite = "IOSPhoneControlHandoffExecutorTests.\(UUID().uuidString)"
@@ -829,7 +911,7 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
                 "identifier": UUID().uuidString,
             ], format: .binary, options: 0)
             let controller = IOSPhoneControlController(defaults: defaults, credentials: HandoffPairingStore(data: pairing),
-                session: session, localTunnel: PhoneControlTunnelStub(), onHandoffChange: onHandoff)
+                session: session, localTunnel: PhoneControlTunnelStub(), onReturnToConversation: { _, _ in }, onHandoffChange: onHandoff)
             self.runID = runID
             self.suite = suite
             self.defaults = defaults
@@ -839,7 +921,7 @@ final class IOSPhoneControlHandoffExecutorTests: XCTestCase {
             executor = IOSPhoneControlToolExecutor(runID: runID, controller: controller, reportActivity: { _ in })
             await controller.refreshPreparation()
             controller.enabled = true
-            controller.selectedBundleIDs = ["app.test"]
+            controller.selectedBundleIDs = selectedBundleIDs
             XCTAssertTrue(controller.claim(runID: runID, onStop: {}))
         }
 
@@ -896,6 +978,8 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
     private var requests: [(String, String)] = []
     private var sources = 0
     private var clicks = 0
+    private var activeBundleID = "app.test"
+    private var locked = false
     var paths: [String] { lock.withLock { requests.map { $0.1 } } }
     var mutationPaths: [String] { lock.withLock { requests.filter { $0.0 == "POST" }.map { $0.1 } } }
     var sourceCount: Int { lock.withLock { sources } }
@@ -926,7 +1010,9 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
         }
         switch path {
         case "/status": return (#"{"value":{"ready":true,"sessionId":"handoff","auth":{"required":true,"scheme":"IPU-HMAC-SHA256"}}}"#, nil)
-        case "/wda/activeAppInfo": return (#"{"value":{"bundleId":"app.test","pid":42}}"#, nil)
+        case "/wda/activeAppInfo":
+            let bundle = lock.withLock { activeBundleID }
+            return (#"{"value":{"bundleId":"\#(bundle)","pid":42}}"#, nil)
         case "/window/size": return (#"{"value":{"width":402,"height":874}}"#, nil)
         case "/wda/settle": return (#"{"value":{"stable":true,"blank":false,"waited_ms":160,"frames":4,"changed_px":0,"capture_ms":2,"budget_ms":700}}"#, nil)
         case "/source":
@@ -958,8 +1044,21 @@ private final class HandoffHTTPFixture: @unchecked Sendable {
         case "/screenshot":
             let data = try XCTUnwrap(screenshotPNG, "Only explicit screenshot/OCR tests supply image support")
             return (#"{"value":"\#(data.base64EncodedString())"}"#, nil)
+        case "/wda/locked":
+            let state = lock.withLock { locked }
+            return (#"{"value":\#(state ? "true" : "false")}"#, nil)
+        case "/wda/lock", "/wda/unlock":
+            XCTAssertEqual(request.httpMethod, "POST")
+            lock.withLock { locked = path == "/wda/lock" }
+            return (#"{"value":null}"#, nil)
+        case "/wda/homescreen":
+            XCTAssertEqual(request.httpMethod, "POST")
+            lock.withLock { activeBundleID = "com.apple.springboard" }
+            return (#"{"value":null}"#, nil)
         case "/wda/apps/activate":
             XCTAssertEqual(request.httpMethod, "POST")
+            let bundle = try XCTUnwrap(try requestObject(request)["bundleId"] as? String)
+            if !unknownMutation { lock.withLock { activeBundleID = bundle } }
             return (unknownMutation ? #"{"value":{"error":"unknown error","message":"activation receipt lost"}}"# : #"{"value":null}"#, postGate)
         case "/element/FRESH/value":
             XCTAssertEqual(request.httpMethod, "POST")

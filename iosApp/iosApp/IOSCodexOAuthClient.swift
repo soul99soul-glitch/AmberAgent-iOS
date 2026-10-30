@@ -204,7 +204,9 @@ actor IOSCodexOAuthClient {
                         codeVerifier: codeVerifier
                     )
                     try Task.checkCancellation()
-                    IOSCodexAuthStore.save(providerId: providerId, tokens: tokens)
+                    guard IOSCodexAuthStore.save(providerId: providerId, tokens: tokens) else {
+                        throw IOSCodexOAuthError(message: "无法保存 Codex 登录状态，请重试。")
+                    }
                     return tokens
                 case 403, 404:
                     // Still pending — keep polling.

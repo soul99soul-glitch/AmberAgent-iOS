@@ -4,7 +4,7 @@ import Foundation
 /// Native iPhone tools are exposed for user-started runs while the persistent switch is enabled.
 enum IOSPhoneControlToolCatalog {
     static let toolNames: Set<String> = [
-        "phone_status", "phone_apps", "phone_add_app", "phone_observe", "phone_act", "phone_run_goal", "phone_run_flow", "phone_scroll_until", "phone_collect_list", "phone_stop",
+        "phone_status", "phone_apps", "phone_add_app", "phone_observe", "phone_act", "phone_run_goal", "phone_run_flow", "phone_scroll_until", "phone_collect_list", "phone_return_to_amber", "phone_clipboard", "phone_system", "phone_stop",
     ]
 
     static func isPhoneTool(name: String) -> Bool {
@@ -13,6 +13,24 @@ enum IOSPhoneControlToolCatalog {
 
     static var declarations: [Tool] {
         [
+            declaration(
+                name: "phone_return_to_amber",
+                description: "主动切回 Amber 并打开本轮任务的对话，以便向用户展示抓取内容、分析结果、重要进展或需要接手的问题。抓取阶段结束、准备进行较长分析或产出时调用；无需等整轮任务结束，也不要在每个按钮之间来回切换。复用本轮已启动的手机连接，不启动新连接。返回 verified=true 才证明 Amber 已在前台；completed 只表示切换动作回执，unknown 必须停止并核对。切换后原 App 的 ref/截图失效；再次查看目标 App 时用 phone_act launch，再使用新观察。此工具只切换与定位会话，你仍须在对话中写出有用的阶段摘要和后续结果。人工接管、结果未知时不抢前台。",
+                schema: #"{"type":"object","properties":{},"required":[],"additionalProperties":false}"#,
+                effect: "sideEffect"
+            ),
+            declaration(
+                name: "phone_clipboard",
+                description: "读写这部 iPhone 当前剪贴板的文本，action 默认 read；写入用 action=write 和 text（允许空文本），会替换原剪贴板。仅在用户任务需要读取或使用已复制内容时调用，不顺手检查无关内容。必须先让 Amber 在前台；若仍在其他 App，先 phone_return_to_amber。使用系统原生粘贴 API，iOS 可能询问粘贴许可，不会自动批准。只处理文本，不支持图片或文件；读取不会修改剪贴板，写入最多100000字符；无文本或系统未允许读取时明确返回 unavailable，不推断剪贴板为空。返回字符数和 truncated；max_chars 默认20000、最多100000。",
+                schema: #"{"type":"object","properties":{"action":{"type":"string","enum":["read","write"],"default":"read"},"text":{"type":"string","maxLength":100000},"max_chars":{"type":"integer","minimum":1,"maximum":100000,"default":20000}},"required":[],"additionalProperties":false}"#,
+                effect: "sideEffect"
+            ),
+            declaration(
+                name: "phone_system",
+                description: "观察或导航手机系统界面。action=observe 只读取当前界面；action=home 先返回主屏幕再读取新界面。volume_up/volume_down 按音量键；dismiss_keyboard 收起键盘；lock 锁屏、unlock 尝试解锁（有密码时明确拒绝，不输入或绕过密码），lock_state 只查询 locked 状态；锁屏和解锁后返回真实锁状态核验；显式锁屏后不会自动返回 Amber，以免唤醒已锁屏幕，成功解锁后恢复结束返回策略。按需开放本轮 SpringBoard 系统桌面范围，不改变保存的 App 列表。可设置 include_screenshot=true 查看图标和系统覆盖层；之后 phone_act 可用最新 ref 或截图比例位置操作，不能沿用之前 App 的 ref。通知中心、控制中心等只在新观察能识别实际前台时尝试导航，不保证所有系统界面可访问。系统权限、登录、支付等仍按用户授权处理，不自动批准权限，不绕过有密码的锁屏。需要打开普通 App 仍使用 phone_apps/phone_add_app/phone_act launch。",
+                schema: #"{"type":"object","properties":{"action":{"type":"string","enum":["observe","home","volume_up","volume_down","dismiss_keyboard","lock","unlock","lock_state"]},"include_screenshot":{"type":"boolean","default":false}},"required":["action"],"additionalProperties":false}"#,
+                effect: "sideEffect"
+            ),
             declaration(
                 name: "phone_status",
                 description: "查询手机本机 iPhone 自控状态、准备情况和当前应用范围。只读，不启动或重新配对控制服务。总开关开启后，由用户发起的任务即可使用；no_scope 时先 phone_apps 查询，再 phone_add_app 添加目标应用。",
@@ -78,8 +96,8 @@ enum IOSPhoneControlToolCatalog {
             ),
             declaration(
                 name: "phone_stop",
-                description: "结束当前有界 iPhone 手机自控会话并释放本机启动器，停止接受后续动作。不能撤销已经发送给系统的点击、输入或滑动；仅结束当前 run 的控制权限。",
-                schema: #"{"type":"object","properties":{},"required":[],"additionalProperties":false}"#,
+                description: "结束当前有界 iPhone 手机自控会话并释放本机启动器，停止接受后续动作。不能撤销已经发送给系统的点击、输入或滑动；仅结束当前 run 的控制权限。默认按「完成后返回 Amber」开关返回本次对话；用户要求留在当前 App 时传 return_to_amber=false。结果未知、人工接管或显式取消不抢前台。",
+                schema: #"{"type":"object","properties":{"return_to_amber":{"type":"boolean","default":true}},"required":[],"additionalProperties":false}"#,
                 effect: "sideEffect"
             ),
         ]

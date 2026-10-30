@@ -37,8 +37,11 @@ struct ChatPhoneToolPresentation {
         let isUnknown = status == "unknown" || outcome == "unknown" || prior?["kind"] as? String == "unknown"
         isOutcomeUnknown = isUnknown
         let isHandback = status == "handback"
-        let needsVerification = verificationStatus == "unmet" || verificationStatus == "insufficient"
-            || (toolName == "phone_act" && outcome == "completed" && result["fresh_observation_available"] as? Bool == false)
+        let returnReceipt = result["return_to_amber"] as? [String: Any]
+        let needsVerification = (toolName == "phone_stop" && returnReceipt != nil && returnReceipt?["verified"] as? Bool != true)
+            || (toolName == "phone_return_to_amber" && outcome == "completed" && result["verified"] as? Bool != true)
+            || verificationStatus == "unmet" || verificationStatus == "insufficient"
+            || (["phone_act", "phone_system"].contains(toolName) && outcome == "completed" && result["fresh_observation_available"] as? Bool == false)
 
         if isUnknown {
             state = .failed
@@ -69,6 +72,12 @@ struct ChatPhoneToolPresentation {
         }
 
         var facts: [String] = []
+        if toolName == "phone_return_to_amber", result["verified"] as? Bool == true {
+            facts.append(Self.localized("已确认 Amber 在前台"))
+        }
+        if toolName == "phone_clipboard", let characters = result["returned_chars"] as? Int {
+            facts.append(Self.formatted("已读取 %ld 字符", characters))
+        }
         if let steps = receipt["steps"] as? [Any] {
             let count = steps.filter { step in
                 if let text = step as? String { return text.hasSuffix(": completed") }

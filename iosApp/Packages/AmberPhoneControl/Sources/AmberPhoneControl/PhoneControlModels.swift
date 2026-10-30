@@ -37,6 +37,10 @@ public enum PhoneSwipeDirection: String, Sendable, CaseIterable {
     case up, down, left, right
 }
 
+public enum PhoneHardwareButton: String, Sendable, CaseIterable {
+    case volumeUp, volumeDown
+}
+
 /// Visual quiet is an observation aid, not evidence that an action achieved its goal.
 public struct PhoneScreenStability: Sendable, Encodable, Equatable {
     public let stable: Bool
@@ -89,7 +93,7 @@ public struct PhoneOperationDiagnostics: Sendable, Encodable, Equatable {
 
 public struct PhoneRunnerRequestTiming: Sendable, Encodable, Equatable {
     public enum Stage: String, Sendable, Encodable {
-        case activeApp, settle, source, screenSize, screenshot, elementLookup, action
+        case activeApp, lockState, settle, source, screenSize, screenshot, elementLookup, action
     }
 
     public let stage: Stage
@@ -132,6 +136,11 @@ public enum PhoneAction: Sendable, Equatable {
     /// Direction describes the finger movement, not the content movement.
     case swipe(ref: String, direction: PhoneSwipeDirection)
     case home
+    /// Device-wide actions require explicit system navigation for the current run.
+    case pressButton(PhoneHardwareButton)
+    case lockScreen
+    /// Uses the runner's supported unlock path; it cannot enter or bypass a passcode.
+    case unlockScreen
     /// 收起屏幕键盘：输入完成后键盘与候选栏会遮住底部控件，且遮挡后坐标失效。
     case dismissKeyboard
 }

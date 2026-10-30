@@ -947,7 +947,9 @@ final class IOSWorkspaceStore {
 
     private func workspaceFileWriteJSON(_ args: [String: Any]) async throws -> String {
         let path = try normalizeWorkspacePath((args["path"] as? String) ?? "")
-        let content = (args["content"] as? String) ?? ""
+        guard let content = args["content"] as? String else {
+            return Self.json(["ok": false, "tool": "workspace_file_write", "error": "content must be a string."])
+        }
         let overwrite = (args["overwrite"] as? Bool) ?? false
         let url = fileURL(forWorkspacePath: path)
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

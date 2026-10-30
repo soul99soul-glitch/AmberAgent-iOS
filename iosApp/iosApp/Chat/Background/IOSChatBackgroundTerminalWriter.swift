@@ -12,7 +12,7 @@ extension IOSChatBackgroundGenerationCoordinator {
         messages: [UIMessage],
         runState: IOSChatBackgroundRunState
     ) async {
-        await IOSPhoneControlController.shared.stop(runID: job.runId)
+        await IOSPhoneControlController.shared.stop(runID: job.runId, returnToAmber: true)
         var stamped = messages.applyingLastAssistantGenerationDuration(runState.generationDuration())
         let miniAppApplication = job.saveMiniAppIfPresent?(stamped, job.conversationId)
         if let miniAppApplication {
@@ -154,12 +154,16 @@ extension IOSChatBackgroundGenerationCoordinator {
                     status: recordedStatus,
                     finalMessages: finalMessages
                 )
-                await archiveTerminalOutput(
-                    runId: job.runId,
-                    conversationId: job.conversationId,
-                    displayMessages: job.runDisplayBaseline,
-                    finalMessages: finalMessages
-                )
+                if didSave {
+                    await notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
+                } else {
+                    await archiveTerminalOutput(
+                        runId: job.runId,
+                        conversationId: job.conversationId,
+                        displayMessages: job.runDisplayBaseline,
+                        finalMessages: finalMessages
+                    )
+                }
                 _ = await publishTruncatedTerminal(
                     job: job,
                     requestId: backgroundTask.identifier,
@@ -242,7 +246,7 @@ extension IOSChatBackgroundGenerationCoordinator {
         partialAssistantText: String? = nil
     ) async {
         guard runState.reserveTerminal() else { return }
-        await IOSPhoneControlController.shared.stop(runID: job.runId)
+        await IOSPhoneControlController.shared.stop(runID: job.runId, returnToAmber: true)
         await failAfterTerminalReservation(
             job: job,
             backgroundTask: backgroundTask,
@@ -319,9 +323,6 @@ extension IOSChatBackgroundGenerationCoordinator {
             : runState.finalizeTerminal(as: terminalOwner)
         guard didFinalize else {
             if runState.terminalIsOwned(by: .expiration) {
-                if didSave && !requiresRecovery {
-                    removePayload(requestId: backgroundTask.identifier)
-                }
                 let failurePresentation = await backgroundFailurePresentation(
                     job: job,
                     didSave: didSave,
@@ -337,11 +338,12 @@ extension IOSChatBackgroundGenerationCoordinator {
                     runId: job.runId,
                     presentation: failurePresentation
                 )
-                finish(
-                    runId: job.runId,
-                    requestId: backgroundTask.identifier,
-                    removePayload: !requiresRecovery
-                )
+                if didSave && !requiresRecovery {
+                    await notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
+                    finish(runId: job.runId, requestId: backgroundTask.identifier)
+                } else {
+                    releaseRuntimeOwnership(requestId: backgroundTask.identifier)
+                }
             }
             return
         }

@@ -235,6 +235,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             localToolExecutor: localToolExecutor
         )
         chatViewModel.conversationStore = conversationStore
+        IOSWakeScheduler.shared.attach(chatViewModel: chatViewModel)
         dependencies = IOSChatBackgroundDependencies(
             conversationStore: conversationStore,
             toolRuntime: chatViewModel.makeBackgroundToolRuntime(),
@@ -924,6 +925,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         let bridge: IosToolExposureBridge
         if !fullToolNames.isEmpty {
             var rebuilt = ToolKt.iosToolDeclarations(names: fullToolNames)
+            // Native Swift declarations have no KMP name-only factory. Restore
+            // their exact schema without widening this run's frozen catalog.
+            rebuilt += IOSWakeToolCatalog.declarations.filter { fullToolNames.contains($0.name) }
+            rebuilt += IOSShortcutAuthoringToolCatalog.declarations.filter { fullToolNames.contains($0.name) }
             let rebuiltNames = Set(rebuilt.map(\.name))
             // P0-b: dynamic `mcp__*` declarations cannot be rebuilt from a
             // name (the payload has no server/tool directory), so exclude them

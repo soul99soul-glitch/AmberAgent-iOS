@@ -20,7 +20,8 @@ extension ChatViewModel {
             bindings: makeGenerationBindings(state: state),
             toolLedger: chatRunLedger,
             textProvider: textProviderOverride,
-            phoneControl: phoneControl
+            phoneControl: phoneControl,
+            wakeScheduler: wakeScheduler
         )
     }
 
@@ -266,7 +267,7 @@ extension ChatViewModel {
                     )
                 },
                 drainSteerQueue: { [weak self] conversationId in
-                    self?.drainSteerQueue(state: state) ?? []
+                    await self?.drainSteerQueue(state: state) ?? []
                 },
                 drainMailbox: { [weak self] conversationId in
                     await self?.drainMailbox(state: state) ?? []
@@ -292,6 +293,12 @@ extension ChatViewModel {
                         Self.checkCompletionClaim(state: state, runId: runId, messages: finalMessages)
                     }
                     let terminal = try? await self.runStore.snapshot(runId: runId)
+                    if let terminal, terminal.status.isTerminal, terminal.finishedAt != nil {
+                        await self.wakeScheduler.recordRunTerminal(
+                            runID: runId, status: terminal.status.wireName,
+                            result: IOSWakeTaskOutput.text(in: finalMessages, baseline: displayBaseline)
+                        )
+                    }
                     await self.orchestrationToolService.notifyRunTerminal(
                         conversationId: conversationId,
                         runId: runId,

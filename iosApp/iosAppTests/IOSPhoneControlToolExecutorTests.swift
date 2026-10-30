@@ -6,6 +6,36 @@ import XCTest
 
 @MainActor
 final class IOSPhoneControlToolExecutorTests: XCTestCase {
+    func testPresentationAndSystemToolsHaveReachableRequests() throws {
+        XCTAssertNoThrow(try IOSPhoneControlToolExecutor.request(name: "phone_return_to_amber", arguments: "{}"))
+        XCTAssertNoThrow(try IOSPhoneControlToolExecutor.request(name: "phone_clipboard", arguments: "{}"))
+        XCTAssertNoThrow(try IOSPhoneControlToolExecutor.request(name: "phone_system", arguments: #"{"action":"observe"}"#))
+        XCTAssertNoThrow(try IOSPhoneControlToolExecutor.request(name: "phone_system", arguments: #"{"action":"home","include_screenshot":true}"#))
+    }
+
+    func testSystemClipboardAndStopArgumentsMatchTheirCapabilities() throws {
+        for action in ["observe", "home", "volume_up", "volume_down", "dismiss_keyboard", "lock", "unlock", "lock_state"] {
+            XCTAssertEqual(try IOSPhoneControlToolExecutor.request(name: "phone_system", arguments: "{\"action\":\"\(action)\"}"),
+                .system(action: action, includeScreenshot: false))
+        }
+        XCTAssertEqual(try IOSPhoneControlToolExecutor.request(name: "phone_stop", arguments: "{}"), .stop(returnToAmber: true))
+        XCTAssertEqual(try IOSPhoneControlToolExecutor.request(name: "phone_stop", arguments: #"{"return_to_amber":false}"#), .stop(returnToAmber: false))
+        XCTAssertEqual(try IOSPhoneControlToolExecutor.request(name: "phone_clipboard", arguments: #"{"action":"write","text":""}"#), .writeClipboard(text: ""))
+        for (name, arguments) in [
+            ("phone_system", #"{"action":"guess"}"#),
+            ("phone_system", #"{"action":"home","include_screenshot":1}"#),
+            ("phone_return_to_amber", #"{"bundle_id":"other.app"}"#),
+            ("phone_stop", #"{"return_to_amber":1}"#),
+            ("phone_clipboard", #"{"max_chars":0}"#),
+            ("phone_clipboard", #"{"max_chars":100001}"#),
+            ("phone_clipboard", #"{"action":"read","text":"overwrite"}"#),
+            ("phone_clipboard", #"{"action":"write","text":"x","max_chars":3}"#),
+            ("phone_clipboard", #"{"action":"write"}"#),
+        ] {
+            XCTAssertThrowsError(try IOSPhoneControlToolExecutor.request(name: name, arguments: arguments), name)
+        }
+    }
+
     func testScreenshotOnlyCloseButtonHasReachableAction() throws {
         // The reported popup exposes only window containers, so there is no close-button ref.
         XCTAssertNoThrow(try IOSPhoneControlToolExecutor.request(
@@ -57,7 +87,7 @@ final class IOSPhoneControlToolExecutorTests: XCTestCase {
         XCTAssertEqual(IOSPhoneControlToolExecutor.actionActivity(.launch(bundleID: "private.app")), .openingApp)
         XCTAssertEqual(IOSPhoneControlToolExecutor.completionActivity(request: .act(.tap(ref: "ref")), outcome: .outcomeUnknown([])), .outcomeUnknown)
         XCTAssertEqual(IOSPhoneControlToolExecutor.completionActivity(request: .observe(maxNodes: 1, includeScreenshot: false), outcome: .denied("no access")), .failed)
-        XCTAssertEqual(IOSPhoneControlToolExecutor.completionActivity(request: .stop, outcome: .filled("stopped")), .stopped)
+        XCTAssertEqual(IOSPhoneControlToolExecutor.completionActivity(request: .stop(returnToAmber: true), outcome: .filled("stopped")), .stopped)
     }
 
     func testObservationDefaultsToTreeAndEnforcesAdvertisedBounds() throws {
@@ -453,6 +483,60 @@ final class IOSPhoneControlToolExecutorTests: XCTestCase {
         XCTAssertEqual(result["code"] as? String, "phone_control_cleanup_failed")
         XCTAssertEqual(phases.last, .failed)
         XCTAssertNil(controller.ownerRunID)
+    }
+
+    func testReturnPreferenceDefaultsOnAndPreservesExplicitOptOut() throws {
+        let suite = "PhoneReturnPreference-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(IOSPhoneControlReturnPreference.enabled(defaults))
+        IOSPhoneControlReturnPreference.set(false, defaults)
+        XCTAssertFalse(IOSPhoneControlReturnPreference.enabled(defaults))
+        IOSPhoneControlReturnPreference.set(true, defaults)
+        XCTAssertTrue(IOSPhoneControlReturnPreference.enabled(defaults))
+    }
+
+    func testClipboardReadsOnlyInForegroundAndReturnsBoundedTextWithoutStartingRunner() async throws {
+        let (controller, defaults, suite) = try await makeClaimedController(runID: "clipboard")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clipboard = ClipboardFixture()
+        let executor = IOSPhoneControlToolExecutor(runID: "clipboard", controller: controller,
+            clipboard: .init(isForeground: { clipboard.foreground }, read: { clipboard.reads += 1; return clipboard.text }, write: { clipboard.writes.append($0) }), reportActivity: { _ in })
+        let blocked = await executor.execute(name: "phone_clipboard", arguments: "{}", isUserInitiated: true)
+        guard case .failed(let blockedText) = blocked else { return XCTFail("Background clipboard access must fail visibly") }
+        XCTAssertEqual(try decodedObject(blockedText)["code"] as? String, "clipboard_requires_foreground")
+        XCTAssertEqual(clipboard.reads, 0)
+        _ = await executor.execute(name: "phone_clipboard", arguments: #"{"action":"write","text":"new"}"#, isUserInitiated: true)
+        XCTAssertTrue(clipboard.writes.isEmpty)
+        clipboard.foreground = true
+        let result = await executor.execute(name: "phone_clipboard", arguments: #"{"max_chars":3}"#, isUserInitiated: true)
+        guard case .filled(let text) = result else { return XCTFail("Foreground text should be readable") }
+        let fields = try decodedObject(text)
+        XCTAssertEqual(fields["text"] as? String, "你🙂好")
+        XCTAssertEqual(fields["returned_chars"] as? Int, 3)
+        XCTAssertEqual(fields["total_chars"] as? Int, 6)
+        XCTAssertEqual(fields["truncated"] as? Bool, true)
+        XCTAssertEqual(clipboard.reads, 1)
+        XCTAssertFalse(controller.hasRequestedSession(runID: "clipboard"))
+        clipboard.text = nil
+        let unavailable = await executor.execute(name: "phone_clipboard", arguments: "{}", isUserInitiated: true)
+        guard case .failed(let unavailableText) = unavailable else { return XCTFail("Missing data is not proof of an empty clipboard") }
+        XCTAssertEqual(try decodedObject(unavailableText)["status"] as? String, "unavailable")
+        let written = await executor.execute(name: "phone_clipboard", arguments: #"{"action":"write","text":"new"}"#, isUserInitiated: true)
+        guard case .filled(let writeText) = written else { return XCTFail("Foreground write should replace text") }
+        XCTAssertEqual(try decodedObject(writeText)["written_chars"] as? Int, 3)
+        XCTAssertEqual(clipboard.writes, ["new"])
+        await controller.stop(runID: "clipboard")
+        _ = await executor.execute(name: "phone_clipboard", arguments: "{}", isUserInitiated: true)
+        XCTAssertEqual(clipboard.reads, 2, "A revoked owner must not read again")
+    }
+
+    @MainActor
+    private final class ClipboardFixture {
+        var foreground = false
+        var reads = 0
+        var writes: [String] = []
+        var text: String? = "你🙂好abc"
     }
 
     private func makeClaimedController(runID: String) async throws -> (IOSPhoneControlController, UserDefaults, String) {

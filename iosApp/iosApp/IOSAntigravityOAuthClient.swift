@@ -109,8 +109,66 @@ enum IOSAntigravityOAuthClients {
 
     static func logout(providerId: String) {
         lock.lock()
+        defer { lock.unlock() }
         generations[providerId, default: 0] += 1
-        lock.unlock()
+        IOSAntigravityAuthStore.clear(providerId: providerId)
+    }
+
+    static func persist(
+        providerId: String,
+        tokens: IOSAntigravityAuthTokens,
+        generation: Int,
+        replacing expected: IOSAntigravityAuthTokens? = nil,
+        startsNewSession: Bool = false
+    ) throws -> IOSAntigravityAuthTokens {
+        try Task.checkCancellation()
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == generations[providerId, default: 0] else { throw CancellationError() }
+        var merged = tokens
+        if let expected {
+            guard let latest = IOSAntigravityAuthStore.load(providerId: providerId),
+                  latest.accessToken == expected.accessToken,
+                  latest.refreshToken == expected.refreshToken else { throw CancellationError() }
+            merged.projectId = latest.projectId ?? merged.projectId
+            merged.onboardedTier = latest.onboardedTier ?? merged.onboardedTier
+        }
+        guard IOSAntigravityAuthStore.save(providerId: providerId, tokens: merged) else {
+            throw IOSAntigravityOAuthError(message: "无法保存 Antigravity 登录状态，请重试。")
+        }
+        if startsNewSession { generations[providerId, default: 0] += 1 }
+        return merged
+    }
+
+    static func persistOnboarding(
+        providerId: String,
+        generation: Int,
+        projectId: String,
+        tier: String
+    ) throws -> IOSAntigravityAuthTokens {
+        try Task.checkCancellation()
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == generations[providerId, default: 0],
+              var current = IOSAntigravityAuthStore.load(providerId: providerId) else { throw CancellationError() }
+        // Refresh may have rotated credentials while onboarding was in flight.
+        // Only the onboarding-owned fields belong to this response.
+        current.projectId = projectId
+        current.onboardedTier = tier
+        guard IOSAntigravityAuthStore.save(providerId: providerId, tokens: current) else {
+            throw IOSAntigravityOAuthError(message: "无法保存 Antigravity 登录状态，请重试。")
+        }
+        return current
+    }
+
+    static func invalidate(providerId: String, generation: Int, expected: IOSAntigravityAuthTokens) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == generations[providerId, default: 0],
+              let current = IOSAntigravityAuthStore.load(providerId: providerId),
+              current.accessToken == expected.accessToken,
+              current.refreshToken == expected.refreshToken else { return }
+        generations[providerId, default: 0] += 1
         IOSAntigravityAuthStore.clear(providerId: providerId)
     }
 
@@ -308,12 +366,6 @@ actor IOSAntigravityOAuthClient {
         IOSAntigravityOAuthClients.logout(providerId: providerId)
     }
 
-    private func persist(_ tokens: IOSAntigravityAuthTokens, generation: Int) -> IOSAntigravityAuthTokens {
-        guard generation == IOSAntigravityOAuthClients.generation(providerId: providerId) else { return tokens }
-        _ = IOSAntigravityAuthStore.save(providerId: providerId, tokens: tokens)
-        return tokens
-    }
-
     // MARK: - Authorization code exchange
 
     /// Exchanges the browser authorization code for tokens and persists them.
@@ -342,7 +394,9 @@ actor IOSAntigravityOAuthClient {
             expiresInSeconds: (obj["expires_in"] as? NSNumber)?.int64Value,
             fallback: cached()
         )
-        return persist(tokens, generation: generation)
+        return try IOSAntigravityOAuthClients.persist(
+            providerId: providerId, tokens: tokens, generation: generation, startsNewSession: true
+        )
     }
 
     /// Runs `loadCodeAssist` + (`onboardUser` + LRO poll) against cloudcode-pa
@@ -351,13 +405,16 @@ actor IOSAntigravityOAuthClient {
     /// Onboarding failure does NOT invalidate the login: the token stays, and a
     /// later call (or a chat request) retries.
     func ensureOnboarded() async throws -> IOSAntigravityAuthTokens {
-        guard var current = cached() else {
+        let generation = IOSAntigravityOAuthClients.generation(providerId: providerId)
+        guard let current = cached() else {
             throw IOSAntigravityOAuthError(message: "尚未登录 Antigravity，请先在服务商设置里登录。")
         }
         if !(current.projectId ?? "").isEmpty, !(current.onboardedTier ?? "").isEmpty {
             return current
         }
         let accessToken = try await getValidAccessToken()
+        try Task.checkCancellation()
+        guard generation == IOSAntigravityOAuthClients.generation(providerId: providerId) else { throw CancellationError() }
 
         // 1) loadCodeAssist — mirror gemini-cli setup.ts exactly: NO
         // `cloudaicompanionProject` field at all when we don't have one (an
@@ -368,9 +425,9 @@ actor IOSAntigravityOAuthClient {
         let currentProject = (loadObj["cloudaicompanionProject"] as? String).nonBlank
         let currentTier = ((loadObj["currentTier"] as? [String: Any])?["id"] as? String).nonBlank
         if let currentProject, let currentTier {
-            current.projectId = currentProject
-            current.onboardedTier = currentTier
-            return persist(current, generation: IOSAntigravityOAuthClients.generation(providerId: providerId))
+            return try IOSAntigravityOAuthClients.persistOnboarding(
+                providerId: providerId, generation: generation, projectId: currentProject, tier: currentTier
+            )
         }
 
         // 2) onboardUser — FREE tier passes no project so the server assigns one.
@@ -389,9 +446,9 @@ actor IOSAntigravityOAuthClient {
         guard let resolved = try await pollOnboardOperation(accessToken: accessToken, initialResponse: onboardResp) else {
             throw IOSAntigravityOAuthError(message: "onboardUser 没有返回 cloudaicompanionProject。")
         }
-        current.projectId = resolved
-        current.onboardedTier = chosenTier
-        return persist(current, generation: IOSAntigravityOAuthClients.generation(providerId: providerId))
+        return try IOSAntigravityOAuthClients.persistOnboarding(
+            providerId: providerId, generation: generation, projectId: resolved, tier: chosenTier
+        )
     }
 
     private func pollOnboardOperation(
@@ -432,6 +489,7 @@ actor IOSAntigravityOAuthClient {
 
     @discardableResult
     func refresh() async throws -> IOSAntigravityAuthTokens {
+        let generation = IOSAntigravityOAuthClients.generation(providerId: providerId)
         guard let current = cached() else {
             throw IOSAntigravityOAuthError(message: "尚未登录 Antigravity，请先在服务商设置里用 Google 账号登录。")
         }
@@ -444,11 +502,10 @@ actor IOSAntigravityOAuthClient {
             "client_id": IOSAntigravityOAuthConstants.clientId,
             "client_secret": IOSAntigravityOAuthConstants.clientSecret,
         ])
-        let generation = IOSAntigravityOAuthClients.generation(providerId: providerId)
         let (data, status) = try await postForm(url: IOSAntigravityOAuthConstants.tokenEndpoint, form: form)
         guard status.isHTTPSuccess else {
             if Self.oauthErrorCode(data) == "invalid_grant" {
-                IOSAntigravityOAuthClients.logout(providerId: providerId)
+                IOSAntigravityOAuthClients.invalidate(providerId: providerId, generation: generation, expected: current)
             }
             throw oauthError("Google OAuth 刷新失败", status, data)
         }
@@ -463,7 +520,9 @@ actor IOSAntigravityOAuthClient {
             expiresInSeconds: (obj["expires_in"] as? NSNumber)?.int64Value,
             fallback: current
         )
-        return persist(merged, generation: generation)
+        return try IOSAntigravityOAuthClients.persist(
+            providerId: providerId, tokens: merged, generation: generation, replacing: current
+        )
     }
 
     // MARK: - cloudcode-pa helpers

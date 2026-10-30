@@ -13,6 +13,7 @@ actor ReadinessSessionStub: IOSPhoneControlSessionServing {
     private var blocked: CheckedContinuation<Void, Never>?
     private(set) var startedScopes: [Set<String>] = []
     private(set) var connectionModes: [IOSPhoneControlConnectionMode] = []
+    private(set) var endpoints: [String] = []
 
     init(fixture: ReadinessHTTPFixture, failStartup: Bool = false, blockStartup: Bool = false) {
         self.fixture = fixture
@@ -23,6 +24,7 @@ actor ReadinessSessionStub: IOSPhoneControlSessionServing {
     func start(runID: UUID, configuration: PhoneControlLaunchConfiguration) async throws -> PhoneRunnerStatus {
         startedScopes.append(configuration.allowedBundleIDs)
         connectionModes.append(configuration.connectionMode)
+        endpoints.append(configuration.endpoint)
         started?.resume()
         started = nil
         if blockStartup { await withCheckedContinuation { blocked = $0 } }
@@ -41,7 +43,10 @@ actor ReadinessSessionStub: IOSPhoneControlSessionServing {
     }
 
     func runner(runID: UUID) throws -> PhoneRunnerClient { try XCTUnwrap(client) }
-    func stop(runID: UUID) async { await client?.stop() }
+    func stop(runID: UUID) async {
+        fixture.recordStop()
+        await client?.stop()
+    }
     func launchStatus(runID: UUID) -> PhoneControlLaunchStatus? { nil }
     func cachedApplications(runID: UUID) -> [PhoneControlInstalledApp] { [] }
     func waitUntilStarted() async {
@@ -55,32 +60,51 @@ final class ReadinessHTTPFixture: @unchecked Sendable {
     let port: UInt16
     let bundleID: String
     let failSource: Bool
+    let activatedBundleID: String?
+    let failActivation: Bool
+    let sourceBody: String?
     private let lock = NSLock()
     private var recordedPaths: [String] = []
+    private var recordedEvents: [String] = []
+    private var activated = false
     private var validRequests = true
     var paths: [String] { lock.withLock { recordedPaths } }
+    var events: [String] { lock.withLock { recordedEvents } }
     var onlySignedGETRequests: Bool { lock.withLock { validRequests } }
 
-    init(bundleID: String, failSource: Bool = false) {
+    init(bundleID: String, failSource: Bool = false, activatedBundleID: String? = nil,
+         failActivation: Bool = false, sourceBody: String? = nil) {
         self.bundleID = bundleID
         self.failSource = failSource
+        self.activatedBundleID = activatedBundleID
+        self.failActivation = failActivation
+        self.sourceBody = sourceBody
         port = ReadinessHTTPProtocol.nextPort()
         ReadinessHTTPProtocol.register(self)
     }
     func unregister() { ReadinessHTTPProtocol.remove(port) }
+    func recordStop() { lock.withLock { recordedEvents.append("stop") } }
     func body(for request: URLRequest) throws -> String {
         let path = try XCTUnwrap(request.url?.path)
         lock.withLock {
             recordedPaths.append(path)
+            recordedEvents.append(path)
             validRequests = validRequests && request.httpMethod == "GET"
                 && request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("IPU-HMAC-SHA256 ") == true
         }
         switch path {
         case "/status": return #"{"value":{"ready":true,"sessionId":"check","auth":{"required":true,"scheme":"IPU-HMAC-SHA256"}}}"#
-        case "/wda/activeAppInfo": return "{\"value\":{\"bundleId\":\"\(bundleID)\",\"pid\":42}}"
+        case "/wda/activeAppInfo":
+            let currentBundleID = lock.withLock { activated ? activatedBundleID ?? bundleID : bundleID }
+            return "{\"value\":{\"bundleId\":\"\(currentBundleID)\",\"pid\":42}}"
+        case "/wda/apps/activate" where activatedBundleID != nil:
+            if failActivation { throw URLError(.networkConnectionLost) }
+            lock.withLock { activated = true }
+            return #"{"value":null}"#
         case "/window/size": return #"{"value":{"width":393,"height":852}}"#
         case "/source":
             if failSource { throw URLError(.cannotConnectToHost) }
+            if let sourceBody { return sourceBody }
             return #"{"value":{"type":"XCUIElementTypeApplication","rect":{"x":0,"y":0,"width":393,"height":852},"children":[]}}"#
         default: XCTFail("Unexpected check request: \(path)"); throw URLError(.badURL)
         }

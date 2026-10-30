@@ -15,8 +15,9 @@ import XCTest
     func testActualSharedWebDAVClientParsesAndBuildsEveryNetworkOperation() async throws {
         let bytes = Data("opaque archive bytes".utf8)
         let transport = WebDAVFixtureTransport([
-            .init(207, Self.listing), .init(405), .init(207, Self.listing),
-            .init(405), .init(201, headers: ["ETag": "\"uploaded\""]), .init(200, bytes), .init(204),
+            // MKCOL per path level: AmberAgent, then AmberAgent/macOS.
+            .init(207, Self.listing), .init(405), .init(405), .init(207, Self.listing),
+            .init(405), .init(405), .init(201, headers: ["ETag": "\"uploaded\""]), .init(200, bytes), .init(204),
         ])
         let client = IOSWebDAVClient(config: IOSWebDAVConfig(baseURL: "https://dav.example.com/dav", path: "AmberAgent/macOS", username: "user", password: "secret"), transport: transport)
         try await client.testConnection()
@@ -33,13 +34,15 @@ import XCTest
         XCTAssertEqual(downloaded, bytes)
         try await client.delete(fileName: "unique.ambermacbackup")
         let requests = transport.requests
-        XCTAssertEqual(requests.map(\.httpMethod), ["PROPFIND", "MKCOL", "PROPFIND", "MKCOL", "PUT", "GET", "DELETE"])
+        XCTAssertEqual(requests.map(\.httpMethod), ["PROPFIND", "MKCOL", "MKCOL", "PROPFIND", "MKCOL", "MKCOL", "PUT", "GET", "DELETE"])
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Depth"), "0")
-        XCTAssertEqual(requests[2].value(forHTTPHeaderField: "Depth"), "1")
-        XCTAssertEqual(requests[4].value(forHTTPHeaderField: "If-None-Match"), "*")
-        XCTAssertEqual(requests[4].value(forHTTPHeaderField: "Authorization"), "Basic " + Data("user:secret".utf8).base64EncodedString())
-        XCTAssertEqual(requests[4].url?.path, "/dav/AmberAgent/macOS/unique.ambermacbackup")
-        XCTAssertEqual(transport.bodies[4], bytes)
+        XCTAssertEqual(requests[1].url?.path, "/dav/AmberAgent")
+        XCTAssertEqual(requests[2].url?.path, "/dav/AmberAgent/macOS")
+        XCTAssertEqual(requests[3].value(forHTTPHeaderField: "Depth"), "1")
+        XCTAssertEqual(requests[6].value(forHTTPHeaderField: "If-None-Match"), "*")
+        XCTAssertEqual(requests[6].value(forHTTPHeaderField: "Authorization"), "Basic " + Data("user:secret".utf8).base64EncodedString())
+        XCTAssertEqual(requests[6].url?.path, "/dav/AmberAgent/macOS/unique.ambermacbackup")
+        XCTAssertEqual(transport.bodies[6], bytes)
         XCTAssertThrowsError(try client.makeRequest(method: "GET", fileName: "../outside.ambermacbackup"))
     }
 
@@ -77,7 +80,8 @@ import XCTest
         let archive = try DesktopBackup.encode(DesktopBackupPayload(), password: "backup-password")
         let transport = WebDAVFixtureTransport([
             .init(405), .init(207, Self.listing),
-            .init(405), .init(201), .init(405), .init(201), .init(200, archive), .init(204),
+            .init(405), .init(201, headers: ["ETag": "\"r1\""]), .init(405), .init(201, headers: ["ETag": "\"r2\""]),
+            .init(200, archive), .init(204),
         ])
         let manager = DesktopWebDAVManager(defaults: defaults, credentials: credentials, transport: transport)
         var configuration = DesktopWebDAVConfiguration()

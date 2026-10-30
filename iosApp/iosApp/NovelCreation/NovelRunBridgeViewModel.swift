@@ -54,6 +54,17 @@ extension NovelCreationViewModel {
         }
     }
 
+    func observeSessionRun(
+        projectID: NovelProjectID,
+        run: NovelActiveRunRecord
+    ) async throws -> NovelRun {
+        try await creation.observeRun(
+            projectID: projectID,
+            runID: run.id,
+            operationID: run.operationID
+        )
+    }
+
     /// 在已经取得 session 单写者之后、第一次 await 之前取得后台执行权。
     /// 代笔内层正文沿用整批 lease，避免每章再挂一条会独立过期的短 lease。
     func beginBackgroundGeneration(for request: NovelRunRequest) {

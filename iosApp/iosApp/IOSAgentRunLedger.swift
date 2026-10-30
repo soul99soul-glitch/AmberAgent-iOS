@@ -879,6 +879,9 @@ enum IOSToolEffectClassMapping {
     }
 
     static func forToolName(_ toolName: String, input: String) -> IOSToolEffectClass {
+        if toolName == IOSWakeToolCatalog.list { return .pure }
+        if IOSShortcutAuthoringToolCatalog.toolNames.contains(toolName) { return .pure }
+        if toolName == IOSWakeToolCatalog.schedule || toolName == IOSWakeToolCatalog.cancel { return .sideEffect }
         if toolName == "tool_search" {
             // P0-a: local catalog search — no effect in the world.
             return .pure

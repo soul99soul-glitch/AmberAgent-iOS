@@ -53,17 +53,33 @@ extension ChatViewModel {
     /// 持久化进会话，返回生成的消息供下一轮 upload 折入。队列为空或 run 不属于
     /// 当前会话时零操作（不同会话的队列不串）。
     @discardableResult
-    func drainSteerQueue(conversationId: KotlinUuid?) -> [UIMessage] {
+    func drainSteerQueue(conversationId: KotlinUuid?) async -> [UIMessage] {
         guard isCurrentConversation(conversationId) else { return [] }
-        return drainSteerQueue(state: currentRun.state)
+        return await drainSteerQueue(state: currentRun.state)
     }
 
-    func drainSteerQueue(state: ChatConversationRunState) -> [UIMessage] {
+    func drainSteerQueue(state: ChatConversationRunState) async -> [UIMessage] {
         ensureSteerQueueLoaded(state: state)
-        guard !state.steerQueue.isEmpty else { return [] }
-        let entries = state.steerQueue
-        state.steerQueue = []
-        inboxIO.persistQueue([], for: state.conversationId)
+        return await commitSteerQueueEntries(state.steerQueue, state: state)
+    }
+
+    /// Keep the sidecar authoritative until the conversation contains this batch.
+    /// Stable IDs make a successful write followed by an interrupted dequeue safe to replay.
+    private func commitSteerQueueEntries(
+        _ entries: [IOSSteerQueueEntry], state: ChatConversationRunState
+    ) async -> [UIMessage] {
+        // A regenerated answer owns its variant transaction until terminal commit.
+        // Inbound user/report messages must not prematurely close that transaction.
+        guard !Task.isCancelled, state.pendingAssistantRegeneration == nil,
+              !entries.isEmpty, !state.isCommittingSteerQueue else { return [] }
+        state.isCommittingSteerQueue = true
+        defer {
+            state.isCommittingSteerQueue = false
+            if state.restoreSteerQueueAfterCommit {
+                state.restoreSteerQueueAfterCommit = false
+                restoreSteerQueueLeftoverToComposer(state: state)
+            }
+        }
         let drained = entries.map { entry -> UIMessage in
             let prompt = Self.promptText(
                 userText: entry.text,
@@ -72,23 +88,39 @@ extension ChatViewModel {
             let images = entry.images.map {
                 PendingChatImage(dataUrl: $0.dataUrl, previewData: $0.previewData)
             }
-            return makeUserMessage(prompt: prompt, images: images)
+            let message = makeUserMessage(prompt: prompt, images: images)
+            let digest = Array(chatInputDigest(for: "amber-steer-message:\(entry.id)"))
+            let stableId = [
+                String(digest[0..<8]), String(digest[8..<12]), String(digest[12..<16]),
+                String(digest[16..<20]), String(digest[20..<32])
+            ].joined(separator: "-")
+            return UIMessage(
+                id: KotlinUuid.companion.parse(uuidString: stableId), role: message.role,
+                parts: message.parts, annotations: message.annotations,
+                createdAt: message.createdAt, finishedAt: message.finishedAt,
+                modelId: message.modelId, usage: message.usage, translation: message.translation
+            )
         }
-        // 与 appendUserMessage 同款上屏：真实 user 消息进 timeline（后续会话落盘
-        // 与工具轮次持久化共用既有 persistMessages 路径）。
+        let existingIds = Set(state.messages.map { $0.id.toHexDashString().lowercased() })
+        let appended = drained.filter { !existingIds.contains($0.id.toHexDashString().lowercased()) }
+        guard await persistInboxMessages(state.messages + appended, state: state) else { return [] }
+        let consumedIds = Set(entries.map(\.id))
+        state.steerQueue.removeAll { consumedIds.contains($0.id) }
+        inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
+        let publishedIds = Set(state.messages.map { $0.id.toHexDashString().lowercased() })
+        let unpublished = appended.filter { !publishedIds.contains($0.id.toHexDashString().lowercased()) }
         withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
-            state.messages.append(contentsOf: drained)
-            if isCurrentConversation(state.conversationId) { bumpMessageRevision(reason: .userAppend) }
+            state.messages.append(contentsOf: unpublished)
+            if !unpublished.isEmpty, isCurrentConversation(state.conversationId) {
+                bumpMessageRevision(reason: .userAppend)
+            }
         }
         if isCurrentConversation(state.conversationId) {
             invalidateSuggestionRequest()
             chatSuggestions = []
             selectedFileContextError = nil
         }
-        Task { @MainActor [weak self] in
-            _ = await self?.persistMessages(state: state)
-        }
-        return drained
+        return appended
     }
 
     /// run 终态：成功则出队头一条上屏并自动开下一轮；取消/失败则回填 composer。
@@ -99,41 +131,31 @@ extension ChatViewModel {
 
     func handleSteerQueueAtRunTerminal(state: ChatConversationRunState, autoContinue: Bool) {
         ensureSteerQueueLoaded(state: state)
+        if !autoContinue { state.steerQueueAutoContinueTask?.cancel() }
         guard !state.steerQueue.isEmpty else { return }
         if autoContinue {
-            sendNextSteerQueueEntry(state: state)
+            guard state.steerQueueAutoContinueTask == nil else { return }
+            state.steerQueueAutoContinueTask = Task { @MainActor [weak self] in
+                defer { state.steerQueueAutoContinueTask = nil }
+                await self?.sendNextSteerQueueEntry(state: state)
+            }
             return
         }
         restoreSteerQueueLeftoverToComposer(state: state)
     }
 
     /// 出队头一条 → 上屏 →（若开启自动生成）立刻开下一轮。剩余条目继续留在队列。
-    private func sendNextSteerQueueEntry(state: ChatConversationRunState) {
+    private func sendNextSteerQueueEntry(state: ChatConversationRunState) async {
         guard let entry = state.steerQueue.first else { return }
-        state.steerQueue.removeFirst()
-        inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
-        let images = entry.images.map {
-            PendingChatImage(dataUrl: $0.dataUrl, previewData: $0.previewData)
-        }
         let prompt = Self.promptText(
             userText: entry.text,
             selectedFilePreview: entry.selectedFile?.asSelectedDocument
         )
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
-        let userMsg = makeUserMessage(prompt: prompt, images: images)
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
-            state.messages.append(userMsg)
-            if isCurrentConversation(state.conversationId) { bumpMessageRevision(reason: .userAppend) }
-        }
-        if isCurrentConversation(state.conversationId) {
-            invalidateSuggestionRequest()
-            chatSuggestions = []
-            selectedFileContextError = nil
-        }
-        Task { @MainActor [weak self] in
-            _ = await self?.persistMessages(state: state)
-        }
-        guard autoGenerateResponses else { return }
+        guard !Task.isCancelled,
+              !(await commitSteerQueueEntries([entry], state: state)).isEmpty,
+              !Task.isCancelled, autoGenerateResponses,
+              state.conversationId.map({ isGenerationActive(conversationId: $0) }) != true else { return }
         if isCurrentConversation(state.conversationId) {
             generateResponse(inputDigest: digest, conversationId: state.conversationId)
         } else if let configuration = state.generationConfiguration,
@@ -157,7 +179,14 @@ extension ChatViewModel {
     }
 
     func restoreSteerQueueLeftoverToComposer(state: ChatConversationRunState) {
+        state.steerQueueAutoContinueTask?.cancel()
         ensureSteerQueueLoaded(state: state)
+        // A cancellation may arrive while the queue's conversation write is in
+        // flight. Restore only what remains after its actual commit result.
+        if state.isCommittingSteerQueue {
+            state.restoreSteerQueueAfterCommit = true
+            return
+        }
         guard !state.steerQueue.isEmpty else { return }
         let textOnly = state.steerQueue.filter { !$0.hasAttachments }
         let withAttachments = state.steerQueue.filter(\.hasAttachments)
@@ -206,11 +235,20 @@ extension ChatViewModel {
     /// Own the subscription at conversation scope, independent of the visible
     /// ChatView. Subscribe before peeking so completion during teardown is caught.
     /// Jev 完成校验：运行结束后异步判断，不影响终态处理。
-    static func checkCompletionClaim(state: ChatConversationRunState, runId: String, messages: [UIMessage]) {
+    @discardableResult
+    static func checkCompletionClaim(
+        state: ChatConversationRunState,
+        runId: String,
+        messages: [UIMessage],
+        needsVerification: @escaping @MainActor ([UIMessage], String) async -> Bool = { messages, runId in
+            await IOSJevCompletionCheckService.shared.needsVerification(messages: messages, runKey: runId)
+        }
+    ) -> Task<Void, Never>? {
         state.jevCompletionNoticeMessageId = nil
-        guard let finalId = messages.last?.id.description() else { return }
-        Task { @MainActor in
-            guard await IOSJevCompletionCheckService.shared.needsVerification(messages: messages, runKey: runId) else { return }
+        guard let finalId = messages.last?.id.description() else { return nil }
+        return Task { @MainActor in
+            guard await needsVerification(messages, runId),
+                  state.messages.last?.id.description() == finalId else { return }
             state.jevCompletionNoticeMessageId = finalId
         }
     }
@@ -279,8 +317,8 @@ extension ChatViewModel {
         return true
     }
 
-    /// 工具循环/新 run 首轮边界消费 mailbox：Room 事务 drain 未投递信封（exactly-once，
-    /// 二次调用为空），按既有路径持久化进会话并供下一轮 upload 折入。
+    /// 工具循环/新 run 首轮边界消费 mailbox：先持久化稳定信封消息，再确认投递。
+    /// 保存失败保留 pending；提交后 ACK 失败的重放通过消息 ID 去重。
     /// 结果由 timeline 投影为独立代理卡片，不伪装成用户发送，也不改变草稿或附件提示。
     /// 未消费信封不回 composer，留在 Room 等下次 run。
     @discardableResult
@@ -290,23 +328,50 @@ extension ChatViewModel {
     }
 
     func drainMailbox(state: ChatConversationRunState) async -> [UIMessage] {
-        let envelopes = await inboxIO.drainPending(forConversationId: state.conversationId)
-        return appendMailboxEnvelopes(envelopes, state: state)
+        guard state.pendingAssistantRegeneration == nil else { return [] }
+        do {
+            let envelopes = try await inboxIO.pendingEnvelopes(forConversationId: state.conversationId)
+            guard !envelopes.isEmpty, state.pendingAssistantRegeneration == nil else { return [] }
+            let existingIDs = Set(state.messages.map { $0.id.toHexDashString().lowercased() })
+            let drained = mailboxMessages(envelopes).filter {
+                !existingIDs.contains($0.id.toHexDashString().lowercased())
+            }
+            guard await persistInboxMessages(state.messages + drained, state: state) else { return [] }
+            _ = appendMailboxEnvelopes(envelopes, state: state, persistPreview: false)
+            do { try await inboxIO.acknowledge(envelopes) }
+            catch { conversationStore?.publishIOError(operation: "确认代理消息投递", detail: error.localizedDescription) }
+            return drained
+        } catch {
+            conversationStore?.publishIOError(operation: "接收代理消息", detail: error.localizedDescription)
+            return []
+        }
+    }
+
+    private func persistInboxMessages(_ messages: [UIMessage], state: ChatConversationRunState) async -> Bool {
+        await persistMessagesSnapshot(
+            messages, targetConversationId: state.conversationId,
+            pendingRegeneration: nil, store: conversationStore,
+            writeBaseline: state.conversationId.flatMap { conversationStore?.writeBaseline(for: $0) },
+            state: state
+        )
+    }
+
+    private func mailboxMessages(_ envelopes: [IOSMailboxStore.EnvelopeSnapshot]) -> [UIMessage] {
+        envelopes.map { envelope in
+            amberMailboxMessage(
+                envelopeId: envelope.id, authorThreadId: envelope.authorThreadId,
+                type: envelope.type, payload: envelope.payload
+            )
+        }
     }
 
     private func appendMailboxEnvelopes(
-        _ envelopes: [IOSMailboxStore.EnvelopeSnapshot], state: ChatConversationRunState
+        _ envelopes: [IOSMailboxStore.EnvelopeSnapshot], state: ChatConversationRunState,
+        persistPreview: Bool = true
     ) -> [UIMessage] {
         guard !envelopes.isEmpty else { return [] }
         let existingIDs = Set(state.messages.map { $0.id.toHexDashString().lowercased() })
-        let drained = envelopes.map { envelope in
-            amberMailboxMessage(
-                envelopeId: envelope.id,
-                authorThreadId: envelope.authorThreadId,
-                type: envelope.type,
-                payload: envelope.payload
-            )
-        }.filter {
+        let drained = mailboxMessages(envelopes).filter {
             !existingIDs.contains($0.id.toHexDashString().lowercased())
         }
         guard !drained.isEmpty else { return [] }
@@ -318,8 +383,11 @@ extension ChatViewModel {
                 bumpMessageRevision(reason: .toolResultAppended)
             }
         }
-        Task { @MainActor [weak self] in
-            _ = await self?.persistMessages(state: state)
+        if persistPreview {
+            Task { @MainActor [weak self] in
+                guard state.pendingAssistantRegeneration == nil else { return }
+                _ = await self?.persistMessages(state: state)
+            }
         }
         return drained
     }

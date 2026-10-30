@@ -72,7 +72,6 @@ final class IOSMcpManager {
     }
 
     func refreshServers() {
-        invalidateAllSessionRecoveries(disconnectClients: true)
         let configuredServers = serverProvider()
         let serversByName = Dictionary(grouping: configuredServers, by: \.name)
         ambiguousServerNames = Set(serversByName.compactMap { name, candidates in
@@ -80,9 +79,28 @@ final class IOSMcpManager {
             return candidates.dropFirst().allSatisfy { $0 == first } ? nil : name
         })
         var seenServerNames = Set<String>()
-        servers = configuredServers.filter {
+        let unambiguousServers = configuredServers.filter {
             !ambiguousServerNames.contains($0.name) && seenServerNames.insert($0.name).inserted
         }
+        for name in Array(sessionRecoveriesByServer.keys) {
+            guard let recovery = sessionRecoveriesByServer[name] else { continue }
+            guard let configured = unambiguousServers.first(where: { $0.name == name }),
+                  configured.enabled,
+                  Self.sameConnectionConfiguration(configured, recovery.server) else {
+                invalidateSessionRecovery(serverName: name, disconnectClient: true)
+                continue
+            }
+        }
+        let refreshedServers = unambiguousServers.map { configured in
+            guard let current = servers.first(where: { $0.name == configured.name }),
+                  Self.sameConnectionConfiguration(current, configured),
+                  !current.tools.isEmpty else { return configured }
+            // Discovery enriches the in-memory catalog even when the provider
+            // cannot persist it. A directory read keeps that catalog and applies
+            // the user's current per-tool enable choices.
+            return configured.withTools(Self.mergeDiscoveredTools(discovered: current.tools, existing: configured.tools))
+        }
+        if servers != refreshedServers { servers = refreshedServers }
         for name in ambiguousServerNames {
             statusByServer[name] = .error(IOSMcpManagerError.ambiguousServerName(name).localizedDescription)
         }
@@ -128,21 +146,22 @@ final class IOSMcpManager {
         }
     }
 
-    /// Waits for the sync chain without cancelling it: a cancelled tool call
-    /// leaves at once while the sync keeps serving other callers.
-    private static func waitForSync(_ task: Task<Void, Never>) async throws {
+    /// A caller can leave a shared sync or recovery without cancelling the
+    /// operation that other callers still need.
+    private static func waitForSharedOperation<Failure: Error>(_ task: Task<Void, Failure>) async throws {
+        try Task.checkCancellation()
         let gate = IOSMcpSyncWaitGate()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 gate.install(continuation)
                 Task {
-                    await task.value
-                    gate.finish(.success(()))
+                    gate.finish((await task.result).mapError { $0 as Error })
                 }
             }
         } onCancel: {
             gate.finish(.failure(CancellationError()))
         }
+        try Task.checkCancellation()
     }
 
     private func performSyncAll(enabledOverride: Bool?) async {
@@ -233,13 +252,13 @@ final class IOSMcpManager {
             throw IOSMcpClientError.invalidResponse
         }
         if let syncChainTail {
-            try await Self.waitForSync(syncChainTail)
+            try await Self.waitForSharedOperation(syncChainTail)
         }
         if servers.isEmpty || clientsByServer[serverName] == nil {
             await syncAll(enabledOverride: enabledOverride)
         }
         if let recovery = sessionRecoveriesByServer[serverName] {
-            try await recovery.task.value
+            try await Self.waitForSharedOperation(recovery.task)
         }
         guard !ambiguousServerNames.contains(serverName) else {
             throw IOSMcpManagerError.ambiguousServerName(serverName)
@@ -406,18 +425,27 @@ final class IOSMcpManager {
         }
     }
 
+    private static func sameConnectionConfiguration(_ lhs: IOSMcpServerConfig, _ rhs: IOSMcpServerConfig) -> Bool {
+        lhs.withTools([]) == rhs.withTools([])
+    }
+
     private func recoverExpiredSession(
         server: IOSMcpServerConfig,
         client: IOSMcpClienting
     ) async throws {
         if let recovery = sessionRecoveriesByServer[server.name] {
-            return try await recovery.task.value
+            return try await Self.waitForSharedOperation(recovery.task)
         }
 
         let recoveryID = UUID()
         let generation = advanceSessionRecoveryGeneration(serverName: server.name)
         let task = Task { @MainActor [weak self] in
             guard let self else { throw IOSMcpClientError.invalidResponse }
+            defer {
+                if self.isRegisteredSessionRecovery(id: recoveryID, generation: generation, serverName: server.name) {
+                    self.sessionRecoveriesByServer.removeValue(forKey: server.name)
+                }
+            }
             try self.validateSessionRecoveryOwnership(
                 id: recoveryID,
                 generation: generation,
@@ -456,7 +484,7 @@ final class IOSMcpManager {
                     from: listedTools,
                     to: self.discoveredToolSink(server.name, listedTools) ?? Self.mergeDiscoveredTools(
                         discovered: listedTools,
-                        existing: server.tools
+                        existing: self.servers.first(where: { $0.name == server.name })?.tools ?? server.tools
                     )
                 )
                 try self.validateSessionRecoveryOwnership(
@@ -494,25 +522,7 @@ final class IOSMcpManager {
             client: client,
             task: task
         )
-        do {
-            try await task.value
-            if isRegisteredSessionRecovery(
-                id: recoveryID,
-                generation: generation,
-                serverName: server.name
-            ) {
-                sessionRecoveriesByServer.removeValue(forKey: server.name)
-            }
-        } catch {
-            if isRegisteredSessionRecovery(
-                id: recoveryID,
-                generation: generation,
-                serverName: server.name
-            ) {
-                sessionRecoveriesByServer.removeValue(forKey: server.name)
-            }
-            throw error
-        }
+        try await Self.waitForSharedOperation(task)
     }
 
     private func advanceSessionRecoveryGeneration(serverName: String) -> UInt64 {
@@ -568,7 +578,8 @@ final class IOSMcpManager {
               recovery.server == server,
               recovery.client === client,
               clientsByServer[server.name] === client,
-              servers.first(where: { $0.name == server.name }) == server else {
+              let currentServer = servers.first(where: { $0.name == server.name }),
+              Self.sameConnectionConfiguration(currentServer, server) else {
             return false
         }
         return true

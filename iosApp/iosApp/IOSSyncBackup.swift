@@ -775,7 +775,7 @@ struct IOSWebDAVSyncProvider: IOSRemoteSyncProvider {
             .map { resource in
                 IOSRemoteSnapshot(fileName: resource.fileName, provider: kind,
                     createdAt: resource.modifiedAt, modifiedAt: resource.modifiedAt,
-                    sizeBytes: resource.sizeBytes, remoteRevision: resource.etag.ifBlank(resource.href),
+                    sizeBytes: resource.sizeBytes, remoteRevision: resource.remoteRevision,
                     deviceId: "", deviceLabel: "", appVersionName: "", appVersionCode: 0,
                     mode: "", encrypted: true, passphraseProtected: true, payloadSha256: "")
             }.sorted { $0.modifiedAt > $1.modifiedAt }
@@ -786,7 +786,7 @@ struct IOSWebDAVSyncProvider: IOSRemoteSyncProvider {
         let revision = try await client.upload(data: data, fileName: safeName, mimeType: IOSSyncBackup.mimeType)
         return IOSRemoteSnapshot(fileName: safeName, provider: kind, manifest: manifest,
             modifiedAt: Int64(Date().timeIntervalSince1970 * 1000), sizeBytes: Int64(data.count),
-            remoteRevision: revision ?? data.sha256Hex())
+            remoteRevision: revision)
     }
 
     func downloadSnapshot(_ snapshot: IOSRemoteSnapshot) async throws -> Data {

@@ -156,6 +156,33 @@ class MemoryPollutionTest {
     }
 
     @Test
+    fun stalePollutedMessageSnapshotCannotUndoExplicitReset() = runTest {
+        val id = Uuid.random()
+        val staleSnapshot = sampleConversation(id, memoryMode = ConversationMemoryMode.POLLUTED)
+        storage.saveConversation(staleSnapshot)
+        assertTrue(storage.updateMemoryMode(id, ConversationMemoryMode.ENABLED))
+
+        val newMessage = UIMessage.user(prompt = "after reset")
+        storage.saveConversation(staleSnapshot.updateCurrentMessages(staleSnapshot.currentMessages + newMessage))
+
+        val loaded = assertNotNull(storage.loadConversation(id))
+        assertEquals(ConversationMemoryMode.ENABLED, loaded.memoryMode)
+        assertEquals("after reset", loaded.currentMessages.last().toText())
+    }
+
+    @Test
+    fun messageSnapshotCannotChangeExplicitlyDisabledMemoryMode() = runTest {
+        val id = Uuid.random()
+        val staleSnapshot = sampleConversation(id)
+        storage.saveConversation(staleSnapshot)
+        assertTrue(storage.updateMemoryMode(id, ConversationMemoryMode.DISABLED))
+
+        storage.saveConversation(staleSnapshot)
+
+        assertEquals(ConversationMemoryMode.DISABLED, storage.loadConversation(id)?.memoryMode)
+    }
+
+    @Test
     fun saveAndSummaryCarryMemoryModeThroughStorage() = runTest {
         val id = Uuid.parse("00000000-0000-0000-0000-000000000008")
         storage.saveConversation(sampleConversation(id, memoryMode = ConversationMemoryMode.POLLUTED))

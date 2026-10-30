@@ -427,9 +427,9 @@ final class IOSSearchExecutorTests: XCTestCase {
         XCTAssertTrue(selection.fallbackReason?.contains("no API key") == true)
     }
 
-    func testJinaRouteAllowsMissingAPIKey() async throws {
+    func testJinaRouteSendsRequiredAPIKey() async throws {
         let store = makeIsolatedStore()
-        store.addSearchProvider(name: "Jina", serviceType: "jina")
+        store.addSearchProvider(name: "Jina", apiKey: "jina-test", serviceType: "jina")
         let transport = MockSearchTransport(responses: [
             .json("""
             {
@@ -452,9 +452,46 @@ final class IOSSearchExecutorTests: XCTestCase {
         let request = try XCTUnwrap(transport.requests.first)
 
         XCTAssertEqual(request.url?.host, "s.jina.ai")
-        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer jina-test")
         XCTAssertTrue(output.contains("来源：Jina"))
         XCTAssertTrue(output.contains("Jina snippet."))
+    }
+
+    func testJinaWithoutKeyIsNotAnExecutableProvider() async throws {
+        let store = makeIsolatedStore()
+        store.addSearchProvider(name: "Jina", serviceType: "jina")
+        XCTAssertEqual(IOSSearchExecutor.searchProviderSelection(settings: store.snapshot).route, .freeAggregate)
+
+        let transport = MockSearchTransport(responses: [])
+        let service = try XCTUnwrap(store.snapshot.searchServices.last as? SearchServiceOptions.JinaOptions)
+        do {
+            _ = try await IOSSearchExecutor.searchJina(
+                request: IOSSearchRequest(query: "amber", maxResults: 1),
+                service: service,
+                transport: transport
+            )
+            XCTFail("Jina Search must reject a missing key before sending a request")
+        } catch {
+            XCTAssertEqual(error as? IOSSearchExecutorError, .missingAPIKey("Jina"))
+        }
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testFreeAggregateSwitchBlocksSelectedAndFallbackBingConfigurations() {
+        let store = makeIsolatedStore()
+        store.addSearchProvider(name: "Bing", serviceType: "bing_local")
+        store.setSearchBuiltinDuckDuckGoEnabled(false)
+        store.setSearchBuiltinBingEnabled(false)
+        XCTAssertEqual(IOSSearchExecutor.searchProviderSelection(settings: store.snapshot).route, .unsupported)
+
+        store.addSearchProvider(name: "Tavily without Key", serviceType: "tavily")
+        XCTAssertEqual(IOSSearchExecutor.searchProviderSelection(settings: store.snapshot).route, .unsupported)
+
+        store.addSearchProvider(name: "Brave", apiKey: "brave-test", serviceType: "brave")
+        XCTAssertEqual(IOSSearchExecutor.searchProviderSelection(settings: store.snapshot).route, .braveAPI)
+        store.setSearchBuiltinDuckDuckGoEnabled(true)
+        store.addSearchProvider(name: "Bing", serviceType: "bing_local")
+        XCTAssertEqual(IOSSearchExecutor.searchProviderSelection(settings: store.snapshot).route, .freeAggregate)
     }
 
     func testAPIHTTPFailureIncludesProviderName() async throws {
@@ -928,7 +965,11 @@ final class IOSSearchExecutorTests: XCTestCase {
     private func makeIsolatedStore(suiteName: String = "SearchExecutor-\(UUID().uuidString)") -> IOSSharedSettingsStore {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
-        return IOSSharedSettingsStore(userDefaults: defaults)
+        let credentials = IOSSearchTestCredentialStore()
+        return IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: credentials.load,
+            storeCredential: credentials.store, deleteCredential: credentials.delete
+        )
     }
 
     private func jsonObject(_ string: String) -> [String: Any]? {
@@ -938,6 +979,21 @@ final class IOSSearchExecutorTests: XCTestCase {
 
     private func jsonObject(_ data: Data) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+}
+
+@MainActor
+final class IOSSearchTestCredentialStore {
+    private var values: [String: String] = [:]
+
+    func load(_ key: String) -> String? { values[key] }
+    func store(_ key: String, _ value: String) -> Bool {
+        values[key] = value
+        return true
+    }
+    func delete(_ key: String) -> Bool {
+        values.removeValue(forKey: key)
+        return true
     }
 }
 
@@ -989,7 +1045,14 @@ final class ChatViewModelSearchToolDeclarationTests: XCTestCase {
             mcpManager: IOSMcpManager(serverProvider: { [] })
         )
 
-        let executors = runtime.novelDiscussionToolExecutors()
+        let permission = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [IOSSearchToolPermission.capabilityId: IOSAgentPermissionPolicy.autoApprove.rawValue],
+            globalAutoApproveEnabled: false, highRiskAutoApproveEnabled: false,
+            execJavaScriptEnabled: false, webSearchEnabled: true
+        )
+        let executors = IOSExecutionPolicyContext.$snapshot.withValue(permission) {
+            runtime.novelDiscussionToolExecutors()
+        }
         XCTAssertEqual(Set(executors.keys), IOSSearchExecutor.supportedToolNames.union(["ask_user"]))
         let executor = UncheckedToolExecutorBox(try XCTUnwrap(executors["search_web"]))
         let outcome = await executor.execute(

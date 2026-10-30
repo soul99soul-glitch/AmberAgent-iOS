@@ -26,6 +26,8 @@ struct ChatView: View {
     @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
     @State var viewportState = ChatViewportState()
     @State private var scrollToBottomTrigger = 0
+    /// iPhone Duo 外屏右侧竖条是否承载了返回 / 新对话等操作。
+    @State private var sideRailActive = false
     @State private var scrollToBottomSource: NativeTimelineBottomIntentSource = .button
     @State private var chatSize: CGSize = .zero
     @State var requestedMessageAnchor: ChatMessageAnchor?
@@ -108,7 +110,7 @@ struct ChatView: View {
 
             // 视觉浮层,不参与 bottom safe-area inset 布局。否则按钮显隐会改变
             // ScrollView 的可视区域,和系统顶部/底部 rubber-band 回弹互相拉扯。
-            if viewportState.showScrollToBottom && chatListSummary.hasMessages {
+            if viewportState.showScrollToBottom && chatListSummary.hasMessages && !sideRailActive {
                 VStack {
                     Spacer()
                     ChatScrollToBottomButton {
@@ -320,6 +322,7 @@ struct ChatView: View {
                 artifactShelfDismissRevision &+= 1
             }
         })
+        .amberSideRail(isActive: $sideRailActive, top: sideRailTopItems, bottom: sideRailBottomItems)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onDisappear {
@@ -637,6 +640,32 @@ struct ChatView: View {
         }
     }
 
+    private var sideRailTopItems: [AmberSideRailItem] {
+        [
+            AmberSideRailItem(id: "back", systemImage: isSplitDetailRoot ? "sidebar.left" : "chevron.left",
+                              accessibilityLabel: "返回") { router.goBack() },
+            AmberSideRailItem(id: "new-chat", systemImage: "square.and.pencil", accessibilityLabel: "新建聊天") {
+                Task { await viewModel.startNewConversation() }
+            },
+        ]
+    }
+
+    /// 竖条底部放拇指最常用的一个动作：生成中可停止，否则在离开底部时回到最新。
+    private var sideRailBottomItems: [AmberSideRailItem] {
+        if viewModel.isGenerationActive {
+            return [AmberSideRailItem(id: "stop", systemImage: "stop.fill", accessibilityLabel: "停止生成",
+                                      prominent: true) { viewModel.cancelGeneration() }]
+        }
+        guard viewportState.showScrollToBottom, chatListSummary.hasMessages else { return [] }
+        return [AmberSideRailItem(id: "scroll-bottom", systemImage: "arrow.down", accessibilityLabel: "回到最新") {
+            scrollToBottomSource = .button
+            scrollToBottomTrigger &+= 1
+        }]
+    }
+
+    /// 双栏详情栏根：聊天页没有上一页可返回。
+    private var isSplitDetailRoot: Bool { router.chatIsDetailRoot && router.path.isEmpty }
+
     var topBar: some View {
         let generating = viewModel.isGenerationActive
         let recap = generating ? nil : currentRecap
@@ -665,6 +694,11 @@ struct ChatView: View {
                     .map { String(describing: $0.updateAt) }
             },
             artifacts: artifactShelf.index,
+            backSystemImage: isSplitDetailRoot ? "sidebar.left" : "chevron.left",
+            backAccessibilityLabel: isSplitDetailRoot
+                ? (router.showsSidebar ? "隐藏会话列表" : "显示会话列表")
+                : "返回",
+            showsBackButton: !sideRailActive,
             snippets: currentConversationIdString.map {
                 ChatArtifactPinning.visibleSnippets(conversationStore.artifactStore.snippets(for: $0), messageIDs: chatListSummary.messageIDs)
             } ?? [],

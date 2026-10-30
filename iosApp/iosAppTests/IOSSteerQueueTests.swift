@@ -217,6 +217,7 @@ final class IOSSteerQueueTests: XCTestCase {
         viewModel.generationActiveOverrideForTesting = nil
 
         viewModel.handleSteerQueueAtRunTerminal(for: conversationId, autoContinue: true)
+        await viewModel.currentRun.state.steerQueueAutoContinueTask?.value
 
         // 成功终态：头一条上屏发出；下一条仍留队列；不回填 composer。
         XCTAssertTrue(viewModel.inputText.isEmpty)
@@ -399,7 +400,7 @@ final class IOSSteerQueueTests: XCTestCase {
         viewModel.inputText = "带图插话"
         XCTAssertTrue(viewModel.sendMessage())
 
-        let drained = viewModel.drainSteerQueue(conversationId: store.currentConversation?.id)
+        let drained = await viewModel.drainSteerQueue(conversationId: store.currentConversation?.id)
         XCTAssertEqual(drained.count, 1)
         let parts = drained[0].parts
         XCTAssertTrue(parts.contains { $0 is UIMessagePart.Text })
@@ -515,6 +516,7 @@ final class IOSSteerQueueTests: XCTestCase {
         viewModel.generationActiveOverrideForTesting = nil
 
         viewModel.handleSteerQueueAtRunTerminal(for: conversationId, autoContinue: true)
+        await viewModel.currentRun.state.steerQueueAutoContinueTask?.value
 
         // 成功终态先发纯文本头一条；带图条目仍留队列。
         XCTAssertTrue(viewModel.inputText.isEmpty)
@@ -525,6 +527,197 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertEqual(viewModel.steerQueue.count, 1)
         XCTAssertTrue(viewModel.steerQueue[0].hasAttachments)
         XCTAssertEqual(viewModel.steerQueue[0].text, "带图插话")
+    }
+
+    func testFailedConversationCommitKeepsSteerSidecarAndReplayUsesOneMessageID() async throws {
+        let root = makeTempDirectory("SteerCommitFailure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let conversations = root.appendingPathComponent("conversations")
+        let queueDirectory = root.appendingPathComponent("queue")
+        let heldConversations = root.appendingPathComponent("held-conversations")
+        let store = makeConversationStore(directory: conversations)
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: queueDirectory)
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.inputText = "must survive a failed write"
+        XCTAssertTrue(viewModel.sendMessage())
+        let entry = try XCTUnwrap(viewModel.steerQueue.first)
+
+        try FileManager.default.moveItem(at: conversations, to: heldConversations)
+        try Data().write(to: conversations)
+        let failed = await viewModel.drainSteerQueue(conversationId: id)
+        XCTAssertTrue(failed.isEmpty)
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertEqual(IOSSteerQueueStore(directoryURL: queueDirectory).load(conversationId: id), [entry])
+        XCTAssertNotNil(store.lastIOError)
+
+        try FileManager.default.removeItem(at: conversations)
+        try FileManager.default.moveItem(at: heldConversations, to: conversations)
+        let reloadedStore = makeConversationStore(directory: conversations)
+        await reloadedStore.bootstrap()
+        await reloadedStore.selectConversation(id: id)
+        let reloaded = makeViewModel(conversationStore: reloadedStore, queueDirectory: queueDirectory)
+        let committed = await reloaded.drainSteerQueue(conversationId: id)
+        XCTAssertEqual(committed.map { $0.toText() }, [entry.text])
+        let committedID = try XCTUnwrap(committed.first?.id)
+        XCTAssertTrue(IOSSteerQueueStore(directoryURL: queueDirectory).load(conversationId: id).isEmpty)
+
+        // Model a process ending after the conversation commit but before sidecar cleanup.
+        IOSSteerQueueStore(directoryURL: queueDirectory).persist([entry], for: id)
+        let replayed = makeViewModel(conversationStore: reloadedStore, queueDirectory: queueDirectory)
+        let replayedDrain = await replayed.drainSteerQueue(conversationId: id)
+        XCTAssertTrue(replayedDrain.isEmpty)
+        let persisted = await reloadedStore.messages(for: id) ?? []
+        XCTAssertEqual(persisted.map(\.id), [committedID])
+        XCTAssertTrue(IOSSteerQueueStore(directoryURL: queueDirectory).load(conversationId: id).isEmpty)
+    }
+
+    func testSteerCommitKeepsMessagesEnqueuedWhileSaveIsSuspended() async throws {
+        let root = makeTempDirectory("SteerEnqueueDuringCommit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeConversationStore(directory: root.appendingPathComponent("conversations"))
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let queueDirectory = root.appendingPathComponent("queue")
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: queueDirectory)
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.inputText = "first batch"
+        XCTAssertTrue(viewModel.sendMessage())
+        var releaseSave: CheckedContinuation<Void, Never>?
+        let saveEntered = expectation(description: "conversation commit began")
+        store.beforePersistForTesting = { _ in
+            store.beforePersistForTesting = nil
+            saveEntered.fulfill()
+            await withCheckedContinuation { releaseSave = $0 }
+        }
+        let consumption = Task { await viewModel.drainSteerQueue(conversationId: id) }
+        await fulfillment(of: [saveEntered], timeout: 2)
+        XCTAssertNotNil(releaseSave)
+        viewModel.inputText = "next batch"
+        XCTAssertTrue(viewModel.sendMessage())
+        releaseSave?.resume()
+        let committed = await consumption.value
+        XCTAssertEqual(committed.map { $0.toText() }, ["first batch"])
+        XCTAssertEqual(viewModel.steerQueue.map(\.text), ["next batch"])
+        XCTAssertEqual(IOSSteerQueueStore(directoryURL: queueDirectory).load(conversationId: id).map(\.text), ["next batch"])
+    }
+
+    func testSteerWaitsForRegeneratedAnswerVariantCommit() async throws {
+        let root = makeTempDirectory("SteerPendingVariant")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeConversationStore(directory: root.appendingPathComponent("conversations"))
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: root.appendingPathComponent("queue"))
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.inputText = "follow-up after regeneration"
+        XCTAssertTrue(viewModel.sendMessage())
+        viewModel.currentRun.state.pendingAssistantRegeneration = PendingAssistantRegeneration(
+            conversationId: id, targetMessageIndex: 1, generatedMessageIndex: 1
+        )
+        var writes = 0
+        store.beforePersistForTesting = { _ in writes += 1 }
+
+        let drained = await viewModel.drainSteerQueue(conversationId: id)
+        XCTAssertTrue(drained.isEmpty)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(viewModel.steerQueue.map(\.text), ["follow-up after regeneration"])
+        XCTAssertEqual(viewModel.currentRun.state.pendingAssistantRegeneration?.targetMessageIndex, 1)
+    }
+
+    func testCancellingAutoContinueDuringCommitDoesNotDuplicateCommittedTextInComposer() async throws {
+        let root = makeTempDirectory("SteerCancelDuringCommit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeConversationStore(directory: root.appendingPathComponent("conversations"))
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: root.appendingPathComponent("queue"))
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.inputText = "committed while cancelling"
+        XCTAssertTrue(viewModel.sendMessage())
+        viewModel.generationActiveOverrideForTesting = nil
+        let saveEntered = expectation(description: "terminal queue commit began")
+        var releaseSave: CheckedContinuation<Void, Never>?
+        store.beforePersistForTesting = { _ in
+            store.beforePersistForTesting = nil
+            saveEntered.fulfill()
+            await withCheckedContinuation { releaseSave = $0 }
+        }
+        viewModel.handleSteerQueueAtRunTerminal(for: id, autoContinue: true)
+        let continuation = viewModel.currentRun.state.steerQueueAutoContinueTask
+        await fulfillment(of: [saveEntered], timeout: 2)
+        viewModel.handleSteerQueueAtRunTerminal(for: id, autoContinue: false)
+        releaseSave?.resume()
+        await continuation?.value
+
+        XCTAssertTrue(viewModel.inputText.isEmpty)
+        XCTAssertTrue(viewModel.steerQueue.isEmpty)
+        XCTAssertEqual(viewModel.messages.map { $0.toText() }, ["committed while cancelling"])
+        XCTAssertFalse(viewModel.isGenerationActive)
+    }
+
+    func testConversationSwitchRetainsTerminalQueueCommitOwnerAndNewDraft() async throws {
+        let root = makeTempDirectory("SteerCommitConversationSwitch")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeConversationStore(directory: root.appendingPathComponent("conversations"))
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: root.appendingPathComponent("queue"))
+        let originalRun = viewModel.currentRun
+        let originalHost = viewModel.kernelRunHost
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.inputText = "belongs to the original conversation"
+        XCTAssertTrue(viewModel.sendMessage())
+        viewModel.generationActiveOverrideForTesting = nil
+        let saveEntered = expectation(description: "queue commit began before switching")
+        var releaseSave: CheckedContinuation<Void, Never>?
+        store.beforePersistForTesting = { _ in
+            store.beforePersistForTesting = nil
+            saveEntered.fulfill()
+            await withCheckedContinuation { releaseSave = $0 }
+        }
+        viewModel.handleSteerQueueAtRunTerminal(for: id, autoContinue: true)
+        let continuation = originalRun.state.steerQueueAutoContinueTask
+        await fulfillment(of: [saveEntered], timeout: 2)
+        await store.newConversation()
+        viewModel.reloadFromStore()
+        let newConversationID = try XCTUnwrap(store.currentConversation?.id)
+        viewModel.inputText = "keep this new draft"
+        XCTAssertTrue(viewModel.runRegistry.run(for: id) === originalRun)
+        XCTAssertTrue(viewModel.host(for: id) === originalHost)
+        releaseSave?.resume()
+        await continuation?.value
+
+        XCTAssertEqual(store.currentConversation?.id, newConversationID)
+        XCTAssertEqual(viewModel.inputText, "keep this new draft")
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertEqual(originalRun.state.messages.map { $0.toText() }, ["belongs to the original conversation"])
+        let persisted = await store.messages(for: id)
+        XCTAssertEqual(persisted?.map { $0.toText() }, ["belongs to the original conversation"])
+    }
+
+    func testTerminalAutoContinueDoesNotConsumeQueueWhenSaveFails() async throws {
+        let root = makeTempDirectory("SteerTerminalCommitFailure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let conversations = root.appendingPathComponent("conversations")
+        let store = makeConversationStore(directory: conversations)
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let queueDirectory = root.appendingPathComponent("queue")
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: queueDirectory)
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.inputText = "continue only after commit"
+        XCTAssertTrue(viewModel.sendMessage())
+        viewModel.generationActiveOverrideForTesting = nil
+        try FileManager.default.moveItem(at: conversations, to: root.appendingPathComponent("held"))
+        try Data().write(to: conversations)
+
+        viewModel.handleSteerQueueAtRunTerminal(for: id, autoContinue: true)
+        await viewModel.currentRun.state.steerQueueAutoContinueTask?.value
+        XCTAssertEqual(viewModel.steerQueue.map(\.text), ["continue only after commit"])
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertFalse(viewModel.isGenerationActive)
     }
 
     func testQueueRowTitleShowsImageAndFile() {

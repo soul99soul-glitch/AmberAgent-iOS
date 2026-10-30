@@ -198,7 +198,22 @@ enum IOSPhoneControlPhase: String {
 
 struct IOSPhoneControlStopResult: Sendable, Equatable {
     let cleanupFailure: String?
+    let returnReceipt: IOSPhoneControlReturnReceipt?
     var cleanupComplete: Bool { cleanupFailure == nil }
+
+    init(cleanupFailure: String?, returnReceipt: IOSPhoneControlReturnReceipt? = nil) {
+        self.cleanupFailure = cleanupFailure
+        self.returnReceipt = returnReceipt
+    }
+}
+
+/// Activation acknowledgement and foreground verification are separate evidence.
+struct IOSPhoneControlReturnReceipt: Codable, Sendable, Equatable {
+    let outcome: String
+    let verified: Bool
+    let bundleID: String?
+    let observedBundleID: String?
+    let message: String
 }
 
 enum IOSPhoneControlError: LocalizedError {
@@ -276,6 +291,7 @@ final class IOSPhoneControlController {
     var isPreparingPairing: Bool { isUpdatingPairing && pairingOperationID != nil }
 
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let hostBundleID: String?
     @ObservationIgnored private let credentials: any IOSPhoneControlCredentialStoring
     @ObservationIgnored private let applicationDiscoverer: any PhoneControlApplicationDiscovering
     @ObservationIgnored private let session: any IOSPhoneControlSessionServing
@@ -295,6 +311,7 @@ final class IOSPhoneControlController {
     @ObservationIgnored private var readinessTask: Task<Void, Never>?
     @ObservationIgnored private var readinessCleanupResult: IOSPhoneControlStopResult?
     @ObservationIgnored private let onHandoffChange: @MainActor (String, IOSPhoneControlHandoffState) -> Void
+    @ObservationIgnored private let onReturnToConversation: @MainActor (String, String?) -> Void
 
     init(defaults: UserDefaults = .standard,
          credentials: any IOSPhoneControlCredentialStoring = IOSPhoneControlCredentials(),
@@ -302,17 +319,27 @@ final class IOSPhoneControlController {
          applications: any PhoneControlApplicationDiscovering = PhoneControlApplications(),
          localTunnel: any IOSPhoneControlLocalTunneling = IOSPhoneControlLocalTunnel(),
          pairingSession: any PhoneControlPairingServing = PhoneControlPairingSession(),
+         hostBundleID: String? = Bundle.main.bundleIdentifier,
+         onReturnToConversation: @escaping @MainActor (String, String?) -> Void = { runID, conversationID in
+             guard let conversationID else { return }
+             if let url = IOSAppDeepLink.url(for: .agentActivity(.init(
+                runId: runID, conversationId: conversationID, focus: .result))) {
+                 IOSDeepLinkInbox.shared.submit(url, persistUntilHandled: true)
+             }
+         },
          onHandoffChange: @escaping @MainActor (String, IOSPhoneControlHandoffState) -> Void = { runID, _ in
              // The activity update entry point overlays the current owner's handoff state.
              Task { await AgentLiveActivityController.shared.updatePhoneControl(runID: runID, phase: .waitingForModel) }
          }) {
         self.defaults = defaults
+        self.hostBundleID = hostBundleID
         self.credentials = credentials
         self.session = session
         self.applicationDiscoverer = applications
         self.localTunnel = localTunnel
         self.pairingSession = pairingSession
         self.onHandoffChange = onHandoffChange
+        self.onReturnToConversation = onReturnToConversation
         connectionMode = defaults.string(forKey: Self.connectionModePreferenceKey)
             .flatMap(IOSPhoneControlConnectionMode.init(rawValue:)) ?? .embedded
         enabled = defaults.bool(forKey: Self.enabledPreferenceKey)
@@ -441,6 +468,8 @@ final class IOSPhoneControlController {
             do {
                 if connectionMode == .embedded { try await localTunnel.start(owner: id) }
                 try Task.checkCancellation()
+                _ = await localTunnel.resolveRemotePairingPort()
+                try Task.checkCancellation()
                 let data = try await pairingSession.prepare(id: id, connectionMode: connectionMode) { [weak self] status in
                     await self?.recordPairingProgress(status, id: id)
                 }
@@ -519,10 +548,10 @@ final class IOSPhoneControlController {
     }
 
     /// The host calls this only for a new user-started run, never on handoff or cold recovery.
-    /// An empty scope still permits status and app discovery; starting control requires selected apps.
-    func claim(runID: String, onStop: @escaping @MainActor () -> Void) -> Bool {
+    /// An empty scope permits discovery; control needs selected apps or an explicit system-navigation scope.
+    func claim(runID: String, conversationID: String? = nil, onStop: @escaping @MainActor () -> Void) -> Bool {
         guard enabled, !isOccupied, !isPreparingConnection, !isUpdatingPairing, !isLoadingApplications else { return false }
-        owner = Owner(runID: runID, sessionID: UUID(), scope: selectedBundleIDs, onStop: onStop)
+        owner = Owner(runID: runID, conversationID: conversationID, sessionID: UUID(), scope: selectedBundleIDs, onStop: onStop)
         ownerRunID = runID
         hasApplicationCatalog = false
         lastFailure = nil
@@ -571,7 +600,9 @@ final class IOSPhoneControlController {
     /// It ends this lease after the receipt, before waiting for the user to resume.
     func beginPhoneTool(runID: String) throws -> IOSPhoneControlToolLease {
         var context = try handoffOwner(runID: runID)
-        guard context.activeTool == nil, context.resumeWaiter == nil else { throw IOSPhoneControlError.occupied }
+        guard context.activeTool == nil, context.resumeWaiter == nil, !context.returnInFlight else {
+            throw IOSPhoneControlError.occupied
+        }
         let lease = IOSPhoneControlToolLease(runID: runID, sessionID: context.sessionID,
             operationID: UUID(), takeoverGeneration: context.takeoverGeneration)
         context.activeTool = lease
@@ -777,7 +808,6 @@ final class IOSPhoneControlController {
                 try Task.checkCancellation()
                 _ = try activeOwner(runID: runID, sessionID: context.sessionID)
                 let validatedPairing = try IOSPhoneControlCredentials.validatedPairing(pairing)
-                let endpoint = IOSPhoneControlLoopbackRoute.endpoint
                 if readinessRunID == runID { readinessReport?.stage = .connection }
                 if connectionMode == .embedded {
                     owner?.requestedTunnel = true
@@ -785,8 +815,12 @@ final class IOSPhoneControlController {
                 }
                 try Task.checkCancellation()
                 _ = try activeOwner(runID: runID, sessionID: context.sessionID)
+                let port = await localTunnel.resolveRemotePairingPort()
+                try Task.checkCancellation()
+                _ = try activeOwner(runID: runID, sessionID: context.sessionID)
+                let endpoint = "\(IOSPhoneControlLoopbackRoute.peer):\(port)"
                 IOSBackgroundLifecycleLog.record("phoneControlResolvedEndpoint",
-                    detail: "source=\(connectionMode.rawValue) port=49152")
+                    detail: "source=\(connectionMode.rawValue) port=\(port)")
                 let configuration = PhoneControlLaunchConfiguration(pairing: validatedPairing,
                                                                     endpoint: endpoint,
                                                                     connectionMode: connectionMode,
@@ -832,6 +866,25 @@ final class IOSPhoneControlController {
         applicationNames[bundleID] ?? bundleID
     }
 
+    /// Explicit system navigation extends only this live owner, never the saved app selection.
+    func allowSystemNavigation(runID: String) async throws {
+        let context = try handoffOwner(runID: runID)
+        guard context.handoffState == .automated, !context.needsFreshObservation, !context.returnInFlight,
+              phase == .authorized || phase == .ready else { throw IOSPhoneControlHandoffError.operationInFlight }
+        if let client = runnerClient {
+            try await client.allowSystemNavigation()
+            _ = try handoffOwner(runID: runID, sessionID: context.sessionID)
+            guard canDispatchAction(runID: runID) else { throw IOSPhoneControlHandoffError.operationInFlight }
+        }
+        // Permit a system-only task to start without selecting an unrelated installed app.
+        owner?.scope.insert("com.apple.springboard")
+    }
+
+    func preserveExplicitLock(runID: String, locked: Bool) throws {
+        _ = try handoffOwner(runID: runID)
+        owner?.preserveLockedScreen = locked
+    }
+
     /// Lists metadata through the same local development route, without launching an app or runner.
     /// Once control has started, reuse its InstallationProxy result instead of opening another tunnel.
     func loadInstalledApplications(runID: String? = nil) async throws -> [PhoneControlInstalledApp] {
@@ -868,6 +921,9 @@ final class IOSPhoneControlController {
             let applications: [PhoneControlInstalledApp]
             do {
                 if connectionMode == .embedded { try await localTunnel.start(owner: queryID) }
+                try Task.checkCancellation()
+                if let context { _ = try activeOwner(runID: context.runID, sessionID: context.sessionID) }
+                _ = await localTunnel.resolveRemotePairingPort()
                 try Task.checkCancellation()
                 if let context { _ = try activeOwner(runID: context.runID, sessionID: context.sessionID) }
                 applications = try await applicationDiscoverer.installedApplications(pairing: pairing, connectionMode: connectionMode)
@@ -997,9 +1053,92 @@ final class IOSPhoneControlController {
         return "enabled=true\nphase=\(phase.rawValue)\navailability=\(availability)\nhandoff=\(owner.handoffState.rawValue)\n\(handoff)\n\(statusMessage)\n\(preparation)\nscope=\(owner.scope.sorted().joined(separator: ","))"
     }
 
-    /// Revoke synchronously; keep the slot until native runtime join finishes.
-    func revoke(runID: String) {
+    /// Reuses this owner's live runner; it never creates a connection just to switch apps.
+    func returnToAmber(runID: String, lease: IOSPhoneControlToolLease? = nil) async -> IOSPhoneControlReturnReceipt {
+        let context: Owner
+        do {
+            context = try handoffOwner(runID: runID)
+            try validateReturnOwner(context, lease: lease, duringCleanup: false)
+        } catch {
+            return returnReceipt(outcome: "not_sent", message: error.localizedDescription)
+        }
+        guard phase == .ready, let client = runnerClient else {
+            return returnReceipt(outcome: "not_sent", message: "本轮尚未启动手机控制连接，未发送返回 Amber 的操作。")
+        }
+        owner?.returnInFlight = true
+        defer {
+            if owner?.sessionID == context.sessionID { owner?.returnInFlight = false }
+        }
+        return await performReturnToAmber(context, client: client, lease: lease, duringCleanup: false)
+    }
+
+    private func validateReturnOwner(_ context: Owner, lease: IOSPhoneControlToolLease?, duringCleanup: Bool,
+                                     returning: Bool = false) throws {
+        guard let current = owner, current.sessionID == context.sessionID, current.runID == context.runID,
+              duringCleanup || current.active else { throw IOSPhoneControlError.unauthorized }
+        guard !current.outcomeUnknown else { throw IOSPhoneControlHandoffError.outcomeUnknown }
+        guard readinessRunID != current.runID else { throw IOSPhoneControlHandoffError.preparationCheck }
+        guard current.handoffState == .automated, !current.needsFreshObservation,
+              current.resumeWaiter == nil, !current.returnInFlight || returning else {
+            throw IOSPhoneControlHandoffError.operationInFlight
+        }
+        if let lease {
+            guard current.activeTool == lease, lease.runID == current.runID,
+                  lease.sessionID == current.sessionID, lease.takeoverGeneration == current.takeoverGeneration else {
+                throw IOSPhoneControlError.unauthorized
+            }
+        } else {
+            guard current.activeTool == nil else { throw IOSPhoneControlHandoffError.operationInFlight }
+        }
+    }
+
+    private func returnReceipt(outcome: String, verified: Bool = false, observedBundleID: String? = nil,
+                               message: String) -> IOSPhoneControlReturnReceipt {
+        IOSPhoneControlReturnReceipt(outcome: outcome, verified: verified, bundleID: hostBundleID,
+            observedBundleID: observedBundleID, message: message)
+    }
+
+    private func performReturnToAmber(_ context: Owner, client: PhoneRunnerClient,
+                                     lease: IOSPhoneControlToolLease?, duringCleanup: Bool) async -> IOSPhoneControlReturnReceipt {
+        var outcome = "not_sent"
+        do {
+            try Task.checkCancellation()
+            try validateReturnOwner(context, lease: lease, duringCleanup: duringCleanup, returning: true)
+            guard let hostBundleID, Self.validBundleID(hostBundleID) else {
+                return returnReceipt(outcome: outcome, message: "无法取得 Amber 的应用标识，未发送返回操作。")
+            }
+            try await client.allowApplication(hostBundleID)
+            try Task.checkCancellation()
+            try validateReturnOwner(context, lease: lease, duringCleanup: duringCleanup, returning: true)
+            switch await client.act(.launch(bundleID: hostBundleID)) {
+            case .unsent(let problem):
+                return returnReceipt(outcome: outcome, message: "未发送返回 Amber 的操作：\(problem.localizedDescription)")
+            case .unknown(let problem):
+                if owner?.sessionID == context.sessionID { owner?.outcomeUnknown = true }
+                return returnReceipt(outcome: "unknown", message: "返回 Amber 的操作结果未知：\(problem.localizedDescription)")
+            case .completed:
+                outcome = "completed"
+            }
+            try validateReturnOwner(context, lease: lease, duringCleanup: duringCleanup, returning: true)
+            let observation = try await client.observe(maxNodes: 1)
+            try validateReturnOwner(context, lease: lease, duringCleanup: duringCleanup, returning: true)
+            let verified = observation.bundleID == hostBundleID
+            if verified { onReturnToConversation(context.runID, context.conversationID) }
+            return returnReceipt(outcome: outcome, verified: verified, observedBundleID: observation.bundleID,
+                message: verified ? "已通过新的界面观察确认 Amber 在前台。" : "返回操作已执行，但新的界面观察未确认 Amber 在前台。")
+        } catch {
+            return returnReceipt(outcome: outcome, message: outcome == "completed"
+                ? "返回操作已执行，但前台核验失败：\(error.localizedDescription)"
+                : "未发送返回 Amber 的操作：\(error.localizedDescription)")
+        }
+    }
+
+    /// Revoke synchronously; keep the slot until return and native runtime join finish.
+    func revoke(runID: String, returnToAmber: Bool = false) {
         guard var owner, owner.runID == runID, owner.active else { return }
+        let returnClient = returnToAmber && IOSPhoneControlReturnPreference.enabled(defaults)
+            && !owner.preserveLockedScreen && phase == .ready && (try? validateReturnOwner(owner, lease: nil, duringCleanup: false)) != nil
+            ? runnerClient : nil
         owner.active = false
         let resumeWaiter = owner.resumeWaiter
         owner.resumeWaiter = nil
@@ -1014,6 +1153,15 @@ final class IOSPhoneControlController {
         let startup = startTask
         let applicationQuery = applicationsTask
         cleanupTask = Task { [self] in
+            var returnReceipt: IOSPhoneControlReturnReceipt?
+            if let returnClient {
+                let receipt = await performReturnToAmber(owner, client: returnClient, lease: nil, duringCleanup: true)
+                returnReceipt = receipt
+                if !receipt.verified, self.owner?.sessionID == owner.sessionID {
+                    lastFailure = lastFailure.map { "\($0)\n\(receipt.message)" } ?? receipt.message
+                    statusMessage = lastFailure ?? receipt.message
+                }
+            }
             await session.stop(runID: owner.sessionID)
             // A cancelled actor hop must finish before this owner can hand its slot to another run.
             _ = await startup?.result
@@ -1028,7 +1176,8 @@ final class IOSPhoneControlController {
             let queryCleanupFailure = owner.requestedTunnel && disconnected ? nil : pendingQueryFailure
             let nativeCleanupFailure = closedStatus?.code == "runner_shutdown_failed" ? closedStatus?.message : nil
             let result = IOSPhoneControlStopResult(cleanupFailure: nativeCleanupFailure ?? queryCleanupFailure
-                ?? (disconnected ? nil : IOSPhoneControlLocalTunnelError.disconnectionTimedOut.localizedDescription))
+                ?? (disconnected ? nil : IOSPhoneControlLocalTunnelError.disconnectionTimedOut.localizedDescription),
+                returnReceipt: returnReceipt)
             if readinessRunID == owner.runID { readinessCleanupResult = result }
             guard self.owner?.sessionID == owner.sessionID else { return result }
             lastFailure = lastFailure ?? result.cleanupFailure
@@ -1043,9 +1192,9 @@ final class IOSPhoneControlController {
     }
 
     @discardableResult
-    func stop(runID: String) async -> IOSPhoneControlStopResult? {
+    func stop(runID: String, returnToAmber: Bool = false) async -> IOSPhoneControlStopResult? {
         guard owner?.runID == runID else { return nil }
-        revoke(runID: runID)
+        revoke(runID: runID, returnToAmber: returnToAmber)
         // Capture this owner's receipt before cleanup releases the slot to the next run.
         let cleanup = cleanupTask
         return await cleanup?.value
@@ -1081,6 +1230,7 @@ final class IOSPhoneControlController {
 
     private struct Owner {
         let runID: String
+        let conversationID: String?
         let sessionID: UUID
         var scope: Set<String>
         var requestedApplications = false
@@ -1095,6 +1245,8 @@ final class IOSPhoneControlController {
         var activeTool: IOSPhoneControlToolLease?
         var resumeWaiter: ResumeWaiter?
         var outcomeUnknown = false
+        var returnInFlight = false
+        var preserveLockedScreen = false
     }
     private struct ResumeWaiter {
         let id: UUID

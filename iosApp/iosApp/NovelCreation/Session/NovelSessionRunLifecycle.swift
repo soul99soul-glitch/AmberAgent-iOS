@@ -648,7 +648,8 @@ extension NovelSessionViewModel {
                 attachingBindingToken = nil
             }
         }
-        guard let draft = draft(for: run), let request = request(for: run, draft: draft) else {
+        guard let draft = draft(for: run),
+              let projectID = workspace.projectSnapshot?.project.id else {
             refreshErrorMessage = "无法恢复正在生成的消息订阅。"
             return
         }
@@ -669,10 +670,7 @@ extension NovelSessionViewModel {
             phase: run.partialContent.isEmpty ? .waitingForFirstToken : .streaming
         )
         do {
-            let observed = try await workspace.startSessionRun(
-                request,
-                acquiresBackgroundLease: false
-            )
+            let observed = try await workspace.observeSessionRun(projectID: projectID, run: run)
             guard attachAttemptID == attemptID,
                   consumerAttachmentDesired,
                   binding == expectedBinding,
@@ -685,6 +683,29 @@ extension NovelSessionViewModel {
                   binding == expectedBinding,
                   bindingToken == expectedToken,
                   transientTail?.runID == run.id else { return }
+            if case .runNotFound(let missingID) = error as? NovelError,
+               missingID == run.id {
+                // A detached run may finish and be pruned while this workspace
+                // still holds its running snapshot. Reload the durable result
+                // instead of reconstructing or restarting the old request.
+                guard await refreshDurable(
+                    binding: expectedBinding,
+                    token: expectedToken,
+                    retireTerminalTail: false
+                ) else { return }
+                guard attachAttemptID == attemptID,
+                      consumerAttachmentDesired,
+                      binding == expectedBinding,
+                      bindingToken == expectedToken,
+                      transientTail?.runID == run.id else { return }
+                if workspace.projectSnapshot?.activeRuns.contains(where: {
+                    $0.id == run.id && $0.status == .running
+                }) == false,
+                   workspace.branchSnapshot?.branch.activeRunID != run.id {
+                    await clearTransientTailAfterDurableProjection(runID: run.id, token: expectedToken)
+                    return
+                }
+            }
             refreshErrorMessage = describe(error)
             await clearTransientTailAfterDurableProjection(
                 runID: run.id,

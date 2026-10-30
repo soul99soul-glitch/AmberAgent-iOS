@@ -59,6 +59,7 @@ final class ChatRunUploadPreparation {
     ) async throws -> [UIMessage] {
         var prepareInterval = ChatPerfTrace.begin("PrepareUpload")
         defer { ChatPerfTrace.end(&prepareInterval) }
+        try Task.checkCancellation()
         guard isCurrentRun() else { return messages }
         let effectiveParams = params.replacingTools(
             toolExposureBridge.visibleTools()
@@ -87,6 +88,7 @@ final class ChatRunUploadPreparation {
         // 压缩、上下文投影、图片准备重叠。本轮选择仍只在注入前读取一次。
         let recallBox = JevRecallResultBox()
         let memoryRecallTask = Task { @MainActor in
+            guard !Task.isCancelled else { return }
             recallBox.value = await bindings.prepareJevMemoryRecall(requestMessages, runId)
         }
         defer { memoryRecallTask.cancel() }
@@ -143,7 +145,10 @@ final class ChatRunUploadPreparation {
                     self.applyCompactEvent(event)
                 }
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            try Task.checkCancellation()
             if isCurrentRun() {
                 applyCompactEvent(.failed(message: (error as NSError).localizedDescription))
             }
@@ -153,6 +158,7 @@ final class ChatRunUploadPreparation {
                 arguments: [(error as NSError).localizedDescription]
             ))
         }
+        try Task.checkCancellation()
         guard isCurrentRun() else { return messages }
         let promptedUploadMessages = Self.messagesByInjectingImageGenerationPromptIfNeeded(
             preparedUploadMessages,
@@ -170,14 +176,21 @@ final class ChatRunUploadPreparation {
                 conversationId: conversationId?.toHexDashString()
             )
         )
+        try Task.checkCancellation()
 
         // 每轮组装前刷新编排链接缓存(CG-C :2022-2024)。
         await bindings.refreshOrchestrationLinks()
+        try Task.checkCancellation()
 
         // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
         // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
         // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
-        await memoryRecallTask.value
+        await withTaskCancellationHandler {
+            await memoryRecallTask.value
+        } onCancel: {
+            memoryRecallTask.cancel()
+        }
+        try Task.checkCancellation()
         // Jev 未给出结果时在注入时刻现算（与原行为同一时机与输入），并复用给
         // usage marking，使标记的记忆与实际注入的一致。
         let memoryRecallOverride = recallBox.value ?? bindings.memoryRecallResultForRun(projectedMessages)

@@ -207,6 +207,140 @@ final class IOSMailboxDeliveryTests: XCTestCase {
         )
     }
 
+    func testFailedConversationCommitLeavesMailboxPendingAcrossViewModelRecreation() async throws {
+        let root = makeTempDirectory("MailboxCommitFailure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let conversations = root.appendingPathComponent("conversations")
+        let held = root.appendingPathComponent("held")
+        let store = makeConversationStore(directory: conversations)
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let dao = makeMailboxDao(directory: root)
+        let viewModel = makeViewModel(conversationStore: store, mailboxDao: dao)
+        try await enqueue(dao, envelope(id: "durable-final", recipient: id, payload: "do not lose this result", createdAt: 1))
+
+        try FileManager.default.moveItem(at: conversations, to: held)
+        try Data().write(to: conversations)
+        let failed = await viewModel.drainMailbox(conversationId: id)
+        XCTAssertTrue(failed.isEmpty)
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        let pendingAfterFailure = await pendingEnvelopeIds(dao, recipient: id)
+        XCTAssertEqual(pendingAfterFailure, ["durable-final"])
+        XCTAssertNotNil(store.lastIOError)
+
+        try FileManager.default.removeItem(at: conversations)
+        try FileManager.default.moveItem(at: held, to: conversations)
+        let reloadedStore = makeConversationStore(directory: conversations)
+        await reloadedStore.bootstrap()
+        await reloadedStore.selectConversation(id: id)
+        let reloaded = makeViewModel(conversationStore: reloadedStore, mailboxDao: dao)
+        let committed = await reloaded.drainMailbox(conversationId: id)
+        XCTAssertEqual(committed.count, 1)
+        let pendingAfterCommit = await pendingEnvelopeIds(dao, recipient: id)
+        let persisted = await reloadedStore.messages(for: id)
+        XCTAssertTrue(pendingAfterCommit.isEmpty)
+        XCTAssertEqual(persisted?.map(\.id), committed.map(\.id))
+    }
+
+    func testAlreadyCommittedMailboxMessageIsAcknowledgedWithoutDuplicateAfterRestart() async throws {
+        let root = makeTempDirectory("MailboxCommitBeforeAck")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeConversationStore(directory: root.appendingPathComponent("conversations"))
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let dao = makeMailboxDao(directory: root)
+        try await enqueue(dao, envelope(id: "committed-before-ack", recipient: id, payload: "already saved", createdAt: 1))
+        let message = amberMailboxMessage(
+            envelopeId: "committed-before-ack", authorThreadId: "/root/a",
+            type: MailboxEnvelopeType.message.name, payload: "already saved"
+        )
+        let saved = await store.save(messages: [message], to: id)
+        XCTAssertTrue(saved)
+        let viewModel = makeViewModel(conversationStore: store, mailboxDao: dao)
+
+        let replayed = await viewModel.drainMailbox(conversationId: id)
+        XCTAssertTrue(replayed.isEmpty)
+        XCTAssertEqual(viewModel.messages.map(\.id), [message.id])
+        let pendingAfterReplay = await pendingEnvelopeIds(dao, recipient: id)
+        XCTAssertTrue(pendingAfterReplay.isEmpty)
+    }
+
+    func testMailboxWaitsForRegeneratedAnswerVariantCommit() async throws {
+        let root = makeTempDirectory("MailboxPendingVariant")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeConversationStore(directory: root.appendingPathComponent("conversations"))
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let dao = makeMailboxDao(directory: root)
+        let viewModel = makeViewModel(conversationStore: store, mailboxDao: dao)
+        try await enqueue(dao, envelope(id: "pending-variant-result", recipient: id, payload: "keep this pending", createdAt: 1))
+        viewModel.currentRun.state.pendingAssistantRegeneration = PendingAssistantRegeneration(
+            conversationId: id, targetMessageIndex: 1, generatedMessageIndex: 1
+        )
+        var writes = 0
+        store.beforePersistForTesting = { _ in writes += 1 }
+
+        let drained = await viewModel.drainMailbox(conversationId: id)
+        let pending = await pendingEnvelopeIds(dao, recipient: id)
+        XCTAssertTrue(drained.isEmpty)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(pending, ["pending-variant-result"])
+        XCTAssertEqual(viewModel.currentRun.state.pendingAssistantRegeneration?.targetMessageIndex, 1)
+    }
+
+    func testBackgroundMailboxSaveFailureDoesNotAcknowledgeOrFoldResult() async throws {
+        let root = makeTempDirectory("BackgroundMailboxCommitFailure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let conversations = root.appendingPathComponent("conversations")
+        let held = root.appendingPathComponent("held")
+        let store = makeConversationStore(directory: conversations)
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let dao = makeMailboxDao(directory: root)
+        let mailbox = IOSMailboxStore(mailboxDao: dao)
+        try await enqueue(dao, envelope(id: "background-final", recipient: id, payload: "background result", createdAt: 1))
+        try FileManager.default.moveItem(at: conversations, to: held)
+        try Data().write(to: conversations)
+
+        let failed = await IOSChatBackgroundGenerationCoordinator.shared.drainMailboxForBackgroundJob(
+            store: store, mailboxStore: mailbox, conversationId: id
+        )
+        XCTAssertTrue(failed.values.isEmpty)
+        let pendingAfterFailure = await pendingEnvelopeIds(dao, recipient: id)
+        XCTAssertEqual(pendingAfterFailure, ["background-final"])
+        try FileManager.default.removeItem(at: conversations)
+        try FileManager.default.moveItem(at: held, to: conversations)
+        let committed = await IOSChatBackgroundGenerationCoordinator.shared.drainMailboxForBackgroundJob(
+            store: store, mailboxStore: mailbox, conversationId: id
+        )
+        XCTAssertEqual(committed.values.count, 1)
+        let pendingAfterCommit = await pendingEnvelopeIds(dao, recipient: id)
+        XCTAssertTrue(pendingAfterCommit.isEmpty)
+    }
+
+    func testBackgroundReplayReturnsCommittedEnvelopeForAnOlderEngineWorkingSnapshot() async throws {
+        let root = makeTempDirectory("BackgroundMailboxOlderWorking")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeConversationStore(directory: root.appendingPathComponent("conversations"))
+        await store.newConversation()
+        let id = try XCTUnwrap(store.currentConversation?.id)
+        let dao = makeMailboxDao(directory: root)
+        try await enqueue(dao, envelope(id: "committed-for-old-engine", recipient: id, payload: "saved before ack", createdAt: 1))
+        let message = amberMailboxMessage(
+            envelopeId: "committed-for-old-engine", authorThreadId: "/root/a",
+            type: MailboxEnvelopeType.message.name, payload: "saved before ack"
+        )
+        let saved = await store.save(messages: [message], to: id)
+        XCTAssertTrue(saved)
+        let replay = await IOSChatBackgroundGenerationCoordinator.shared.drainMailboxForBackgroundJob(
+            store: store, mailboxStore: IOSMailboxStore(mailboxDao: dao), conversationId: id
+        )
+        XCTAssertEqual(replay.values.map(\.id), [message.id], "The engine deduplicates against its own working snapshot.")
+        XCTAssertEqual(store.currentMessages.map(\.id), [message.id])
+        let pending = await pendingEnvelopeIds(dao, recipient: id)
+        XCTAssertTrue(pending.isEmpty)
+    }
+
     // MARK: - 1. 工具循环边界折入
 
     func testIdleReportPreviewKeepsInputAndLeavesDeliveryToNextRun() async throws {

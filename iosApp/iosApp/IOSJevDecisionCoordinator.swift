@@ -369,7 +369,8 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             }
             return results
         }
-        let apiKey: String = synchronized { cachedApiKey } ?? deps.apiKeyProvider()
+        let rawApiKey: String = synchronized { cachedApiKey } ?? deps.apiKeyProvider()
+        let apiKey = IOSJevClient.sanitizedAPIKey(rawApiKey)
         guard !apiKey.isEmpty else {
             for item in prepared {
                 results[item.part.id] = .skipped(reason: "missing_key")
@@ -569,6 +570,8 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             switch error {
             case .missingKey, .invalidRequest, .stateTooLarge, .requestTooLarge:
                 refundBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, budgetDay: budgetDay)
+            case .http(let status, _) where status == 451:
+                refundBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, budgetDay: budgetDay)
             default:
                 finishBudget()
             }
@@ -576,6 +579,12 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             case .http(let status, _) where status == 401 || status == 403:
                 synchronized { pausedForAuthFailure = true; consecutiveTransientFailures = 0 }
                 return .failed("auth_\(status)")
+            case .http(let status, _) where status == 451:
+                synchronized {
+                    cooldownUntil = deps.now().addingTimeInterval(TimeInterval(settings.policy.cooldownSeconds))
+                    consecutiveTransientFailures = 0
+                }
+                return .failed("http_451")
             case .timeout, .transport, .http:
                 let transient: Bool
                 if case .http(let status, _) = error { transient = status == 429 || status >= 500 }
@@ -798,7 +807,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         let question = IOSJevQuestion.noul(id: "connectivity", instructions: "Return yes with probability 1.0 if the state is readable.")
         let input = IOSJevClient.RequestInput(
             endpoint: settings.resolvedEndpoint,
-            apiKey: apiKey,
+            apiKey: IOSJevClient.sanitizedAPIKey(apiKey),
             model: modelVersion ?? settings.activeModelVersion,
             state: state,
             questions: [question],
@@ -851,7 +860,9 @@ extension IOSJevDecisionCoordinator {
     static let shared = IOSJevDecisionCoordinator(deps: Dependencies(
         client: IOSJevClient(transport: IOSJevURLSessionTransport(session: URLSession.shared)),
         settingsProvider: { IOSSharedSettingsStore.loadPersistedJevSettings() },
-        apiKeyProvider: { IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey) ?? "" },
+        apiKeyProvider: {
+            IOSJevClient.sanitizedAPIKey(IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey) ?? "")
+        },
         now: { Date() }
     ))
 }

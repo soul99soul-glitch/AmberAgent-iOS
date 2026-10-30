@@ -172,7 +172,16 @@ final class AntigravityLoginModel: ObservableObject {
                 // Onboarding is best-effort here (same policy as Android): the
                 // login succeeds even if the ghost-project dance fails; a chat
                 // request retries it idempotently.
-                let onboarded = try? await client.ensureOnboarded()
+                let onboarded: IOSAntigravityAuthTokens?
+                do {
+                    onboarded = try await client.ensureOnboarded()
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    onboarded = nil
+                }
+                try Task.checkCancellation()
+                guard IOSAntigravityAuthStore.load(providerId: providerId) != nil else { throw CancellationError() }
                 let email = onboarded?.email ?? IOSAntigravityAuthStore.load(providerId: providerId)?.email
                 let tier = onboarded?.onboardedTier ?? IOSAntigravityAuthStore.load(providerId: providerId)?.onboardedTier
                 self.phase = .signedIn(email: email, tier: tier)

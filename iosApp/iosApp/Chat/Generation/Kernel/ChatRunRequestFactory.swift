@@ -64,15 +64,11 @@ final class ChatRunRequestFactory {
             phoneControl: phoneControl,
             maxToolResumeCount: maxToolResumeCount,
             drainSteer: {
-                let boxed = await MainActor.run {
-                    IOSMailboxDrainResult(values: bindingsBox.value.drainSteerQueue(conversationBox.value))
-                }
+                let boxed = await bindingsBox.drainSteer(conversationBox)
                 return boxed.values
             },
             mailboxDrain: {
-                await Task { @MainActor in
-                    IOSMailboxDrainResult(values: await bindingsBox.value.drainMailbox(conversationBox.value))
-                }.value
+                await bindingsBox.drainMailbox(conversationBox)
             },
             citationTracker: citationTracker,
             prepareUploadMessages: prepareUploadMessages,
@@ -88,6 +84,16 @@ final class ChatRunRequestFactory {
 private struct UncheckedHostBindingsBox: @unchecked Sendable {
     let value: ChatGenerationBindings
     init(_ value: ChatGenerationBindings) { self.value = value }
+
+    @MainActor
+    func drainSteer(_ conversation: UncheckedHostConversationIdBox) async -> IOSMailboxDrainResult {
+        IOSMailboxDrainResult(values: await value.drainSteerQueue(conversation.value))
+    }
+
+    @MainActor
+    func drainMailbox(_ conversation: UncheckedHostConversationIdBox) async -> IOSMailboxDrainResult {
+        IOSMailboxDrainResult(values: await value.drainMailbox(conversation.value))
+    }
 }
 
 /// 会话 id(KMP KotlinUuid 非 Sendable)的同款跨边界盒。

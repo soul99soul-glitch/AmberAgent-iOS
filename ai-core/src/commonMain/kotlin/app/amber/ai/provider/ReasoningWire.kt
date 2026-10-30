@@ -154,8 +154,16 @@ fun openAIResponsesReasoningEffort(level: ReasoningLevel): String? = when (level
 
 fun shouldDisableClaudeThinking(modelId: String, level: ReasoningLevel): Boolean {
     if (level != ReasoningLevel.OFF) return false
+    return claudeThinkingTypeForOff(modelId) != null
+}
+
+fun claudeThinkingTypeForOff(modelId: String): String? {
     val id = modelId.normalizedModelId()
-    return !id.contains("fable") && !id.contains("mythos")
+    return when {
+        id.isClaudeAlwaysThinking() -> null
+        id.contains("sonnet-5-5") || id.contains("sonnet-5.5") -> "between_tools"
+        else -> "disabled"
+    }
 }
 
 private fun kimiK3Fields(level: ReasoningLevel) = OpenAICompatibleThinkingFields(

@@ -171,10 +171,16 @@ final class ChatRecipeExecution {
         bridge: IosToolExposureBridge?,
         skipGateForFirstStep: Bool = false
     ) async -> RecipeAdvanceOutcome {
-        let runner = makeRecipeRunner(manifest: state.manifest, context: context, bridge: bridge)
+        var runner = makeRecipeRunner(manifest: state.manifest, context: context, bridge: bridge)
         var skipGate = skipGateForFirstStep
         while state.nextStepIndex < state.plan.steps.count {
             let step = state.plan.steps[state.nextStepIndex]
+            runner = makeRecipeRunner(
+                manifest: state.manifest,
+                context: context,
+                bridge: bridge,
+                searchStepApproved: skipGate
+            )
 
             // Resolve the step's arguments BEFORE the approval gate so the
             // card can show what the step will actually call with.
@@ -660,7 +666,8 @@ final class ChatRecipeExecution {
     private func makeRecipeRunner(
         manifest: IOSRecipeManifest,
         context: ChatPendingToolApproval,
-        bridge: IosToolExposureBridge?
+        bridge: IosToolExposureBridge?,
+        searchStepApproved: Bool = false
     ) -> IOSRecipeRunner {
         IOSRecipeRunner(
             manifest: manifest,
@@ -675,7 +682,8 @@ final class ChatRecipeExecution {
                 switch await self.executeRecipePrimitiveStep(
                     tool: tool,
                     argsJSON: argsJSON,
-                    isUserInitiated: true,
+                    isUserInitiated: IOSSearchExecutor.supportedToolNames.contains(tool)
+                        ? searchStepApproved : true,
                     context: context,
                     bridge: bridge
                 ) {
@@ -732,7 +740,15 @@ final class ChatRecipeExecution {
             }
             return .output(text)
         case .search:
-            return recipePrimitiveResult(await runtime.dispatchSearchToolCall(toolCall))
+            switch runtime.searchToolPermission(isUserInitiated: isUserInitiated) {
+            case .denied(let reason): return .failure(reason)
+            case .needsApproval(let reason): return .needsApproval(reason: reason)
+            case .allow: break
+            }
+            return recipePrimitiveResult(await runtime.dispatchSearchToolCall(
+                toolCall,
+                isUserInitiated: isUserInitiated
+            ))
         case .memory:
             let policy = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: isUserInitiated)
             if case .needsUserAction(let reason) = policy {
@@ -831,17 +847,11 @@ final class ChatRecipeExecution {
         case .workspace:
             return workspaceRecipeStepGate(toolName: tool)
         case .search:
-            let autoApprove = runtime.effectiveGlobalAutoApproveEnabled
-                || runtime.effectiveHighRiskAutoApproveEnabled
-            if !autoApprove,
-               ChatToolApprovalRequestBuilder.search(
-                   for: runtime.toolCall(name: tool, input: argsJSON),
-                   reason: "网络搜索和网页读取会访问外部站点，需要你确认。",
-                   settings: runtime.sharedSettings.snapshot
-               ) != nil {
-                return .approvalRequired(reason: "网络搜索和网页读取会访问外部站点，需要你确认。")
+            switch runtime.searchToolPermission() {
+            case .denied(let reason): return .unsupported(reason: reason)
+            case .needsApproval(let reason): return .approvalRequired(reason: reason)
+            case .allow: return .proceed
             }
-            return .proceed
         case .memory:
             if case .needsUserAction(let reason) = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: false) {
                 return .approvalRequired(reason: reason)

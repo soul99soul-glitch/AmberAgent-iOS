@@ -142,7 +142,7 @@ extension IOSCouncilRoomRunner {
         """
         \(settings.host.prompt)
 
-        你在 iOS 模型议会 Room 中发言。保持中文、具体、可执行。不要声称调用了跨服务商模型；本轮所有席位都运行在当前 OpenAI-compatible 服务商内。
+        你在 iOS 模型议会 Room 中发言。保持中文、具体、可执行。只依据本轮实际执行结果描述过程，不要虚构模型、服务商或工具调用。
         """
     }
 

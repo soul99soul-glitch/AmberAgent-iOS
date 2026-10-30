@@ -1093,14 +1093,15 @@ extension RunnerTests {
     // With a passcode a Home press only shows the passcode pad (WDA cannot type it either).
     switch lockedOnMain() {
     case false?: return .value(NSNull())
-    case nil: throw RunnerError.failed("the lock state could not be read; nothing was pressed")
+    case nil: throw RunnerError(status: 500, code: "unknown error",
+                               message: "the lock state could not be read; nothing was pressed", dropped: true)
     case true?: break
     }
     // A set passcode cannot be entered from here: say so without pressing anything, so a dark
     // phone is not lit up just to show its keypad.
     if IPURBridge.screenLockStatus()?["passcodeEnabled"]?.boolValue == true {
       throw RunnerError(status: 409, code: "unknown error",
-                        message: "passcode_required: a passcode is set on this iPhone, so it cannot be unlocked remotely; unlock it in hand")
+                        message: "passcode_required: a passcode is set on this iPhone, so it cannot be unlocked remotely; unlock it in hand", dropped: true)
     }
     defer { IPURBridge.invalidateRequestCache() }
     // Without a passcode a dark phone needs two presses: the first only wakes it to the lock

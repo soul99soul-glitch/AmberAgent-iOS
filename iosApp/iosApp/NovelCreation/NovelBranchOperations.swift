@@ -479,6 +479,7 @@ extension NovelReducer {
                 collectedCheckpointID: nil,
                 chapterPlanDigest: candidate.chapterPlanDigest,
                 ghostwritePlanID: candidate.ghostwritePlanID,
+                generationGranularity: candidate.generationGranularity,
                 createdAt: candidate.createdAt
             )
         }.sorted { $0.sourceMessageID.description < $1.sourceMessageID.description }
@@ -979,6 +980,7 @@ extension NovelReducer {
             collectedCheckpointID: nil,
             chapterPlanDigest: source.chapterPlanDigest,
             ghostwritePlanID: source.ghostwritePlanID,
+            generationGranularity: source.generationGranularity,
             createdAt: now
         )
         guard let sessionIndex = document.sessions.firstIndex(where: {

@@ -1,15 +1,15 @@
 import AmberPhoneControl
 import Foundation
+import UIKit
 @preconcurrency import Shared
 
-/// 任务结束后是否把宿主 App 切回前台。runner 的 /launch 可激活任意 bundle，
-/// 包括 Amber 自己。默认关闭：一次对话里可能连续跑多个手机任务，每次切走会打断后续步骤。
+/// 整轮手机任务结束后返回原对话；阶段汇报由显式返回工具决定。
 enum IOSPhoneControlReturnPreference {
     static let key = "app.amber.ios.phoneControl.returnAfterRun"
 
-    /// 默认关闭：phone_run_goal 可能在一次对话里被连续调用，默认就切走会打断后续步骤。
+    /// 默认返回；保留用户已经保存的开关选择，不在每个子流程结束时切换。
     static func enabled(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: key) as? Bool ?? false
+        defaults.object(forKey: key) as? Bool ?? true
     }
 
     static func set(_ value: Bool, _ defaults: UserDefaults = .standard) {
@@ -25,13 +25,32 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     private let controller: IOSPhoneControlController
     private let reportActivity: @MainActor (AgentPhoneControlActivityPhase) async -> Void
     private let jev: IOSJevPhoneControlService
+    struct ClipboardAccess {
+        let isForeground: @MainActor () -> Bool
+        let read: @MainActor () -> String?
+        let write: @MainActor (String) -> Void
+
+        init(isForeground: @escaping @MainActor () -> Bool, read: @escaping @MainActor () -> String?,
+             write: @escaping @MainActor (String) -> Void = { UIPasteboard.general.string = $0 }) {
+            self.isForeground = isForeground
+            self.read = read
+            self.write = write
+        }
+
+        static let system = ClipboardAccess(
+            isForeground: { UIApplication.shared.applicationState == .active },
+            read: { UIPasteboard.general.string })
+    }
+    private let clipboard: ClipboardAccess
 
     init(runID: String, controller: IOSPhoneControlController = .shared,
          jev: IOSJevPhoneControlService = .shared,
+         clipboard: ClipboardAccess = .system,
          reportActivity: (@MainActor (AgentPhoneControlActivityPhase) async -> Void)? = nil) {
         self.runID = runID
         self.controller = controller
         self.jev = jev
+        self.clipboard = clipboard
         self.reportActivity = reportActivity ?? { phase in
             // Each phone phase is real work: it keeps the run's liveness heartbeat beating
             // through long goal/flow tool calls that report no model or tool-result progress.
@@ -53,10 +72,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         }
 
         let outcome: IOSAgentToolOutcome
-        if request == .status || request == .stop {
-            outcome = await perform(request)
-        } else {
-            outcome = await performWithHandoff(request)
+        switch request {
+        case .status, .stop: outcome = await perform(request)
+        default: outcome = await performWithHandoff(request)
         }
         let completion = Self.completionActivity(request: request, outcome: outcome)
         // Cancellation after dispatch must not hide an unknown action outcome.
@@ -78,7 +96,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             return .denied(Self.denial(error))
         }
 
-        let outcome = await perform(request)
+        let outcome = await perform(request, lease: lease)
         let unknown: Bool
         if case .outcomeUnknown = outcome { unknown = true } else { unknown = false }
         controller.endPhoneTool(lease, outcomeUnknown: unknown)
@@ -168,32 +186,131 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         return result
     }
 
-    private func perform(_ request: Request) async -> IOSAgentToolOutcome {
+    private func perform(_ request: Request, lease: IOSPhoneControlToolLease? = nil) async -> IOSAgentToolOutcome {
         guard !Task.isCancelled else { return Self.applicationFailure(CancellationError()) }
         switch request {
+        case .returnToAmber:
+            await reportActivity(.openingApp)
+            let receipt = await controller.returnToAmber(runID: runID, lease: lease)
+            var fields: [String: Any] = ["outcome": receipt.outcome, "verified": receipt.verified]
+            if let bundleID = receipt.bundleID { fields["bundle_id"] = bundleID }
+            if let observed = receipt.observedBundleID { fields["observed_bundle_id"] = observed }
+            fields["retry_safe"] = false
+            // Switching apps consumes the old screen even when activation is acknowledged.
+            fields["fresh_observation_available"] = false
+            fields["message"] = receipt.message + " 原 App 的引用和截图已失效；继续前先打开目标 App 并使用新观察。"
+            let text = Self.json(fields)
+            if receipt.outcome == "unknown" {
+                return .outcomeUnknown([UIMessagePart.Text(text: text, metadata: nil)])
+            }
+            return receipt.verified ? .filled(text) : .failed(text)
+        case .clipboard(let maximum):
+            await reportActivity(.observing)
+            guard clipboard.isForeground() else {
+                return .failed(Self.json([
+                    "status": "unavailable", "code": "clipboard_requires_foreground",
+                    "message": "Amber 尚未处于可交互前台；先用 phone_return_to_amber 返回，确认前台后再读取剪贴板。",
+                ]))
+            }
+            guard let text = clipboard.read() else {
+                return .failed(Self.json([
+                    "status": "unavailable", "code": "clipboard_text_unavailable",
+                    "message": "未取得剪贴板文本：可能没有文本或系统未允许读取。不能据此断言剪贴板为空；若出现粘贴许可，请由用户决定。",
+                ]))
+            }
+            let returned = String(text.prefix(maximum))
+            return .filled(Self.json([
+                "status": "completed", "text": returned, "returned_chars": returned.count,
+                "total_chars": text.count, "truncated": returned.count < text.count,
+            ]))
+        case .writeClipboard(let text):
+            await reportActivity(.typing)
+            guard clipboard.isForeground() else {
+                return .failed(Self.json(["status": "unavailable", "code": "clipboard_requires_foreground",
+                    "message": "请先返回 Amber 前台，再写入剪贴板。上一份剪贴板内容尚未修改。"] ))
+            }
+            clipboard.write(text)
+            return .filled(Self.json(["status": "completed", "written_chars": text.count, "copied_to_clipboard": true]))
+        case .system(let action, let includeScreenshot):
+            do { try await controller.allowSystemNavigation(runID: runID) }
+            catch { return Self.applicationFailure(error) }
+            switch await prepareRunner() {
+            case .outcome(let failure): return failure
+            case .ready(let runner):
+                var fields: [String: Any] = ["status": "completed", "outcome": "not_sent", "retry_safe": false]
+                do {
+                    try await controller.allowSystemNavigation(runID: runID)
+                    let operation: PhoneAction?
+                    switch action {
+                    case "home": operation = .home
+                    case "volume_up": operation = .pressButton(.volumeUp)
+                    case "volume_down": operation = .pressButton(.volumeDown)
+                    case "lock": operation = .lockScreen
+                    case "unlock": operation = .unlockScreen
+                    case "dismiss_keyboard": operation = .dismissKeyboard
+                    default: operation = nil
+                    }
+                    if let operation {
+                        await reportActivity(Self.actionActivity(operation))
+                        let receipt = await dispatch(operation, runner: runner)
+                        guard receipt == .completed else { return Self.actionOutcome(receipt) }
+                        fields["outcome"] = "completed"
+                        if action == "lock" { try controller.preserveExplicitLock(runID: runID, locked: true) }
+                    }
+                    if ["lock", "unlock", "lock_state"].contains(action) {
+                        let locked = try await runner.screenLockState()
+                        fields["locked"] = locked
+                        if action == "unlock", !locked { try controller.preserveExplicitLock(runID: runID, locked: false) }
+                        if action != "lock_state" {
+                            fields["verification"] = ["status": locked == (action == "lock") ? "satisfied" : "unmet"]
+                        }
+                        return .filled(Self.json(fields))
+                    }
+                    await reportActivity(.observing)
+                    let observation = try await runner.observe(maxNodes: 1_000, includeScreenSize: true)
+                    return await observationResult(fields: fields, observation: observation,
+                                                   needsScreenshot: includeScreenshot, runner: runner)
+                } catch {
+                    if fields["outcome"] as? String == "completed" {
+                        fields["fresh_observation_available"] = false
+                        fields["observation_error"] = error.localizedDescription
+                        fields["verification"] = ["status": "insufficient", "reason": error.localizedDescription]
+                        return .filled(Self.json(fields))
+                    }
+                    return Self.readFailure(error)
+                }
+            }
         case .status:
             await reportActivity(.checkingStatus)
             // Status is useful after stop as well; it never starts a session.
             return .filled(controller.statusText(runID: runID))
-        case .stop:
+        case .stop(let returnToAmber):
             await reportActivity(.stopping)
-            guard let stopped = await controller.stop(runID: runID) else {
+            guard let stopped = await controller.stop(runID: runID, returnToAmber: returnToAmber) else {
                 return .denied(Self.json([
                     "outcome": "not_sent", "retry_safe": false,
                     "code": "run_not_authorized", "message": "该 run 已不拥有手机控制会话。",
                 ]))
             }
-            if let failure = stopped.cleanupFailure {
-                return .failed(Self.json([
-                    "outcome": "stopped", "cleanup_complete": false, "retry_safe": false,
-                    "code": "phone_control_cleanup_failed",
-                    "message": failure,
-                ]))
-            }
-            return .filled(Self.json([
-                "outcome": "stopped", "cleanup_complete": true, "retry_safe": true,
+            var fields: [String: Any] = [
+                "outcome": "stopped", "cleanup_complete": stopped.cleanupComplete,
+                "retry_safe": stopped.cleanupComplete,
                 "message": "当前 run 已停止接受手机控制动作；已发送的动作不能撤销。",
-            ]))
+            ]
+            if let receipt = stopped.returnReceipt {
+                fields["return_to_amber"] = Self.object(receipt)
+                if receipt.outcome == "unknown" {
+                    fields["outcome"] = "unknown"
+                    fields["retry_safe"] = false
+                    return .outcomeUnknown([UIMessagePart.Text(text: Self.json(fields), metadata: nil)])
+                }
+            }
+            if let failure = stopped.cleanupFailure {
+                fields["code"] = "phone_control_cleanup_failed"
+                fields["message"] = failure
+                return .failed(Self.json(fields))
+            }
+            return .filled(Self.json(fields))
         case .apps(let query, let offset, let limit):
             await reportActivity(.listingApps)
             do {
@@ -403,13 +520,6 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 ))
                 let priorPath = PhoneRecipeStore.lastPath(bundleID: request.bundleID)
                 let result = await loop.run(request)
-                // 跑完切回 Amber：只在任务真的完成时做。runner 只允许 scope 内的 bundle，
-                // 宿主自身不在用户的受控应用列表里，先临时扩 scope 再激活；unknown 不抢前台。
-                if IOSPhoneControlReturnPreference.enabled(), result.status == .completed {
-                    let host = Bundle.main.bundleIdentifier ?? "app.amber.ios"
-                    try? await runner.allowApplication(host)
-                    _ = await runner.act(.launch(bundleID: host))
-                }
                 // 沉淀成功路径：下一轮同一 App 的任务会把上次的做法还给模型参考。
                 if result.status == .completed {
                     PhoneRecipeStore.save(bundleID: request.bundleID, goal: request.goal, steps: result.steps)
@@ -627,20 +737,27 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         case .type, .clear: .typing
         case .swipe, .swipePoint: .swiping
         case .dismissKeyboard: .typing
-        case .home: .failed // The phone tool schema does not expose Home.
+        case .home: .openingApp
+        case .pressButton, .lockScreen, .unlockScreen: .tapping
         }
     }
 
     static func completionActivity(request: Request, outcome: IOSAgentToolOutcome) -> AgentPhoneControlActivityPhase {
         switch outcome {
-        case .filled, .filledParts, .replanRequired: request == .stop ? .stopped : .waitingForModel
-        case .outcomeUnknown: .outcomeUnknown
-        case .failed, .denied, .durabilityFailure, .needsApproval: .failed
+        case .filled, .filledParts, .replanRequired:
+            if case .stop = request { return .stopped }
+            return .waitingForModel
+        case .outcomeUnknown: return .outcomeUnknown
+        case .failed, .denied, .durabilityFailure, .needsApproval: return .failed
         }
     }
 
     // Internal seams keep tests focused on argument and engine-result contracts.
     enum Request: Equatable {
+        case returnToAmber
+        case clipboard(maxChars: Int)
+        case writeClipboard(text: String)
+        case system(action: String, includeScreenshot: Bool)
         case status
         case apps(query: String, offset: Int, limit: Int)
         case addApp(bundleID: String)
@@ -651,7 +768,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         case runFlow(IOSPhoneFlowRequest)
         case scrollUntil(IOSPhoneScrollSearchRequest)
         case collectList(IOSPhoneListCollectionRequest)
-        case stop
+        case stop(returnToAmber: Bool)
     }
 
     static func request(name: String, arguments: String) throws -> Request {
@@ -660,9 +777,42 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             throw InvalidArguments("参数必须是 JSON 对象。")
         }
         switch name {
-        case "phone_status", "phone_stop":
+        case "phone_status", "phone_return_to_amber":
             guard object.isEmpty else { throw InvalidArguments("\(name) 不接受参数。") }
-            return name == "phone_status" ? .status : .stop
+            return name == "phone_status" ? .status : .returnToAmber
+        case "phone_stop":
+            guard Set(object.keys).isSubset(of: ["return_to_amber"]) else {
+                throw InvalidArguments("phone_stop 只接受布尔参数 return_to_amber。")
+            }
+            struct StopArguments: Decodable { let return_to_amber: Bool? }
+            let input = try JSONDecoder().decode(StopArguments.self, from: data)
+            return .stop(returnToAmber: input.return_to_amber ?? true)
+        case "phone_clipboard":
+            guard Set(object.keys).isSubset(of: ["action", "max_chars", "text"]),
+                  object["action"] == nil || object["action"] is String else { throw InvalidArguments("剪贴板参数不合法。") }
+            switch object["action"] as? String ?? "read" {
+            case "read":
+                guard object["text"] == nil else { throw InvalidArguments("读取剪贴板不接受 text。") }
+                struct Read: Decodable { let max_chars: Int? }
+                let input = try JSONDecoder().decode(Read.self, from: data)
+                let maximum = input.max_chars ?? 20_000
+                guard (1...100_000).contains(maximum) else { throw InvalidArguments("max_chars 必须为1到100000。") }
+                return .clipboard(maxChars: maximum)
+            case "write":
+                guard object["max_chars"] == nil, let text = object["text"] as? String, text.count <= 100_000 else {
+                    throw InvalidArguments("写入需要 text，最多100000字符，不接受 max_chars。")
+                }
+                return .writeClipboard(text: text)
+            default: throw InvalidArguments("剪贴板 action 必须为 read 或 write。")
+            }
+        case "phone_system":
+            struct SystemArguments: Decodable { let action: String; let include_screenshot: Bool? }
+            guard Set(object.keys).isSubset(of: ["action", "include_screenshot"]) else { throw InvalidArguments("系统工具包含未知参数。") }
+            let input = try JSONDecoder().decode(SystemArguments.self, from: data)
+            guard ["observe", "home", "volume_up", "volume_down", "lock", "unlock", "lock_state", "dismiss_keyboard"].contains(input.action) else {
+                throw InvalidArguments("系统 action 不受支持。")
+            }
+            return .system(action: input.action, includeScreenshot: input.include_screenshot ?? false)
         case "phone_apps":
             guard Set(object.keys).isSubset(of: ["query", "offset", "limit"]) else {
                 throw InvalidArguments("phone_apps 只接受 query、offset 和 limit。")

@@ -1,17 +1,59 @@
 import Foundation
 @preconcurrency import Shared
 
+enum IOSSearchToolPermission: Equatable {
+    static let capabilityId = "ios.network.search_tools"
+
+    case allow
+    case needsApproval(String)
+    case denied(String)
+
+    static func resolve(
+        webSearchEnabled: Bool,
+        policy: IOSAgentPermissionPolicy,
+        globalAutoApprove: Bool,
+        highRiskAutoApprove: Bool,
+        isUserInitiated: Bool = false
+    ) -> Self {
+        guard webSearchEnabled else {
+            return .denied("Web search is disabled in settings.")
+        }
+        guard policy != .disabled else {
+            return .denied("Search and webpage access are disabled by AmberAgent policy.")
+        }
+        if isUserInitiated || policy == .autoApprove || policy == .autoApproveHighRisk
+            || globalAutoApprove || highRiskAutoApprove {
+            return .allow
+        }
+        return .needsApproval("网络搜索和网页读取会访问外部站点，需要你确认。")
+    }
+}
+
 @MainActor
 extension ChatToolRuntime {
+    func searchToolPermission(isUserInitiated: Bool = false) -> IOSSearchToolPermission {
+        let policy: IOSAgentPermissionPolicy
+        if let snapshot = IOSExecutionPolicyContext.snapshot {
+            policy = snapshot.capabilityPolicies[IOSSearchToolPermission.capabilityId]
+                .flatMap(IOSAgentPermissionPolicy.init(rawValue:)) ?? .askEveryTime
+        } else {
+            policy = localToolExecutor?.permissionPolicy(capabilityId: IOSSearchToolPermission.capabilityId)
+                ?? .askEveryTime
+        }
+        return IOSSearchToolPermission.resolve(
+            webSearchEnabled: effectiveWebSearchEnabled,
+            policy: policy,
+            globalAutoApprove: effectiveGlobalAutoApproveEnabled,
+            highRiskAutoApprove: effectiveHighRiskAutoApproveEnabled,
+            isUserInitiated: isUserInitiated
+        )
+    }
+
     func executeSearchToolCall(_ pending: ChatPendingToolApproval) async -> ChatToolRuntimeResult {
-        // Honor the global / high-risk auto-approve switches (Permissions page). When on,
-        // skip the per-call approval card and dispatch directly.
-        let autoApprove = effectiveGlobalAutoApproveEnabled
-            || effectiveHighRiskAutoApproveEnabled
-        if !autoApprove,
+        if case .needsApproval(let reason) = searchToolPermission(),
            let request = ChatToolApprovalRequestBuilder.search(
                for: pending.toolCall,
-               reason: "网络搜索和网页读取会访问外部站点，需要你确认。",
+               reason: reason,
                settings: sharedSettings.snapshot
            ) {
             return .waitingForApproval(.search(request))
@@ -167,8 +209,21 @@ extension ChatToolRuntime {
         return messagesByFinishingToolCall(pending.toolCall, outputParts: output.parts, in: pending.baseMessages)
     }
 
-    func dispatchSearchToolOutput(_ toolCall: UIMessagePart.Tool) async -> IOSSearchToolOutput {
-        await IOSSearchToolDispatch.dispatchOutput(
+    func dispatchSearchToolOutput(
+        _ toolCall: UIMessagePart.Tool,
+        isUserInitiated: Bool = false
+    ) async -> IOSSearchToolOutput {
+        switch searchToolPermission(isUserInitiated: isUserInitiated) {
+        case .denied(let reason), .needsApproval(let reason):
+            return IOSSearchToolOutput(text: ChatToolOutputFormatter.toolFailureJSON(
+                toolName: toolCall.toolName,
+                reason: reason,
+                denied: true
+            ))
+        case .allow:
+            break
+        }
+        return await IOSSearchToolDispatch.dispatchOutput(
             toolCall,
             settings: sharedSettings.snapshot,
             webSearchEnabled: effectiveWebSearchEnabled,
@@ -176,25 +231,15 @@ extension ChatToolRuntime {
         )
     }
 
-    func dispatchSearchToolCall(_ toolCall: UIMessagePart.Tool) async -> String {
-        await IOSSearchToolDispatch.dispatch(
-            toolCall,
-            settings: sharedSettings.snapshot,
-            webSearchEnabled: effectiveWebSearchEnabled,
-            transport: searchTransport
-        )
+    func dispatchSearchToolCall(
+        _ toolCall: UIMessagePart.Tool,
+        isUserInitiated: Bool = false
+    ) async -> String {
+        await dispatchSearchToolOutput(toolCall, isUserInitiated: isUserInitiated).text
     }
 
     func shouldExecuteSearchInBackground(toolName: String, arguments: String) -> Bool {
-        let autoApprove = effectiveGlobalAutoApproveEnabled
-            || effectiveHighRiskAutoApproveEnabled
-        guard !autoApprove else { return true }
-        let toolCall = toolCall(name: toolName, input: arguments)
-        return ChatToolApprovalRequestBuilder.search(
-            for: toolCall,
-            reason: "网络搜索和网页读取会访问外部站点，需要你确认。",
-            settings: sharedSettings.snapshot
-        ) == nil
+        searchToolPermission() == .allow
     }
 
     func workspaceToolExecutionOutput(
