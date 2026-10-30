@@ -499,12 +499,17 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 0
-        pinnedModelVersion = try container.decodeIfPresent(String.self, forKey: .pinnedModelVersion)
+        let rawPinned = try container.decodeIfPresent(String.self, forKey: .pinnedModelVersion)
+        pinnedModelVersion = rawPinned.flatMap {
+            let cleaned = IOSJevClient.sanitizedModelIdentifier($0)
+            return cleaned.isEmpty ? nil : cleaned
+        }
         // 未知 apiStyle（未来新增形态的旧版本读盘）宽容回退 systemone，
         // 与 modes/scopes 的未知值丢弃策略一致，不整份丢设置。
         apiStyle = (try? container.decodeIfPresent(IOSJevAPIStyle.self, forKey: .apiStyle)) ?? .systemone
-        providerModel = (try container.decodeIfPresent(String.self, forKey: .providerModel) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        providerModel = IOSJevClient.sanitizedModelIdentifier(
+            try container.decodeIfPresent(String.self, forKey: .providerModel) ?? ""
+        )
         // 旧设置没有归属字段：槽位语义上就是当前供应商的模型，按 apiStyle 记账。
         // 有值但 rawValue 无法识别时（新版本写入的未知供应商）保持 nil，不猜。
         let ownerRaw: String?? = try? container.decodeIfPresent(String.self, forKey: .providerModelStyle)
@@ -624,7 +629,7 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
     /// slug 即固定版本，不走这个字段）。空串/空白/浮动别名 latest/preview →
     /// 清除回未验收态（与 acceptVerifiedModelVersion 同口径，避免"存了但无效"）。
     mutating func setPinnedModelVersion(_ version: String?) {
-        let trimmed = version?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = version.map(IOSJevClient.sanitizedModelIdentifier)
         pinnedModelVersion = trimmed.flatMap { Self.isPinnedVersion($0) ? $0 : nil }
         revision += 1
     }
@@ -633,7 +638,7 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
     /// 浮动别名（jev-latest）与空值不验收；vercel 的 slug 即固定版本无需此步。
     mutating func acceptVerifiedModelVersion(_ version: String?) {
         guard apiStyle == .systemone else { return }
-        guard let trimmed = version?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let trimmed = version.map(IOSJevClient.sanitizedModelIdentifier),
               Self.isPinnedVersion(trimmed) else { return }
         pinnedModelVersion = trimmed
         revision += 1
@@ -655,7 +660,7 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
         // 非原生形态必须有模型才能出站：空值、或模型不属于这家（上一家遗留）、
         // 或仍是某家默认值（说明用户没自定义过），都换上新家的默认值。
         if style != .systemone {
-            let trimmed = providerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = IOSJevClient.sanitizedModelIdentifier(providerModel)
             let isProviderDefault = IOSJevProvider.all.contains { $0.defaultModel == trimmed }
                 || IOSJevProvider.legacyDefaultModels.contains(trimmed)
             let ownedByTarget = providerModelStyle == style
@@ -668,7 +673,7 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
     }
 
     mutating func setProviderModel(_ model: String) {
-        providerModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        providerModel = IOSJevClient.sanitizedModelIdentifier(model)
         // 记下这家：切到别家时才能分辨"这是他的自定义值"与"上一家遗留"。
         providerModelStyle = apiStyle
         revision += 1

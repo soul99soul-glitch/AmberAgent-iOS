@@ -233,7 +233,8 @@ struct IOSJevSettingsView: View {
 
     private func commitProviderModel() {
         var settings = sharedSettings.jevSettings
-        let trimmed = providerModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = IOSJevClient.sanitizedModelIdentifier(providerModelInput)
+        providerModelInput = trimmed
         guard trimmed != settings.providerModel else { return }
         settings.setProviderModel(trimmed)
         sharedSettings.updateJevSettings(settings)
@@ -241,7 +242,8 @@ struct IOSJevSettingsView: View {
 
     private func commitPinnedModel() {
         var settings = sharedSettings.jevSettings
-        let trimmed = pinnedModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = IOSJevClient.sanitizedModelIdentifier(pinnedModelInput)
+        pinnedModelInput = trimmed
         guard trimmed != (settings.pinnedModelVersion ?? "") else { return }
         settings.setPinnedModelVersion(trimmed.isEmpty ? nil : trimmed)
         sharedSettings.updateJevSettings(settings)
@@ -452,13 +454,43 @@ struct IOSJevSettingsView: View {
         }
     }
 
+    static func connectionFailureText(reason: String, apiStyle: IOSJevAPIStyle) -> String {
+        let hint: String
+        if reason == "config_changed" {
+            hint = IOSAppLocalization.string("设置或 Key 已变化，请重新测试。", defaultValue: "设置或 Key 已变化，请重新测试。")
+        } else if reason == "http_401" || reason == "http_403" || reason == "missing_key" {
+            hint = IOSAppLocalization.string("请检查 Key。", defaultValue: "请检查 Key。")
+        } else if reason == "http_451" {
+            hint = IOSAppLocalization.string(
+                "当前网络或地区无法直连该服务，请检查网络代理或切换为 Vercel AI Gateway 等调用方式。",
+                defaultValue: "当前网络或地区无法直连该服务，请检查网络代理或切换为 Vercel AI Gateway 等调用方式。"
+            )
+        } else if reason == "invalid_request" || reason == "http_400" {
+            hint = apiStyle == .systemone
+                ? IOSAppLocalization.string("请检查固定模型版本或服务端配置。", defaultValue: "请检查固定模型版本或服务端配置。")
+                : IOSAppLocalization.string("请检查模型 ID。", defaultValue: "请检查模型 ID。")
+        } else {
+            hint = ""
+        }
+        var failureText = IOSAppLocalization.formatted(
+            "连接失败：%@。",
+            defaultValue: "连接失败：%@。",
+            arguments: [reason]
+        )
+        failureText += hint
+        return failureText
+    }
+
     private func runConnectionTest(modelVersion: String? = nil) {
         // 先落盘未回车的模型/固定版本输入：测试必须打在用户刚填的值上，
         // 也避免结束时的 refreshDynamicState 覆盖未提交文本。
         commitProviderModel()
         commitPinnedModel()
         let startedRevision = sharedSettings.jevSettings.revision
-        guard let apiKey = IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey), !apiKey.isEmpty else {
+        let apiKey = IOSJevClient.sanitizedAPIKey(
+            IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey) ?? ""
+        )
+        guard !apiKey.isEmpty else {
             connectionResult = ConnectionTestPresentation(
                 succeeded: false,
                 text: IOSAppLocalization.string("未配置 API Key。", defaultValue: "未配置 API Key。")
@@ -516,24 +548,10 @@ struct IOSJevSettingsView: View {
                 presentation = ConnectionTestPresentation(succeeded: true, text: text + "。")
             } else {
                 let reason = result.errorReason ?? "unknown"
-                let hint: String
-                if reason == "config_changed" {
-                    hint = IOSAppLocalization.string("设置或 Key 已变化，请重新测试。", defaultValue: "设置或 Key 已变化，请重新测试。")
-                } else if reason == "http_401" || reason == "http_403" || reason == "missing_key" {
-                    hint = IOSAppLocalization.string("请检查 Key。", defaultValue: "请检查 Key。")
-                } else if reason == "invalid_request" || reason == "http_400" {
-                    hint = sharedSettings.jevSettings.apiStyle == .systemone
-                        ? IOSAppLocalization.string("请检查固定模型版本或服务端配置。", defaultValue: "请检查固定模型版本或服务端配置。")
-                        : IOSAppLocalization.string("请检查模型 ID。", defaultValue: "请检查模型 ID。")
-                } else {
-                    hint = ""
-                }
-                var failureText = IOSAppLocalization.formatted(
-                    "连接失败：%@。",
-                    defaultValue: "连接失败：%@。",
-                    arguments: [reason]
+                let failureText = Self.connectionFailureText(
+                    reason: reason,
+                    apiStyle: sharedSettings.jevSettings.apiStyle
                 )
-                failureText += hint
                 presentation = ConnectionTestPresentation(succeeded: false, text: failureText)
             }
             await MainActor.run {

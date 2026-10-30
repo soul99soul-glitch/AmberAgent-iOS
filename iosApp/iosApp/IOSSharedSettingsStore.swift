@@ -374,11 +374,11 @@ final class IOSSharedSettingsStore {
     /// 成功后解除协调器的认证暂停（凭据已变化）。
     @discardableResult
     func storeJevApiKey(_ key: String) -> Bool {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
+        let sanitized = IOSJevClient.sanitizedAPIKey(key)
+        guard !sanitized.isEmpty else { return false }
         IOSJevDecisionCoordinator.shared.beginConfigurationChange()
         defer { IOSJevDecisionCoordinator.shared.endConfigurationChange() }
-        guard IOSCredentialSideTable.store(key: IOSCredentialSideTable.jevApiKey, value: trimmed) else {
+        guard IOSCredentialSideTable.store(key: IOSCredentialSideTable.jevApiKey, value: sanitized) else {
             return false
         }
         IOSJevDecisionCoordinator.shared.resetAuthState()
@@ -410,8 +410,10 @@ final class IOSSharedSettingsStore {
     }
 
     func hasJevApiKey() -> Bool {
-        let key = IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey)
-        return key?.isEmpty == false
+        guard let key = IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey) else {
+            return false
+        }
+        return !IOSJevClient.sanitizedAPIKey(key).isEmpty
     }
 
     /// 协调器的轻量读取入口：不走完整 store 初始化（rehydrate 等重活）。

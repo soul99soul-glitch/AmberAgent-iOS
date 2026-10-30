@@ -513,6 +513,50 @@ final class IOSJevSettingsTests: XCTestCase {
         IOSCredentialSideTable.delete(key: IOSCredentialSideTable.jevApiKey)
     }
 
+    func testStoreJevApiKeySanitizesEmbeddedNewlinesAndBearerPrefix() {
+        let defaults = isolatedDefaults()
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        IOSCredentialSideTable.delete(key: IOSCredentialSideTable.jevApiKey)
+        defer { IOSCredentialSideTable.delete(key: IOSCredentialSideTable.jevApiKey) }
+
+        XCTAssertFalse(store.storeJevApiKey("Bearer \n\r\t\u{200B}"))
+        XCTAssertFalse(store.hasJevApiKey())
+
+        XCTAssertTrue(store.storeJevApiKey("  \"Bearer sk-pasted-\nline2\r\nline3\u{200B}\"  "))
+        XCTAssertTrue(store.hasJevApiKey())
+        XCTAssertEqual(
+            IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey),
+            "sk-pasted-line2line3"
+        )
+
+        // 存量 Keychain 若仅有空白与换行符，hasJevApiKey 应判为 false。
+        _ = IOSCredentialSideTable.store(key: IOSCredentialSideTable.jevApiKey, value: " \n\r\u{200B} ")
+        XCTAssertFalse(store.hasJevApiKey())
+    }
+
+    func testModelSettersStripEmbeddedNewlinesAndControlCharacters() {
+        var settings = IOSJevSettings()
+        settings.setAPIStyle(.vercelGateway)
+        settings.setProviderModel("  typesafe-ai/\njev-1.14.0\r\n\u{200B}  ")
+        XCTAssertEqual(settings.providerModel, "typesafe-ai/jev-1.14.0")
+
+        settings.setAPIStyle(.systemone)
+        settings.setPinnedModelVersion("jev-1.\n14.0\r\t\u{FEFF}")
+        XCTAssertEqual(settings.pinnedModelVersion, "jev-1.14.0")
+
+        settings.setPinnedModelVersion(nil)
+        settings.acceptVerifiedModelVersion("jev-1.14.\r\n0")
+        XCTAssertEqual(settings.pinnedModelVersion, "jev-1.14.0")
+    }
+
+    func testConnectionFailureTextProvidesRegionAndGatewayHintForHttp451() {
+        let text = IOSJevSettingsView.connectionFailureText(reason: "http_451", apiStyle: .systemone)
+        XCTAssertEqual(
+            text,
+            "连接失败：http_451。当前网络或地区无法直连该服务，请检查网络代理或切换为 Vercel AI Gateway 等调用方式。"
+        )
+    }
+
     func testSideTableStoreUpdatesInPlaceAndKeepsReadable() {
         // P0 回归：store 改为 SecItemUpdate 优先——重复保存不删除旧值，
         // 任何一步失败都不应让已存在的可用 Key 消失。

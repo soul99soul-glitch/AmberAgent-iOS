@@ -587,6 +587,89 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         XCTAssertEqual(transport.calls, 2, "after reset a new request is allowed")
     }
 
+    func testHttp451RefundsBudgetAndEntersCooldownImmediately() async {
+        var settings = makeSettings()
+        settings.policy.perTurnRequestBudget = 1
+        settings.policy.dailyRequestBudget = 1
+        let box = SettingsBox(settings)
+        let counter = JevCallCounter()
+        let transport = JevStubTransport { _ in
+            if counter.next() == 1 {
+                return (Data(), self.httpResponse(status: 451))
+            }
+            return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let (scopes, state, questions, context) = makeDecideCall()
+
+        let first = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: scopes, state: state,
+            questions: questions, context: context, cacheKey: "k451-1"
+        )
+        guard case .failed(let reason) = first, reason == "http_451" else {
+            return XCTFail("expected http_451 failure, got \(first)")
+        }
+        XCTAssertEqual(transport.calls, 1, "451 must not retry")
+        XCTAssertNotNil(coordinator.status.cooldownRemaining, "451 must immediately enter cooldown")
+
+        let second = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: scopes, state: state,
+            questions: questions, context: context, cacheKey: "k451-2"
+        )
+        guard case .skipped(let skipReason) = second, skipReason == "cooling_down" else {
+            return XCTFail("expected cooling_down during cooldown, got \(second)")
+        }
+        XCTAssertEqual(transport.calls, 1, "cooldown must prevent repeated outbound hits")
+
+        // 解除冷却后，同一 turn 与同一日预算未被 451 消耗，仍可正常完成请求。
+        coordinator.resetAuthState()
+        let third = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: scopes, state: state,
+            questions: questions, context: context, cacheKey: "k451-3"
+        )
+        guard case .applied(let decision) = third else {
+            return XCTFail("451 must refund turn and daily budgets, got \(third)")
+        }
+        XCTAssertEqual(decision.answers.first?.score, 0.9)
+        XCTAssertEqual(transport.calls, 2)
+    }
+
+    func testCoordinatorSanitizesLegacyMultilineApiKeyFromProviderAndConnectionTest() async {
+        let box = SettingsBox(makeSettings())
+        var capturedHeaders: [String] = []
+        let headerLock = NSLock()
+        let transport = JevStubTransport { request in
+            if let auth = request.value(forHTTPHeaderField: "Authorization") {
+                jevSync(headerLock) { capturedHeaders.append(auth) }
+            }
+            let payload: [String: Any] = [
+                "model": "jev-fixed-v1",
+                "answers": [
+                    "single.t1": ["type": "score", "score": 0.9],
+                    "connectivity": ["type": "noul", "noul": 1.0],
+                ],
+            ]
+            return (try! JSONSerialization.data(withJSONObject: payload), self.httpResponse(status: 200))
+        }
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport),
+            settingsProvider: { box.get() },
+            apiKeyProvider: { "  Bearer tsk_legacy_\nkey\r\n123\u{200B}  " },
+            now: { Date() }
+        ))
+        let (scopes, state, questions, context) = makeDecideCall()
+        let outcome = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: scopes, state: state,
+            questions: questions, context: context, cacheKey: "k-legacy-key"
+        )
+        guard case .applied = outcome else {
+            return XCTFail("expected applied with sanitized legacy key, got \(outcome)")
+        }
+        let conn = await coordinator.runConnectionTest(apiKey: "\"Bearer tsk_conn_\ntest\r\n456\"")
+        XCTAssertTrue(conn.succeeded)
+        XCTAssertEqual(capturedHeaders, ["Bearer tsk_legacy_key123", "Bearer tsk_conn_test456"])
+    }
+
     // MARK: Config change
 
     func testConfigChangeDuringFlightDiscardsResult() async {
