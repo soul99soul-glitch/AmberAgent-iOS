@@ -125,12 +125,9 @@ struct DesktopInspector: View {
                 .padding(.leading, 8)
                 .padding(.bottom, 24)
             }
-            .scrollIndicators(.never)
-            .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 0)
+            .scrollIndicators(.automatic)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func floatingIsland<Content: View>(@ViewBuilder content: () -> Content) -> some View {

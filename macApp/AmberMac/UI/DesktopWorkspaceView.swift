@@ -46,10 +46,10 @@ struct DesktopWorkspaceView: View {
             let sidebarShown = columnVisibility != .detailOnly
             let detailWidth = windowGeometry.size.width - (sidebarShown ? 288 : 0)
             let docked = inspectorVisible && detailWidth >= Self.inspectorDockWidth
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 if sidebarShown {
                     sidebar
-                        .frame(width: 288)
+                        .frame(width: 288, height: windowGeometry.size.height)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14)),
                             removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14))
@@ -113,6 +113,7 @@ struct DesktopWorkspaceView: View {
                             .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable || workspace.isManagingBackup)
                     }
                     .animation(.spring(response: 0.38, dampingFraction: 0.86), value: workspace.selectedID)
+                    .frame(maxWidth: .infinity, maxHeight: windowGeometry.size.height)
                 }
                 if docked, workspace.activeSurface == .chat {
                     DesktopInspector(workspace: workspace,
@@ -123,7 +124,7 @@ struct DesktopWorkspaceView: View {
                         onOpenFiles: { filesPresented = true },
                         onOpenTasks: { tasksPresented = true },
                         onFocusComposer: { composerFocusRequest += 1 })
-                        .frame(width: 324)
+                        .frame(width: 324, height: windowGeometry.size.height)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)).combined(with: .offset(x: 12)),
                             removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))

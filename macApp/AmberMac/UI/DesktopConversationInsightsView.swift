@@ -5,6 +5,7 @@ struct DesktopConversationInsightsView: View {
     /// Embedded in the inspector: no own title/padding/width, no dismiss on pick.
     var embedded = false
     @Environment(\.dismiss) private var dismiss
+    @State private var hiddenResultKinds: Set<DesktopInsightKind> = []
 
     private var conversation: DesktopConversation? { workspace.selectedConversation }
     private var active: Bool {
@@ -105,109 +106,161 @@ struct DesktopConversationInsightsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Button {
-                    workspace.requestInsight(.recap)
+                    if recapValue != nil {
+                        withAnimation(.smooth(duration: 0.22)) {
+                            if hiddenResultKinds.contains(.recap) { hiddenResultKinds.remove(.recap) }
+                            else { _ = hiddenResultKinds.insert(.recap) }
+                        }
+                    } else {
+                        hiddenResultKinds.remove(.recap)
+                        workspace.requestInsight(.recap)
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.system(size: 11))
-                        Text(recapValue == nil ? "回顾" : "已回顾")
+                        Text("回顾")
                     }
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.desktopActionPill)
-                .disabled(actionsDisabled)
+                .buttonStyle(recapValue != nil && !hiddenResultKinds.contains(.recap) ? .desktopTintedPill : .desktopActionPill)
+                .disabled(actionsDisabled && recapValue == nil)
                 .help("提炼当前对话的关键结论与待办")
 
                 Button {
-                    workspace.requestInsight(.suggestions)
+                    if suggestionsValue != nil {
+                        withAnimation(.smooth(duration: 0.22)) {
+                            if hiddenResultKinds.contains(.suggestions) { hiddenResultKinds.remove(.suggestions) }
+                            else { _ = hiddenResultKinds.insert(.suggestions) }
+                        }
+                    } else {
+                        hiddenResultKinds.remove(.suggestions)
+                        workspace.requestInsight(.suggestions)
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "lightbulb")
                             .font(.system(size: 11))
-                        Text(suggestionsValue == nil ? "追问" : "换一批")
+                        Text("追问")
                     }
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.desktopActionPill)
-                .disabled(actionsDisabled)
+                .buttonStyle(suggestionsValue != nil && !hiddenResultKinds.contains(.suggestions) ? .desktopTintedPill : .desktopActionPill)
+                .disabled(actionsDisabled && suggestionsValue == nil)
                 .help("生成可点击填入输入框的下一步追问")
 
                 Button {
-                    workspace.requestInsight(.compact)
+                    if compactValue != nil {
+                        withAnimation(.smooth(duration: 0.22)) {
+                            if hiddenResultKinds.contains(.compact) { hiddenResultKinds.remove(.compact) }
+                            else { _ = hiddenResultKinds.insert(.compact) }
+                        }
+                    } else {
+                        hiddenResultKinds.remove(.compact)
+                        workspace.requestInsight(.compact)
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.down.right.and.arrow.up.left")
                             .font(.system(size: 10.5))
-                        Text(compactValue == nil ? "压缩" : "已压缩")
+                        Text("压缩")
                     }
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.desktopActionPill)
-                .disabled(actionsDisabled)
+                .buttonStyle(compactValue != nil && !hiddenResultKinds.contains(.compact) ? .desktopTintedPill : .desktopActionPill)
+                .disabled(actionsDisabled && compactValue == nil)
                 .help("将较早对话压缩为摘要以节省上下文预算，不删除历史消息")
             }
 
-            if recapValue != nil {
-                insightResultBox(.recap, value: recapValue!)
+            if let recapValue, !hiddenResultKinds.contains(.recap) {
+                insightResultBox(.recap, value: recapValue)
             }
-            if suggestionsValue != nil {
-                insightResultBox(.suggestions, value: suggestionsValue!)
+            if let suggestionsValue, !hiddenResultKinds.contains(.suggestions) {
+                insightResultBox(.suggestions, value: suggestionsValue)
             }
-            if compactValue != nil {
-                insightResultBox(.compact, value: compactValue!)
+            if let compactValue, !hiddenResultKinds.contains(.compact) {
+                insightResultBox(.compact, value: compactValue)
             }
         }
     }
 
     @ViewBuilder
     private func insightResultBox(_ kind: DesktopInsightKind, value: DesktopInsightValue) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
                 Text(kind.title)
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(DesktopTheme.inkSecondary)
-                Spacer()
                 Text(value.createdAt, format: .dateTime.hour().minute())
                     .font(.system(size: 10.5).monospacedDigit())
                     .foregroundStyle(DesktopTheme.inkTertiary)
+                Spacer()
+                Button("重新生成") {
+                    workspace.requestInsight(kind)
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 11))
+                .foregroundStyle(DesktopTheme.accentInk)
+                .disabled(actionsDisabled)
+
+                Button {
+                    withAnimation(.smooth(duration: 0.22)) {
+                        _ = hiddenResultKinds.insert(kind)
+                    }
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .help("收起\(kind.title)")
             }
             if kind == .suggestions {
-                ForEach(Array(value.suggestions.enumerated()), id: \.offset) { _, suggestion in
-                    Button {
-                        workspace.draft = suggestion
-                        if !embedded { dismiss() }
-                    } label: {
-                        HStack(alignment: .top, spacing: 6) {
-                            Text(suggestion)
-                                .font(.system(size: 12))
-                                .foregroundStyle(DesktopTheme.ink)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.down.left")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(DesktopTheme.accent)
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(value.suggestions.enumerated()), id: \.offset) { _, suggestion in
+                            Button {
+                                workspace.draft = suggestion
+                                if !embedded { dismiss() }
+                            } label: {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text(suggestion)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(DesktopTheme.ink)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "arrow.down.left")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(DesktopTheme.accent)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DesktopTheme.hairline))
+                            }
+                            .buttonStyle(DesktopQuietButtonStyle())
+                            .help("填入输入框，可编辑后发送")
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DesktopTheme.hairline))
                     }
-                    .buttonStyle(DesktopQuietButtonStyle())
-                    .help("填入输入框，可编辑后发送")
                 }
+                .frame(maxHeight: 180)
+                .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(value.text)
-                    .font(.system(size: 12))
-                    .foregroundStyle(DesktopTheme.inkSecondary)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                ScrollView(.vertical) {
+                    DesktopMarkdown(text: value.text, fontSize: 12.5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.trailing, 4)
+                }
+                .scrollIndicators(.automatic)
+                .frame(maxHeight: 210)
             }
         }
         .padding(10)
-        .background(DesktopTheme.paperDeep.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+        .background(DesktopTheme.paperDeep.opacity(0.65), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DesktopTheme.hairline))
     }
 
     @ViewBuilder
