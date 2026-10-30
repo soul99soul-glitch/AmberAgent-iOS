@@ -49,32 +49,11 @@ enum DesktopTheme {
         .custom("Songti SC", size: size).weight(weight)
     }
 
-    /// Liquid Amber Glass glow reserved for the selected/generating/pending thing:
-    /// combines warm resin refraction with a top-leading specular glass rim.
+    /// Flat, understated warm highlight for the selected row.
     static func glow(_ shape: some InsettableShape) -> some View {
         shape
-            .fill(
-                LinearGradient(
-                    colors: [specularTop.opacity(0.55), honeySoft, honey.opacity(0.75)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay(
-                shape.fill(
-                    RadialGradient(colors: [honey, honeySoft, .clear], center: .leading, startRadius: 0, endRadius: 240)
-                )
-            )
-            .overlay(
-                shape.strokeBorder(
-                    LinearGradient(
-                        colors: [specularTop, honeyEdge, honeyEdge.opacity(0.45)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 0.85
-                )
-            )
+            .fill(honeySoft)
+            .overlay(shape.strokeBorder(honeyEdge, lineWidth: 0.75))
     }
 
     // Compatibility accessors used across secondary panels.
@@ -159,79 +138,25 @@ struct DesktopPressButtonStyle: ButtonStyle {
     }
 }
 
-/// The send key: a 3D Liquid Amber Glass lens that catches overhead light when ready to send.
+/// The send key: clean, flat modern button (no fake 3D dome light or bevel).
 struct DesktopSendGlyph: View {
     let enabled: Bool
     var glint = false
     @State private var hovering = false
-    @State private var sweep: CGFloat = -1
     var body: some View {
         Image(systemName: "arrow.up")
-            .font(.system(size: 13.5, weight: .bold))
-            .foregroundStyle(enabled ? DesktopTheme.paper : DesktopTheme.inkTertiary)
-            .frame(width: 32, height: 32)
-            .background {
-                Circle()
+            .font(.system(size: 13.5, weight: .semibold))
+            .foregroundStyle(enabled ? DesktopTheme.paper : DesktopTheme.inkTertiary.opacity(0.65))
+            .frame(width: 30, height: 30)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(enabled
-                        ? AnyShapeStyle(
-                            LinearGradient(
-                                colors: [
-                                    DesktopTheme.accent.opacity(hovering ? 1.0 : 0.92),
-                                    DesktopTheme.accentInk
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        : AnyShapeStyle(DesktopTheme.glassRecessed))
-                    .overlay {
-                        // Top specular lens dome reflection
-                        Circle()
-                            .fill(
-                                RadialGradient(
-                                    colors: [
-                                        Color.white.opacity(enabled ? 0.38 : 0.22),
-                                        Color.clear
-                                    ],
-                                    center: .init(x: 0.35, y: 0.22),
-                                    startRadius: 0,
-                                    endRadius: 16
-                                )
-                            )
-                    }
-                    .overlay(
-                        Circle().strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    DesktopTheme.specularTop.opacity(enabled ? 0.65 : 0.45),
-                                    enabled ? DesktopTheme.honeyEdge : DesktopTheme.hairline
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.85
-                        )
-                    )
-                    .shadow(color: enabled ? DesktopTheme.honey : .black.opacity(0.04), radius: hovering ? 10 : 5, y: 2)
-            }
-            .overlay {
-                // Easter egg: type just「琥珀」and light passes through the resin once.
-                LinearGradient(colors: [.clear, .white.opacity(0.75), .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 14)
-                    .rotationEffect(.degrees(20))
-                    .offset(x: sweep * 28)
-                    .opacity(sweep > -1 && sweep < 1 ? 1 : 0)
-                    .clipShape(Circle())
-                    .allowsHitTesting(false)
-            }
-            .animation(.easeOut(duration: 0.2), value: enabled)
-            .animation(.easeOut(duration: 0.15), value: hovering)
+                        ? (hovering ? DesktopTheme.accentInk : DesktopTheme.accent)
+                        : DesktopTheme.paperDeep)
+            )
+            .animation(.easeOut(duration: 0.15), value: enabled)
+            .animation(.easeOut(duration: 0.12), value: hovering)
             .onHover { hovering = $0 }
-            .onChange(of: glint) { _, on in
-                guard on else { return }
-                sweep = -1
-                withAnimation(.easeInOut(duration: 0.9)) { sweep = 1.2 }
-            }
     }
 }
 
@@ -322,7 +247,7 @@ extension ButtonStyle where Self == DesktopProminentButtonStyle {
     static var desktopProminent: DesktopProminentButtonStyle { DesktopProminentButtonStyle() }
 }
 
-/// Compact Liquid Glass capsule button that replaces jarring system-blue `.link` buttons in cards, inspectors, and boards.
+/// Clean, flat pill button for cards, inspectors, and boards (no fake 3D gradients or shadows).
 struct DesktopActionPillButtonStyle: ButtonStyle {
     var tinted = false
     func makeBody(configuration: Configuration) -> some View { PillLabel(configuration: configuration, tinted: tinted) }
@@ -339,35 +264,19 @@ struct DesktopActionPillButtonStyle: ButtonStyle {
                 .padding(.horizontal, 10)
                 .frame(height: 25)
                 .background(
-                    Capsule().fill(
-                        LinearGradient(
-                            colors: tinted
-                                ? [DesktopTheme.specularTop.opacity(0.65), hovering && enabled ? DesktopTheme.honey : DesktopTheme.honeySoft]
-                                : [DesktopTheme.specularTop.opacity(0.60), hovering && enabled ? DesktopTheme.hover : DesktopTheme.paperDeep],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(tinted
+                            ? (hovering && enabled ? DesktopTheme.honey : DesktopTheme.honeySoft)
+                            : (hovering && enabled ? DesktopTheme.hover : DesktopTheme.paperDeep))
                 )
                 .overlay(
-                    Capsule()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    DesktopTheme.specularTop,
-                                    tinted ? DesktopTheme.honeyEdge : DesktopTheme.hairlineStrong
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.85
-                        )
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(tinted ? DesktopTheme.honeyEdge : DesktopTheme.hairline, lineWidth: 0.75)
                 )
-                .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                 .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.42)
                 .scaleEffect(configuration.isPressed && enabled ? 0.97 : 1)
                 .animation(.easeOut(duration: 0.14), value: hovering)
-                .contentShape(Capsule())
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .onHover { hovering = $0 }
         }
     }
@@ -378,8 +287,8 @@ extension ButtonStyle where Self == DesktopActionPillButtonStyle {
     static var desktopTintedPill: DesktopActionPillButtonStyle { DesktopActionPillButtonStyle(tinted: true) }
 }
 
-/// Liquid Glass composer capability capsule: replaces inline form switches with a specular-rimmed glass pill
-/// carrying a symbol, label, status dot, and optional risk/mode badge.
+/// Minimal flat composer toggle button (Claude Desktop / Linear style):
+/// quiet and borderless when off, soft flat tint when on — no redundant dots, no nested pills, no fake 3D shine.
 struct DesktopToggleChip: View {
     let title: String
     let symbol: String
@@ -392,97 +301,49 @@ struct DesktopToggleChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11.5, weight: isOn ? .semibold : .regular))
-                    .foregroundStyle(isOn ? DesktopTheme.accentInk : (hovering ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary))
+                    .font(.system(size: 12, weight: isOn ? .medium : .regular))
+                    .foregroundStyle(isOn ? DesktopTheme.accentInk : (hovering ? DesktopTheme.ink : DesktopTheme.inkTertiary))
                 Text(title)
                     .font(.system(size: 12.5, weight: isOn ? .medium : .regular))
                     .foregroundStyle(isOn ? DesktopTheme.accentInk : (hovering ? DesktopTheme.ink : DesktopTheme.inkSecondary))
-                Circle()
-                    .fill(isOn ? DesktopTheme.accent : DesktopTheme.switchOff.opacity(0.45))
-                    .frame(width: 5.5, height: 5.5)
-                    .shadow(color: isOn ? DesktopTheme.honey : .clear, radius: 3)
-                if let badge {
-                    Text(badge)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(badgeColor)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(badgeColor.opacity(0.12), in: Capsule())
-                        .transition(.scale(scale: 0.85).combined(with: .opacity))
+                if let badge, isOn {
+                    Text("· \(badge)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(badgeColor.opacity(0.85))
                 }
             }
-            .padding(.horizontal, 11)
+            .padding(.horizontal, 9)
             .frame(height: 28)
             .background(
-                Capsule().fill(
-                    LinearGradient(
-                        colors: isOn
-                            ? [DesktopTheme.specularTop.opacity(0.65), DesktopTheme.honeySoft, DesktopTheme.honey.opacity(0.55)]
-                            : [DesktopTheme.specularTop.opacity(0.75), hovering && enabled ? DesktopTheme.hover : DesktopTheme.paperDeep.opacity(0.78)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isOn ? DesktopTheme.honeySoft : (hovering && enabled ? DesktopTheme.hover : .clear))
             )
-            .overlay {
-                Capsule()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                DesktopTheme.specularTop,
-                                isOn ? DesktopTheme.honeyEdge : (hovering && enabled ? DesktopTheme.hairlineStrong : DesktopTheme.hairline)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.85
-                    )
-            }
-            .shadow(color: isOn ? DesktopTheme.honey.opacity(0.4) : .black.opacity(0.025), radius: isOn ? 5 : 2, y: 1)
-            .contentShape(Capsule())
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(isOn ? DesktopTheme.honeyEdge : (hovering && enabled ? DesktopTheme.hairline : .clear), lineWidth: 0.75)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.45)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.16), value: isOn)
-        .animation(.easeOut(duration: 0.14), value: hovering)
+        .animation(.easeOut(duration: 0.15), value: isOn)
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
-/// Calm warm-parchment canvas ground with subtle neutral depth behind Liquid Glass islands.
+/// Calm, flat warm-parchment canvas ground.
 struct DesktopAmbientCanvas: View {
-    @Environment(\.colorScheme) private var scheme
     var body: some View {
-        ZStack {
-            DesktopTheme.paper
-            RadialGradient(
-                colors: [
-                    DesktopTheme.paperSide.opacity(scheme == .dark ? 0.35 : 0.45),
-                    .clear
-                ],
-                center: .init(x: 0.15, y: 0.10),
-                startRadius: 20,
-                endRadius: 620
-            )
-            RadialGradient(
-                colors: [
-                    DesktopTheme.paperSide.opacity(scheme == .dark ? 0.25 : 0.35),
-                    .clear
-                ],
-                center: .init(x: 0.88, y: 0.18),
-                startRadius: 20,
-                endRadius: 560
-            )
-        }
-        .ignoresSafeArea()
+        DesktopTheme.paper.ignoresSafeArea()
     }
 }
 
-/// Reusable macOS Liquid Glass card surface with understated Claude Desktop warm-gray rim & shadow.
+/// Clean, flat floating card surface (no fake 3D top glare or bevels).
 struct DesktopLiquidGlassModifier: ViewModifier {
-    var cornerRadius: CGFloat = 18
+    var cornerRadius: CGFloat = 16
     var tinted = false
     var highlighted = false
     @Environment(\.colorScheme) private var scheme
@@ -490,51 +351,15 @@ struct DesktopLiquidGlassModifier: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background {
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                DesktopTheme.glassElevated,
-                                DesktopTheme.glassSurface,
-                                tinted ? DesktopTheme.honeySoft : DesktopTheme.glassSurface
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(alignment: .top) {
-                        shape
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        DesktopTheme.specularTop.opacity(scheme == .dark ? 0.10 : 0.42),
-                                        Color.clear
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .center
-                                )
-                            )
-                    }
-            }
+            .background(tinted ? DesktopTheme.paperDeep : DesktopTheme.card, in: shape)
             .clipShape(shape)
             .overlay(
                 shape.strokeBorder(
-                    LinearGradient(
-                        stops: [
-                            .init(color: highlighted ? DesktopTheme.honeyEdge : DesktopTheme.specularTop, location: 0.0),
-                            .init(color: highlighted ? DesktopTheme.honeyEdge : DesktopTheme.specularMid, location: 0.50),
-                            .init(color: highlighted ? DesktopTheme.honeyEdge : DesktopTheme.specularBottom, location: 1.0)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
+                    highlighted ? DesktopTheme.honeyEdge : DesktopTheme.hairlineStrong,
                     lineWidth: 1.0
                 )
             )
-            .shadow(color: .black.opacity(scheme == .dark ? 0.32 : 0.045), radius: 18, x: 0, y: 8)
-            .shadow(color: DesktopTheme.honey.opacity(highlighted ? (scheme == .dark ? 0.18 : 0.24) : (scheme == .dark ? 0.06 : 0.10)),
-                    radius: highlighted ? 10 : 5, x: 0, y: 2)
+            .shadow(color: .black.opacity(scheme == .dark ? 0.26 : 0.035), radius: 12, x: 0, y: 4)
     }
 }
 

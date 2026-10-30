@@ -124,6 +124,8 @@ struct DesktopInspector: View {
                 .padding(.trailing, 20)
                 .padding(.leading, 8)
                 .padding(.bottom, 24)
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: collapsedRaw)
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: expandedEmptyShelf)
             }
             .scrollIndicators(.automatic)
         }
@@ -191,9 +193,17 @@ struct DesktopInspector: View {
     private func isCollapsed(_ key: String) -> Bool { collapsedRaw.split(separator: ",").contains(Substring(key)) }
 
     private func toggle(_ key: String) {
+        if key == Section.shelf.rawValue, !hasShelfContent, expandedEmptyShelf {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                expandedEmptyShelf = false
+            }
+            return
+        }
         var set = Set(collapsedRaw.split(separator: ",").map(String.init))
         if set.contains(key) { set.remove(key) } else { set.insert(key) }
-        withAnimation(.smooth(duration: 0.28)) { collapsedRaw = set.sorted().joined(separator: ",") }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+            collapsedRaw = set.sorted().joined(separator: ",")
+        }
     }
 
     private func sectionBlock<Content: View>(_ key: String, title: String, glyph: DesktopCraftGlyph, tone: DesktopCraftTone, badge: String?,
@@ -225,15 +235,15 @@ struct DesktopInspector: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(collapsed ? "展开\(title)" : "收起\(title)")
-            content()
-                .padding(.horizontal, 20)
-                .padding(.bottom, 18)
-                .frame(maxHeight: collapsed ? 0 : nil, alignment: .top)
-                .opacity(collapsed ? 0 : 1)
-                .clipped()
-                .disabled(collapsed)
-                .accessibilityHidden(collapsed)
+
+            if !collapsed {
+                content()
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 18)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.84), value: collapsed)
     }
 
     // MARK: Badges

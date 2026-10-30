@@ -168,27 +168,17 @@ struct DesktopComposer: View {
                 return true
             } isTargeted: { fileDropTargeted = $0 }
             HStack(spacing: 8) {
-                HStack(spacing: 5) {
-                    DesktopKeycap(text: "/")
-                    Text("斜杠指令")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
-                    DesktopKeycap(text: "⌘K")
-                    Text("命令面板")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
-                }
+                Text("/ 斜杠指令 · ⌘K 命令面板")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .lineLimit(1)
                 Spacer(minLength: 8)
-                HStack(spacing: 5) {
-                    DesktopKeycap(text: shortcut.sendLabel)
-                    Text(workspace.isSelectedConversationGenerating ? "加入队列" : "发送")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
-                    DesktopKeycap(text: shortcut.newlineLabel)
-                    Text("换行")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
-                }
+                Text(workspace.isSelectedConversationGenerating
+                     ? (workspace.pendingAttachments.isEmpty ? "\(shortcut.sendLabel) 加入队列 · \(shortcut.newlineLabel) 换行" : "生成中仅支持文本排队 · 停止后可发送附件")
+                     : "\(shortcut.sendLabel) 发送 · \(shortcut.newlineLabel) 换行")
+                    .font(.system(size: 11.5).monospacedDigit())
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 6)
         }
@@ -303,30 +293,11 @@ struct DesktopComposer: View {
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.65)
             }
             .foregroundStyle(workspace.composerMode == .chat ? DesktopTheme.inkSecondary : DesktopTheme.accentInk)
-            .padding(.horizontal, 11)
+            .padding(.horizontal, 9)
             .frame(height: 28)
             .background {
                 if workspace.composerMode != .chat {
-                    DesktopTheme.glow(Capsule())
-                } else {
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [DesktopTheme.specularTop.opacity(0.75), DesktopTheme.paperDeep.opacity(0.78)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay(
-                            Capsule().strokeBorder(
-                                LinearGradient(
-                                    colors: [DesktopTheme.specularTop, DesktopTheme.hairlineStrong],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 0.85
-                            )
-                        )
+                    DesktopTheme.glow(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
             }
             .contentTransition(.opacity)

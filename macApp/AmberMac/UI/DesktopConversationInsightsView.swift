@@ -46,10 +46,9 @@ struct DesktopConversationInsightsView: View {
                                 .help("后续请求重新使用完整消息，保留原有会话回顾和建议")
                         }
                     }
-                } else if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens {
-                    DesktopContextMeterBar(tokens: tokens, limit: limit)
-                } else {
-                    DesktopContextMeterBar(tokens: tokens)
+                } else if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens, tokens > 0 {
+                    ProgressView(value: Double(min(tokens, limit)), total: Double(limit))
+                        .tint(tokens >= limit ? DesktopTheme.danger : DesktopTheme.accent)
                 }
                 if active {
                     HStack {

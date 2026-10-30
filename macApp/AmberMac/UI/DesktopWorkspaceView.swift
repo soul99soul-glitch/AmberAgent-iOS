@@ -131,8 +131,8 @@ struct DesktopWorkspaceView: View {
                         ))
                 }
             }
-            .animation(.smooth(duration: 0.28), value: sidebarShown)
-            .animation(.smooth(duration: 0.3), value: docked)
+            .animation(.spring(response: 0.34, dampingFraction: 0.84), value: sidebarShown)
+            .animation(.spring(response: 0.34, dampingFraction: 0.84), value: docked)
             .onChange(of: docked, initial: true) { _, value in inspectorDocked = value }
         }
         .background { DesktopAmbientCanvas() }
@@ -246,22 +246,12 @@ struct DesktopWorkspaceView: View {
                 }
             }
             .font(.system(size: 13))
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 11)
             .frame(height: 34)
-            .background(DesktopTheme.glassRecessed, in: Capsule())
+            .background(DesktopTheme.paper, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay(
-                Capsule()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                searchFocused ? DesktopTheme.accent : DesktopTheme.specularTop,
-                                searchFocused ? DesktopTheme.honeyEdge : DesktopTheme.hairlineStrong
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.85
-                    )
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(searchFocused ? DesktopTheme.honeyEdge : DesktopTheme.hairline, lineWidth: 1)
             )
             .padding(.horizontal, 14)
             .padding(.bottom, 16)
@@ -778,35 +768,16 @@ struct DesktopWorkspaceView: View {
     }
 
     private func welcomeSuggestion(_ title: String, subtitle: String, prompt: String, glyph: DesktopCraftGlyph, tone: DesktopCraftTone) -> some View {
-        Button {
+        WelcomeSuggestionButton(
+            title: title,
+            subtitle: subtitle,
+            glyph: glyph,
+            tone: tone,
+            disabled: workspace.isLoading || workspace.isManagingBackup
+        ) {
             workspace.draft = prompt
             composerFocusRequest += 1
-        } label: {
-            HStack(alignment: .center, spacing: 14) {
-                DesktopCraftIcon(glyph: glyph, tone: tone, size: 36)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(DesktopTheme.ink)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.up.left")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(DesktopTheme.inkTertiary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .desktopGlass(cornerRadius: 16)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(DesktopQuietButtonStyle())
-        .disabled(workspace.isLoading || workspace.isManagingBackup)
-        .help("将建议写入草稿，编辑后再发送")
     }
 
     private func errorBanner(_ error: String) -> some View {
@@ -890,5 +861,54 @@ private struct DesktopSelectedTranscript: View {
         if let conversation = workspace.selectedConversation {
             DesktopTranscript(conversation: conversation, workspace: workspace, focusRequest: focusRequest, findRequest: findRequest)
         }
+    }
+}
+
+/// Welcome suggestion card with its own clean 14pt hover state (never uses `DesktopQuietButtonStyle`, which drew a 6pt box behind 14pt corners).
+private struct WelcomeSuggestionButton: View {
+    let title: String
+    let subtitle: String
+    let glyph: DesktopCraftGlyph
+    let tone: DesktopCraftTone
+    let disabled: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 14) {
+                DesktopCraftIcon(glyph: glyph, tone: tone, size: 34)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.left")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(hovering ? DesktopTheme.accent : DesktopTheme.inkTertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(hovering ? DesktopTheme.paperSide : DesktopTheme.card, in: shape)
+            .overlay(
+                shape.strokeBorder(
+                    hovering ? DesktopTheme.honeyEdge : DesktopTheme.hairlineStrong,
+                    lineWidth: 1
+                )
+            )
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        .help("将建议写入草稿，编辑后再发送")
     }
 }

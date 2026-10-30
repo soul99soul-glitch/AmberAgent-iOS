@@ -49,17 +49,13 @@ struct DesktopAmberEmblem: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
         ZStack {
             shape
                 .fill(
-                    LinearGradient(
-                        colors: scheme == .dark
-                            ? [Color(red: 0.18, green: 0.17, blue: 0.15), Color(red: 0.13, green: 0.12, blue: 0.10)]
-                            : [Color(red: 1.0, green: 0.99, blue: 0.97), Color(red: 0.95, green: 0.93, blue: 0.89)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+                    scheme == .dark
+                        ? Color(red: 0.16, green: 0.15, blue: 0.13)
+                        : Color(red: 0.96, green: 0.94, blue: 0.90)
                 )
 
             Canvas { context, canvasSize in
@@ -107,14 +103,7 @@ struct DesktopAmberEmblem: View {
             }
 
             shape
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [DesktopTheme.specularTop, DesktopTheme.hairlineStrong, DesktopTheme.specularBottom],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: max(0.75, size * 0.025)
-                )
+                .strokeBorder(DesktopTheme.hairlineStrong, lineWidth: 0.75)
         }
         .frame(width: size, height: size)
         .clipShape(shape)
@@ -183,32 +172,8 @@ struct DesktopCraftIcon: View {
     var body: some View {
         ZStack {
             if boxed {
-                let shape = RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                DesktopTheme.specularTop.opacity(scheme == .dark ? 0.16 : 0.72),
-                                strokeColor.opacity(scheme == .dark ? 0.18 : 0.12)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(
-                        shape.strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    DesktopTheme.specularTop.opacity(scheme == .dark ? 0.32 : 0.85),
-                                    strokeColor.opacity(0.28)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.8
-                        )
-                    )
-                    .shadow(color: strokeColor.opacity(0.10), radius: 3, y: 1)
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .fill(strokeColor.opacity(scheme == .dark ? 0.15 : 0.10))
             }
 
             Canvas { context, canvasSize in
@@ -395,32 +360,17 @@ struct DesktopCraftIcon: View {
 
 // MARK: - 3. Appica UI Inspired Tactile 3D Keycap & Context Meter
 
-/// Tactile 3D keycap badge inspired by `appica.dev/ui` command palette shortcuts.
+/// Clean, flat keycap badge for shortcuts.
 struct DesktopKeycap: View {
     let text: String
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10.5, design: .monospaced).weight(.semibold))
-            .foregroundStyle(DesktopTheme.inkSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [DesktopTheme.specularTop.opacity(0.85), DesktopTheme.paperDeep],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(DesktopTheme.hairlineStrong, lineWidth: 0.75)
-            )
-            .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.08), radius: 0.5, x: 0, y: 1.2)
+            .font(.system(size: 10.5, design: .monospaced).weight(.medium))
+            .foregroundStyle(DesktopTheme.inkTertiary)
+            .padding(.horizontal, 5.5)
+            .padding(.vertical, 1.5)
+            .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 4.5, style: .continuous))
     }
 }
 

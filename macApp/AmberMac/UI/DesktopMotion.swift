@@ -328,33 +328,17 @@ struct DesktopReasoningCard: View {
                         .foregroundStyle(DesktopTheme.inkTertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .padding(.horizontal, 11)
+                .padding(.horizontal, 10)
                 .frame(height: 26)
                 .background(
-                    Capsule().fill(
-                        LinearGradient(
-                            colors: [
-                                DesktopTheme.specularTop.opacity(0.75),
-                                hovering || isExpanded ? DesktopTheme.hover : DesktopTheme.paperDeep.opacity(0.75)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(hovering || isExpanded ? DesktopTheme.hover : DesktopTheme.paperDeep.opacity(0.65))
                 )
                 .overlay(
-                    Capsule()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [DesktopTheme.specularTop, DesktopTheme.hairlineStrong],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.8
-                        )
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(DesktopTheme.hairline, lineWidth: 0.75)
                 )
-                .shadow(color: .black.opacity(0.025), radius: 2, y: 1)
-                .contentShape(Capsule())
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
