@@ -23,6 +23,13 @@ struct DesktopToolDeclaration: Codable, Equatable, Sendable {
 }
 
 enum DesktopToolRegistry {
+    private static let pluginEffectsLock = NSLock()
+    private nonisolated(unsafe) static var registeredPluginEffects: [String: DesktopToolEffect] = [:]
+
+    static func updatePluginEffects(_ effects: [String: DesktopToolEffect]) {
+        pluginEffectsLock.withLock { registeredPluginEffects = effects }
+    }
+
     static let declarations: [DesktopToolDeclaration] = [
         declaration("tools_list", "列出本次任务可发现的工具名称；使用tool_search后再调用相应工具。", properties: [:]),
         declaration("workspace_file_list", "列出当前会话工作区中的真实文件。", properties: [:]),
@@ -44,12 +51,22 @@ enum DesktopToolRegistry {
         name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool" || name == "interrupt_agent"
     }
 
-    static func effect(for name: String, arguments: String) -> DesktopToolEffect {
+    static func effect(for name: String, arguments: String, pluginEffect: ((String) -> DesktopToolEffect)? = nil) -> DesktopToolEffect {
+        if name.hasPrefix("plugin__") {
+            if let pluginEffect { return pluginEffect(name) }
+            if let registered = pluginEffectsLock.withLock({ registeredPluginEffects[name] }) {
+                return registered
+            }
+            if name == "plugin__feishu_calendar__list_events" || name == "plugin__feishu_calendar__freebusy" {
+                return .networkRead
+            }
+            return .sideEffect
+        }
         switch name {
-        case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill", "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list": .pure
-        case "search_web", "scrape_web": .networkRead
-        case "memory_tool": memoryEffect(arguments)
-        default: .sideEffect
+        case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill", "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list": return .pure
+        case "search_web", "scrape_web": return .networkRead
+        case "memory_tool": return memoryEffect(arguments)
+        default: return .sideEffect
         }
     }
 
@@ -79,13 +96,25 @@ extension DesktopToolRegistry {
     /// tools switch (or both switches together).
     /// `scheduling`: the conversation may draft scheduled tasks. Off for scheduled runs themselves, so a task never
     /// creates or edits tasks.
-    static func agentDeclarations(toolsEnabled: Bool, subagentsEnabled: Bool, scheduling: Bool = false) -> [DesktopToolDeclaration] {
+    static func agentDeclarations(
+        toolsEnabled: Bool,
+        subagentsEnabled: Bool,
+        scheduling: Bool = false,
+        pluginDeclarations: [DesktopToolDeclaration] = [],
+        disabledCorePlugins: Set<DesktopCorePlugin> = []
+    ) -> [DesktopToolDeclaration] {
+        let knowledgeAllowed = !disabledCorePlugins.contains(.knowledge)
+        let collaborationsAllowed = !disabledCorePlugins.contains(.collaborations)
+        let schedulesAllowed = scheduling && !disabledCorePlugins.contains(.taskBoard)
         if toolsEnabled {
-            return declarations + knowledgeDeclarations
-                + collaborationDeclarations(subagents: subagentsEnabled) + DesktopMCPManager.declarations
-                + (scheduling ? scheduleDeclarations : [])
+            return declarations
+                + (knowledgeAllowed ? knowledgeDeclarations : [])
+                + (collaborationsAllowed ? collaborationDeclarations(subagents: subagentsEnabled) : [])
+                + DesktopMCPManager.declarations
+                + (schedulesAllowed ? scheduleDeclarations : [])
+                + pluginDeclarations
         }
-        guard subagentsEnabled else { return [] }
+        guard subagentsEnabled, collaborationsAllowed else { return [] }
         let allowed = Set(["subagent_dispatch", "list_agents", "interrupt_agent"])
         return allCollaborationDeclarations.filter { allowed.contains($0.name) }
     }

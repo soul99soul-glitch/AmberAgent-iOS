@@ -222,7 +222,7 @@ final class DesktopConversationInsights {
                     guard tokens[owner] == token else { return }
                     for event in run.drain() {
                         switch event {
-                        case .snapshot(let value, _, _, _): text = value
+                        case .snapshot(let value, _, _, _, _): text = value
                         case .transcript: break
                         case .complete: complete = true
                         case .cancelled: throw CancellationError()

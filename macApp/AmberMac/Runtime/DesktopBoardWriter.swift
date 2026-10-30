@@ -101,7 +101,7 @@ import Foundation
             for await _ in generation.signals {
                 for event in generation.drain() {
                     switch event {
-                    case .snapshot(let value, _, _, _): text = value
+                    case .snapshot(let value, _, _, _, _): text = value
                     case .transcript(let turns): text = turns.last { $0.role == .assistant }?.text ?? text
                     case .complete: return text
                     case .failed, .cancelled: return nil

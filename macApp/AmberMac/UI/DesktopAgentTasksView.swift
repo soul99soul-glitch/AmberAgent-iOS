@@ -142,8 +142,7 @@ struct DesktopToolApprovalCard: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Button("查看完整调用") { detailsPresented = true }
-                        .buttonStyle(.link)
-                        .font(.system(size: 12))
+                        .buttonStyle(.desktopActionPill)
                         .popover(isPresented: $detailsPresented) { details(approval) }
                 }
                 .padding(.bottom, 6)

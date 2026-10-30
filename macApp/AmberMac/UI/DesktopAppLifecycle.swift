@@ -95,11 +95,17 @@ struct DesktopWindowLifecycleView: View {
     let delegate: AmberMacAppDelegate
     let searchRequest: Int
     var findRequest = 0
+    var commandPaletteRequest = 0
     let windowID: String
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        DesktopWorkspaceView(workspace: workspace, searchRequest: searchRequest, findRequest: findRequest)
+        DesktopWorkspaceView(
+            workspace: workspace,
+            searchRequest: searchRequest,
+            findRequest: findRequest,
+            commandPaletteRequest: commandPaletteRequest
+        )
             .task {
                 delegate.bind(workspace: workspace) {
                     delegate.backgroundMode?.showDockIcon()

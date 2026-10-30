@@ -52,7 +52,7 @@ import XCTest
         run.cancel()
         let events = run.drain()
         XCTAssertEqual(events.count, 2)
-        guard case .snapshot(let text, let reasoning, let payload, let unsupported) = events[0] else {
+        guard case .snapshot(let text, let reasoning, let payload, let unsupported, _) = events[0] else {
             return XCTFail("Cancellation must flush the accepted partial first")
         }
         XCTAssertEqual(text, "最后 partial")

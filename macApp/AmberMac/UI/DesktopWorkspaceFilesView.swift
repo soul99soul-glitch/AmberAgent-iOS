@@ -14,7 +14,7 @@ struct DesktopWorkspaceFilesView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("会话文件").font(DesktopTheme.serif(size: 22, weight: .semibold))
+                    Text("会话工作区").font(DesktopTheme.serif(size: 22, weight: .semibold))
                     Text(workspace.selectedConversationTitle).font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme)).lineLimit(1)
                 }
                 Spacer()
@@ -23,7 +23,10 @@ struct DesktopWorkspaceFilesView: View {
                     .disabled(workspace.selectedID == nil)
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
             }
-            Text("此会话导入的文件与工具生成的产物保存在这里。添加到文件库不会直接发送给模型。")
+            folderBar
+            Text(workspace.selectedWorkspaceKind == .external
+                 ? "文件工具和终端命令直接作用于这个文件夹；写入、删除和命令仍需你批准。删除会话不会动这个文件夹。"
+                 : "此会话导入的文件与工具生成的产物保存在这里。添加到文件库不会直接发送给模型。")
                 .font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme))
                 .fixedSize(horizontal: false, vertical: true)
             if let error = workspace.fileErrorMessage {
@@ -76,6 +79,13 @@ struct DesktopWorkspaceFilesView: View {
             .scrollContentBackground(.hidden)
             .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
+            .overlay(alignment: .bottom) {
+                if workspace.selectedFilesTruncated {
+                    Text("只显示前 \(DesktopWorkspaceFiles.listingLimit) 个文件；依赖和构建目录（如 node_modules、.git）已跳过。")
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                        .padding(8).frame(maxWidth: .infinity).background(.bar)
+                }
+            }
             .overlay {
                 if workspace.isLoadingFiles { ProgressView("正在读取文件…") }
                 else if workspace.fileErrorMessage == nil && workspace.selectedFiles.isEmpty {
@@ -108,6 +118,58 @@ struct DesktopWorkspaceFilesView: View {
             Button("导入并替换") { if let importingSoul { workspace.importKnowledgeFromWorkspaceFile(importingSoul.id) }; importingSoul = nil }
             Button("取消", role: .cancel) { importingSoul = nil }
         } message: { Text("所选文件将用于后续请求的长期偏好。请先预览确认内容。") }
+    }
+
+    private var folderBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: workspace.selectedWorkspaceKind == .external ? "folder.fill" : "folder")
+                .foregroundStyle(DesktopTheme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(folderTitle).font(.system(size: 13, weight: .medium))
+                Text(workspace.selectedWorkspaceFolder.map { ($0.path as NSString).abbreviatingWithTildeInPath }
+                     ?? "首次写入文件时在 \(workspace.defaultWorkspaceFolder.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "默认工作区") 中创建")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            if workspace.selectedWorkspaceKind != .legacy || workspace.selectedWorkspaceFolder != nil {
+                Button("在访达中显示") {
+                    if let url = workspace.materializeWorkspaceFolder() { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+            }
+            Menu {
+                Button("打开文件夹…", systemImage: "folder.badge.plus") { openFolder() }
+                if workspace.selectedWorkspaceKind == .external {
+                    Button("改回默认工作区", systemImage: "arrow.uturn.backward") { workspace.closeWorkspaceFolder() }
+                }
+            } label: { Text("更换") }
+                .menuStyle(.borderlessButton).fixedSize()
+                .disabled(workspace.selectedID == nil || workspace.isGenerating)
+                .help(workspace.isGenerating ? "生成结束后再更换工作区" : "让这个会话使用你已有的文件夹")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
+    }
+
+    private var folderTitle: String {
+        switch workspace.selectedWorkspaceKind {
+        case .external: "已打开的文件夹"
+        case .managed: "默认工作区中的会话文件夹"
+        case .legacy: workspace.selectedWorkspaceFolder == nil ? "默认工作区中的会话文件夹" : "Amber 内部工作区"
+        }
+    }
+
+    private func openFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "打开"
+        panel.message = "选择这个会话的工作区文件夹。文件工具和终端命令会作用于其中的文件。"
+        if panel.runModal() == .OK, let url = panel.url { workspace.openWorkspaceFolder(url) }
     }
 
     private func importFiles() {

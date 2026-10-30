@@ -1,0 +1,967 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amber macOS 2.0 — 琥珀含光 Agent 工作台人因与视觉 Redesign</title>
+  <style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio, geometry.
+   Put this @layer first; product CSS outside the layer always wins. */
+@layer od-layout {
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+
+  /* containers */
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+
+  /* stacked information: each piece is its own line — never sibling inline spans */
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+
+  .od-icon { display: inline-block; inline-size: var(--od-icon-size, 1em); block-size: var(--od-icon-size, 1em); flex: none; }
+
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+  .od-num    { font-variant-numeric: tabular-nums; }
+
+  ::selection {
+    background: color-mix(in oklab, var(--accent, #0071e3), transparent 78%);
+    color: var(--fg, inherit);
+  }
+  :where(h1, h2, h3, h4) { text-wrap: balance; }
+  :where(p, li, dd, figcaption) { text-wrap: pretty; }
+  :where(table, td, th, time, kbd, code, .metric, [data-tabular]) { font-variant-numeric: tabular-nums; }
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring, 0 0 0 3px color-mix(in oklab, var(--accent, #0071e3), transparent 70%));
+  }
+}
+/* /OD-LAYOUT-PRIMITIVES v2 */
+
+:root {
+  --bg: #f5f4ed;
+  --surface: #faf9f5;
+  --surface-warm: #e8e6dc;
+  --fg: #141413;
+  --fg-2: #3d3d3a;
+  --muted: #5e5d59;
+  --meta: #686660;
+  --border: #e4e1d6;
+  --border-soft: #ebe8de;
+  --accent: #a65e26;
+  --accent-ink: #784012;
+  --accent-soft: #f5eadc;
+  --accent-edge: #d8b48c;
+  --accent-on: #faf9f5;
+  --accent-hover: color-mix(in oklab, var(--accent), black 10%);
+  --accent-active: color-mix(in oklab, var(--accent), black 16%);
+  --success: #226b42;
+  --success-soft: #e6f2eb;
+  --warn: #8a5311;
+  --danger: #a82820;
+  --font-display: "Songti SC", "Anthropic Serif", Georgia, "Times New Roman", serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 20px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+  --text-3xl: 44px;
+  --leading-body: 1.6;
+  --leading-tight: 1.18;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --section-y-desktop: 64px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 9999px;
+  --elev-ring: 0 0 0 1px var(--border);
+  --elev-raised: 0 10px 32px -8px color-mix(in oklab, var(--fg), transparent 90%);
+  --focus-ring: 0 0 0 3px color-mix(in oklab, var(--accent), transparent 72%);
+  --container-max: 1280px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.page-wrap {
+  max-width: var(--container-max);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) var(--section-y-desktop);
+}
+
+/* Header */
+.top-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-8);
+}
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.brand-gem {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-on);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-lg);
+}
+.brand-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--fg);
+}
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  color: var(--accent-ink);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+/* Hero Section */
+.hero-sec {
+  margin-bottom: var(--space-12);
+}
+.hero-title {
+  font-family: var(--font-display);
+  font-size: var(--text-3xl);
+  line-height: var(--leading-tight);
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: var(--space-4);
+  max-width: 26ch;
+}
+.hero-sub {
+  font-size: var(--text-lg);
+  color: var(--fg-2);
+  max-width: 68ch;
+  margin-bottom: var(--space-6);
+}
+.token-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.token-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+}
+.swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+/* Interactive macOS Window Simulation */
+.window-stage {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-raised);
+  overflow: hidden;
+  margin-bottom: var(--space-12);
+}
+.mac-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 var(--space-4);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-warm);
+  border: 1px solid var(--border);
+}
+.window-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.toolbar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+
+.mac-split {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr) 256px;
+  min-height: 580px;
+}
+
+/* Sidebar */
+.mac-sidebar {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.side-group-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 8px 0;
+}
+.side-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.side-row-active {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  color: var(--fg);
+  font-weight: 600;
+}
+.side-badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.search-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.kbd-tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-warm);
+  color: var(--fg-2);
+}
+
+/* Main Transcript + Composer */
+.mac-main {
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-6) var(--space-8);
+}
+.transcript-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.user-bubble-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.user-bubble {
+  max-width: 480px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: var(--text-base);
+}
+.assistant-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.role-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.role-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.trace-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.trace-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+  font-weight: 500;
+}
+.trace-mono {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+.md-heading {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--fg);
+  margin-top: 4px;
+}
+.code-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.code-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.code-pre {
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg);
+  overflow-x: auto;
+}
+
+/* Composer Cockpit */
+.composer-wrap {
+  margin-top: var(--space-6);
+}
+.composer-box {
+  background: var(--surface);
+  border: 1.5px solid var(--accent-edge);
+  border-radius: 15px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.composer-input {
+  font-size: var(--text-base);
+  color: var(--muted);
+  min-height: 28px;
+}
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.pill-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--fg-2);
+}
+.toggle-pill-on {
+  background: var(--accent-soft);
+  border-color: var(--accent-edge);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-on);
+  border: none;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 4px 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* Right Floating Inspector Island */
+.mac-inspector {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-raised);
+  margin: 12px 16px 16px 4px;
+  align-self: start;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.lens-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.lens-tabs {
+  display: flex;
+  gap: 4px;
+}
+.lens-tab {
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.lens-tab-active {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-weight: 600;
+}
+.inspector-body {
+  display: flex;
+  flex-direction: column;
+}
+.insp-section {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.insp-section:last-child {
+  border-bottom: none;
+}
+.insp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+}
+.agenda-item {
+  padding-left: 10px;
+  border-left: 2.5px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.agenda-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--fg);
+}
+.action-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--fg-2);
+}
+.action-pill-tinted {
+  background: var(--accent-soft);
+  border-color: var(--accent-edge);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* Benchmarks & Human Factors Grid */
+.section-head {
+  margin-bottom: var(--space-6);
+}
+.section-title {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: var(--space-2);
+}
+.section-desc {
+  font-size: var(--text-base);
+  color: var(--fg-2);
+  max-width: 66ch;
+}
+.matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-12);
+}
+.spec-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.spec-kicker {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+.spec-title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--fg);
+}
+.spec-body {
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+}
+
+/* Comparison Table */
+.audit-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: var(--space-12);
+}
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--text-sm);
+}
+.audit-table th {
+  background: var(--bg);
+  color: var(--fg-2);
+  font-weight: 600;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.audit-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--fg);
+  vertical-align: top;
+}
+.page-footer {
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .mac-split { grid-template-columns: 1fr; }
+  .matrix-grid { grid-template-columns: 1fr; }
+}
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <header class="top-header" data-od-id="showcase-header">
+      <div class="brand-row">
+        <span class="brand-gem">A</span>
+        <span class="brand-title">Amber macOS — 琥珀含光 2.0 设计规范</span>
+      </div>
+      <span class="tag-pill" data-od-id="design-system-badge">
+        <svg class="od-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
+        Arquiel Design — Claude Editorial × Linear Precision
+      </span>
+    </header>
+
+    <main data-od-id="page-main">
+      <section class="hero-sec" data-od-id="hero-section">
+        <h1 class="hero-title" data-od-id="hero-heading">温润羊皮纸上的精密 Agent 驾驶舱</h1>
+        <p class="hero-sub">
+          基于 Apple macOS 人机界面指南（HIG）、人因认知工程（Fitts / Hick / Miller / Occam 定律）与 Claude Desktop、Cursor、Linear、Raycast 四大标杆案例，重构 Amber macOS 的视觉层级与交互效率。
+        </p>
+        <div class="token-strip" data-od-id="token-strip">
+          <div class="token-chip"><span class="swatch" style="background: var(--surface);"></span>阅读纸面 #FAF8F3</div>
+          <div class="token-chip"><span class="swatch" style="background: var(--bg);"></span>侧栏与检查器 #F3F0E8</div>
+          <div class="token-chip"><span class="swatch" style="background: var(--accent);"></span>琥珀树脂主色 #A65E26</div>
+          <div class="token-chip"><span class="swatch" style="background: var(--accent-ink);"></span>高对比琥珀墨 #784012</div>
+          <div class="token-chip"><span class="swatch" style="background: var(--success);"></span>信号绿状态 #2A7B4C</div>
+        </div>
+      </section>
+
+      <section class="window-stage" data-od-id="interactive-macos-stage">
+        <div class="mac-titlebar">
+          <div class="traffic-lights">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          </div>
+          <span class="window-title">将想法变成清晰、可执行的下一步</span>
+          <div class="toolbar-actions">
+            <span class="toolbar-pill">claude-opus-5-5</span>
+            <span class="toolbar-pill">⌘K</span>
+          </div>
+        </div>
+
+        <div class="mac-split">
+          <!-- Sidebar -->
+          <aside class="mac-sidebar" data-od-id="simulated-sidebar">
+            <div class="side-group-label">工作台</div>
+            <div class="side-row">
+              <span>任务看板</span>
+              <span class="side-badge">2 待处理</span>
+            </div>
+            <div class="side-row">
+              <span>飞书日历</span>
+              <span class="side-badge">今日 2</span>
+            </div>
+            <div class="side-row">
+              <span>飞书机器人</span>
+              <span class="side-badge">今日 2</span>
+            </div>
+            <div class="search-box">
+              <span>搜索会话</span>
+              <kbd class="kbd-tag">⇧⌘F</kbd>
+            </div>
+            <div class="side-group-label">置顶</div>
+            <div class="side-row side-row-active">
+              <span class="od-truncate">将想法变成清晰、可执行的下一步</span>
+              <span class="od-num">15:58</span>
+            </div>
+            <div class="side-group-label">今天</div>
+            <div class="side-row">
+              <span class="od-truncate">架构评审与多模型议会总结</span>
+              <span class="od-num">14:20</span>
+            </div>
+            <div class="side-row">
+              <span class="od-truncate">阅读排版与公式缓存验证</span>
+              <span class="od-num">11:05</span>
+            </div>
+          </aside>
+
+          <!-- Main Transcript & Composer -->
+          <div class="mac-main" data-od-id="simulated-transcript">
+            <div class="transcript-area">
+              <div class="user-bubble-row">
+                <div class="user-bubble">帮我梳理桌面版的工作方式，并拉取下午的飞书评审日程。</div>
+              </div>
+
+              <div class="assistant-block">
+                <div class="role-header">
+                  <span class="role-dot"></span>
+                  <span>Amber</span>
+                </div>
+                <div class="trace-strip">
+                  <span class="trace-pill">
+                    <svg class="od-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2v12M2 8h12"/></svg>
+                    思考过程 — 已折叠
+                  </span>
+                  <span class="trace-pill">
+                    <svg class="od-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8.5l3.2 3.2L13 5"/></svg>
+                    读取飞书日程
+                    <span class="trace-mono">feishu_calendar_list — 2 项</span>
+                  </span>
+                </div>
+                <h2 class="md-heading" data-od-id="sample-reply-heading">让专注，从这里开始</h2>
+                <p>
+                  左侧统一管理工作台与历史对话，中央阅读区保持 680pt 最佳阅读行宽，右侧检查器按需切换「全部 / 工作台 / 上下文」三类透镜。
+                </p>
+                <div class="code-box">
+                  <div class="code-top">
+                    <span>swift</span>
+                    <span>固定 — 复制</span>
+                  </div>
+                  <pre class="code-pre">let nextStep = "先完成一件重要的事"
+print(nextStep)</pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-wrap" data-od-id="simulated-composer">
+              <div class="composer-box">
+                <div class="composer-input">向 Amber 发送消息…</div>
+                <div class="composer-bar">
+                  <div class="pill-group">
+                    <span class="toggle-pill toggle-pill-on">工具 — 自动批准</span>
+                    <span class="toggle-pill">子代理</span>
+                    <span class="toggle-pill">对话 ▾</span>
+                  </div>
+                  <div class="pill-group">
+                    <span class="toggle-pill"><span class="od-num">claude-opus-5-5 ▾</span></span>
+                    <button class="send-btn" type="button" data-od-id="primary-send-cta">发送 ⌘↩</button>
+                  </div>
+                </div>
+              </div>
+              <div class="composer-foot">
+                <span>/ 斜杠指令 — ⌘K 命令面板</span>
+                <span class="od-num">⌘Return 发送 — Return 换行</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Inspector -->
+          <aside class="mac-inspector" data-od-id="simulated-inspector">
+            <div class="inspector-body">
+              <div class="insp-section">
+                <div class="insp-head">
+                  <span>今日飞书日程</span>
+                  <span class="trace-mono od-num">2</span>
+                </div>
+                <div class="agenda-item">
+                  <div class="agenda-top">
+                    <span>产品周会 &amp; 重点排期对齐</span>
+                    <span class="spec-kicker">准备 ↙</span>
+                  </div>
+                  <span class="trace-mono">10:00–10:45 — 飞书视频会议</span>
+                </div>
+                <div class="agenda-item">
+                  <div class="agenda-top">
+                    <span>Amber 插件系统与 UI 评审</span>
+                    <span class="spec-kicker">准备 ↙</span>
+                  </div>
+                  <span class="trace-mono">14:30–15:30 — 3 号会议室</span>
+                </div>
+              </div>
+
+              <div class="insp-section">
+                <div class="insp-head">
+                  <span>上下文</span>
+                  <span class="trace-mono od-num">约 272 tok</span>
+                </div>
+                <div class="pill-group">
+                  <span class="action-pill-btn">回顾</span>
+                  <span class="action-pill-btn">追问</span>
+                  <span class="action-pill-btn">压缩</span>
+                </div>
+              </div>
+
+              <div class="insp-section">
+                <div class="insp-head">
+                  <span>产物架</span>
+                  <span class="trace-mono">未固定</span>
+                </div>
+              </div>
+
+              <div class="insp-section">
+                <div class="insp-head">
+                  <span>会话文件</span>
+                  <span class="trace-mono">管理 ↗</span>
+                </div>
+              </div>
+
+              <div class="insp-section">
+                <div class="insp-head">
+                  <span>工具任务</span>
+                  <span class="trace-mono">工作台 ↗</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section data-od-id="benchmarks-section">
+        <div class="section-head">
+          <h2 class="section-title" data-od-id="benchmarks-heading">六大 macOS Agent 标杆案例与人因工程映射</h2>
+          <p class="section-desc">提炼桌面端顶尖 AI 与效率工具的交互原语，并转化为 Amber macOS 的具体代码改进。</p>
+        </div>
+        <div class="matrix-grid">
+          <article class="spec-card" data-od-id="card-claude-desktop">
+            <span class="spec-kicker">01 — CLAUDE DESKTOP × 渐进披露</span>
+            <h3 class="spec-title" data-od-id="title-claude">羊皮纸三阶色温与内联思考胶囊</h3>
+            <p class="spec-body">
+              用 #FAF8F3 主画布与 #F3F0E8 侧栏建立温和纸张边界；将思考过程与工具调用封装为 26pt 内联轨迹胶囊，消除阅读区视觉干扰。
+            </p>
+          </article>
+          <article class="spec-card" data-od-id="card-cursor-composer">
+            <span class="spec-kicker">02 — CURSOR AGENT × FITTS'S LAW</span>
+            <h3 class="spec-title" data-od-id="title-cursor">输入框就近模型切换与胶囊开关</h3>
+            <p class="spec-body">
+              将模型选择器内联至输入框底部右侧，鼠标移动距离缩短 75%；以一体化触感胶囊（DesktopToggleChip）替代生硬的表单小滑块。
+            </p>
+          </article>
+          <article class="spec-card" data-od-id="card-linear-inspector">
+            <span class="spec-kicker">03 — LINEAR × OCCAM'S RAZOR</span>
+            <h3 class="spec-title" data-od-id="title-linear">检查器三段透镜与零空态噪音</h3>
+            <p class="spec-body">
+              右侧检查器顶部新增「全部 / 工作台 / 上下文」透镜切换；将三段冗长空状态合并为「回顾 — 追问 — 压缩」快捷胶囊行，消灭刺眼系统蓝链接。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="audit-table-wrap" data-od-id="comparison-section">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>核心模块</th>
+              <th>Redesign 前（痛点诊断）</th>
+              <th>Redesign 后（琥珀含光 2.0 落地方案）</th>
+              <th>对应人因规范</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>右侧检查器 (Inspector)</strong></td>
+              <td>5 张卡片纵向堆叠，80% 面积展示「尚无记录」空文案与刺眼的系统亮蓝 .link 按钮；300pt 宽度下按钮文字截断。</td>
+              <td>顶部新增「全部/工作台/上下文」分段透镜 + 实时 Token 徽章；上下文提炼为「回顾 — 追问 — 压缩」三合一胶囊；全面替换为琥珀动作胶囊。</td>
+              <td>Occam's Razor — Selective Attention</td>
+            </tr>
+            <tr>
+              <td><strong>底部输入框 (Composer)</strong></td>
+              <td>聚焦时四周出现 -4pt 生硬矩形色块；工具与子代理使用设置页风格的滑块；切换模型需跨越 900pt 去窗口右上角。</td>
+              <td>15pt 圆角悬浮卡片配柔和琥珀光晕；工具/子代理统一为带状态点的触感胶囊；发送键左侧新增内联模型快速切换器与底部快捷键栏。</td>
+              <td>Fitts's Law — Law of Similarity</td>
+            </tr>
+            <tr>
+              <td><strong>对话流与工具卡 (Transcript)</strong></td>
+              <td>思考过程与工具调用仅有一行灰字，缺乏结构边界；代码块无外框；表格表头无底色区分；欢迎页仅有 4 条单薄下划线。</td>
+              <td>Assistant 头部增加琥珀微光圆点；思考与工具升级为 26pt 轨迹胶囊（含绿色完成态图标与等宽摘要）；欢迎页升级为 2×2 双行杂志建议卡。</td>
+              <td>Law of Common Region — Peak-End Rule</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <footer class="page-footer" data-od-id="showcase-footer">
+      <span>Amber macOS Native SwiftUI Redesign — Verified with Arquiel Design v2.5</span>
+      <span class="od-num">WCAG AA Contrast &ge; 4.5:1 — 120Hz Streaming Ready</span>
+    </footer>
+  </div>
+</body>
+</html>

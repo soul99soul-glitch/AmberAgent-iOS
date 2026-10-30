@@ -2,6 +2,12 @@ import Foundation
 import Observation
 @preconcurrency import GatewayCore
 
+enum DesktopWorkspaceSurface: Equatable, Sendable {
+    case chat
+    case taskBoard
+    case pluginView(pluginID: String, viewID: String)
+}
+
 @MainActor @Observable
 final class DesktopWorkspace {
     private(set) var conversations: [DesktopConversation] = [] {
@@ -25,7 +31,10 @@ final class DesktopWorkspace {
     var composerMode = DesktopComposerMode.chat
     private(set) var composerRunID: UUID?
     var searchText = "" { didSet { if searchText != oldValue { scheduleSearch() } } }
-    private(set) var summaries: [DesktopConversationSummary] = []
+    private(set) var summaries: [DesktopConversationSummary] = [] {
+        // New default-workspace folders are named after the conversation.
+        didSet { for summary in summaries { files.locations.noteTitle(summary.title, for: summary.id) } }
+    }
     private(set) var sidebarResults: [DesktopConversationSearchResult] = []
     private(set) var isSearching = false
     private(set) var searchErrorMessage: String?
@@ -60,6 +69,7 @@ final class DesktopWorkspace {
     let imageGeneration: DesktopImageGeneration
     let speech: DesktopSpeechPlayer
     let searchSettings: DesktopSearchSettings
+    let plugins: DesktopPluginStore
     let titles = DesktopTitleGeneration()
     /// Set by the live app; previews and tests run without one.
     var scheduler: DesktopScheduler?
@@ -101,8 +111,46 @@ final class DesktopWorkspace {
         let sessions = gateway?.isEnabled == true ? gatewaySessions() : []
         return DesktopBoard.build(tasks: scheduler.tasks, live: live, paused: scheduler.isPaused, sessions: sessions, now: now)
     }
+    /// Active main column surface: conversation transcript, task board, or an Obsidian-style plugin workspace view.
+    var activeSurface: DesktopWorkspaceSurface = .chat
     /// The main window shows the task board instead of a conversation (sidebar 「任务」, menu bar, notifications).
-    var showsTaskBoard = false
+    var showsTaskBoard: Bool {
+        get { activeSurface == .taskBoard && plugins.isCoreEnabled(.taskBoard) }
+        set {
+            if newValue {
+                guard plugins.isCoreEnabled(.taskBoard) else { return }
+                activeSurface = .taskBoard
+            } else {
+                activeSurface = .chat
+            }
+        }
+    }
+
+    func openChatSurface() {
+        activeSurface = .chat
+    }
+
+    func openPluginView(pluginID: String, viewID: String) {
+        guard plugins.activeWorkspaceViews.contains(where: { $0.pluginID == pluginID && $0.viewID == viewID }) else { return }
+        activeSurface = .pluginView(pluginID: pluginID, viewID: viewID)
+    }
+
+    private func reconcilePluginState() {
+        recipes.store.registeredTools = plugins.activeRecipeRegisteredTools()
+        switch activeSurface {
+        case .chat:
+            break
+        case .taskBoard:
+            if !plugins.isCoreEnabled(.taskBoard) { activeSurface = .chat }
+        case .pluginView(let pluginID, let viewID):
+            if !plugins.activeWorkspaceViews.contains(where: { $0.pluginID == pluginID && $0.viewID == viewID }) {
+                activeSurface = .chat
+            }
+        }
+        if !plugins.isCoreEnabled(.collaborations), composerMode != .chat {
+            composerMode = .chat
+        }
+    }
     /// Items that need the user, for the sidebar badge; refreshed by the board and the sidebar poll.
     private(set) var boardNeedsYouCount = 0
 
@@ -114,6 +162,9 @@ final class DesktopWorkspace {
     private(set) var collaborationSaveErrors: [UUID: String] = [:]
     @ObservationIgnored private var collaborationSaveTasks: [UUID: Task<Void, Never>] = [:]
     private(set) var selectedFiles: [DesktopWorkspaceFile] = []
+    private(set) var selectedFilesTruncated = false
+    /// Bumped when a workspace folder choice changes, so views showing locations re-read them.
+    private(set) var workspaceLocationVersion = 0
     private(set) var fileErrorMessage: String?
     private(set) var fileStatusMessage: String?
     private(set) var isLoadingFiles = false
@@ -170,7 +221,8 @@ final class DesktopWorkspace {
          webDAV: DesktopWebDAVManager? = nil, notifications: DesktopNotifications? = nil,
          storageUsageSources: [DesktopStorageUsage.Source]? = nil,
          imageGeneration: DesktopImageGeneration? = nil, speech: DesktopSpeechPlayer? = nil,
-         searchSettings: DesktopSearchSettings? = nil, artifactShelf: DesktopArtifactShelf? = nil) {
+         searchSettings: DesktopSearchSettings? = nil, artifactShelf: DesktopArtifactShelf? = nil,
+         plugins: DesktopPluginStore? = nil) {
         self.settings = settings
         self.insights = insights ?? DesktopConversationInsights()
         self.artifactShelf = artifactShelf ?? DesktopArtifactShelf()
@@ -181,10 +233,30 @@ final class DesktopWorkspace {
         self.mcp = mcp ?? DesktopMCPManager(store: DesktopMCPStore(
             defaults: UserDefaults(suiteName: "amber.preview.mcp." + UUID().uuidString)!, credentials: DesktopMemoryCredentials()))
         self.collaborations = collaborations ?? DesktopCollaborations(settings: settings, provider: provider)
-        self.recipes = recipes ?? DesktopRecipeRuns(store: DesktopRecipeStore(
+        self.plugins = plugins ?? DesktopPluginStore(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent("amber-preview-plugins-" + UUID().uuidString, isDirectory: true),
+            defaults: UserDefaults(suiteName: "amber.preview.plugins." + UUID().uuidString)!,
+            credentials: DesktopMemoryCredentials()
+        )
+        let defaultRecipeStore = DesktopRecipeStore(
             directory: FileManager.default.temporaryDirectory.appendingPathComponent("amber-preview-recipes-" + UUID().uuidString),
-            registeredTools: Set(DesktopToolRegistry.declarations.map(\.name) + DesktopMCPManager.declarations.map(\.name) +
-                ["skills_list", "use_skill", "skill_enable", "skill_disable", "memory_tool"])), tasks: self.agentTasks)
+            registeredTools: self.plugins.activeRecipeRegisteredTools()
+        )
+        if let recipes {
+            self.recipes = recipes
+        } else {
+            #if !AMBER_MAC_PREVIEW
+            if let agentProvider = provider as? DesktopAgentProvider {
+                self.recipes = DesktopRecipeRuns(store: defaultRecipeStore, tasks: self.agentTasks) {
+                    try await agentProvider.performRecipeTool(runID: $0, owner: $1, name: $2, argumentsJSON: $3)
+                }
+            } else {
+                self.recipes = DesktopRecipeRuns(store: defaultRecipeStore, tasks: self.agentTasks)
+            }
+            #else
+            self.recipes = DesktopRecipeRuns(store: defaultRecipeStore, tasks: self.agentTasks)
+            #endif
+        }
         self.webDAV = webDAV ?? DesktopWebDAVManager(defaults: UserDefaults(suiteName: "amber.preview.webdav." + UUID().uuidString)!,
             credentials: DesktopMemoryCredentials())
         self.notifications = notifications ?? DesktopNotifications(settings: settings)
@@ -202,6 +274,10 @@ final class DesktopWorkspace {
         ]
         self.storage = storage
         self.provider = provider
+        self.plugins.onStateChanged = { [weak self] in
+            self?.reconcilePluginState()
+        }
+        reconcilePluginState()
         if let initialConversations {
             conversations = initialConversations
             summaries = DesktopConversationSummary.ordered(initialConversations.map(DesktopConversationSummary.init))
@@ -352,7 +428,7 @@ final class DesktopWorkspace {
 
     func createConversation() {
         guard !isLoading else { return }
-        showsTaskBoard = false
+        activeSurface = .chat
         saveDraft()
         let conversation = DesktopConversation()
         conversations.insert(conversation, at: 0)
@@ -366,7 +442,7 @@ final class DesktopWorkspace {
 
     func select(_ id: UUID) {
         guard summaries.contains(where: { $0.id == id }) else { return }
-        showsTaskBoard = false
+        activeSurface = .chat
         if selectedID != id {
             saveDraft()
             selectedID = id
@@ -740,9 +816,12 @@ final class DesktopWorkspace {
 
     /// History as the model sees it: compaction applied, then the system prompt and local knowledge context.
     private func requestMessages(_ history: [DesktopMessage], conversationID: UUID) throws -> [DesktopMessage] {
-        let localContext = try knowledge.requestContext(query: history.last(where: { $0.role == .user })?.text ?? "")
+        let localContext = plugins.isCoreEnabled(.knowledge)
+            ? try knowledge.requestContext(query: history.last(where: { $0.role == .user })?.text ?? "")
+            : ""
         var messages = insights.prepare(messages: history, conversationID: conversationID)
-        let system = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), localContext]
+        let system = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), localContext,
+                      workspaceContext(conversationID) ?? ""]
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
         if !system.isEmpty { messages.insert(DesktopMessage(role: .system, text: system), at: 0) }
         return messages
@@ -754,13 +833,14 @@ final class DesktopWorkspace {
         var terminal: DesktopMessageState?
         for event in events {
             switch event {
-            case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount):
+            case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount, let tools):
                 guard let messageID = assistantID,
                       let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == messageID }) else { continue }
                 if conversations[index].messages[messageIndex].text != text { conversations[index].messages[messageIndex].text = text }
                 if conversations[index].messages[messageIndex].reasoning != reasoning { conversations[index].messages[messageIndex].reasoning = reasoning }
                 conversations[index].messages[messageIndex].canonicalJSON = canonicalJSON
                 conversations[index].messages[messageIndex].unsupportedPartCount = unsupportedPartCount
+                if conversations[index].messages[messageIndex].tools != tools { conversations[index].messages[messageIndex].tools = tools }
             case .transcript(let turns):
                 guard !turns.isEmpty else { continue }
                 let prefix = Array(conversations[index].messages.prefix(generationPrefixIDs.count))
@@ -980,6 +1060,7 @@ final class DesktopWorkspace {
                 self.conversations[index].messages[messageIndex].editableText = actual.editableText
                 self.conversations[index].messages[messageIndex].estimatedTokens = actual.estimatedTokens
                 self.conversations[index].messages[messageIndex].images = actual.images
+                self.conversations[index].messages[messageIndex].tools = actual.tools
             }
         }
     }
@@ -1142,6 +1223,9 @@ final class DesktopWorkspace {
 
     func generateImages(ownerID: UUID, prompt: String, aspectRatio: IOSImageAspectRatio = .square,
                         count: Int = 1, style: String = "") async throws -> [DesktopGeneratedImageArtifact] {
+        guard plugins.isCoreEnabled(.imageGeneration) else {
+            throw DesktopRuntimeError.message("图片生成核心插件已停用，请先在设置 → 插件中启用。")
+        }
         guard !isManagingBackup else { throw DesktopRuntimeError.message("备份或恢复进行中，请完成后再生成图片。") }
         guard summaries.contains(where: { $0.id == ownerID }) else {
             throw DesktopRuntimeError.message("原会话已删除，无法开始生成图片。")
@@ -1173,15 +1257,17 @@ final class DesktopWorkspace {
         filePreviewErrorMessage = nil
         isLoadingFilePreview = false
         selectedFiles = []
+        selectedFilesTruncated = false
         fileErrorMessage = nil
         guard let owner = selectedID else { isLoadingFiles = false; return nil }
         fileErrorMessage = fileErrors[owner]
         isLoadingFiles = true
         return Task {
             do {
-                let entries = try await files.list(conversationID: owner)
+                let listing = try await files.listing(conversationID: owner)
                 guard selectedID == owner, filesToken == token else { return }
-                selectedFiles = entries
+                selectedFiles = listing.files
+                selectedFilesTruncated = listing.truncated
                 if fileReadFailures.remove(owner) != nil { recordFileError(nil, owner: owner) }
             } catch {
                 guard selectedID == owner, filesToken == token else { return }
@@ -1189,6 +1275,67 @@ final class DesktopWorkspace {
             }
             guard selectedID == owner, filesToken == token else { return }
             isLoadingFiles = false
+        }
+    }
+
+    // MARK: workspace folder
+
+    /// Folder in use by the selected conversation, or nil when it will be created on first use.
+    var selectedWorkspaceFolder: URL? {
+        _ = workspaceLocationVersion
+        return selectedID.flatMap(files.locations.existingDirectory(for:))
+    }
+
+    var selectedWorkspaceKind: DesktopWorkspaceLocations.Kind {
+        _ = workspaceLocationVersion
+        return selectedID.map(files.locations.kind(of:)) ?? .legacy
+    }
+
+    var defaultWorkspaceFolder: URL? {
+        _ = workspaceLocationVersion
+        return files.locations.defaultRoot
+    }
+
+    func setDefaultWorkspaceFolder(_ url: URL?) {
+        do { try files.locations.setDefaultRoot(url) }
+        catch { recordError(error.localizedDescription, owner: nil) }
+        workspaceLocationVersion += 1
+    }
+
+    /// Point the selected conversation at an existing folder. Files already in its old workspace stay there.
+    func openWorkspaceFolder(_ url: URL) {
+        guard let owner = selectedID else { return }
+        do {
+            try files.locations.bindExternal(url, to: owner)
+            recordFileError(nil, owner: owner)
+        } catch { recordFileError(error.localizedDescription, owner: owner) }
+        workspaceLocationVersion += 1
+        reloadFiles()
+    }
+
+    func closeWorkspaceFolder() {
+        guard let owner = selectedID else { return }
+        do { try files.locations.releaseExternal(owner) }
+        catch { recordFileError("无法恢复默认工作区：\(error.localizedDescription)", owner: owner) }
+        workspaceLocationVersion += 1
+        reloadFiles()
+    }
+
+    /// Creates the folder if it only existed as a plan, so it can be shown in Finder.
+    func materializeWorkspaceFolder() -> URL? {
+        guard let owner = selectedID else { return nil }
+        defer { workspaceLocationVersion += 1 }
+        do { return try files.locations.directory(for: owner, create: true).url }
+        catch { recordFileError(error.localizedDescription, owner: owner); return nil }
+    }
+
+    /// Tells the model which folder its file tools and terminal act on, when that is a folder the user can see.
+    private func workspaceContext(_ owner: UUID) -> String? {
+        switch files.locations.kind(of: owner) {
+        case .legacy: return nil
+        case .managed, .external:
+            guard let url = files.locations.existingDirectory(for: owner) else { return nil }
+            return "当前会话的工作区文件夹是 \(url.path)。workspace_file_* 工具的相对路径和 terminal_exec 的工作目录都以它为准。"
         }
     }
 
@@ -1337,6 +1484,10 @@ final class DesktopWorkspace {
 
     @discardableResult
     func runRecipe(name: String, inputs: [String: DesktopRecipeJSONValue]) -> UUID? {
+        guard plugins.isCoreEnabled(.recipes) else {
+            errorMessage = "Recipe 核心插件已停用，请先在设置 → 插件中启用。"
+            return nil
+        }
         guard !isLoading, !isManagingBackup, !selectedConversationUnavailable, let owner = selectedID else {
             errorMessage = "请先选择并读取完整会话，再执行 Recipe。"
             return nil
@@ -1348,6 +1499,10 @@ final class DesktopWorkspace {
     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
     func sendCollaboration() {
+        guard plugins.isCoreEnabled(.collaborations) else {
+            errorMessage = "多模型协作核心插件已停用，请先在设置 → 插件中启用。"
+            return
+        }
         guard let owner = selectedID, composerMode == .council else { return }
         let objective = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !objective.isEmpty else { return }
@@ -1755,12 +1910,14 @@ extension DesktopWorkspace {
             for event in events {
                 guard let index = conversations.firstIndex(where: { $0.id == owner }) else { result = (.failed, "结果会话已删除。"); return }
                 switch event {
-                case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount):
+                case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount, let tools):
                     guard let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == assistantID }) else { continue }
                     conversations[index].messages[messageIndex].text = text
                     conversations[index].messages[messageIndex].reasoning = reasoning
                     conversations[index].messages[messageIndex].canonicalJSON = canonicalJSON
                     conversations[index].messages[messageIndex].unsupportedPartCount = unsupportedPartCount
+                    conversations[index].messages[messageIndex].tools = tools
+                if conversations[index].messages[messageIndex].tools != tools { conversations[index].messages[messageIndex].tools = tools }
                 case .transcript(let turns):
                     guard !turns.isEmpty, replaceScheduledSuffix(turns, owner: owner, prefixIDs: prefixIDs) else { continue }
                     assistantID = turns.last?.role == .assistant ? turns.last?.id : nil

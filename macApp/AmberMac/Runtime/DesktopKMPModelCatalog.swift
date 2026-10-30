@@ -40,7 +40,7 @@ import Foundation
                     for await _ in run.signals {
                         for event in run.drain() {
                             switch event {
-                            case .snapshot(let text, _, _, _): received = received || !text.isEmpty
+                            case .snapshot(let text, _, _, _, _): received = received || !text.isEmpty
                             case .transcript(let messages): received = received || messages.contains { $0.role == .assistant && !$0.text.isEmpty }
                             case .complete:
                                 guard received else { throw DesktopRuntimeError.message("服务商未返回文字内容。") }

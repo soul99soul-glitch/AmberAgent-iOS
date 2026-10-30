@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Amber mark. Breathes softly on the empty state; five quick taps release a drop of resin
@@ -12,11 +13,17 @@ struct DesktopAmberMark: View {
     @State private var lastTap = Date.distantPast
 
     var body: some View {
-        Image("AmberMark").resizable().interpolation(.high)
-            .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: size * 0.24))
-            .shadow(color: DesktopTheme.honey.opacity(breathes && glow ? 1 : 0), radius: size * 0.4)
-            .rotationEffect(.degrees(wobble ? -8 : 0), anchor: .bottom)
+        Group {
+            if let nsImage = NSImage(named: "AmberMark") {
+                Image(nsImage: nsImage).resizable().interpolation(.high)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            } else {
+                DesktopAmberEmblem(size: size)
+            }
+        }
+        .shadow(color: DesktopTheme.honey.opacity(breathes && glow ? 0.85 : 0.25), radius: breathes ? size * 0.35 : size * 0.14, y: size * 0.05)
+        .rotationEffect(.degrees(wobble ? -8 : 0), anchor: .bottom)
             .overlay(alignment: .bottom) {
                 Circle()
                     .fill(RadialGradient(colors: [DesktopTheme.accent, DesktopTheme.honey], center: .init(x: 0.35, y: 0.3), startRadius: 0, endRadius: size * 0.12))
@@ -61,7 +68,7 @@ struct DesktopRiseIn: ViewModifier {
     }
 }
 
-/// While a reply streams in, a faint amber shimmer travels along its leading edge.
+/// While a reply streams in, a soft Claude Desktop warm-gray shimmer travels along its leading edge.
 struct DesktopStreamingEdge: ViewModifier {
     let active: Bool
     @State private var phase: CGFloat = 0
@@ -70,12 +77,12 @@ struct DesktopStreamingEdge: ViewModifier {
             if active {
                 GeometryReader { proxy in
                     Rectangle()
-                        .fill(LinearGradient(colors: [.clear, DesktopTheme.accent.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom))
+                        .fill(LinearGradient(colors: [.clear, DesktopTheme.inkTertiary.opacity(0.38), .clear], startPoint: .top, endPoint: .bottom))
                         .frame(width: 1.5, height: min(proxy.size.height, max(24, proxy.size.height * 0.35)))
                         // Travels the full height and back, easing at both ends, forever.
                         .offset(y: phase * max(0, proxy.size.height - max(24, proxy.size.height * 0.35)))
                         .onAppear {
-                            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { phase = 1 }
+                            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { phase = 1 }
                         }
                 }
                 .frame(width: 1.5)
@@ -83,7 +90,7 @@ struct DesktopStreamingEdge: ViewModifier {
                 .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.3), value: active)
+        .animation(.easeOut(duration: 0.35), value: active)
     }
 }
 
@@ -170,8 +177,8 @@ struct DesktopCollaborationProgress: View {
             if !run.outputs.isEmpty {
                 Text("\(done)/\(run.outputs.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(DesktopTheme.inkTertiary)
             }
-            Button("查看", action: onOpen).buttonStyle(.link).font(.system(size: 12))
-            Button("停止", action: onStop).buttonStyle(.link).font(.system(size: 12))
+            Button("查看", action: onOpen).buttonStyle(.desktopActionPill)
+            Button("停止", action: onStop).buttonStyle(.desktopActionPill)
         }
         .padding(.horizontal, 14)
         .frame(height: 48)
@@ -255,6 +262,40 @@ extension View {
     }
 }
 
+/// Claude Desktop style soft warm-gray shimmer across active thinking/status labels:
+/// a gentle luminance wave that never glares or changes color saturation.
+struct DesktopSoftShimmer: ViewModifier {
+    let active: Bool
+    @State private var phase: CGFloat = -0.6
+
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .overlay {
+                    GeometryReader { proxy in
+                        LinearGradient(
+                            colors: [.clear, DesktopTheme.ink.opacity(0.45), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: max(36, proxy.size.width * 0.55))
+                        .offset(x: phase * proxy.size.width * 1.6)
+                    }
+                    .mask(content)
+                    .allowsHitTesting(false)
+                }
+                .onAppear {
+                    phase = -0.6
+                    withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
+                        phase = 1.2
+                    }
+                }
+        } else {
+            content
+        }
+    }
+}
+
 /// Thinking card: a fixed-height window while it streams (growth scrolls inside, never pushes the answer),
 /// softly folds when the answer begins, and toggles with an eased height change.
 struct DesktopReasoningCard: View {
@@ -277,16 +318,43 @@ struct DesktopReasoningCard: View {
                 withAnimation(.smooth(duration: 0.28)) { expanded = !isExpanded }
             } label: {
                 HStack(spacing: 6) {
-                    if thinking { DesktopPulse() }
+                    DesktopReasoningGlyph(thinking: thinking)
                     Text(thinking ? "正在思考…" : "思考过程")
-                        .font(.system(size: 13)).foregroundStyle(hovering ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(hovering || isExpanded ? DesktopTheme.inkSecondary : DesktopTheme.inkTertiary)
+                        .modifier(DesktopSoftShimmer(active: thinking))
                         .contentTransition(.opacity)
-                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(DesktopTheme.inkTertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .frame(height: 24)
-                .contentShape(Rectangle())
+                .padding(.horizontal, 11)
+                .frame(height: 26)
+                .background(
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [
+                                DesktopTheme.specularTop.opacity(0.75),
+                                hovering || isExpanded ? DesktopTheme.hover : DesktopTheme.paperDeep.opacity(0.75)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                )
+                .overlay(
+                    Capsule()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [DesktopTheme.specularTop, DesktopTheme.hairlineStrong],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.8
+                        )
+                )
+                .shadow(color: .black.opacity(0.025), radius: 2, y: 1)
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .onHover { hovering = $0 }

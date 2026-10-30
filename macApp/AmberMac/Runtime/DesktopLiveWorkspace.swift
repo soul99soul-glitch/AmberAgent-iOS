@@ -7,7 +7,8 @@ import Foundation
             .appendingPathComponent("Amber", isDirectory: true)
         let settings = DesktopSettings()
         let notifications = DesktopNotifications(settings: settings)
-        let files = DesktopWorkspaceFiles(directory: directory.appendingPathComponent("workspaces", isDirectory: true))
+        let files = DesktopWorkspaceFiles(directory: directory.appendingPathComponent("workspaces", isDirectory: true),
+            locationsFile: directory.appendingPathComponent("workspace-locations.json"))
         let tasks = DesktopAgentTasks(directory: directory.appendingPathComponent("agent-runs", isDirectory: true), notifications: notifications)
         let knowledge = DesktopKnowledgeStore()
         let mcp = DesktopMCPManager(store: DesktopMCPStore())
@@ -17,9 +18,10 @@ import Foundation
         let text = DesktopKMPProvider()
         let collaborations = DesktopCollaborations(settings: settings, provider: text,
             directory: directory.appendingPathComponent("collaborations", isDirectory: true), notifications: notifications)
+        let plugins = DesktopPluginStore(directory: directory.appendingPathComponent("plugins", isDirectory: true))
         let provider = DesktopAgentProvider(text: text, tasks: tasks, files: files, knowledge: knowledge, mcp: mcp,
-            collaborations: collaborations, searchSettings: searchSettings)
-        let names = Set((DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations + DesktopMCPManager.declarations).map(\.name))
+            collaborations: collaborations, searchSettings: searchSettings, plugins: plugins)
+        let names = plugins.activeRecipeRegisteredTools()
         let recipes = DesktopRecipeRuns(store: DesktopRecipeStore(directory: directory, registeredTools: names), tasks: tasks) {
             try await provider.performRecipeTool(runID: $0, owner: $1, name: $2, argumentsJSON: $3)
         }
@@ -29,7 +31,8 @@ import Foundation
             notifications: notifications, storageUsageSources: DesktopStorageUsage.sources(
                 amberRoot: directory, knowledgeDirectory: knowledge.directory),
             imageGeneration: imageGeneration, searchSettings: searchSettings,
-            artifactShelf: DesktopArtifactShelf(fileURL: directory.appendingPathComponent("artifact-shelf.json")))
+            artifactShelf: DesktopArtifactShelf(fileURL: directory.appendingPathComponent("artifact-shelf.json")),
+            plugins: plugins)
         let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: directory.appendingPathComponent("schedules", isDirectory: true)),
             runner: { [weak self] task, slot in
                 guard let self else {

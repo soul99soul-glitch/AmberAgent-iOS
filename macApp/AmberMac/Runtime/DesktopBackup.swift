@@ -233,7 +233,8 @@ struct DesktopBackupRestoreResult: Sendable {
             }
             let document = try await storage.exportDocument(conversation)
             var attachments: [DesktopBackupPayload.File] = []
-            for entry in try await files.list(conversationID: id) {
+            // A folder the user opened holds their own files: it is not Amber's to copy into a backup.
+            for entry in files.isExternal(id) ? [] : try await files.list(conversationID: id) {
                 attachments.append(.init(path: entry.id, data: try await files.read(conversationID: id, path: entry.id)))
             }
             value.conversations.append(.init(id: id, document: document,

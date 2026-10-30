@@ -6,6 +6,7 @@ struct DesktopWorkspaceView: View {
     @Bindable var workspace: DesktopWorkspace
     let searchRequest: Int
     var findRequest = 0
+    var commandPaletteRequest = 0
     @Environment(\.colorScheme) private var scheme
     @FocusState private var searchFocused: Bool
     @State private var renameID: UUID?
@@ -17,6 +18,8 @@ struct DesktopWorkspaceView: View {
     @State private var shelfPresented = false
     @State private var filesPresented = false
     @State private var tasksPresented = false
+    @State private var pluginInspectorPresented = false
+    @State private var commandPalettePresented = false
     @State private var knowledgePresented = false
     @State private var backupPresented = false
     @State private var collaborationsPresented = false
@@ -39,85 +42,103 @@ struct DesktopWorkspaceView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 228, ideal: 268, max: 360)
-        } detail: {
-            GeometryReader { geometry in
-            let docked = inspectorVisible && geometry.size.width >= Self.inspectorDockWidth
+        GeometryReader { windowGeometry in
+            let sidebarShown = columnVisibility != .detailOnly
+            let detailWidth = windowGeometry.size.width - (sidebarShown ? 288 : 0)
+            let docked = inspectorVisible && detailWidth >= Self.inspectorDockWidth
             HStack(spacing: 0) {
-            if workspace.showsTaskBoard, let scheduler = workspace.scheduler {
-                DesktopBoardView(workspace: workspace, scheduler: scheduler) { conversation in
-                    workspace.showsTaskBoard = false
-                    workspace.select(conversation)
+                if sidebarShown {
+                    sidebar
+                        .frame(width: 288)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14)),
+                            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14))
+                        ))
                 }
-                .transition(.opacity)
-            } else {
-            VStack(spacing: 0) {
-                if workspace.isLoading {
-                    ProgressView("正在读取会话…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if workspace.isLoadingSelectedConversation {
-                    ProgressView("正在读取消息…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if workspace.selectedConversationUnavailable {
-                    ContentUnavailableView {
-                        Label("暂时无法读取会话", systemImage: "exclamationmark.bubble")
-                    } description: {
-                        Text("原始数据已保留。请检查文件权限后重试。")
-                    } actions: {
-                        Button("重新读取") { workspace.reloadSelectedConversation() }
+                if workspace.showsTaskBoard, let scheduler = workspace.scheduler {
+                    DesktopBoardView(workspace: workspace, scheduler: scheduler) { conversation in
+                        workspace.showsTaskBoard = false
+                        workspace.select(conversation)
                     }
-                } else if workspace.selectedConversationHasMessages {
-                    DesktopSelectedTranscript(workspace: workspace, focusRequest: transcriptFocus, findRequest: findRequest)
-                        .id(workspace.selectedID)
-                        .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity))
+                    .transition(.opacity)
+                } else if case .pluginView(let pluginID, let viewID) = workspace.activeSurface {
+                    DesktopPluginWorkspaceView(
+                        workspace: workspace,
+                        pluginID: pluginID,
+                        viewID: viewID,
+                        onFocusComposer: { composerFocusRequest += 1 }
+                    )
+                    .transition(.opacity)
                 } else {
-                    welcome
-                        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    VStack(spacing: 0) {
+                        if workspace.isLoading {
+                            ProgressView("正在读取会话…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if workspace.isLoadingSelectedConversation {
+                            ProgressView("正在读取消息…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if workspace.selectedConversationUnavailable {
+                            ContentUnavailableView {
+                                Label("暂时无法读取会话", systemImage: "exclamationmark.bubble")
+                            } description: {
+                                Text("原始数据已保留。请检查文件权限后重试。")
+                            } actions: {
+                                Button("重新读取") { workspace.reloadSelectedConversation() }
+                            }
+                        } else if workspace.selectedConversationHasMessages {
+                            DesktopSelectedTranscript(workspace: workspace, focusRequest: transcriptFocus, findRequest: findRequest)
+                                .id(workspace.selectedID)
+                                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity))
+                        } else {
+                            welcome
+                                .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                        }
+                        if let error = workspace.errorMessage {
+                            errorBanner(error)
+                        }
+                        if let task = workspace.agentTasks.records.first(where: { $0.conversationID == workspace.selectedID && $0.approval != nil }) {
+                            DesktopToolApprovalCard(task: task, tasks: workspace.agentTasks)
+                                .id(task.approval?.id)
+                                .frame(maxWidth: DesktopTheme.contentWidth)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 8)
+                        }
+                        if let runID = workspace.composerRunID, let run = workspace.collaborations.runs.first(where: { $0.id == runID }) {
+                            DesktopCollaborationProgress(run: run, onOpen: { collaborationsPresented = true },
+                                onStop: { workspace.collaborations.cancel(runID) })
+                                .frame(maxWidth: DesktopTheme.contentWidth)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 8)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                        DesktopComposer(workspace: workspace, focusRequest: composerFocusRequest, onOpenCollaborations: { collaborationsPresented = true })
+                            .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable || workspace.isManagingBackup)
+                    }
+                    .animation(.spring(response: 0.38, dampingFraction: 0.86), value: workspace.selectedID)
                 }
-                if let error = workspace.errorMessage {
-                    errorBanner(error)
+                if docked, workspace.activeSurface == .chat {
+                    DesktopInspector(workspace: workspace,
+                        onLocate: { messageID in
+                            guard let conversationID = workspace.selectedID else { return }
+                            transcriptFocus = DesktopTranscriptFocus(conversationID: conversationID, messageID: messageID)
+                        },
+                        onOpenFiles: { filesPresented = true },
+                        onOpenTasks: { tasksPresented = true },
+                        onFocusComposer: { composerFocusRequest += 1 })
+                        .frame(width: 324)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)).combined(with: .offset(x: 12)),
+                            removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))
+                        ))
                 }
-                if let task = workspace.agentTasks.records.first(where: { $0.conversationID == workspace.selectedID && $0.approval != nil }) {
-                    DesktopToolApprovalCard(task: task, tasks: workspace.agentTasks)
-                        .id(task.approval?.id)
-                        .frame(maxWidth: DesktopTheme.contentWidth)
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 8)
-                }
-                if let runID = workspace.composerRunID, let run = workspace.collaborations.runs.first(where: { $0.id == runID }) {
-                    DesktopCollaborationProgress(run: run, onOpen: { collaborationsPresented = true },
-                        onStop: { workspace.collaborations.cancel(runID) })
-                        .frame(maxWidth: DesktopTheme.contentWidth)
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 8)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                DesktopComposer(workspace: workspace, focusRequest: composerFocusRequest, onOpenCollaborations: { collaborationsPresented = true })
-                    .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable || workspace.isManagingBackup)
             }
-            .animation(.spring(response: 0.38, dampingFraction: 0.86), value: workspace.selectedID)
-            .background(DesktopTheme.paper)
-            }
-            if docked, !workspace.showsTaskBoard {
-                DesktopInspector(workspace: workspace,
-                    onLocate: { messageID in
-                        guard let conversationID = workspace.selectedID else { return }
-                        transcriptFocus = DesktopTranscriptFocus(conversationID: conversationID, messageID: messageID)
-                    },
-                    onOpenFiles: { filesPresented = true }, onOpenTasks: { tasksPresented = true })
-                    .frame(width: 300)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-            }
+            .animation(.smooth(duration: 0.28), value: sidebarShown)
             .animation(.smooth(duration: 0.3), value: docked)
             .onChange(of: docked, initial: true) { _, value in inspectorDocked = value }
-            }
-            .navigationTitle(workspace.showsTaskBoard ? "任务" : workspace.selectedConversationTitle)
-            .toolbar { toolbar }
-            .toolbarBackground(DesktopTheme.paper, for: .windowToolbar)
-            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         }
-        .navigationSplitViewStyle(.balanced)
+        .background { DesktopAmbientCanvas() }
+        .navigationTitle(windowTitle)
+        .toolbar { toolbar }
+        .toolbarBackground(DesktopTheme.paper, for: .windowToolbar)
+        .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         .sheet(isPresented: $filesPresented) { DesktopWorkspaceFilesView(workspace: workspace) }
         .sheet(isPresented: $tasksPresented) { DesktopAgentTasksView(workspace: workspace) }
         .sheet(isPresented: $backupPresented) { DesktopBackupView(workspace: workspace) }
@@ -139,6 +160,16 @@ struct DesktopWorkspaceView: View {
                 workspace.select(conversationID)
                 knowledgePresented = false
             }
+        }
+        .sheet(isPresented: $commandPalettePresented) {
+            DesktopCommandPaletteView(
+                workspace: workspace,
+                onDismiss: { commandPalettePresented = false },
+                onFocusComposer: { composerFocusRequest += 1 }
+            )
+        }
+        .onChange(of: commandPaletteRequest) {
+            commandPalettePresented = true
         }
         .onChange(of: searchRequest) {
             columnVisibility = .all
@@ -166,27 +197,37 @@ struct DesktopWorkspaceView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                DesktopAmberMark(size: 18, taps: $markTaps)
-                Text("Amber").font(DesktopTheme.serif(size: 17, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
+            // Top Brand & New Conversation Header
+            HStack(spacing: 10) {
+                DesktopAmberMark(size: 22, taps: $markTaps)
+                Text("Amber")
+                    .font(DesktopTheme.serif(size: 18, weight: .semibold))
+                    .foregroundStyle(DesktopTheme.ink)
                 Spacer()
                 Button { workspace.createConversation() } label: {
-                    Image(systemName: "square.and.pencil").font(.system(size: 14)).frame(width: 28, height: 28)
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("新建")
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
                 }
-                .buttonStyle(DesktopQuietButtonStyle())
+                .buttonStyle(.desktopActionPill)
                 .disabled(workspace.isLoading || workspace.isManagingBackup)
                 .help("新建会话 ⌘N")
                 .accessibilityLabel("新建会话")
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 14)
 
-            if workspace.scheduler != nil { tasksRow }
-
+            // Search Field
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
                 TextField("搜索会话", text: $workspace.searchText)
                     .textFieldStyle(.plain)
                     .focused($searchFocused)
@@ -200,15 +241,49 @@ struct DesktopWorkspaceView: View {
                         .foregroundStyle(DesktopTheme.inkTertiary)
                         .accessibilityLabel("清空搜索")
                 } else {
-                    Text("⇧⌘F").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                    DesktopKeycap(text: "⇧⌘F")
                 }
             }
             .font(.system(size: 13))
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(searchFocused ? DesktopTheme.honeyEdge : DesktopTheme.hairline))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(DesktopTheme.glassRecessed, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                searchFocused ? DesktopTheme.accent : DesktopTheme.specularTop,
+                                searchFocused ? DesktopTheme.honeyEdge : DesktopTheme.hairlineStrong
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.85
+                    )
+            )
+            .padding(.horizontal, 14)
+            .padding(.bottom, 16)
+
+            // Workspace Apps Section
+            if (workspace.scheduler != nil && workspace.plugins.isCoreEnabled(.taskBoard)) || !workspace.plugins.activeWorkspaceViews.isEmpty {
+                Text("工作台")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 6)
+            }
+            if workspace.scheduler != nil && workspace.plugins.isCoreEnabled(.taskBoard) { tasksRow }
+            if !workspace.plugins.activeWorkspaceViews.isEmpty { pluginWorkspaceRows }
+
+            if (workspace.scheduler != nil && workspace.plugins.isCoreEnabled(.taskBoard)) || !workspace.plugins.activeWorkspaceViews.isEmpty {
+                Rectangle()
+                    .fill(DesktopTheme.hairline)
+                    .frame(height: 1)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 4)
+                    .padding(.bottom, 14)
+            }
 
             if let error = workspace.searchErrorMessage {
                 HStack(alignment: .top, spacing: 7) {
@@ -219,54 +294,55 @@ struct DesktopWorkspaceView: View {
                     Spacer(minLength: 0)
                     Button("重试") { workspace.retrySearch() }.buttonStyle(.borderless)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             }
 
-            List {
-                ForEach(sidebarGroups, id: \.title) { group in
-                Section {
-                    ForEach(group.items) { conversation in
-                        conversationRow(conversation)
-                            .tag(conversation.id)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
-                            .onTapGesture { selectResult(conversation) }
-                            .accessibilityAddTraits(workspace.selectedID == conversation.id ? [.isSelected, .isButton] : .isButton)
-                            .contextMenu {
-                                Button(conversation.isPinned ? "取消置顶" : "置顶", systemImage: conversation.isPinned ? "pin.slash" : "pin") {
-                                    workspace.togglePin(conversation.id)
-                                }
-                                Button("重命名", systemImage: "pencil") {
-                                    renameID = conversation.id
-                                    renameTitle = conversation.title
-                                }
-                                if workspace.titles.activeOwners.contains(conversation.id) {
-                                    Button("取消生成标题", systemImage: "stop") { workspace.titles.cancel(conversation.id) }
-                                } else {
-                                    Button("生成标题", systemImage: "sparkles") { generateTitle(for: conversation.id) }
-                                        .disabled(workspace.isManagingBackup || workspace.isMutatingBranch
-                                            || workspace.generationConversationID == conversation.id || conversation.messageCount == 0)
-                                }
-                                Divider()
-                                Button("删除会话", systemImage: "trash", role: .destructive) { deleteID = conversation.id }
+            // Conversation Groups ScrollView
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    ForEach(sidebarGroups, id: \.title) { group in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(group.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(DesktopTheme.inkTertiary)
+                                .padding(.horizontal, 10)
+                                .padding(.bottom, 2)
+                            ForEach(group.items) { conversation in
+                                conversationRow(conversation)
+                                    .onTapGesture { selectResult(conversation) }
+                                    .accessibilityAddTraits(workspace.selectedID == conversation.id ? [.isSelected, .isButton] : .isButton)
+                                    .contextMenu {
+                                        Button(conversation.isPinned ? "取消置顶" : "置顶", systemImage: conversation.isPinned ? "pin.slash" : "pin") {
+                                            workspace.togglePin(conversation.id)
+                                        }
+                                        Button("重命名", systemImage: "pencil") {
+                                            renameID = conversation.id
+                                            renameTitle = conversation.title
+                                        }
+                                        if workspace.titles.activeOwners.contains(conversation.id) {
+                                            Button("取消生成标题", systemImage: "stop") { workspace.titles.cancel(conversation.id) }
+                                        } else {
+                                            Button("生成标题", systemImage: "character.cursor.ibeam") { generateTitle(for: conversation.id) }
+                                                .disabled(workspace.isManagingBackup || workspace.isMutatingBranch
+                                                    || workspace.generationConversationID == conversation.id || conversation.messageCount == 0)
+                                        }
+                                        Divider()
+                                        Button("删除会话", systemImage: "trash", role: .destructive) { deleteID = conversation.id }
+                                    }
                             }
+                        }
                     }
-                } header: {
-                    Text(group.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
-                        .padding(.leading, 14)
                 }
-                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
             }
-            .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 32)
+            .scrollIndicators(.never)
             .focusable()
             .focusEffectDisabled()
             .onKeyPress(.upArrow) { moveSelection(-1) }
             .onKeyPress(.downArrow) { moveSelection(1) }
-            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay {
                 if displayedConversations.isEmpty {
                     if workspace.isSearching {
@@ -278,59 +354,104 @@ struct DesktopWorkspaceView: View {
                     }
                 }
             }
-            Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
+
+            // Bottom Dock Footer
+            Rectangle()
+                .fill(DesktopTheme.hairline)
+                .frame(height: 1)
+                .padding(.horizontal, 16)
             HStack(spacing: 12) {
                 SettingsLink {
-                    Label("设置", systemImage: "gearshape").frame(height: 30)
+                    HStack(spacing: 5) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 12))
+                        Text("设置")
+                            .font(.system(size: 12.5, weight: .medium))
+                    }
+                    .foregroundStyle(DesktopTheme.inkSecondary)
+                    .frame(height: 28)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
                 .help("设置 ⌘,")
-                Menu("工作台") {
+
+                Menu {
+                    Button("命令面板…", systemImage: "command") { commandPalettePresented = true }
+                    Divider()
                     Button("会话文件", systemImage: "folder") { filesPresented = true }
                         .disabled(workspace.selectedID == nil)
                     Button("任务工作台", systemImage: "checklist") { tasksPresented = true }
-                    Button("知识与偏好", systemImage: "brain") { knowledgePresented = true }
-                    Button("多模型协作", systemImage: "person.3") { collaborationsPresented = true }
-                        .disabled(workspace.selectedID == nil || workspace.selectedConversationUnavailable)
-                    Button("Recipe 自动流程", systemImage: "list.number") { recipesPresented = true }
-                    if workspace.scheduler != nil {
+                    if workspace.plugins.isCoreEnabled(.knowledge) {
+                        Button("知识与偏好", systemImage: "brain") { knowledgePresented = true }
+                    }
+                    if workspace.plugins.isCoreEnabled(.collaborations) {
+                        Button("多模型协作", systemImage: "person.3") { collaborationsPresented = true }
+                            .disabled(workspace.selectedID == nil || workspace.selectedConversationUnavailable)
+                    }
+                    if workspace.plugins.isCoreEnabled(.recipes) {
+                        Button("Recipe 自动流程", systemImage: "list.number") { recipesPresented = true }
+                    }
+                    if workspace.scheduler != nil && workspace.plugins.isCoreEnabled(.taskBoard) {
                         Button("任务看板", systemImage: "clock") { workspace.showsTaskBoard = true }
                     }
-                    Button("图片生成", systemImage: "photo.badge.plus") {
-                        if let owner = workspace.imageGeneration.isRunning ? workspace.imageGeneration.ownerID : workspace.selectedID {
-                            imageGenerationOwner = ImageGenerationOwner(id: owner)
+                    if workspace.plugins.isCoreEnabled(.imageGeneration) {
+                        Button("图片生成", systemImage: "photo.badge.plus") {
+                            if let owner = workspace.imageGeneration.isRunning ? workspace.imageGeneration.ownerID : workspace.selectedID {
+                                imageGenerationOwner = ImageGenerationOwner(id: owner)
+                            }
+                        }
+                        .disabled(workspace.selectedID == nil || workspace.selectedConversationUnavailable)
+                    }
+                    if !workspace.plugins.activeWorkspaceViews.isEmpty {
+                        Divider()
+                        ForEach(workspace.plugins.activeWorkspaceViews) { entry in
+                            Button(entry.title, systemImage: entry.symbol) {
+                                workspace.openPluginView(pluginID: entry.pluginID, viewID: entry.viewID)
+                            }
                         }
                     }
-                    .disabled(workspace.selectedID == nil || workspace.selectedConversationUnavailable)
-                    Button("联网搜索设置", systemImage: "globe") { searchSettingsPresented = true }
                     Divider()
+                    Button("联网搜索设置", systemImage: "globe") { searchSettingsPresented = true }
                     Button("备份与恢复", systemImage: "externaldrive") { backupPresented = true }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 11.5))
+                        Text("工作台")
+                            .font(.system(size: 12.5, weight: .medium))
+                    }
+                    .foregroundStyle(DesktopTheme.inkSecondary)
+                    .frame(height: 28)
                 }
-                .menuStyle(.borderlessButton).fixedSize()
-                .foregroundStyle(.secondary)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
                 Spacer()
+
                 Menu {
                     Button("导入会话…", systemImage: "square.and.arrow.down") { DesktopFileActions.importConversation(workspace) }
                         .disabled(workspace.isLoading)
                     Menu("导出当前会话", systemImage: "square.and.arrow.up") { exportActions }
                         .disabled(!workspace.hasSelectedConversation)
                 } label: {
-                    Image(systemName: "ellipsis.circle").frame(width: 30, height: 30)
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 13))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .frame(width: 28, height: 28)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("导入与导出")
             }
-            .font(.system(size: 13))
             .tint(DesktopTheme.inkSecondary)
-            .padding(.leading, 16)
-            .padding(.trailing, 12)
-            .frame(height: 52)
+            .padding(.horizontal, 18)
+            .frame(height: 46)
         }
-        .background(DesktopTheme.paperSide)
-        .overlay(alignment: .trailing) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1).ignoresSafeArea() }
+        .desktopGlass(cornerRadius: 20)
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .padding(.top, 12)
+        .padding(.bottom, 16)
     }
 
     private func moveSelection(_ step: Int) -> KeyPress.Result {
@@ -342,12 +463,54 @@ struct DesktopWorkspaceView: View {
         return .handled
     }
 
+    private var windowTitle: String {
+        switch workspace.activeSurface {
+        case .chat:
+            workspace.selectedConversationTitle
+        case .taskBoard:
+            "任务"
+        case .pluginView(let pluginID, let viewID):
+            workspace.plugins.activeWorkspaceViews.first(where: { $0.pluginID == pluginID && $0.viewID == viewID })?.title ?? "插件视图"
+        }
+    }
+
+    private var pluginWorkspaceRows: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(workspace.plugins.activeWorkspaceViews) { entry in
+                let selected = workspace.activeSurface == .pluginView(pluginID: entry.pluginID, viewID: entry.viewID)
+                let craftGlyph: DesktopCraftGlyph = entry.viewID.contains("bot") ? .botPlane : .calendar
+                let craftTone: DesktopCraftTone = entry.viewID.contains("bot") ? .jade : .terracotta
+                DesktopSelectableRow(selected: selected, action: {
+                    workspace.openPluginView(pluginID: entry.pluginID, viewID: entry.viewID)
+                }) {
+                    HStack(spacing: 10) {
+                        DesktopCraftIcon(glyph: craftGlyph, tone: craftTone, size: 22)
+                        Text(entry.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(DesktopTheme.ink)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        if entry.badgeCount > 0 {
+                            Text("今日 \(entry.badgeCount)")
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .foregroundStyle(DesktopTheme.accentInk)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 1.5)
+                                .background(DesktopTheme.honeySoft, in: Capsule())
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+    }
+
     /// 「任务」: opens the task board in the main area; the badge counts items waiting for the user.
     private var tasksRow: some View {
         DesktopSelectableRow(selected: workspace.showsTaskBoard, action: { workspace.showsTaskBoard = true }) {
-            HStack(spacing: 8) {
-                Image(systemName: "clock").font(.system(size: 13)).foregroundStyle(DesktopTheme.accent).frame(width: 18)
-                    .accessibilityHidden(true)
+            HStack(spacing: 10) {
+                DesktopCraftIcon(glyph: .clockOrbit, tone: .amber, size: 22)
                 Text("任务").font(.system(size: 13, weight: .medium)).foregroundStyle(DesktopTheme.ink)
                 Spacer(minLength: 0)
                 if workspace.boardNeedsYouCount > 0 {
@@ -358,8 +521,8 @@ struct DesktopWorkspaceView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
         .task {
             while !Task.isCancelled {
                 workspace.refreshBoardBadge()
@@ -402,7 +565,7 @@ struct DesktopWorkspaceView: View {
     }
 
     private func conversationRow(_ conversation: DesktopConversationSearchResult) -> some View {
-        let selected = workspace.selectedID == conversation.id
+        let selected = workspace.activeSurface == .chat && workspace.selectedID == conversation.id
         let generating = workspace.generationConversationID == conversation.id
         let searching = !workspace.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return HStack(spacing: 8) {
@@ -433,8 +596,8 @@ struct DesktopWorkspaceView: View {
                     .fixedSize()
             }
         }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 32)
+        .padding(.horizontal, 10)
+        .frame(minHeight: 34)
         .padding(.vertical, searching ? 6 : 0)
         .background {
             if selected {
@@ -467,6 +630,17 @@ struct DesktopWorkspaceView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button {
+                withAnimation(.smooth(duration: 0.28)) {
+                    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                }
+            } label: {
+                Image(systemName: "sidebar.left")
+            }
+            .help(columnVisibility == .detailOnly ? "显示左侧面板" : "隐藏左侧面板")
+            .accessibilityLabel("左侧面板")
+        }
         ToolbarItemGroup(placement: .primaryAction) {
             Menu {
                 Picker("服务商与模型", selection: Binding(
@@ -491,12 +665,15 @@ struct DesktopWorkspaceView: View {
             .help(workspace.settings.selectedModelID == nil ? "在设置中添加服务商与模型"
                 : workspace.settings.selectedProvider.map { "\($0.name) · \($0.modelID)" } ?? "在设置中添加服务商与模型")
             .accessibilityLabel("选择服务商与模型")
-            if !workspace.showsTaskBoard {
+            Button { commandPalettePresented = true } label: { Image(systemName: "command") }
+                .help("命令面板 ⌘K")
+                .accessibilityLabel("命令面板")
+            if workspace.activeSurface == .chat {
             Button { withAnimation(.smooth(duration: 0.3)) { inspectorVisible.toggle() } } label: { Image(systemName: "sidebar.right") }
                 .help(inspectorVisible ? "隐藏右侧面板" : "显示右侧面板（窗口足够宽时常驻）")
                 .accessibilityLabel("右侧面板")
             }
-            if !inspectorDocked, !workspace.showsTaskBoard {
+            if !inspectorDocked, workspace.activeSurface == .chat {
             Button { insightsPresented.toggle() } label: { Image(systemName: "text.bubble") }
                 .disabled(!workspace.hasSelectedConversation || workspace.isLoading)
                 .help("上下文与回顾")
@@ -530,6 +707,20 @@ struct DesktopWorkspaceView: View {
             }
             .help("工具任务与待确认操作")
             .accessibilityLabel("任务工作台")
+            if !workspace.plugins.inspectorSnapshots.isEmpty {
+                Button { pluginInspectorPresented.toggle() } label: {
+                    Image(systemName: workspace.plugins.inspectorSnapshots.first?.symbol ?? "puzzlepiece.extension")
+                }
+                .help("插件右侧栏卡片")
+                .accessibilityLabel("插件右侧栏卡片")
+                .popover(isPresented: $pluginInspectorPresented, arrowEdge: .bottom) {
+                    DesktopPluginInspectorPopoverView(
+                        workspace: workspace,
+                        onFocusComposer: { composerFocusRequest += 1 },
+                        onDismiss: { pluginInspectorPresented = false }
+                    )
+                }
+            }
             }
         }
     }
@@ -544,8 +735,8 @@ struct DesktopWorkspaceView: View {
     private var welcome: some View {
         VStack(spacing: 0) {
             Spacer()
-            DesktopAmberMark(size: 48, taps: $markTaps, breathes: true)
-                .padding(.bottom, 24)
+            DesktopAmberMark(size: 52, taps: $markTaps, breathes: true)
+                .padding(.bottom, 22)
             Text(Self.greeting)
                 .font(DesktopTheme.serif(size: 32, weight: .medium))
                 .foregroundStyle(DesktopTheme.ink)
@@ -555,11 +746,11 @@ struct DesktopWorkspaceView: View {
                 .foregroundStyle(DesktopTheme.inkTertiary)
                 .multilineTextAlignment(.center)
                 .padding(.bottom, 32)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 24), GridItem(.flexible(), spacing: 24)], spacing: 0) {
-                welcomeSuggestion("梳理一个想法", prompt: "帮我梳理一个想法，先从目标与关键问题开始。", symbol: "lightbulb", divider: true)
-                welcomeSuggestion("分析一份资料", prompt: "帮我分析一份资料，提炼重点、依据与待确认的问题。", symbol: "doc.text.magnifyingglass", divider: true)
-                welcomeSuggestion("整理一段文字", prompt: "帮我整理一段文字，让逻辑更清晰、表达更准确。", symbol: "text.alignleft", divider: false)
-                welcomeSuggestion("查一查最新进展", prompt: "帮我联网查一查这个话题的最新进展，并给出来源。", symbol: "globe", divider: false)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
+                welcomeSuggestion("梳理一个想法", subtitle: "从核心目标、边界条件与执行步骤拆解", prompt: "帮我梳理一个想法，先从目标与关键问题开始。", glyph: .ideaBulb, tone: .amber)
+                welcomeSuggestion("分析一份资料", subtitle: "提炼核心结论、关键依据与待确认点", prompt: "帮我分析一份资料，提炼重点、依据与待确认的问题。", glyph: .docLens, tone: .terracotta)
+                welcomeSuggestion("整理一段文字", subtitle: "润色结构与语气，消除冗余表达", prompt: "帮我整理一段文字，让逻辑更清晰、表达更准确。", glyph: .editorialPen, tone: .jade)
+                welcomeSuggestion("查一查最新进展", subtitle: "联网检索权威来源并汇总对比结论", prompt: "帮我联网查一查这个话题的最新进展，并给出来源。", glyph: .meridianGlobe, tone: .ocean)
             }
             .frame(maxWidth: DesktopTheme.contentWidth)
             if workspace.settings.selectedProvider?.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
@@ -585,22 +776,32 @@ struct DesktopWorkspaceView: View {
         }
     }
 
-    private func welcomeSuggestion(_ title: String, prompt: String, symbol: String, divider: Bool) -> some View {
+    private func welcomeSuggestion(_ title: String, subtitle: String, prompt: String, glyph: DesktopCraftGlyph, tone: DesktopCraftTone) -> some View {
         Button {
             workspace.draft = prompt
             composerFocusRequest += 1
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: symbol).font(.system(size: 14)).foregroundStyle(DesktopTheme.inkTertiary).frame(width: 18)
-                Text(title).font(.system(size: 14)).foregroundStyle(DesktopTheme.inkSecondary).lineLimit(1)
+            HStack(alignment: .center, spacing: 14) {
+                DesktopCraftIcon(glyph: glyph, tone: tone, size: 36)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 0)
+                Image(systemName: "arrow.up.left")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
             }
-            .padding(.horizontal, 4)
-            .frame(height: 48)
-            .overlay(alignment: .bottom) {
-                if divider { Rectangle().fill(DesktopTheme.hairline).frame(height: 1) }
-            }
-            .contentShape(Rectangle())
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .desktopGlass(cornerRadius: 16)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(DesktopQuietButtonStyle())
         .disabled(workspace.isLoading || workspace.isManagingBackup)

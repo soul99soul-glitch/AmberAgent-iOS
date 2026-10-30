@@ -74,18 +74,22 @@ struct DesktopBoardView: View {
     private func columnView(_ column: AmberControl.BoardItem.Column, wide: Bool) -> some View {
         let cards = items.filter { $0.column == column }
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(Self.columnDotColor(column))
+                    .frame(width: 6.5, height: 6.5)
                 Text(Self.title(column)).font(.system(size: 13, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
-                Text("\(cards.count)").font(.system(size: 12, weight: .medium)).foregroundStyle(DesktopTheme.inkTertiary)
-                    .padding(.horizontal, 6).padding(.vertical, 1)
-                    .background(DesktopTheme.hover, in: Capsule())
+                Text("\(cards.count)").font(.system(size: 11, design: .monospaced).weight(.semibold)).foregroundStyle(DesktopTheme.inkSecondary)
+                    .padding(.horizontal, 6.5).padding(.vertical, 1.5)
+                    .background(DesktopTheme.paperDeep, in: Capsule())
             }
             .padding(.bottom, 2)
             if cards.isEmpty {
                 Text(Self.empty(column)).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
-                    .background(DesktopTheme.paperDeep.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+                    .background(DesktopTheme.paperDeep.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.hairline))
             }
             ForEach(cards) { card($0) }
         }
@@ -160,16 +164,25 @@ struct DesktopBoardView: View {
         let conversation = item.conversationId.flatMap(UUID.init(uuidString:))
         let task = item.scheduleId.flatMap(UUID.init(uuidString:))
         if conversation != nil || (item.kind == .schedule && task != nil) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if let conversation, workspace.summaries.contains(where: { $0.id == conversation }) {
-                    Button("打开会话") { onOpenConversation(conversation) }.buttonStyle(.link).font(.system(size: 12))
+                    Button("打开会话") { onOpenConversation(conversation) }.buttonStyle(.desktopActionPill)
                 }
                 if item.kind == .schedule, let task {
-                    Button("立即运行") { let error = scheduler.runNow(task); refresh(); message = error }.buttonStyle(.link).font(.system(size: 12))
-                    Button("编辑") { editingTaskID = task; editingTasks = true }.buttonStyle(.link).font(.system(size: 12))
+                    Button("立即运行") { let error = scheduler.runNow(task); refresh(); message = error }.buttonStyle(.desktopTintedPill)
+                    Button("编辑") { editingTaskID = task; editingTasks = true }.buttonStyle(.desktopActionPill)
                 }
             }
             .padding(.leading, 26)
+        }
+    }
+
+    private static func columnDotColor(_ column: AmberControl.BoardItem.Column) -> Color {
+        switch column {
+        case .needsYou: DesktopTheme.accent
+        case .running: DesktopTheme.honeyEdge
+        case .scheduled: DesktopTheme.inkTertiary
+        case .done: DesktopTheme.success
         }
     }
 

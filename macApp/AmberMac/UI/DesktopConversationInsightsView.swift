@@ -16,37 +16,44 @@ struct DesktopConversationInsightsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let isEmpty = conversation?.messages.isEmpty ?? true
+        return VStack(alignment: .leading, spacing: embedded ? 10 : 16) {
             if !embedded { Text("上下文与回顾").font(DesktopTheme.serif(size: 18, weight: .semibold)) }
             if let conversation {
                 let prepared = workspace.insights.prepare(messages: conversation.messages, conversationID: conversation.id)
                 let tokens = DesktopConversationInsights.estimatedTokens(prepared,
                     extraText: workspace.settings.systemPrompt + workspace.draft
                         + workspace.pendingAttachments.map(\.text).joined())
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("下次请求约 \(tokens.formatted()) tokens").font(.callout.weight(.medium))
-                    Text("包含系统提示与当前草稿，仅为估算。")
-                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-                    if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens {
-                        ProgressView(value: Double(min(tokens, limit)), total: Double(limit))
-                            .tint(tokens >= limit ? DesktopTheme.danger : DesktopTheme.accent)
-                        Text("模型窗口 \(limit.formatted()) tokens\(tokens >= limit ? "，建议先压缩上下文" : "")")
-                            .font(.system(size: 12))
-                            .foregroundStyle(tokens >= limit ? DesktopTheme.danger : DesktopTheme.inkTertiary)
-                    }
-                    if workspace.insights.value(.compact, for: conversation) != nil {
-                        Label("已使用较早对话的摘要，原消息仍保留", systemImage: "checkmark.circle")
+                if !embedded {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("下次请求约 \(tokens.formatted()) tokens").font(.callout.weight(.medium))
+                        Text("包含系统提示与当前草稿，仅为估算。")
                             .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-                        Button("恢复完整上下文") { workspace.insights.clearCompaction(conversation.id) }
-                            .font(.system(size: 12))
-                            .disabled(actionsDisabled)
-                            .help("后续请求重新使用完整消息，保留原有会话回顾和建议")
+                        if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens {
+                            ProgressView(value: Double(min(tokens, limit)), total: Double(limit))
+                                .tint(tokens >= limit ? DesktopTheme.danger : DesktopTheme.accent)
+                            Text("模型窗口 \(limit.formatted()) tokens\(tokens >= limit ? "，建议先压缩上下文" : "")")
+                                .font(.system(size: 12))
+                                .foregroundStyle(tokens >= limit ? DesktopTheme.danger : DesktopTheme.inkTertiary)
+                        }
+                        if workspace.insights.value(.compact, for: conversation) != nil {
+                            Label("已使用较早对话的摘要，原消息仍保留", systemImage: "checkmark.circle")
+                                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                            Button("恢复完整上下文") { workspace.insights.clearCompaction(conversation.id) }
+                                .font(.system(size: 12))
+                                .disabled(actionsDisabled)
+                                .help("后续请求重新使用完整消息，保留原有会话回顾和建议")
+                        }
                     }
+                } else if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens {
+                    DesktopContextMeterBar(tokens: tokens, limit: limit)
+                } else {
+                    DesktopContextMeterBar(tokens: tokens)
                 }
                 if active {
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("正在处理会话辅助内容…").font(.system(size: 13))
+                        Text("正在处理会话辅助内容…").font(.system(size: 12.5))
                         Spacer()
                         Button("停止") { workspace.insights.cancel(conversation.id) }
                     }
@@ -54,19 +61,29 @@ struct DesktopConversationInsightsView: View {
                 if let error = workspace.insights.errors[conversation.id] {
                     VStack(alignment: .leading, spacing: 7) {
                         Label(error, systemImage: "exclamationmark.circle")
-                            .font(.system(size: 13)).foregroundStyle(DesktopTheme.accent)
+                            .font(.system(size: 12.5)).foregroundStyle(DesktopTheme.accent)
                             .textSelection(.enabled)
                         Button("重新读取记录") { workspace.insights.retryLoad(conversation.id) }
                             .disabled(active)
                             .help("重新读取本机会话辅助记录；生成失败可使用对应的生成按钮重试")
                     }
                 }
-                let sections = VStack(alignment: .leading, spacing: 20) {
-                    insightSection(.recap, conversation: conversation)
-                    Divider()
-                    insightSection(.suggestions, conversation: conversation)
-                    Divider()
-                    insightSection(.compact, conversation: conversation)
+                let sections = VStack(alignment: .leading, spacing: embedded ? 10 : 18) {
+                    if embedded {
+                        if !isEmpty {
+                            embeddedQuickActions(conversation: conversation)
+                        } else {
+                            Text("发送消息后可一键生成回顾、追问建议或压缩上下文。")
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesktopTheme.inkTertiary)
+                        }
+                    } else {
+                        insightSection(.recap, conversation: conversation)
+                        Divider()
+                        insightSection(.suggestions, conversation: conversation)
+                        Divider()
+                        insightSection(.compact, conversation: conversation)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if embedded { sections } else { ScrollView { sections }.frame(maxHeight: 400) }
@@ -80,6 +97,120 @@ struct DesktopConversationInsightsView: View {
     }
 
     @ViewBuilder
+    private func embeddedQuickActions(conversation: DesktopConversation) -> some View {
+        let recapValue = workspace.insights.value(.recap, for: conversation)
+        let suggestionsValue = workspace.insights.value(.suggestions, for: conversation)
+        let compactValue = workspace.insights.value(.compact, for: conversation)
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Button {
+                    workspace.requestInsight(.recap)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 11))
+                        Text(recapValue == nil ? "回顾" : "已回顾")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.desktopActionPill)
+                .disabled(actionsDisabled)
+                .help("提炼当前对话的关键结论与待办")
+
+                Button {
+                    workspace.requestInsight(.suggestions)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lightbulb")
+                            .font(.system(size: 11))
+                        Text(suggestionsValue == nil ? "追问" : "换一批")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.desktopActionPill)
+                .disabled(actionsDisabled)
+                .help("生成可点击填入输入框的下一步追问")
+
+                Button {
+                    workspace.requestInsight(.compact)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .font(.system(size: 10.5))
+                        Text(compactValue == nil ? "压缩" : "已压缩")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.desktopActionPill)
+                .disabled(actionsDisabled)
+                .help("将较早对话压缩为摘要以节省上下文预算，不删除历史消息")
+            }
+
+            if recapValue != nil {
+                insightResultBox(.recap, value: recapValue!)
+            }
+            if suggestionsValue != nil {
+                insightResultBox(.suggestions, value: suggestionsValue!)
+            }
+            if compactValue != nil {
+                insightResultBox(.compact, value: compactValue!)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func insightResultBox(_ kind: DesktopInsightKind, value: DesktopInsightValue) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(kind.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(DesktopTheme.inkSecondary)
+                Spacer()
+                Text(value.createdAt, format: .dateTime.hour().minute())
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+            }
+            if kind == .suggestions {
+                ForEach(Array(value.suggestions.enumerated()), id: \.offset) { _, suggestion in
+                    Button {
+                        workspace.draft = suggestion
+                        if !embedded { dismiss() }
+                    } label: {
+                        HStack(alignment: .top, spacing: 6) {
+                            Text(suggestion)
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesktopTheme.ink)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.down.left")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(DesktopTheme.accent)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DesktopTheme.hairline))
+                    }
+                    .buttonStyle(DesktopQuietButtonStyle())
+                    .help("填入输入框，可编辑后发送")
+                }
+            } else {
+                Text(value.text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesktopTheme.inkSecondary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(DesktopTheme.paperDeep.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
     private func insightSection(_ kind: DesktopInsightKind, conversation: DesktopConversation) -> some View {
         let value = workspace.insights.value(kind, for: conversation)
         VStack(alignment: .leading, spacing: 10) {
@@ -87,6 +218,7 @@ struct DesktopConversationInsightsView: View {
                 Text(kind.title).font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button(value == nil ? "生成" : "重新生成") { workspace.requestInsight(kind) }
+                    .buttonStyle(.desktopActionPill)
                     .disabled(actionsDisabled)
             }
             if kind == .compact {

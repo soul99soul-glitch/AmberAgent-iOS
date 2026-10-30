@@ -23,6 +23,7 @@ extension DesktopConversationExport {
                     .replacingOccurrences(of: "\n", with: "%0A").replacingOccurrences(of: "\r", with: "%0D")
                 sections.append("![\(name)](<\(url)>)")
             }
+            if !message.tools.isEmpty { sections.append(message.tools.map { "> " + DesktopToolActivity($0).summary }.joined(separator: "\n")) }
             if message.unsupportedPartCount > 0 { sections.append("> 另有 \(message.unsupportedPartCount) 项未渲染内容；请使用完整会话 JSON 保留其原始数据。") }
             if message.state == .cancelled { sections.append("> 已停止；以上为已收到内容。") }
             if message.state == .failed { sections.append("> 生成未完成。") }
@@ -106,6 +107,10 @@ extension DesktopConversationExport {
             }
             appendBlocks(DesktopMarkdownParser.parse(message.text), to: result)
             appendImages(message.images, to: result)
+            if !message.tools.isEmpty {
+                result.append(NSAttributedString(string: message.tools.map { DesktopToolActivity($0).summary }.joined(separator: "\n") + "\n",
+                    attributes: attributes(size: 10, color: 0.4)))
+            }
             if message.unsupportedPartCount > 0 {
                 result.append(NSAttributedString(string: "另有 \(message.unsupportedPartCount) 项未渲染内容；原始数据请见完整会话 JSON。\n", attributes: attributes(size: 10, color: 0.4)))
             }

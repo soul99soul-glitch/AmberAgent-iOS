@@ -13,6 +13,7 @@ struct DesktopSettingsView: View {
     private let speech: DesktopSpeechPlayer?
     private let backgroundMode: DesktopBackgroundMode?
     private let gateway: DesktopGateway?
+    private let plugins: DesktopPluginStore?
     @State private var speechPreviewID = UUID()
     @State private var login: DesktopCodexLogin
     @State private var catalogRequest = DesktopCatalogRequest()
@@ -61,7 +62,8 @@ struct DesktopSettingsView: View {
     init(settings: DesktopSettings, catalog: any DesktopModelCatalog, oauth: any DesktopCodexAuthorizer,
         onOpenBackup: (() -> Void)? = nil, mcp: DesktopMCPManager? = nil, syncWorkspace: DesktopWorkspace? = nil,
         notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil,
-        backgroundMode: DesktopBackgroundMode? = nil, gateway: DesktopGateway? = nil) {
+        backgroundMode: DesktopBackgroundMode? = nil, gateway: DesktopGateway? = nil,
+        plugins: DesktopPluginStore? = nil, initialTab: Int = 0) {
         self.settings = settings
         self.catalog = catalog
         self.onOpenBackup = onOpenBackup
@@ -72,6 +74,9 @@ struct DesktopSettingsView: View {
         self.speech = speech
         self.backgroundMode = backgroundMode
         self.gateway = gateway
+        self.plugins = plugins ?? syncWorkspace?.plugins
+        _tab = State(initialValue: initialTab)
+        _previousTab = State(initialValue: initialTab)
         _login = State(initialValue: DesktopCodexLogin(authorizer: oauth))
     }
     /// Changes whenever a new preset draft becomes fetchable (key typed, or keyless local server).
@@ -158,7 +163,7 @@ struct DesktopSettingsView: View {
             HStack(spacing: 24) {
                 Text("设置").font(DesktopTheme.serif(size: 22, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
                 Spacer()
-                DesktopSegmented(options: [(0, "服务商"), (1, "通用")] + (mcp != nil ? [(2, "MCP")] : []) + (syncWorkspace != nil ? [(3, "同步")] : []) + (gateway != nil ? [(4, "Mac Gateway")] : []),
+                DesktopSegmented(options: [(0, "服务商"), (1, "通用")] + (mcp != nil ? [(2, "MCP")] : []) + (plugins != nil ? [(5, "插件")] : []) + (syncWorkspace != nil ? [(3, "同步")] : []) + (gateway != nil ? [(4, "Mac Gateway")] : []),
                     selection: Binding(get: { tab }, set: { request(.tab($0)) }))
                     .accessibilityLabel("设置分类")
             }
@@ -194,6 +199,7 @@ struct DesktopSettingsView: View {
                 case 2: if let mcp { DesktopMCPSettingsView(manager: mcp).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 case 3: if let syncWorkspace { DesktopWebDAVSettingsView(workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 case 4: if let gateway { DesktopGatewaySettingsView(gateway: gateway).modifier(DesktopTabTransition(forward: tab > previousTab)) }
+                case 5: if let plugins { DesktopPluginsSettingsView(plugins: plugins, workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 default: providers.modifier(DesktopTabTransition(forward: tab > previousTab))
                 }
             }
@@ -500,6 +506,9 @@ struct DesktopSettingsView: View {
                 Toggle("思考时自动展开", isOn: $settings.autoExpandThinking)
                 Text("模型思考时展开思考过程，开始作答后自动收起。").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Toggle("已完成的思考默认展开", isOn: $settings.reasoningExpandedByDefault)
+                Toggle("在对话中隐藏工具调用", isOn: $settings.hidesToolCalls)
+                Text("只影响显示；工具调用和结果仍保存在会话里，导出完整会话时会保留。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Picker("发送消息", selection: $settings.sendShortcut) {
                     ForEach(DesktopSendShortcut.allCases) { Text($0.title).tag($0) }
                 }
@@ -579,6 +588,23 @@ struct DesktopSettingsView: View {
                         .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 }.onAppear { backgroundMode.refreshLoginItem() }
             }
+            if let syncWorkspace {
+                Section("工作区") {
+                    LabeledContent("默认工作区") {
+                        HStack {
+                            Text(syncWorkspace.defaultWorkspaceFolder.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "未设置")
+                                .lineLimit(1).truncationMode(.middle)
+                                .foregroundStyle(syncWorkspace.defaultWorkspaceFolder == nil ? DesktopTheme.inkTertiary : DesktopTheme.ink)
+                            Button("选择…") { chooseDefaultWorkspace(syncWorkspace) }
+                            if syncWorkspace.defaultWorkspaceFolder != nil {
+                                Button("清除") { syncWorkspace.setDefaultWorkspaceFolder(nil) }
+                            }
+                        }
+                    }
+                    Text("新会话第一次保存文件时，会在这里建一个以会话标题命名的子文件夹，可在访达里直接查看。已有会话的文件不会移动；在会话工作区里也可以改用任意已有文件夹。")
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                }
+            }
             Section("数据与凭证") {
                 Text("会话保存在这台 Mac。API Key 和登录凭证保存在系统钥匙串，不包含在会话导出文件里。")
                     .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
@@ -586,6 +612,16 @@ struct DesktopSettingsView: View {
                 if let onOpenStorage { Button("存储用量…", action: onOpenStorage) }
             }
         }.formStyle(.grouped).scrollContentBackground(.hidden)
+    }
+
+    private func chooseDefaultWorkspace(_ workspace: DesktopWorkspace) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "选择"
+        panel.message = "选择默认工作区。每个新会话会在其中使用一个子文件夹。"
+        if panel.runModal() == .OK, let url = panel.url { workspace.setDefaultWorkspaceFolder(url) }
     }
 
     private func statusText(_ message: String, failed: Bool) -> some View {

@@ -130,6 +130,7 @@ import ServiceManagement
         let owner = workspace.selectedID!
         let shots: [(String, AnyView, CGFloat, CGFloat)] = [
             ("panel-settings", AnyView(PreviewSettingsView(workspace: workspace)), 880, 700),
+            ("panel-plugins", AnyView(DesktopPluginsSettingsView(plugins: workspace.plugins, workspace: workspace).frame(width: 880, height: 640)), 880, 640),
             ("panel-knowledge", AnyView(DesktopKnowledgeView(store: workspace.knowledge, conversationIDs: [owner], onOpenSource: { _, _ in })), 860, 680),
             ("panel-tasks", AnyView(DesktopAgentTasksView(workspace: workspace)), 860, 640),
             ("panel-collaboration", AnyView(DesktopCollaborationsView(workspace: workspace, onOpenSavedResult: { _, _ in })), 860, 760),
@@ -145,6 +146,19 @@ import ServiceManagement
         ]
         for (name, view, w, h) in shots {
             for dark in [false, true] { try await capture("\(name)-\(dark ? "dark" : "light")", view.background(DesktopTheme.paper), w, h, dark) }
+        }
+        let pluginWS = DesktopWorkspace.uiFixture()
+        await pluginWS.agentTasks.waitUntilLoaded()
+        pluginWS.openPluginView(pluginID: "feishu_calendar", viewID: "calendar_board")
+        for dark in [false, true] {
+            try await capture("plugin-feishu-board-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: pluginWS, searchRequest: 0), 1440, 900, dark)
+        }
+        pluginWS.openChatSurface()
+        pluginWS.draft = "/feishu"
+        for dark in [false, true] {
+            try await capture("plugin-slash-composer-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: pluginWS, searchRequest: 0), 1440, 900, dark)
+            try await capture("plugin-command-palette-\(dark ? "dark" : "light")",
+                DesktopCommandPaletteView(workspace: pluginWS, onDismiss: {}).background(DesktopTheme.paper), 540, 520, dark)
         }
     }
 

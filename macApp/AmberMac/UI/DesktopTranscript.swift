@@ -59,7 +59,7 @@ struct DesktopTranscript: View {
             if findPresented { findBar }
             ScrollView {
                 DesktopTranscriptStack(eager: windowed) {
-                    ForEach(Array(conversation.messages.enumerated()), id: \.element.rowIdentity) { index, message in
+                    ForEach(visibleRows, id: \.element.rowIdentity) { index, message in
                         let following = conversation.messages.count - index - 1
                         let highlighted = findPresented && find.currentMessageID == message.id
                         let layout = rowLayout(message)
@@ -277,7 +277,16 @@ struct DesktopTranscript: View {
         let settings = workspace.settings
         return .init(message: message, width: layoutWidth, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize,
             reasoningExpanded: reasoningExpansion[message.id], autoExpandThinking: settings.autoExpandThinking,
-            reasoningExpandedByDefault: settings.reasoningExpandedByDefault)
+            reasoningExpandedByDefault: settings.reasoningExpandedByDefault, hidesToolCalls: settings.hidesToolCalls,
+            expandedTools: message.tools.filter { reasoningExpansion[tool: message.id, $0.id] }.map(\.id))
+    }
+
+    /// Rows keep their index in `conversation.messages`; with tool calls hidden, a finished turn that only called
+    /// tools has nothing left to show and is skipped.
+    private var visibleRows: [(offset: Int, element: DesktopMessage)] {
+        let rows = Array(conversation.messages.enumerated())
+        guard workspace.settings.hidesToolCalls else { return rows }
+        return rows.filter { !$0.element.isToolOnly || $0.element.state == .streaming }
     }
 
     /// Re-picks the live rows only once the viewport nears the edge of the current window, so scrolling within it
@@ -396,17 +405,36 @@ private struct DesktopMessageRow: View, Equatable {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             if message.role != .user {
-                HStack(spacing: 8) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [DesktopTheme.accent, DesktopTheme.honeyEdge],
+                                center: .topLeading,
+                                startRadius: 0,
+                                endRadius: 8
+                            )
+                        )
+                        .frame(width: 7, height: 7)
+                        .accessibilityHidden(true)
                     Text(roleTitle)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.ink)
                         .lineLimit(1)
                         .help(roleTitle)
                     if message.state == .streaming {
-                        DesktopPulse()
-                        Text("正在生成").font(.system(size: 12)).foregroundStyle(DesktopTheme.accent)
+                        HStack(spacing: 5) {
+                            DesktopPulse()
+                            Text("正在生成")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(DesktopTheme.inkSecondary)
+                                .modifier(DesktopSoftShimmer(active: true))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(DesktopTheme.paperDeep, in: Capsule())
                     }
                     Spacer()
                     actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
@@ -423,16 +451,16 @@ private struct DesktopMessageRow: View, Equatable {
             }
             if message.role == .user, !message.text.isEmpty {
                 HStack(alignment: .bottom, spacing: 8) {
-                    Spacer(minLength: 120)
+                    Spacer(minLength: 100)
                     actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
                     Text(message.text)
-                        .font(settings.messageFontFamily.swiftUIFont(size: settings.messageFontSize + 1))
+                        .font(settings.messageFontFamily.swiftUIFont(size: settings.messageFontSize + 0.5))
                         .foregroundStyle(DesktopTheme.ink)
-                        .lineSpacing(6)
+                        .lineSpacing(5)
                         .textSelection(.enabled)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(highlighted ? DesktopTheme.honey : DesktopTheme.hover, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+                        .desktopGlass(cornerRadius: 18, tinted: true, highlighted: highlighted)
                         .frame(maxWidth: 520, alignment: .trailing)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -440,8 +468,22 @@ private struct DesktopMessageRow: View, Equatable {
                 DesktopMarkdown(text: message.text, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize,
                     streaming: message.state == .streaming)
                     .environment(\.desktopCodePinning, codePinning)
-            } else if message.state == .streaming {
-                Text("正在等待回复…").font(.system(size: 14)).foregroundStyle(DesktopTheme.inkTertiary)
+            }
+            if !message.tools.isEmpty, !settings.hidesToolCalls {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(message.tools) { tool in
+                        DesktopToolCallCard(tool: tool, expanded: Binding(
+                            get: { reasoningExpansion[tool: message.id, tool.id] },
+                            set: { reasoningExpansion[tool: message.id, tool.id] = $0 }))
+                    }
+                }
+            }
+            if message.text.isEmpty, message.state == .streaming, message.role != .user,
+               message.tools.isEmpty || settings.hidesToolCalls {
+                Text(message.tools.isEmpty ? "正在等待回复…" : "正在使用工具…")
+                    .font(.system(size: 14))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .modifier(DesktopSoftShimmer(active: true))
             }
             if !message.images.isEmpty {
                 ForEach(Array(message.images.enumerated()), id: \.offset) { _, image in
@@ -478,6 +520,7 @@ private struct DesktopMessageRow: View, Equatable {
             }
             if message.state == .cancelled || message.state == .failed {
                 let hasContent = !message.text.isEmpty || !message.reasoning.isEmpty || !message.images.isEmpty || message.unsupportedPartCount > 0
+                    || !message.tools.isEmpty
                 Label(message.state == .cancelled ? (hasContent ? "已停止，已保留生成内容" : "已停止，可重新生成") : "生成未完成，可重试", systemImage: message.state == .cancelled ? "stop.circle" : "exclamationmark.circle")
                     .font(.system(size: 12))
                     .foregroundStyle(DesktopTheme.inkTertiary)
@@ -565,12 +608,17 @@ private struct DesktopTranscriptStack<Content: View>: View {
     let eager: Bool
     @ViewBuilder let content: Content
     var body: some View {
-        if eager { VStack(alignment: .leading, spacing: 24) { content } }
-        else { LazyVStack(alignment: .leading, spacing: 24) { content } }
+        if eager { VStack(alignment: .leading, spacing: 32) { content } }
+        else { LazyVStack(alignment: .leading, spacing: 32) { content } }
     }
 }
 
 extension DesktopMessage {
+    /// Only tool calls: nothing else would render once tool cards are hidden.
+    var isToolOnly: Bool {
+        !tools.isEmpty && text.isEmpty && reasoning.isEmpty && images.isEmpty && unsupportedPartCount == 0
+    }
+
     /// A regenerated reply is a new message ID but the same slot (same variant group): keep its row, so the
     /// version switcher and surrounding layout never get torn down and re-inserted mid-stream.
     var rowIdentity: UUID { variantIDs.first ?? id }
@@ -579,9 +627,15 @@ extension DesktopMessage {
 /// Per-message thinking-card choice (nil = follow settings), kept outside the row so placeholders don't reset it.
 @MainActor @Observable final class DesktopReasoningExpansion {
     private var values: [UUID: Bool] = [:]
+    private var tools: Set<String> = []
     subscript(id: UUID) -> Bool? {
         get { values[id] }
         set { values[id] = newValue }
+    }
+    /// Tool cards start folded; only opened ones are remembered.
+    subscript(tool messageID: UUID, toolID: String) -> Bool {
+        get { tools.contains("\(messageID)/\(toolID)") }
+        set { if newValue { tools.insert("\(messageID)/\(toolID)") } else { tools.remove("\(messageID)/\(toolID)") } }
     }
 }
 
@@ -596,6 +650,8 @@ extension DesktopMessage {
         let reasoningExpanded: Bool?
         let autoExpandThinking: Bool
         let reasoningExpandedByDefault: Bool
+        let hidesToolCalls: Bool
+        let expandedTools: [String]
     }
 
     struct Measurement: Equatable {

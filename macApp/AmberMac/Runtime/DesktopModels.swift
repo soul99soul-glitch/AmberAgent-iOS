@@ -126,6 +126,16 @@ struct DesktopMessageImage: Codable, Equatable, Sendable {
     let name: String?
 }
 
+/// Display projection of one tool call; the canonical part stays in `canonicalJSON`.
+struct DesktopToolCall: Codable, Equatable, Identifiable, Sendable {
+    enum Status: String, Codable, Sendable { case running, pending, complete, denied }
+    let id: String
+    let name: String
+    var input = ""
+    var output = ""
+    var status: Status = .complete
+}
+
 struct DesktopMessage: Codable, Equatable, Identifiable, Sendable {
     var id = UUID()
     var role: DesktopMessageRole
@@ -139,6 +149,7 @@ struct DesktopMessage: Codable, Equatable, Identifiable, Sendable {
     var editableText: String?
     var estimatedTokens: Int?
     var images: [DesktopMessageImage] = []
+    var tools: [DesktopToolCall] = []
 
     var variantIndex: Int { variantIDs.firstIndex(of: id) ?? 0 }
     var variantCount: Int { max(1, variantIDs.count) }
@@ -148,7 +159,7 @@ struct DesktopMessage: Codable, Equatable, Identifiable, Sendable {
     init(id: UUID = UUID(), role: DesktopMessageRole, text: String, reasoning: String = "",
          state: DesktopMessageState = .complete, canonicalJSON: String? = nil, unsupportedPartCount: Int = 0,
          variantIDs: [UUID] = [], editableTextPartIndex: Int? = nil, editableText: String? = nil,
-         estimatedTokens: Int? = nil, images: [DesktopMessageImage] = []) {
+         estimatedTokens: Int? = nil, images: [DesktopMessageImage] = [], tools: [DesktopToolCall] = []) {
         self.id = id
         self.role = role
         self.text = text
@@ -161,11 +172,12 @@ struct DesktopMessage: Codable, Equatable, Identifiable, Sendable {
         self.editableText = editableText
         self.estimatedTokens = estimatedTokens
         self.images = images
+        self.tools = tools
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, role, text, reasoning, state, canonicalJSON, unsupportedPartCount
-        case variantIDs, editableTextPartIndex, editableText, estimatedTokens, images
+        case variantIDs, editableTextPartIndex, editableText, estimatedTokens, images, tools
     }
 
     init(from decoder: any Decoder) throws {
@@ -182,6 +194,7 @@ struct DesktopMessage: Codable, Equatable, Identifiable, Sendable {
         editableText = try container.decodeIfPresent(String.self, forKey: .editableText)
         estimatedTokens = try container.decodeIfPresent(Int.self, forKey: .estimatedTokens)
         images = try container.decodeIfPresent([DesktopMessageImage].self, forKey: .images) ?? []
+        tools = try container.decodeIfPresent([DesktopToolCall].self, forKey: .tools) ?? []
     }
 }
 

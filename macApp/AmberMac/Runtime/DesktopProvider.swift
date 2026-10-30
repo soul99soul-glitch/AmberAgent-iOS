@@ -198,7 +198,7 @@ private final class DesktopKMPAccumulator: @unchecked Sendable {
             let messages = try DesktopJSON.decode([DesktopMessage].self, from: json)
             if let last = messages.last, last.role == .assistant {
                 run.yield(.snapshot(text: last.text, reasoning: last.reasoning,
-                    canonicalJSON: last.canonicalJSON, unsupportedPartCount: last.unsupportedPartCount))
+                    canonicalJSON: last.canonicalJSON, unsupportedPartCount: last.unsupportedPartCount, tools: last.tools))
             }
             return true
         } catch {

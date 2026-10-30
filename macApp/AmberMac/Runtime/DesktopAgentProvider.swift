@@ -11,16 +11,18 @@ import CryptoKit
     private let mcp: DesktopMCPManager
     private let collaborations: DesktopCollaborations
     private let searchSettings: DesktopSearchSettings
+    private let plugins: DesktopPluginStore?
     private var recipeExecutors: [UUID: DesktopAgentExecutor] = [:]
     /// Set by the live app once the scheduler exists; conversations then get the `schedule_*` tools.
     weak var scheduler: DesktopScheduler?
 
     init(text: DesktopKMPProvider, tasks: DesktopAgentTasks, files: DesktopWorkspaceFiles,
         knowledge: DesktopKnowledgeStore, mcp: DesktopMCPManager, collaborations: DesktopCollaborations,
-        searchSettings: DesktopSearchSettings) {
+        searchSettings: DesktopSearchSettings, plugins: DesktopPluginStore? = nil) {
         self.text = text; self.tasks = tasks; self.files = files; self.knowledge = knowledge; self.mcp = mcp
         self.collaborations = collaborations
         self.searchSettings = searchSettings
+        self.plugins = plugins
         collaborations.toolRunner = { [weak self] request, onSteps in
             guard let self else { throw DesktopRuntimeError.message("协作运行时已释放。") }
             return try self.runCollaborationMember(request, onSteps: onSteps)
@@ -112,8 +114,13 @@ import CryptoKit
         var input = try bridge.agentRequestHistory(messages: bridge.messages(json: DesktopJSON.encode(messages)))
         // Scheduled runs carry their own policy; they never see the tools that create or edit tasks.
         let scheduling = scheduler != nil && context.approvalPolicy == nil
-        let declarations = DesktopToolRegistry.agentDeclarations(toolsEnabled: context.toolsEnabled,
-            subagentsEnabled: context.subagentsEnabled, scheduling: scheduling)
+        let declarations = DesktopToolRegistry.agentDeclarations(
+            toolsEnabled: context.toolsEnabled,
+            subagentsEnabled: context.subagentsEnabled,
+            scheduling: scheduling,
+            pluginDeclarations: plugins?.activeToolDeclarations ?? [],
+            disabledCorePlugins: plugins?.disabledCorePlugins ?? []
+        )
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
         let exposure = IosToolExposureBridge(tools: tools)
         let guidance = exposure.discoveryGuidance()
@@ -132,7 +139,7 @@ import CryptoKit
                 let executor = DesktopAgentExecutor(runID: id, owner: context.conversationID, tasks: tasks,
                     files: files, knowledge: knowledge, mcp: mcp, declarations: declarations, exposure: exposure,
                     sourceMessageIDs: messages.last(where: { $0.role == .user }).map { [$0.id.uuidString.lowercased()] } ?? [],
-                    collaborations: collaborations, searchSettings: searchSettings, approvalPolicy: context.approvalPolicy)
+                    collaborations: collaborations, searchSettings: searchSettings, plugins: plugins, approvalPolicy: context.approvalPolicy)
                 if scheduling { executor.scheduler = scheduler }
                 let sink = DesktopEngineTranscript(input: input, responseID: responseID, generation: generation)
                 let ledger = DesktopEngineLedger(tasks: tasks, runID: id)
@@ -167,7 +174,12 @@ import CryptoKit
 
     func performRecipeTool(runID: UUID, owner: UUID, name: String, argumentsJSON: String) async throws -> String {
         try Task.checkCancellation()
-        let declarations = DesktopToolRegistry.declarations + DesktopToolRegistry.knowledgeDeclarations + DesktopMCPManager.declarations
+        if let plugins, !plugins.isCoreEnabled(.recipes) {
+            throw DesktopRuntimeError.message("Recipe 核心插件当前已停用。")
+        }
+        let knowledgeDecls = (plugins?.isCoreEnabled(.knowledge) ?? true) ? DesktopToolRegistry.knowledgeDeclarations : []
+        let declarations = DesktopToolRegistry.declarations + knowledgeDecls
+            + DesktopMCPManager.declarations + (plugins?.activeToolDeclarations ?? [])
         guard declarations.contains(where: { $0.name == name }), name != "tool_search" else {
             throw DesktopRuntimeError.message("Recipe引用了当前未注册的工具。")
         }
@@ -182,7 +194,7 @@ import CryptoKit
             let exposure = IosToolExposureBridge(tools: tools)
             executor = DesktopAgentExecutor(runID: runID, owner: owner, tasks: tasks, files: files,
                 knowledge: knowledge, mcp: mcp, declarations: declarations, exposure: exposure, sourceMessageIDs: [],
-                collaborations: collaborations, searchSettings: searchSettings)
+                collaborations: collaborations, searchSettings: searchSettings, plugins: plugins)
             recipeExecutors[runID] = executor
         }
         // A manifest names an exact primitive. Keep one skill scope for all steps of this run.
@@ -194,9 +206,10 @@ import CryptoKit
         let invocation = try DesktopJSON.decode([DesktopMessage].self,
             from: DesktopProviderBridge.shared.projectMessages(messages: [message])).first?.canonicalJSON
         let ledger = DesktopEngineLedger(tasks: tasks, runID: runID)
+        let pluginEffect = plugins?.toolEffect(for: name)
         let prepared = await ledger.recordToolCallPrepared(runId: runID.uuidString, toolCallId: tool.toolCallId,
             toolName: tool.toolName, argsDigest: chatInputDigest(for: tool.input),
-            effectClass: DesktopToolRegistry.effectClass(for: name, arguments: tool.input))
+            effectClass: DesktopToolRegistry.effectClass(for: name, arguments: tool.input, pluginEffect: pluginEffect.map { val in { _ in val } }))
         guard case .ready = prepared else { throw DesktopRuntimeError.message("Recipe工具调用无法保存或已经执行，未再次派发。") }
         let callID = tool.toolCallId
         let record = try await tasks.journal.change(runID) {
@@ -387,6 +400,7 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
     let sourceMessageIDs: [String]
     let collaborations: DesktopCollaborations
     let searchSettings: DesktopSearchSettings
+    let plugins: DesktopPluginStore?
     private let scopeLock = NSLock()
     private var skillScope = DesktopSkillToolScope()
     let approvalPolicy: DesktopApprovalPolicy?
@@ -396,13 +410,14 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
     init(runID: UUID, owner: UUID, tasks: DesktopAgentTasks, files: DesktopWorkspaceFiles,
         knowledge: DesktopKnowledgeStore, mcp: DesktopMCPManager, declarations: [DesktopToolDeclaration],
         exposure: IosToolExposureBridge, sourceMessageIDs: [String], collaborations: DesktopCollaborations,
-        searchSettings: DesktopSearchSettings, approvalPolicy: DesktopApprovalPolicy? = nil) {
+        searchSettings: DesktopSearchSettings, plugins: DesktopPluginStore? = nil, approvalPolicy: DesktopApprovalPolicy? = nil) {
         self.approvalPolicy = approvalPolicy
         self.runID = runID; self.owner = owner; self.tasks = tasks; self.files = files
         self.knowledge = knowledge; self.mcp = mcp; self.declarations = declarations
         self.exposure = exposure; self.sourceMessageIDs = sourceMessageIDs
         self.collaborations = collaborations
         self.searchSettings = searchSettings
+        self.plugins = plugins
     }
 
     func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
@@ -420,7 +435,17 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
         if let policy, !["tool_search", "tools_list"].contains(tool.toolName), policy.denies(tool.toolName) {
             return .denied("此工具不在定时任务允许的工具范围内，未执行。")
         }
-        let effect = DesktopToolRegistry.effect(for: tool.toolName, arguments: tool.input)
+        if let disabledCore = await MainActor.run(body: { plugins?.disabledCorePlugin(governing: tool.toolName) }) {
+            return .denied("核心插件「\(disabledCore.title)」已停用，未执行工具 \(tool.toolName)。")
+        }
+        let resolvedPluginEffect: DesktopToolEffect? = tool.toolName.hasPrefix("plugin__")
+            ? await MainActor.run { plugins?.toolEffect(for: tool.toolName) }
+            : nil
+        let effect = DesktopToolRegistry.effect(
+            for: tool.toolName,
+            arguments: tool.input,
+            pluginEffect: resolvedPluginEffect.map { val in { _ in val } }
+        )
         let approval = effect == .sideEffect || effect == .idempotent
         let autoApproved = approval ? await MainActor.run { tasks.autoApproves(tool.toolName, policy: policy) } : false
         if approval, autoApproved, policy != nil {
@@ -448,8 +473,13 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
             case "tool_search": output = await MainActor.run { exposure.executeToolSearch(argumentsJson: tool.input) }
             case "tools_list": output = await MainActor.run { exposure.executeToolsList() }
             case "workspace_file_list":
-                let values = try await files.list(conversationID: owner)
-                output = try Self.json(values.map { ["path": $0.id, "bytes": $0.byteCount] as [String: Any] })
+                let listing = try await files.listing(conversationID: owner)
+                let paths = listing.files.map { ["path": $0.id, "bytes": $0.byteCount] as [String: Any] }
+                // Small workspaces keep the plain array the model has always seen.
+                output = try listing.truncated
+                    ? Self.json(["files": paths, "truncated": true,
+                        "note": "只列出前 \(DesktopWorkspaceFiles.listingLimit) 个文件；依赖与构建目录已跳过。请用 terminal_exec 按需查找。"])
+                    : Self.json(paths)
             case "workspace_file_read":
                 let path = try Self.string("path", args)
                 let result = try await files.readUTF8Prefix(conversationID: owner, path: path, maxCharacters: 48_000)
@@ -536,7 +566,13 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                 }
                 await collaborations.cancel(id)
                 output = try Self.json(["ok": true, "run_id": id.uuidString])
-            default: return .failed("当前桌面工具目录没有此执行器。")
+            default:
+                if tool.toolName.hasPrefix("plugin__") {
+                    guard let plugins else { return .failed("插件运行时未初始化。") }
+                    output = try await plugins.executeTool(qualifiedName: tool.toolName, argumentsJSON: tool.input)
+                } else {
+                    return .failed("当前桌面工具目录没有此执行器。")
+                }
             }
             return .filled(output)
         } catch let error as DesktopMCPOutcomeUnknown {
@@ -564,8 +600,8 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
 }
 
 extension DesktopToolRegistry {
-    static func effectClass(for name: String, arguments: String) -> IOSToolEffectClass {
-        switch effect(for: name, arguments: arguments) {
+    static func effectClass(for name: String, arguments: String, pluginEffect: ((String) -> DesktopToolEffect)? = nil) -> IOSToolEffectClass {
+        switch effect(for: name, arguments: arguments, pluginEffect: pluginEffect) {
         case .pure: .pure
         case .networkRead: .networkRead
         case .idempotent: .idempotent

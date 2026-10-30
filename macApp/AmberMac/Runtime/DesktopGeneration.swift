@@ -1,7 +1,8 @@
 import Foundation
 
 enum DesktopProviderEvent: Sendable {
-    case snapshot(text: String, reasoning: String, canonicalJSON: String? = nil, unsupportedPartCount: Int = 0)
+    case snapshot(text: String, reasoning: String, canonicalJSON: String? = nil, unsupportedPartCount: Int = 0,
+        tools: [DesktopToolCall] = [])
     case transcript([DesktopMessage])
     case complete
     case failed(String)

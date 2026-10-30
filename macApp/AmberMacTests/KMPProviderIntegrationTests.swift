@@ -416,14 +416,14 @@ final class KMPProviderIntegrationTests: XCTestCase {
 
     private func snapshots(_ events: [DesktopProviderEvent]) -> [(text: String, reasoning: String)] {
         events.compactMap { event in
-            if case .snapshot(let text, let reasoning, _, _) = event { return (text, reasoning) }
+            if case .snapshot(let text, let reasoning, _, _, _) = event { return (text, reasoning) }
             return nil
         }
     }
 
     private func snapshotPayloads(_ events: [DesktopProviderEvent]) -> [String] {
         events.compactMap { event in
-            if case .snapshot(_, _, let canonicalJSON, _) = event { return canonicalJSON }
+            if case .snapshot(_, _, let canonicalJSON, _, _) = event { return canonicalJSON }
             return nil
         }
     }
@@ -431,7 +431,7 @@ final class KMPProviderIntegrationTests: XCTestCase {
     private func assertCanonicalSnapshots(_ events: [DesktopProviderEvent], responseID: UUID) throws {
         var count = 0
         for event in events {
-            guard case .snapshot(_, _, let payload, _) = event else { continue }
+            guard case .snapshot(_, _, let payload, _, _) = event else { continue }
             let json = try XCTUnwrap(payload)
             let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
             XCTAssertEqual(root["id"] as? String, responseID.uuidString.lowercased())

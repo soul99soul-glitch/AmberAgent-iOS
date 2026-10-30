@@ -45,7 +45,7 @@ private struct DesktopMarkdownBlocks: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 // Settled blocks compare equal and keep their rendering while the reply grows; only the tail changes.
                 DesktopMarkdownBlockView(block: block, fontFamily: fontFamily, fontSize: fontSize,
@@ -171,13 +171,15 @@ private struct DesktopCodeBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 2) {
-                Text(language.isEmpty ? "代码" : language).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+            HStack(spacing: 4) {
+                Text(language.isEmpty ? "代码" : language)
+                    .font(.system(size: 11.5, design: .monospaced).weight(.medium))
+                    .foregroundStyle(DesktopTheme.inkSecondary)
                 Spacer()
                 if let pinning {
                     let pinned = pinning.isPinned(text)
                     Button { pinning.toggle(text, language) } label: {
-                        Label(pinned ? "已固定" : "固定", systemImage: pinned ? "pin.fill" : "pin").font(.system(size: 12))
+                        Label(pinned ? "已固定" : "固定", systemImage: pinned ? "pin.fill" : "pin").font(.system(size: 11.5))
                             .padding(.horizontal, 8).frame(height: 24)
                     }
                     .buttonStyle(DesktopQuietButtonStyle())
@@ -190,29 +192,34 @@ private struct DesktopCodeBlock: View {
                 } label: {
                     Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .contentTransition(.symbolEffect(.replace.downUp))
-                        .font(.system(size: 12))
+                        .font(.system(size: 11.5))
                         .padding(.horizontal, 8).frame(height: 24)
                 }
                 .buttonStyle(DesktopQuietButtonStyle())
                 .help("复制代码")
             }
-            .padding(.leading, 16)
+            .padding(.leading, 14)
             .padding(.trailing, 8)
-            .frame(height: 32)
+            .frame(height: 34)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
+            }
             let highlighted = highlightCache.value(text: text.isEmpty ? " " : text,
                 language: language, fontSize: fontSize - 2, dark: scheme == .dark)
             ScrollView(.horizontal) {
                 Text(highlighted)
-                    .lineSpacing(3)
+                    .lineSpacing(3.5)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 16)
+                    .padding(.top, 12)
                     .padding(.bottom, 14)
             }
             .scrollIndicators(.automatic)
         }
-        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 10))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(DesktopTheme.hairlineStrong, lineWidth: 0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 11))
         .onChange(of: text) { copied = false }
     }
 }
@@ -226,6 +233,7 @@ private struct DesktopMarkdownTable: View {
 
     var body: some View {
         let widths = columnWidths
+        let rowCount = rows.count
         ScrollView(.horizontal) {
             DesktopMarkdownTableLayout(widths: widths) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
@@ -235,18 +243,26 @@ private struct DesktopMarkdownTable: View {
                                 .textSelection(.enabled)
                                 .multilineTextAlignment(textAlignment(column))
                                 .foregroundStyle(rowIndex == 0 ? DesktopTheme.inkSecondary : DesktopTheme.ink)
-                                .frame(width: widths[column] - 28, alignment: alignment(column))
+                                .frame(width: widths[column] - 32, alignment: alignment(column))
                                 .fixedSize(horizontal: false, vertical: true)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 11)
                                 .frame(width: widths[column], alignment: alignment(column))
                                 .frame(maxHeight: .infinity, alignment: alignment(column))
+                                .background(rowIndex == 0 ? DesktopTheme.paperDeep.opacity(0.65) : DesktopTheme.card.opacity(0.6))
                                 .overlay(alignment: .bottom) {
-                                    Rectangle().fill(rowIndex == 0 ? DesktopTheme.hairlineStrong : DesktopTheme.hairline).frame(height: 1)
+                                    if rowIndex < rowCount - 1 {
+                                        Rectangle().fill(rowIndex == 0 ? DesktopTheme.hairlineStrong : DesktopTheme.hairline).frame(height: 1)
+                                    }
                                 }
                         }
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(DesktopTheme.hairlineStrong, lineWidth: 0.75)
+            )
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -258,7 +274,7 @@ private struct DesktopMarkdownTable: View {
                 let text = column < row.count ? String(DesktopMarkdownInline.parse(row[column]).characters) : ""
                 return NSAttributedString(string: text, attributes: [.font: tableFont(bold: index == 0)]).size().width
             }.max() ?? 0
-            return min(280, max(110, ceil(ideal) + 28))
+            return min(280, max(116, ceil(ideal) + 40))
         }
     }
 

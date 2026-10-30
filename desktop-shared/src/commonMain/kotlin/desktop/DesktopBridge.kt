@@ -7,6 +7,7 @@ import app.amber.ai.core.Tool
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
+import app.amber.ai.ui.ToolApprovalState
 import app.amber.ai.provider.openai.OpenAIKmpProvider
 import app.amber.ai.provider.claude.ClaudeKmpProvider
 import app.amber.ai.ui.UIMessage
@@ -41,6 +42,40 @@ private val desktopJson = Json { ignoreUnknownKeys = true; encodeDefaults = true
 @Serializable
 internal data class DesktopMessageImage(val url: String, val name: String? = null)
 
+/** Display-only view of a tool call; the canonical part stays in `canonicalJSON`. */
+@Serializable
+internal data class DesktopToolCall(
+    val id: String,
+    val name: String,
+    val input: String = "",
+    val output: String = "",
+    val status: String = "complete",
+) {
+    companion object {
+        private const val INPUT_LIMIT = 4_000
+        private const val OUTPUT_LIMIT = 8_000
+
+        fun from(part: UIMessagePart.Tool): DesktopToolCall {
+            val output = part.output.joinToString("\n") { result ->
+                when (result) {
+                    is UIMessagePart.Text -> result.text
+                    is UIMessagePart.Image -> "[图片]"
+                    else -> "[附件]"
+                }
+            }
+            val status = when {
+                part.approvalState is ToolApprovalState.Denied -> "denied"
+                part.isPending -> "pending"
+                part.isExecuted -> "complete"
+                else -> "running"
+            }
+            return DesktopToolCall(part.toolCallId, part.toolName, part.input.clipped(INPUT_LIMIT), output.clipped(OUTPUT_LIMIT), status)
+        }
+
+        private fun String.clipped(limit: Int): String = if (length <= limit) this else take(limit) + "\n…"
+    }
+}
+
 @Serializable
 internal data class DesktopMessage(
     val id: String,
@@ -56,6 +91,7 @@ internal data class DesktopMessage(
     val editableText: String? = null,
     val estimatedTokens: Int? = null,
     val images: List<DesktopMessageImage> = emptyList(),
+    val tools: List<DesktopToolCall> = emptyList(),
 ) {
     fun toMessage(existing: UIMessage? = null): UIMessage {
         require(state in setOf("complete", "streaming", "cancelled", "failed")) { "Unknown message state: $state" }
@@ -91,7 +127,7 @@ internal data class DesktopMessage(
             reasoning = message.parts.filterIsInstance<UIMessagePart.Reasoning>().joinToString("") { it.reasoning },
             state = message.desktopState(),
             canonicalJSON = JsonInstant.encodeToString(message),
-            unsupportedPartCount = message.parts.count { it !is UIMessagePart.Text && it !is UIMessagePart.Reasoning && it !is UIMessagePart.Image },
+            unsupportedPartCount = message.parts.count { it !is UIMessagePart.Text && it !is UIMessagePart.Reasoning && it !is UIMessagePart.Image && it !is UIMessagePart.Tool },
             nodeID = node?.id?.toString(),
             variantIDs = node?.messages?.map { it.id.toString() }.orEmpty(),
             editableTextPartIndex = message.parts.indexOfFirst { it is UIMessagePart.Text }.takeIf { it >= 0 },
@@ -100,6 +136,7 @@ internal data class DesktopMessage(
             images = message.parts.filterIsInstance<UIMessagePart.Image>().map {
                 DesktopMessageImage(it.url, it.metadata?.get("fileName")?.jsonPrimitive?.contentOrNull)
             },
+            tools = message.parts.filterIsInstance<UIMessagePart.Tool>().map(DesktopToolCall::from),
         )
     }
 }

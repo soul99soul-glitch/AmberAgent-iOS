@@ -21,6 +21,9 @@ struct DesktopComposer: View {
                 if !workspace.pendingAttachments.isEmpty {
                     attachmentList
                 }
+                if !matchingSlashCommands.isEmpty {
+                    slashCommandBar
+                }
                 TextField("", text: $workspace.draft, prompt: Text(placeholder).foregroundStyle(DesktopTheme.inkTertiary), axis: .vertical)
                     .font(.system(size: 15))
                     .foregroundStyle(DesktopTheme.ink)
@@ -51,52 +54,49 @@ struct DesktopComposer: View {
                         return .handled
                     }
                     .onPasteCommand(of: [.image, .fileURL]) { _ in pasteAttachments() }
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Button { DesktopFileActions.addAttachments(workspace) } label: {
-                        Image(systemName: "paperclip").font(.system(size: 14)).frame(width: 28, height: 28)
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .frame(width: 28, height: 28)
                     }
                     .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
                         || workspace.isGenerating || workspace.isMutatingBranch || workspace.isReadingAttachments)
                     .help("添加图片、PDF、文档或代码文件，也可拖入文件或粘贴图片")
                     .accessibilityLabel("添加附件")
-                    Button {
+
+                    DesktopToggleChip(
+                        title: "工具",
+                        symbol: "wrench.and.screwdriver",
+                        isOn: workspace.agentTasks.toolsEnabled,
+                        badge: (workspace.agentTasks.toolsEnabled && (workspace.agentTasks.autoApprove || workspace.agentTasks.autoApproveHighRisk))
+                            ? (workspace.agentTasks.autoApproveHighRisk ? "全自动" : "自动批准")
+                            : nil,
+                        badgeColor: workspace.agentTasks.autoApproveHighRisk ? DesktopTheme.danger : DesktopTheme.accentInk
+                    ) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.toolsEnabled.toggle() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text("工具").font(.system(size: 13))
-                            DesktopSwitch(isOn: workspace.agentTasks.toolsEnabled)
-                            if workspace.agentTasks.toolsEnabled && (workspace.agentTasks.autoApprove || workspace.agentTasks.autoApproveHighRisk) {
-                                Text(workspace.agentTasks.autoApproveHighRisk ? "全自动" : "自动批准")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(workspace.agentTasks.autoApproveHighRisk ? DesktopTheme.danger : DesktopTheme.accentInk)
-                                    .transition(.scale(scale: 0.8).combined(with: .opacity))
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(height: 28)
                     }
-                    .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isGenerating || workspace.isMutatingBranch)
                     .help("允许模型使用已接入的工具；需要确认的操作会先显示审批。")
                     .accessibilityLabel("工具")
                     .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
-                    Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.subagentsEnabled.toggle() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text("子代理").font(.system(size: 13))
-                            DesktopSwitch(isOn: workspace.agentTasks.subagentsEnabled)
+
+                    if workspace.plugins.isCoreEnabled(.collaborations) {
+                        DesktopToggleChip(
+                            title: "子代理",
+                            symbol: "point.3.connected.trianglepath.dotted",
+                            isOn: workspace.agentTasks.subagentsEnabled
+                        ) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.subagentsEnabled.toggle() }
                         }
-                        .padding(.horizontal, 8)
-                        .frame(height: 28)
+                        .disabled(workspace.isGenerating || workspace.isMutatingBranch)
+                        .help("允许模型在对话中派发只读子代理（Explorer、Oracle 等）并行调研，结果回到本轮回答。")
+                        .accessibilityLabel("子代理")
+                        .accessibilityValue(workspace.agentTasks.subagentsEnabled ? "已开启" : "已关闭")
+
+                        modeMenu
                     }
-                    .buttonStyle(DesktopQuietButtonStyle())
-                    .disabled(workspace.isGenerating || workspace.isMutatingBranch)
-                    .help("允许模型在对话中派发只读子代理（Explorer、Oracle 等）并行调研，结果回到本轮回答。")
-                    .accessibilityLabel("子代理")
-                    .accessibilityValue(workspace.agentTasks.subagentsEnabled ? "已开启" : "已关闭")
-                    modeMenu
                     if workspace.isReadingAttachments {
                         ProgressView().controlSize(.mini)
                         Text("正在读取附件…")
@@ -105,6 +105,7 @@ struct DesktopComposer: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
+                    inlineModelPicker
                     if workspace.isMutatingBranch {
                         ProgressView().controlSize(.small)
                         Text("正在保存…").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
@@ -151,14 +152,10 @@ struct DesktopComposer: View {
                     }
                 }
             }
-            .padding(8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
             .animation(.spring(response: 0.32, dampingFraction: 0.8), value: workspace.isSelectedConversationGenerating)
-            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(fileDropTargeted || inputFocused ? DesktopTheme.accent : DesktopTheme.hairlineStrong,
-                    lineWidth: fileDropTargeted ? 1.5 : 1))
-            .background(RoundedRectangle(cornerRadius: 12).inset(by: -4)
-                .fill(inputFocused || fileDropTargeted ? DesktopTheme.honeySoft : .clear))
+            .desktopGlass(cornerRadius: 20, highlighted: fileDropTargeted || inputFocused)
             .animation(.easeOut(duration: 0.18), value: inputFocused)
             .animation(.easeOut(duration: 0.18), value: fileDropTargeted)
             .dropDestination(for: URL.self) { urls, _ in
@@ -170,14 +167,30 @@ struct DesktopComposer: View {
                 workspace.addAttachments(files)
                 return true
             } isTargeted: { fileDropTargeted = $0 }
-            Text(workspace.isSelectedConversationGenerating
-                 ? (workspace.pendingAttachments.isEmpty ? "\(shortcut.sendLabel) 加入队列 · \(shortcut.newlineLabel) 换行" : "生成中仅支持文本排队 · 停止后可发送附件")
-                 : "\(shortcut.sendLabel) 发送 · \(shortcut.newlineLabel) 换行")
-                .font(.system(size: 12))
-                .foregroundStyle(DesktopTheme.inkTertiary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 4)
+            HStack(spacing: 8) {
+                HStack(spacing: 5) {
+                    DesktopKeycap(text: "/")
+                    Text("斜杠指令")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                    DesktopKeycap(text: "⌘K")
+                    Text("命令面板")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                }
+                Spacer(minLength: 8)
+                HStack(spacing: 5) {
+                    DesktopKeycap(text: shortcut.sendLabel)
+                    Text(workspace.isSelectedConversationGenerating ? "加入队列" : "发送")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                    DesktopKeycap(text: shortcut.newlineLabel)
+                    Text("换行")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                }
+            }
+            .padding(.horizontal, 6)
         }
         .frame(maxWidth: DesktopTheme.contentWidth)
         .padding(.horizontal, 24)
@@ -195,6 +208,70 @@ struct DesktopComposer: View {
     }
 
     private var shortcut: DesktopSendShortcut { workspace.settings.sendShortcut }
+
+    private var matchingSlashCommands: [DesktopPluginSlashCommandEntry] {
+        let trimmed = workspace.draft.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("/"), !trimmed.contains("\n") else { return [] }
+        let query = trimmed.lowercased()
+        return workspace.plugins.activeSlashCommands.filter { cmd in
+            query == "/" || cmd.slash.lowercased().hasPrefix(query) || cmd.title.lowercased().contains(String(query.dropFirst()))
+        }
+    }
+
+    private var slashCommandBar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.horizontal.fill")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(DesktopTheme.accent)
+                Text("插件斜杠指令")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                Spacer()
+                Text("点击填入对话")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+            }
+            .padding(.horizontal, 8)
+
+            ForEach(matchingSlashCommands) { cmd in
+                Button {
+                    workspace.draft = cmd.promptTemplate
+                    workspace.agentTasks.toolsEnabled = true
+                    inputFocused = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: cmd.symbol)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesktopTheme.accent)
+                            .frame(width: 18)
+                        Text(cmd.slash)
+                            .font(.system(size: 12, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(DesktopTheme.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(DesktopTheme.honeySoft, in: RoundedRectangle(cornerRadius: 4))
+                        Text(cmd.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(DesktopTheme.ink)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(cmd.pluginName)
+                            .font(.system(size: 11))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 7))
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .background(DesktopTheme.paperSide, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(DesktopTheme.hairline))
+    }
 
     private var placeholder: String {
         switch workspace.composerMode {
@@ -220,15 +297,37 @@ struct DesktopComposer: View {
             Divider()
             Button("协作详细设置…", systemImage: "slider.horizontal.3") { onOpenCollaborations() }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: workspace.composerMode.symbol).font(.system(size: 12))
-                Text(workspace.composerMode.title).font(.system(size: 13))
+            HStack(spacing: 5) {
+                Image(systemName: workspace.composerMode.symbol).font(.system(size: 11.5))
+                Text(workspace.composerMode.title).font(.system(size: 12.5, weight: workspace.composerMode == .chat ? .regular : .medium))
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.65)
             }
-            .foregroundStyle(workspace.composerMode == .chat ? DesktopTheme.inkTertiary : DesktopTheme.accentInk)
-            .padding(.horizontal, 8)
+            .foregroundStyle(workspace.composerMode == .chat ? DesktopTheme.inkSecondary : DesktopTheme.accentInk)
+            .padding(.horizontal, 11)
             .frame(height: 28)
             .background {
-                if workspace.composerMode != .chat { DesktopTheme.glow(RoundedRectangle(cornerRadius: 6)) }
+                if workspace.composerMode != .chat {
+                    DesktopTheme.glow(Capsule())
+                } else {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [DesktopTheme.specularTop.opacity(0.75), DesktopTheme.paperDeep.opacity(0.78)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(
+                                LinearGradient(
+                                    colors: [DesktopTheme.specularTop, DesktopTheme.hairlineStrong],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.85
+                            )
+                        )
+                }
             }
             .contentTransition(.opacity)
         }
@@ -236,11 +335,50 @@ struct DesktopComposer: View {
         .menuIndicator(.hidden)
         .fixedSize()
         // Borderless menu labels take the tint, not foregroundStyle; chat mode stays neutral.
-        .tint(workspace.composerMode == .chat ? DesktopTheme.inkTertiary : DesktopTheme.accentInk)
+        .tint(workspace.composerMode == .chat ? DesktopTheme.inkSecondary : DesktopTheme.accentInk)
         .disabled(workspace.isGenerating || workspace.isMutatingBranch || workspace.composerRunID != nil)
         .help("选择发送方式：普通对话或模型议会")
         .accessibilityLabel("发送方式")
         .accessibilityValue(workspace.composerMode.title)
+    }
+
+    /// Fitts's Law inline model selector right inside the composer cockpit, synchronized with the toolbar picker.
+    private var inlineModelPicker: some View {
+        Menu {
+            Picker("服务商与模型", selection: Binding(
+                get: { workspace.settings.selectedModelID },
+                set: { if let id = $0 { workspace.settings.selectModel(id) } })) {
+                if workspace.settings.selectedModelID == nil { Text("选择模型").tag(Optional<UUID>.none) }
+                ForEach(workspace.settings.modelSelections) { model in
+                    Text("\(model.providerName) · \(model.modelName)").tag(Optional(model.id))
+                        .help(model.modelID)
+                }
+            }
+            Divider()
+            SettingsLink { Label("管理服务商…", systemImage: "slider.horizontal.3") }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 10.5))
+                Text(workspace.settings.selectedProvider?.selectedModel?.displayName ?? "选择模型")
+                    .font(.system(size: 12, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 132)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .opacity(0.6)
+            }
+            .foregroundStyle(DesktopTheme.inkTertiary)
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .tint(DesktopTheme.inkTertiary)
+        .help("快速切换当前对话模型")
+        .accessibilityLabel("输入框模型选择")
     }
 
     private var sendDisabled: Bool {

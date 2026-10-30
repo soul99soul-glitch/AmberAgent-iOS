@@ -28,8 +28,8 @@ struct DesktopArtifactShelfView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if embedded { list } else { ScrollView { list }.frame(maxHeight: 400) }
             } else {
-                Text("在消息菜单或代码块上选择“固定”，常用的回答与代码会保存在这里。")
-                    .font(.system(size: 13))
+                Text(embedded ? "在消息或代码块上点「固定」即可收入此处" : "在消息菜单或代码块上选择“固定”，常用的回答与代码会保存在这里。")
+                    .font(.system(size: embedded ? 12 : 13))
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }

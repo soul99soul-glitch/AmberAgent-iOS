@@ -35,7 +35,7 @@ import Observation
                         try Task.checkCancellation()
                         for event in generation.drain() {
                             switch event {
-                            case .snapshot(let value, _, _, _): text = value
+                            case .snapshot(let value, _, _, _, _): text = value
                             case .transcript: break
                             case .complete: completed = true
                             case .cancelled: throw CancellationError()

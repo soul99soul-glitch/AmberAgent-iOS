@@ -245,10 +245,24 @@ class DesktopProviderBridgeTest {
         val snapshot = DesktopProviderBridge.snapshot(listOf(original))
         val returned = DesktopProviderBridge.messages(snapshot).single()
         assertEquals(original, returned)
-        assertEquals(2, Json.parseToJsonElement(snapshot).jsonArray.single().jsonObject.getValue("unsupportedPartCount").jsonPrimitive.content.toInt())
+        // The document stays unsupported; the tool call is projected for display.
+        assertEquals(1, Json.parseToJsonElement(snapshot).jsonArray.single().jsonObject.getValue("unsupportedPartCount").jsonPrimitive.content.toInt())
         assertEquals(original.parts.map { it::class }, returned.parts.map { it::class })
         val projection = Json.parseToJsonElement(snapshot).jsonArray.single().jsonObject
         assertEquals(original, JsonInstant.decodeFromString(projection.getValue("canonicalJSON").jsonPrimitive.content))
+    }
+
+    @Test
+    fun toolCallsAreProjectedWithStatusAndTextOutput() {
+        val original = canonicalConversationFixture().currentMessages.last()
+        val pending = original.copy(parts = original.parts + app.amber.ai.ui.UIMessagePart.Tool(
+            toolCallId = "call-2", toolName = "shell", input = "{}", approvalState = app.amber.ai.ui.ToolApprovalState.Pending,
+        ))
+        val tools = Json.parseToJsonElement(DesktopProviderBridge.snapshot(listOf(pending))).jsonArray.single().jsonObject
+            .getValue("tools").jsonArray.map { it.jsonObject }
+        assertEquals(listOf("lookup", "shell"), tools.map { it.getValue("name").jsonPrimitive.content })
+        assertEquals("result\n[图片]", tools[0].getValue("output").jsonPrimitive.content)
+        assertEquals(listOf("complete", "pending"), tools.map { it.getValue("status").jsonPrimitive.content })
     }
 
     @Test

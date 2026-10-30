@@ -152,6 +152,8 @@ import XCTest
         settings.userNickname = "Amber用户"
         settings.reasoningExpandedByDefault = true
         settings.automaticallyFollowGeneration = false
+        XCTAssertFalse(settings.hidesToolCalls)
+        settings.hidesToolCalls = true
         let restored = DesktopSettings(defaults: defaults, credentials: credentials)
         XCTAssertEqual(restored.messageFontFamily, .serif)
         XCTAssertEqual(restored.messageFontSize, 19)
@@ -159,6 +161,7 @@ import XCTest
         XCTAssertEqual(restored.userDisplayName, "Amber用户")
         XCTAssertTrue(restored.reasoningExpandedByDefault)
         XCTAssertFalse(restored.automaticallyFollowGeneration)
+        XCTAssertTrue(restored.hidesToolCalls)
     }
 
     func testDisplaySizeBoundsAndEmptyNamesHaveExplicitDefaults() {

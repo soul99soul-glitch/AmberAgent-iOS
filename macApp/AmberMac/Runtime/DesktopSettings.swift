@@ -112,6 +112,8 @@ final class DesktopSettings {
     /// iOS「自动展开思考」: open while the model is thinking, fold softly once the answer starts.
     var autoExpandThinking: Bool { didSet { persist() } }
     var automaticallyFollowGeneration: Bool { didSet { persist() } }
+    /// Tool calls stay in the conversation data either way; this only hides their cards in the transcript.
+    var hidesToolCalls: Bool { didSet { persist() } }
     var sendShortcut: DesktopSendShortcut { didSet { persist() } }
     var notificationsEnabled: Bool { didSet { persist() } }
     var speechVoiceIdentifier: String { didSet { persist() } }
@@ -145,6 +147,7 @@ final class DesktopSettings {
         var reasoningExpandedByDefault: Bool?
         var autoExpandThinking: Bool?
         var automaticallyFollowGeneration: Bool?
+        var hidesToolCalls: Bool?
         var sendShortcut: DesktopSendShortcut?
         var notificationsEnabled: Bool?
         var speechVoiceIdentifier: String?
@@ -178,6 +181,7 @@ final class DesktopSettings {
         reasoningExpandedByDefault = record?.reasoningExpandedByDefault ?? false
         autoExpandThinking = record?.autoExpandThinking ?? true
         automaticallyFollowGeneration = record?.automaticallyFollowGeneration ?? true
+        hidesToolCalls = record?.hidesToolCalls ?? false
         sendShortcut = record?.sendShortcut ?? .commandReturn
         notificationsEnabled = record?.notificationsEnabled ?? false
         speechVoiceIdentifier = record?.speechVoiceIdentifier ?? ""
@@ -349,7 +353,7 @@ final class DesktopSettings {
             messageFontFamily: messageFontFamily, messageFontSize: messageFontSize,
             assistantName: assistantName, userNickname: userNickname,
             reasoningExpandedByDefault: reasoningExpandedByDefault, autoExpandThinking: autoExpandThinking,
-            automaticallyFollowGeneration: automaticallyFollowGeneration, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
+            automaticallyFollowGeneration: automaticallyFollowGeneration, hidesToolCalls: hidesToolCalls, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
             speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate)
         if let data = try? JSONEncoder().encode(record) {
             defaults.set(data, forKey: Self.persistedSettingsKey)

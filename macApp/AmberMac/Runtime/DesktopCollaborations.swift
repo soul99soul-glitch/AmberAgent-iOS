@@ -484,7 +484,7 @@ private actor DesktopCollaborationStore {
     private func consume(_ events: [DesktopProviderEvent], runID: UUID, childID: UUID, executionID: UUID) -> Bool {
         for event in events {
             switch event {
-            case .snapshot(let text, _, _, _): updateOutput(runID, childID) { $0.text = text }
+            case .snapshot(let text, _, _, _, _): updateOutput(runID, childID) { $0.text = text }
             case .transcript(let messages):
                 if let text = messages.last(where: { $0.role == .assistant })?.text { updateOutput(runID, childID) { $0.text = text } }
             case .complete:
