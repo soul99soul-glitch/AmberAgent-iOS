@@ -1,6 +1,6 @@
 # iOS Project Instructions
 
-- 本目录是独立的 iOS/KMP 构建根；不得通过兄弟目录或绝对路径读取其他产品仓库。
+- 本目录是独立的 iOS/KMP 构建根；允许跨仓库只读查阅 Amber 其他平台仓库以对齐功能与协议，但不得跨目录修改、构建或提交其他仓库的文件。
 - 原生应用在 `iosApp/`，继续遵守 `iosApp/AGENTS.md`；小说任务继续读取更深层规则。
 - Swift 目前仍通过本目录的 Gradle 工程生成 `Shared.framework`。不要假装 Core 已独立发布。
 - 修改 KMP provider/runtime/storage 时，同时验证 Swift 消费入口与对应 Gradle 测试。
