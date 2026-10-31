@@ -152,6 +152,81 @@ struct DesktopTabTransition: ViewModifier {
     }
 }
 
+private struct DesktopLiquidMorphPreviewProgressKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    /// Optional deterministic progress override for the top toolbar Liquid Glass capsule (`0` = short when inspector expanded,
+    /// `1` = long when inspector collapsed, `< 0` = shortening overshoot, `> 1` = lengthening overshoot).
+    var desktopLiquidMorphPreviewProgress: CGFloat? {
+        get { self[DesktopLiquidMorphPreviewProgressKey.self] }
+        set { self[DesktopLiquidMorphPreviewProgressKey.self] = newValue }
+    }
+}
+
+/// Liquid Glass capsule shape with semicircular end-caps and an animatable concave/convex middle waist (`waistPinch`).
+/// - `waistPinch == 0`: exact geometric `Capsule`
+/// - `waistPinch > 0`: concave hourglass liquid waist during rapid horizontal stretch/contraction
+/// - `waistPinch < 0`: convex plump pillow during overshoot squash/rebound
+struct DesktopLiquidCapsuleShape: Shape {
+    var waistPinch: CGFloat
+
+    var animatableData: CGFloat {
+        get { waistPinch }
+        set { waistPinch = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard rect.width > 1, rect.height > 1 else { return path }
+        let r = min(rect.height * 0.5, rect.width * 0.5)
+        let xLeft = rect.minX + r
+        let xRight = rect.maxX - r
+        let midY = rect.midY
+
+        let span = max(0, xRight - xLeft)
+        let spanFactor = min(1.0, span / 64.0)
+        let deflection = rect.height * waistPinch * spanFactor
+
+        path.move(to: CGPoint(x: xLeft, y: rect.minY))
+        if span > 1.0 {
+            path.addCurve(
+                to: CGPoint(x: xRight, y: rect.minY),
+                control1: CGPoint(x: xLeft + span * 0.34, y: rect.minY + deflection),
+                control2: CGPoint(x: xLeft + span * 0.66, y: rect.minY + deflection)
+            )
+        } else {
+            path.addLine(to: CGPoint(x: xRight, y: rect.minY))
+        }
+        path.addArc(
+            center: CGPoint(x: xRight, y: midY),
+            radius: r,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(90),
+            clockwise: false
+        )
+        if span > 1.0 {
+            path.addCurve(
+                to: CGPoint(x: xLeft, y: rect.maxY),
+                control1: CGPoint(x: xLeft + span * 0.66, y: rect.maxY - deflection),
+                control2: CGPoint(x: xLeft + span * 0.34, y: rect.maxY - deflection)
+            )
+        } else {
+            path.addLine(to: CGPoint(x: xLeft, y: rect.maxY))
+        }
+        path.addArc(
+            center: CGPoint(x: xLeft, y: midY),
+            radius: r,
+            startAngle: .degrees(90),
+            endAngle: .degrees(270),
+            clockwise: false
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
 /// Live strip above the composer while a council / sub-agent run started from the composer works.
 struct DesktopCollaborationProgress: View {
     let run: DesktopCollaborationRun
@@ -230,18 +305,23 @@ struct DesktopStreamingTextModifier: ViewModifier {
     @State private var shown = ""
 
     func body(content: Content) -> some View {
-        content
-            .textRenderer(DesktopStreamingFade(settled: active ? settled : .max, progress: active ? progress : 1))
-            .onChange(of: text, initial: true) { old, new in
-                guard active, new.count > shown.count, new.hasPrefix(shown) else {
-                    shown = new; settled = Self.visibleCount(new); progress = 1; return
-                }
-                // Boundary in rendered characters (markdown markers removed, a formula draws as one image).
-                settled = Self.visibleCount(shown)
-                shown = new
-                progress = 0
-                withAnimation(.easeOut(duration: 0.35)) { progress = 1 }
+        Group {
+            if active || progress < 1 {
+                content.textRenderer(DesktopStreamingFade(settled: active ? settled : .max, progress: active ? progress : 1))
+            } else {
+                content
             }
+        }
+        .onChange(of: text, initial: true) { old, new in
+            guard active, new.count > shown.count, new.hasPrefix(shown) else {
+                shown = new; settled = active ? Self.visibleCount(new) : 0; progress = 1; return
+            }
+            // Boundary in rendered characters (markdown markers removed, a formula draws as one image).
+            settled = Self.visibleCount(shown)
+            shown = new
+            progress = 0
+            withAnimation(.easeOut(duration: 0.35)) { progress = 1 }
+        }
     }
 }
 

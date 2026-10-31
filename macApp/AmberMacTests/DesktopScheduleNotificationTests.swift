@@ -27,7 +27,7 @@ import XCTest
 
     private func settle(_ delivery: Delivery, count: Int) async {
         let deadline = Date().addingTimeInterval(2)
-        while delivery.sent.count < count, Date() < deadline { await Task.yield() }
+        while delivery.sent.count < count, deadline.timeIntervalSince(Date()) > 0 { await Task.yield() }
     }
 
     func testOrdinaryApprovalNotificationHasActionsAndApproveContinuesTheRun() async throws {

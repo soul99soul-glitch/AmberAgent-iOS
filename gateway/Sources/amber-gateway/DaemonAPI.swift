@@ -92,7 +92,18 @@ extension Daemon {
             guard let key = body["sessionKey"] as? String, key.hasPrefix("amber:"), let call = body["toolCallId"] as? String,
                   let allow = body["allow"] as? Bool
             else { return respond(.error(400, "需要 sessionKey、toolCallId 与 allow")) }
-            audit.record("amber-decision", ["device": device.id, "task": key, "allow": String(allow)])
+            var auditFields: [String: String] = [
+                "device": device.id,
+                "task": key,
+                "run": String(key.dropFirst("amber:".count)),
+                "toolCallId": call,
+                "allow": String(allow),
+                "decision": allow ? "allow" : "deny"
+            ]
+            if let tool = registry.sessions[key]?.waitingTool ?? (body["tool"] as? String), !tool.isEmpty {
+                auditFields["tool"] = tool
+            }
+            audit.record("amber-decision", auditFields)
             forwardToAmber(.init(action: .decide, sessionKey: key, toolCallId: call, allow: allow, deviceName: device.name), respond: respond)
         case ("GET", "/v1/amber/board"):
             forwardToAmber(.init(action: .board, deviceName: device.name), respond: respond)
@@ -139,7 +150,7 @@ extension Daemon {
         else { return .error(400, "需要 secret 与 platform（ios / android / harmony）") }
         guard let data = try? Data(contentsOf: paths.pairing),
               let ticket = try? GatewayJSON.decoder().decode(PairingTicket.self, from: data),
-              ticket.expiresAt > Date(), ticket.secretHash == Secrets.sha256(secret)
+              ticket.expiresAt.timeIntervalSince(Date()) > 0, ticket.secretHash == Secrets.sha256(secret)
         else { return .error(403, "配对码无效或已过期，请在 Mac 上重新运行 amber-gateway pair") }
         // Single use: burn the ticket before issuing anything.
         try? FileManager.default.removeItem(at: paths.pairing)
@@ -160,7 +171,7 @@ extension Daemon {
 
     private func status(for device: PairedDevice, now: Date) -> HTTPResponse {
         let sessions = registry.sessions.values
-            .sorted { ($0.isOpen ? 1 : 0, $0.updatedAt) > ($1.isOpen ? 1 : 0, $1.updatedAt) }
+            .sorted { ($0.isOpen ? 1 : 0, $0.updatedAt.timeIntervalSince1970) > ($1.isOpen ? 1 : 0, $1.updatedAt.timeIntervalSince1970) }
             .prefix(Self.statusSessionLimit)
             .map {
                 StatusResponse.Session(key: $0.key, agent: $0.agent, subject: Registry.subject(for: $0), summary: $0.generatedTitle ?? $0.summary, origin: $0.origin,

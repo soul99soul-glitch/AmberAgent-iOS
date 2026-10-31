@@ -72,7 +72,7 @@ extension SMAppService: DesktopGatewayService {}
         let fm = FileManager.default
         guard let started = (try? fm.attributesOfItem(atPath: paths.pidFile.path))?[.modificationDate] as? Date,
               let built = (try? fm.attributesOfItem(atPath: bundledBinary.path))?[.modificationDate] as? Date else { return false }
-        return built > started
+        return built.timeIntervalSince(started) > 0
     }
 
     /// launchd pins the code signature it saw at registration and refuses a rebuilt binary (EX_CONFIG) until the
@@ -142,7 +142,8 @@ extension SMAppService: DesktopGatewayService {}
     }
 
     private func refreshFiles() {
-        devices = DeviceStore(url: paths.devices).load().sorted { $0.pairedAt < $1.pairedAt }
+        devices = DeviceStore(url: paths.devices).load()
+            .sorted { $0.pairedAt.timeIntervalSince($1.pairedAt) < 0 }
         let store = CredentialStore(dir: paths.secretsDir)
         credentials = Set(CredentialKind.allCases.filter(store.exists))
         if var session = pairing {
@@ -150,7 +151,8 @@ extension SMAppService: DesktopGatewayService {}
                let fresh = devices.first(where: { !session.knownDeviceIds.contains($0.id) }) {
                 session.pairedDeviceName = fresh.name
                 pairing = session
-            } else if session.pairedDeviceName == nil, Date() >= session.expiresAt {
+            // Interval comparison: `Date.>=` traps on this Xcode 27 SDK/runtime pairing.
+            } else if session.pairedDeviceName == nil, Date().timeIntervalSince(session.expiresAt) >= 0 {
                 pairing = nil
                 message = "配对二维码已过期，需要时重新生成。"
             }

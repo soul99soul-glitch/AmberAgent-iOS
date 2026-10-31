@@ -22,7 +22,7 @@ import XCTest
     private func sessionKey(_ paths: GatewayPaths) async -> String {
         let deadline = Date().addingTimeInterval(2)
         var key: String?
-        while key == nil, Date() < deadline {
+        while key == nil, deadline.timeIntervalSince(Date()) > 0 {
             Spool(dir: paths.spoolDir).drain { if $0.kind == .runStart { key = "amber:" + $0.sessionId } }
             if key == nil { try? await Task.sleep(for: .milliseconds(20)) }
         }
@@ -158,5 +158,55 @@ import XCTest
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
         let garbage = await control.handle(Data("nope".utf8))
         XCTAssertEqual(try GatewayJSON.decoder().decode(AmberControl.Response.self, from: try XCTUnwrap(garbage)).status, 400)
+    }
+
+    func testRiskMatrixPluginSideEffectsOldRunIsolationAndAuditRecords() async throws {
+        let (control, tasks, reporter, paths, conversation) = try await make()
+        let key1 = await sessionKey(paths)
+        let run1 = try await waitingRun(tasks, conversation: conversation, tool: "plugin__feishu_bot__send_message")
+
+        // High-risk plugin write tool cannot be approved on the phone (403), but can be denied (200)
+        let refusedPlugin = await control.handle(.init(action: .decide, sessionKey: key1, toolCallId: "call-1", allow: true, deviceName: "iPhone"))
+        XCTAssertEqual(refusedPlugin.status, 403)
+        XCTAssertEqual(tasks.records.first { $0.id == run1 }?.status, .waiting)
+
+        // Simulate Run 1 expiring / finishing before any valid decision arrives, then Run 2 starting in the same conversation
+        await tasks.finish(run1, status: .failed, error: "审批等待超时")
+        reporter.runFinished(conversationID: conversation, succeeded: false)
+
+        let run2SessionID = UUID()
+        reporter.runStarted(runID: run2SessionID, conversationID: conversation, taskName: "每日汇总")
+        let key2 = "amber:" + run2SessionID.uuidString.lowercased()
+        let run2 = try await waitingRun(tasks, conversation: conversation, tool: "workspace_file_write")
+
+        // Old run's sessionKey (key1) with matching toolCallId ("call-1") must return 409 and never approve Run 2
+        let expiredRunAttempt = await control.handle(.init(action: .decide, sessionKey: key1, toolCallId: "call-1", allow: true, deviceName: "iPhone"))
+        XCTAssertEqual(expiredRunAttempt.status, 409)
+        XCTAssertEqual(tasks.records.first { $0.id == run2 }?.status, .waiting, "old run approval must never affect a newer run")
+
+        // Current run (key2) with ordinary risk tool is approved (200)
+        let waitRun2 = Task { await tasks.awaitDecision(runID: run2, toolID: "call-1") }
+        let approvedRun2 = await control.handle(.init(action: .decide, sessionKey: key2, toolCallId: "call-1", allow: true, deviceName: "iPhone"))
+        XCTAssertEqual(approvedRun2.status, 200)
+        let decisionValue = await waitRun2.value
+        XCTAssertTrue(decisionValue)
+
+        // Verify audit.jsonl contains run, tool, toolCallId, and decision for both rejected high-risk and approved ordinary risk
+        let auditRaw = try String(contentsOf: paths.audit, encoding: .utf8)
+        let lines = auditRaw.split(separator: "\n").compactMap {
+            try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String]
+        }
+        let highRiskAudit = try XCTUnwrap(lines.first { $0["outcome"] == "rejected_high_risk" })
+        XCTAssertEqual(highRiskAudit["run"], run1.uuidString.lowercased())
+        XCTAssertEqual(highRiskAudit["tool"], "plugin__feishu_bot__send_message")
+        XCTAssertEqual(highRiskAudit["toolCallId"], "call-1")
+        XCTAssertEqual(highRiskAudit["decision"], "allow")
+
+        let approvedAudit = try XCTUnwrap(lines.first { $0["outcome"] == "approved" })
+        XCTAssertEqual(approvedAudit["run"], run2.uuidString.lowercased())
+        XCTAssertEqual(approvedAudit["tool"], "workspace_file_write")
+        XCTAssertEqual(approvedAudit["toolCallId"], "call-1")
+        XCTAssertEqual(approvedAudit["decision"], "allow")
+        XCTAssertEqual(approvedAudit["device"], "iPhone")
     }
 }

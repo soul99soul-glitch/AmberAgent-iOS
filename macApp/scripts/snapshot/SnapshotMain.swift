@@ -11,18 +11,48 @@ import ServiceManagement
         NSApp.setActivationPolicy(.prohibited)
         Task { @MainActor in
             do {
-                let chat = DesktopWorkspace.uiFixture()
-                await chat.agentTasks.waitUntilLoaded()
-                for (w, h) in [(1440.0, 900.0), (1180.0, 800.0), (860.0, 600.0), (1920.0, 1080.0)] {
+                // `AMBER_SNAPSHOT_ONLY` renders just the named extra views: the full transcript matrix crashes inside
+                // SwiftUI's sidebar grouping on this macOS build (reproduced on an unmodified HEAD checkout), and a
+                // settings-only capture does not need it.
+                let onlyExtras = ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_ONLY"] != nil
+                var chat: DesktopWorkspace?
+                if !onlyExtras {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    chat = workspace
+                    await workspace.agentTasks.waitUntilLoaded()
+                    for (w, h) in [(1440.0, 900.0), (1180.0, 800.0), (860.0, 600.0), (1920.0, 1080.0)] {
+                        for dark in [false, true] {
+                            try await capture("chat-\(Int(w))-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: workspace, searchRequest: 0), w, h, dark)
+                        }
+                    }
+                    let empty = DesktopWorkspace.uiFixture()
+                    empty.createConversation()
+                    try await capture("empty-1440-light", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, false)
+                    try await capture("empty-1440-dark", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, true)
+                }
+                if let chat, ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PANELS"] != nil { try await panels(chat) }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_CONTEXT_PANEL"] != nil { try await contextPanel() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PLUGIN_CAPABILITIES"] != nil {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    await workspace.agentTasks.waitUntilLoaded()
                     for dark in [false, true] {
-                        try await capture("chat-\(Int(w))-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: chat, searchRequest: 0), w, h, dark)
+                        try await capture("plugin-capabilities-\(dark ? "dark" : "light")",
+                            DesktopPluginsSettingsView(plugins: workspace.plugins, workspace: workspace)
+                                .frame(width: 880, height: 1500), 880, 1500, dark)
                     }
                 }
-                let empty = DesktopWorkspace.uiFixture()
-                empty.createConversation()
-                try await capture("empty-1440-light", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, false)
-                try await capture("empty-1440-dark", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, true)
-                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PANELS"] != nil { try await panels(chat) }
+                // P3 M3.4/M3.2: the host-native calendar plugin's capability matrix, in both appearances.
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_APPLE_SCHEDULE"] != nil {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    await workspace.agentTasks.waitUntilLoaded()
+                    for dark in [false, true] {
+                        try await capture("plugin-apple-schedule-\(dark ? "dark" : "light")",
+                            DesktopPluginsSettingsView(plugins: workspace.plugins, workspace: workspace,
+                                initialSelection: .ext("apple_schedule"),
+                                initialTechnicalDetailsExpanded: true)
+                                .frame(width: 880, height: 1180), 880, 1180, dark)
+                    }
+                }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_RECOVERY"] != nil { try await reviewRecovery() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PHASE3_UI"] != nil { try await reviewPhase3UI() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PERF3_CACHE"] != nil { try await reviewPerf3Cache() }
@@ -160,6 +190,37 @@ import ServiceManagement
             try await capture("plugin-command-palette-\(dark ? "dark" : "light")",
                 DesktopCommandPaletteView(workspace: pluginWS, onDismiss: {}).background(DesktopTheme.paper), 540, 520, dark)
         }
+    }
+
+    /// Context panel: provider-reported cache usage, then the budget-fit notice after a turn is sent at a 6k
+    /// window. Captures both the standalone panel and the docked inspector inside the real workspace window.
+    @MainActor static func contextPanel() async throws {
+        // Dock the inspector beside the transcript (it needs a detail column of at least 1080pt).
+        UserDefaults.standard.set(true, forKey: "desktop.inspector.visible")
+        let idle = DesktopWorkspace.uiContextFixture()
+        await idle.agentTasks.waitUntilLoaded()
+        for dark in [false, true] {
+            let scheme = dark ? "dark" : "light"
+            try await capture("panel-insights-usage-\(scheme)",
+                DesktopConversationInsightsView(workspace: idle).background(DesktopTheme.paper), 440, 520, dark)
+            try await capture("workspace-inspector-\(scheme)", DesktopWorkspaceView(workspace: idle, searchRequest: 0), 1440, 900, dark)
+        }
+
+        let trimmed = DesktopWorkspace.uiContextFixture()
+        await trimmed.agentTasks.waitUntilLoaded()
+        trimmed.draft = "继续整理"
+        trimmed.send()
+        for dark in [false, true] {
+            let scheme = dark ? "dark" : "light"
+            try await capture("panel-insights-trimmed-\(scheme)",
+                DesktopConversationInsightsView(workspace: trimmed).background(DesktopTheme.paper), 440, 520, dark)
+            try await capture("workspace-inspector-trimmed-\(scheme)",
+                DesktopWorkspaceView(workspace: trimmed, searchRequest: 0), 1440, 900, dark)
+            try await capture("workspace-inspector-trimmed-1180-\(scheme)",
+                DesktopWorkspaceView(workspace: trimmed, searchRequest: 0), 1180, 800, dark)
+        }
+        trimmed.stop()
+        _ = await trimmed.flush()
     }
 
     /// 定时任务 page with a few representative tasks (editing, high-risk badge, history, failures).

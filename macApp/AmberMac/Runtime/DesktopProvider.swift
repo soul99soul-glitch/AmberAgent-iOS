@@ -58,6 +58,11 @@ import Foundation
         let provider = try bridge.configurationWithAuth(kind: configuration.kind.rawValue,
             id: configuration.id.uuidString, name: configuration.name,
             baseUrl: configuration.baseURL, apiKey: apiKey, authMode: configuration.authMode.rawValue)
+        // Claude sends `cache_control` only when the provider setting asks for it; the prefix is stable per turn
+        // (see DesktopContextBudget.prefixFingerprint) so it can be reused.
+        if let claude = provider as? ProviderSetting.Claude, configuration.kind == .claude {
+            claude.promptCaching = configuration.promptCaching
+        }
         if let google = provider as? ProviderSetting.Google {
             let accumulator = DesktopKMPAccumulator(messages: input, model: params.model, responseID: responseID, run: run)
             let task = Task {
@@ -111,6 +116,9 @@ import Foundation
         if raw.contains("401") || raw.contains("403") { return "服务商拒绝认证，请检查 API Key 与账号权限后重试。" }
         if raw.contains("429") { return "服务商请求限额已到，请稍后重试或检查余额。" }
         if raw.contains("404") { return "服务商未找到模型或 API 路径，请检查地址与 Model ID。" }
+        if DesktopContextBudget.isContextOverflow(raw) {
+            return "本轮内容超出模型上下文窗口。Amber 已省略最早的部分消息并把摘要保留在上下文面板；仍失败时请先「压缩上下文」或换用更大窗口的模型。"
+        }
         return "生成失败，请检查网络、API 地址与模型设置，然后重试。已收到的内容已保留。"
     }
 }

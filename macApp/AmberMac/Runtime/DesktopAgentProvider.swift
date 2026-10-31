@@ -139,12 +139,14 @@ import CryptoKit
                 let executor = DesktopAgentExecutor(runID: id, owner: context.conversationID, tasks: tasks,
                     files: files, knowledge: knowledge, mcp: mcp, declarations: declarations, exposure: exposure,
                     sourceMessageIDs: messages.last(where: { $0.role == .user }).map { [$0.id.uuidString.lowercased()] } ?? [],
-                    collaborations: collaborations, searchSettings: searchSettings, plugins: plugins, approvalPolicy: context.approvalPolicy)
+                    collaborations: collaborations, searchSettings: searchSettings, plugins: plugins,
+                    approvalPolicy: context.approvalPolicy, historySnapshot: context.historySnapshot)
                 if scheduling { executor.scheduler = scheduler }
                 let sink = DesktopEngineTranscript(input: input, responseID: responseID, generation: generation)
                 let ledger = DesktopEngineLedger(tasks: tasks, runID: id)
                 let result = await self.resume(provider: provider, messages: input, params: params, exposure: exposure,
                     executor: executor, sink: sink, ledger: ledger, runID: id, budget: 8,
+                    promptCaching: DesktopEnginePromptCaching.appliesCaching(configuration: configuration),
                     persistTurns: persistTurns, drainSteer: context.drainSteer)
                 sink.update(result.messages)
                 if result.toolOutcomeUnknown != nil || result.durabilityFailureMessage != nil {
@@ -153,6 +155,11 @@ import CryptoKit
                 } else if result.wasCancelled || Task.isCancelled {
                     await tasks.finish(id, status: .cancelled)
                     generation.yield(.cancelled)
+                } else if let failure = result.providerFailureMessage, DesktopContextBudget.isContextOverflow(failure) {
+                    // In tool mode an overflow used to surface as the generic "任务已停止", which gives the user
+                    // nothing to do. Name the cause and the two ways out.
+                    await tasks.finish(id, status: .failed, error: "上下文超出模型窗口。")
+                    generation.yield(.failed(Self.overflowMessageForToolRun))
                 } else if result.providerFailureMessage != nil || result.hitStepLimit || result.guardStopped || result.hitOutputLimit {
                     await tasks.finish(id, status: .failed, error: "任务已停止，请查看会话中保留的结果后继续。")
                     generation.yield(.failed("任务已停止，已收到的结果已保留。请检查模型设置或继续当前会话。"))
@@ -246,12 +253,14 @@ import CryptoKit
 
     private func resume(provider: ProviderSetting, messages: sending [UIMessage], params: TextGenerationParams,
         exposure: IosToolExposureBridge, executor: DesktopAgentExecutor, sink: DesktopEngineTranscript,
-        ledger: DesktopEngineLedger, runID: UUID, budget: Int,
+        ledger: DesktopEngineLedger, runID: UUID, budget: Int, promptCaching: Bool,
         persistTurns: @escaping @MainActor @Sendable ([DesktopMessage]) async -> Bool,
         drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?) async -> IOSAgentToolEngineResult {
         var registry = Dictionary(uniqueKeysWithValues: executor.declarations.map { ($0.name, executor as any IOSToolExecutor) })
         registry["tool_search"] = executor
-        let engine = IOSAgentToolEngine(provider: DesktopEngineTransport(), executors: registry,
+        var transport = DesktopEngineTransport()
+        transport.promptCaching = promptCaching
+        let engine = IOSAgentToolEngine(provider: transport, executors: registry,
             configuration: .init(maxSteps: max(0, budget), honorApprovalPause: true), ledger: ledger, ledgerRunId: runID.uuidString)
         let result = await engine.run(providerSetting: provider, messages: messages, params: params,
             toolExposureBridge: exposure, drainSteer: {
@@ -272,11 +281,16 @@ import CryptoKit
                 // Resume the same pending batch through the engine. Completed calls replay their durable result.
                 return await resume(provider: provider, messages: result.messages, params: params.replacingTools(exposure.visibleTools()),
                     exposure: exposure, executor: executor, sink: sink, ledger: ledger, runID: runID,
-                    budget: max(0, budget - result.stepsExecuted), persistTurns: persistTurns, drainSteer: drainSteer)
+                    budget: max(0, budget - result.stepsExecuted), promptCaching: promptCaching,
+                    persistTurns: persistTurns, drainSteer: drainSteer)
             }
         }
         return result
     }
+
+    /// Shown when a tool-mode run overflows the model window. Names the cause and both ways out, because the
+    /// generic "任务已停止" gave the user nothing to act on.
+    static let overflowMessageForToolRun = "这轮对话超出了模型的上下文窗口，已收到的结果全部保留。可以先用「压缩上下文」收短历史，或新建一个会话继续。"
 
     private static func schemaJSON(_ declarations: [DesktopToolDeclaration]) throws -> String {
         let objects: [[String: Any]] = try declarations.map {
@@ -285,15 +299,52 @@ import CryptoKit
         }
         return String(decoding: try JSONSerialization.data(withJSONObject: objects, options: [.sortedKeys]), as: UTF8.self)
     }
+
+    func executeToolForTesting(runID: UUID, owner: UUID, name: String, argumentsJSON: String) async throws -> (succeeded: Bool, message: String) {
+        let declarations = DesktopToolRegistry.declarations + (plugins?.activeToolDeclarations ?? [])
+        let tools = try DesktopProviderBridge.shared.declarations(json: Self.schemaJSON(declarations))
+        let exposure = IosToolExposureBridge(tools: tools)
+        exposure.exposeToolNames(names: [name])
+        let executor = DesktopAgentExecutor(runID: runID, owner: owner, tasks: tasks, files: files,
+            knowledge: knowledge, mcp: mcp, declarations: declarations, exposure: exposure, sourceMessageIDs: [],
+            collaborations: collaborations, searchSettings: searchSettings, plugins: plugins,
+            approvalPolicy: DesktopApprovalPolicy(autoApproveOrdinary: true, autoApproveHighRisk: true))
+        let message = try DesktopProviderBridge.shared.toolInvocation(callId: UUID().uuidString, name: name, arguments: argumentsJSON)
+        guard let tool = message.parts.compactMap({ $0 as? UIMessagePart.Tool }).first else {
+            throw DesktopRuntimeError.message("无法构造测试工具调用。")
+        }
+        switch await executor.execute(tool: tool, isUserInitiated: true) {
+        case .filled(let output): return (true, output)
+        case .failed(let reason), .denied(let reason): return (false, reason)
+        default: return (false, "unknown")
+        }
+    }
+}
+
+/// One place that decides whether this request should ask the provider for prefix caching.
+/// Split out because another worktree also edits this file: keep the wiring surface tiny.
+enum DesktopEnginePromptCaching {
+    /// Only Claude has a `cache_control` field; other protocols would silently ignore it.
+    static func appliesCaching(configuration: DesktopProviderConfiguration) -> Bool {
+        configuration.kind == .claude && configuration.promptCaching
+    }
 }
 
 struct DesktopEngineTransport: IOSAgentTextProvider, IOSAgentStreamingProvider {
     private let openAI = OpenAIKmpProvider()
     private let claude = ClaudeKmpProvider()
 
+    /// Set from the model configuration of the run: the tool path must forward the same caching switch the plain
+    /// chat path already honoured, or a Claude user with caching on sent no `cache_control` whenever tools ran.
+    var promptCaching = false
+
     func prepareRequest(providerSetting: ProviderSetting, params: TextGenerationParams) async throws -> (ProviderSetting, TextGenerationParams) {
         // Same identity rewrite chain as iOS ChatKernelRunHost: Codex, then Grok OAuth (token refresh + CLI proxy).
-        let resolved = try await IOSGrokWebProviderResolver.resolved(try await IOSCodexProviderResolver.resolved(providerSetting))
+        var resolved = try await IOSGrokWebProviderResolver.resolved(try await IOSCodexProviderResolver.resolved(providerSetting))
+        if promptCaching, let claude = resolved as? ProviderSetting.Claude {
+            claude.promptCaching = true
+            resolved = claude
+        }
         return (resolved, IOSGrokWebProviderResolver.augmentParamsForGrok(
             IOSCodexProviderResolver.augmentParamsForCodex(params, provider: resolved), provider: resolved))
     }
@@ -403,6 +454,8 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
     let plugins: DesktopPluginStore?
     private let scopeLock = NSLock()
     private var skillScope = DesktopSkillToolScope()
+    /// Read-only access to the stored transcript, including turns a summary folded away.
+    let historySnapshot: (@MainActor @Sendable () -> (messages: [DesktopMessage], coveredIDs: Set<UUID>))?
     let approvalPolicy: DesktopApprovalPolicy?
     /// Only for conversation runs; nil makes `schedule_*` unavailable even if a model names them.
     weak var scheduler: DesktopScheduler?
@@ -410,7 +463,8 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
     init(runID: UUID, owner: UUID, tasks: DesktopAgentTasks, files: DesktopWorkspaceFiles,
         knowledge: DesktopKnowledgeStore, mcp: DesktopMCPManager, declarations: [DesktopToolDeclaration],
         exposure: IosToolExposureBridge, sourceMessageIDs: [String], collaborations: DesktopCollaborations,
-        searchSettings: DesktopSearchSettings, plugins: DesktopPluginStore? = nil, approvalPolicy: DesktopApprovalPolicy? = nil) {
+        searchSettings: DesktopSearchSettings, plugins: DesktopPluginStore? = nil, approvalPolicy: DesktopApprovalPolicy? = nil,
+        historySnapshot: (@MainActor @Sendable () -> (messages: [DesktopMessage], coveredIDs: Set<UUID>))? = nil) {
         self.approvalPolicy = approvalPolicy
         self.runID = runID; self.owner = owner; self.tasks = tasks; self.files = files
         self.knowledge = knowledge; self.mcp = mcp; self.declarations = declarations
@@ -418,6 +472,7 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
         self.collaborations = collaborations
         self.searchSettings = searchSettings
         self.plugins = plugins
+        self.historySnapshot = historySnapshot
     }
 
     func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
@@ -500,6 +555,20 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                     "timed_out": result.timedOut, "cancelled": result.cancelled])
             case "search_web", "scrape_web":
                 output = try await DesktopSearchRuntime.execute(name: tool.toolName, input: tool.input, settings: searchSettings)
+            case "history_search":
+                guard let snapshot = historySnapshot else { return .failed("当前会话没有可检索的历史记录。") }
+                let state = await snapshot()
+                let query = try Self.string("query", args)
+                let limit = args["limit"] as? Int ?? 8
+                let hits = DesktopHistoryTools.search(query: query, in: state.messages, covered: state.coveredIDs, limit: limit)
+                output = try DesktopHistoryTools.hitsJSON(hits)
+            case "history_fetch":
+                guard let snapshot = historySnapshot else { return .failed("当前会话没有可检索的历史记录。") }
+                let state = await snapshot()
+                guard let id = UUID(uuidString: try Self.string("message_id", args)) else {
+                    throw DesktopRuntimeError.message("message_id 须为消息 UUID。")
+                }
+                output = try Self.json(try DesktopHistoryTools.fetch(id, in: state.messages, covered: state.coveredIDs))
             case "skills_list", "use_skill", "skill_enable", "skill_disable", "memory_tool":
                 var ownedArguments = args
                 if tool.toolName == "memory_tool" {
@@ -578,7 +647,10 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
         } catch let error as DesktopMCPOutcomeUnknown {
             return .outcomeUnknown([UIMessagePart.Text(text: error.localizedDescription, metadata: nil)])
         } catch is CancellationError { return .denied("任务已取消。") }
-        catch { return .failed(error is DesktopRuntimeError ? error.localizedDescription : "工具执行失败，请检查目标文件、网络或权限。") }
+        catch {
+            let preservesMessage = error is DesktopRuntimeError || error is DesktopCalendarError
+            return .failed(preservesMessage ? error.localizedDescription : "工具执行失败，请检查目标文件、网络或权限。")
+        }
     }
 
     private static func string(_ key: String, _ arguments: [String: Any], allowEmpty: Bool = false) throws -> String {

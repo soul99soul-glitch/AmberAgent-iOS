@@ -51,7 +51,7 @@ import XCTest
 
     private func waitForRun(_ provider: Provider, count: Int = 1) async {
         let deadline = Date().addingTimeInterval(2)
-        while provider.runs.count < count, Date() < deadline { await Task.yield() }
+        while provider.runs.count < count, deadline.timeIntervalSince(Date()) > 0 { await Task.yield() }
     }
 
     func testNewConversationRunUsesTaskPolicyAndLeavesComposerAlone() async throws {
@@ -167,7 +167,7 @@ import XCTest
         let running = Task { await workspace.runScheduled(scheduled, clock: { now }, approvalPollInterval: .milliseconds(10)) }
         await waitForRun(provider)
         let deadline = Date().addingTimeInterval(2)
-        while !tasks.records.contains(where: { $0.status == .waiting }), Date() < deadline { await Task.yield() }
+        while !tasks.records.contains(where: { $0.status == .waiting }), deadline.timeIntervalSince(Date()) > 0 { await Task.yield() }
         XCTAssertTrue(tasks.records.contains { $0.status == .waiting })
         // Still inside the window: nothing happens.
         try await Task.sleep(for: .milliseconds(50))

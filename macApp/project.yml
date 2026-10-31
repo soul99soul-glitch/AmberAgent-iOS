@@ -34,7 +34,6 @@ targets:
         excludes:
           - Info.plist
           - Amber.entitlements
-          - LaunchAgents
       - path: AmberMac/LaunchAgents
         buildPhase:
           copyFiles:

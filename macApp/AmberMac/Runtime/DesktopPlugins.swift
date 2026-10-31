@@ -60,11 +60,17 @@ struct DesktopPluginCapabilities: Codable, Equatable, Sendable {
     var networkDomains: [String]
     var workspaceReadPrefixes: [String]
     var workspaceWritePrefixes: [String]
+    /// Host-native modules this plugin is implemented by (for example `calendar` = macOS EventKit).
+    /// A JS sandbox cannot reach EventKit, so a plugin either declares the module and the host runs it,
+    /// or it must read as declared-but-not-wired in the settings page. Never claim it silently.
+    var hostModules: [String]
 
-    init(networkDomains: [String] = [], workspaceReadPrefixes: [String] = [], workspaceWritePrefixes: [String] = []) {
+    init(networkDomains: [String] = [], workspaceReadPrefixes: [String] = [], workspaceWritePrefixes: [String] = [],
+         hostModules: [String] = []) {
         self.networkDomains = networkDomains
         self.workspaceReadPrefixes = workspaceReadPrefixes
         self.workspaceWritePrefixes = workspaceWritePrefixes
+        self.hostModules = hostModules
     }
 
     init(from decoder: Decoder) throws {
@@ -72,7 +78,42 @@ struct DesktopPluginCapabilities: Codable, Equatable, Sendable {
         networkDomains = try container.decodeIfPresent([String].self, forKey: .networkDomains) ?? []
         workspaceReadPrefixes = try container.decodeIfPresent([String].self, forKey: .workspaceReadPrefixes) ?? []
         workspaceWritePrefixes = try container.decodeIfPresent([String].self, forKey: .workspaceWritePrefixes) ?? []
+        hostModules = try container.decodeIfPresent([String].self, forKey: .hostModules) ?? []
     }
+}
+
+/// Built-in plugins backed by macOS frameworks instead of the JS sandbox.
+/// The manifest declares the module; this type decides whether the host actually implements it.
+enum DesktopPluginHostModule: String, Sendable {
+    /// `EKEventStore`: read, create, update and delete events in the user's own calendar.
+    case calendar
+
+    /// The only modules this build actually wires into a host implementation.
+    static let implemented: Set<DesktopPluginHostModule> = [.calendar]
+
+    var title: String {
+        switch self {
+        // The capability matrix gives each name an 84pt column; EventKit lives in the detail line instead.
+        case .calendar: "本机日历"
+        }
+    }
+
+    var wiredDetail: String {
+        switch self {
+        case .calendar: "经宿主原生 EventKit 读写本机日历；新增、修改与删除仍需你在 Mac 上批准。"
+        }
+    }
+
+    func isWired(for plugin: DesktopInstalledPlugin) -> Bool {
+        guard plugin.isBuiltIn, Self.implemented.contains(self) else { return false }
+        switch self {
+        case .calendar:
+            return plugin.id == DesktopAppleScheduleTools.pluginID
+        }
+    }
+
+    static let unwiredDetail = "声明了宿主模块，但当前版本没有对应实现。"
+    static let thirdPartyRejectedDetail = "宿主模块仅供官方内置插件使用，第三方插件不接线。"
 }
 
 struct DesktopPluginSettingField: Codable, Equatable, Identifiable, Sendable {
@@ -157,9 +198,14 @@ struct DesktopPluginToolManifest: Codable, Equatable, Identifiable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         description = try container.decodeIfPresent(String.self, forKey: .description) ?? name
-        if let rawEffect = try container.decodeIfPresent(String.self, forKey: .effect),
-           let parsed = DesktopToolEffect(rawValue: rawEffect) {
-            effect = parsed
+        if let rawEffect = try container.decodeIfPresent(String.self, forKey: .effect) {
+            if rawEffect == "readOnly" {
+                effect = .pure
+            } else if let parsed = DesktopToolEffect(rawValue: rawEffect) {
+                effect = parsed
+            } else {
+                effect = .pure
+            }
         } else {
             effect = .pure
         }
@@ -400,6 +446,9 @@ struct DesktopPluginManifest: Codable, Equatable, Identifiable, Sendable {
                 throw DesktopRuntimeError.message("插件域名白名单格式无效：\(domain)。")
             }
         }
+        for module in capabilities.hostModules where DesktopPluginHostModule(rawValue: module) == nil {
+            throw DesktopRuntimeError.message("插件声明的宿主模块未知：\(module)。")
+        }
     }
 
     static func isValidIdentifier(_ value: String, minLength: Int) -> Bool {
@@ -593,8 +642,10 @@ final class DesktopPluginStore {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let credentials: any DesktopCredentialStore
     @ObservationIgnored private let httpTransport: any DesktopPluginHTTPTransport
+    @ObservationIgnored let calendarService: any DesktopCalendarService
     @ObservationIgnored private let referenceDateProvider: @Sendable () -> Date
     @ObservationIgnored private var settingsCache: [String: [String: String]] = [:]
+    @ObservationIgnored private var inFlightIdempotencyWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     @ObservationIgnored var onStateChanged: (() -> Void)?
 
     static var defaultDirectory: URL {
@@ -607,12 +658,15 @@ final class DesktopPluginStore {
         defaults: UserDefaults = .standard,
         credentials: any DesktopCredentialStore = DesktopKeychain(service: "app.amber.macos.plugins.credentials"),
         httpTransport: any DesktopPluginHTTPTransport = URLSessionPluginHTTPTransport(),
+        calendarService: (any DesktopCalendarService)? = nil,
         referenceDateProvider: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.directory = directory
         self.defaults = defaults
         self.credentials = credentials
         self.httpTransport = httpTransport
+        // The real EventKit store is only created when the host calendar plugin actually runs a tool.
+        self.calendarService = calendarService ?? DesktopEventKitCalendarService()
         self.referenceDateProvider = referenceDateProvider
 
         if let rawCore = defaults.stringArray(forKey: Self.disabledCoreKey) {
@@ -658,17 +712,24 @@ final class DesktopPluginStore {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let disabledIDs = Set(defaults.stringArray(forKey: Self.disabledPluginsKey) ?? [])
             let builtInFeishu = Self.makeBuiltInFeishuPlugin(enabled: !disabledIDs.contains("feishu_calendar"))
-            var loaded: [DesktopInstalledPlugin] = [builtInFeishu]
+            let builtInApple = Self.makeBuiltInAppleSchedulePlugin(enabled: !disabledIDs.contains(DesktopAppleScheduleTools.pluginID))
+            let builtInWatchtower = DesktopWatchtower.makeBuiltInPlugin(enabled: !disabledIDs.contains(DesktopWatchtower.pluginID))
+            var loaded: [DesktopInstalledPlugin] = [builtInFeishu, builtInApple, builtInWatchtower]
 
             let entries = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
             for folder in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
                 let name = folder.lastPathComponent
-                guard !name.hasPrefix("."), name != "feishu_calendar" else { continue }
+                let isBuiltInID = name == "feishu_calendar" || name == DesktopAppleScheduleTools.pluginID
+                    || name == DesktopWatchtower.pluginID
+                guard !name.hasPrefix("."), !isBuiltInID else { continue }
                 let manifestURL = folder.appendingPathComponent("plugin.json")
                 guard FileManager.default.fileExists(atPath: manifestURL.path) else { continue }
                 let data = try Data(contentsOf: manifestURL)
                 let manifest = try JSONDecoder().decode(DesktopPluginManifest.self, from: data)
                 try manifest.validated()
+                guard manifest.capabilities.hostModules.isEmpty else {
+                    throw DesktopRuntimeError.message("hostModules 仅供官方内置插件使用，第三方插件不能声明宿主模块。")
+                }
                 guard manifest.id == name else {
                     throw DesktopRuntimeError.message("插件目录名 \(name) 与 plugin.json id \(manifest.id) 不一致。")
                 }
@@ -745,6 +806,15 @@ final class DesktopPluginStore {
         try manifest.validated()
         guard manifest.id != "feishu_calendar" else {
             throw DesktopRuntimeError.message("feishu_calendar 是内置插件 ID，请使用其他插件 ID。")
+        }
+        guard manifest.id != DesktopAppleScheduleTools.pluginID else {
+            throw DesktopRuntimeError.message("apple_schedule 是内置插件 ID，请使用其他插件 ID。")
+        }
+        guard manifest.id != DesktopWatchtower.pluginID else {
+            throw DesktopRuntimeError.message("watchtower 是内置插件 ID，请使用其他插件 ID。")
+        }
+        guard manifest.capabilities.hostModules.isEmpty else {
+            throw DesktopRuntimeError.message("hostModules 仅供官方内置插件使用，第三方插件不能声明宿主模块。")
         }
 
         let targetFolder = directory.appendingPathComponent(manifest.id, isDirectory: true)
@@ -1572,6 +1642,12 @@ final class DesktopPluginStore {
         let argsData = argumentsJSON.data(using: .utf8) ?? Data("{}".utf8)
         let args = (try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]) ?? [:]
 
+        // Host-native calendar: no JavaScript can reach EventKit, so the host runs these tools itself.
+        if plugin.id == DesktopAppleScheduleTools.pluginID {
+            return try await DesktopAppleScheduleTools.perform(tool: tool.name, argumentsJSON: argumentsJSON,
+                service: calendarService, now: referenceDateProvider())
+        }
+
         // Built-in Feishu Suite (Calendar CalDAV + Bot Webhook/OpenAPI) handlers + JS execution
         if plugin.id == "feishu_calendar" {
             if hasFeishuRemoteCredentials && (tool.name == "list_events" || tool.name == "freebusy") {
@@ -1579,59 +1655,87 @@ final class DesktopPluginStore {
             }
             switch tool.name {
             case "create_event":
-                let summary = (args["summary"] as? String) ?? ""
-                let startTime = (args["start_time"] as? String) ?? ""
-                let endTime = (args["end_time"] as? String) ?? ""
-                guard !summary.isEmpty, !startTime.isEmpty, !endTime.isEmpty else {
-                    throw DesktopRuntimeError.message("create_event 需要提供非空的 summary、start_time 与 end_time。")
+                return try await withIdempotencyLock(key: args["idempotency_key"] as? String) {
+                    let isLocal = !hasFeishuRemoteCredentials
+                    if let key = DesktopFeishuIdempotency.normalize(args["idempotency_key"] as? String),
+                       let stored = DesktopFeishuIdempotency.read(key, isLocalDemo: isLocal, from: readPluginStorage(pluginID: "feishu_calendar")) {
+                        return DesktopFeishuReplay.payload(from: stored, tool: "create_event")
+                    }
+                    let summary = (args["summary"] as? String) ?? ""
+                    let startTime = (args["start_time"] as? String) ?? ""
+                    let endTime = (args["end_time"] as? String) ?? ""
+                    guard !summary.isEmpty, !startTime.isEmpty, !endTime.isEmpty else {
+                        throw DesktopRuntimeError.message("create_event 需要提供非空的 summary、start_time 与 end_time。")
+                    }
+                    let location = (args["location"] as? String) ?? "飞书会议"
+                    let attendees = (args["attendees"] as? [String]) ?? []
+                    let notes = (args["notes"] as? String) ?? ""
+                    let created = try await createCalendarEvent(
+                        summary: summary,
+                        startTime: startTime,
+                        endTime: endTime,
+                        location: location,
+                        attendees: attendees,
+                        notes: notes
+                    )
+                    let createOutput = try Self.encodeJSONObject([
+                        "ok": true,
+                        "plugin": "feishu_calendar",
+                        "mode": created.source,
+                        "event": [
+                            "id": created.id,
+                            "summary": created.summary,
+                            "start_time": created.startTime,
+                            "end_time": created.endTime,
+                            "location": created.location,
+                            "attendees": created.attendees,
+                            "notes": created.notes,
+                            "source": created.source
+                        ],
+                        "total_events": calendarEvents.count
+                    ])
+                    recordIdempotentWrite(
+                        key: args["idempotency_key"] as? String,
+                        result: createOutput,
+                        target: created.id,
+                        isLocalDemo: created.source == "local"
+                    )
+                    return createOutput
                 }
-                let location = (args["location"] as? String) ?? "飞书会议"
-                let attendees = (args["attendees"] as? [String]) ?? []
-                let notes = (args["notes"] as? String) ?? ""
-                let created = try await createCalendarEvent(
-                    summary: summary,
-                    startTime: startTime,
-                    endTime: endTime,
-                    location: location,
-                    attendees: attendees,
-                    notes: notes
-                )
-                return try Self.encodeJSONObject([
-                    "ok": true,
-                    "plugin": "feishu_calendar",
-                    "mode": created.source,
-                    "event": [
-                        "id": created.id,
-                        "summary": created.summary,
-                        "start_time": created.startTime,
-                        "end_time": created.endTime,
-                        "location": created.location,
-                        "attendees": created.attendees,
-                        "notes": created.notes,
-                        "source": created.source
-                    ],
-                    "total_events": calendarEvents.count
-                ])
 
             case "bot_send_message":
-                let title = (args["title"] as? String) ?? "Amber 智能体通知"
-                let content = (args["content"] as? String) ?? ""
-                let msgType = (args["msg_type"] as? String) ?? "interactive"
-                let receiveID = (args["receive_id"] as? String) ?? ""
-                let activity = try await sendFeishuBotMessage(
-                    title: title,
-                    content: content,
-                    msgType: msgType,
-                    receiveID: receiveID
-                )
-                return try Self.encodeJSONObject([
-                    "ok": true,
-                    "plugin": "feishu_calendar",
-                    "channel": activity.channel,
-                    "message_id": activity.id,
-                    "title": activity.title,
-                    "target": activity.target
-                ])
+                return try await withIdempotencyLock(key: args["idempotency_key"] as? String) {
+                    let receiveID = (args["receive_id"] as? String) ?? ""
+                    let isLocal = !isFeishuBotMessageRemote(receiveID: receiveID)
+                    if let key = DesktopFeishuIdempotency.normalize(args["idempotency_key"] as? String),
+                       let stored = DesktopFeishuIdempotency.read(key, isLocalDemo: isLocal, from: readPluginStorage(pluginID: "feishu_calendar")) {
+                        return DesktopFeishuReplay.payload(from: stored, tool: "bot_send_message")
+                    }
+                    let title = (args["title"] as? String) ?? "Amber 智能体通知"
+                    let content = (args["content"] as? String) ?? ""
+                    let msgType = (args["msg_type"] as? String) ?? "interactive"
+                    let activity = try await sendFeishuBotMessage(
+                        title: title,
+                        content: content,
+                        msgType: msgType,
+                        receiveID: receiveID
+                    )
+                    let sendOutput = try Self.encodeJSONObject([
+                        "ok": true,
+                        "plugin": "feishu_calendar",
+                        "channel": activity.channel,
+                        "message_id": activity.id,
+                        "title": activity.title,
+                        "target": activity.target
+                    ])
+                    recordIdempotentWrite(
+                        key: args["idempotency_key"] as? String,
+                        result: sendOutput,
+                        target: activity.target,
+                        isLocalDemo: activity.channel == "local"
+                    )
+                    return sendOutput
+                }
 
             case "bot_fetch_chat_history":
                 let chatID = (args["chat_id"] as? String) ?? ""
@@ -1660,25 +1764,159 @@ final class DesktopPluginStore {
                 ])
 
             case "bot_create_doc":
-                let title = (args["title"] as? String) ?? ""
-                let content = (args["content"] as? String) ?? ""
-                let folderToken = (args["folder_token"] as? String) ?? ""
-                let activity = try await createFeishuDocument(title: title, content: content, folderToken: folderToken)
-                return try Self.encodeJSONObject([
-                    "ok": true,
-                    "plugin": "feishu_calendar",
-                    "channel": activity.channel,
-                    "document_id": activity.target,
-                    "title": activity.title,
-                    "url": activity.documentURL ?? ""
-                ])
+                return try await withIdempotencyLock(key: args["idempotency_key"] as? String) {
+                    let isLocal = !computeHasFeishuOpenAPICredentials()
+                    if let key = DesktopFeishuIdempotency.normalize(args["idempotency_key"] as? String),
+                       let stored = DesktopFeishuIdempotency.read(key, isLocalDemo: isLocal, from: readPluginStorage(pluginID: "feishu_calendar")) {
+                        return DesktopFeishuReplay.payload(from: stored, tool: tool.name)
+                    }
+                    let title = (args["title"] as? String) ?? ""
+                    let content = (args["content"] as? String) ?? ""
+                    let folderToken = (args["folder_token"] as? String) ?? ""
+                    let activity = try await createFeishuDocument(title: title, content: content, folderToken: folderToken)
+                    let docOutput = try Self.encodeJSONObject([
+                        "ok": true,
+                        "plugin": "feishu_calendar",
+                        "channel": activity.channel,
+                        "document_id": activity.target,
+                        "title": activity.title,
+                        "url": activity.documentURL ?? ""
+                    ])
+                    recordIdempotentWrite(
+                        key: args["idempotency_key"] as? String,
+                        result: docOutput,
+                        target: activity.target,
+                        isLocalDemo: activity.channel == "local"
+                    )
+                    return docOutput
+                }
 
             default:
                 break
             }
         }
 
+        // The meeting closeout: one call that writes the minutes document and then the group receipt under
+        // deterministic keys, so re-running the loop after a review cannot double-post either of them.
+        if plugin.id == "feishu_calendar", tool.name == "meeting_closeout" {
+            return try await feishuMeetingCloseout(arguments: args)
+        }
+
         return try evaluateJSTool(plugin: plugin, tool: tool, arguments: args)
+    }
+
+    /// Writes the minutes document and the group receipt for one meeting.
+    /// Keys default to `meeting:<date>:<receive_id>:<title>:<minutes_digest>` so the same meeting loop is idempotent
+    /// without the model having to invent a key; an explicit `idempotency_key` overrides both.
+    private func feishuMeetingCloseout(arguments: [String: Any]) async throws -> String {
+        let title = ((arguments["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let minutes = ((arguments["minutes"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !minutes.isEmpty else {
+            throw DesktopRuntimeError.message("meeting_closeout 需要非空的 title 与 minutes。")
+        }
+        let day = Self.dateFormatter.string(from: referenceDateProvider())
+        let rawReceiveID = ((arguments["receive_id"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultReceiveID = settingValue(pluginID: "feishu_calendar", key: "default_receive_id")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedReceiveID = rawReceiveID.isEmpty ? defaultReceiveID : rawReceiveID
+        let receiveSegment = resolvedReceiveID.isEmpty ? "default" : String(resolvedReceiveID.prefix(24))
+        let minutesDigest = DesktopFeishuIdempotency.shortDigest(minutes)
+        let defaultBase = "meeting:\(day):\(receiveSegment):\(String(title.prefix(32))):\(minutesDigest)"
+        let base = DesktopFeishuIdempotency.normalize(arguments["idempotency_key"] as? String) ?? defaultBase
+
+        return try await withIdempotencyLock(key: base) {
+            let docIsLocal = !computeHasFeishuOpenAPICredentials()
+            var document: [String: Any]
+            var documentReplayed = false
+            if let stored = DesktopFeishuIdempotency.read(base + ":doc", isLocalDemo: docIsLocal,
+                                                          from: readPluginStorage(pluginID: "feishu_calendar")) {
+                documentReplayed = true
+                document = (try? JSONSerialization.jsonObject(with: Data(stored.result.utf8)) as? [String: Any]) ?? [:]
+            } else {
+                let activity = try await createFeishuDocument(title: title, content: minutes)
+                document = ["ok": true, "document_id": activity.target, "title": activity.title,
+                            "url": activity.documentURL ?? "", "channel": activity.channel]
+                recordIdempotentWrite(key: base + ":doc",
+                    result: try Self.encodeJSONObject(document), target: activity.target,
+                    isLocalDemo: activity.channel == "local")
+            }
+
+            // The receipt only ships once the document exists, so the group never gets a dead link.
+            // Re-read storage after the document write so we never inspect a stale pre-await snapshot.
+            let documentURL = (document["url"] as? String) ?? ""
+            let receiptBody = ((arguments["receipt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines))
+                .flatMap { $0.isEmpty ? nil : $0 }
+                ?? "纪要已归档：\(title)\n\(documentURL.isEmpty ? "" : documentURL)"
+            let receiptIsLocal = !isFeishuBotMessageRemote(receiveID: rawReceiveID)
+            var receipt: [String: Any]
+            var receiptReplayed = false
+            if let stored = DesktopFeishuIdempotency.read(base + ":receipt", isLocalDemo: receiptIsLocal,
+                                                          from: readPluginStorage(pluginID: "feishu_calendar")) {
+                receiptReplayed = true
+                receipt = (try? JSONSerialization.jsonObject(with: Data(stored.result.utf8)) as? [String: Any]) ?? [:]
+            } else if arguments["send_receipt"] as? Bool == false {
+                receipt = ["ok": true, "skipped": true]
+            } else {
+                let activity = try await sendFeishuBotMessage(title: "会后回执 · \(title)", content: receiptBody,
+                    msgType: "interactive", receiveID: rawReceiveID)
+                receipt = ["ok": true, "message_id": activity.id, "title": activity.title, "target": activity.target]
+                recordIdempotentWrite(key: base + ":receipt",
+                    result: try Self.encodeJSONObject(receipt), target: activity.target,
+                    isLocalDemo: activity.channel == "local")
+            }
+
+            // Recipe bindings only read one level (`${step.x.output.field}`), so the two things a workflow needs are
+            // also exposed flat. The nested objects stay for the transcript card.
+            return try Self.encodeJSONObject([
+                "ok": true,
+                "plugin": "feishu_calendar",
+                "idempotency_key": base,
+                "document": document,
+                "receipt": receipt,
+                "document_id": document["document_id"] ?? "",
+                "url": document["url"] ?? "",
+                "message_id": receipt["message_id"] ?? "",
+                "replayed": documentReplayed && receiptReplayed,
+                "document_replayed": documentReplayed,
+                "receipt_replayed": receiptReplayed
+            ])
+        }
+    }
+
+    private func isFeishuBotMessageRemote(receiveID: String) -> Bool {
+        let cleanTarget = receiveID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let webhookURL = settingValue(pluginID: "feishu_calendar", key: "bot_webhook_url")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (!webhookURL.isEmpty && cleanTarget.isEmpty) || computeHasFeishuOpenAPICredentials()
+    }
+
+    private func withIdempotencyLock<T>(key rawKey: String?, operation: () async throws -> T) async rethrows -> T {
+        guard let key = DesktopFeishuIdempotency.normalize(rawKey) else {
+            return try await operation()
+        }
+        while inFlightIdempotencyWaiters[key] != nil {
+            await withCheckedContinuation { continuation in
+                inFlightIdempotencyWaiters[key, default: []].append(continuation)
+            }
+        }
+        inFlightIdempotencyWaiters[key] = []
+        defer {
+            let waiters = inFlightIdempotencyWaiters.removeValue(forKey: key) ?? []
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+        return try await operation()
+    }
+
+    /// Remembers a confirmed write under the caller's key so the same meeting loop cannot post twice.
+    private func recordIdempotentWrite(key rawKey: String?, result: String, target: String, isLocalDemo: Bool = false) {
+        guard let key = DesktopFeishuIdempotency.normalize(rawKey) else { return }
+        var storage = readPluginStorage(pluginID: "feishu_calendar")
+        DesktopFeishuIdempotency.write(.init(key: key, result: result, target: target,
+            recordedAt: Self.dateTimeFormatter.string(from: referenceDateProvider())),
+            isLocalDemo: isLocalDemo, into: &storage)
+        writePluginStorage(pluginID: "feishu_calendar", storage: storage)
     }
 
     private func evaluateJSTool(
@@ -2279,7 +2517,7 @@ final class DesktopPluginStore {
             capabilities: DesktopPluginCapabilities(
                 networkDomains: ["caldav.feishu.cn", "caldav.larksuite.com", "open.feishu.cn", "open.larksuite.com"],
                 workspaceReadPrefixes: [],
-                workspaceWritePrefixes: ["meetings/", "feishu/"]
+                workspaceWritePrefixes: []
             ),
             settingsSchema: [
                 // Group 1: Calendar (CalDAV)
@@ -2411,14 +2649,32 @@ final class DesktopPluginStore {
                     description: "在飞书日历创建新的日程或会议邀约（通过 CalDAV 或开放平台同步，需要用户批准）。",
                     effect: .sideEffect,
                     entry: "createEvent",
-                    parametersJSON: #"{"type":"object","properties":{"summary":{"type":"string","description":"会议或日程标题"},"start_time":{"type":"string","description":"开始时间 yyyy-MM-dd HH:mm"},"end_time":{"type":"string","description":"结束时间 yyyy-MM-dd HH:mm"},"location":{"type":"string","description":"会议地点或飞书会议链接"},"attendees":{"type":"array","items":{"type":"string"},"description":"参会人姓名列表"},"notes":{"type":"string","description":"会议议程或备注"}},"required":["summary","start_time","end_time"],"additionalProperties":false}"#
+                    parametersJSON: """
+                    {"type":"object","properties":{\
+                    "summary":{"type":"string","description":"会议或日程标题"},\
+                    "start_time":{"type":"string","description":"开始时间 yyyy-MM-dd HH:mm"},\
+                    "end_time":{"type":"string","description":"结束时间 yyyy-MM-dd HH:mm"},\
+                    "location":{"type":"string","description":"会议地点或飞书会议链接"},\
+                    "attendees":{"type":"array","items":{"type":"string"},"description":"参会人姓名列表"},\
+                    "notes":{"type":"string","description":"会议议程或备注"},\
+                    "idempotency_key":{"type":"string","description":"可选幂等键；同一键重复调用不会重复创建"}},\
+                    "required":["summary","start_time","end_time"],"additionalProperties":false}
+                    """
                 ),
                 DesktopPluginToolManifest(
                     name: "bot_send_message",
                     description: "通过飞书机器人（群 Webhook 或应用机器人）发送文本通知或富文本交互卡片到飞书群/个人。",
                     effect: .sideEffect,
                     entry: "botSendMessage",
-                    parametersJSON: #"{"type":"object","properties":{"title":{"type":"string","description":"消息卡片标题"},"content":{"type":"string","description":"消息正文（支持 Markdown）"},"msg_type":{"type":"string","enum":["interactive","text"],"description":"卡片 interactive 或纯文本 text，默认 interactive"},"receive_id":{"type":"string","description":"可选接收方 chat_id (oc_xxx) 或 open_id (ou_xxx)，不填则走群 Webhook 或默认接收 ID"}},"required":["content"],"additionalProperties":false}"#
+                    parametersJSON: """
+                    {"type":"object","properties":{\
+                    "title":{"type":"string","description":"消息卡片标题"},\
+                    "content":{"type":"string","description":"消息正文（支持 Markdown）"},\
+                    "msg_type":{"type":"string","enum":["interactive","text"],"description":"默认 interactive"},\
+                    "receive_id":{"type":"string","description":"chat_id (oc_xxx) 或 open_id (ou_xxx)，不填走 Webhook 或默认接收 ID"},\
+                    "idempotency_key":{"type":"string","description":"可选幂等键；同一键重复调用不会重复发送"}},\
+                    "required":["content"],"additionalProperties":false}
+                    """
                 ),
                 DesktopPluginToolManifest(
                     name: "bot_fetch_chat_history",
@@ -2439,7 +2695,23 @@ final class DesktopPluginStore {
                     description: "通过飞书机器人在飞书云端创建一篇新的云文档（Docx），返回文档链接。",
                     effect: .sideEffect,
                     entry: "botCreateDoc",
-                    parametersJSON: #"{"type":"object","properties":{"title":{"type":"string","description":"云文档标题"},"content":{"type":"string","description":"文档内容摘要或正文"},"folder_token":{"type":"string","description":"可选目标文件夹 Token"}},"required":["title"],"additionalProperties":false}"#
+                    parametersJSON: #"{"type":"object","properties":{"title":{"type":"string","description":"云文档标题"},"content":{"type":"string","description":"文档内容摘要或正文"},"folder_token":{"type":"string","description":"可选目标文件夹 Token"},"idempotency_key":{"type":"string","description":"可选幂等键；同一键重复调用不会重复创建"}},"required":["title"],"additionalProperties":false}"#
+                ),
+                DesktopPluginToolManifest(
+                    name: "meeting_closeout",
+                    description: "会后收口：把纪要建成飞书云文档再发群回执；同一个幂等键重复执行不会重复发。",
+                    effect: .sideEffect,
+                    entry: "meetingCloseout",
+                    parametersJSON: """
+                    {"type":"object","properties":{\
+                    "title":{"type":"string","description":"会议标题，也用作云文档标题"},\
+                    "minutes":{"type":"string","description":"已确认的纪要正文"},\
+                    "receive_id":{"type":"string","description":"可选群 chat_id；默认用设置里的接收 ID"},\
+                    "receipt":{"type":"string","description":"可选回执正文；默认是纪要已归档与链接"},\
+                    "send_receipt":{"type":"boolean","description":"false 时只建文档不发回执"},\
+                    "idempotency_key":{"type":"string","description":"可选幂等键；默认按日期与标题生成"}},\
+                    "required":["title","minutes"],"additionalProperties":false}
+                    """
                 )
             ],
             ui: DesktopPluginUIManifest(

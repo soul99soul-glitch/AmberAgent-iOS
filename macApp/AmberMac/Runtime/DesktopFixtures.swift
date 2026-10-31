@@ -3,7 +3,12 @@ import Foundation
 final class DesktopMemoryCredentials: DesktopCredentialStore {
     var values: [UUID: String] = [:]
     func load(id: UUID) throws -> String { values[id] ?? "" }
-    func save(_ value: String, id: UUID) throws { values[id] = value }
+    func save(_ value: String, id: UUID) throws {
+        if DesktopHistoryRedaction.isPlaceholderCredential(value) {
+            throw DesktopRuntimeError.message("不能将脱敏占位符保存为凭据。")
+        }
+        values[id] = value
+    }
     func delete(id: UUID) throws { values[id] = nil }
 }
 
@@ -92,6 +97,35 @@ final class DesktopMemoryCredentials: DesktopCredentialStore {
         let values = [conversation, interrupted, DesktopConversation(title: "这是一条很长很长的会话标题，用于检查侧栏截断与完整提示"), structured, reading, context]
         return DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage(values),
             provider: DesktopFixtureProvider(), initialConversations: values,
+            agentTasks: DesktopAgentTasks(defaults: defaults))
+    }
+
+    /// Context-panel fixture: the newest finished reply carries the provider-reported cache usage the KMP
+    /// bridge writes into `canonicalJSON`, and the history is long enough that a 6k window has to trim when the
+    /// next turn is sent. Used by `snapshot-ui.sh` to render the real panel and the docked inspector.
+    static func uiContextFixture() -> DesktopWorkspace {
+        let defaults = UserDefaults(suiteName: "app.amber.macos.ui-context-fixture")!
+        defaults.removePersistentDomain(forName: "app.amber.macos.ui-context-fixture")
+        let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        if let initial = settings.selectedProvider {
+            var config = initial
+            var model = DesktopModelConfiguration(modelID: "amber-context-fixture")
+            model.contextWindowTokens = 6_000
+            config.name = "桌面验收 · 上下文面板"
+            config.models = [model]
+            config.selectedModelID = model.id
+            try? settings.saveProvider(config, apiKey: "fixture-only")
+        }
+        let usage = #"{"id":"6E4B5A62-0000-4000-8000-00000000C0DE","role":"assistant","parts":[{"type":"text","text":"这是最近的本地示例回答。"}],"usage":{"promptTokens":18240,"completionTokens":418,"cachedTokens":12144,"totalTokens":18658}}"#
+        let history = DesktopConversation(title: "上下文面板 · 本地示例", messages: [
+            DesktopMessage(role: .user, text: "把这周的桌面版工作整理成一份可执行的清单。"),
+            DesktopMessage(role: .assistant,
+                text: String(repeating: "这是用于检查上下文预算的本地工作记录，保留原始历史可以回看全部决定。", count: 96)),
+            DesktopMessage(role: .user, text: "先按依赖关系排序，再补上验收标准。"),
+            DesktopMessage(role: .assistant, text: "这是最近的本地示例回答。", canonicalJSON: usage),
+        ], isPinned: true)
+        return DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage([history]),
+            provider: DesktopFixtureProvider(), initialConversations: [history],
             agentTasks: DesktopAgentTasks(defaults: defaults))
     }
 }

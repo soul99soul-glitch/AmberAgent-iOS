@@ -194,6 +194,12 @@ final class DesktopWorkspace {
     @ObservationIgnored private var loadingTask: Task<Void, Never>?
     @ObservationIgnored private var attachmentTasks: [UUID: (owner: UUID, task: Task<Void, Never>)] = [:]
     @ObservationIgnored private var conversationErrors: [UUID: String] = [:]
+    @ObservationIgnored private var autoCompaction = DesktopAutoCompactionPolicy()
+    /// Request-time context notices (budget trimming) shown next to the context panel.
+    private(set) var contextNotices: [UUID: String] = [:]
+    /// Fingerprint of the last request's turn-invariant prefix per conversation: equal values mean a provider
+    /// that supports prefix caching can reuse it.
+    private(set) var contextPrefixFingerprints: [UUID: UInt64] = [:]
     @ObservationIgnored private var unsavedConversationIDs: Set<UUID> = []
     @ObservationIgnored private var unsavedMetadataIDs: Set<UUID> = []
     @ObservationIgnored private var branchMutationTask: Task<Void, Never>?
@@ -245,7 +251,7 @@ final class DesktopWorkspace {
         if let recipes {
             self.recipes = recipes
         } else {
-            #if !AMBER_MAC_PREVIEW
+            #if !AMBER_MAC_PREVIEW && canImport(Shared)
             if let agentProvider = provider as? DesktopAgentProvider {
                 self.recipes = DesktopRecipeRuns(store: defaultRecipeStore, tasks: self.agentTasks) {
                     try await agentProvider.performRecipeTool(runID: $0, owner: $1, name: $2, argumentsJSON: $3)
@@ -413,7 +419,7 @@ final class DesktopWorkspace {
         sidebarResults = Array((titleMatches + current + stored).sorted {
             if $0.kind != $1.kind { return $0.kind == .title }
             if $0.isPinned != $1.isPinned { return $0.isPinned }
-            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt.timeIntervalSince($1.updatedAt) > 0 }
             return $0.conversationID.uuidString < $1.conversationID.uuidString
         }.prefix(200))
     }
@@ -767,7 +773,8 @@ final class DesktopWorkspace {
             persist(conversations[index])
         }
         let prefixIDs = messages.map(\.id)
-        do { messages = try requestMessages(messages, conversationID: conversationID) }
+        do { messages = try requestMessages(messages, conversationID: conversationID,
+            model: configuration.selectedModel) }
         catch {
             conversations[index].messages[conversations[index].messages.count - 1].state = .failed
             persist(conversations[index])
@@ -796,6 +803,12 @@ final class DesktopWorkspace {
                         return await self.persistAgentTurns(turns, owner: conversationID, token: token)
                     }, drainSteer: { [weak self] in
                         self?.drainQueuedInstructions(owner: conversationID, token: token) ?? []
+                    }, historySnapshot: { [weak self] in
+                        guard let self, let conversation = self.conversations.first(where: { $0.id == conversationID }) else {
+                            return ([], [])
+                        }
+                        let covered = self.insights.checkpoint(for: conversation)?.coveredMessageIDs ?? []
+                        return (conversation.messages, Set(covered))
                     }))
             generation = run
             generationTask = Task { [weak self] in
@@ -814,16 +827,35 @@ final class DesktopWorkspace {
         }
     }
 
-    /// History as the model sees it: compaction applied, then the system prompt and local knowledge context.
-    private func requestMessages(_ history: [DesktopMessage], conversationID: UUID) throws -> [DesktopMessage] {
-        let localContext = plugins.isCoreEnabled(.knowledge)
-            ? try knowledge.requestContext(query: history.last(where: { $0.role == .user })?.text ?? "")
+    /// History as the model sees it: compaction applied, a turn-invariant system prefix, memories recalled
+    /// for the newest user text right before it, then a deterministic budget fit.
+    private func requestMessages(_ history: [DesktopMessage], conversationID: UUID,
+                                 model: DesktopModelConfiguration?) throws -> [DesktopMessage] {
+        let knowledgeEnabled = plugins.isCoreEnabled(.knowledge)
+        let stableContext = knowledgeEnabled ? try knowledge.stableContext() : ""
+        let memoryContext = knowledgeEnabled
+            ? try knowledge.requestMemoryContext(query: history.last(where: { $0.role == .user })?.text ?? "")
             : ""
-        var messages = insights.prepare(messages: history, conversationID: conversationID)
-        let system = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), localContext,
-                      workspaceContext(conversationID) ?? ""]
+        let stableSystem = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), stableContext,
+                            workspaceContext(conversationID) ?? ""]
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
-        if !system.isEmpty { messages.insert(DesktopMessage(role: .system, text: system), at: 0) }
+        // The budget has to measure the whole request, but trimming may only touch turns: fit the history first
+        // and pass the prefix and recall as overhead, so the system block can never be dropped.
+        let overhead = [stableSystem, memoryContext].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let fit = DesktopContextBudget.fitting(
+            insights.prepare(messages: history, conversationID: conversationID), model: model, extraText: overhead)
+        var messages = fit.messages
+        if !stableSystem.isEmpty { messages.insert(DesktopMessage(role: .system, text: stableSystem), at: 0) }
+        contextPrefixFingerprints[conversationID] = DesktopContextBudget.prefixFingerprint(messages)
+        // Recalled memories follow the newest user text and travel as a user turn: the Claude path flattens
+        // every system message into the top-level system prompt, so a `.system` recall would rewrite the
+        // turn-invariant prefix and read as a system rule.
+        if !memoryContext.isEmpty, let lastUser = messages.lastIndex(where: { $0.role == .user }) {
+            messages.insert(DesktopMessage(role: .user, text: memoryContext), at: lastUser)
+        }
+        contextNotices[conversationID] = fit.trimmed
+            ? "本轮已省略最早的 \(fit.droppedCount) 条消息以满足模型窗口；原消息仍完整保留在会话中。"
+            : nil
         return messages
     }
 
@@ -903,9 +935,55 @@ final class DesktopWorkspace {
                 }
             }
             if selectedID == conversationID { reloadFiles() }
+            // A finished turn is the only safe place to compact: tool round trips and pending approvals live
+            // inside a run, so compacting there would split one. A stopped or failed turn also leaves the
+            // history in a state the summary could bake in, so only a completed turn triggers a compaction.
+            if terminal == .complete { scheduleAutomaticCompaction(owner: conversationID) }
         } else if checkpoint, Date().timeIntervalSince(lastCheckpoint) >= 1 {
             lastCheckpoint = Date()
             persist(conversations[index])
+        }
+    }
+
+    /// Produces a summary once an idle conversation approaches the model window, so the next turn starts
+    /// from a compacted history instead of relying on the budget fit. The user's manual control
+    /// (「压缩上下文」/「恢复完整上下文」) keeps working exactly as before.
+    private func scheduleAutomaticCompaction(owner: UUID) {
+        guard !isGenerating, !isLoading, !isMutatingBranch, !isManagingBackup,
+              !scheduledRunConversationIDs.contains(owner), !insights.activeOwners.contains(owner),
+              // A conversation that is not durably saved must not start another model call on top of it.
+              !unsavedConversationIDs.contains(owner), !unsavedMetadataIDs.contains(owner),
+              !agentTasks.records.contains(where: { $0.conversationID == owner && $0.approval != nil }),
+              let conversation = conversations.first(where: { $0.id == owner }),
+              let boundary = DesktopContextBudget.compactionBoundary(conversation.messages),
+              autoCompaction.mayCompact(owner) else { return }
+        // Measure what the next request would actually send: after a compaction that is the summary plus the
+        // uncovered tail, so the same stored history does not trigger a fresh full summary every turn.
+        guard DesktopContextBudget.needsCompaction(
+            insights.prepare(messages: conversation.messages, conversationID: owner),
+            model: settings.selectedProvider?.selectedModel, extraText: settings.systemPrompt) else { return }
+        // Nothing new to fold in: the existing summary already covers everything the boundary would.
+        let covered = insights.value(.compact, for: conversation)?.sourceMessageIDs.count ?? 0
+        guard boundary > covered else { return }
+        do {
+            let request = try requestConfiguration(.compaction)
+            // Snapshot the checkpoint count *before* the attempt: "is there a summary?" is true forever once one
+            // exists, which made a failed retry look successful and defeated the cooldown.
+            let before = insights.checkpointCount(owner)
+            insights.generate(.compact, conversation: conversation, configuration: request.0,
+                apiKey: request.1, provider: provider) { [weak self] ids in
+                self?.conversations.first(where: { $0.id == owner })?.messages.map(\.id) == ids
+            }
+            // A failed attempt cools down instead of firing again on every following turn.
+            Task { [weak self] in
+                await self?.insights.waitUntilIdle(owner)
+                guard let self else { return }
+                let after = self.insights.checkpointCount(owner)
+                self.autoCompaction.record(owner,
+                    succeeded: DesktopAutoCompactionOutcome(before: before, after: after).succeeded)
+            }
+        } catch {
+            // No auxiliary model configured: the request budget still protects the next turn.
         }
     }
 
@@ -1824,12 +1902,21 @@ extension DesktopWorkspace {
 
         let run: DesktopGeneration
         do {
-            let messages = try requestMessages(history, conversationID: conversationID)
+            let messages = try requestMessages(history, conversationID: conversationID,
+                model: request.0.selectedModel)
             run = try provider.start(configuration: request.0, apiKey: request.1, messages: messages, responseID: reply.id,
                 context: DesktopRunContext(conversationID: conversationID, toolsEnabled: task.toolsEnabled,
                     subagentsEnabled: task.subagentsEnabled, approvalPolicy: task.approval.policy,
                     persistTurns: { [weak self] turns in
                         await self?.persistScheduledTurns(turns, owner: conversationID, prefixIDs: prefixIDs) ?? false
+                    }, historySnapshot: { [weak self] in
+                        // An unattended run reads the same transcript as a chat run; without this the
+                        // history tools answered "没有可检索的历史记录" while the session was right there.
+                        guard let self, let conversation = self.conversations.first(where: { $0.id == conversationID }) else {
+                            return ([], [])
+                        }
+                        let covered = self.insights.checkpoint(for: conversation)?.coveredMessageIDs ?? []
+                        return (conversation.messages, Set(covered))
                     }))
         } catch {
             finishScheduledReply(owner: conversationID, replyID: reply.id, state: .failed)
@@ -1845,7 +1932,8 @@ extension DesktopWorkspace {
                 try? await Task.sleep(for: approvalPollInterval)
                 guard let self, !Task.isCancelled else { return false }
                 if let waiting = self.agentTasks.records.first(where: {
-                    $0.conversationID == conversationID && $0.status == .waiting && $0.createdAt >= startedAt.addingTimeInterval(-1)
+                    $0.conversationID == conversationID && $0.status == .waiting
+                        && $0.createdAt.timeIntervalSince(startedAt.addingTimeInterval(-1)) >= 0
                 }), clock().timeIntervalSince(waiting.updatedAt) >= timeout {
                     self.agentTasks.cancel(waiting.id)
                     run.cancel()
@@ -1861,7 +1949,8 @@ extension DesktopWorkspace {
         let timedOut = await watchdog.value
         await persistence?.value
 
-        let agentRun = agentTasks.records.first { $0.conversationID == conversationID && $0.createdAt >= startedAt.addingTimeInterval(-1) }
+        let agentRun = agentTasks.records.first { $0.conversationID == conversationID
+            && $0.createdAt.timeIntervalSince(startedAt.addingTimeInterval(-1)) >= 0 }
         record.agentRunID = agentRun?.id
         record.autoApprovedTools = agentRun?.transactions.filter { $0.autoApproved == true }.map(\.name) ?? []
         record.finishedAt = clock()
@@ -1881,12 +1970,21 @@ extension DesktopWorkspace {
         // The conversation is done: hand it back to the user before the (slow) summary call. The board keeps showing
         // the run until it returns.
         scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
+        // A watchtower run that found nothing new stays quiet on the board and in Notification Center: that is the
+        // whole point of a page watcher, and it overrides the title model's judgement because it is factual.
+        if record.status == .completed,
+           let reply = conversations.first(where: { $0.id == conversationID })?.messages.last(where: { $0.role == .assistant }),
+           let quiet = DesktopWatchtower.quietVerdict(tools: reply.tools) {
+            record.noteworthy = !quiet
+            if quiet { record.summary = record.summary ?? "网页无变化" }
+        }
         // Failed runs notify anyway; a completed one gets a line and a noteworthy flag (B6 reads it).
         if record.status == .completed, let boardWriter,
            let reply = conversations.first(where: { $0.id == conversationID })?.messages.last(where: { $0.role == .assistant })?.text,
            let result = await boardWriter.summarize(reply) {
             record.summary = result.summary
-            record.noteworthy = result.noteworthy
+            // The watcher's own verdict wins: a quiet page must not be turned into noise by the summary model.
+            record.noteworthy = record.noteworthy ?? result.noteworthy
         }
         return record
     }

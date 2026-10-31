@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import AmberMac
 
@@ -79,15 +81,16 @@ final class DesktopPluginTests: XCTestCase {
             referenceDateProvider: { now }
         )
 
-        XCTAssertEqual(store.plugins.map(\.id), ["feishu_calendar"])
+        // P3 added two more built-in plugins; the Feishu suite keeps its own projections unchanged.
+        XCTAssertEqual(store.plugins.map(\.id), ["feishu_calendar", "apple_schedule", "watchtower"])
         XCTAssertEqual(store.plugins.first?.manifest.name, "飞书")
         XCTAssertEqual(store.calendarEvents.count, 3)
         XCTAssertEqual(store.botActivities.count, 2)
-        XCTAssertEqual(store.activeWorkspaceViews.count, 2)
-        XCTAssertEqual(store.activeWorkspaceViews.map(\.title), ["飞书日历", "飞书机器人"])
+        XCTAssertEqual(store.activeWorkspaceViews.filter { $0.pluginID == "feishu_calendar" }.count, 2)
+        XCTAssertEqual(store.activeWorkspaceViews.filter { $0.pluginID == "feishu_calendar" }.map(\.title), ["飞书日历", "飞书机器人"])
         XCTAssertEqual(store.activeWorkspaceViews.first?.badgeCount, 2)
         XCTAssertEqual(
-            store.activeSlashCommands.map(\.slash),
+            store.activeSlashCommands.filter { $0.pluginID == "feishu_calendar" }.map(\.slash),
             ["/feishu-today", "/feishu-freebusy", "/feishu-meet", "/feishu-notify", "/feishu-chat", "/feishu-doc"]
         )
         XCTAssertEqual(store.inspectorSnapshots.count, 1)
@@ -306,7 +309,7 @@ final class DesktopPluginTests: XCTestCase {
         XCTAssertEqual(store.disabledCorePlugin(governing: "schedule_create"), .taskBoard)
         XCTAssertFalse(store.activeRecipeRegisteredTools().contains("memory_tool"))
         XCTAssertTrue(store.inspectorSnapshots.isEmpty)
-        XCTAssertTrue(store.activeWorkspaceViews.isEmpty)
+        XCTAssertFalse(store.activeWorkspaceViews.contains { $0.pluginID == "feishu_calendar" })
     }
 
     func testCustomPluginImportExecutionAndRemoval() async throws {
@@ -420,7 +423,7 @@ final class DesktopPluginTests: XCTestCase {
 
         // Re-enable and verify tool card preview summary
         try store.setPluginEnabled("feishu_calendar", enabled: true)
-        let preview = DesktopToolCallCard.pluginPreviewSummary(tool: DesktopToolCall(
+        let preview = DesktopToolCallPreview.pluginSummary(for: DesktopToolCall(
             id: "t1",
             name: "plugin__feishu_calendar__create_event",
             input: "{}",
@@ -428,5 +431,149 @@ final class DesktopPluginTests: XCTestCase {
             status: .complete
         ))
         XCTAssertEqual(preview?.text, "架构评审（2026-10-30 16:00 · 飞书会议）")
+    }
+
+    func testArquielDesign2FeishuPluginSettingsPresentationAndFieldMapping() async throws {
+        let now = fixedDate()
+        let store = DesktopPluginStore(
+            directory: tempDirectory,
+            defaults: defaults,
+            credentials: credentials,
+            referenceDateProvider: { now }
+        )
+
+        let feishu = try XCTUnwrap(store.plugins.first { $0.id == "feishu_calendar" })
+
+        // 1. Default unconnected / demo mode overview:
+        let demoOverview = DesktopPluginSettingsPresentation.overview(for: feishu, store: store, hasError: false)
+        XCTAssertEqual(demoOverview.title, "飞书")
+        XCTAssertEqual(demoOverview.connectionState, .demoMode)
+        XCTAssertEqual(demoOverview.connectionBadgeText, "演示模式")
+        XCTAssertEqual(demoOverview.calendarModuleStatus, "本地演示模式")
+        XCTAssertEqual(demoOverview.botModuleStatus, "本地沙箱模式")
+        XCTAssertFalse(demoOverview.showsTechnicalMetadataInHeader)
+
+        // 2. Error state overview:
+        let errorOverview = DesktopPluginSettingsPresentation.overview(for: feishu, store: store, hasError: true)
+        XCTAssertEqual(errorOverview.connectionState, .error)
+        XCTAssertEqual(errorOverview.connectionBadgeText, "连接异常")
+
+        // 3. Field categorization & default collapsed states for Calendar vs. Bot modules:
+        let initialDraft = Dictionary(
+            uniqueKeysWithValues: feishu.manifest.settingsSchema.map { ($0.key, store.settingValue(pluginID: "feishu_calendar", key: $0.key)) }
+        )
+        let calCat = DesktopPluginSettingsPresentation.categorizeFields(
+            for: feishu,
+            module: .calendar,
+            draftSettings: initialDraft
+        )
+        XCTAssertEqual(calCat.connectionKeys, ["caldav_username", "caldav_password"])
+        XCTAssertEqual(calCat.generalKeys, ["workday_start_hour", "workday_end_hour", "default_receive_id"])
+        XCTAssertEqual(
+            calCat.advancedKeys,
+            ["caldav_server", "default_calendar_id", "app_id", "app_secret", "personal_access_token"]
+        )
+        XCTAssertEqual(calCat.customizedAdvancedCount, 0)
+        XCTAssertFalse(calCat.isAdvancedExpandedByDefault)
+        XCTAssertFalse(calCat.isTechnicalDetailsExpandedByDefault)
+
+        let botCat = DesktopPluginSettingsPresentation.categorizeFields(
+            for: feishu,
+            module: .bot,
+            draftSettings: initialDraft
+        )
+        XCTAssertEqual(botCat.connectionKeys, ["bot_webhook_url", "bot_webhook_secret"])
+        XCTAssertEqual(botCat.generalKeys, ["workday_start_hour", "workday_end_hour", "default_receive_id"])
+        XCTAssertEqual(
+            botCat.advancedKeys,
+            ["caldav_server", "default_calendar_id", "app_id", "app_secret", "personal_access_token"]
+        )
+
+        // Every single schema key in feishu_calendar must be covered without loss or collision:
+        let allSchemaKeys = Set(feishu.manifest.settingsSchema.map(\.key))
+        let coveredKeys = Set(calCat.connectionKeys)
+            .union(botCat.connectionKeys)
+            .union(calCat.generalKeys)
+            .union(calCat.advancedKeys)
+        XCTAssertEqual(coveredKeys, allSchemaKeys)
+        XCTAssertEqual(allSchemaKeys.count, 12)
+
+        // 4. Save all 12 fields across Connection / General / Advanced and verify non-destructive persistence & connected state:
+        let fullValues: [String: String] = [
+            "caldav_server": "https://caldav.larksuite.com",
+            "caldav_username": "u_arquiel",
+            "caldav_password": "caldav_secret_value",
+            "workday_start_hour": "10",
+            "workday_end_hour": "19",
+            "default_calendar_id": "cal_team_01",
+            "bot_webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/hook_001",
+            "bot_webhook_secret": "hook_sign_secret",
+            "app_id": "cli_enterprise_app",
+            "app_secret": "enterprise_app_secret",
+            "default_receive_id": "oc_product_group",
+            "personal_access_token": "u-pat-token-xyz"
+        ]
+        try store.saveSettings(pluginID: "feishu_calendar", values: fullValues)
+
+        for (key, expected) in fullValues {
+            XCTAssertEqual(store.settingValue(pluginID: "feishu_calendar", key: key), expected, "Mismatch for key \(key)")
+        }
+
+        // Verify secrets are only in Keychain, never in UserDefaults:
+        let persistedDefaults = defaults.dictionary(forKey: "desktop.plugins.settings.v1.feishu_calendar") as? [String: String]
+        XCTAssertNil(persistedDefaults?["caldav_password"])
+        XCTAssertNil(persistedDefaults?["bot_webhook_secret"])
+        XCTAssertNil(persistedDefaults?["app_secret"])
+        XCTAssertNil(persistedDefaults?["personal_access_token"])
+        XCTAssertEqual(persistedDefaults?["workday_start_hour"], "10")
+        XCTAssertEqual(persistedDefaults?["default_receive_id"], "oc_product_group")
+
+        let customizedCat = DesktopPluginSettingsPresentation.categorizeFields(
+            for: feishu,
+            module: .calendar,
+            draftSettings: fullValues
+        )
+        XCTAssertEqual(customizedCat.customizedAdvancedCount, 4)
+        XCTAssertTrue(customizedCat.advancedSummary.contains("已启用企业自建应用 OpenAPI"))
+
+        let connectedPlugin = try XCTUnwrap(store.plugins.first { $0.id == "feishu_calendar" })
+        let connectedOverview = DesktopPluginSettingsPresentation.overview(
+            for: connectedPlugin,
+            store: store,
+            hasError: false
+        )
+        XCTAssertEqual(connectedOverview.connectionState, .connected)
+        XCTAssertEqual(connectedOverview.connectionBadgeText, "已连接")
+        XCTAssertEqual(connectedOverview.calendarModuleStatus, "CalDAV 直连")
+        XCTAssertEqual(connectedOverview.botModuleStatus, "Webhook + 应用机器人")
+
+        // 5. Disabled state overview:
+        try store.setPluginEnabled("feishu_calendar", enabled: false)
+        let disabledPlugin = try XCTUnwrap(store.plugins.first { $0.id == "feishu_calendar" })
+        let disabledOverview = DesktopPluginSettingsPresentation.overview(
+            for: disabledPlugin,
+            store: store,
+            hasError: false
+        )
+        XCTAssertEqual(disabledOverview.connectionState, .disabled)
+        XCTAssertEqual(disabledOverview.connectionBadgeText, "已停用")
+        XCTAssertEqual(disabledOverview.calendarModuleStatus, "已停用")
+        XCTAssertEqual(disabledOverview.botModuleStatus, "已停用")
+        try store.setPluginEnabled("feishu_calendar", enabled: true)
+
+        // 6. Permission summary & technical metadata line:
+        let perm = DesktopPluginSettingsPresentation.permissionSummary(
+            for: connectedPlugin,
+            calendarEventCount: store.calendarEvents.count,
+            botActivityCount: store.botActivities.count
+        )
+        XCTAssertTrue(perm.networkSummary.contains("4 个 HTTPS 域名"))
+        XCTAssertTrue(perm.approvalSummary.contains("4 项只读查询直接可用"))
+        // P3 added `meeting_closeout`, so the Feishu suite now declares four external writes.
+        XCTAssertTrue(perm.approvalSummary.contains("4 项外部写入"))
+        XCTAssertEqual(perm.workspaceSummary, "禁止直接写入当前会话工作区文件")
+        XCTAssertEqual(perm.capabilityCountBadge, "8 项工具 · 6 条命令 · 2 个视图")
+        XCTAssertTrue(perm.technicalMetadataLine.contains("feishu_calendar"))
+        XCTAssertTrue(perm.technicalMetadataLine.contains("amber.plugin.v2"))
     }
 }

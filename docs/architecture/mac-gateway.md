@@ -1,6 +1,6 @@
 # Amber Mac Gateway 设计（v0.4，实施中）
 
-状态：实施中，代码在本仓 `gateway/`（SwiftPM 包；2026-10-27 从独立仓库并入，随 Amber 桌面版打包，见 `docs/plans/2026-10-27-gateway-integration.md`）。v0.4（2026-09-27）把 G1 实施中经运行时证据修正的设计、G2–G4 的三端落地清单与分期验收写回本文，偏差逐条列在修订记录。v0.2（2026-09-27）按评审修订：配对改二维码 + 证书 pinning、本地传输改 TLS、hook 通道改 Unix domain socket、Codex 接入改 hooks 体系、停滞检测改进程监听、明确单开发者自用定位。v0.3（2026-09-27）修正进程监听的可行性边界（退出码仅子进程可得、进程树定位、多会话宿主）、hook 时延预算、推送在场判定、凭据与设备吊销、iOS entitlement 缺口。修订记录见文末。与 `cross-device-collaboration.md` 的关系：本文是其「事件 + 推送 + 受限控制」纵切的先行实现，不是替代。
+状态：实施中，代码在本仓 `gateway/`（SwiftPM 包；2026-10-27 从独立仓库并入，随 Amber 桌面版打包，见 `docs/plans/2026-10-27-gateway-integration.md`）。**跨端冻结字段规范（C3 Gateway 协议、C4 数据保留、C5 任务看板）见 [`gateway-contract-c3.md`](./gateway-contract-c3.md)。** v0.4（2026-09-27）把 G1 实施中经运行时证据修正的设计、G2–G4 的三端落地清单与分期验收写回本文，偏差逐条列在修订记录。v0.2（2026-09-27）按评审修订：配对改二维码 + 证书 pinning、本地传输改 TLS、hook 通道改 Unix domain socket、Codex 接入改 hooks 体系、停滞检测改进程监听、明确单开发者自用定位。v0.3（2026-09-27）修正进程监听的可行性边界（退出码仅子进程可得、进程树定位、多会话宿主）、hook 时延预算、推送在场判定、凭据与设备吊销、iOS entitlement 缺口。修订记录见文末。与 `cross-device-collaboration.md` 的关系：本文是其「事件 + 推送 + 受限控制」纵切的先行实现，不是替代。
 
 ## 1. 定位与目标
 

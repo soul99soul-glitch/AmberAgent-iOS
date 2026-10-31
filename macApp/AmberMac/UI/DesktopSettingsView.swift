@@ -361,6 +361,15 @@ struct DesktopSettingsView: View {
         }
     }
 
+    @ViewBuilder private var claudeCaching: some View {
+        if draft.kind == .claude {
+            Toggle("复用稳定的提示前缀（Claude prompt caching）", isOn: Binding(
+                get: { draft.promptCaching },
+                set: { draft.promptCaching = $0 }))
+                .help("为系统提示、工具与历史插入 cache_control 断点；缓存写入按服务商价格计费，默认关闭。")
+        }
+    }
+
     private var models: some View {
         Section("模型") {
             if draft.models.isEmpty {
@@ -386,6 +395,7 @@ struct DesktopSettingsView: View {
                     .background(modelBeingEdited == model.id ? DesktopTheme.accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 6))
                 }
             }
+            claudeCaching
             Button("手动输入模型 ID", systemImage: "plus") {
                 let model = DesktopModelConfiguration(modelID: "")
                 draft.models.append(model); parameters[model.id] = ModelParameters(model)

@@ -211,7 +211,8 @@ import XCTest
         workspace.draft = "continue tools"
         workspace.send()
         XCTAssertLessThan(provider.messages[1].count, original.messages.count)
-        XCTAssertEqual(provider.messages[1].first?.role, .system)
+        // v2 handoffs travel as a user turn, so the Claude path cannot flatten them into the system prompt.
+        XCTAssertEqual(provider.messages[1].first?.role, .user)
         let final = DesktopMessage(id: provider.responseIDs[1], role: .assistant, text: "new final")
         provider.runs[1].yield(.transcript([final]))
         provider.runs[1].yield(.complete)

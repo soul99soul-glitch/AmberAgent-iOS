@@ -208,7 +208,7 @@ import XCTest
         workspace.draft = "继续"
         workspace.send()
         let request = try XCTUnwrap(provider.requests.last)
-        XCTAssertEqual(request.first?.role, .system)
+        XCTAssertEqual(request.first?.role, .user, "the handoff is injected as a user turn")
         XCTAssertTrue(request.first?.text.contains("较早两轮的摘要") == true)
         XCTAssertEqual(request.dropFirst().map(\.text), ["问题2", "回答2", "问题3", "回答3", "继续"])
         XCTAssertEqual(Array(try XCTUnwrap(workspace.selectedConversation).messages.prefix(8)), messages)

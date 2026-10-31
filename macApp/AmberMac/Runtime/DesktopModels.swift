@@ -46,6 +46,8 @@ struct DesktopProviderConfiguration: Codable, Equatable, Identifiable, Sendable 
     var models: [DesktopModelConfiguration]
     var selectedModelID: UUID?
     var authMode: DesktopProviderAuthMode
+    /// Claude only: send `cache_control` so a stable prefix can be reused. Off by default (cache writes are billed).
+    var promptCaching = false
 
     var selectedModel: DesktopModelConfiguration? {
         models.first { $0.id == selectedModelID && $0.enabled } ?? models.first { $0.enabled }
@@ -76,15 +78,15 @@ struct DesktopProviderConfiguration: Codable, Equatable, Identifiable, Sendable 
 
     init(id: UUID = UUID(), name: String, kind: DesktopProviderKind, baseURL: String,
          models: [DesktopModelConfiguration], selectedModelID: UUID? = nil,
-         authMode: DesktopProviderAuthMode = .apiKey) {
+         authMode: DesktopProviderAuthMode = .apiKey, promptCaching: Bool = false) {
         self.id = id; self.name = name; self.kind = kind; self.baseURL = baseURL
         self.models = models
         self.selectedModelID = selectedModelID ?? models.first(where: \.enabled)?.id
-        self.authMode = authMode
+        self.authMode = authMode; self.promptCaching = promptCaching
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, modelID, models, selectedModelID, authMode
+        case id, name, kind, baseURL, modelID, models, selectedModelID, authMode, promptCaching
     }
 
     init(from decoder: any Decoder) throws {
@@ -100,6 +102,7 @@ struct DesktopProviderConfiguration: Codable, Equatable, Identifiable, Sendable 
         }
         selectedModelID = try values.decodeIfPresent(UUID.self, forKey: .selectedModelID) ?? models.first(where: \.enabled)?.id
         authMode = try values.decodeIfPresent(DesktopProviderAuthMode.self, forKey: .authMode) ?? .apiKey
+        promptCaching = try values.decodeIfPresent(Bool.self, forKey: .promptCaching) ?? false
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -108,6 +111,7 @@ struct DesktopProviderConfiguration: Codable, Equatable, Identifiable, Sendable 
         try values.encode(kind, forKey: .kind); try values.encode(baseURL, forKey: .baseURL)
         try values.encode(models, forKey: .models); try values.encodeIfPresent(selectedModelID, forKey: .selectedModelID)
         try values.encode(authMode, forKey: .authMode)
+        if promptCaching { try values.encode(true, forKey: .promptCaching) }
         try values.encode(modelID, forKey: .modelID)
     }
 }

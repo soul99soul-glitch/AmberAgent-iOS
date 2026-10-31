@@ -162,12 +162,12 @@ Amber 在应用支持目录（`~/Library/Application Support/Amber/plugins/`）�
 | 字段 | 类型 | 必填 | 含义 |
 | :--- | :--- | :--- | :--- |
 | `schema` | `string` | 否 | 协议版本，默认 `"amber.plugin.v2"`，兼容 `"amber.plugin.v1"`。 |
-| `id` | `string` | 是 | 插件唯一标识：2–32 位，以小写字母开头，仅含小写字母、数字和下划线（`^[a-z][a-z0-9_]*$`）。`feishu_calendar` 为官方内置插件保留 ID。 |
+| `id` | `string` | 是 | 插件唯一标识：2–32 位，以小写字母开头，仅含小写字母、数字和下划线（`^[a-z][a-z0-9_]*$`）。`feishu_calendar`、`apple_schedule`、`watchtower` 为官方内置插件保留 ID。 |
 | `name` | `string` | 是 | 设置页、侧栏和命令面板里展示的插件名称。 |
 | `version` | `string` | 是 | 版本号字符串，例如 `"2.0.0"`。 |
 | `description` | `string` | 是 | 插件的一句话功能说明。 |
 | `icon` | `string` | 否 | SF Symbols 图标名，默认 `"puzzlepiece.extension"`。 |
-| `capabilities` | `object` | 否 | 权限与沙箱边界：`{ networkDomains: [], workspaceReadPrefixes: [], workspaceWritePrefixes: [] }`。 |
+| `capabilities` | `object` | 否 | 权限与沙箱边界：`{ networkDomains: [], workspaceReadPrefixes: [], workspaceWritePrefixes: [], hostModules: [] }`。 |
 | `settings_schema` | `array` | 否 | 插件配置项定义数组（见[配置与凭据](#settings)）。 |
 | `tools` | `array` | 否 | 提供给智能体的工具数组（见[给每个会话的工具](#tools)）。 |
 | `ui` | `object` | 否 | 界面扩展声明：`{ inspectorCards: [], workspaceViews: [], commands: [] }`（见[窗口里的界面槽位](#ui-slots)）。 |
@@ -176,6 +176,22 @@ Amber 在应用支持目录（`~/Library/Application Support/Amber/plugins/`）�
 
 - `networkDomains`：字符串数组，每一项为不含协议头、斜杠和端口的纯域名（例如 `["caldav.feishu.cn", "open.feishu.cn"]`）。允许匹配该域名本身及其任意子域名（`*.open.feishu.cn`）。
 - `workspaceReadPrefixes` / `workspaceWritePrefixes`：声明插件在会话工作区中可读写的文件路径前缀（例如 `["meetings/", "feishu/"]`），展示在「设置 → 插件 → 权限与沙箱边界」卡片中。
+- `hostModules`：**仅供官方内置插件使用**，声明「由宿主框架实现、而不是由 JS 沙箱实现」的能力。目前只支持 `"calendar"`（macOS EventKit 读写本机日历与提醒事项）。写这个字段的第三方插件会被拒绝（内置 ID 不允许被导入），而未知模块名会让清单校验直接失败。
+
+### 沙箱真实能力（请以这里为准）
+
+设置页的「权限与能力边界」卡片按代码实际接线情况逐项标注，不要把它当成营销页面：
+
+| 能力 | 当前状态 | 说明 |
+| :--- | :--- | :--- |
+| 纯计算与命令 | 已接线 | `main.js` 在 JavaScriptCore 中同步求值。 |
+| 持久状态 | 已接线 | `amber.storage` 写入该插件自己的 `storage.json`。 |
+| 网络访问 | **第三方脚本未接线** | 沙箱没有 `fetch`/`XMLHttpRequest`。只有内置插件（飞书）通过宿主原生客户端联网，并受上面的域名白名单约束。 |
+| 工作区文件 | **未接线** | 沙箱没有文件 API；声明前缀只用于展示，读写都不会发生。 |
+| 系统数据（`hostModules`） | 视模块而定 | `calendar` 已实现（内置「本机日程」插件）；其他模块即使声明也只会标为「未接线」。 |
+| 界面入口 | 已接线 | 命令、工作区视图、检查器卡片均由宿主按清单渲染，不执行插件自带界面代码。 |
+
+所以第三方插件要联网时，正确做法是**组合宿主工具**：让 Recipe 或定时任务先调用 `scrape_web`，再把正文作为参数传给你的纯函数工具（内置 `watchtower` 就是这么做的）。
 
 ---
 
@@ -257,7 +273,7 @@ Amber 在应用支持目录（`~/Library/Application Support/Amber/plugins/`）�
 | :--- | :--- | :--- | :--- |
 | `"pure"` | `只读` | **免批准**，直接执行 | 本地计算、格式化、读取插件自己的 `storage.json`。 |
 | `"networkRead"` | `网络读取` | **免批准**，直接执行 | 查询日历列表、拉取忙闲状态、拉取群聊历史、读取云文档。 |
-| `"idempotent"` | `幂等变更（需批准）` | **需用户批准**（除非开启自动批准普通变更） | 覆盖更新已有状态或配置。 |
+| `"idempotent"` | `幂等变更（需批准）` | **需用户批准**（插件外部变更均按高风险处理，「自动批准普通变更」不会自动放行） | 覆盖更新已有外部状态或标记提醒完成。 |
 | `"sideEffect"` | `外部写入（需批准）` | **需用户批准** | 创建日历日程、通过飞书机器人向群里发卡片、新建云文档。 |
 
 ### 对话流工具卡片的结构化预览
@@ -407,6 +423,31 @@ Amber 内置的 **「飞书」插件（`id: "feishu_calendar"`, `v2.0.0`）** �
 当某个核心插件被停用时：
 1. `DesktopToolRegistry.agentDeclarations(...)` 会在构造模型请求时直接剔除它管辖的工具；
 2. 如果 Recipe 或外部调用尝试强行执行已停用核心插件的工具，`DesktopAgentProvider` 会立即拦截并返回明确的中文提示（`核心插件「xxx」当前已停用`）。
+
+### 官方内置插件
+
+除了上面的开关式核心插件，Amber 还自带三个**不可删除、可停用**的内置插件：
+
+| 插件 ID | 名称 | 实现方式 | 工具 |
+| :--- | :--- | :--- | :--- |
+| `feishu_calendar` | 飞书 | 宿主原生（CalDAV + 飞书开放平台） | 8 项：`list_events`、`freebusy`、`bot_fetch_chat_history`、`bot_read_doc` 为网络读取；`create_event`、`bot_send_message`、`bot_create_doc`、`meeting_closeout` 为外部写入 |
+| `apple_schedule` | 本机日程 | 宿主原生（EventKit） | `list_events`、`list_reminders` 只读；`create_event`、`update_event`、`delete_event`、`complete_reminder` 需批准 |
+| `watchtower` | 网页监控 | 纯 JavaScript 沙箱 | `snapshot`、`status`，都不联网，正文由 `scrape_web` 传入 |
+
+这三个 ID 被内置插件占用，导入同名插件会被拒绝。它们的工具同样遵守下面的审批规则：
+
+- 只读工具（`pure` / `networkRead`）直接执行；
+- 外部写入（`sideEffect` / `idempotent`）一律按**高风险**处理：「自动批准普通变更」放行不了，手机端只能拒绝、批准必须回到 Mac。
+- `meeting_closeout` 与三个写入工具都接受可选的 `idempotency_key`：同一个键重复调用会返回上次的结果并标记 `replayed: true`，不会重复建文档、发消息或建日程。
+
+### 随附 Recipe
+
+首次启动会把两个 `amber.recipe.v1` 流程写进 Recipe 目录（已存在的用户版本不会被覆盖）：
+
+| Recipe | 步骤 | 用途 |
+| :--- | :--- | :--- |
+| `watch_page` | `scrape_web` → `plugin__watchtower__snapshot` | 定时监控一个网页；`changed=false` 时任务记录保持安静，不发通知 |
+| `feishu_meeting_loop` | `plugin__feishu_calendar__meeting_closeout` | 会后把已确认的纪要建成云文档并发群回执；同一会议重复执行不会重复发送 |
 
 ---
 

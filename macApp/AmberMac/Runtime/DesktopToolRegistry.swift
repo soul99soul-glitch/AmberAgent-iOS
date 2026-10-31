@@ -13,7 +13,10 @@ struct DesktopSkillToolScope: Sendable {
     }
 }
 
-enum DesktopToolEffect: String, Sendable { case pure, networkRead, idempotent, sideEffect }
+enum DesktopToolEffect: String, Sendable {
+    case pure, networkRead, idempotent, sideEffect
+    static let readOnly: DesktopToolEffect = .pure
+}
 
 struct DesktopToolDeclaration: Codable, Equatable, Sendable {
     let name: String
@@ -48,7 +51,14 @@ enum DesktopToolRegistry {
     static func alwaysAsks(_ name: String) -> Bool { name == "schedule_create" || name == "schedule_update" }
 
     static func isHighRisk(_ name: String) -> Bool {
-        name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool" || name == "interrupt_agent"
+        // A plugin tool writes into another system (calendar, bot, document), so it carries the same gate as
+        // shell, deletion and MCP: the ordinary switch must not run it and a phone may only deny it. A plugin
+        // tool with no declared effect is treated as a write, never as a safe read.
+        if name.hasPrefix("plugin__") {
+            let declared = effect(for: name, arguments: "{}")
+            return declared == .sideEffect || declared == .idempotent
+        }
+        return name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool" || name == "interrupt_agent"
     }
 
     static func effect(for name: String, arguments: String, pluginEffect: ((String) -> DesktopToolEffect)? = nil) -> DesktopToolEffect {
@@ -57,13 +67,24 @@ enum DesktopToolRegistry {
             if let registered = pluginEffectsLock.withLock({ registeredPluginEffects[name] }) {
                 return registered
             }
-            if name == "plugin__feishu_calendar__list_events" || name == "plugin__feishu_calendar__freebusy" {
+            switch name {
+            case "plugin__feishu_calendar__list_events",
+                 "plugin__feishu_calendar__freebusy",
+                 "plugin__feishu_calendar__bot_fetch_chat_history",
+                 "plugin__feishu_calendar__bot_read_doc":
                 return .networkRead
+            case "plugin__apple_schedule__list_events",
+                 "plugin__apple_schedule__list_reminders",
+                 "plugin__watchtower__snapshot",
+                 "plugin__watchtower__status":
+                return .pure
+            default:
+                return .sideEffect
             }
-            return .sideEffect
         }
         switch name {
-        case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill", "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list": return .pure
+        case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill",
+             "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list", "history_search", "history_fetch": return .pure
         case "search_web", "scrape_web": return .networkRead
         case "memory_tool": return memoryEffect(arguments)
         default: return .sideEffect
@@ -111,12 +132,25 @@ extension DesktopToolRegistry {
                 + (knowledgeAllowed ? knowledgeDeclarations : [])
                 + (collaborationsAllowed ? collaborationDeclarations(subagents: subagentsEnabled) : [])
                 + DesktopMCPManager.declarations
+                + historyDeclarations
                 + (schedulesAllowed ? scheduleDeclarations : [])
                 + pluginDeclarations
         }
         guard subagentsEnabled, collaborationsAllowed else { return [] }
         let allowed = Set(["subagent_dispatch", "list_agents", "interrupt_agent"])
         return allCollaborationDeclarations.filter { allowed.contains($0.name) }
+    }
+
+    /// Read-only access to the stored transcript, including turns a summary folded away.
+    static var historyDeclarations: [DesktopToolDeclaration] {
+        [DesktopToolDeclaration(name: "history_search",
+            description: "在完整会话记录中检索关键词（含已被上下文摘要覆盖的更早消息），返回消息 id、角色、片段与 stale 标记；只读。",
+            parametersJSON: #"{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":12}},"required":["query"],"additionalProperties":false}"#,
+            needsApproval: false),
+         DesktopToolDeclaration(name: "history_fetch",
+            description: "按消息 id 读取原始消息全文（最多 4000 字），标注该消息是否已被摘要覆盖；只读。",
+            parametersJSON: #"{"type":"object","properties":{"message_id":{"type":"string"}},"required":["message_id"],"additionalProperties":false}"#,
+            needsApproval: false)]
     }
 
     /// Council and run management stay available with tools; sub-agent dispatch only when its switch is on.

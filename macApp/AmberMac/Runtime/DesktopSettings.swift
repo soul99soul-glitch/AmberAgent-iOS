@@ -65,6 +65,9 @@ struct DesktopKeychain: DesktopCredentialStore {
 
     func save(_ value: String, id: UUID) throws {
         if value.isEmpty { try delete(id: id); return }
+        if DesktopHistoryRedaction.isPlaceholderCredential(value) {
+            throw DesktopRuntimeError.message("不能将脱敏占位符保存为凭据。")
+        }
         let attributes = [kSecValueData as String: Data(value.utf8)]
         var status = SecItemUpdate(query(id) as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {

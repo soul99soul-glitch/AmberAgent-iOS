@@ -27,20 +27,22 @@ cp "$project_dir/../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.s
 cp "$project_dir/../iosApp/iosApp/IOSWebMountPublicDNS.swift" "$test_dir/Sources/AmberMac/"
 for source in "$project_dir"/AmberMacTests/*.swift; do
   case "$(basename "$source")" in
-    # Need the KMP Shared framework or the full app wiring; they run in the Xcode test target.
-    KMPProviderIntegrationTests.swift|DesktopGrokOAuthTests.swift|LiveGatewayE2ETests.swift|DesktopSearchLiveProbeTests.swift|DesktopIOSBackupTests.swift) continue ;;
+    # Need the KMP Shared framework, the SwiftUI view tree or the full app wiring; they run in the Xcode test target.
+    KMPProviderIntegrationTests.swift|DesktopGrokOAuthTests.swift|LiveGatewayE2ETests.swift|DesktopSearchLiveProbeTests.swift|DesktopIOSBackupTests.swift|DesktopConversationLayoutTests.swift|DesktopAgentProviderPathTests.swift) continue ;;
   esac
   cp "$source" "$test_dir/Tests/AmberMacTests/"
 done
 cp -R "$project_dir/AmberMacTests/Fixtures" "$test_dir/Tests/AmberMacTests/"
-cat > "$test_dir/Package.swift" <<'SWIFT'
+# Runtime sources import the embedded gateway modules for the task board, control channel and reporting.
+cat > "$test_dir/Package.swift" <<SWIFT
 // swift-tools-version: 6.0
 import PackageDescription
 let package = Package(
     name: "AmberMacRuntimeChecks",
     platforms: [.macOS(.v15)],
+    dependencies: [.package(path: "$project_dir/../gateway")],
     targets: [
-        .target(name: "AmberMac"),
+        .target(name: "AmberMac", dependencies: [.product(name: "GatewayKit", package: "gateway")]),
         .testTarget(name: "AmberMacTests", dependencies: ["AmberMac"], resources: [.process("Fixtures")])
     ]
 )

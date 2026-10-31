@@ -43,8 +43,10 @@ import XCTest
         run.yield(.complete)
         await controller.waitUntilIdle(original.id)
         let prepared = controller.prepare(messages: original.messages, conversationID: original.id)
-        XCTAssertEqual(prepared.first?.role, .system)
+        // v2 handoffs travel as a user turn: the Claude path flattens system messages into the top prompt.
+        XCTAssertEqual(prepared.first?.role, .user)
         XCTAssertTrue(prepared.first?.text.contains("目标与已确认事实") == true)
+        XCTAssertTrue(prepared.first?.text.contains("<context-handoff>") == true)
         XCTAssertEqual(prepared.dropFirst().map(\.id), original.messages.suffix(4).map(\.id))
         XCTAssertEqual(original.messages.count, 8)
         var otherBranch = original
@@ -59,7 +61,8 @@ import XCTest
         oversized.yield(.complete)
         await controller.waitUntilIdle(original.id)
         XCTAssertEqual(controller.value(.compact, for: original), prior)
-        XCTAssertTrue(controller.errors[original.id]?.contains("没有减少") == true)
+        // v2: the existing summary already covers every turn the boundary would fold, so nothing is re-sent.
+        XCTAssertTrue(controller.errors[original.id]?.contains("已被当前摘要覆盖") == true)
         controller.clearCompaction(original.id)
         await controller.waitUntilIdle(original.id)
         XCTAssertNil(controller.value(.compact, for: original))

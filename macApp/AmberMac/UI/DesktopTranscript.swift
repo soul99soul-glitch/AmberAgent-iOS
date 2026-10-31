@@ -68,7 +68,7 @@ struct DesktopTranscript: View {
                         // Lazy stacks virtualize themselves; image rows reload (and change height) when remounted.
                         if windowed, message.images.isEmpty, !highlighted, !(liveRows?.contains(index) ?? true),
                            let height = message.state == .streaming ? rowHeights.anyHeight(message.rowIdentity)
-                            : rowHeights.height(message.rowIdentity, layout: layout) {
+                            : (rowHeights.height(message.rowIdentity, layout: layout) ?? rowHeights.anyHeight(message.rowIdentity)) {
                             Color.clear.frame(maxWidth: .infinity).frame(height: height)
                                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.contentSpace)) } action: {
                                     rowHeights.place(message.rowIdentity, $0)
@@ -129,10 +129,16 @@ struct DesktopTranscript: View {
                     streaming: workspace.isSelectedConversationGenerating) { position.scrollTo(y: $0) }
             }
             .onScrollGeometryChange(for: DesktopLiveRows.Viewport.self) { geometry in
-                .init(visible: geometry.visibleRect, width: Int(geometry.containerSize.width.rounded()))
+                .init(visible: geometry.visibleRect,
+                      width: DesktopLiveRows.contentWidth(forContainerWidth: geometry.containerSize.width,
+                                                          maxWidth: DesktopTheme.contentWidth))
             } action: { _, viewport in
-                if layoutWidth != viewport.width { layoutWidth = viewport.width; liveRows = nil; return }
                 visibleRect = viewport.visible
+                if layoutWidth != viewport.width {
+                    layoutWidth = viewport.width
+                    repickLiveRows()
+                    return
+                }
                 updateLiveRows(viewport.visible)
             }
             .onScrollPhaseChange { _, phase in
@@ -299,7 +305,7 @@ struct DesktopTranscript: View {
     }
 
     private func repickLiveRows() {
-        guard windowed, liveRows != nil else { return }
+        guard windowed, visibleRect.height > 0 else { return }
         let next = DesktopLiveRows(visible: visibleRect, rowIDs: conversation.messages.map(\.rowIdentity), heights: rowHeights)
         if next != liveRows { liveRows = next }
     }
@@ -693,6 +699,14 @@ struct DesktopLiveRows: Equatable {
     struct Viewport: Equatable {
         let visible: CGRect
         let width: Int
+    }
+
+    /// Clamps scroll-container width to the centered transcript column width so outer chrome changes (such as
+    /// toggling the sidebar or inspector when the column is already at `maxWidth`) do not invalidate row heights.
+    static func contentWidth(forContainerWidth containerWidth: CGFloat,
+                             maxWidth: CGFloat = DesktopTheme.contentWidth,
+                             horizontalPadding: CGFloat = 48) -> Int {
+        Int(min(max(0, containerWidth - horizontalPadding), maxWidth).rounded())
     }
 
     /// The scroll view's content starts with the transcript's 32pt top padding.

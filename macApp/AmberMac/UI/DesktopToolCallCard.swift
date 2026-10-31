@@ -14,7 +14,7 @@ struct DesktopToolCallCard: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(tool.name).font(.system(size: 11, design: .monospaced)).foregroundStyle(DesktopTheme.inkTertiary)
                         .textSelection(.enabled)
-                    if let pluginSummary = Self.pluginPreviewSummary(tool: tool) {
+                    if let pluginSummary = DesktopToolCallPreview.pluginSummary(for: tool) {
                         HStack(spacing: 8) {
                             Image(systemName: pluginSummary.symbol)
                                 .font(.system(size: 11, weight: .semibold))
@@ -122,39 +122,4 @@ struct DesktopToolCallCard: View {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func pluginPreviewSummary(tool: DesktopToolCall) -> (symbol: String, text: String)? {
-        guard tool.name.hasPrefix("plugin__"),
-              tool.output.utf8.count <= 16_384,
-              let data = tool.output.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        if let event = obj["event"] as? [String: Any],
-           let summary = event["summary"] as? String {
-            let start = (event["start_time"] as? String) ?? (event["startTime"] as? String) ?? ""
-            let loc = (event["location"] as? String) ?? ""
-            let meta = [start, loc].filter { !$0.isEmpty }.joined(separator: " · ")
-            return ("calendar.badge.checkmark", meta.isEmpty ? summary : "\(summary)（\(meta)）")
-        }
-        if let count = obj["count"] as? Int, obj["events"] != nil {
-            return ("calendar", "共读取 \(count) 项飞书日历日程")
-        }
-        if let freeSlots = obj["free_slots"] as? [[String: Any]] {
-            return ("clock.badge.checkmark", "发现 \(freeSlots.count) 个可约空闲时段")
-        }
-        if let msgID = obj["message_id"] as? String, !msgID.isEmpty,
-           let title = obj["title"] as? String {
-            let target = (obj["target"] as? String) ?? ""
-            return ("paperplane", target.isEmpty ? "已推送：\(title)" : "已推送至 \(target)：\(title)")
-        }
-        if let count = obj["count"] as? Int, obj["messages"] != nil {
-            let chatID = (obj["chat_id"] as? String) ?? "飞书群"
-            return ("bubble.left.and.bubble.right", "已拉取 \(chatID) 近 \(count) 条消息")
-        }
-        if let docID = obj["document_id"] as? String, !docID.isEmpty,
-           let title = obj["title"] as? String {
-            return ("doc.text", "\(title)（\(docID)）")
-        }
-        return nil
-    }
 }

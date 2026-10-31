@@ -104,13 +104,16 @@ struct DesktopRunContext: Sendable {
     let approvalPolicy: DesktopApprovalPolicy?
     let persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)?
     let drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?
+    /// Stored transcript plus the ids the active summary covers, for the read-only history tools.
+    let historySnapshot: (@MainActor @Sendable () -> (messages: [DesktopMessage], coveredIDs: Set<UUID>))?
 
     init(conversationID: UUID, toolsEnabled: Bool, subagentsEnabled: Bool = false, approvalPolicy: DesktopApprovalPolicy? = nil,
         persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)? = nil,
-        drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])? = nil) {
+        drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])? = nil,
+        historySnapshot: (@MainActor @Sendable () -> (messages: [DesktopMessage], coveredIDs: Set<UUID>))? = nil) {
         self.conversationID = conversationID; self.toolsEnabled = toolsEnabled
         self.subagentsEnabled = subagentsEnabled; self.approvalPolicy = approvalPolicy; self.persistTurns = persistTurns
-        self.drainSteer = drainSteer
+        self.drainSteer = drainSteer; self.historySnapshot = historySnapshot
     }
 }
 

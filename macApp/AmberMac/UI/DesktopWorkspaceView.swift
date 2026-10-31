@@ -8,11 +8,14 @@ struct DesktopWorkspaceView: View {
     var findRequest = 0
     var commandPaletteRequest = 0
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.desktopLiquidMorphPreviewProgress) private var morphPreviewProgress
     @FocusState private var searchFocused: Bool
     @State private var renameID: UUID?
     @State private var renameTitle = ""
     @State private var deleteID: UUID?
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var toolbarCapsuleProgress: CGFloat = 0.0
     @State private var transcriptFocus: DesktopTranscriptFocus?
     @State private var insightsPresented = false
     @State private var shelfPresented = false
@@ -33,12 +36,19 @@ struct DesktopWorkspaceView: View {
     /// Detail-column width from which the inspector docks beside the transcript (680 column + margins + 300 panel).
     static let inspectorDockWidth: CGFloat = 1080
     @State private var markTaps = 0
-    @Namespace private var sidebarNamespace
 
     private struct ImageGenerationOwner: Identifiable { let id: UUID }
 
     private var displayedConversations: [DesktopConversationSearchResult] {
         workspace.sidebarResults
+    }
+
+    private var panelAnimation: Animation {
+        DesktopLiquidMotion.panelAnimation(reduceMotion: reduceMotion)
+    }
+
+    private var toolbarCapsuleAnimation: Animation {
+        DesktopLiquidMotion.toolbarCapsuleAnimation(reduceMotion: reduceMotion)
     }
 
     var body: some View {
@@ -50,10 +60,14 @@ struct DesktopWorkspaceView: View {
                 if sidebarShown {
                     sidebar
                         .frame(width: 288, height: windowGeometry.size.height)
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14)),
-                            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14))
-                        ))
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14)),
+                                    removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)).combined(with: .offset(x: -14))
+                                )
+                        )
                 }
                 if workspace.showsTaskBoard, let scheduler = workspace.scheduler {
                     DesktopBoardView(workspace: workspace, scheduler: scheduler) { conversation in
@@ -125,15 +139,31 @@ struct DesktopWorkspaceView: View {
                         onOpenTasks: { tasksPresented = true },
                         onFocusComposer: { composerFocusRequest += 1 })
                         .frame(width: 324, height: windowGeometry.size.height)
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)).combined(with: .offset(x: 12)),
-                            removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))
-                        ))
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)).combined(with: .offset(x: 12)),
+                                    removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))
+                                )
+                        )
                 }
             }
-            .animation(.spring(response: 0.34, dampingFraction: 0.84), value: sidebarShown)
-            .animation(.spring(response: 0.34, dampingFraction: 0.84), value: docked)
-            .onChange(of: docked, initial: true) { _, value in inspectorDocked = value }
+            .animation(panelAnimation, value: sidebarShown)
+            .animation(panelAnimation, value: docked)
+            .onChange(of: docked, initial: true) { old, value in
+                inspectorDocked = value
+                let target: CGFloat = (!value && workspace.activeSurface == .chat) ? 1.0 : 0.0
+                if old != value {
+                    withAnimation(toolbarCapsuleAnimation) { toolbarCapsuleProgress = target }
+                } else {
+                    toolbarCapsuleProgress = target
+                }
+            }
+            .onChange(of: workspace.activeSurface) { _, surface in
+                let target: CGFloat = (!inspectorDocked && surface == .chat) ? 1.0 : 0.0
+                withAnimation(toolbarCapsuleAnimation) { toolbarCapsuleProgress = target }
+            }
         }
         .background { DesktopAmbientCanvas() }
         .navigationTitle(windowTitle)
@@ -175,6 +205,13 @@ struct DesktopWorkspaceView: View {
         .onChange(of: searchRequest) {
             columnVisibility = .all
             searchFocused = true
+        }
+        .task(id: workspace.scheduler != nil && workspace.plugins.isCoreEnabled(.taskBoard)) {
+            guard workspace.scheduler != nil, workspace.plugins.isCoreEnabled(.taskBoard) else { return }
+            while !Task.isCancelled {
+                workspace.refreshBoardBadge()
+                try? await Task.sleep(for: .seconds(5))
+            }
         }
         .alert("重命名会话", isPresented: Binding(get: { renameID != nil }, set: { if !$0 { renameID = nil } })) {
             TextField("会话名称", text: $renameTitle)
@@ -514,12 +551,6 @@ struct DesktopWorkspaceView: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 4)
-        .task {
-            while !Task.isCancelled {
-                workspace.refreshBoardBadge()
-                try? await Task.sleep(for: .seconds(5))
-            }
-        }
     }
 
     private func selectResult(_ result: DesktopConversationSearchResult) {
@@ -550,8 +581,10 @@ struct DesktopWorkspaceView: View {
         let pinned = displayedConversations.filter(\.isPinned)
         let rest = displayedConversations.filter { !$0.isPinned }
         let today = rest.filter { calendar.isDateInToday($0.updatedAt) }
-        let week = rest.filter { !calendar.isDateInToday($0.updatedAt) && $0.updatedAt > calendar.date(byAdding: .day, value: -7, to: .now)! }
-        let older = rest.filter { $0.updatedAt <= calendar.date(byAdding: .day, value: -7, to: .now)! }
+        // Interval comparisons: `Date.>` / `Date.<=` trap on this Xcode 27 SDK/runtime pairing.
+        let weekAgo = calendar.date(byAdding: .day, value: -7, to: .now) ?? .distantPast
+        let week = rest.filter { !calendar.isDateInToday($0.updatedAt) && $0.updatedAt.timeIntervalSince(weekAgo) > 0 }
+        let older = rest.filter { $0.updatedAt.timeIntervalSince(weekAgo) <= 0 }
         return [("置顶", pinned), ("今天", today), ("本周", week), ("更早", older)].filter { !$0.1.isEmpty }
     }
 
@@ -593,13 +626,12 @@ struct DesktopWorkspaceView: View {
         .background {
             if selected {
                 DesktopTheme.glow(RoundedRectangle(cornerRadius: 8))
-                    .matchedGeometryEffect(id: "sidebar-glow", in: sidebarNamespace)
             } else if hoveredRow == conversation.id {
                 RoundedRectangle(cornerRadius: 8).fill(DesktopTheme.hover)
             }
         }
         .onHover { hoveredRow = $0 ? conversation.id : (hoveredRow == conversation.id ? nil : hoveredRow) }
-        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: selected)
+        .animation(.easeOut(duration: 0.15), value: selected)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .help("\(conversation.title)\n\(conversation.messageCount) 条消息 · \(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))")
         .accessibilityElement(children: .combine)
@@ -623,7 +655,7 @@ struct DesktopWorkspaceView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             Button {
-                withAnimation(.smooth(duration: 0.28)) {
+                withAnimation(panelAnimation) {
                     columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
                 }
             } label: {
@@ -632,88 +664,85 @@ struct DesktopWorkspaceView: View {
             .help(columnVisibility == .detailOnly ? "显示左侧面板" : "隐藏左侧面板")
             .accessibilityLabel("左侧面板")
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            Menu {
-                Picker("服务商与模型", selection: Binding(
-                    get: { workspace.settings.selectedModelID },
-                    set: { if let id = $0 { workspace.settings.selectModel(id) } })) {
-                    if workspace.settings.selectedModelID == nil { Text("选择模型").tag(Optional<UUID>.none) }
-                    ForEach(workspace.settings.modelSelections) { model in
-                        Text("\(model.providerName) · \(model.modelName)").tag(Optional(model.id))
-                            .help(model.modelID)
-                    }
-                }
-                Divider()
-                SettingsLink { Label("管理服务商…", systemImage: "slider.horizontal.3") }
-            } label: {
-                Text(workspace.settings.selectedProvider?.selectedModel?.displayName ?? "选择模型")
-                    .font(.system(size: 13))
-                    .foregroundStyle(DesktopTheme.inkSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 160)
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .primaryAction) {
+                trailingToolbarCluster
             }
-            .help(workspace.settings.selectedModelID == nil ? "在设置中添加服务商与模型"
-                : workspace.settings.selectedProvider.map { "\($0.name) · \($0.modelID)" } ?? "在设置中添加服务商与模型")
-            .accessibilityLabel("选择服务商与模型")
-            Button { commandPalettePresented = true } label: { Image(systemName: "command") }
-                .help("命令面板 ⌘K")
-                .accessibilityLabel("命令面板")
-            if workspace.activeSurface == .chat {
-            Button { withAnimation(.smooth(duration: 0.3)) { inspectorVisible.toggle() } } label: { Image(systemName: "sidebar.right") }
-                .help(inspectorVisible ? "隐藏右侧面板" : "显示右侧面板（窗口足够宽时常驻）")
-                .accessibilityLabel("右侧面板")
-            }
-            if !inspectorDocked, workspace.activeSurface == .chat {
-            Button { insightsPresented.toggle() } label: { Image(systemName: "text.bubble") }
-                .disabled(!workspace.hasSelectedConversation || workspace.isLoading)
-                .help("上下文与回顾")
-                .accessibilityLabel("上下文与回顾")
-                .popover(isPresented: $insightsPresented, arrowEdge: .bottom) {
-                    DesktopConversationInsightsView(workspace: workspace)
-                }
-            Button { shelfPresented.toggle() } label: { Image(systemName: "pin") }
-                .disabled(!workspace.hasSelectedConversation || workspace.isLoading)
-                .help("产物架")
-                .accessibilityLabel("产物架")
-                .popover(isPresented: $shelfPresented, arrowEdge: .bottom) {
-                    DesktopArtifactShelfView(workspace: workspace) { messageID in
-                        guard let conversationID = workspace.selectedID else { return }
-                        transcriptFocus = DesktopTranscriptFocus(conversationID: conversationID, messageID: messageID)
-                        shelfPresented = false
-                    }
-                }
-            Button { filesPresented = true } label: { Image(systemName: "folder") }
-                .disabled(workspace.selectedID == nil || workspace.isLoading)
-                .help("此会话的文件与产物")
-                .accessibilityLabel("会话文件")
-            Button { tasksPresented = true } label: {
-                Image(systemName: "checklist")
-                    .symbolEffect(.bounce, value: workspace.agentTasks.records.filter { $0.status == .completed }.count)
-                    .overlay(alignment: .topTrailing) {
-                        if workspace.agentTasks.records.contains(where: { $0.approval != nil }) {
-                            DesktopPulse().offset(x: 4, y: -3)
-                        }
-                    }
-            }
-            .help("工具任务与待确认操作")
-            .accessibilityLabel("任务工作台")
-            if !workspace.plugins.inspectorSnapshots.isEmpty {
-                Button { pluginInspectorPresented.toggle() } label: {
-                    Image(systemName: workspace.plugins.inspectorSnapshots.first?.symbol ?? "puzzlepiece.extension")
-                }
-                .help("插件右侧栏卡片")
-                .accessibilityLabel("插件右侧栏卡片")
-                .popover(isPresented: $pluginInspectorPresented, arrowEdge: .bottom) {
-                    DesktopPluginInspectorPopoverView(
-                        workspace: workspace,
-                        onFocusComposer: { composerFocusRequest += 1 },
-                        onDismiss: { pluginInspectorPresented = false }
-                    )
-                }
-            }
+            .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .primaryAction) {
+                trailingToolbarCluster
             }
         }
+    }
+
+    private var trailingToolbarCluster: some View {
+        let effectiveCapsuleProgress = morphPreviewProgress ?? toolbarCapsuleProgress
+        return HStack(spacing: 8) {
+            modelPickerPill
+            DesktopToolbarLiquidCapsule(
+                workspace: workspace,
+                extensionProgress: effectiveCapsuleProgress,
+                reduceMotion: reduceMotion,
+                inspectorVisible: inspectorVisible,
+                insightsPresented: $insightsPresented,
+                shelfPresented: $shelfPresented,
+                filesPresented: $filesPresented,
+                tasksPresented: $tasksPresented,
+                pluginInspectorPresented: $pluginInspectorPresented,
+                commandPalettePresented: $commandPalettePresented,
+                onLocateArtifact: { messageID in
+                    guard let conversationID = workspace.selectedID else { return }
+                    transcriptFocus = DesktopTranscriptFocus(conversationID: conversationID, messageID: messageID)
+                    shelfPresented = false
+                },
+                onFocusComposer: { composerFocusRequest += 1 },
+                onToggleInspector: {
+                    withAnimation(panelAnimation) {
+                        inspectorVisible.toggle()
+                    }
+                }
+            )
+        }
+        .frame(width: 452, height: 36, alignment: .trailing)
+    }
+
+    private var modelPickerPill: some View {
+        Menu {
+            Picker("服务商与模型", selection: Binding(
+                get: { workspace.settings.selectedModelID },
+                set: { if let id = $0 { workspace.settings.selectModel(id) } })) {
+                if workspace.settings.selectedModelID == nil { Text("选择模型").tag(Optional<UUID>.none) }
+                ForEach(workspace.settings.modelSelections) { model in
+                    Text("\(model.providerName) · \(model.modelName)").tag(Optional(model.id))
+                        .help(model.modelID)
+                }
+            }
+            Divider()
+            SettingsLink { Label("管理服务商…", systemImage: "slider.horizontal.3") }
+        } label: {
+            Text(workspace.settings.selectedProvider?.selectedModel?.displayName ?? "选择模型")
+                .font(.system(size: 13))
+                .foregroundStyle(DesktopTheme.inkSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 160)
+        }
+        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(
+            Capsule(style: .continuous)
+                .fill(DesktopTheme.card.opacity(0.95))
+                .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(DesktopTheme.hairlineStrong, lineWidth: 1)
+        )
+        .help(workspace.settings.selectedModelID == nil ? "在设置中添加服务商与模型"
+            : workspace.settings.selectedProvider.map { "\($0.name) · \($0.modelID)" } ?? "在设置中添加服务商与模型")
+        .accessibilityLabel("选择服务商与模型")
     }
 
     @ViewBuilder private var exportActions: some View {
@@ -910,5 +939,286 @@ private struct WelcomeSuggestionButton: View {
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: hovering)
         .help("将建议写入草稿，编辑后再发送")
+    }
+}
+
+/// Top-right toolbar capsule bar that shortens when the right inspector expands and lengthens when the right
+/// inspector collapses, using a bouncy Liquid Glass morph (`DesktopLiquidMotion.toolbarCapsuleTransform`) while
+/// keeping the trailing `sidebar.right` toggle button at a fixed window coordinate (`ΔX = 0`).
+private struct DesktopToolbarLiquidCapsule: View, Animatable {
+    @Bindable var workspace: DesktopWorkspace
+    var extensionProgress: CGFloat
+    let reduceMotion: Bool
+    let inspectorVisible: Bool
+    @Binding var insightsPresented: Bool
+    @Binding var shelfPresented: Bool
+    @Binding var filesPresented: Bool
+    @Binding var tasksPresented: Bool
+    @Binding var pluginInspectorPresented: Bool
+    @Binding var commandPalettePresented: Bool
+    let onLocateArtifact: (UUID) -> Void
+    let onFocusComposer: () -> Void
+    let onToggleInspector: () -> Void
+
+    nonisolated var animatableData: CGFloat {
+        get { extensionProgress }
+        set { extensionProgress = newValue }
+    }
+
+    var body: some View {
+        let isChat = workspace.activeSurface == .chat
+        let hasPluginItem = !workspace.plugins.inspectorSnapshots.isEmpty
+        let extraItemCount = isChat ? (hasPluginItem ? 5 : 4) : 0
+        let transform = DesktopLiquidMotion.toolbarCapsuleTransform(
+            extensionProgress: isChat ? extensionProgress : 0.0,
+            extraItemCount: extraItemCount,
+            reduceMotion: reduceMotion
+        )
+        let effectiveWidth: CGFloat = isChat ? transform.width : 42.0
+        let capsuleShape = DesktopLiquidCapsuleShape(waistPinch: isChat ? transform.waistPinch : 0.0)
+
+        HStack(spacing: 0) {
+            DesktopToolbarIconButton(
+                systemName: "command",
+                help: "命令面板 ⌘K",
+                accessibilityLabel: "命令面板",
+                action: { commandPalettePresented = true }
+            )
+            .padding(.leading, 4)
+
+            if isChat {
+                HStack(spacing: 4) {
+                    collapsibleItem(index: 0, totalCount: extraItemCount) {
+                        DesktopToolbarIconButton(
+                            systemName: "text.bubble",
+                            help: "上下文与回顾",
+                            accessibilityLabel: "上下文与回顾",
+                            disabled: !workspace.hasSelectedConversation || workspace.isLoading,
+                            isActive: insightsPresented,
+                            action: { insightsPresented.toggle() }
+                        )
+                        .popover(isPresented: $insightsPresented, arrowEdge: .bottom) {
+                            DesktopConversationInsightsView(workspace: workspace)
+                        }
+                    }
+
+                    collapsibleItem(index: 1, totalCount: extraItemCount) {
+                        DesktopToolbarIconButton(
+                            systemName: "pin",
+                            help: "产物架",
+                            accessibilityLabel: "产物架",
+                            disabled: !workspace.hasSelectedConversation || workspace.isLoading,
+                            isActive: shelfPresented,
+                            action: { shelfPresented.toggle() }
+                        )
+                        .popover(isPresented: $shelfPresented, arrowEdge: .bottom) {
+                            DesktopArtifactShelfView(workspace: workspace, onLocate: onLocateArtifact)
+                        }
+                    }
+
+                    collapsibleItem(index: 2, totalCount: extraItemCount) {
+                        DesktopToolbarIconButton(
+                            systemName: "folder",
+                            help: "此会话的文件与产物",
+                            accessibilityLabel: "会话文件",
+                            disabled: workspace.selectedID == nil || workspace.isLoading,
+                            action: { filesPresented = true }
+                        )
+                    }
+
+                    collapsibleItem(index: 3, totalCount: extraItemCount) {
+                        DesktopToolbarIconButton(
+                            systemName: "checklist",
+                            help: "工具任务与待确认操作",
+                            accessibilityLabel: "任务工作台",
+                            showsApprovalPulse: workspace.agentTasks.records.contains(where: { $0.approval != nil }),
+                            bounceValue: workspace.agentTasks.records.filter { $0.status == .completed }.count,
+                            action: { tasksPresented = true }
+                        )
+                    }
+
+                    if hasPluginItem {
+                        collapsibleItem(index: 4, totalCount: extraItemCount) {
+                            DesktopToolbarIconButton(
+                                systemName: workspace.plugins.inspectorSnapshots.first?.symbol ?? "puzzlepiece.extension",
+                                help: "插件右侧栏卡片",
+                                accessibilityLabel: "插件右侧栏卡片",
+                                isActive: pluginInspectorPresented,
+                                action: { pluginInspectorPresented.toggle() }
+                            )
+                            .popover(isPresented: $pluginInspectorPresented, arrowEdge: .bottom) {
+                                DesktopPluginInspectorPopoverView(
+                                    workspace: workspace,
+                                    onFocusComposer: onFocusComposer,
+                                    onDismiss: { pluginInspectorPresented = false }
+                                )
+                            }
+                        }
+                    }
+                }
+                .frame(width: max(0, effectiveWidth - 74), height: transform.baseHeight, alignment: .trailing)
+                .clipped()
+                .allowsHitTesting(extensionProgress > 0.65)
+
+                Spacer(minLength: 0)
+
+                DesktopToolbarIconButton(
+                    systemName: "sidebar.right",
+                    help: inspectorVisible ? "隐藏右侧面板" : "显示右侧面板（窗口足够宽时常驻）",
+                    accessibilityLabel: "右侧面板",
+                    action: onToggleInspector
+                )
+                .background(
+                    DesktopToolbarSubframeProbe(
+                        identifier: "amber.toolbar.inspectorToggle",
+                        toolTip: inspectorVisible ? "隐藏右侧面板" : "显示右侧面板（窗口足够宽时常驻）"
+                    )
+                )
+                .padding(.trailing, 4)
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(width: effectiveWidth, height: transform.baseHeight)
+        .background {
+            ZStack {
+                capsuleShape
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                DesktopTheme.card.opacity(0.97),
+                                DesktopTheme.paper.opacity(0.93)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                if transform.specularOpacity > 0.01 {
+                    capsuleShape
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    DesktopTheme.honeySoft.opacity(0.90),
+                                    DesktopTheme.honeySoft.opacity(0.25),
+                                    .clear
+                                ],
+                                center: .center,
+                                startRadius: 4,
+                                endRadius: effectiveWidth * 0.55
+                            )
+                        )
+                        .opacity(transform.specularOpacity)
+                }
+                capsuleShape
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                DesktopTheme.honeyEdge.opacity(0.35 + 0.65 * transform.specularOpacity),
+                                DesktopTheme.hairlineStrong,
+                                DesktopTheme.honeyEdge.opacity(0.25 + 0.55 * transform.specularOpacity)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.0 + 0.5 * transform.specularOpacity
+                    )
+            }
+            .scaleEffect(x: 1.0, y: isChat ? transform.scaleY : 1.0, anchor: .center)
+            .shadow(color: .black.opacity(0.045), radius: 4, y: 1.5)
+        }
+        .background(
+            DesktopToolbarSubframeProbe(
+                identifier: "amber.toolbar.liquidCapsule",
+                toolTip: nil
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func collapsibleItem<Content: View>(
+        index: Int,
+        totalCount: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let itemTransform = DesktopLiquidMotion.toolbarItemTransform(
+            index: index,
+            totalCount: totalCount,
+            extensionProgress: extensionProgress,
+            reduceMotion: reduceMotion
+        )
+        content()
+            .scaleEffect(itemTransform.scale)
+            .offset(x: itemTransform.offsetX)
+            .opacity(itemTransform.opacity)
+    }
+}
+
+private struct DesktopToolbarIconButton: View {
+    let systemName: String
+    let help: String
+    let accessibilityLabel: String
+    var disabled = false
+    var isActive = false
+    var showsApprovalPulse = false
+    var bounceValue: Int? = nil
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                if hovering || isActive {
+                    Circle()
+                        .fill(DesktopTheme.hover)
+                        .frame(width: 26, height: 26)
+                }
+                if let bounceValue {
+                    Image(systemName: systemName)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .symbolEffect(.bounce, value: bounceValue)
+                        .overlay(alignment: .topTrailing) {
+                            if showsApprovalPulse {
+                                DesktopPulse().offset(x: 4, y: -3)
+                            }
+                        }
+                } else {
+                    Image(systemName: systemName)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(DesktopTheme.ink)
+                }
+            }
+            .frame(width: 32, height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.42 : 1.0)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// Pass-through AppKit view probe that exposes the exact window-space geometry and tooltip of toolbar sub-elements
+/// without intercepting pointer events (`hitTest` returns `nil`).
+private struct DesktopToolbarSubframeProbe: NSViewRepresentable {
+    let identifier: String
+    let toolTip: String?
+
+    final class ProbeView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.identifier = NSUserInterfaceItemIdentifier(identifier)
+        view.toolTip = toolTip
+        return view
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.identifier = NSUserInterfaceItemIdentifier(identifier)
+        nsView.toolTip = toolTip
     }
 }

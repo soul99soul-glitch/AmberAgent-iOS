@@ -22,6 +22,10 @@ import Foundation
         let provider = DesktopAgentProvider(text: text, tasks: tasks, files: files, knowledge: knowledge, mcp: mcp,
             collaborations: collaborations, searchSettings: searchSettings, plugins: plugins)
         let names = plugins.activeRecipeRegisteredTools()
+        // The P3 workflows ship as Recipes the user can inspect and edit; without them the plugins exist but
+        // nothing ever runs them. Existing user edits are never overwritten.
+        DesktopBuiltInRecipes.install(into: directory,
+            hasFeishu: plugins.plugins.contains { $0.id == "feishu_calendar" && $0.enabled })
         let recipes = DesktopRecipeRuns(store: DesktopRecipeStore(directory: directory, registeredTools: names), tasks: tasks) {
             try await provider.performRecipeTool(runID: $0, owner: $1, name: $2, argumentsJSON: $3)
         }

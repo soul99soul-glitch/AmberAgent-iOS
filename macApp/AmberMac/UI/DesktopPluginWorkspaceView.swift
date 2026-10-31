@@ -138,22 +138,24 @@ struct DesktopPluginWorkspaceView: View {
                         .font(DesktopTheme.serif(size: 21, weight: .semibold))
                         .foregroundStyle(DesktopTheme.ink)
 
-                    let badgeText = isFeishuBotView
-                        ? workspace.plugins.feishuBotConnectionBadge
-                        : workspace.plugins.feishuCalendarConnectionBadge
-                    let badgeActive = isFeishuBotView
-                        ? workspace.plugins.hasFeishuBotCredentials
-                        : workspace.plugins.hasFeishuRemoteCredentials
+                    if pluginID == "feishu_calendar" {
+                        let badgeText = isFeishuBotView
+                            ? workspace.plugins.feishuBotConnectionBadge
+                            : workspace.plugins.feishuCalendarConnectionBadge
+                        let badgeActive = isFeishuBotView
+                            ? workspace.plugins.hasFeishuBotCredentials
+                            : workspace.plugins.hasFeishuRemoteCredentials
 
-                    Text(badgeText)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(badgeActive ? DesktopTheme.accent : DesktopTheme.inkTertiary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            badgeActive ? DesktopTheme.honeySoft : DesktopTheme.paperDeep,
-                            in: Capsule()
-                        )
+                        Text(badgeText)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(badgeActive ? DesktopTheme.accent : DesktopTheme.inkTertiary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(
+                                badgeActive ? DesktopTheme.honeySoft : DesktopTheme.paperDeep,
+                                in: Capsule()
+                            )
+                    }
                 }
                 Text(viewEntry?.subtitle ?? plugin?.manifest.description ?? "")
                     .font(.system(size: 12))

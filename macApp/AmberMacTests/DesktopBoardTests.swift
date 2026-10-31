@@ -99,4 +99,68 @@ import XCTest
         XCTAssertTrue(scheduled?.detail.hasSuffix("已暂停") == true)
         XCTAssertFalse(items.contains { $0.kind == .agentSession }, "Amber's own runs come from the scheduler, not the gateway registry")
     }
+
+    func testStaleOrphanOpenSessionIsExcludedWhileTrackedProcessSessionRemains() {
+        var staleOrphan = session("stale-orphan", .waiting, wait: .turnEnd, ago: 25 * 3600, summary: "孤儿会话")
+        staleOrphan.process = nil
+
+        var trackedLongRunning = session("tracked", .running, ago: 30 * 3600, summary: "有进程跟踪的长任务")
+        trackedLongRunning.process = ProcessIdentity(pid: 999, startSec: 1, startUsec: 0)
+
+        let freshOrphan = session("fresh-orphan", .waiting, wait: .permission, ago: 2 * 3600, summary: "近期等待会话")
+
+        let items = DesktopBoard.build(
+            tasks: [], live: [], paused: false,
+            sessions: [staleOrphan, trackedLongRunning, freshOrphan],
+            now: now
+        )
+        XCTAssertEqual(items.map(\.id), ["session:claude:fresh-orphan", "session:claude:tracked"])
+        XCTAssertEqual(items.map(\.column), [.needsYou, .running])
+    }
+
+    func testLiveWorkspaceBoardNeverUsesFixturesAndNotificationRouterHandlesExistingAndDeletedConversation() async throws {
+        let defaults = UserDefaults(suiteName: "amber.board.live.\(UUID().uuidString)")!
+        let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        let c1 = DesktopConversation(title: "定时任务结果会话", messages: [DesktopMessage(role: .assistant, text: "已完成")])
+        let storage = DesktopMemoryConversationStorage([c1])
+        final class NoopProvider: DesktopTextProvider {
+            func start(configuration: DesktopProviderConfiguration, apiKey: String, messages: [DesktopMessage], responseID: UUID) throws -> DesktopGeneration {
+                DesktopGeneration()
+            }
+        }
+        let workspace = DesktopWorkspace(settings: settings, storage: storage, provider: NoopProvider(), initialConversations: [c1])
+        XCTAssertTrue(workspace.boardItems(now: now).isEmpty, "without scheduler or real runs, board never fabricates fixture items")
+
+        let scheduler = DesktopScheduler(
+            store: DesktopScheduleStore(directory: nil),
+            defaults: defaults,
+            runner: { _, slot in DesktopScheduleRunRecord(scheduledFor: slot, startedAt: self.now, finishedAt: self.now, status: .completed) },
+            clock: { self.now },
+            timerEnabled: false
+        )
+        await scheduler.waitUntilLoaded()
+        workspace.scheduler = scheduler
+        XCTAssertTrue(workspace.boardItems(now: now).isEmpty, "empty scheduler produces zero board items, never fixtures")
+
+        var task = DesktopScheduledTask(name: "真实早报", prompt: "生成早报", schedule: .daily(hour: 9, minute: 0), createdAt: now)
+        task.nextRunAt = now.addingTimeInterval(1800)
+        _ = await scheduler.save(task: task)
+        let items = workspace.boardItems(now: now)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.title, "真实早报")
+        XCTAssertEqual(items.first?.column, .scheduled)
+
+        let router = DesktopNotificationRouter()
+        var openedWindowCount = 0
+        router.bind(workspace: workspace, openMainWindow: { openedWindowCount += 1 })
+        await router.receive(conversationID: c1.id)?.value
+        XCTAssertEqual(openedWindowCount, 1)
+        XCTAssertEqual(workspace.selectedID, c1.id)
+        XCTAssertNil(workspace.errorMessage)
+
+        let deletedID = UUID()
+        await router.receive(conversationID: deletedID)?.value
+        XCTAssertEqual(openedWindowCount, 2)
+        XCTAssertEqual(workspace.errorMessage, "通知对应的会话已删除，任务记录仍可在工作台查看。")
+    }
 }

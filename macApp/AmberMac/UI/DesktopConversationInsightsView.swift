@@ -37,6 +37,7 @@ struct DesktopConversationInsightsView: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(tokens >= limit ? DesktopTheme.danger : DesktopTheme.inkTertiary)
                         }
+                        lastUsageLines(conversation, compact: false)
                         if workspace.insights.value(.compact, for: conversation) != nil {
                             Label("已使用较早对话的摘要，原消息仍保留", systemImage: "checkmark.circle")
                                 .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
@@ -46,9 +47,14 @@ struct DesktopConversationInsightsView: View {
                                 .help("后续请求重新使用完整消息，保留原有会话回顾和建议")
                         }
                     }
-                } else if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens, tokens > 0 {
-                    ProgressView(value: Double(min(tokens, limit)), total: Double(limit))
-                        .tint(tokens >= limit ? DesktopTheme.danger : DesktopTheme.accent)
+                } else {
+                    VStack(alignment: .leading, spacing: 5) {
+                        if let limit = workspace.settings.selectedProvider?.selectedModel?.contextWindowTokens, tokens > 0 {
+                            ProgressView(value: Double(min(tokens, limit)), total: Double(limit))
+                                .tint(tokens >= limit ? DesktopTheme.danger : DesktopTheme.accent)
+                        }
+                        lastUsageLines(conversation, compact: true)
+                    }
                 }
                 if active {
                     HStack {
@@ -181,6 +187,33 @@ struct DesktopConversationInsightsView: View {
                 insightResultBox(.compact, value: compactValue)
             }
         }
+    }
+
+    /// Provider-reported usage for the last finished reply, plus any request-time budget notice.
+    /// A zero cache count is reported as zero: macOS never claims a cache gain it did not observe.
+    @ViewBuilder
+    private func lastUsageLines(_ conversation: DesktopConversation, compact: Bool) -> some View {
+        let size: CGFloat = compact ? 11 : 12
+        if let usage = DesktopTokenUsage.latest(in: conversation.messages) {
+            let ratio = usage.cacheHitRatio
+            noteLine(
+                ratio.map { "上次请求 输入 \(usage.promptTokens.formatted()) · 缓存命中 \(Int(($0 * 100).rounded()))%" }
+                    ?? "上次请求 输入 \(usage.promptTokens.formatted()) tokens · 缓存命中 0",
+                tint: DesktopTheme.inkTertiary, size: size)
+        }
+        if let notice = workspace.contextNotices[conversation.id] {
+            noteLine(notice, tint: DesktopTheme.accent, size: size)
+        }
+    }
+
+    /// A leading symbol would push the first line off the panel's left edge while its wrapped lines stayed
+    /// flush; the colour already separates a notice from the estimate above it, so the note is plain text.
+    private func noteLine(_ text: String, tint: Color, size: CGFloat) -> some View {
+        Text(text)
+            .font(.system(size: size))
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
     }
 
     @ViewBuilder

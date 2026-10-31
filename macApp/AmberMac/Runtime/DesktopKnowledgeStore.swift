@@ -223,7 +223,8 @@ final class DesktopKnowledgeStore {
         return DesktopMemoryRecall(records: selected, prompt: prompt)
     }
 
-    func requestContext(query: String) throws -> String {
+    /// Soul and enabled-skill catalog: identical for every turn, so it can live in the cached system prefix.
+    func stableContext() throws -> String {
         try ready()
         var sections: [String] = []
         if !soulMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { sections.append("<soul>\n\(soulMarkdown)\n</soul>") }
@@ -231,9 +232,19 @@ final class DesktopKnowledgeStore {
         if !enabled.isEmpty {
             sections.append("Enabled local skills (call use_skill for their instructions; allowed-tools never grants permission):\n" + enabled.map { "- \($0.name): \($0.description)" }.joined(separator: "\n"))
         }
-        let recall = memoryContext(query: query)
-        if !recall.prompt.isEmpty { sections.append(recall.prompt) }
         return sections.joined(separator: "\n\n")
+    }
+
+    /// Memories recalled for one query. They change with the user's wording, so they are not part of
+    /// the system prefix.
+    func requestMemoryContext(query: String) throws -> String {
+        try ready()
+        return memoryContext(query: query).prompt
+    }
+
+    func requestContext(query: String) throws -> String {
+        [try stableContext(), try requestMemoryContext(query: query)]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
     private func ready() throws { if let loadError { throw failure(loadError) } }

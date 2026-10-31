@@ -14,6 +14,7 @@ import Foundation
     }
 
     static let doneWindow: TimeInterval = 7 * 24 * 3600
+    static let orphanWindow: TimeInterval = 24 * 3600
     static let runsPerTask = 3
 
     static func build(tasks: [DesktopScheduledTask], live: [LiveRun], paused: Bool,
@@ -36,7 +37,7 @@ import Foundation
             } else if task.enabled {
                 let next = paused ? nil : task.nextRunAt
                 items.append(.init(id: "schedule:\(task.id.uuidString)", kind: .schedule, column: .scheduled, title: task.name,
-                    detail: DesktopScheduledTasksView.ruleText(task) + (paused ? " · 已暂停" : ""),
+                    detail: DesktopScheduleText.rule(task) + (paused ? " · 已暂停" : ""),
                     updatedAt: next ?? task.createdAt, scheduleId: task.id.uuidString, nextRunAt: next))
             }
             for run in task.recentRuns.filter({ $0.status == .completed || $0.status == .failed })
@@ -52,8 +53,12 @@ import Foundation
         for rec in sessions where rec.agent != .amber && rec.agent != .run {
             let column: AmberControl.BoardItem.Column
             switch rec.state {
-            case .waiting: column = .needsYou
-            case .running, .stalled: column = .running
+            case .waiting:
+                guard rec.process != nil || now.timeIntervalSince(rec.updatedAt) < orphanWindow else { continue }
+                column = .needsYou
+            case .running, .stalled:
+                guard rec.process != nil || now.timeIntervalSince(rec.updatedAt) < orphanWindow else { continue }
+                column = .running
             case .completed, .stopped:
                 guard now.timeIntervalSince(rec.updatedAt) < doneWindow else { continue }
                 column = .done
@@ -69,8 +74,10 @@ import Foundation
             let (ac, bc) = (columnOrder(a.column), columnOrder(b.column))
             if ac != bc { return ac < bc }
             // Scheduled: soonest first. Everything else: most recent first.
-            if a.column == .scheduled { return (a.nextRunAt ?? .distantFuture) < (b.nextRunAt ?? .distantFuture) }
-            return a.updatedAt > b.updatedAt
+            if a.column == .scheduled {
+                return (a.nextRunAt ?? .distantFuture).timeIntervalSince(b.nextRunAt ?? .distantFuture) < 0
+            }
+            return a.updatedAt.timeIntervalSince(b.updatedAt) > 0
         }
     }
 
