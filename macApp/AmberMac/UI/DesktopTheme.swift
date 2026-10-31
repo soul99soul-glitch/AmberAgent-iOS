@@ -334,6 +334,39 @@ struct DesktopToggleChip: View {
     }
 }
 
+/// Icon-only twin of `DesktopToggleChip`: exactly one 28×28 slot, the same inline rhythm as the
+/// composer's paperclip. Quiet outline when off, flat amber tint when on; the words live in the tooltip.
+struct DesktopIconToggle: View {
+    let symbol: String
+    let isOn: Bool
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13.5, weight: isOn ? .medium : .regular))
+                .foregroundStyle(isOn ? DesktopTheme.accentInk : (hovering && enabled ? DesktopTheme.ink : DesktopTheme.inkTertiary))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isOn ? DesktopTheme.honeySoft : (hovering && enabled ? DesktopTheme.hover : .clear))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(isOn ? DesktopTheme.honeyEdge : (hovering && enabled ? DesktopTheme.hairline : .clear), lineWidth: 0.75)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.45)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: isOn)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
 /// Calm, flat warm-parchment canvas ground.
 struct DesktopAmbientCanvas: View {
     var body: some View {

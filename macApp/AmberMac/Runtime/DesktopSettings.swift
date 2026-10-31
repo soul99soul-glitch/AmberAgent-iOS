@@ -118,6 +118,28 @@ final class DesktopSettings {
     /// Tool calls stay in the conversation data either way; this only hides their cards in the transcript.
     var hidesToolCalls: Bool { didSet { persist() } }
     var sendShortcut: DesktopSendShortcut { didSet { persist() } }
+    /// 长程工具任务的轮数上限；默认值足够跑满一小时以上的多步任务，可在设置里下调或再调高。
+    private var storedAgentToolRoundLimit: Int
+    var agentToolRoundLimit: Int {
+        get { storedAgentToolRoundLimit }
+        set {
+            let value = DesktopAgentRunLimits.clampedRounds(newValue)
+            guard storedAgentToolRoundLimit != value else { return }
+            storedAgentToolRoundLimit = value
+            persist()
+        }
+    }
+    /// 单次工具任务的实际运行时长上限（分钟）；到点就停，不靠轮数估算。
+    private var storedAgentRunMinutes: Int
+    var agentRunMinutes: Int {
+        get { storedAgentRunMinutes }
+        set {
+            let value = DesktopAgentRunLimits.clampedMinutes(newValue)
+            guard storedAgentRunMinutes != value else { return }
+            storedAgentRunMinutes = value
+            persist()
+        }
+    }
     var notificationsEnabled: Bool { didSet { persist() } }
     var speechVoiceIdentifier: String { didSet { persist() } }
     private var storedSpeechRate: Double
@@ -155,6 +177,8 @@ final class DesktopSettings {
         var notificationsEnabled: Bool?
         var speechVoiceIdentifier: String?
         var speechRate: Double?
+        var agentToolRoundLimit: Int?
+        var agentRunMinutes: Int?
     }
 
     init(defaults: UserDefaults = .standard, credentials: any DesktopCredentialStore = DesktopKeychain()) {
@@ -186,6 +210,8 @@ final class DesktopSettings {
         automaticallyFollowGeneration = record?.automaticallyFollowGeneration ?? true
         hidesToolCalls = record?.hidesToolCalls ?? false
         sendShortcut = record?.sendShortcut ?? .commandReturn
+        storedAgentToolRoundLimit = DesktopAgentRunLimits.clampedRounds(record?.agentToolRoundLimit ?? DesktopAgentRunLimits.defaultRounds)
+        storedAgentRunMinutes = DesktopAgentRunLimits.clampedMinutes(record?.agentRunMinutes ?? DesktopAgentRunLimits.defaultMinutes)
         notificationsEnabled = record?.notificationsEnabled ?? false
         speechVoiceIdentifier = record?.speechVoiceIdentifier ?? ""
         storedSpeechRate = min(0.6, max(0.2, record?.speechRate ?? 0.5))
@@ -357,7 +383,8 @@ final class DesktopSettings {
             assistantName: assistantName, userNickname: userNickname,
             reasoningExpandedByDefault: reasoningExpandedByDefault, autoExpandThinking: autoExpandThinking,
             automaticallyFollowGeneration: automaticallyFollowGeneration, hidesToolCalls: hidesToolCalls, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
-            speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate)
+            speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate,
+            agentToolRoundLimit: agentToolRoundLimit, agentRunMinutes: agentRunMinutes)
         if let data = try? JSONEncoder().encode(record) {
             defaults.set(data, forKey: Self.persistedSettingsKey)
             settingsRecoveryMessage = nil

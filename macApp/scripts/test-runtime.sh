@@ -28,7 +28,7 @@ cp "$project_dir/../iosApp/iosApp/IOSWebMountPublicDNS.swift" "$test_dir/Sources
 for source in "$project_dir"/AmberMacTests/*.swift; do
   case "$(basename "$source")" in
     # Need the KMP Shared framework, the SwiftUI view tree or the full app wiring; they run in the Xcode test target.
-    KMPProviderIntegrationTests.swift|DesktopGrokOAuthTests.swift|LiveGatewayE2ETests.swift|DesktopSearchLiveProbeTests.swift|DesktopIOSBackupTests.swift|DesktopConversationLayoutTests.swift|DesktopAgentProviderPathTests.swift) continue ;;
+    KMPProviderIntegrationTests.swift|DesktopGrokOAuthTests.swift|LiveGatewayE2ETests.swift|DesktopSearchLiveProbeTests.swift|DesktopIOSBackupTests.swift|DesktopConversationLayoutTests.swift|DesktopAgentProviderPathTests.swift|DesktopAgentRunLimitsTests.swift) continue ;;
   esac
   cp "$source" "$test_dir/Tests/AmberMacTests/"
 done

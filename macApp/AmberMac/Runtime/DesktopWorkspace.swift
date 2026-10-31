@@ -70,6 +70,8 @@ final class DesktopWorkspace {
     let speech: DesktopSpeechPlayer
     let searchSettings: DesktopSearchSettings
     let plugins: DesktopPluginStore
+    /// DeepSeek 专属 `/boost` 的会话级开关。
+    let boost: DesktopDeepSeekBoostStore
     let titles = DesktopTitleGeneration()
     /// Set by the live app; previews and tests run without one.
     var scheduler: DesktopScheduler?
@@ -228,12 +230,13 @@ final class DesktopWorkspace {
          storageUsageSources: [DesktopStorageUsage.Source]? = nil,
          imageGeneration: DesktopImageGeneration? = nil, speech: DesktopSpeechPlayer? = nil,
          searchSettings: DesktopSearchSettings? = nil, artifactShelf: DesktopArtifactShelf? = nil,
-         plugins: DesktopPluginStore? = nil) {
+         plugins: DesktopPluginStore? = nil, boost: DesktopDeepSeekBoostStore? = nil) {
         self.settings = settings
         self.insights = insights ?? DesktopConversationInsights()
         self.artifactShelf = artifactShelf ?? DesktopArtifactShelf()
         self.files = files
         self.agentTasks = agentTasks ?? DesktopAgentTasks()
+        self.boost = boost ?? DesktopDeepSeekBoostStore()
         self.knowledge = knowledge ?? DesktopKnowledgeStore(directory: FileManager.default.temporaryDirectory
             .appendingPathComponent("amber-preview-knowledge-" + UUID().uuidString, isDirectory: true))
         self.mcp = mcp ?? DesktopMCPManager(store: DesktopMCPStore(
@@ -307,6 +310,25 @@ final class DesktopWorkspace {
     var selectedConversationHasMessages: Bool { selectedID.map(nonEmptyConversationIDs.contains) ?? false }
     var selectedConversationTitle: String {
         selectedConversation?.title ?? summaries.first { $0.id == selectedID }?.title ?? "Amber"
+    }
+    /// DeepSeek 专属 `/boost` 只在当前会话选中 DeepSeek 模型时可用。
+    var isBoostAvailable: Bool { selectedID != nil && DesktopDeepSeekBoost.isDeepSeek(settings.selectedProvider) }
+    /// 已开启且当前确实是 DeepSeek：此时该会话的 system 末尾会带上专属提示词。
+    var isBoostActive: Bool { isBoostAvailable && boost.isEnabled(selectedID) }
+
+    func toggleBoost() {
+        guard let selectedID else { return }
+        boost.setEnabled(!boost.isEnabled(selectedID), for: selectedID)
+    }
+
+    /// 输入框里的 `/boost` 按回车只切换开关，不把这段文字当成用户消息发出去。
+    @discardableResult
+    func toggleBoostFromDraft() -> Bool {
+        guard composerMode == .chat, isBoostAvailable,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == DesktopDeepSeekBoost.slash else { return false }
+        toggleBoost()
+        draft = ""
+        return true
     }
 
     private func load() async {
@@ -774,7 +796,7 @@ final class DesktopWorkspace {
         }
         let prefixIDs = messages.map(\.id)
         do { messages = try requestMessages(messages, conversationID: conversationID,
-            model: configuration.selectedModel) }
+            configuration: configuration) }
         catch {
             conversations[index].messages[conversations[index].messages.count - 1].state = .failed
             persist(conversations[index])
@@ -798,6 +820,7 @@ final class DesktopWorkspace {
             let run = try provider.start(configuration: configuration, apiKey: apiKey,
                 messages: messages, responseID: replyID, context: DesktopRunContext(
                     conversationID: conversationID, toolsEnabled: agentTasks.toolsEnabled, subagentsEnabled: agentTasks.subagentsEnabled,
+                    toolRounds: settings.agentToolRoundLimit, runMinutes: settings.agentRunMinutes,
                     persistTurns: { [weak self] turns in
                         guard let self else { return false }
                         return await self.persistAgentTurns(turns, owner: conversationID, token: token)
@@ -830,14 +853,16 @@ final class DesktopWorkspace {
     /// History as the model sees it: compaction applied, a turn-invariant system prefix, memories recalled
     /// for the newest user text right before it, then a deterministic budget fit.
     private func requestMessages(_ history: [DesktopMessage], conversationID: UUID,
-                                 model: DesktopModelConfiguration?) throws -> [DesktopMessage] {
+                                 configuration: DesktopProviderConfiguration) throws -> [DesktopMessage] {
+        let model = configuration.selectedModel
         let knowledgeEnabled = plugins.isCoreEnabled(.knowledge)
         let stableContext = knowledgeEnabled ? try knowledge.stableContext() : ""
         let memoryContext = knowledgeEnabled
             ? try knowledge.requestMemoryContext(query: history.last(where: { $0.role == .user })?.text ?? "")
             : ""
         let stableSystem = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), stableContext,
-                            workspaceContext(conversationID) ?? ""]
+                            workspaceContext(conversationID) ?? "",
+                            DesktopDeepSeekBoost.systemSuffix(enabled: boost.isEnabled(conversationID), configuration: configuration)]
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
         // The budget has to measure the whole request, but trimming may only touch turns: fit the history first
         // and pass the prefix and recall as overhead, so the system block can never be dropped.
@@ -1066,6 +1091,7 @@ final class DesktopWorkspace {
                 self.fileErrors[id] = nil
                 self.fileReadFailures.remove(id)
                 self.insights.remove(id)
+                self.boost.forget(id)
                 var cleanupFailed = !self.artifactShelf.removeConversation(id)
                 do { try await self.files.removeConversation(id) }
                 catch { cleanupFailed = true }
@@ -1903,7 +1929,7 @@ extension DesktopWorkspace {
         let run: DesktopGeneration
         do {
             let messages = try requestMessages(history, conversationID: conversationID,
-                model: request.0.selectedModel)
+                configuration: request.0)
             run = try provider.start(configuration: request.0, apiKey: request.1, messages: messages, responseID: reply.id,
                 context: DesktopRunContext(conversationID: conversationID, toolsEnabled: task.toolsEnabled,
                     subagentsEnabled: task.subagentsEnabled, approvalPolicy: task.approval.policy,

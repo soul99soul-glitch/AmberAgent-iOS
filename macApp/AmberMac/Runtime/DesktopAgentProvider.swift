@@ -128,8 +128,21 @@ import CryptoKit
             input.insert(contentsOf: try bridge.messages(json: DesktopJSON.encode([DesktopMessage(role: .system, text: guidance)])), at: 0)
         }
         let params = try bridge.paramsFromJSON(json: DesktopJSON.encode(model)).replacingTools(exposure.visibleTools())
+        let toolRounds = DesktopAgentRunLimits.rounds(context.toolRounds)
+        let runMinutes = DesktopAgentRunLimits.clampedMinutes(context.runMinutes ?? DesktopAgentRunLimits.defaultMinutes)
         let generation = DesktopGeneration(cancellationCompletesAsynchronously: true)
+        let timeout = DesktopRunTimeout()
+        let runTaskHandle = DesktopTaskHandle()
+        // 长程任务的墙钟兜底：到点只取消执行任务（不走 generation.cancel()，否则下面的
+        // .failed 会被降级成 .cancelled，超时原因就丢了）。
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(Double(runMinutes) * 60))
+            guard !Task.isCancelled else { return }
+            timeout.fire()
+            runTaskHandle.cancel()
+        }
         let task = Task {
+            defer { watchdog.cancel() }
             var runID: UUID?
             do {
                 try Task.checkCancellation()
@@ -144,14 +157,19 @@ import CryptoKit
                 if scheduling { executor.scheduler = scheduler }
                 let sink = DesktopEngineTranscript(input: input, responseID: responseID, generation: generation)
                 let ledger = DesktopEngineLedger(tasks: tasks, runID: id)
-                let result = await self.resume(provider: provider, messages: input, params: params, exposure: exposure,
-                    executor: executor, sink: sink, ledger: ledger, runID: id, budget: 8,
+                let result = await self.resume(ResumeWiring(provider: provider, params: params, exposure: exposure,
+                    executor: executor, sink: sink, ledger: ledger, runID: id,
                     promptCaching: DesktopEnginePromptCaching.appliesCaching(configuration: configuration),
-                    persistTurns: persistTurns, drainSteer: context.drainSteer)
+                    persistTurns: persistTurns, drainSteer: context.drainSteer),
+                    messages: input, budget: toolRounds)
                 sink.update(result.messages)
+                let timeReason = timeout.fired ? DesktopAgentStopReason.timeLimit(minutes: runMinutes) : nil
                 if result.toolOutcomeUnknown != nil || result.durabilityFailureMessage != nil {
                     await tasks.finish(id, status: .outcomeUnknown, error: "工具结果需要核对，请查看原会话和任务记录；不会自动重放。")
                     generation.yield(.failed("工具执行结果需要核对，已保留任务记录；请检查后继续。"))
+                } else if let timeReason {
+                    await tasks.finish(id, status: .failed, error: timeReason.record)
+                    generation.yield(.failed(timeReason.banner))
                 } else if result.wasCancelled || Task.isCancelled {
                     await tasks.finish(id, status: .cancelled)
                     generation.yield(.cancelled)
@@ -160,9 +178,9 @@ import CryptoKit
                     // nothing to do. Name the cause and the two ways out.
                     await tasks.finish(id, status: .failed, error: "上下文超出模型窗口。")
                     generation.yield(.failed(Self.overflowMessageForToolRun))
-                } else if result.providerFailureMessage != nil || result.hitStepLimit || result.guardStopped || result.hitOutputLimit {
-                    await tasks.finish(id, status: .failed, error: "任务已停止，请查看会话中保留的结果后继续。")
-                    generation.yield(.failed("任务已停止，已收到的结果已保留。请检查模型设置或继续当前会话。"))
+                } else if let reason = Self.stopReason(result, rounds: toolRounds) {
+                    await tasks.finish(id, status: .failed, error: reason.record)
+                    generation.yield(.failed(reason.banner))
                 } else {
                     await tasks.finish(id, status: .completed)
                     generation.yield(.complete)
@@ -175,8 +193,18 @@ import CryptoKit
                 generation.yield(.failed("无法启动或保存工具任务，请检查配置与存储权限后重试。"))
             }
         }
-        generation.installCancellation { task.cancel() }
+        runTaskHandle.install(task)
+        generation.installCancellation { task.cancel(); watchdog.cancel() }
         return generation
+    }
+
+    /// 四种引擎终态各自对应一条可读原因：先判输出上限（它也带 providerFailureMessage），再判轮数。
+    nonisolated static func stopReason(_ result: IOSAgentToolEngineResult, rounds: Int) -> DesktopAgentStopReason? {
+        if result.hitOutputLimit { return .outputLimit }
+        if result.hitStepLimit { return .roundLimit(rounds) }
+        if result.guardStopped { return .loopGuard }
+        if result.providerFailureMessage != nil { return .providerFailure }
+        return nil
     }
 
     func performRecipeTool(runID: UUID, owner: UUID, name: String, argumentsJSON: String) async throws -> String {
@@ -251,38 +279,48 @@ import CryptoKit
         return tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
     }
 
-    private func resume(provider: ProviderSetting, messages: sending [UIMessage], params: TextGenerationParams,
-        exposure: IosToolExposureBridge, executor: DesktopAgentExecutor, sink: DesktopEngineTranscript,
-        ledger: DesktopEngineLedger, runID: UUID, budget: Int, promptCaching: Bool,
-        persistTurns: @escaping @MainActor @Sendable ([DesktopMessage]) async -> Bool,
-        drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?) async -> IOSAgentToolEngineResult {
-        var registry = Dictionary(uniqueKeysWithValues: executor.declarations.map { ($0.name, executor as any IOSToolExecutor) })
-        registry["tool_search"] = executor
+    /// 一次长程运行里不变的接线。打包成一个参数，避免 resume 变成十几个参数的递归函数。
+    private struct ResumeWiring: @unchecked Sendable {
+        let provider: ProviderSetting
+        var params: TextGenerationParams
+        let exposure: IosToolExposureBridge
+        let executor: DesktopAgentExecutor
+        let sink: DesktopEngineTranscript
+        let ledger: DesktopEngineLedger
+        let runID: UUID
+        let promptCaching: Bool
+        let persistTurns: @MainActor @Sendable ([DesktopMessage]) async -> Bool
+        let drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?
+    }
+
+    private func resume(_ wiring: ResumeWiring, messages: sending [UIMessage], budget: Int) async -> IOSAgentToolEngineResult {
+        var registry = Dictionary(uniqueKeysWithValues: wiring.executor.declarations.map { ($0.name, wiring.executor as any IOSToolExecutor) })
+        registry["tool_search"] = wiring.executor
         var transport = DesktopEngineTransport()
-        transport.promptCaching = promptCaching
+        transport.promptCaching = wiring.promptCaching
         let engine = IOSAgentToolEngine(provider: transport, executors: registry,
-            configuration: .init(maxSteps: max(0, budget), honorApprovalPause: true), ledger: ledger, ledgerRunId: runID.uuidString)
-        let result = await engine.run(providerSetting: provider, messages: messages, params: params,
-            toolExposureBridge: exposure, drainSteer: {
-                guard let drainSteer else { return [] }
+            configuration: .init(maxSteps: max(0, budget), honorApprovalPause: true), ledger: wiring.ledger,
+            ledgerRunId: wiring.runID.uuidString)
+        let result = await engine.run(providerSetting: wiring.provider, messages: messages, params: wiring.params,
+            toolExposureBridge: wiring.exposure, drainSteer: {
+                guard let drainSteer = wiring.drainSteer else { return [] }
                 let turns = await drainSteer()
                 guard !turns.isEmpty else { return [] }
                 // The workspace retains leased entries until the next durable checkpoint acknowledges their IDs.
                 return (try? DesktopProviderBridge.shared.messages(json: DesktopJSON.encode(turns))) ?? []
             }, prepareRequestMessages: { values in
-                guard await sink.checkpoint(values, persist: persistTurns) else { throw DesktopRuntimeError.message("工具会话保存失败，后续执行已停止。") }
+                guard await wiring.sink.checkpoint(values, persist: wiring.persistTurns) else { throw DesktopRuntimeError.message("工具会话保存失败，后续执行已停止。") }
                 return values
-            }, onAssistantTurnCompleted: { await sink.checkpoint($0, persist: persistTurns) },
-            onAssistantMessageSnapshot: { sink.provisional($0) }, onMessagesUpdated: { sink.update($0) })
+            }, onAssistantTurnCompleted: { await wiring.sink.checkpoint($0, persist: wiring.persistTurns) },
+            onAssistantMessageSnapshot: { wiring.sink.provisional($0) }, onMessagesUpdated: { wiring.sink.update($0) })
         if let pending = result.pendingApproval, !Task.isCancelled {
-            _ = await tasks.awaitDecision(runID: runID, toolID: pending.toolCallId)
+            _ = await tasks.awaitDecision(runID: wiring.runID, toolID: pending.toolCallId)
             if !Task.isCancelled {
-                ledger.advanceRound(by: result.stepsExecuted)
+                wiring.ledger.advanceRound(by: result.stepsExecuted)
                 // Resume the same pending batch through the engine. Completed calls replay their durable result.
-                return await resume(provider: provider, messages: result.messages, params: params.replacingTools(exposure.visibleTools()),
-                    exposure: exposure, executor: executor, sink: sink, ledger: ledger, runID: runID,
-                    budget: max(0, budget - result.stepsExecuted), promptCaching: promptCaching,
-                    persistTurns: persistTurns, drainSteer: drainSteer)
+                var resumed = wiring
+                resumed.params = wiring.params.replacingTools(wiring.exposure.visibleTools())
+                return await resume(resumed, messages: result.messages, budget: max(0, budget - result.stepsExecuted))
             }
         }
         return result
@@ -384,6 +422,22 @@ private final class DesktopSubagentReportExecutor: IOSToolExecutor, @unchecked S
         lock.withLock { report = text }
         return .filled(#"{"status":"ok"}"#)
     }
+}
+
+/// 墙上时钟兜底的一次性标记：watchdog 到点时置位，运行结束后用来区分「超时」与「用户停止」。
+private final class DesktopRunTimeout: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didFire = false
+    var fired: Bool { lock.withLock { didFire } }
+    func fire() { lock.withLock { didFire = true } }
+}
+
+/// 持有执行任务本身，供 watchdog 从外部取消（比抓自己的 Task 更直接）。
+private final class DesktopTaskHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+    func install(_ task: Task<Void, Never>) { lock.withLock { self.task = task } }
+    func cancel() { lock.withLock { task }?.cancel() }
 }
 
 private final class DesktopEngineTranscript: @unchecked Sendable {

@@ -102,17 +102,24 @@ struct DesktopRunContext: Sendable {
     var engineEnabled: Bool { toolsEnabled || subagentsEnabled }
     /// nil = the global auto-approve switches; scheduled/unattended runs pass their own.
     let approvalPolicy: DesktopApprovalPolicy?
+    /// 长程任务的轮数上限（设置里的「工具轮数」）；nil 用默认值。
+    let toolRounds: Int?
+    /// 单次任务的实际运行时长上限（分钟）；nil 用默认值。
+    let runMinutes: Int?
     let persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)?
     let drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])?
     /// Stored transcript plus the ids the active summary covers, for the read-only history tools.
     let historySnapshot: (@MainActor @Sendable () -> (messages: [DesktopMessage], coveredIDs: Set<UUID>))?
 
     init(conversationID: UUID, toolsEnabled: Bool, subagentsEnabled: Bool = false, approvalPolicy: DesktopApprovalPolicy? = nil,
+        toolRounds: Int? = nil, runMinutes: Int? = nil,
         persistTurns: (@MainActor @Sendable ([DesktopMessage]) async -> Bool)? = nil,
         drainSteer: (@MainActor @Sendable () async -> [DesktopMessage])? = nil,
         historySnapshot: (@MainActor @Sendable () -> (messages: [DesktopMessage], coveredIDs: Set<UUID>))? = nil) {
         self.conversationID = conversationID; self.toolsEnabled = toolsEnabled
-        self.subagentsEnabled = subagentsEnabled; self.approvalPolicy = approvalPolicy; self.persistTurns = persistTurns
+        self.subagentsEnabled = subagentsEnabled; self.approvalPolicy = approvalPolicy
+        self.toolRounds = toolRounds; self.runMinutes = runMinutes
+        self.persistTurns = persistTurns
         self.drainSteer = drainSteer; self.historySnapshot = historySnapshot
     }
 }

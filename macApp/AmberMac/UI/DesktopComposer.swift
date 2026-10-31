@@ -21,7 +21,7 @@ struct DesktopComposer: View {
                 if !workspace.pendingAttachments.isEmpty {
                     attachmentList
                 }
-                if !matchingSlashCommands.isEmpty {
+                if !matchingSlashCommands.isEmpty || showsBoostSlashCommand {
                     slashCommandBar
                 }
                 TextField("", text: $workspace.draft, prompt: Text(placeholder).foregroundStyle(DesktopTheme.inkTertiary), axis: .vertical)
@@ -46,6 +46,7 @@ struct DesktopComposer: View {
                         case .shiftReturn: shift
                         }
                         if sends {
+                            if workspace.toggleBoostFromDraft() { inputFocused = true; return .handled }
                             if workspace.isSelectedConversationGenerating { if workspace.canQueueInstruction { _ = workspace.queueInstruction() } }
                             else if !sendDisabled { submit() }
                             return .handled
@@ -96,6 +97,17 @@ struct DesktopComposer: View {
                         .accessibilityValue(workspace.agentTasks.subagentsEnabled ? "已开启" : "已关闭")
 
                         modeMenu
+                    }
+                    if workspace.isBoostAvailable {
+                        // 一个图标位：火焰代表「更强力、想得更深」，闪电留给以后的 fast mode。
+                        DesktopIconToggle(symbol: "flame", isOn: workspace.isBoostActive) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.toggleBoost() }
+                        }
+                        .help(workspace.isBoostActive
+                            ? "Boost：DeepSeek 深度思考模式（点击关闭）"
+                            : "Boost：DeepSeek 深度思考模式（点击开启）")
+                        .accessibilityLabel("Boost")
+                        .accessibilityValue(workspace.isBoostActive ? "已开启" : "已关闭")
                     }
                     if workspace.isReadingAttachments {
                         ProgressView().controlSize(.mini)
@@ -208,21 +220,31 @@ struct DesktopComposer: View {
         }
     }
 
+    /// 内置 `/boost`：只有会话选中 DeepSeek 模型时才进入补全。
+    private var showsBoostSlashCommand: Bool {
+        let trimmed = workspace.draft.trimmingCharacters(in: .whitespaces)
+        guard workspace.isBoostAvailable, trimmed.hasPrefix("/"), !trimmed.contains("\n") else { return false }
+        let query = trimmed.lowercased()
+        return query == "/" || DesktopDeepSeekBoost.slash.hasPrefix(query)
+    }
+
     private var slashCommandBar: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.horizontal.fill")
                     .font(.system(size: 10.5))
                     .foregroundStyle(DesktopTheme.accent)
-                Text("插件斜杠指令")
+                Text(matchingSlashCommands.isEmpty ? "斜杠指令" : "插件斜杠指令")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(DesktopTheme.inkTertiary)
                 Spacer()
-                Text("点击填入对话")
+                Text(matchingSlashCommands.isEmpty ? "回车切换" : "点击填入对话")
                     .font(.system(size: 10.5))
                     .foregroundStyle(DesktopTheme.inkTertiary)
             }
             .padding(.horizontal, 8)
+
+            if showsBoostSlashCommand { boostSlashRow }
 
             ForEach(matchingSlashCommands) { cmd in
                 Button {
@@ -230,30 +252,8 @@ struct DesktopComposer: View {
                     workspace.agentTasks.toolsEnabled = true
                     inputFocused = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: cmd.symbol)
-                            .font(.system(size: 12))
-                            .foregroundStyle(DesktopTheme.accent)
-                            .frame(width: 18)
-                        Text(cmd.slash)
-                            .font(.system(size: 12, design: .monospaced).weight(.semibold))
-                            .foregroundStyle(DesktopTheme.accent)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1.5)
-                            .background(DesktopTheme.honeySoft, in: RoundedRectangle(cornerRadius: 4))
-                        Text(cmd.title)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(DesktopTheme.ink)
-                            .lineLimit(1)
-                        Spacer()
-                        Text(cmd.pluginName)
-                            .font(.system(size: 11))
-                            .foregroundStyle(DesktopTheme.inkTertiary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 7))
-                    .contentShape(RoundedRectangle(cornerRadius: 7))
+                    slashCommandRow(symbol: cmd.symbol, slash: cmd.slash, title: cmd.title,
+                        trailing: cmd.pluginName, trailingAccent: false)
                 }
                 .buttonStyle(.plain)
             }
@@ -261,6 +261,50 @@ struct DesktopComposer: View {
         .padding(6)
         .background(DesktopTheme.paperSide, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(DesktopTheme.hairline))
+    }
+
+    private var boostSlashRow: some View {
+        let enabled = workspace.boost.isEnabled(workspace.selectedID)
+        return Button {
+            workspace.toggleBoost()
+            workspace.draft = ""
+            inputFocused = true
+        } label: {
+            slashCommandRow(symbol: "flame", slash: DesktopDeepSeekBoost.slash,
+                title: enabled ? "关闭 DeepSeek 专属提示词" : "开启 DeepSeek 专属提示词",
+                trailing: enabled ? "已开启" : "DeepSeek 专属", trailingAccent: enabled)
+        }
+        .buttonStyle(.plain)
+        .help("把固定的一段提示词追加到本会话 system 末尾，只对 DeepSeek 模型生效；再次输入 /boost 关闭。")
+        .accessibilityLabel("DeepSeek Boost")
+    }
+
+    private func slashCommandRow(symbol: String, slash: String, title: String, trailing: String,
+        trailingAccent: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .foregroundStyle(DesktopTheme.accent)
+                .frame(width: 18)
+            Text(slash)
+                .font(.system(size: 12, design: .monospaced).weight(.semibold))
+                .foregroundStyle(DesktopTheme.accent)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1.5)
+                .background(DesktopTheme.honeySoft, in: RoundedRectangle(cornerRadius: 4))
+            Text(title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(DesktopTheme.ink)
+                .lineLimit(1)
+            Spacer()
+            Text(trailing)
+                .font(.system(size: 11))
+                .foregroundStyle(trailingAccent ? DesktopTheme.accentInk : DesktopTheme.inkTertiary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(RoundedRectangle(cornerRadius: 7))
     }
 
     private var placeholder: String {
@@ -271,6 +315,7 @@ struct DesktopComposer: View {
     }
 
     private func submit() {
+        if workspace.toggleBoostFromDraft() { inputFocused = true; return }
         if workspace.composerMode == .chat { workspace.send() } else { workspace.sendCollaboration() }
     }
 

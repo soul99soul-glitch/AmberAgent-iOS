@@ -529,6 +529,18 @@ struct DesktopSettingsView: View {
             if let tasks = syncWorkspace?.agentTasks {
                 DesktopToolApprovalSettings(tasks: tasks)
             }
+            Section("长程任务") {
+                Picker("工具轮数上限", selection: $settings.agentToolRoundLimit) {
+                    ForEach(DesktopAgentRunLimits.roundOptions, id: \.self) { Text("\($0) 轮").tag($0) }
+                }
+                Picker("运行时长上限", selection: $settings.agentRunMinutes) {
+                    ForEach(DesktopAgentRunLimits.minuteOptions, id: \.self) { minutes in
+                        Text(minutes % 60 == 0 ? "\(minutes / 60) 小时" : "\(minutes) 分钟").tag(minutes)
+                    }
+                }
+                Text("一轮 = 一次模型往返 + 一批工具调用（可并行多个工具）。长程任务按轮数与运行时长双重兜底，到任一条就停止，已收到的结果保留在会话里；中途审批也占用轮数，因此长任务建议保留较大值。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+            }
             Section("辅助任务模型") {
                 ForEach(DesktopAuxiliaryModelTask.allCases) { task in
                     Picker(task.title, selection: Binding(get: { settings.auxiliaryModelIDs[task.rawValue] }, set: { settings.setAuxiliaryModel($0, for: task) })) {
