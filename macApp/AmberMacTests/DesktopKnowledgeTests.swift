@@ -256,20 +256,56 @@ import XCTest
     func testBuiltInPluginDevelopmentSkillAPINamesMatchInjectedSandboxAPIsAndSampleImports() async throws {
         let markdown = DesktopKnowledgeStore.builtInPluginDevelopmentSkillMarkdown
         let regex = try NSRegularExpression(pattern: #"amber\.(?!plugin\.)[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+"#)
-        let nsRange = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
-        var mentionedAPIs = Set<String>()
-        for match in regex.matches(in: markdown, range: nsRange) {
-            if let range = Range(match.range, in: markdown) {
-                mentionedAPIs.insert(String(markdown[range]))
+        func extractAPIs(from text: String) -> Set<String> {
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            var set = Set<String>()
+            for match in regex.matches(in: text, range: range) {
+                if let r = Range(match.range, in: text) {
+                    set.insert(String(text[r]))
+                }
             }
+            return set
         }
+
+        let mentionedAPIs = extractAPIs(from: markdown)
         XCTAssertEqual(
             mentionedAPIs,
             DesktopPluginStore.injectedSandboxAPIs,
-            "Skill 文档中提到的 amber.* API 必须与 DesktopPluginStore 实际注入的沙箱 API 完全一致"
+            "Skill 内置文档中提到的 amber.* API 必须与 DesktopPluginStore 实际注入的 26 项 v3 沙箱 API 完全一致"
         )
 
+        // Verify docs/skills/plugin-development/SKILL.md and docs/plugins.md stay locked to the runtime API catalog:
+        let candidateRoots = [
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+        ]
+        let repoRoot = try XCTUnwrap(candidateRoots.first {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("docs/plugins.md").path)
+        })
+        let skillDocURL = repoRoot.appendingPathComponent("docs/skills/plugin-development/SKILL.md")
+        let pluginsDocURL = repoRoot.appendingPathComponent("docs/plugins.md")
+        let skillDocText = try String(contentsOf: skillDocURL, encoding: .utf8)
+        let pluginsDocText = try String(contentsOf: pluginsDocURL, encoding: .utf8)
+
+        XCTAssertEqual(
+            extractAPIs(from: skillDocText),
+            DesktopPluginStore.injectedSandboxAPIs,
+            "docs/skills/plugin-development/SKILL.md 中的 amber.* API 必须与运行时注入的 26 项 API 完全一致"
+        )
+        XCTAssertEqual(
+            extractAPIs(from: pluginsDocText),
+            DesktopPluginStore.injectedSandboxAPIs,
+            "docs/plugins.md 开发者指南中的 amber.* API 必须与运行时注入的 26 项 API 完全一致"
+        )
+        XCTAssertTrue(pluginsDocText.contains("amber.plugin.v3"))
+        XCTAssertTrue(pluginsDocText.contains("kanban-board"))
+        XCTAssertTrue(pluginsDocText.contains("旧版（`amber.plugin.v2`）"))
+
         // Extract the minimal sample plugin from the skill markdown and verify it passes importPlugin & runs:
+        let nsRange = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
         let jsonBlockRegex = try NSRegularExpression(pattern: #"```json\n(\{[\s\S]*?\})\n```"#)
         let jsBlockRegex = try NSRegularExpression(pattern: #"```javascript\n([\s\S]*?)\n```"#)
         let jsonMatch = try XCTUnwrap(jsonBlockRegex.firstMatch(in: markdown, range: nsRange))

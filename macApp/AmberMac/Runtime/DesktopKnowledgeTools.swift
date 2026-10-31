@@ -92,94 +92,109 @@ extension DesktopKnowledgeStore {
 ---
 name: plugin-development
 description: >
-  指导在 Amber macOS 中设计、编写、自检与手动导入 amber.plugin.v2 扩展插件（含受控 HTTPS、工作区前缀读写、检查器卡片与高风险审批规范）。
-allowed-tools: [skills_list, use_skill, workspace_list, workspace_read, workspace_write]
+  指导在 Amber macOS 中设计、编写、自检与安装验证 amber.plugin.v3 扩展插件（默认使用 v3：含自定义 WebView 视图决策、最小权限原则、常驻生命周期、26 项 Bridge API、高风险审批门禁，以及 plugin_install / plugin_list 与设置页导入验证）。
+allowed-tools: [skills_list, use_skill, workspace_file_list, workspace_file_read, workspace_file_write, workspace_list, workspace_read, workspace_write, plugin_install, plugin_list]
 ---
 
-# Amber macOS 插件开发技能（`plugin-development`）
+# Amber macOS 插件开发技能（`plugin-development` · 默认 `amber.plugin.v3`）
 
-本技能用于指导为 Amber macOS 编写符合 `amber.plugin.v2` 协议与 Arquiel Design 2.0 规范的扩展插件。
+本技能指导为 Amber macOS 编写符合 **`amber.plugin.v3`** 协议（向下兼容 `amber.plugin.v2`）与 Arquiel Design 2.0 规范的扩展插件。Amber 自己编写新插件时**默认使用 `amber.plugin.v3`**。完整参考实现见仓库内的 `examples/plugins/kanban-board/`，开发者文档见 `docs/plugins.md`。
 
-## 一、核心铁律（必须遵守）
+## 一、核心铁律与安全边界（必须遵守）
 
 1. **严禁静默安装或直接启用插件**：
-   - 协助用户编写插件时，**只能在当前会话工作区**（例如 `<id>/plugin.json` 与 `<id>/main.js`）生成插件草稿。
-   - **绝不允许**直接读写或拷贝到 `~/Library/Application Support/Amber/plugins/`，也绝不允许尝试替用户自动安装或启用插件。
-   - 草稿生成并完成 6 项自检后，必须引导用户通过 **「设置 (`⌘,`) → 插件 → + 导入插件」** 手动导入，或在修改后点击 **「↻ 重新加载」**。
+   - 在会话中起草插件时，先在当前会话工作区创建插件目录（如 `<id>/plugin.json`、`<id>/main.js` 及可选的 `<id>/index.html`），切勿直接散落写入 `~/Library/Application Support/Amber/plugins/`。
+   - 草稿生成并完成自检清单后，优先调用高风险工具 `plugin_install`（传入工作区相对路径如 `{"path": "<id>"}`；若升级或覆盖已有同名插件，须核对新旧版本差异并显式传 `"overwrite": true`），由用户在 Mac 主窗口审批卡片上核对插件名称、版本与申请权限后批准安装，随后调用只读工具 `plugin_list` 验证插件状态、权限与已注册工具/视图（或引导用户通过 **「设置 (`⌘,`) → 插件 → + 导入插件」** 在权限审批弹窗中确认并安装）。
 2. **保留 ID 与核心插件边界**：
    - 官方内置扩展插件保留 ID 为 `feishu_calendar`、`apple_schedule`、`watchtower`，第三方插件禁止使用。
    - 5 个一级核心插件 ID 为 `task_board`、`knowledge`、`collaborations`、`recipes`、`image_generation`。
-   - `capabilities.hostModules`（如 `["calendar"]`）**仅供官方内置插件使用**，第三方插件若声明 `hostModules` 会在导入和加载时被直接拒绝。
-3. **高风险审批边界**：
+   - `capabilities.hostModules`（如 `["calendar"]`）**仅供官方内置插件使用**，第三方插件声明会被直接拒绝。
+3. **写类工具的高风险审批边界（High-Risk Gate）**：
    - 工具 `effect` 仅支持 `"pure"`、`"networkRead"`、`"idempotent"`、`"sideEffect"`。
    - `"pure"` 与 `"networkRead"` 为只读工具，免审批直接执行，但**严禁调用 `amber.workspace.write`**。
-   - `"idempotent"` 与 `"sideEffect"` **均属于高风险操作（High Risk）**：必须在 Mac 桌面端主窗口由用户人工批准，不受普通「自动批准」开关豁免；通知横幅、锁屏界面与手机端远程审批对高风险工具**只能拒绝、不能批准**。
+   - `"idempotent"` 与 `"sideEffect"`（含任何工作区写入或外部网络写入）**均属于高风险操作（High Risk）**：必须在 Mac 桌面端主窗口由用户人工批准，不受普通「自动批准」开关豁免；通知横幅、锁屏界面与手机端远程审批对高风险工具**只能拒绝、不能批准**。
 
 ---
 
-## 二、`plugin.json` 规范与字段定义
+## 二、架构决策：如何决定是否需要自定义 UI 與如何按最小权限原则选权限
 
-每个插件是一个独立文件夹，文件夹名必须与 `plugin.json` 中的 `id` 完全一致：
+### 1. 如何决定是否需要自定义 UI（`ui.views`）
 
-| 字段 | 类型 | 必填 | 规范说明 |
-| --- | --- | --- | --- |
-| `schema` | `string` | 否 | 固定写 `"amber.plugin.v2"`（兼容 `"amber.plugin.v1"`）。 |
-| `id` | `string` | 是 | 2–32 位，符合 `^[a-z][a-z0-9_]*$`，与目录名完全一致，且不可占用保留 ID。 |
-| `name` | `string` | 是 | 插件中文/显示名称。 |
-| `version` | `string` | 是 | 语义化版本号，如 `"1.0.0"`。 |
-| `description` | `string` | 是 | 一句话清晰描述插件用途。 |
-| `icon` | `string` | 否 | SF Symbols 图标名，默认 `"puzzlepiece.extension"`。 |
-| `capabilities` | `object` | 否 | `{ "networkDomains": [], "workspaceReadPrefixes": [], "workspaceWritePrefixes": [] }`。第三方插件不得声明 `hostModules`。 |
-| `settings_schema` | `array` | 否 | 配置项数组：`{ key, title, kind, placeholder, defaultValue, help, group }`。`kind` 支持 `"string"`、`"secret"`、`"boolean"`、`"integer"`。 |
-| `tools` | `array` | 否 | 工具数组：`{ name, description, effect, entry, input_schema }`。模型侧完整工具名为 `plugin__<id>__<name>`。 |
-| `ui` | `object` | 否 | 界面槽位：`{ inspectorCards: [], workspaceViews: [], commands: [] }`。 |
+| 场景需求 | 推荐方案 | 是否需要 `ui.views` (`WKWebView`) |
+| --- | --- | --- |
+| 纯数据处理、格式转换、单次外部 API 查询供大模型调用 | 仅声明 `tools` + `ui.commands` | **不需要**（保持轻量无界面） |
+| 仅在右侧栏展示 1–5 条只读状态摘要与快捷提问按钮 | 使用声明式 `ui.inspectorCards` | **不需要**（零 WebView 开销） |
+| 需要拖拽看板（Kanban）、可视化图表、多字段交互表单、富媒体预览或独立工作台 | 在 `ui.views` 中声明 `slot`（`workspace` / `left_sidebar` / `right_sidebar` / `inspector` / `modal` / `settings`）并提供 `index.html` | **需要**（同时声明 `"ui.views"` 权限） |
 
-### Arquiel Design 2.0 界面与配置规范
+### 2. 如何按最小权限原则（Least Privilege）选择 `permissions`
 
-- **设置页分层降噪**：Amber 会将 `settings_schema` 自动归类为「连接设置（含 `secret` / URL / Key）/ 通用设置 / 高级设置（`group: "advanced"`，默认折叠）」。敏感凭据必须标记 `"kind": "secret"`（自动存入 macOS Keychain，绝不进 `UserDefaults` 或 JS 沙箱，且保存时拦截把 placeholder 占位符当真凭据的误操作）。
-- **右侧检查器卡片（`ui.inspectorCards`）**：声明 `{ id, title, symbol, entry }`。宿主在 `rebuildProjections()` 中调用 `entry` 函数并将结果缓存为 `DesktopInspectorCardSnapshot`（SwiftUI 渲染期零 JS 调用、零磁盘/钥匙串 IO）。条目采用双行零截断布局。
-- **主工作区视图（`ui.workspaceViews`）**：声明 `{ id, title, symbol, subtitle }`。侧栏显示入口与 `badgeCount`（可通过 `storage` 的 `badge:<viewID>` / `badge_count` 控制，或默认取检查器卡片条目数），主画布提供 `< 返回对话` 按钮、标题/副标题与快捷命令列表；插件停用时由 `reconcilePluginState()` 自动切回 `.chat`。
-- **斜杠命令（`ui.commands`）**：声明 `{ id, title, slash, symbol, prompt_template }`，`slash` 必须以 `/` 开头，同时注入底部输入框 `/` 补全与 `⌘K` 命令面板。
+在 `amber.plugin.v3` 中，未声明的权限在调用对应 Bridge API 时会立即被拦截（`E_PERMISSION_DENIED`）。请**只申请插件实际用到的权限**，并配合 `capabilities` 进一步收窄子目录与域名：
 
----
-
-## 三、JavaScript 沙箱注入 API（`amber.*`）
-
-每次工具执行都在后台队列的独立 `JSContext` 中运行，不阻塞 `@MainActor`。沙箱内注入且仅注入以下 6 个冻结接口：
-
-| 注入 API | 签名与行为说明 |
-| --- | --- |
-| `amber.settings.get` | `amber.settings.get(key)`：读取非敏感配置项值（或内置 `"today"` / `"mode"`）。**绝不返回 `secret` 字段**（读取 `secret` 键恒返回 `""`）。 |
-| `amber.storage.get` | `amber.storage.get(key)`：读取插件专属 `storage.json` 中的字符串值，不存在时返回 `""`。 |
-| `amber.storage.set` | `amber.storage.set(key, val)`：写入插件专属 `storage.json`（对象/数组自动 JSON 序列化），工具返回后原子落盘并触发 `rebuildProjections()`。 |
-| `amber.http.fetch` | `amber.http.fetch(url, options)`：受控 HTTPS 请求。仅允许 `https://`，目标主机必须匹配 `capabilities.networkDomains`（精确匹配或子域名），固定 20 秒超时。返回 `{ ok, status, body, text, json }`。 |
-| `amber.workspace.read` | `amber.workspace.read(path)`：读取当前会话工作区内匹配 `capabilities.workspaceReadPrefixes` 的 UTF-8 文本文件；拒绝 `..` 路径穿越、绝对路径与符号链接。 |
-| `amber.workspace.write` | `amber.workspace.write(path, content)`：向当前会话工作区内匹配 `capabilities.workspaceWritePrefixes` 的相对路径原子写入 UTF-8 文本；仅允许 `sideEffect` 或 `idempotent` 工具调用，拒绝 `..` 与符号链接。 |
-
-### 对话流工具卡片的结构化预览字段
-
-工具返回 JSON 对象时，若包含以下字段，`DesktopToolCallCard` 会自动渲染高亮摘要：
-- `event: { summary, start_time, location }` → 📅 日程摘要
-- `count` + `events` 数组 → 📅 日程列表计数
-- `free_slots` 数组 → 🕒 可约空闲时段计数
-- `message_id` + `title` (+ `target`) → ✈️ 消息推送回执
-- `count` + `messages` 数组 (+ `chat_id`) → 💬 群聊消息拉取计数
-- `document_id` + `title` → 📄 文档读写摘要
+- **只读本地配置**：仅加 `"settings"`（绝不读取 `secret` 钥匙串字段）。
+- **插件私有键值持久化**：仅加 `"storage"`（读写插件专属 `storage.json`）。
+- **读取会话工作区特定子目录**：加 `"workspace.read"`，并在 `capabilities.workspaceReadPrefixes` 中明确列出最小子目录前缀（如 `["kanban/"]`，切勿无故申请整个工作区）。
+- **写入会话工作区特定子目录**：加 `"workspace.write"`（高风险），并在 `capabilities.workspaceWritePrefixes` 中限定最小子目录前缀（如 `["kanban/"]`）。
+- **访问外部 HTTPS 接口**：按目标域名逐个声明 `"http:<domain>"`（高风险，例如 `"http:api.github.com"`），同时填入 `capabilities.networkDomains`，严禁使用明文 `http://`。
+- **向智能体暴露工具**：加 `"agent.tools"`（高风险）。
+- **渲染自定义 WebView 界面或弹窗通知**：加 `"ui.views"`。
+- **注册斜杠命令或事件通信**：按需添加 `"commands"`、`"events"`。
 
 ---
 
-## 四、最小完整示例（`note_helper`）
+## 三、目录结构与模板规范（参考 `examples/plugins/kanban-board/`）
+
+### 1. 标准 `amber.plugin.v3` 目录结构
+
+```text
+<plugin-id>/
+├── plugin.json    # 必填：manifest_version: 3, schema: "amber.plugin.v3", permissions, tools, ui
+├── main.js        # 必填：onload() / onunload() 生命周期与后台工具实现
+├── index.html     # 可选（当声明 ui.views 时必填）：通过 amber-plugin://<id>/ 加载
+├── styles.css     # 可选：直接使用宿主注入的 --amber-* 主题 CSS 变量
+└── board.js       # 可选：前端交互脚本，通过 window.amber.* 调用 Promise Bridge API
+```
+
+### 2. 全量 26 项沙箱与 WebView Bridge API（`amber.*` / `window.amber.*`）
+
+宿主在后台 `JSContext`（`amber.*`）与前端 `WKWebView`（`window.amber.*`）中统一注入以下 26 个冻结 API：
+
+| 命名空间 | 注入 API 列表 | 所需权限与行为说明 |
+| --- | --- | --- |
+| `settings` | `amber.settings.get`、`amber.settings.set`、`amber.settings.getAll` | 需 `"settings"`。读取/修改非敏感配置项（或内置 `"today"` / `"mode"`）；`secret` 字段加密存于 macOS Keychain，对 JS 恒返回 `""`。 |
+| `storage` | `amber.storage.get`、`amber.storage.set`、`amber.storage.remove`、`amber.storage.keys`、`amber.storage.all` | 需 `"storage"`。读写插件专属 `storage.json`（支持任意 JSON 对象/数组，上限 10 MB）。 |
+| `workspace` | `amber.workspace.read`、`amber.workspace.write`、`amber.workspace.list`、`amber.workspace.watch` | 读/列目录/监听需 `"workspace.read"`；写入需 `"workspace.write"` 且工具 `effect` 必须为 `"sideEffect"` 或 `"idempotent"`。严格拦截 `..` 路径穿越、绝对路径与符号链接。 |
+| `http` | `amber.http.fetch` | 需 `"http:<domain>"`。仅允许 `https://` 且目标域名必须命中白名单，20 秒超时，返回 `{ ok, status, body, text, json }`。 |
+| `commands` | `amber.commands.register`、`amber.commands.list` | 需 `"commands"`。动态注册或列出 `/` 斜杠指令与 `⌘K` 命令面板动作。 |
+| `events` | `amber.events.on`、`amber.events.off`、`amber.events.emit` | 需 `"events"`。监听宿主事件（`conversation:changed`、`workspace:file_changed`、`theme:changed` 等）或在后台与多个 WebView 之间广播自定义事件。 |
+| `ui` | `amber.ui.notice`、`amber.ui.confirm`、`amber.ui.openView`、`amber.ui.openModal`、`amber.ui.closeModal` | 需 `"ui.views"`。发送通知提示、弹出原生确认框、切换主工作区/侧栏插件视图或开关自定义模态弹窗。 |
+| `agent` | `amber.agent.registerTool`、`amber.agent.getConversation`、`amber.agent.insertToComposer` | 需 `"agent.tools"`。动态注册智能体工具、获取当前会话脱敏摘要、将提示词安全填入底部输入框。 |
+
+---
+
+## 四、最小完整可运行模板（`note_helper` · `amber.plugin.v3`）
 
 ### 1. `note_helper/plugin.json`
 
 ```json
 {
-  "schema": "amber.plugin.v2",
+  "manifest_version": 3,
+  "schema": "amber.plugin.v3",
   "id": "note_helper",
   "name": "会议纪要助手",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "统计纪要字数、附加统一前缀并归档到当前会话工作区。",
   "icon": "doc.text.magnifyingglass",
+  "main": "main.js",
+  "dev_reload": true,
+  "permissions": [
+    "workspace.read",
+    "workspace.write",
+    "agent.tools",
+    "storage",
+    "commands",
+    "events",
+    "settings"
+  ],
   "capabilities": {
     "networkDomains": [],
     "workspaceReadPrefixes": ["notes/"],
@@ -268,6 +283,12 @@ allowed-tools: [skills_list, use_skill, workspace_list, workspace_read, workspac
 ### 2. `note_helper/main.js`
 
 ```javascript
+function onload() {
+  amber.events.on("workspace:file_changed", function () {});
+}
+
+function onunload() {}
+
 function formatNote(input) {
   const prefix = amber.settings.get("prefix") || "【纪要】";
   const rawText = String((input && input.text) || "").trim();
@@ -323,29 +344,19 @@ function renderNoteInspector() {
 }
 ```
 
+> 若需编写带拖拽自定义 WebView 界面的插件，请直接参考 `examples/plugins/kanban-board/` 中的 `plugin.json`、`main.js`、`index.html`、`styles.css` 与 `board.js`。
+
 ---
 
-## 五、交付前 6 项自检清单与常见错误排查
+## 五、交付前自检清单与安装验证流程
 
-### 6 项必做自检
+### 1. 必做自检清单（6 项）
 
-1. [ ] 文件夹名与 `plugin.json` 的 `id` 完全一致，符合 `^[a-z][a-z0-9_]*$`（2–32 位），且未占用 `feishu_calendar`、`apple_schedule`、`watchtower`。
-2. [ ] 所有敏感密码/Token 在 `settings_schema` 中均标记为 `"kind": "secret"`，且脚本未试图通过 `amber.settings.get` 读取密钥。
-3. [ ] `capabilities.networkDomains` 仅填写纯域名（不含 `https://`、端口或斜杠），读写工作区文件已声明 `workspaceReadPrefixes` / `workspaceWritePrefixes`，且未声明 `hostModules`。
-4. [ ] 凡调用 `amber.workspace.write` 或产生外部变更的工具，`effect` 均已声明为 `"sideEffect"` 或 `"idempotent"`。
-5. [ ] 每个工具的 `input_schema` 顶层均为 `"type": "object"`，字段附带清晰中文 `description`。
-6. [ ] 已向用户说明：请前往 **设置 (`⌘,`) → 插件 → + 导入插件** 手动选择工作区中的插件文件夹完成安装。
-
-### 常见错误排查表
-
-| 报错现象 | 原因分析 | 修复方法 |
-| --- | --- | --- |
-| `插件目录名与 plugin.json id 不一致` | 文件夹名与 `id` 字段不匹配 | 将文件夹重命名为与 `id` 完全相同的名称 |
-| `插件域名白名单格式无效` | `networkDomains` 含 `https://`、`:` 或 `/` | 改为纯域名，例如 `"api.example.com"` |
-| `hostModules 仅供官方内置插件使用` | 第三方插件声明了 `hostModules` | 从 `capabilities` 中移除 `hostModules` |
-| `插件仅允许访问 HTTPS 地址` | 调用 `amber.http.fetch` 传入了 `http://` | 改用 `https://` 地址 |
-| `未授权访问域名` | 请求域名未列入 `networkDomains` | 将目标域名加入 `capabilities.networkDomains` |
-| `未授权访问工作区路径` | 路径未命中 `workspaceReadPrefixes` / `workspaceWritePrefixes` | 在 `capabilities` 中补充对应子目录前缀（如 `"notes/"`） |
-| `只读工具禁止调用 amber.workspace.write` | 工具 `effect` 为 `pure` 或 `networkRead` | 将工具 `effect` 改为 `"sideEffect"` 或 `"idempotent"` |
+1. [ ] **ID 与目录名一致**：文件夹名与 `plugin.json` 的 `id` 完全一致，符合 `^[a-z][a-z0-9_-]*$`（2–32 位），且未占用 `feishu_calendar`、`apple_schedule`、`watchtower`。
+2. [ ] **权限声明完整且遵循最小权限原则**：`permissions` 数组已完整覆盖代码中调用的每一个 `amber.*` 命名空间能力，未申请多余权限；敏感凭据在 `settings_schema` 中均标记为 `"kind": "secret"`。
+3. [ ] **没有路径或域名越界**：`capabilities.workspaceReadPrefixes` / `workspaceWritePrefixes` 与实际读写子目录严格匹配，无 `..` 路径穿越或绝对路径；`http:<domain>` 与 `capabilities.networkDomains` 仅填写纯 HTTPS 域名，未声明 `hostModules`。
+4. [ ] **写类工具走高风险审批**：凡调用 `amber.workspace.write` 或发起外部写入的工具（无论静态声明还是 `amber.agent.registerTool` 动态注册），`effect` 均已声明为 `"sideEffect"` 或 `"idempotent"`。
+5. [ ] **Schema 与静态资源合规**：每个工具的 `input_schema` 顶层均为 `"type": "object"`；所有 `ui.views` 的 `entry` HTML 与静态资源均通过 `amber-plugin://<id>/` 引用且无内联外链脚本。
+6. [ ] **安装与验证闭环**：通过 `plugin_install`（或引导用户前往 **设置 (`⌘,`) → 插件 → + 导入插件** 批准权限并安装），随后使用 `plugin_list` 验证插件已启用且工具与视图均已注册。
 """#
 }
