@@ -235,6 +235,29 @@ final class DesktopSettings {
               !model.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return model.id
     }
+
+    var selectedModelSupportedReasoningLevels: [DesktopReasoningLevel] {
+        guard let provider = selectedProvider, let model = provider.selectedModel else { return [] }
+        return DesktopThinkingPolicy.supportedLevels(for: model, provider: provider)
+    }
+
+    var selectedModelReasoning: DesktopReasoningLevel {
+        guard let provider = selectedProvider, let model = provider.selectedModel else { return .off }
+        let supported = DesktopThinkingPolicy.supportedLevels(for: model, provider: provider)
+        return DesktopThinkingPolicy.coercedLevel(model.reasoning, supported: supported)
+    }
+
+    func setSelectedModelReasoning(_ level: DesktopReasoningLevel) {
+        guard let providerID = selectedProviderID,
+              let providerIndex = providers.firstIndex(where: { $0.id == providerID }),
+              let model = providers[providerIndex].selectedModel,
+              let modelIndex = providers[providerIndex].models.firstIndex(where: { $0.id == model.id }) else { return }
+        let supported = DesktopThinkingPolicy.supportedLevels(for: model, provider: providers[providerIndex])
+        let coerced = DesktopThinkingPolicy.coercedLevel(level, supported: supported)
+        guard providers[providerIndex].models[modelIndex].reasoning != coerced else { return }
+        providers[providerIndex].models[modelIndex].reasoning = coerced
+        persist()
+    }
     var assistantDisplayName: String {
         let name = assistantName.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Amber" : name

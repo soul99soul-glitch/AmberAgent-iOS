@@ -99,6 +99,9 @@ struct DesktopComposer: View {
 
                         modeMenu
                     }
+                    if workspace.isThinkingLevelAvailable {
+                        thinkingLevelMenu
+                    }
                     if workspace.isBoostAvailable {
                         // 一个图标位：火焰代表「更强力、想得更深」，闪电留给以后的 fast mode。
                         DesktopIconToggle(symbol: "flame", isOn: workspace.isBoostActive) {
@@ -394,6 +397,45 @@ struct DesktopComposer: View {
         .tint(DesktopTheme.inkTertiary)
         .help("快速切换当前对话模型")
         .accessibilityLabel("输入框模型选择")
+    }
+
+    private var thinkingLevelMenu: some View {
+        let active = workspace.selectedThinkingLevel.isEnabled
+        return Menu {
+            Picker("思考等级", selection: Binding(
+                get: { workspace.selectedThinkingLevel },
+                set: { workspace.setThinkingLevel($0) }
+            )) {
+                ForEach(workspace.supportedThinkingLevels) { level in
+                    Text(level.title).tag(level)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "brain")
+                .font(.system(size: 13.5, weight: active ? .medium : .regular))
+                .foregroundStyle(active ? DesktopTheme.accentInk : DesktopTheme.inkTertiary)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(active ? DesktopTheme.honeySoft : .clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(active ? DesktopTheme.honeyEdge : .clear, lineWidth: 0.75)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .tint(active ? DesktopTheme.accentInk : DesktopTheme.inkTertiary)
+        .disabled(workspace.isGenerating || workspace.isMutatingBranch)
+        .help(active
+            ? "思考等级：\(workspace.selectedThinkingLevel.title)（点击切换）"
+            : "思考等级：关闭（点击选择）")
+        .accessibilityLabel("思考等级")
+        .accessibilityValue(workspace.selectedThinkingLevel.title)
     }
 
     private var sendDisabled: Bool {

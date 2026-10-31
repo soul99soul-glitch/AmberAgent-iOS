@@ -415,7 +415,13 @@ struct DesktopSettingsView: View {
         TextField("Temperature", text: parameterBinding(id, \.temperature), prompt: Text(draft.kind == .claude ? "默认，或 0–1" : "默认，或 0–2"))
         TextField("最大输出", text: parameterBinding(id, \.output), prompt: Text("可留空，单位 token"))
         Picker("推理强度", selection: modelBinding(id, \.reasoning, fallback: .off)) {
-            ForEach(DesktopReasoningLevel.allCases) { Text($0.title).tag($0) }
+            ForEach(DesktopThinkingPolicy.editorLevels(
+                for: model,
+                kind: draft.kind,
+                providerName: draft.name,
+                baseURL: draft.baseURL,
+                authMode: draft.authMode
+            )) { Text($0.title).tag($0) }
         }
         Picker("图片理解", selection: modelBinding(id, \.supportsVision, fallback: nil)) {
             Text("自动识别能力").tag(nil as Bool?)

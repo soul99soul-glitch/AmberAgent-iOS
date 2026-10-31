@@ -332,6 +332,22 @@ final class DesktopWorkspace {
         return true
     }
 
+    var supportedThinkingLevels: [DesktopReasoningLevel] {
+        settings.selectedModelSupportedReasoningLevels
+    }
+
+    var isThinkingLevelAvailable: Bool {
+        !supportedThinkingLevels.isEmpty
+    }
+
+    var selectedThinkingLevel: DesktopReasoningLevel {
+        settings.selectedModelReasoning
+    }
+
+    func setThinkingLevel(_ level: DesktopReasoningLevel) {
+        settings.setSelectedModelReasoning(level)
+    }
+
     private func load() async {
         do {
             summaries = DesktopConversationSummary.ordered(try await storage.listSummaries())
@@ -734,7 +750,13 @@ final class DesktopWorkspace {
         if config.authMode == .apiKey, key.isEmpty, !config.baseURL.hasPrefix("http://") {
             throw DesktopRuntimeError.message("请先在服务商设置中填写 API Key。本机模型可留空。")
         }
-        return (config, key)
+        var resolved = config
+        if let model = resolved.selectedModel,
+           let index = resolved.models.firstIndex(where: { $0.id == model.id }) {
+            let supported = DesktopThinkingPolicy.supportedLevels(for: model, provider: resolved)
+            resolved.models[index].reasoning = DesktopThinkingPolicy.coercedLevel(model.reasoning, supported: supported)
+        }
+        return (resolved, key)
     }
 
     @discardableResult
