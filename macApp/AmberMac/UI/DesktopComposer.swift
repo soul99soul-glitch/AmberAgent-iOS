@@ -11,6 +11,7 @@ struct DesktopComposer: View {
     @State private var fileDropTargeted = false
     @State private var previewedAttachment: DesktopImportedDocument?
     @State private var queuePresented = false
+    @State private var pasteKeyMonitor: Any?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -171,13 +172,7 @@ struct DesktopComposer: View {
             .animation(.easeOut(duration: 0.18), value: inputFocused)
             .animation(.easeOut(duration: 0.18), value: fileDropTargeted)
             .dropDestination(for: URL.self) { urls, _ in
-                guard !workspace.isLoading, !workspace.isLoadingSelectedConversation,
-                      !workspace.selectedConversationUnavailable, !workspace.isGenerating,
-                      !workspace.isMutatingBranch, !workspace.isManagingBackup else { return false }
-                let files = urls.filter(\.isFileURL)
-                guard !files.isEmpty else { return false }
-                workspace.addAttachments(files)
-                return true
+                workspace.dropFiles(urls)
             } isTargeted: { fileDropTargeted = $0 }
             HStack(spacing: 8) {
                 Text("/ 斜杠指令 · ⌘K 命令面板")
@@ -200,7 +195,11 @@ struct DesktopComposer: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         // The composer, not the sidebar search, owns first focus at launch.
-        .onAppear { inputFocused = true }
+        .onAppear {
+            inputFocused = true
+            installPasteKeyMonitor()
+        }
+        .onDisappear { removePasteKeyMonitor() }
         .onChange(of: focusRequest) { inputFocused = true }
         .onChange(of: workspace.selectedID) { inputFocused = true; queuePresented = false }
         .onChange(of: workspace.selectedQueuedMessages.isEmpty) { _, empty in if empty { queuePresented = false } }
@@ -510,31 +509,37 @@ struct DesktopComposer: View {
     }
 
     private func pasteAttachments() {
-        guard !workspace.isLoading, !workspace.isLoadingSelectedConversation,
-              !workspace.selectedConversationUnavailable, !workspace.isGenerating,
-              !workspace.isMutatingBranch, !workspace.isManagingBackup else { return }
-        let pasteboard = NSPasteboard.general
-        if let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [NSURL],
-           !objects.isEmpty {
-            workspace.addAttachments(objects.map { $0 as URL })
-            return
-        }
-        let types: [(NSPasteboard.PasteboardType, String)] = [
-            (.png, "剪贴板图片.png"),
-            (NSPasteboard.PasteboardType(UTType.jpeg.identifier), "剪贴板图片.jpg"),
-            (.tiff, "剪贴板图片.tiff"),
-        ]
-        for (type, name) in types {
-            if let data = pasteboard.data(forType: type) {
-                workspace.addImageAttachment(data: data, name: name)
-                return
+        _ = workspace.pasteFromPasteboard()
+    }
+
+    /// `NSTextView` (the field editor for `TextField`) intercepts `paste:` and either beeps when the pasteboard
+    /// holds only an image or pastes the filename string when Finder copied a file. Intercepting ⌘V before
+    /// `performKeyEquivalent` routes file URLs and images into the attachment pipeline while leaving plain text untouched.
+    private func installPasteKeyMonitor() {
+        guard pasteKeyMonitor == nil else { return }
+        pasteKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard DesktopPasteboardImport.isPasteShortcut(
+                modifierFlags: event.modifierFlags,
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+                keyCode: event.keyCode
+            ) else { return event }
+            guard workspace.activeSurface == .chat else { return event }
+            let firstResponder = NSApp.keyWindow?.firstResponder
+            if let editor = firstResponder as? NSTextView {
+                guard inputFocused, !editor.hasMarkedText() else { return event }
             }
+            if workspace.pasteFromPasteboard() {
+                inputFocused = true
+                return nil
+            }
+            return event
         }
-        for type in pasteboard.types ?? [] {
-            guard let imageType = UTType(type.rawValue), imageType.conforms(to: .image),
-                  let data = pasteboard.data(forType: type) else { continue }
-            workspace.addImageAttachment(data: data, name: "剪贴板图片." + (imageType.preferredFilenameExtension ?? "png"))
-            return
+    }
+
+    private func removePasteKeyMonitor() {
+        if let monitor = pasteKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            pasteKeyMonitor = nil
         }
     }
 }

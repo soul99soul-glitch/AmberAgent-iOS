@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 @preconcurrency import GatewayCore
@@ -1244,6 +1245,44 @@ final class DesktopWorkspace {
         return unsavedConversationIDs.isEmpty && unsavedMetadataIDs.isEmpty
     }
     func waitUntilLoaded() async { await loadingTask?.value }
+
+    var canAcceptAttachments: Bool {
+        !isLoading && !isLoadingSelectedConversation && !selectedConversationUnavailable
+            && !isGenerating && !isMutatingBranch && !isManagingBackup
+    }
+
+    /// Handles ⌘V / Paste from the given pasteboard when it carries file URLs or image data.
+    /// Returns `true` when the pasteboard contained an attachment payload (even if rejected due to current state),
+    /// or `false` when it only carries plain text so the text editor can paste normally.
+    @discardableResult
+    func pasteFromPasteboard(_ pasteboard: NSPasteboard = .general) -> Bool {
+        let urls = DesktopPasteboardImport.fileURLs(from: pasteboard)
+        if !urls.isEmpty {
+            guard canAcceptAttachments else {
+                if isGenerating { recordError("请等待当前回复结束或停止后再粘贴文件。", owner: selectedID) }
+                return true
+            }
+            addAttachments(urls)
+            return true
+        }
+        if let image = DesktopPasteboardImport.imagePayload(from: pasteboard) {
+            guard canAcceptAttachments else {
+                if isGenerating { recordError("请等待当前回复结束或停止后再粘贴图片。", owner: selectedID) }
+                return true
+            }
+            addImageAttachment(data: image.data, name: image.name)
+            return true
+        }
+        return false
+    }
+
+    @discardableResult
+    func dropFiles(_ urls: [URL]) -> Bool {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty, canAcceptAttachments else { return false }
+        addAttachments(files)
+        return true
+    }
 
     @discardableResult
     func addAttachments(_ urls: [URL]) -> Task<Void, Never>? {
