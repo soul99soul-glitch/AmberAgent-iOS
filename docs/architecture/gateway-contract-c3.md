@@ -356,3 +356,33 @@
 3. **显式删除语义**：
    - 删除会话时，同步清理会话主存储文件、`conversation-insights` 记录、`artifact-shelf` 固定项以及 Amber 受管工作区目录；
    - 若会话绑定了用户打开的**外部文件夹（External Workspace Folder）**，删除会话仅解除绑定，**绝不删除用户外部文件夹中的任何文件**。
+
+---
+
+## 8. C3 v2 草案：云端本体（Cloud Self）与授信端前台审批规则变更
+
+- 状态：**DRAFT（Cloud Self Phase 1 起生效）**
+- 适用端：云端守护进程（`amberd` / `:cloud-daemon`）、macOS（`AmberMac`）、iOS（`AmberAgent`）、Android（`AmberAndroid`）、HarmonyOS（`AmberHarmony`）及 IM 连接器（Telegram / 飞书）
+
+### 8.1 拓扑演进：从局域网 Mac 单主到云端本体星型拓扑
+
+1. 在 C3 v2 架构下，常驻守护进程 `amberd`（`:cloud-daemon`）作为中心网关与唯一权威状态源运行，100% 向下兼容 C3 v1 的全部 REST 端点（`/v1/pair`、`/v1/unpair`、`/v1/status`、`/v1/push-token`、`/v1/test-push`、`/v1/amber/decision`、`/v1/amber/board`、`/v1/amber/schedules`、`/v1/tasks/<key>/monitor`）与 `amber://gateway/pair?p=` 配对深链。
+2. `POST /v1/pair` 扩展支持 `platform` 枚举 `"ios" | "android" | "harmony" | "macos" | "linux"`，以及可选字段 `protocolVersion`（`1 | 2`）、`nodeRole`（`"viewer" | "executor" | "hybrid"`）、`trustedApprovalSurface`（`Bool`）。旧版 C3 v1 客户端省略扩展字段时仍完全合法。
+
+### 8.2 高风险审批规则变更（Trusted Foreground Approval Surface）
+
+C3 v1 §3.2 原定“高风险操作只能在 Mac 上核对后批准，手机端一律拒绝 `allow=true`”。在云端本体场景下，用户外出时 Mac 可能处于离线或睡眠状态，因此 C3 v2 将高风险审批信任边界更新为 **「仅限已配对、已解锁的原生 App 前台批准；一切非可信或非前台来源只能拒绝」**：
+
+| 审批发起端 / 交互表面 | 普通风险工具（`highRisk == false`） | 高风险工具（`highRisk == true`） | 网关裁决与返回码 |
+| --- | --- | --- | --- |
+| **已配对且已解锁的原生 App 前台**<br>（macOS / iOS / Android / 鸿蒙 App 前台详情页，携带已配对设备 Bearer Token + 前台解锁证明 `X-Amber-Trusted-Foreground: true` 或请求体 `trustedForeground: true`） | 允许 `allow=true` / `allow=false`（`200`） | **允许批准 `allow=true`（`200`）** 或拒绝 `allow=false`（`200`） | 审计记录 `approved` / `denied` |
+| **锁屏、通知中心横幅、灵动岛、手表、未带前台解锁证明的移动端远端请求** | 允许批准或拒绝（`200`） | **严禁批准！** `allow=true` 必须在入口拒绝；仅允许 `allow=false`（`200`） | `allow=true` 返回 `403 {"error": "高风险操作只能在已配对且已解锁的原生 App 前台核对后批准"}`，审计记录 `rejected_high_risk` |
+| **IM 渠道（Telegram / 飞书私聊或群聊卡片按钮）** | 仅主人私聊允许批准或拒绝 | **严禁批准！** 卡片只渲染「拒绝」按钮；若收到 `allow=true` 回调直接在入口拒绝 | `allow=true` 返回 `403`，审计记录 `rejected_high_risk` |
+| **云端本体自身（无人值守后台任务 / 子代理 / Council / JS 沙箱）** | 按任务无人值守策略 | **严禁云端自批！** 子代理/Council/JS 沙箱物理剥离高风险写工具；无人值守默认挂起进 `needsYou` | `allow=true` 返回 `403`，审计记录 `rejected_high_risk` |
+
+### 8.3 Phase 1 网关执行硬约束
+
+1. 在 `POST /v1/amber/decision` 入口处，当目标挂起审批的 `highRisk == true` 且请求 `allow == true` 时：
+   - 网关检查请求是否同时满足：① 来自已配对的原生客户端设备（有效 Bearer Token 且 `device.trustedApprovalSurface == true`）；② 显式声明处于已解锁原生 App 前台（请求头 `X-Amber-Trusted-Foreground: true` 或 JSON 字段 `"trustedForeground": true`）。
+   - **任何不满足上述条件的非可信来源（含旧版未声明前台解锁的远程调用、锁屏/通知快捷动作、IM 渠道、云端内部自调用）请求 `allow=true` 时，网关立即返回 `HTTP 403`，任务保持 `waiting` 状态，并写入 `audit.jsonl`（`outcome = "rejected_high_risk"`）。**
+2. 任何来源请求 `allow=false`（拒绝高风险操作）始终放行并返回 `200 OK`。
