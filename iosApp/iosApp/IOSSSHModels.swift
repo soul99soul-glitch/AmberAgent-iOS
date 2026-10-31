@@ -9,6 +9,17 @@ enum IOSSSHAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    init?(wireValue: String) {
+        switch wireValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "password":
+            self = .password
+        case "key", "private_key", "privateKey":
+            self = .privateKey
+        default:
+            return nil
+        }
+    }
+
     /// Canonical wire value for agent tools (`"password"` or `"key"`).
     var wireName: String {
         switch self {
@@ -27,17 +38,13 @@ enum IOSSSHAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let raw = try container.decode(String.self)
-        switch raw {
-        case "password":
-            self = .password
-        case "privateKey", "private_key", "key":
-            self = .privateKey
-        default:
+        guard let method = Self(wireValue: raw) else {
             throw DecodingError.dataCorruptedError(
                 in: container,
                 debugDescription: "Unknown IOSSSHAuthMethod: \(raw)"
             )
         }
+        self = method
     }
 
     func encode(to encoder: Encoder) throws {

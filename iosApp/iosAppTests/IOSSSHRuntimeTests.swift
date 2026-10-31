@@ -2,6 +2,23 @@ import XCTest
 @testable import iosApp
 
 final class IOSSSHProfileTests: XCTestCase {
+    func testAuthMethodWireValuesMapToSupportedMethods() {
+        let cases: [(String, IOSSSHAuthMethod?)] = [
+            ("password", .password),
+            ("key", .privateKey),
+            ("private_key", .privateKey),
+            ("privateKey", .privateKey),
+            (" \nkey\t", .privateKey),
+            (" password ", .password),
+            ("", nil),
+            ("unknown", nil),
+        ]
+
+        for (wireValue, expected) in cases {
+            XCTAssertEqual(IOSSSHAuthMethod(wireValue: wireValue), expected, wireValue)
+        }
+    }
+
     func testProfileValidationTrimsRequiredFields() throws {
         let profile = IOSSSHProfile(
             name: "  dev box  ",

@@ -167,8 +167,8 @@ enum IOSSSHProfileToolCatalog {
         let host = nonEmpty(args["host"] as? String) ?? "?"
         let port = (args["port"] as? Int) ?? Int(args["port"] as? String ?? "") ?? 22
         let user = nonEmpty(args["username"] as? String) ?? "?"
-        let rawMethod = nonEmpty(args["auth_method"] as? String)
-        let usesKey = rawMethod == "key" || rawMethod == "private_key" || rawMethod == "privateKey"
+        let method = (args["auth_method"] as? String).flatMap(IOSSSHAuthMethod.init(wireValue:))
+        let usesKey = method == .privateKey
             || nonEmpty(args["key_id"] as? String) != nil
             || nonEmpty(args["private_key"] as? String) != nil
         return "\(user)@\(host):\(port) · \(usesKey ? "密钥认证" : "密码认证")"
@@ -222,7 +222,7 @@ enum IOSSSHProfileToolCatalog {
            port != (target?.port ?? 22) { names.append("端口") }
         if let user = args["username"] as? String, user != target?.username { names.append("用户名") }
         if let method = args["auth_method"] as? String,
-           IOSSSHAuthMethod(rawValue: method) != target?.authMethod { names.append("认证方式") }
+           IOSSSHAuthMethod(wireValue: method) != target?.authMethod { names.append("认证方式") }
         if args.keys.contains("jump_profile_id") {
             let newJump = nonEmpty(args["jump_profile_id"] as? String)
             if newJump != target?.jumpProfileId {
@@ -255,7 +255,7 @@ enum IOSSSHProfileToolCatalog {
         } ?? false
         let userChanged = (args["username"] as? String).map { $0 != target.username } ?? false
         let authChanged = (args["auth_method"] as? String)
-            .flatMap(IOSSSHAuthMethod.init(rawValue:)).map { $0 != target.authMethod } ?? false
+            .flatMap(IOSSSHAuthMethod.init(wireValue:)).map { $0 != target.authMethod } ?? false
         return hostChanged || portChanged || userChanged || authChanged
     }
 
@@ -280,7 +280,7 @@ enum IOSSSHProfileToolCatalog {
         }
         if let user = args["username"] as? String, user != target.username { fields.append("用户名") }
         if let method = args["auth_method"] as? String,
-           IOSSSHAuthMethod(rawValue: method) != target.authMethod { fields.append("认证方式") }
+           IOSSSHAuthMethod(wireValue: method) != target.authMethod { fields.append("认证方式") }
         let changed = fields.isEmpty ? "连接目标或认证方式" : fields.joined(separator: "、")
         return "改动了 \(changed) 且未提供新凭证：批准后会清除本机已存的\(target.authMethod.displayName)。"
     }
@@ -590,7 +590,7 @@ enum IOSSSHProfileToolExecutor {
     ) throws -> IOSSSHAuthMethod {
         if let raw = arguments["auth_method"] {
             guard let text = raw as? String,
-                  let method = IOSSSHAuthMethod(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                  let method = IOSSSHAuthMethod(wireValue: text) else {
                 throw IOSSSHProfileToolError.invalidArguments("auth_method 只能是 \"password\"、\"key\" 或 \"private_key\"。")
             }
             return method
