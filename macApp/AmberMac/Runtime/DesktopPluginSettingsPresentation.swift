@@ -263,6 +263,9 @@ struct DesktopPluginSettingsPresentation: Equatable, Sendable {
                   detail: "未声明域名；沙箱拒绝一切外部网络请求。")
         }
         let hasWorkspacePrefixes = !readPrefixes.isEmpty || !writePrefixes.isEmpty
+            || plugin.manifest.permissions.contains("workspace.read")
+            || plugin.manifest.permissions.contains("workspace.write")
+            || plugin.manifest.permissions.contains(where: { $0.hasPrefix("workspace.read:") || $0.hasPrefix("workspace.write:") })
         let files: DesktopPluginCapabilityRow = if !plugin.isBuiltIn && hasWorkspacePrefixes {
             .init(id: "files", title: "工作区文件",
                   state: plugin.enabled ? .wired : .declaredNotWired,
@@ -277,6 +280,14 @@ struct DesktopPluginSettingsPresentation: Equatable, Sendable {
                       : "内置模块不使用沙箱工作区文件桥。")
         }
         let interfaces = plugin.manifest.ui
+        let hasCustomViews = !interfaces.views.isEmpty || interfaces.workspaceViews.contains(where: { !($0.entry ?? "").isEmpty })
+        let uiDetail: String = if hasCustomViews {
+            "命令与受控 WebView 自定义视图（amber-plugin:// 沙箱协议渲染，遵循 CSP 限制）。"
+        } else if interfaces.commands.isEmpty && interfaces.workspaceViews.isEmpty && interfaces.inspectorCards.isEmpty {
+            "未声明命令或视图，仅提供工具。"
+        } else {
+            "命令、检查器卡片与工作区视图由宿主渲染，不执行动态界面代码。"
+        }
         return [
             .init(id: "compute", title: "纯计算与命令", state: .wired,
                   detail: "在沙箱内同步求值，只读配置与持久状态。"),
@@ -284,10 +295,7 @@ struct DesktopPluginSettingsPresentation: Equatable, Sendable {
         ] + hostModuleRows(for: plugin) + [
             network,
             files,
-            .init(id: "ui", title: "界面入口", state: .wired,
-                  detail: interfaces.commands.isEmpty && interfaces.workspaceViews.isEmpty && interfaces.inspectorCards.isEmpty
-                      ? "未声明命令或视图，仅提供工具。"
-                      : "命令、检查器卡片与工作区视图由宿主渲染，不执行动态界面代码。"),
+            .init(id: "ui", title: "界面入口", state: .wired, detail: uiDetail),
         ]
     }
 
