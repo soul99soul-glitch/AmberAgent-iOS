@@ -240,15 +240,23 @@ struct MacGatewaySettingsView: View {
     }
 
     private func valueRow(icon: String, title: String, value: String) -> some View {
-        HStack(spacing: 12) {
-            MacGatewayIconPlate(icon: icon)
-            Text(verbatim: title).font(.body).foregroundStyle(AmberTheme.foreground)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            HStack(spacing: 12) {
+                MacGatewayIconPlate(icon: icon)
+                Text(verbatim: title).font(.body).foregroundStyle(AmberTheme.foreground)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             Text(verbatim: value).font(.subheadline).foregroundStyle(AmberTheme.muted)
-                .multilineTextAlignment(.trailing)
+                .multilineTextAlignment(dynamicTypeSize.isAccessibilitySize ? .leading : .trailing)
+                .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 40 : 0)
         }
         .frame(minHeight: 52)
         .padding(.horizontal, 14)
+        .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder

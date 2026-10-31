@@ -121,7 +121,9 @@ struct PermissionsApprovalView: View {
                         .font(.system(size: 20, weight: .medium))
                         .foregroundStyle(globalAutoApprove ? AmberTheme.accentGreen : AmberTheme.muted2)
                         .padding(.trailing, 14)
+                        .accessibilityHidden(true)
                 }
+                .accessibilityValue(Text(verbatim: globalAutoApprove ? "已开启" : "已关闭"))
 
                 Divider().overlay(AmberTheme.borderSoft).padding(.leading, 58)
 
@@ -143,7 +145,9 @@ struct PermissionsApprovalView: View {
                         .font(.system(size: 20, weight: .medium))
                         .foregroundStyle(highRiskAutoApprove ? AmberTheme.accentRed : AmberTheme.muted2)
                         .padding(.trailing, 14)
+                        .accessibilityHidden(true)
                 }
+                .accessibilityValue(Text(verbatim: highRiskAutoApprove ? "已开启" : "已关闭"))
             }
         }
     }

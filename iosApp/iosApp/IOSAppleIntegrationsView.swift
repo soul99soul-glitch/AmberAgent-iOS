@@ -165,6 +165,8 @@ struct IOSAppleIntegrationsView: View {
                     displayedComponents: [.date, .hourAndMinute]
                 )
                 .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
             }
         } else {
             DatePicker(
@@ -199,6 +201,8 @@ struct IOSAppleIntegrationsView: View {
         }
         .buttonStyle(.bordered)
         .tint(AmberTheme.muted)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     private var scheduleReminderButton: some View {
@@ -207,6 +211,8 @@ struct IOSAppleIntegrationsView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(AmberTheme.accent)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     private var shortcutSection: some View {

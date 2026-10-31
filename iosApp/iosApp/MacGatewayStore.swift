@@ -72,11 +72,19 @@ final class MacGatewayStore {
 
     #if DEBUG
     /// Simulator screenshots of every board group without a Mac: no client, so nothing is sent anywhere.
-    private func loadBoardFixture() {
+    func loadBoardFixture() {
         let now = Date()
         connection = MacGatewayConnection(gatewayId: "fixture", name: "Studio Mac", addrs: [], port: 1, fingerprint: "", deviceId: "d")
         client = nil
         isReachable = true
+        let statusJSON = #"""
+        {"gateway":{"id":"fixture","name":"Studio Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"synaraURL":"https://synara.local/tasks",
+         "health":{"sampledAt":1799999980,"diskFreeBytes":248000000000,"batteryPercent":86,"onBattery":false,"memoryPressure":"normal","thermal":"nominal"},
+         "sessions":[]}
+        """#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        status = try? decoder.decode(MacGatewayStatus.self, from: Data(statusJSON.utf8))
         func item(_ id: String, _ kind: MacGatewayBoardItem.Kind, _ column: MacGatewayBoardItem.Column, _ title: String,
                   _ detail: String, ago: TimeInterval = 0, schedule: String? = nil, next: Date? = nil, reply: Bool = false,
                   failed: Bool = false, approval: MacGatewayBoardItem.Approval? = nil) -> MacGatewayBoardItem {
@@ -101,6 +109,15 @@ final class MacGatewayStore {
                                autoApprovesHighRisk: false),
             MacGatewaySchedule(id: "D", name: "备份照片", rule: "每天 03:00", enabled: false, running: false, autoApprovesHighRisk: false),
         ]
+    }
+
+    func resetBoardFixtureForTesting() {
+        connection = nil
+        status = nil
+        isReachable = nil
+        board = nil
+        schedules = nil
+        notice = nil
     }
     #endif
 

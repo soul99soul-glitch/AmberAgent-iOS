@@ -352,6 +352,8 @@ struct MacGatewayScheduleSheet: View {
                                         .frame(maxWidth: .infinity, minHeight: 36)
                                         .background(on ? AmberTheme.accentTint : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? AmberTheme.accent.opacity(0.4) : AmberTheme.borderSoft))
+                                        .frame(minHeight: 44)
+                                        .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundStyle(on ? AmberTheme.accent : AmberTheme.foreground)

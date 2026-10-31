@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 @testable import iosApp
 
@@ -44,5 +46,130 @@ final class AmberSideRailLayoutTests: XCTestCase {
                 "height \(height)"
             )
         }
+    }
+
+    // MARK: - Phase 5: Modified UI Light / Dark & Accessibility Layout Verification
+
+    @MainActor
+    func testPhase5ModifiedViewsRenderLightDarkAndAccessibilityWithoutOverflow() async throws {
+        let store = MacGatewayStore.shared
+        store.loadBoardFixture()
+        defer { store.resetBoardFixtureForTesting() }
+
+        let suite = "Phase5Layout.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let permissionStore = IOSPermissionStore(userDefaults: defaults, taskStore: nil)
+        let coordinator = IOSSystemPermissionCoordinator()
+
+        let pages: [(name: String, makeView: @MainActor () -> AnyView)] = [
+            ("mac-tasks-board", {
+                AnyView(
+                    NavigationStack {
+                        MacTasksBoardView()
+                            .environment(RouterPath())
+                    }
+                )
+            }),
+            ("mac-gateway-settings", {
+                AnyView(
+                    NavigationStack {
+                        MacGatewaySettingsView()
+                            .environment(RouterPath())
+                    }
+                )
+            }),
+            ("apple-integrations", {
+                AnyView(
+                    NavigationStack {
+                        IOSAppleIntegrationsView(systemPermissionCoordinator: coordinator)
+                            .environment(RouterPath())
+                    }
+                    .defaultAppStorage(defaults)
+                )
+            }),
+            ("permissions-approval", {
+                AnyView(
+                    NavigationStack {
+                        PermissionsApprovalView(permissionStore: permissionStore)
+                            .environment(RouterPath())
+                    }
+                    .defaultAppStorage(defaults)
+                )
+            })
+        ]
+
+        let outputDir = URL(fileURLWithPath: "/tmp/amber-ios-phase5-screenshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKey = scene.windows.first(where: \.isKeyWindow)
+
+        for page in pages {
+            for style in [UIUserInterfaceStyle.light, .dark] {
+                let styleName = style == .dark ? "dark" : "light"
+                let scheme: ColorScheme = style == .dark ? .dark : .light
+                let window = UIWindow(windowScene: scene)
+                window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+                window.overrideUserInterfaceStyle = style
+                window.traitOverrides.preferredContentSizeCategory = .large
+                let controller = UIHostingController(
+                    rootView: page.makeView()
+                        .environment(\.colorScheme, scheme)
+                        .environment(\.dynamicTypeSize, .large)
+                        .environment(\.locale, Locale(identifier: "zh_Hans"))
+                )
+                window.rootViewController = controller
+                window.makeKeyAndVisible()
+                controller.view.frame = window.bounds
+                window.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(300))
+                window.layoutIfNeeded()
+
+                let scrolls = collectScrollViews(in: controller.view)
+                let mainScroll = try XCTUnwrap(scrolls.max { $0.contentSize.height < $1.contentSize.height },
+                                               "\(page.name)-\(styleName) must mount a ScrollView")
+                XCTAssertLessThanOrEqual(
+                    mainScroll.contentSize.width,
+                    mainScroll.bounds.width + 1,
+                    "\(page.name)-\(styleName) must not overflow horizontally"
+                )
+
+                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+                }
+                let pngData = try XCTUnwrap(image.pngData())
+                XCTAssertGreaterThan(pngData.count, 10_000, "\(page.name)-\(styleName) screenshot must be non-empty")
+                try pngData.write(to: outputDir.appendingPathComponent("\(page.name)-\(styleName).png"), options: .atomic)
+
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+
+            // Verify Accessibility Dynamic Type (.accessibility3) at standard 393pt width has no horizontal overflow
+            let axFixture = try SwiftModularizationHostingFixture(
+                root: page.makeView(),
+                width: 393,
+                height: 852,
+                type: .accessibility3
+            )
+            try await axFixture.settle()
+            let axScroll = try XCTUnwrap(axFixture.mainScrollView(), "\(page.name) ax3 scroll missing")
+            axFixture.assertNoHorizontalOverflow(axScroll)
+            axFixture.close()
+        }
+
+        previousKey?.makeKey()
+    }
+
+    private func collectScrollViews(in view: UIView) -> [UIScrollView] {
+        var result: [UIScrollView] = []
+        if let scroll = view as? UIScrollView, !(scroll is UITextView) {
+            result.append(scroll)
+        }
+        for subview in view.subviews {
+            result.append(contentsOf: collectScrollViews(in: subview))
+        }
+        return result
     }
 }

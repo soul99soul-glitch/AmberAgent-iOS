@@ -87,6 +87,8 @@ struct MacGatewayChevron: View {
 
 struct MacGatewayCapsuleButton: View {
     let title: String
+    var accessibilityLabel: String? = nil
+    var accessibilityHint: String? = nil
     let action: () -> Void
 
     var body: some View {
@@ -101,6 +103,8 @@ struct MacGatewayCapsuleButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(AmberTheme.accent)
+        .accessibilityLabel(Text(verbatim: accessibilityLabel ?? title))
+        .accessibilityHint(Text(verbatim: accessibilityHint ?? ""))
     }
 }
 
@@ -141,9 +145,16 @@ struct MacGatewayApprovalRow: View {
                 if store.decidingCalls.contains(approval.toolCallId) {
                     ProgressView().frame(minHeight: 44)
                 } else {
-                    MacGatewayCapsuleButton(title: macGatewayL("拒绝")) { decide(false) }
+                    MacGatewayCapsuleButton(
+                        title: macGatewayL("拒绝"),
+                        accessibilityLabel: macGatewayL("拒绝") + " " + approval.tool,
+                        accessibilityHint: approval.highRisk ? macGatewayL("高风险操作，请在 Mac 上核对后批准") : nil
+                    ) { decide(false) }
                     if !approval.highRisk {
-                        MacGatewayCapsuleButton(title: macGatewayL("批准")) { decide(true) }
+                        MacGatewayCapsuleButton(
+                            title: macGatewayL("批准"),
+                            accessibilityLabel: macGatewayL("批准") + " " + approval.tool
+                        ) { decide(true) }
                     }
                 }
                 Spacer(minLength: 0)
@@ -152,12 +163,14 @@ struct MacGatewayApprovalRow: View {
                 Text(verbatim: macGatewayL("高风险操作，请在 Mac 上核对后批准"))
                     .font(.caption2)
                     .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 54)
         .padding(.trailing, 14)
         .padding(.bottom, 12)
+        .accessibilityElement(children: .contain)
     }
 
     private func decide(_ allow: Bool) {
