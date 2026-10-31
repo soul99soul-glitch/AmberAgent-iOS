@@ -125,6 +125,7 @@ import ServiceManagement
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_SCHEDULES"] != nil { try await schedules() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_GATEWAY"] != nil { try await gatewaySettings() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PHASE5"] != nil { try await phase5ChangedPages() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_COMPOSER"] != nil { try await composerThinkingSnapshots() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
@@ -594,6 +595,88 @@ import ServiceManagement
         try await Task.sleep(for: .milliseconds(200))
         try shot("review-perf3-cache-content-dark")
         window.orderOut(nil)
+    }
+
+    @MainActor static func composerThinkingSnapshots() async throws {
+        func makeWorkspace(kind: DesktopProviderKind, baseURL: String, modelID: String, level: DesktopReasoningLevel) -> DesktopWorkspace {
+            let suiteName = "amber.snap.composer.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defaults.removePersistentDomain(forName: suiteName)
+            let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+            if var provider = settings.selectedProvider {
+                provider.name = kind == .claude ? "Anthropic" : "OpenAI"
+                provider.kind = kind
+                provider.baseURL = baseURL
+                let model = DesktopModelConfiguration(modelID: modelID, reasoning: level)
+                provider.models = [model]
+                provider.selectedModelID = model.id
+                try? settings.saveProvider(provider, apiKey: "snap-key")
+            }
+            let conv = DesktopConversation(title: "思考等级验收", messages: [
+                DesktopMessage(role: .user, text: "帮我梳理架构演进方案并评估风险。")
+            ])
+            let ws = DesktopWorkspace(
+                settings: settings,
+                storage: DesktopMemoryConversationStorage([conv]),
+                provider: ReplayProvider(),
+                initialConversations: [conv],
+                agentTasks: DesktopAgentTasks(defaults: defaults)
+            )
+            ws.select(conv.id)
+            ws.setThinkingLevel(level)
+            return ws
+        }
+
+        let wsHigh = makeWorkspace(
+            kind: .claude,
+            baseURL: "https://api.anthropic.com",
+            modelID: "claude-sonnet-4-6",
+            level: .high
+        )
+        let wsOff = makeWorkspace(
+            kind: .claude,
+            baseURL: "https://api.anthropic.com",
+            modelID: "claude-sonnet-4-6",
+            level: .off
+        )
+        let wsUnsupported = makeWorkspace(
+            kind: .openAI,
+            baseURL: "https://api.openai.com/v1",
+            modelID: "gpt-4.1-mini",
+            level: .off
+        )
+        await wsHigh.agentTasks.waitUntilLoaded()
+        await wsOff.agentTasks.waitUntilLoaded()
+        await wsUnsupported.agentTasks.waitUntilLoaded()
+
+        for dark in [false, true] {
+            let suffix = dark ? "dark" : "light"
+            try await capture(
+                "composer-thinking-\(suffix)",
+                VStack(spacing: 0) {
+                    Spacer(minLength: 16)
+                    DesktopComposer(workspace: wsHigh)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 16)
+                }
+                .frame(width: 780, height: 168)
+                .background(DesktopTheme.paper),
+                780, 168, dark
+            )
+            try await capture(
+                "composer-thinking-states-\(suffix)",
+                VStack(alignment: .leading, spacing: 14) {
+                    DesktopComposer(workspace: wsHigh)
+                    DesktopComposer(workspace: wsOff)
+                    DesktopComposer(workspace: wsUnsupported)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+                .frame(width: 780, height: 420)
+                .background(DesktopTheme.paper),
+                780, 420, dark
+            )
+        }
     }
 
     @MainActor static func capture<V: View>(_ name: String, _ view: V, _ width: CGFloat, _ height: CGFloat, _ dark: Bool,

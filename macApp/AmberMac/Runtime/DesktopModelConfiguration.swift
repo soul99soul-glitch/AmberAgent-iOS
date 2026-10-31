@@ -18,6 +18,14 @@ enum DesktopReasoningLevel: String, Codable, CaseIterable, Identifiable, Sendabl
 }
 
 /// Aligns composer and settings thinking-level options with KMP `ReasoningPolicy` and `ModelRegistry`.
+///
+/// Relationship with DeepSeek `/boost`: the two are orthogonal and neither overrides the other.
+/// - The thinking level is the only source for request-body reasoning fields (OpenAI `reasoning_effort`,
+///   Claude `thinking` / `output_config.effort`). It is stored per model and always passed through
+///   `coercedLevel` against `supportedLevels` before sending.
+/// - `/boost` is per conversation and only appends `DesktopDeepSeekBoost.prompt` as a system message
+///   for DeepSeek models. It never raises, lowers, or resets the thinking level, and turning it off
+///   leaves the chosen level untouched.
 enum DesktopThinkingPolicy {
     static func supportedLevels(
         for model: DesktopModelConfiguration?,

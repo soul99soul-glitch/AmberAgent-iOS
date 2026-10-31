@@ -99,9 +99,6 @@ struct DesktopComposer: View {
 
                         modeMenu
                     }
-                    if workspace.isThinkingLevelAvailable {
-                        thinkingLevelMenu
-                    }
                     if workspace.isBoostAvailable {
                         // 一个图标位：火焰代表「更强力、想得更深」，闪电留给以后的 fast mode。
                         DesktopIconToggle(symbol: "flame", isOn: workspace.isBoostActive) {
@@ -121,7 +118,12 @@ struct DesktopComposer: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    inlineModelPicker
+                    HStack(spacing: 2) {
+                        if workspace.isThinkingLevelAvailable {
+                            thinkingLevelMenu
+                        }
+                        inlineModelPicker
+                    }
                     if workspace.isMutatingBranch {
                         ProgressView().controlSize(.small)
                         Text("正在保存…").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
@@ -375,30 +377,36 @@ struct DesktopComposer: View {
             Divider()
             SettingsLink { Label("管理服务商…", systemImage: "slider.horizontal.3") }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 10.5))
-                Text(workspace.settings.selectedProvider?.selectedModel?.displayName ?? "选择模型")
-                    .font(.system(size: 12, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 132)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .opacity(0.6)
-            }
-            .foregroundStyle(DesktopTheme.inkTertiary)
-            .padding(.horizontal, 8)
-            .frame(height: 26)
+            // The former decorative `cpu` glyph is gone; clicking the model name is still the single entry
+            // to switch models / manage providers. Text only: borderless menus hoist any Image to the
+            // leading edge, which would sit between the thinking level and the model name.
+            Text(workspace.settings.selectedProvider?.selectedModel?.displayName ?? "选择模型")
+                .font(.system(size: 12, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 132)
+                .foregroundStyle(DesktopTheme.inkTertiary)
+                .padding(.leading, workspace.isThinkingLevelAvailable ? 2 : 8)
+                .padding(.trailing, 8)
+                .frame(height: 26)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .tint(DesktopTheme.inkTertiary)
-        .help("快速切换当前对话模型")
+        .help(inlineModelHelpText)
         .accessibilityLabel("输入框模型选择")
     }
 
+    private var inlineModelHelpText: String {
+        if let provider = workspace.settings.selectedProvider,
+           let model = provider.selectedModel {
+            return "当前服务商与模型：\(provider.name) · \(model.displayName)（点击切换模型或管理服务商）"
+        }
+        return "快速切换当前对话模型"
+    }
+
+    /// Replaces the decorative `cpu` icon immediately to the left of the model name with a text-only thinking level selector.
     private var thinkingLevelMenu: some View {
         let active = workspace.selectedThinkingLevel.isEnabled
         return Menu {
@@ -407,35 +415,36 @@ struct DesktopComposer: View {
                 set: { workspace.setThinkingLevel($0) }
             )) {
                 ForEach(workspace.supportedThinkingLevels) { level in
-                    Text(level.title).tag(level)
+                    Text("\(level.rawValue)  ·  \(level.title)").tag(level)
                 }
             }
             .pickerStyle(.inline)
         } label: {
-            Image(systemName: "brain")
-                .font(.system(size: 13.5, weight: active ? .medium : .regular))
+            Text(workspace.selectedThinkingLevel.rawValue)
+                .font(.system(size: 12, weight: active ? .medium : .regular, design: .monospaced))
+                .lineLimit(1)
                 .foregroundStyle(active ? DesktopTheme.accentInk : DesktopTheme.inkTertiary)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(active ? DesktopTheme.honeySoft : .clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(active ? DesktopTheme.honeyEdge : .clear, lineWidth: 0.75)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .padding(.leading, 6)
+                .padding(.trailing, 2)
+                .frame(height: 26)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .tint(active ? DesktopTheme.accentInk : DesktopTheme.inkTertiary)
         .disabled(workspace.isGenerating || workspace.isMutatingBranch)
-        .help(active
-            ? "思考等级：\(workspace.selectedThinkingLevel.title)（点击切换）"
-            : "思考等级：关闭（点击选择）")
+        .help(thinkingLevelHelpText)
         .accessibilityLabel("思考等级")
-        .accessibilityValue(workspace.selectedThinkingLevel.title)
+        .accessibilityValue(workspace.selectedThinkingLevel.rawValue)
+    }
+
+    private var thinkingLevelHelpText: String {
+        let level = workspace.selectedThinkingLevel
+        let options = workspace.supportedThinkingLevels.map(\.rawValue).joined(separator: " / ")
+        let head = level.isEnabled
+            ? "思考等级：\(level.rawValue)（\(level.title)）。模型回答前的推理深度，越高越慢、消耗越多。"
+            : "思考等级：off（已关闭推理思考）。"
+        return head + "当前模型可选：\(options)。点击切换；按模型分别记住。/boost 只追加提示词，不改变此等级。"
     }
 
     private var sendDisabled: Bool {
