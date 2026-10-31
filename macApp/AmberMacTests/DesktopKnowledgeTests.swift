@@ -236,11 +236,18 @@ import XCTest
         XCTAssertEqual(pluginSkill["enabled"] as? Bool, true)
 
         let useOutput = try store.executeTool(name: "use_skill", argumentsJSON: #"{"name":"plugin-development"}"#)
-        XCTAssertTrue(useOutput.contains("严禁静默安装或直接启用插件"))
+        XCTAssertTrue(useOutput.contains("工作区编写 + 高风险审批安装"))
+        XCTAssertTrue(useOutput.contains("plugin_install"))
+        XCTAssertTrue(useOutput.contains("plugin_list"))
         XCTAssertTrue(useOutput.contains("设置 (`⌘,`) → 插件 → + 导入插件"))
         XCTAssertTrue(useOutput.contains("feishu_calendar"))
         XCTAssertTrue(useOutput.contains("apple_schedule"))
         XCTAssertTrue(useOutput.contains("watchtower"))
+
+        let skillRecord = try XCTUnwrap(store.allSkills.first { $0.name == "plugin-development" })
+        XCTAssertTrue(skillRecord.allowedTools.contains("plugin_install"))
+        XCTAssertTrue(skillRecord.allowedTools.contains("plugin_list"))
+        XCTAssertTrue(skillRecord.allowedTools.contains("workspace_file_write"))
 
         // Disable and verify persistence across restart:
         _ = try store.executeTool(name: "skill_disable", argumentsJSON: #"{"name":"plugin-development"}"#)

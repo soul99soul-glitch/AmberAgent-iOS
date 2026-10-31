@@ -1006,4 +1006,241 @@ final class DesktopPluginTests: XCTestCase {
         let savedOnDisk = try String(contentsOf: workspaceDir.appendingPathComponent("notes/weekly.md"), encoding: .utf8)
         XCTAssertEqual(savedOnDisk, "【项目纪要】确认周五发布 macOS 插件 v2")
     }
+
+    func testPluginInstallAndPluginListAgentToolsWithDuplicateUpgradeAndOverwrite() async throws {
+        let pluginsRoot = tempDirectory.appendingPathComponent("installed_agent_tools", isDirectory: true)
+        let workspaceDir = tempDirectory.appendingPathComponent("workspace_agent_tools", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDir, withIntermediateDirectories: true)
+
+        let store = DesktopPluginStore(
+            directory: pluginsRoot,
+            workspaceDirectory: workspaceDir,
+            defaults: defaults,
+            credentials: credentials
+        )
+
+        // 1. Initial plugin_list contains the 3 built-in plugins:
+        let initialListRaw = try store.executePluginList()
+        let initialList = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(initialListRaw.utf8)) as? [String: Any])
+        XCTAssertEqual(initialList["ok"] as? Bool, true)
+        XCTAssertEqual(initialList["count"] as? Int, 3)
+
+        // 2. Write a v1.0.0 plugin inside the conversation workspace:
+        let pluginFolder = workspaceDir.appendingPathComponent("drafts/summary_helper", isDirectory: true)
+        try FileManager.default.createDirectory(at: pluginFolder, withIntermediateDirectories: true)
+        func writeWorkspacePlugin(version: String, prefixText: String) throws {
+            let manifest = """
+            {
+              "schema": "amber.plugin.v2",
+              "id": "summary_helper",
+              "name": "摘要助手",
+              "version": "\(version)",
+              "description": "在会话工作区整理摘要并同步指定接口。",
+              "capabilities": {
+                "networkDomains": ["api.example.com"],
+                "workspaceReadPrefixes": ["notes/"],
+                "workspaceWritePrefixes": ["notes/out/"]
+              },
+              "tools": [
+                {
+                  "name": "summarize",
+                  "description": "生成带前缀的摘要文本",
+                  "effect": "pure",
+                  "entry": "summarizeText",
+                  "input_schema": {
+                    "type": "object",
+                    "properties": { "text": { "type": "string" } },
+                    "required": ["text"]
+                  }
+                }
+              ]
+            }
+            """
+            let script = """
+            function summarizeText(input) {
+              return { ok: true, result: "\(prefixText)" + String((input && input.text) || "") };
+            }
+            """
+            try Data(manifest.utf8).write(to: pluginFolder.appendingPathComponent("plugin.json"))
+            try Data(script.utf8).write(to: pluginFolder.appendingPathComponent("main.js"))
+        }
+        try writeWorkspacePlugin(version: "1.0.0", prefixText: "[v1.0]")
+
+        // 3. Prepare install and verify human-readable approval reason:
+        let preparedFresh = try store.preparePluginInstall(
+            argumentsJSON: #"{"path":"drafts/summary_helper"}"#,
+            workspaceDirectory: workspaceDir
+        )
+        XCTAssertEqual(preparedFresh.installKind, .fresh)
+        XCTAssertNil(preparedFresh.versionComparison)
+        XCTAssertTrue(preparedFresh.approvalReason.contains("摘要助手"))
+        XCTAssertTrue(preparedFresh.approvalReason.contains("summary_helper"))
+        XCTAssertTrue(preparedFresh.approvalReason.contains("v1.0.0"))
+        XCTAssertTrue(preparedFresh.approvalReason.contains("api.example.com"))
+        XCTAssertTrue(preparedFresh.approvalReason.contains("notes/"))
+        XCTAssertTrue(preparedFresh.approvalReason.contains("notes/out/"))
+        XCTAssertTrue(preparedFresh.approvalReason.contains("summarize(pure)"))
+
+        // 4. Execute fresh install -> auto-enabled (consistent with manual import) and reload() registers tool:
+        let installOutRaw = try store.executePluginInstall(
+            argumentsJSON: #"{"path":"drafts/summary_helper"}"#,
+            workspaceDirectory: workspaceDir
+        )
+        let installOut = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(installOutRaw.utf8)) as? [String: Any])
+        XCTAssertEqual(installOut["ok"] as? Bool, true)
+        XCTAssertEqual(installOut["id"] as? String, "summary_helper")
+        XCTAssertEqual(installOut["version"] as? String, "1.0.0")
+        XCTAssertEqual(installOut["enabled"] as? Bool, true)
+        XCTAssertEqual(installOut["action"] as? String, "install")
+
+        // Verify via plugin_list and tool execution:
+        let afterInstallList = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.executePluginList().utf8)) as? [String: Any])
+        XCTAssertEqual(afterInstallList["count"] as? Int, 4)
+        let pluginsArray = try XCTUnwrap(afterInstallList["plugins"] as? [[String: Any]])
+        let listedSummary = try XCTUnwrap(pluginsArray.first { ($0["id"] as? String) == "summary_helper" })
+        XCTAssertEqual(listedSummary["version"] as? String, "1.0.0")
+        XCTAssertEqual(listedSummary["enabled"] as? Bool, true)
+        XCTAssertEqual(listedSummary["is_built_in"] as? Bool, false)
+
+        let v1Exec = try await store.executeTool(
+            qualifiedName: "plugin__summary_helper__summarize",
+            argumentsJSON: #"{"text":"周会结论"}"#,
+            workspaceDirectory: workspaceDir
+        )
+        XCTAssertTrue(v1Exec.contains("[v1.0]周会结论"))
+
+        // 5. Duplicate install with v1.1.0 WITHOUT overwrite=true must be rejected with version comparison:
+        try writeWorkspacePlugin(version: "1.1.0", prefixText: "[v1.1]")
+        do {
+            _ = try store.preparePluginInstall(
+                argumentsJSON: #"{"path":"drafts/summary_helper"}"#,
+                workspaceDirectory: workspaceDir
+            )
+            XCTFail("Expected duplicate plugin without overwrite=true to fail")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("升级安装"))
+            XCTAssertTrue(error.localizedDescription.contains("v1.0.0 → v1.1.0"))
+            XCTAssertTrue(error.localizedDescription.contains("overwrite=true"))
+        }
+
+        // 6. Duplicate install with v1.1.0 and overwrite=true -> succeeds as upgrade with version comparison:
+        let preparedUpgrade = try store.preparePluginInstall(
+            argumentsJSON: #"{"path":"drafts/summary_helper/plugin.json","overwrite":true}"#,
+            workspaceDirectory: workspaceDir
+        )
+        XCTAssertEqual(preparedUpgrade.installKind, .upgrade(previousVersion: "1.0.0"))
+        XCTAssertEqual(preparedUpgrade.versionComparison, "v1.0.0 → v1.1.0")
+        XCTAssertTrue(preparedUpgrade.approvalReason.contains("即将升级已有插件「摘要助手」"))
+        XCTAssertTrue(preparedUpgrade.approvalReason.contains("v1.0.0 → v1.1.0"))
+
+        let upgradeOutRaw = try store.executePluginInstall(
+            argumentsJSON: #"{"path":"drafts/summary_helper/plugin.json","overwrite":true}"#,
+            workspaceDirectory: workspaceDir
+        )
+        let upgradeOut = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(upgradeOutRaw.utf8)) as? [String: Any])
+        XCTAssertEqual(upgradeOut["action"] as? String, "upgrade")
+        XCTAssertEqual(upgradeOut["previous_version"] as? String, "1.0.0")
+        XCTAssertEqual(upgradeOut["version_comparison"] as? String, "v1.0.0 → v1.1.0")
+
+        let v11Exec = try await store.executeTool(
+            qualifiedName: "plugin__summary_helper__summarize",
+            argumentsJSON: #"{"text":"周会结论"}"#,
+            workspaceDirectory: workspaceDir
+        )
+        XCTAssertTrue(v11Exec.contains("[v1.1]周会结论"))
+
+        // 7. Same-version reinstall with overwrite=true -> reports overwrite (v1.1.0 → v1.1.0):
+        try writeWorkspacePlugin(version: "1.1.0", prefixText: "[v1.1-hotfix]")
+        let overwriteOutRaw = try store.executePluginInstall(
+            argumentsJSON: #"{"path":"drafts/summary_helper","overwrite":true}"#,
+            workspaceDirectory: workspaceDir
+        )
+        let overwriteOut = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(overwriteOutRaw.utf8)) as? [String: Any])
+        XCTAssertEqual(overwriteOut["action"] as? String, "overwrite")
+        XCTAssertEqual(overwriteOut["version_comparison"] as? String, "v1.1.0 → v1.1.0")
+    }
+
+    func testPluginInstallRejectsOutsideWorkspaceTraversalAndSymlinks() throws {
+        let pluginsRoot = tempDirectory.appendingPathComponent("installed_security", isDirectory: true)
+        let workspaceDir = tempDirectory.appendingPathComponent("workspace_security", isDirectory: true)
+        let outsideDir = tempDirectory.appendingPathComponent("outside_secret_plugin", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideDir, withIntermediateDirectories: true)
+
+        let outsideManifest = """
+        {
+          "schema": "amber.plugin.v2",
+          "id": "outside_secret_plugin",
+          "name": "外部越界插件",
+          "version": "1.0.0",
+          "description": "不应从工作区外部被安装",
+          "tools": []
+        }
+        """
+        try Data(outsideManifest.utf8).write(to: outsideDir.appendingPathComponent("plugin.json"))
+        try Data("function noop() {}".utf8).write(to: outsideDir.appendingPathComponent("main.js"))
+
+        let store = DesktopPluginStore(
+            directory: pluginsRoot,
+            workspaceDirectory: workspaceDir,
+            defaults: defaults,
+            credentials: credentials
+        )
+
+        // 1. Reject traversal, absolute path, tilde, and current directory:
+        for invalidPath in [
+            "../outside_secret_plugin",
+            "sub/../../outside_secret_plugin",
+            outsideDir.path,
+            "~/outside_secret_plugin",
+            ".",
+            "./outside_secret_plugin",
+            "sub\\outside_secret_plugin"
+        ] {
+            XCTAssertThrowsError(
+                try store.preparePluginInstall(
+                    argumentsJSON: #"{"path":"\#(invalidPath)"}"#,
+                    workspaceDirectory: workspaceDir
+                ),
+                "Path should be rejected: \(invalidPath)"
+            )
+        }
+
+        // 2. Reject symlinked plugin directory inside workspace pointing outside:
+        let symlinkedDir = workspaceDir.appendingPathComponent("linked_plugin")
+        try FileManager.default.createSymbolicLink(at: symlinkedDir, withDestinationURL: outsideDir)
+        XCTAssertThrowsError(
+            try store.preparePluginInstall(
+                argumentsJSON: #"{"path":"linked_plugin"}"#,
+                workspaceDirectory: workspaceDir
+            )
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("符号链接"))
+        }
+
+        // 3. Reject real directory inside workspace whose plugin.json or main.js is a symlink pointing outside:
+        let realDirWithLinkedFile = workspaceDir.appendingPathComponent("outside_secret_plugin", isDirectory: true)
+        try FileManager.default.createDirectory(at: realDirWithLinkedFile, withIntermediateDirectories: true)
+        try Data(outsideManifest.utf8).write(to: realDirWithLinkedFile.appendingPathComponent("plugin.json"))
+        try FileManager.default.createSymbolicLink(
+            at: realDirWithLinkedFile.appendingPathComponent("main.js"),
+            withDestinationURL: outsideDir.appendingPathComponent("main.js")
+        )
+        XCTAssertThrowsError(
+            try store.preparePluginInstall(
+                argumentsJSON: #"{"path":"outside_secret_plugin"}"#,
+                workspaceDirectory: workspaceDir
+            )
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("符号链接"))
+        }
+        XCTAssertThrowsError(
+            try store.preparePluginInstall(
+                argumentsJSON: #"{"path":"outside_secret_plugin/plugin.json"}"#,
+                workspaceDirectory: workspaceDir
+            )
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("符号链接"))
+        }
+    }
 }

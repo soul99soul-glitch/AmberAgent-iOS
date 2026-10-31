@@ -50,7 +50,7 @@ import CryptoKit
         let params = try bridge.paramsFromJSON(json: DesktopJSON.encode(model)).replacingTools(exposure.visibleTools())
         let executor = DesktopAgentExecutor(runID: UUID(), owner: request.ownerID, tasks: tasks, files: files, knowledge: knowledge,
             mcp: mcp, declarations: declarations, exposure: exposure, sourceMessageIDs: [], collaborations: collaborations,
-            searchSettings: searchSettings)
+            searchSettings: searchSettings, plugins: plugins)
         let report = DesktopSubagentReportExecutor()
         var registry = Dictionary(uniqueKeysWithValues: request.toolNames.map { ($0, executor as any IOSToolExecutor) })
         registry[DesktopSubagentToolPolicy.reportToolName] = report
@@ -513,9 +513,22 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
             if let decision = await tasks.decision(runID: runID, toolID: tool.toolCallId) {
                 if !decision { return .denied("用户拒绝了这一次工具调用。") }
             } else {
+                var approvalReason = "请核对操作内容后允许一次或拒绝。"
+                if tool.toolName == "plugin_install" {
+                    guard let plugins else { return .failed("插件运行时未初始化。") }
+                    do {
+                        let workspaceDir = try await files.commandDirectory(conversationID: owner)
+                        let prepared = try await MainActor.run {
+                            try plugins.preparePluginInstall(argumentsJSON: tool.input, workspaceDirectory: workspaceDir)
+                        }
+                        approvalReason = prepared.approvalReason
+                    } catch {
+                        return .failed(error.localizedDescription)
+                    }
+                }
                 do {
                     try await tasks.requestApproval(runID: runID, approval: DesktopToolApproval(id: tool.toolCallId,
-                        name: tool.toolName, arguments: tool.input, reason: "请核对操作内容后允许一次或拒绝。"))
+                        name: tool.toolName, arguments: tool.input, reason: approvalReason))
                     return .needsApproval("等待用户确认这一次操作。")
                 } catch { return .durabilityFailure("无法保存工具审批，工具未执行。") }
             }
@@ -635,6 +648,15 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                 }
                 await collaborations.cancel(id)
                 output = try Self.json(["ok": true, "run_id": id.uuidString])
+            case "plugin_list":
+                guard let plugins else { return .failed("插件运行时未初始化。") }
+                output = try await MainActor.run { try plugins.executePluginList() }
+            case "plugin_install":
+                guard let plugins else { return .failed("插件运行时未初始化。") }
+                let workspaceDir = try await files.commandDirectory(conversationID: owner)
+                output = try await MainActor.run {
+                    try plugins.executePluginInstall(argumentsJSON: tool.input, workspaceDirectory: workspaceDir)
+                }
             default:
                 if tool.toolName.hasPrefix("plugin__") {
                     guard let plugins else { return .failed("插件运行时未初始化。") }

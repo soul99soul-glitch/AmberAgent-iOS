@@ -23,10 +23,10 @@ struct DesktopCollaborationRole: Identifiable, Equatable, Sendable {
 
 // Sub-agents are read-only workers, mirroring IOSSubAgentToolPolicy.
 enum DesktopSubagentToolPolicy {
-    static let readOnlyToolNames: Set<String> = ["search_web", "scrape_web", "workspace_file_read", "workspace_file_list"]
+    static let readOnlyToolNames: Set<String> = ["search_web", "scrape_web", "workspace_file_read", "workspace_file_list", "plugin_list"]
     static let deniedToolNames: Set<String> = ["workspace_file_write", "workspace_artifact_delete", "terminal_exec",
         "mcp_call_tool", "memory_tool", "skill_enable", "skill_disable", "generate_image",
-        "subagent_dispatch", "model_council_run", "interrupt_agent"]
+        "subagent_dispatch", "model_council_run", "interrupt_agent", "plugin_install"]
 
     /// Custom members (no built-in role) get every read-only tool, like iOS custom roles.
     static func toolNames(for role: DesktopCollaborationRole?) -> [String] {

@@ -181,10 +181,16 @@ function renderNoteInspector() {
 }
 ```
 
-### 第三步：导入到 Amber 并试用
+### 第三步：安装到 Amber 并试用
 
-1. 打开 Amber，按 `⌘,` 进入 **设置 → 插件**。
-2. 点击左下角 **「+ 导入插件」**，选中刚才创建的 `note_helper` 文件夹（或里面的 `plugin.json`）。
+你可以通过 **智能体工具自动安装（需 Mac 审批）** 或 **设置面板手动导入** 两种方式安装：
+
+1. **方式 A — 让 Amber 在当前会话工作区内直接安装（推荐）：**
+   - 当 Amber 在当前会话工作区写好 `note_helper/plugin.json` 与 `note_helper/main.js` 后，可调用 `plugin_install`（例如 `{"path": "note_helper"}`；若升级或覆盖已有同名插件则显式传 `{"path": "note_helper", "overwrite": true}`）。
+   - `plugin_install` 属于高风险操作，Amber 会在 Mac 主窗口弹出审批卡片，清晰列出插件名称、版本（或新旧版本对比）以及申请的 `networkDomains`、`workspaceReadPrefixes` / `workspaceWritePrefixes` 权限。
+   - 在 Mac 上点击批准后，Amber 会复用 `DesktopPluginStore.importPlugin(from:)` 完成清单校验、原子落盘与 `reload()`，随后可通过只读工具 `plugin_list` 核实插件已安装且默认启用。
+2. **方式 B — 在设置面板手动导入：**
+   - 打开 Amber，按 `⌘,` 进入 **设置 → 插件**，点击左下角 **「+ 导入插件」**，选中 `note_helper` 文件夹（或里面的 `plugin.json`）。
 3. 左侧「扩展插件」列表会出现 **会议纪要助手** `v1.0.0`，状态圆点为琥珀色（已启用）。
 4. 回到主窗口试用：
    - 在底部输入框输入 `/note`，补全浮层会列出 `/note-format`，回车即可填入提示词；
@@ -197,8 +203,8 @@ function renderNoteInspector() {
 - **原生 JavaScriptCore 沙箱：** Amber 直接调用 macOS 系统内置的 `JavaScriptCore`（`JSContext`）在后台队列运行插件工具脚本，绝不阻塞 `@MainActor`。每次工具调用都在全新创建的独立 `JSContext` 中执行，跑完立即销毁，插件之间不共享任何全局状态。
 - **主线程零 IO 投影：** 所有外部网络请求都在后台任务中完成；用于 SwiftUI 渲染的界面数据（右侧栏卡片快照 `DesktopInspectorCardSnapshot`、侧栏徽章 `badgeCount`、斜杠命令列表）全部在 `DesktopPluginStore.rebuildProjections()` 中预先计算缓存，SwiftUI 视图渲染期零 JS 执行、零磁盘/钥匙串 IO。
 - **安装与热重载：**
-  - 在 **设置 → 插件** 点 **「+ 导入插件」** 选择文件夹或 `plugin.json`，Amber 校验通过后会将文件原子拷贝到应用支持目录。
-  - 改完代码后，点设置面板左下角的 **「↻ 重新加载」** 按钮（或把插件关掉再打开），新逻辑立即生效。
+  - 通过智能体工具 `plugin_install`（仅允许当前会话工作区路径、禁止符号链接逃逸、Mac 审批通过后生效）或在 **设置 → 插件** 点 **「+ 导入插件」** 选择文件夹或 `plugin.json`，Amber 校验通过后会将文件原子拷贝到应用支持目录并触发 `reload()`。
+  - 改完代码后，可再次通过 `plugin_install`（设置 `overwrite: true`）升级/覆盖，或点设置面板左下角的 **「↻ 重新加载」** 按钮，新逻辑立即生效。
 - **网络白名单守卫（Capability Broker）：** 插件调用 `amber.http.fetch(url, options)` 或宿主 `performAuthorizedHTTP` 时，仅放行 `https://` 协议，且目标主机必须精确匹配 `capabilities.networkDomains`（或其子域名）。未声明的域名或明文 `http://` 会被当场拦截，单次请求超时固定为 20 秒。
 - **会话工作区前缀守卫：** 插件调用 `amber.workspace.read(path)` / `amber.workspace.write(path, content)` 时，路径必须是当前会话工作区内的相对路径，且必须命中 `workspaceReadPrefixes` / `workspaceWritePrefixes` 声明的前缀；任何 `..` 路径穿越、绝对路径或符号链接（symlink）逃逸都会被立即拒绝。
 
