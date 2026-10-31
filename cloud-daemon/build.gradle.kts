@@ -29,6 +29,7 @@ kotlin {
                 implementation(project(":core:context:api"))
                 implementation(project(":core:types"))
                 implementation(project(":core:agent-utils"))
+                implementation(libs.androidx.sqlite.bundled)
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.kotlinx.datetime)
