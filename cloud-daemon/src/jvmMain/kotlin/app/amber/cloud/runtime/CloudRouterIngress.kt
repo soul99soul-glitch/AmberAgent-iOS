@@ -39,7 +39,6 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
                 )
             if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
                 kernel.ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
-                kernel.extractExplicitMemoryIfPresent(message.text, conversationId.toString())
             }
             kernel.conversationStorage.saveConversation(conversation.copy(
                 messageNodes = conversation.messageNodes + UIMessage.user(CredentialRedactor.redact(message.text)).toMessageNode(),

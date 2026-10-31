@@ -356,10 +356,21 @@ class CloudDaemonE2ETest {
         // Ephemeral secret is still intact while waiting (since 403 kept the session in waiting)
         assertTrue(kernel.vault.hasPendingToolArgs("call-highrisk-1"))
 
-        // 8. Trusted Paired Native App in Unlocked Foreground (`X-Amber-Trusted-Foreground: true`) -> 200!
+        // Foreground without positive biometric proof must still be rejected.
+        val noBiometricResp = client.post("/v1/amber/decision") {
+            header(HttpHeaders.Authorization, "Bearer $bearerToken")
+            header("X-Amber-Trusted-Foreground", "true")
+            contentType(ContentType.Application.Json)
+            setBody("""{"sessionKey":"${card.sessionKey}","toolCallId":"${card.toolCallId}","allow":true}""")
+        }
+        assertEquals(403, noBiometricResp.status.value)
+        assertTrue(kernel.vault.hasPendingToolArgs("call-highrisk-1"))
+
+        // 8. Trusted unlocked foreground App with biometric verification -> 200!
         val trustedApproveResp = client.post("/v1/amber/decision") {
             header(HttpHeaders.Authorization, "Bearer $bearerToken")
             header("X-Amber-Trusted-Foreground", "true")
+            header("X-Amber-Biometric-Verified", "true")
             contentType(ContentType.Application.Json)
             setBody("""{"sessionKey":"${card.sessionKey}","toolCallId":"${card.toolCallId}","allow":true}""")
         }

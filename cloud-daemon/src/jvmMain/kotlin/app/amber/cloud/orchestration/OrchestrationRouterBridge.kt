@@ -70,7 +70,8 @@ internal class OrchestrationRouterBridge(
         )
         observableEvents.add(triggerEvent)
 
-        if (threadKey != null) {
+        // An explicit agent mention starts a fresh Router decision rather than leaking to old subscribers.
+        if (threadKey != null && !message.text.contains('@')) {
             val subscribers = kernel.store.listActiveSubscribersForThread(threadKey)
             if (subscribers.isNotEmpty()) {
                 kernel.directPassThroughCount.incrementAndGet()

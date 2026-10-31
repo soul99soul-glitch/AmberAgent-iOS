@@ -48,6 +48,7 @@ import java.nio.charset.StandardCharsets
 fun Application.configureCloudGateway(
     state: CloudGatewayState,
     feishuChannel: FeishuChannel? = null,
+    agentApi: AgentCentricApi? = null,
 ) {
     val gatewayJson = Json {
         ignoreUnknownKeys = true
@@ -58,6 +59,7 @@ fun Application.configureCloudGateway(
     install(ContentNegotiation) {
         json(gatewayJson)
     }
+    if (agentApi != null) configureAgentCentricRoutes(state, agentApi)
 
     suspend fun ApplicationCall.respondJson(status: Int, payload: String) {
         respondText(
@@ -190,10 +192,10 @@ fun Application.configureCloudGateway(
             val foregroundBody = body["trustedForeground"]?.jsonPrimitive?.booleanOrNull == true
             val biometricHeader = call.request.header("X-Amber-Biometric-Verified")?.lowercase()
             val biometricBody = body["biometricVerified"]?.jsonPrimitive?.booleanOrNull
-            val biometricExplicitlyFailed = biometricHeader == "false" || biometricBody == false
+            val biometricVerified = (biometricHeader == "true" || biometricBody == true) && biometricHeader != "false" && biometricBody != false
             val trustedForeground = device.trustedApprovalSurface &&
                 !isUntrustedSurface &&
-                !biometricExplicitlyFailed &&
+                biometricVerified &&
                 (foregroundHeader || foregroundBody)
 
             val decisionResult = state.processDecision(

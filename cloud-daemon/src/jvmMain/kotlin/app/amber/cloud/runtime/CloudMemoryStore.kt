@@ -2,15 +2,21 @@ package app.amber.cloud.runtime
 
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.PlaceholderCredentialException
+import app.amber.cloud.agents.AgentMemoryPolicy
+import app.amber.cloud.agents.GLOBAL_MEMORY_AGENT_ID
 import app.amber.core.memory.model.MemoryRecord
 import app.amber.core.model.DEFAULT_ASSISTANT_ID
 import app.amber.core.model.MemoryKind
 import app.amber.core.model.MemoryScope
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+
+@Serializable
+private data class ScopedCloudMemory(val agentId: String, val record: MemoryRecord, val tags: List<String> = emptyList())
 
 /**
  * Persistent memory and identity (`SOUL.md` + `memories.json`) store for `amberd`.
@@ -23,6 +29,7 @@ class CloudMemoryStore(
 ) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val memoriesFile = File(memoryDir, "memories.json")
+    private val scopedMemoriesFile = File(memoryDir, "agent-memories.json")
     private val soulFile = File(memoryDir, "SOUL.md")
 
     init {
@@ -33,7 +40,8 @@ class CloudMemoryStore(
     }
 
     @Synchronized
-    fun loadSoulPrompt(): String {
+    fun loadSoulPrompt(memoryPolicy: AgentMemoryPolicy = AgentMemoryPolicy.SHARED_WITH_GLOBAL): String {
+        if (memoryPolicy == AgentMemoryPolicy.HUB_ISOLATED) return DEFAULT_SOUL_MARKDOWN
         if (!soulFile.exists()) return DEFAULT_SOUL_MARKDOWN
         return soulFile.readText().ifBlank { DEFAULT_SOUL_MARKDOWN }
     }
@@ -45,12 +53,15 @@ class CloudMemoryStore(
     }
 
     @Synchronized
-    fun listMemories(includeArchived: Boolean = false): List<MemoryRecord> {
-        if (!memoriesFile.exists()) return emptyList()
-        val all = runCatching {
-            json.decodeFromString<List<MemoryRecord>>(memoriesFile.readText())
-        }.getOrDefault(emptyList())
+    fun listMemories(includeArchived: Boolean = false, agentId: String = GLOBAL_MEMORY_AGENT_ID): List<MemoryRecord> {
+        val all = loadAll().filter { it.agentId == agentId }.map { it.record }
         return if (includeArchived) all else all.filterNot { it.archived }
+    }
+
+    private fun loadAll(): List<ScopedCloudMemory> = when {
+        scopedMemoriesFile.exists() -> json.decodeFromString(scopedMemoriesFile.readText())
+        memoriesFile.exists() -> json.decodeFromString<List<MemoryRecord>>(memoriesFile.readText()).map { ScopedCloudMemory(GLOBAL_MEMORY_AGENT_ID, it) }
+        else -> emptyList()
     }
 
     @Synchronized
@@ -60,6 +71,8 @@ class CloudMemoryStore(
         kind: MemoryKind = MemoryKind.NOTE,
         sourceConversationId: String? = null,
         pinned: Boolean = false,
+        agentId: String = GLOBAL_MEMORY_AGENT_ID,
+        tags: List<String> = emptyList(),
     ): MemoryRecord {
         if (CredentialRedactor.isPlaceholderCredential(content)) {
             throw PlaceholderCredentialException("拒绝将占位符凭据写入长期记忆")
@@ -67,20 +80,21 @@ class CloudMemoryStore(
         val redactedContent = CredentialRedactor.redact(content.trim())
         require(redactedContent.isNotEmpty()) { "记忆内容不能为空" }
 
-        val current = listMemories(includeArchived = true).toMutableList()
+        require(agentId.isNotBlank())
+        val current = loadAll().toMutableList()
         val now = System.currentTimeMillis()
         val existingIndex = current.indexOfFirst {
-            !it.archived && it.content.equals(redactedContent, ignoreCase = true) && it.scope == scope
+            it.agentId == agentId && !it.record.archived && it.record.content.equals(redactedContent, ignoreCase = true) && it.record.scope == scope
         }
         val record = if (existingIndex >= 0) {
-            val existing = current[existingIndex]
+            val existing = current[existingIndex].record
             existing.copy(
                 updatedAt = now,
                 lastReinforcedAt = now,
                 pinned = pinned || existing.pinned,
-            ).also { current[existingIndex] = it }
+            ).also { current[existingIndex] = ScopedCloudMemory(agentId, it, tags.map(CredentialRedactor::redact)) }
         } else {
-            val nextId = (current.maxOfOrNull { it.id } ?: 0) + 1
+            val nextId = (current.maxOfOrNull { it.record.id } ?: 0) + 1
             MemoryRecord(
                 id = nextId,
                 content = redactedContent,
@@ -91,19 +105,28 @@ class CloudMemoryStore(
                 pinned = pinned,
                 createdAt = now,
                 updatedAt = now,
-            ).also { current.add(it) }
+            ).also { current.add(ScopedCloudMemory(agentId, it, tags.map(CredentialRedactor::redact))) }
         }
         persistMemories(current)
         return record
     }
 
     @Synchronized
-    fun recallForPrompt(query: String, limit: Int = 8): List<MemoryRecord> {
-        val active = listMemories(includeArchived = false)
+    fun recallForPrompt(
+        query: String, limit: Int = 8, agentId: String = GLOBAL_MEMORY_AGENT_ID,
+        memoryPolicy: AgentMemoryPolicy = AgentMemoryPolicy.SHARED_WITH_GLOBAL,
+    ): List<MemoryRecord> {
+        val local = listMemories(agentId = agentId)
+        val global = if (agentId != GLOBAL_MEMORY_AGENT_ID && memoryPolicy == AgentMemoryPolicy.SHARED_WITH_GLOBAL) {
+            listMemories().filter { it.scope == MemoryScope.CORE || it.kind == MemoryKind.USER || it.pinned }
+        } else emptyList()
+        val active = local + global
+        val localIds = local.map { it.id }.toSet()
         if (active.isEmpty()) return emptyList()
         val terms = query.lowercase().split(Regex("""\s+""")).filter { it.length >= 2 }
         return active.sortedWith(
-            compareByDescending<MemoryRecord> { it.scope == MemoryScope.CORE || it.pinned }
+            compareByDescending<MemoryRecord> { it.id in localIds }
+                .thenByDescending { it.scope == MemoryScope.CORE || it.pinned }
                 .thenByDescending { record ->
                     terms.count { term -> record.content.lowercase().contains(term) }
                 }
@@ -111,9 +134,9 @@ class CloudMemoryStore(
         ).take(limit)
     }
 
-    private fun persistMemories(records: List<MemoryRecord>) {
+    private fun persistMemories(records: List<ScopedCloudMemory>) {
         memoryDir.mkdirs()
-        atomicWrite(memoriesFile, json.encodeToString(records))
+        atomicWrite(scopedMemoriesFile, json.encodeToString(records))
     }
 
     private fun atomicWrite(target: File, content: String) {

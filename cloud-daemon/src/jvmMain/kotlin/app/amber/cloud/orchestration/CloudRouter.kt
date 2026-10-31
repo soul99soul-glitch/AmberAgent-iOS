@@ -1,6 +1,8 @@
 package app.amber.cloud.orchestration
 
 import app.amber.cloud.channel.ChannelConnector
+import app.amber.cloud.agents.AgentProfile
+import app.amber.cloud.agents.AgentRouterCoordinator
 import app.amber.cloud.channel.ChannelKind
 import app.amber.cloud.channel.InboundMessage
 import app.amber.cloud.channel.OutboundMessage
@@ -106,6 +108,7 @@ data class RouterDecision(
     val reply: String? = null,
     val dispatch: List<WorkItemSubmissionSpec> = emptyList(),
     val steer: List<RouterSteer> = emptyList(),
+    val proposeAgent: AgentProfile? = null,
 )
 
 fun interface RouterBrain {
@@ -170,18 +173,19 @@ class CloudRouter(
     private val sink: ImStatusSink,
     var brain: RouterBrain,
     /** 执行类工具名（来自主工具注册表），对外输出一律剥离 */
-    executionToolNames: Set<String> = emptySet(),
+    private val executionToolNames: Set<String> = emptySet(),
     private val clockMs: () -> Long = { System.currentTimeMillis() },
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val onReply: suspend (conversationId: String, text: String) -> Unit = { _, _ -> },
+    private val agentCoordinator: AgentRouterCoordinator? = null,
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = false }
 
     /** Router 专属工具表：只含派单/引导/读取/诊断/召回，不含任何执行类工具。 */
     val routerTools: CloudToolRegistry = CloudToolRegistry().also { registerRouterTools(it) }
 
-    val forbiddenToolNames: Set<String> = executionToolNames +
-        routerTools.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }
+    val forbiddenToolNames: Set<String>
+        get() = executionToolNames + kernel.toolRegistry.registeredToolNames() + routerTools.registeredToolNames()
 
     private val running = AtomicBoolean(false)
     private val loopMutex = Mutex()
@@ -275,7 +279,8 @@ class CloudRouter(
                     kernel.isRouterTurnBusy = true
                     try {
                         for (conversationEvents in events.groupBy { it.conversationId }.values) {
-                            runCatching { processTurn(conversationEvents) }
+                            val turns = agentCoordinator?.splitTurns(conversationEvents) ?: listOf(conversationEvents)
+                            for (turn in turns) runCatching { processTurn(turn) }
                         }
                     } finally {
                         kernel.isRouterTurnBusy = false
@@ -307,10 +312,17 @@ class CloudRouter(
             ownerAuthorizedMessageIds = ownerIds,
             batchPrompt = kernel.formatRouterBatchPrompt(events),
         )
-        val decision = runCatching { brain.decide(input) }
+        val decision = runCatching { agentCoordinator?.plan(events, ownerIds) ?: brain.decide(input) }
             .getOrElse { RouterDecision(reply = "这次没处理好，我稍后再试。") }
 
         val replies = mutableListOf<String>()
+        decision.proposeAgent?.let { profile ->
+            val coordinator = agentCoordinator
+            if (coordinator != null) {
+                replies += runCatching { coordinator.propose(profile, ownerIds) }
+                    .getOrElse { "无法创建这个提议，请核对名称、权限和主人授权。" }
+            }
+        }
         if (decision.dispatch.isNotEmpty()) {
             if (ownerIds.isEmpty()) {
                 replies += "只有主人本人可以安排新任务。"
@@ -483,6 +495,10 @@ class CloudRouter(
     // ------------------------------------------------------------------------
 
     private fun registerRouterTools(registry: CloudToolRegistry) {
+        registry.register(CloudToolDefinition(
+            name = "propose_agent", description = "向主人提议创建细分 agent，需要后续独立确认。参数 profile: {id,name,instructions,memoryPolicy,toolScope,modelPreference,routingKeywords,tags}。toolScope 必须来自主人已授权工具。",
+            highRisk = false, effect = ToolEffect.PURE,
+        ) { buildJsonObject { put("ok", true); put("status", "proposal_only") } })
         registry.register(
             CloudToolDefinition(
                 name = "dispatch_work",
@@ -581,6 +597,7 @@ class CloudRouter(
 
     companion object {
         val ROUTER_TOOL_NAMES = setOf(
+            "propose_agent",
             "dispatch_work",
             "steer_worker",
             "read_worker_session",

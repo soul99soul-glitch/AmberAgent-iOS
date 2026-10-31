@@ -366,7 +366,7 @@ class CloudOrchestrationStore(
 
     @Synchronized
     fun getWorkItemBySession(workerSessionId: String): CloudWorkItemRecord? {
-        connection.prepare("SELECT record_json FROM work_items WHERE worker_session_id = ?").use { stmt ->
+        connection.prepare("SELECT record_json FROM work_items WHERE worker_session_id = ? ORDER BY CASE WHEN state IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN 1 ELSE 0 END, created_at_ms DESC LIMIT 1").use { stmt ->
             stmt.bindText(1, workerSessionId)
             if (!stmt.step()) return null
             return json.decodeFromString<CloudWorkItemRecord>(stmt.getText(0))

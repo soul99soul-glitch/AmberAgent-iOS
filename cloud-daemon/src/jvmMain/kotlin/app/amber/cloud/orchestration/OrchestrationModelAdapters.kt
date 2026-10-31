@@ -6,11 +6,14 @@ import app.amber.cloud.runtime.CloudModelClient
 import app.amber.cloud.runtime.CloudToolRegistry
 import app.amber.cloud.runtime.ExecutionScope
 import app.amber.cloud.security.CredentialRedactor
+import app.amber.cloud.agents.AgentProfile
+import app.amber.cloud.runtime.CloudMemoryStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlin.uuid.Uuid
 
 /**
@@ -52,16 +55,18 @@ class ModelRouterBrain(
         val dispatch = mutableListOf<WorkItemSubmissionSpec>()
         val steer = mutableListOf<RouterSteer>()
         var reply: String? = null
+        var proposal: AgentProfile? = null
         repeat(maxReadSteps + 1) {
             val answer = modelClient.generateReply(messages, tools)
             val calls = answer.getTools()
             reply = answer.toText().takeIf { it.isNotBlank() } ?: reply
-            if (calls.isEmpty()) return RouterDecision(reply, dispatch, steer)
+            if (calls.isEmpty()) return RouterDecision(reply, dispatch, steer, proposal)
             var needsFollowup = false
             val executed = calls.map { call ->
                 val args = runCatching { json.parseToJsonElement(call.input.ifBlank { "{}" }).jsonObject }
                     .getOrDefault(JsonObject(emptyMap()))
                 when (call.toolName) {
+                    "propose_agent" -> proposal = args["profile"]?.let { json.decodeFromJsonElement<AgentProfile>(it) }
                     "dispatch_work" -> dispatch += CloudRouter.parseDispatchSpecs(args)
                     "steer_worker" -> {
                         val id = args["work_item_id"]?.jsonPrimitive?.contentOrNull
@@ -78,12 +83,12 @@ class ModelRouterBrain(
                 }
                 call.copy(output = listOf(UIMessagePart.Text(CredentialRedactor.redact(out))))
             }
-            if (!needsFollowup) return RouterDecision(reply, dispatch, steer)
+            if (!needsFollowup) return RouterDecision(reply, dispatch, steer, proposal)
             messages += answer.copy(parts = answer.parts.map { part ->
                 if (part is UIMessagePart.Tool) executed.firstOrNull { it.toolCallId == part.toolCallId } ?: part else part
             })
         }
-        return RouterDecision(reply, dispatch, steer)
+        return RouterDecision(reply, dispatch, steer, proposal)
     }
 
     companion object {
@@ -103,17 +108,31 @@ class ModelWorkerTurnRunner(
     private val modelClient: CloudModelClient,
     private val toolRegistry: CloudToolRegistry,
     private val maxSteps: Int = 6,
+    private val memoryStore: CloudMemoryStore? = null,
+    private val modelClients: Map<String, CloudModelClient> = emptyMap(),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun run(item: CloudWorkItemRecord, principal: CloudPrincipal.Worker): WorkerSettlementReport {
         val sessionId = item.workerSessionId ?: return WorkerSettlementReport(item.workItemId, "failed", "缺少 Worker 会话")
         val uuid = Uuid.parse(sessionId)
-        val tools = toolRegistry.declaredTools(ExecutionScope.SUBAGENT)
+        val registry = kernel.agentRegistry
+        val profile = registry?.let { it.get(item.agentId) ?: error("Agent 已不存在") }
+        val allowedTools = profile?.let { registry.effectiveTools(it) }
+        val tools = toolRegistry.declaredTools(ExecutionScope.SUBAGENT).filter { allowedTools == null || it.name in allowedTools }
+        val client = profile?.modelPreference?.let { modelClients[it] ?: error("Agent 模型配置已移除") } ?: modelClient
+        val memories = if (profile != null) memoryStore?.recallForPrompt(item.brief, agentId = profile.id, memoryPolicy = profile.memoryPolicy).orEmpty() else emptyList()
+        val systemPrompt = buildString {
+            append(if (profile != null) memoryStore?.loadSoulPrompt(profile.memoryPolicy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN)
+            append("\n你是受管 Worker，只处理当前任务；不得创建 agent、派单或向其他 agent 发送消息。\n")
+            append(profile?.instructions.orEmpty())
+            append('\n').append((item.targetNode as? ExecutionTargetNode.CloudSubagent)?.rolePrompt.orEmpty())
+            if (memories.isNotEmpty()) append("\n<agent_memory>\n").append(memories.joinToString("\n") { it.content }).append("\n</agent_memory>")
+        }
         var lastText = ""
         repeat(maxSteps) {
             val history = kernel.conversationStorage.loadConversation(uuid)?.messageNodes?.map { it.currentMessage }.orEmpty()
-            val answer = modelClient.generateReply(history, tools)
+            val answer = client.generateReply(listOf(UIMessage.system(systemPrompt)) + history, tools)
             val calls = answer.getTools()
             lastText = answer.toText().ifBlank { lastText }
             if (calls.isEmpty()) {
@@ -128,7 +147,7 @@ class ModelWorkerTurnRunner(
                 }
                 val args = runCatching { json.parseToJsonElement(call.input.ifBlank { "{}" }).jsonObject }
                     .getOrDefault(JsonObject(emptyMap()))
-                val out = runCatching { toolRegistry.executeGate(call.toolName, args, ExecutionScope.SUBAGENT).toString() }
+                val out = runCatching { kernel.executeWorkerTool(principal, call.toolName, args).toString() }
                     .getOrElse { e -> "{\"ok\":false,\"error\":\"${CredentialRedactor.redact(e.message.orEmpty()).replace("\"", "'")}\"}" }
                 call.copy(
                     input = CredentialRedactor.redact(call.input),

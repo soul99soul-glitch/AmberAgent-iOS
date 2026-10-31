@@ -371,6 +371,8 @@
 
 ### 8.2 高风险审批规则变更（Trusted Foreground Approval Surface）
 
+**P2.6 执行收紧**：云端网关的 `allow=true` 现在必须同时带明确成功的生物识别证明（`X-Amber-Biometric-Verified: true` 或 JSON `biometricVerified: true`），缺失或任一字段明确失败均返回 403，保留待审批状态与临时凭据；拒绝不要求该证明。IM 对普通与高风险操作均只能拒绝。下表的批准条件应与本条共同读取，单有前台解锁声明不足以批准。新增 agent / 主时间线接口见 [agent-centric-api.md](agent-centric-api.md)。
+
 C3 v1 §3.2 原定“高风险操作只能在 Mac 上核对后批准，手机端一律拒绝 `allow=true`”。在云端本体场景下，用户外出时 Mac 可能处于离线或睡眠状态，因此 C3 v2 将高风险审批信任边界更新为 **「仅限已配对、已解锁的原生 App 前台批准；一切非可信或非前台来源只能拒绝」**：
 
 | 审批发起端 / 交互表面 | 普通风险工具（`highRisk == false`） | 高风险工具（`highRisk == true`） | 网关裁决与返回码 |

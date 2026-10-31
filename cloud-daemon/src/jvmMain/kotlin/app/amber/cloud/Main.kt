@@ -6,6 +6,7 @@ import app.amber.cloud.channels.RedactingChannelLogger
 import app.amber.cloud.config.CloudConfigLoader
 import app.amber.cloud.gateway.TlsIdentityManager
 import app.amber.cloud.gateway.configureCloudGateway
+import app.amber.cloud.gateway.AgentCentricApi
 import app.amber.cloud.proactive.L2NoteworthyScore
 import app.amber.cloud.proactive.NoteworthyJudgeProvider
 import app.amber.cloud.proactive.ProactiveEngine
@@ -123,7 +124,7 @@ fun main(args: Array<String>) {
 
     logger.info("amberd starting on $host:$port (dataDir=${dataDir.absolutePath}, gatewayId=${kernel.gatewayState.identity.id})")
     embeddedServer(CIO, port = port, host = host) {
-        configureCloudGateway(kernel.gatewayState, feishuChannel)
+        configureCloudGateway(kernel.gatewayState, feishuChannel, AgentCentricApi(kernel))
     }.start(wait = true)
 }
 

@@ -1,6 +1,7 @@
 package app.amber.cloud.orchestration
 
 import app.amber.ai.ui.UIMessage
+import app.amber.cloud.agents.AgentRegistry
 import app.amber.cloud.channel.InboundMessage
 import app.amber.cloud.channel.OutboundCard
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
@@ -50,6 +51,7 @@ class DefaultCloudOrchestrationKernel(
     var onOwnerNotificationCard: (suspend (OutboundCard, String) -> Unit)? = null,
     var proactiveEngine: ProactiveEngine? = null,
     var watchdogJudge: CloudWatchdogJudge? = null,
+    val agentRegistry: AgentRegistry? = null,
     var completionPolicyEvaluator: CompletionPolicyEvaluator = CompletionPolicyEvaluator { policy, runOutput, memoryText ->
         val clause = policy.stopWhenClause.trim().lowercase()
         val combined = "$runOutput\n$memoryText".lowercase()
@@ -115,7 +117,9 @@ class DefaultCloudOrchestrationKernel(
         rollupCoordinator.maybeTriggerBatchRollup(batchId, nowEpochMs)
     }
 
+    @Synchronized
     internal fun launchWorkerRunnerInternal(item: CloudWorkItemRecord) {
+        if (activeWorkerJobs[item.workItemId]?.isActive == true) return
         val runner = workerTurnRunner ?: return
         val workerPrincipal = workerPrincipalFor(item)
         val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -214,6 +218,21 @@ class DefaultCloudOrchestrationKernel(
     ): JsonElement {
         if (principal !is CloudPrincipal.Worker) {
             throw PrincipalPermissionException("executeWorkerTool 仅限 Worker 主体调用")
+        }
+        val item = store.getWorkItem(principal.workItemId)
+            ?: throw PrincipalPermissionException("Worker 任务不存在")
+        if (principal != workerPrincipalFor(item) || item.state.isTerminal) throw PrincipalPermissionException("Worker 身份或状态无效")
+        val registry = agentRegistry
+        if (registry != null) {
+            val agent = registry.get(item.agentId) ?: throw PrincipalPermissionException("Agent 不存在")
+            if (toolName !in registry.effectiveTools(agent)) throw PrincipalPermissionException("Agent 未获授该工具")
+            // History tools must never reopen the global timeline or another agent's session.
+            if (toolName in setOf("history_search", "history_fetch")) {
+                val requested = (args["conversation_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                if (requested != null && requested != item.workerSessionId) throw PrincipalPermissionException("禁止跨会话读取")
+                val scopedArgs = JsonObject(args + ("conversation_id" to kotlinx.serialization.json.JsonPrimitive(item.workerSessionId)))
+                return toolRegistry.executeGate(toolName, scopedArgs, ExecutionScope.SUBAGENT)
+            }
         }
         return toolRegistry.executeGate(toolName, args, ExecutionScope.SUBAGENT)
     }

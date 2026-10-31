@@ -36,6 +36,11 @@ import app.amber.cloud.orchestration.ModelWorkerTurnRunner
 import app.amber.cloud.orchestration.OrchestrationConfig
 import app.amber.cloud.orchestration.RouterBrain
 import app.amber.cloud.orchestration.RouterDecision
+import app.amber.cloud.agents.AgentRegistry
+import app.amber.cloud.agents.AgentRouting
+import app.amber.cloud.agents.AgentRouterCoordinator
+import app.amber.cloud.agents.GLOBAL_MEMORY_AGENT_ID
+import app.amber.cloud.agents.MAIN_AGENT_ID
 import app.amber.cloud.proactive.InterruptionBudgetConfig
 import app.amber.cloud.proactive.L2NoteworthyScore
 import app.amber.cloud.proactive.NoteworthyJudgeProvider
@@ -129,6 +134,8 @@ class CloudAgentKernel(
     masterSecretOverride: String? = null,
     val contextWindowTokens: Int = 32_000,
     val autoApproveOrdinaryTools: Boolean = false,
+    val modelClients: Map<String, CloudModelClient> = emptyMap(),
+    ownerToolScope: Set<String>? = null,
     val ownerBinding: OwnerBindingManager = OwnerBindingManager(
         persistenceFile = File(dataDir, "owner-bindings.json"),
     ),
@@ -165,6 +172,13 @@ class CloudAgentKernel(
     val toolRegistry = CloudToolRegistry()
     val gatewayState = CloudGatewayState(dataDir)
     val orchestrationStore = CloudOrchestrationStore(dataDir)
+    val agentRegistry = AgentRegistry(dataDir, orchestrationStore,
+        ownerGrantedTools = {
+            val enabled = toolRegistry.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }.toSet()
+            ownerToolScope?.intersect(enabled) ?: enabled
+        },
+        modelPreferences = { modelClients.keys },
+    )
     val orchestrationKernel = DefaultCloudOrchestrationKernel(
         config = OrchestrationConfig(),
         store = orchestrationStore,
@@ -172,11 +186,14 @@ class CloudAgentKernel(
         toolRegistry = toolRegistry,
         proactiveEngine = proactiveEngine,
         autoExecuteWorkersInBackground = true,
+        agentRegistry = agentRegistry,
     )
     val workerTurnRunner = ModelWorkerTurnRunner(
         kernel = orchestrationKernel,
         modelClient = modelClient,
         toolRegistry = toolRegistry,
+        memoryStore = memoryStore,
+        modelClients = modelClients,
     )
     val router: CloudRouter
     private val routerIngress by lazy { CloudRouterIngress(this) }
@@ -222,6 +239,9 @@ class CloudAgentKernel(
             brain = RouterBrain { RouterDecision() },
             executionToolNames = toolRegistry.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }.toSet(),
             onReply = { conversationId, text -> routerIngress.recordReply(conversationId, text) },
+            agentCoordinator = AgentRouterCoordinator(orchestrationKernel, agentRegistry, AgentRouting(agentRegistry, modelClient)) { text, conversationId, agentId ->
+                extractExplicitMemoryIfPresent(text, conversationId, if (agentId == MAIN_AGENT_ID) GLOBAL_MEMORY_AGENT_ID else agentId)
+            },
         ).also { r ->
             r.brain = ModelRouterBrain(
                 modelClient = modelClient,
@@ -821,8 +841,8 @@ class CloudAgentKernel(
         )
     }
 
-    internal fun extractExplicitMemoryIfPresent(text: String, conversationId: String) {
-        val trimmed = text.trim()
+    internal fun extractExplicitMemoryIfPresent(text: String, conversationId: String, agentId: String = GLOBAL_MEMORY_AGENT_ID) {
+        val trimmed = text.trim().replace(Regex("^@[^\\s，,:：]+[\\s，,:：]+"), "")
         val prefixes = listOf("记住：", "记住:", "请记住：", "请记住:", "remember:", "remember ")
         val matchedPrefix = prefixes.firstOrNull { trimmed.startsWith(it, ignoreCase = true) } ?: return
         val fact = trimmed.substring(matchedPrefix.length).trim()
@@ -833,6 +853,7 @@ class CloudAgentKernel(
                     scope = MemoryScope.LONG_TERM,
                     kind = MemoryKind.NOTE,
                     sourceConversationId = conversationId,
+                    agentId = agentId,
                 )
             }
         }

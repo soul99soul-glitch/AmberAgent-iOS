@@ -98,6 +98,9 @@ class CloudToolRegistry(
     fun get(name: String): CloudToolDefinition? = tools[name]
 
     @Synchronized
+    fun registeredToolNames(): Set<String> = tools.keys.toSet()
+
+    @Synchronized
     fun isHighRisk(toolName: String): Boolean {
         val registered = tools[toolName]
         if (registered != null) {

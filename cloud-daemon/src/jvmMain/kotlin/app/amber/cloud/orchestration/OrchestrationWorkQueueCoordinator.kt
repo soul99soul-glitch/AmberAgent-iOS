@@ -153,6 +153,9 @@ internal class OrchestrationWorkQueueCoordinator(
         val coord = requireCoordinatorAuthority(principal, "submitWorkBatch")
         require(requestId.isNotBlank()) { "requestId 不能为空" }
         require(items.isNotEmpty()) { "items 不能为空" }
+        items.forEach { spec ->
+            if (kernel.agentRegistry != null) require(kernel.agentRegistry.get(spec.agentId) != null) { "Agent 不存在" }
+        }
 
         val provenanceList = kernel.store.resolveAuthorizedSourceMessages(contextMessageIds)
 
@@ -183,6 +186,7 @@ internal class OrchestrationWorkQueueCoordinator(
                     append(spec.targetNode.toString()).append('\n')
                     append(spec.expectedOutputSchemaHint.orEmpty().trim()).append('\n')
                     append(scopeKey)
+                    if (spec.agentId != app.amber.cloud.agents.MAIN_AGENT_ID) append('\n').append(spec.agentId)
                 }
             )
 
@@ -198,7 +202,8 @@ internal class OrchestrationWorkQueueCoordinator(
                 continue
             }
 
-            val workerSessionUuid = Uuid.random()
+            val reusedSessionId = WorkerSessionLifecycle.reusableSession(kernel.store, spec)
+            val workerSessionUuid = reusedSessionId?.let(Uuid::parse) ?: Uuid.random()
             val workerSessionId = workerSessionUuid.toString()
 
             val workerPrompt = buildString {
@@ -215,13 +220,16 @@ internal class OrchestrationWorkQueueCoordinator(
             }
             val initialMsg = UIMessage.user(workerPrompt)
             kernel.recordMessageTimestampInternal(initialMsg.id.toString(), nowEpochMs)
+            val existingSession = kernel.conversationStorage.loadConversation(workerSessionUuid) ?: Conversation(
+                id = workerSessionUuid,
+                assistantId = DEFAULT_ASSISTANT_ID,
+                title = "Worker: ${spec.title}",
+                messageNodes = emptyList(),
+                createAt = Clock.System.now(),
+            )
             kernel.conversationStorage.saveConversation(
-                Conversation(
-                    id = workerSessionUuid,
-                    assistantId = DEFAULT_ASSISTANT_ID,
-                    title = "Worker: ${spec.title}",
-                    messageNodes = listOf(initialMsg.toMessageNode()),
-                    createAt = Clock.System.now(),
+                existingSession.copy(
+                    messageNodes = existingSession.messageNodes + initialMsg.toMessageNode(),
                     updateAt = Clock.System.now(),
                 )
             )
@@ -245,6 +253,7 @@ internal class OrchestrationWorkQueueCoordinator(
                 subscribedThreadKeys = spec.subscribedThreadKeys,
                 createdAtMs = nowEpochMs,
                 updatedAtMs = nowEpochMs,
+                agentId = spec.agentId,
             )
             kernel.store.upsertWorkItem(record)
 
@@ -388,6 +397,7 @@ internal class OrchestrationWorkQueueCoordinator(
         requireCoordinatorAuthority(principal, "steerWorker")
         val snapshot = kernel.store.getWorkItem(workItemId)
             ?: throw IllegalArgumentException("找不到 WorkItem: $workItemId")
+        require(!snapshot.state.isTerminal) { "终态任务请由 Router 创建新的 WorkItem；同 agent 与话题可复用会话" }
 
         val needsSlot = !snapshot.slotHeld
         if (needsSlot && kernel.store.countHeldSlots() >= kernel.config.maxConcurrentWorkers) {
@@ -398,6 +408,8 @@ internal class OrchestrationWorkQueueCoordinator(
                 lastActivityAtMs = nowEpochMs,
                 updatedAtMs = nowEpochMs,
             )
+            val sessionId = snapshot.workerSessionId ?: error("Worker 缺少 workerSessionId")
+            kernel.appendMessageToSessionInternal(sessionId, UIMessage.user("【Coordinator 追加指令】\n${CredentialRedactor.redact(followupInstruction)}"), nowEpochMs)
             kernel.store.upsertWorkItem(queuedFollowup)
             return queuedFollowup
         }
@@ -424,6 +436,7 @@ internal class OrchestrationWorkQueueCoordinator(
                 detail = CredentialRedactor.redact(followupInstruction),
                 nowMs = nowEpochMs,
             )
+            if (kernel.autoExecuteWorkersInBackground) kernel.launchWorkerRunnerInternal(admitted)
             admitted
         } catch (t: Throwable) {
             kernel.store.upsertWorkItem(snapshot)

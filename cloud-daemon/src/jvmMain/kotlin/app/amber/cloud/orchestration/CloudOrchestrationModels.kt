@@ -229,6 +229,7 @@ data class WorkItemSubmissionSpec(
     val expectedOutputSchemaHint: String? = null,
     /** 任务初始订阅的 Thread Key 列表（用于同一话题/PR/任务的后续消息直通） */
     val subscribedThreadKeys: List<String> = emptyList(),
+    val agentId: String = app.amber.cloud.agents.MAIN_AGENT_ID,
 ) {
     init {
         require(TASK_KEY_REGEX.matches(taskKey)) {
@@ -275,6 +276,7 @@ data class CloudWorkItemRecord(
     val needsYouEscalated: Boolean = false,
     val createdAtMs: Long,
     val updatedAtMs: Long,
+    val agentId: String = app.amber.cloud.agents.MAIN_AGENT_ID,
 )
 
 @Serializable
