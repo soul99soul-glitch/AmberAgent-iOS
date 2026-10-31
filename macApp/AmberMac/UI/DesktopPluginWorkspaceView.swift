@@ -130,13 +130,17 @@ struct DesktopPluginWorkspaceView: View {
                 .frame(height: 28)
             }
             .buttonStyle(DesktopQuietButtonStyle())
+            .fixedSize()
             .help("切回当前对话视图")
+            .accessibilityLabel("返回对话")
+            .keyboardShortcut(.escape, modifiers: [])
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(viewEntry?.title ?? plugin?.manifest.name ?? "飞书工作区")
                         .font(DesktopTheme.serif(size: 21, weight: .semibold))
                         .foregroundStyle(DesktopTheme.ink)
+                        .fixedSize()
 
                     if pluginID == "feishu_calendar" {
                         let badgeText = isFeishuBotView
@@ -155,15 +159,16 @@ struct DesktopPluginWorkspaceView: View {
                                 badgeActive ? DesktopTheme.honeySoft : DesktopTheme.paperDeep,
                                 in: Capsule()
                             )
+                            .fixedSize()
                     }
                 }
                 Text(viewEntry?.subtitle ?? plugin?.manifest.description ?? "")
                     .font(.system(size: 12))
                     .foregroundStyle(DesktopTheme.inkTertiary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Spacer(minLength: 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if pluginID == "feishu_calendar" {
                 DesktopSegmented(
@@ -181,6 +186,7 @@ struct DesktopPluginWorkspaceView: View {
                         }
                     )
                 )
+                .fixedSize()
 
                 if isFeishuBotView {
                     Button {
@@ -193,6 +199,7 @@ struct DesktopPluginWorkspaceView: View {
                         }
                     }
                     .buttonStyle(.desktopProminent)
+                    .fixedSize()
                     .disabled(isRunningBotAction)
                 } else {
                     DesktopSegmented(
@@ -203,6 +210,7 @@ struct DesktopPluginWorkspaceView: View {
                         ],
                         selection: $dateFilter
                     )
+                    .fixedSize()
 
                     Button {
                         Task {
@@ -230,6 +238,7 @@ struct DesktopPluginWorkspaceView: View {
                         .frame(height: 28)
                     }
                     .buttonStyle(DesktopQuietButtonStyle())
+                    .fixedSize()
                     .disabled(workspace.plugins.isSyncingPluginID == "feishu_calendar")
 
                     Button {
@@ -242,6 +251,7 @@ struct DesktopPluginWorkspaceView: View {
                         }
                     }
                     .buttonStyle(.desktopProminent)
+                    .fixedSize()
                 }
             }
         }

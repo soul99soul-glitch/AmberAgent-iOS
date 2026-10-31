@@ -12,4 +12,6 @@
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Amber 需要访问你的本机日历以读取、创建或修改你批准的日程。</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>Amber 需要访问你的本机提醒事项以读取、创建或完成你批准的待办。</string>
 </dict></plist>

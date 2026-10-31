@@ -33,14 +33,15 @@ macApp/scripts/build-preview-swiftpm.sh \
 
 | 领域 | 已接线的行为 |
 | --- | --- |
-| 聊天 | 流式/停止/重试、编辑重发/删除/重生成/变体、按需加载历史、消息搜索定位、上下文预算/压缩、回顾/建议、原会话指令队列 |
-| 模型 | OpenAI 兼容、Responses、Claude、Gemini；多模型、目录、参数及模型级 headers/body；Codex/Grok 登录和已有 Antigravity token 解析；独立辅助模型、视觉回退和标题生成 |
+| 聊天与上下文 | 流式/停止/重试、编辑重发/删除/重生成/变体、按需加载历史、消息搜索定位、确定性请求预算裁剪、0.85 自动阈值与链式上下文检查点（schema v2 + 12 类 needle 保真校验）、只读历史检索（`history_search` / `history_fetch` 含凭据脱敏）、回顾/建议、原会话指令队列 |
+| 模型 | OpenAI 兼容、Responses、Claude（含可选 `promptCaching` 前缀缓存与 `cachedTokens` 观测）、Gemini；多模型、目录、参数及模型级 headers/body；Codex/Grok 登录和已有 Antigravity token 解析；独立辅助模型、视觉回退和标题生成 |
 | 阅读与文件 | 中文 Markdown、列表/引用/表格、代码高亮、真实 iosMath；拖放/粘贴图片，PDF/DOCX/PPTX/RTF/文本解析预览；Workspace 与 Markdown/PDF/JSON 导出 |
-| 工具 | 复用 IOSAgentToolEngine；工具发现、原 run 审批、持久事务、搜索、会话目录读写和本地命令；不自动重放结果未知的调用 |
-| 外部服务与知识 | MCP HTTP/SSE/stdio、工具启停；Skills/SOUL/记忆与来源；技能可收紧工具范围 |
-| 协作 | 有并发/超时/取消和只读工具循环的子代理、议会多轮讨论与综合、结果回原会话；Recipe 固定工具步骤共用审批与事务链 |
+| 工具与审批 | 复用 IOSAgentToolEngine；工具发现、原 run 审批、持久事务、搜索、会话目录读写和本地命令；高风险工具（`terminal_exec`、`workspace_artifact_delete`、`mcp_call_tool`、`interrupt_agent` 及插件写工具）仅允许在 Mac 端批准，通知栏与手机 Gateway 端仅可拒绝；不自动重放结果未知的调用 |
+| 插件与工作流 | 5 项核心能力开关与 `amber.plugin.v2` 扩展体系：内置 `feishu_calendar`（日历 CalDAV + 机器人 Webhook/OpenAPI + `feishu_meeting_loop` 会后闭环 Recipe）、内置 `apple_schedule`（本机 EventKit 日历与提醒事项读写）、内置 `watchtower`（纯 JS 快照/diff + `watchtower_check` 网页变更巡检 Recipe）；第三方 JS 插件严格限定在纯计算与持久 KV 状态，不开放沙箱网络、工作区文件写入或宿主模块 |
+| 外部服务与知识 | MCP HTTP/SSE/stdio、工具启停；Skills/SOUL/记忆与来源；技能可收紧工具范围；内嵌 `amber-gateway` 支持手机配对、四栏任务看板与远程审批（协议冻结见 `docs/architecture/gateway-contract-c3.md`） |
+| 协作与定时任务 | 有并发/超时/取消和只读工具循环的子代理、议会多轮讨论与综合、结果回原会话；Recipe 固定工具步骤共用审批与事务链；定时与事件触发任务支持独立无人值守审批策略与睡眠唤醒补跑 |
 | 媒体 | 系统语音、声音/语速与消息朗读；OpenAI 兼容/Codex 生图复用原 repository，结果保存至原会话文件 |
-| 数据与偏好 | 任务生命周期、可选通知、加密备份/副本恢复、WebDAV 快照、实际存储用量、字体/字号/主题/昵称/思考展开/跟随生成 |
+| 数据与隐私 | 任务生命周期、可选通知、加密备份/副本恢复、WebDAV 快照、实际存储用量；原始对话历史永不被压缩投影覆盖；服务商 API Key、MCP 敏感头、WebDAV 密码与插件密钥仅存系统 Keychain（拒绝脱敏占位符覆盖），并在历史检索、压缩摘要与任务账本落盘时自动脱敏 |
 
 当前测试计数、正式 Native/local provider、KMP/iOS 回归及性能测量统一见[最新审查](../docs/product/macos/performance-review/review.md)。流式 provider 在约 30Hz 发布完整快照，终态、失败和停止前保留最后已接受内容；MCP 分片只扫描新增字节，长会话保存后的消息查找使用线性索引。
 

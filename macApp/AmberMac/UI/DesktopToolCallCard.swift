@@ -44,11 +44,13 @@ struct DesktopToolCallCard: View {
         let tool: DesktopToolCall
         let activity: DesktopToolActivity
         @Binding var expanded: Bool
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var hovering = false
 
         var body: some View {
             Button {
-                withAnimation(.smooth(duration: 0.24)) { expanded.toggle() }
+                if reduceMotion { expanded.toggle() }
+                else { withAnimation(.smooth(duration: 0.24)) { expanded.toggle() } }
             } label: {
                 HStack(spacing: 7) {
                     statusIcon

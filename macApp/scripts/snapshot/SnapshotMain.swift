@@ -58,6 +58,7 @@ import ServiceManagement
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PERF3_CACHE"] != nil { try await reviewPerf3Cache() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_SCHEDULES"] != nil { try await schedules() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_GATEWAY"] != nil { try await gatewaySettings() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PHASE5"] != nil { try await phase5ChangedPages() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
@@ -297,6 +298,74 @@ import ServiceManagement
         gateway.snapshotStatus(.off)
         try await capture("gateway-off-light", DesktopGatewaySettingsView(gateway: gateway).background(DesktopTheme.paper), 880, 640, false)
         try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// Phase 5: Light & dark pairs for the UI pages modified in P2–P4 not already covered by phase1/phase3 folders.
+    @MainActor static func phase5ChangedPages() async throws {
+        let workspace = DesktopWorkspace.uiFixture()
+        await workspace.agentTasks.waitUntilLoaded()
+
+        // 1. Provider settings showing Claude promptCaching toggle
+        let claudeModel = DesktopModelConfiguration(modelID: "claude-sonnet-4-5", contextWindowTokens: 200_000, maxOutputTokens: 8_192)
+        var claudeProvider = DesktopProviderConfiguration(
+            name: "Anthropic Claude",
+            kind: .claude,
+            baseURL: "https://api.anthropic.com/v1",
+            models: [claudeModel],
+            selectedModelID: claudeModel.id
+        )
+        claudeProvider.promptCaching = true
+        try? workspace.settings.saveProvider(claudeProvider, apiKey: "sk-ant-fixture")
+        workspace.settings.selectedProviderID = claudeProvider.id
+        for dark in [false, true] {
+            workspace.settings.appearance = dark ? "dark" : "light"
+            try await capture("settings-claude-caching-\(dark ? "dark" : "light")",
+                PreviewSettingsView(workspace: workspace).frame(width: 880, height: 760), 880, 760, dark)
+        }
+
+        // 2. Scheduled tasks view with unattended approval section & run history
+        let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: nil),
+            defaults: UserDefaults(suiteName: "amber.snapshot.phase5.schedules.\(UUID().uuidString)")!,
+            runner: { _, slot in DesktopScheduleRunRecord(scheduledFor: slot, startedAt: Date(), status: .completed) }, timerEnabled: false)
+        workspace.scheduler = scheduler
+        await scheduler.waitUntilLoaded()
+        var daily = DesktopScheduledTask(name: "每日晨间日程与待办汇总", prompt: "读取今日 Apple 日历与提醒事项，生成三行重点摘要。",
+            schedule: .daily(hour: 9, minute: 0))
+        daily.approval.autoApproveOrdinary = true
+        daily.approval.allowedTools = ["plugin__apple_schedule__list_events", "plugin__apple_schedule__list_reminders"]
+        _ = await scheduler.save(task: daily)
+        _ = scheduler.runNow(daily.id)
+        try await Task.sleep(for: .milliseconds(100))
+        for dark in [false, true] {
+            workspace.settings.appearance = dark ? "dark" : "light"
+            try await capture("scheduled-tasks-approval-\(dark ? "dark" : "light")",
+                DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler, initialSelection: daily.id)
+                    .frame(width: 900, height: 980).background(DesktopTheme.paper), 900, 980, dark)
+        }
+
+        // 3. Feishu Calendar / Bot plugin workspace surface
+        for dark in [false, true] {
+            workspace.settings.appearance = dark ? "dark" : "light"
+            try await capture("plugin-feishu-workspace-\(dark ? "dark" : "light")",
+                DesktopPluginWorkspaceView(workspace: workspace, pluginID: "feishu_calendar", viewID: "calendar_board")
+                    .frame(width: 1080, height: 760).background(DesktopTheme.paper), 1080, 760, dark)
+        }
+
+        // 4. Expanded tool call card with apple_schedule summary badge
+        let sampleTool = DesktopToolCall(
+            id: "call_apple_1",
+            name: "plugin__apple_schedule__list_events",
+            input: #"{"start_at":"2026-10-31T09:00","end_at":"2026-10-31T18:00"}"#,
+            output: #"{"ok":true,"count":2,"events":[{"id":"evt_1","title":"产品周会","start_at":"2026-10-31T10:00"}]}"#,
+            status: .complete
+        )
+        for dark in [false, true] {
+            try await capture("tool-call-card-schedule-\(dark ? "dark" : "light")",
+                DesktopToolCallCard(tool: sampleTool, expanded: .constant(true))
+                    .padding(24)
+                    .frame(width: 640, height: 340, alignment: .topLeading)
+                    .background(DesktopTheme.paper), 640, 340, dark)
+        }
     }
 
     /// Phase 1 UI review states. This is opt-in so the normal snapshot set is unchanged.
