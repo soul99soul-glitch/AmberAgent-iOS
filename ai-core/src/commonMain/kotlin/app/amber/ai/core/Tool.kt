@@ -2078,6 +2078,10 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "provider_refresh_models" to ::createProviderRefreshModelsToolDeclaration,
     "settings_set_model_slot" to ::createSettingsSetModelSlotToolDeclaration,
     "theme_pack_status" to ::createThemePackStatusToolDeclaration,
+    "ssh_profile_list" to ::createSSHProfileListToolDeclaration,
+    "ssh_profile_create" to ::createSSHProfileCreateToolDeclaration,
+    "ssh_profile_update" to ::createSSHProfileUpdateToolDeclaration,
+    "ssh_profile_delete" to ::createSSHProfileDeleteToolDeclaration,
     "theme_pack_import" to ::createThemePackImportToolDeclaration,
 )
 
@@ -2445,6 +2449,153 @@ fun createSettingsSetModelSlotToolDeclaration(): Tool = Tool(
         )
     },
     needsApproval = false,
+    execute = { emptyList() }
+)
+
+/**
+ * SSH profile management tools (iOS host executes; they edit the same store the
+ * settings page edits, so changes are visible immediately).
+ *
+ * Credentials are write-only: `password` / `private_key` are accepted as input
+ * and stored in the existing Keychain item, but no tool result, log or approval
+ * preview ever returns them, and the host redacts those fields before the tool
+ * call is persisted back into the conversation. The three writers are declared
+ * non-auto-approvable so an ordinary "auto approve" policy cannot run them; the
+ * host gates them on the high-risk approval path that a lock-screen or phone
+ * push cannot answer.
+ */
+fun createSSHProfileListToolDeclaration(): Tool = Tool(
+    name = "ssh_profile_list",
+    description = """
+        List the saved Remote SSH profiles with id, name, host, port, username and
+        auth method, plus whether a credential is stored (booleans only - the
+        password or private key itself is never returned). Read-only: no approval.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {},
+            required = emptyList()
+        )
+    },
+    needsApproval = false,
+    execute = { emptyList() }
+)
+
+fun createSSHProfileCreateToolDeclaration(): Tool = Tool(
+    name = "ssh_profile_create",
+    description = """
+        Create one saved Remote SSH profile. Requires host and username; port defaults to
+        22 and auth_method defaults to password (or private_key when only a private key is
+        supplied). The credential is written to the local Keychain and is never echoed
+        back. The host shows a foreground approval card before writing.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("name", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional display name; must be unique among profiles. Defaults to user@host.")
+                })
+                put("host", buildJsonObject { put("type", "string") })
+                put("port", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional. 1-65535. Defaults to 22.")
+                })
+                put("username", buildJsonObject { put("type", "string") })
+                put("auth_method", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional. \"password\" or \"private_key\".")
+                })
+                put("password", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional SSH password when auth_method=password. Stored in the Keychain; never returned or re-uploaded.")
+                })
+                put("private_key", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional OpenSSH Ed25519 or ECDSA PEM private key text (max 64 KB, no passphrase). Stored in the Keychain; never returned or re-uploaded.")
+                })
+            },
+            required = listOf("host", "username")
+        )
+    },
+    needsApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createSSHProfileUpdateToolDeclaration(): Tool = Tool(
+    name = "ssh_profile_update",
+    description = """
+        Update one existing Remote SSH profile by profile_id. Only provided fields change;
+        omit password/private_key to keep the stored credential. Changing host, port,
+        username or auth_method without a new credential clears the stored credential.
+        The host shows a foreground approval card before writing.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("profile_id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Required. Id from ssh_profile_list.")
+                })
+                put("name", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional new display name; must stay unique.")
+                })
+                put("host", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional new host.")
+                })
+                put("port", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional new port, 1-65535.")
+                })
+                put("username", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional new username.")
+                })
+                put("auth_method", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional. \"password\" or \"private_key\".")
+                })
+                put("password", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional replacement password. Never returned or re-uploaded.")
+                })
+                put("private_key", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional replacement private key. Never returned or re-uploaded.")
+                })
+            },
+            required = listOf("profile_id")
+        )
+    },
+    needsApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createSSHProfileDeleteToolDeclaration(): Tool = Tool(
+    name = "ssh_profile_delete",
+    description = """
+        Delete one saved Remote SSH profile by profile_id and remove its Keychain
+        credential. Terminal jobs that still reference the profile fail with
+        profile_not_found instead of being stopped. The host shows a destructive
+        foreground approval card before deleting.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("profile_id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Required. Id from ssh_profile_list.")
+                })
+            },
+            required = listOf("profile_id")
+        )
+    },
+    needsApproval = true,
+    allowsAutoApproval = false,
     execute = { emptyList() }
 )
 

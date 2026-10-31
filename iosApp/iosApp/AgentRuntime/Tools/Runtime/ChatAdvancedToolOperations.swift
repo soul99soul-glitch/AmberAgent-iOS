@@ -340,6 +340,12 @@ extension ChatToolRuntime {
                 toolName: name,
                 argumentsJSON: toolCall.input
             )
+        case let name where IOSSSHProfileToolCatalog.toolNames.contains(name):
+            return IOSSSHProfileToolExecutor.execute(
+                toolName: name,
+                argumentsJSON: toolCall.input,
+                settingsStore: settingsStore
+            )
         case "exec":
             guard effectiveExecJavaScriptEnabled else {
                 return IOSWorkspaceStore.json([

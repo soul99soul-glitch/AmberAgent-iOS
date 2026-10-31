@@ -503,7 +503,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 } ?? retained
             }
             if let assistantMessage {
-                working.append(assistantMessage)
+                // 入列前先脱敏：含明文密码/私钥的 tool 调用不能经
+                // onMessagesUpdated → ChatViewModel.messages，也不能经
+                // onAssistantTurnCompleted → 续跑快照落盘。执行用的原始参数
+                // 只留在 assistantMessage 的内存副本里（下面 pendingTools 取它）。
+                working.append(IOSSecretArgumentRedaction.redactingSecrets(in: assistantMessage))
                 onMessagesUpdated?(working)
             }
 

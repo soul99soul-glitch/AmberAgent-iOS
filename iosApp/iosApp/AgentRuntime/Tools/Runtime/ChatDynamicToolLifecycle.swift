@@ -242,6 +242,35 @@ final class ChatDynamicToolLifecycle {
             return .waitingForApproval(.mcp(request))
         }
 
+        // SSH profile 写入：高风险。普通自动批准不放行；高风险自动批准开启时直接执行（不额外拦截）。
+        if IOSSSHProfileToolCatalog.highRiskToolNames.contains(toolName) {
+            if runtime.effectiveHighRiskAutoApproveEnabled {
+                let resultText = IOSSSHProfileToolExecutor.execute(
+                    toolName: toolName,
+                    argumentsJSON: pending.toolCall.input,
+                    settingsStore: runtime.settingsStore
+                )
+                return .completed(runtime.messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: resultText,
+                    in: pending.baseMessages,
+                    conversationId: pending.conversationId
+                ))
+            }
+            let request = McpToolApprovalRequest(
+                id: ChatToolCallParsing.requestId(for: pending.toolCall),
+                serverName: "local",
+                toolName: toolName,
+                argumentsPreview: IOSSSHProfileToolCatalog.approvalPreview(
+                    toolName: toolName,
+                    argumentsJSON: pending.toolCall.input,
+                    store: runtime.settingsStore
+                ),
+                reason: IOSSSHProfileToolCatalog.approvalReason(toolName: toolName)
+            )
+            return .waitingForApproval(.mcp(request))
+        }
+
         // Theme pack import: try-on immediately, always show 套用/还原 (never skip the card).
         if toolName == "theme_pack_import" {
             do {

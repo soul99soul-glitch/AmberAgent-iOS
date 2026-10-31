@@ -146,6 +146,9 @@ enum ConversationMemoryPollutionPolicy {
     /// model never sees the key material again.
     static func shouldMarkPolluted(toolName: String, outputText: String) -> Bool {
         if isPollutingToolName(toolName) { return true }
+        // SSH profile 写工具把新凭证写进钥匙串 / 改写连接目标：即使模型看不到
+        // 明文，本机安全配置已被本次 run 改过，与 provider key 写入同档处理。
+        if IOSSecretArgumentRedaction.carriesCredential(toolName) { return true }
         guard IOSProviderConfigToolCatalog.highRiskToolNames.contains(toolName) else { return false }
         guard let data = outputText.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

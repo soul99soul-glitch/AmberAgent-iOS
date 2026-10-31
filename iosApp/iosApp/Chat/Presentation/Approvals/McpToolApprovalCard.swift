@@ -8,7 +8,8 @@ struct McpToolApprovalCard: View {
 
     var body: some View {
         let isThemeTryOn = request.themePackPreview != nil
-        let chrome = request.isDestructiveAppleAction
+        let isDestructive = request.isDestructiveAppleAction || request.isDestructiveLocalMutation
+        let chrome = isDestructive
             ? AmberTheme.accentRed
             : (isThemeTryOn ? AmberTheme.accent : AmberTheme.accentCyan)
         return VStack(alignment: .leading, spacing: 10) {
@@ -44,12 +45,20 @@ struct McpToolApprovalCard: View {
                 themePackPreview(preview)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(request.isAppleCapability ? request.displayToolName : "\(request.serverName) / \(request.toolName)")
+                    // SSH profile 是本地能力：用中文能力名，不展示裸工具名+local 前缀。
+                    let heading = request.isAppleCapability
+                        ? request.displayToolName
+                        : (IOSSSHProfileToolCatalog.contains(request.toolName)
+                            ? request.displayToolName
+                            : "\(request.serverName) / \(request.toolName)")
+                    Text(heading)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground2)
                         .lineLimit(1)
                     Text(request.argumentsPreview)
-                        .font(request.isAppleCapability ? .footnote : .system(size: 11, weight: .regular, design: .monospaced))
+                        .font(request.isAppleCapability || IOSSSHProfileToolCatalog.contains(request.toolName)
+                            ? .footnote
+                            : .system(size: 11, weight: .regular, design: .monospaced))
                         .foregroundStyle(AmberTheme.muted)
                         .lineLimit(IOSAppleAgentToolCatalog.workoutToolNames.contains(request.toolName) ? 10 : 4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -130,16 +139,16 @@ struct McpToolApprovalCard: View {
                             : (request.isAppleCapability
                                 && IOSAppleAgentToolCatalog.alarmToolNames.contains(request.toolName)
                                 ? IOSAlarmCopy.approveButton
-                                : (request.isDestructiveAppleAction ? "删除" : (request.themePackPreview == nil ? "批准" : "套用"))),
+                                : (isDestructive ? "删除" : (request.themePackPreview == nil ? "批准" : "套用"))),
                         systemImage: request.toolName.hasSuffix("_cancel")
                             ? "arrow.uturn.backward"
-                            : (request.isDestructiveAppleAction ? "trash" : "checkmark")
+                            : (isDestructive ? "trash" : "checkmark")
                     )
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 13)
                         .frame(minHeight: 32)
-                        .background(request.isDestructiveAppleAction ? AmberTheme.accentRed : AmberTheme.accent, in: Capsule())
+                        .background(isDestructive ? AmberTheme.accentRed : AmberTheme.accent, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .chatApprovalHitTarget()

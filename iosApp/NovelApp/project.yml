@@ -32,6 +32,7 @@ targets:
       - path: ../iosApp/NovelCreation
         excludes:
           - AGENTS.md
+      - path: ../iosApp/AgentResponseStage.swift
       - path: ../iosApp/AgentActivityModels.swift
       - path: ../iosApp/AmberDesignSystem.swift
       - path: ../iosApp/AmberThemeDesign.swift
@@ -126,7 +127,9 @@ targets:
       - path: ../iosApp/IOSProviderConfigToolCatalog.swift
       - path: ../iosApp/IOSProviderRequestHeaders.swift
       - path: ../iosApp/IOSSearchExecutor.swift
+      - path: ../iosApp/IOSSecretArgumentRedaction.swift
       - path: ../iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
+      - path: ../iosApp/Search/IOSSearchHTTPProtocol.swift
       - path: ../iosApp/Search/IOSSearchHTTPTransport.swift
       - path: ../iosApp/IOSSearchToolDispatch.swift
       - path: ../iosApp/IOSSettingsSnapshotSource.swift

@@ -435,11 +435,16 @@ struct IOSAgentToolBatchExecutor {
                     return part
                 }
                 didChange = true
+                // 两个脱敏器都编进 Novel target：IOSSecretArgumentRedaction 不依赖主
+                // App 类型，IOSProviderConfigToolCatalog 已在 Novel 源列表中。
+                var input = toolPart.input
+                if IOSSecretArgumentRedaction.carriesCredential(toolPart.toolName) {
+                    input = IOSSecretArgumentRedaction.redactedArgumentsJSON(input)
+                }
                 #if os(iOS)
-                let input = IOSProviderConfigToolCatalog.toolNames.contains(toolPart.toolName)
-                    ? IOSProviderConfigToolCatalog.redactedArgumentsJSON(toolPart.input) : toolPart.input
-                #else
-                let input = toolPart.input
+                if IOSProviderConfigToolCatalog.toolNames.contains(toolPart.toolName) {
+                    input = IOSProviderConfigToolCatalog.redactedArgumentsJSON(input)
+                }
                 #endif
                 return PromptTranscript.shared.doCopyTool(tool: toolPart, input: input, output: newOutput)
             }

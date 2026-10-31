@@ -309,6 +309,8 @@ extension ChatToolRuntime {
             audit = ("ios.settings.provider_config", "Provider configuration")
         } else if pending.toolCall.toolName == "theme_pack_import" {
             audit = ("ios.settings.theme_pack", "Theme pack try-on")
+        } else if IOSSSHProfileToolCatalog.mutatingToolNames.contains(pending.toolCall.toolName) {
+            audit = ("ios.remote.command", "Remote SSH profile write")
         } else if pending.toolCall.toolName == IOSSoulToolCatalog.toolName {
             audit = ("ios.skills.management", "Soul update")
         } else if IOSRecipeToolCatalog.toolNames.contains(pending.toolCall.toolName)
