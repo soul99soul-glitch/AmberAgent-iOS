@@ -19,6 +19,7 @@ final class IOSReleaseConfigurationTests: XCTestCase {
         XCTAssertNil(ats["NSAllowsArbitraryLoadsInWebContent"])
         XCTAssertNil(ats["NSAllowsArbitraryLoadsForMedia"])
         XCTAssertNil(ats["NSExceptionDomains"])
+        XCTAssertEqual(info["ITSAppUsesNonExemptEncryption"] as? Bool, false)
     }
 
     func testPrivacyManifestDeclaresRequiredReasonAPIsWithoutTracking() throws {

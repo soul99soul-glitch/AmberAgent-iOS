@@ -58,6 +58,9 @@ if ats.get("NSAllowsArbitraryLoads") is True:
 if ats.get("NSExceptionDomains"):
     errors.append("broad ATS exception domains are not allowed in the stable release plist")
 
+if info.get("ITSAppUsesNonExemptEncryption") is not False:
+    errors.append("Info.plist must declare ITSAppUsesNonExemptEncryption = false for App Store Connect export compliance")
+
 privacy_requirements = {
     "main PrivacyInfo.xcprivacy": (
         privacy_path,
