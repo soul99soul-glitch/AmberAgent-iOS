@@ -1,5 +1,16 @@
 package app.amber.cloud.channels
 
+import app.amber.cloud.channel.ButtonStyle
+import app.amber.cloud.channel.ChannelConnector
+import app.amber.cloud.channel.ChannelDecisionOutcome
+import app.amber.cloud.channel.ChannelIngress
+import app.amber.cloud.channel.ChannelKind
+import app.amber.cloud.channel.ConversationScope
+import app.amber.cloud.channel.InboundMessage
+import app.amber.cloud.channel.OutboundCard
+import app.amber.cloud.channel.OutboundMessage
+import app.amber.cloud.channel.OutboundReceipt
+import app.amber.cloud.channel.SenderRole
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.header
@@ -15,7 +26,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -34,7 +44,7 @@ data class FeishuWebhookResponse(
 )
 
 /**
- * 飞书通道实现（HTTPS Webhook 入站事件与卡片回调 + 签名校验 + OpenAPI/自定义机器人 Webhook 出站）。
+ * 飞书通道连接器实现（实现统一 SPI [ChannelConnector]）。
  *
  * 复用并对齐 `macApp/AmberMac/Runtime/DesktopPlugins.swift`：
  * 1. `inferReceiveIdType`（`oc_` -> `chat_id`、`ou_` -> `open_id`、`on_` -> `union_id`、`@` -> `email`）；
@@ -54,11 +64,14 @@ class FeishuChannel(
     private val logger: RedactingChannelLogger,
     private val httpClient: HttpClient = HttpClient(OkHttp),
     private val clockMs: () -> Long = { System.currentTimeMillis() },
-) : Channel {
-    override val id: String = CHANNEL_ID
+) : ChannelConnector {
+    override val kind: ChannelKind = ChannelKind.FEISHU
+    val id: String = CHANNEL_ID
 
     companion object {
         const val CHANNEL_ID = "feishu"
+        const val CONFIG_KEY_APP_ID = "feishu.app_id"
+        const val ENV_APP_ID = "AMBER_FEISHU_APP_ID"
         const val CONFIG_KEY_APP_SECRET = "feishu.app_secret"
         const val ENV_APP_SECRET = "AMBER_FEISHU_APP_SECRET"
         const val CONFIG_KEY_ENCRYPT_KEY = "feishu.encrypt_key"
@@ -66,9 +79,6 @@ class FeishuChannel(
         const val CONFIG_KEY_WEBHOOK_SECRET = "feishu.webhook_secret"
         const val ENV_WEBHOOK_SECRET = "AMBER_FEISHU_WEBHOOK_SECRET"
 
-        /**
-         * 移植自 `DesktopPlugins.swift:2746` `inferFeishuReceiveIDType(_:)`。
-         */
         fun inferReceiveIdType(receiveId: String): String {
             val clean = receiveId.trim()
             return when {
@@ -80,10 +90,6 @@ class FeishuChannel(
             }
         }
 
-        /**
-         * 移植并扩展自 `DesktopPlugins.swift:2754` `buildFeishuInteractiveCard(title:markdown:)`。
-         * 当包含按钮或关联审批时，强制经 [ImApprovalGate.sanitizeOutboundButtons] 剥离任何批准按钮。
-         */
         fun buildInteractiveCardJson(card: OutboundCard): JsonObject {
             val safeButtons = ImApprovalGate.sanitizeOutboundButtons(card)
             return buildJsonObject {
@@ -169,15 +175,28 @@ class FeishuChannel(
     private var cachedTenantToken: SecretValue? = null
     private var cachedTenantTokenExpiresAtMs: Long = 0L
 
+    private var ingress: ChannelIngress? = null
     private var inboundHandler: (suspend (InboundMessage) -> Unit)? = null
     private val rejectedMessages = mutableListOf<InboundGateVerdict.RejectedNonOwner>()
+    private val decisionOutcomes = mutableListOf<ChannelDecisionOutcome>()
 
     fun rejectedHistory(): List<InboundGateVerdict.RejectedNonOwner> =
         synchronized(rejectedMessages) { rejectedMessages.toList() }
 
-    override suspend fun start(onInbound: suspend (InboundMessage) -> Unit) {
-        inboundHandler = onInbound
+    fun decisionHistory(): List<ChannelDecisionOutcome> =
+        synchronized(decisionOutcomes) { decisionOutcomes.toList() }
+
+    override fun attachIngress(ingress: ChannelIngress) {
+        this.ingress = ingress
+    }
+
+    override suspend fun start() {
         logger.info("飞书通道已就绪 (mode=HTTPS_WEBHOOK_AND_OPENAPI, baseUrl=${logger.redact(openApiBaseUrl)})")
+    }
+
+    suspend fun start(onInbound: suspend (InboundMessage) -> Unit) {
+        inboundHandler = onInbound
+        start()
     }
 
     override suspend fun stop() {
@@ -189,10 +208,6 @@ class FeishuChannel(
 
     /**
      * 处理飞书开放平台推送的 HTTPS Webhook 事件（含 `url_verification`、`im.message.receive_v1`、`card.action.trigger`）。
-     *
-     * 签名校验规则：
-     * - 若配置了 [encryptKey]，强制校验 `X-Lark-Request-Timestamp` + `X-Lark-Request-Nonce` + `X-Lark-Signature`；
-     * - 若请求体包含 `timestamp` 与 `sign` 且配置了 [webhookSecret]，校验 HMAC-SHA256 签名。
      */
     suspend fun handleWebhookEvent(
         headers: Map<String, String>,
@@ -271,13 +286,35 @@ class FeishuChannel(
         val handler = onInboundOverride ?: inboundHandler
         return when (val verdict = ownerBinding.evaluate(parsedMessage)) {
             is InboundGateVerdict.Allowed -> {
-                handler?.invoke(verdict.message)
+                val verified = verdict.message
+                handler?.invoke(verified)
+                val attachedIngress = ingress
+                if (attachedIngress != null) {
+                    val decision = verified.approvalDecision
+                    if (decision != null) {
+                        val outcome = attachedIngress.handleChannelDecision(
+                            channel = kind,
+                            senderId = verified.senderId,
+                            sessionKey = decision.sessionKey.orEmpty(),
+                            toolCallId = decision.toolCallId,
+                            allow = decision.coercedFromApproveAttempt,
+                        )
+                        synchronized(decisionOutcomes) {
+                            decisionOutcomes.add(outcome)
+                        }
+                    } else if (onInboundOverride == null) {
+                        val outbound = attachedIngress.handleInbound(verified)
+                        // Reply to the owner's open_id or chat_id
+                        sendWithReceipt(outbound)
+                    }
+                }
                 FeishuWebhookResponse(200, """{"ok":true}""")
             }
             is InboundGateVerdict.BoundSuccess -> {
                 logger.info("飞书主人绑定成功: senderId=${verdict.ownerSenderId}")
-                send(
+                sendWithReceipt(
                     OutboundMessage(
+                        channel = kind,
                         chatId = parsedMessage.chatId,
                         text = verdict.replyMessage,
                     )
@@ -297,7 +334,16 @@ class FeishuChannel(
         }
     }
 
-    override suspend fun send(message: OutboundMessage): OutboundReceipt {
+    override suspend fun send(message: OutboundMessage): Result<String> {
+        val receipt = sendWithReceipt(message)
+        return if (receipt.ok) {
+            Result.success(receipt.messageId)
+        } else {
+            Result.failure(IllegalStateException(receipt.note ?: "Feishu send failed"))
+        }
+    }
+
+    override suspend fun sendWithReceipt(message: OutboundMessage): OutboundReceipt {
         return idempotencyStore.executeIdempotent(message.idempotencyKey, id) {
             val targetId = message.chatId.trim()
             val useCustomWebhook = webhookUrl.isNotBlank() && targetId.isEmpty()
@@ -309,11 +355,11 @@ class FeishuChannel(
         }
     }
 
-    override suspend fun editStreamMessage(
+    suspend fun editStreamMessage(
         chatId: String,
         messageId: String,
         newText: String,
-        card: OutboundCard?,
+        card: OutboundCard? = null,
     ): OutboundReceipt {
         val token = resolveTenantAccessToken()
         val effectiveCard = card ?: OutboundCard(
@@ -344,7 +390,7 @@ class FeishuChannel(
     }
 
     private suspend fun sendViaCustomWebhook(message: OutboundMessage): OutboundReceipt {
-        val card = message.card
+        val card = message.effectiveCard()
         val timestampSec = (clockMs() / 1000L).toString()
         val bodyObj = buildJsonObject {
             if (card != null) {
@@ -380,7 +426,7 @@ class FeishuChannel(
         val receiveId = message.chatId.trim()
         require(receiveId.isNotEmpty()) { "飞书 OpenAPI 发送消息需要非空 chatId / receiveId" }
         val receiveIdType = inferReceiveIdType(receiveId)
-        val card = message.card
+        val card = message.effectiveCard()
         val msgType: String
         val contentJsonString: String
         if (card != null) {
@@ -464,7 +510,7 @@ class FeishuChannel(
         val messageId = messageObj["message_id"]?.jsonPrimitive?.content ?: fallbackEventId.ifBlank { return null }
         val chatId = messageObj["chat_id"]?.jsonPrimitive?.content ?: openId
         val chatTypeStr = messageObj["chat_type"]?.jsonPrimitive?.content ?: "p2p"
-        val chatType = if (chatTypeStr == "p2p") ChatType.DIRECT else ChatType.GROUP
+        val scope = if (chatTypeStr == "p2p") ConversationScope.DIRECT else ConversationScope.GROUP
         val createTimeMs = messageObj["create_time"]?.jsonPrimitive?.longOrNull ?: clockMs()
         val rootId = messageObj["root_id"]?.jsonPrimitive?.content
 
@@ -474,15 +520,16 @@ class FeishuChannel(
         }.getOrNull() ?: rawContent
 
         return InboundMessage(
-            id = messageId,
-            channelId = id,
+            messageId = messageId,
+            channel = kind,
             chatId = chatId,
-            chatType = chatType,
-            senderId = openId,
-            text = parsedText.trim(),
-            tainted = true,
-            timestampEpochMs = createTimeMs,
             threadId = rootId,
+            senderId = openId,
+            senderRole = SenderRole.GUEST,
+            scope = scope,
+            text = parsedText.trim(),
+            receivedAtEpochSeconds = createTimeMs / 1000L,
+            tainted = true,
         )
     }
 
@@ -507,14 +554,15 @@ class FeishuChannel(
         val msgId = fallbackEventId.ifBlank { "card_cb_${clockMs()}" }
 
         return InboundMessage(
-            id = msgId,
-            channelId = id,
+            messageId = msgId,
+            channel = kind,
             chatId = chatId,
-            chatType = ChatType.DIRECT,
             senderId = openId,
+            senderRole = SenderRole.GUEST,
+            scope = ConversationScope.DIRECT,
             text = actionString,
+            receivedAtEpochSeconds = clockMs() / 1000L,
             tainted = true,
-            timestampEpochMs = clockMs(),
             callbackData = actionString,
             approvalDecision = approvalDecision,
         )

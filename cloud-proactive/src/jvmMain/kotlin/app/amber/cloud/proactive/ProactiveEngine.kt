@@ -1,10 +1,11 @@
 package app.amber.cloud.proactive
 
-import app.amber.cloud.channels.Channel
+import app.amber.cloud.channel.ChannelConnector
+import app.amber.cloud.channel.OutboundCard
+import app.amber.cloud.channel.OutboundMessage
+import app.amber.cloud.channel.OutboundReceipt
 import app.amber.cloud.channels.FeishuCalendarEvent
-import app.amber.cloud.channels.OutboundCard
-import app.amber.cloud.channels.OutboundMessage
-import app.amber.cloud.channels.OutboundReceipt
+import app.amber.cloud.security.CredentialRedactor
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
@@ -96,7 +97,7 @@ class ProactiveEngine(
      */
     suspend fun pollAllSources(
         targetChatId: String,
-        channel: Channel? = null,
+        channel: ChannelConnector? = null,
     ): List<ProactiveRunResult> {
         val results = mutableListOf<ProactiveRunResult>()
         for (source in registeredSources) {
@@ -112,7 +113,7 @@ class ProactiveEngine(
     suspend fun processSignal(
         signal: ProactiveTriggerSignal,
         targetChatId: String,
-        channel: Channel? = null,
+        channel: ChannelConnector? = null,
         nowOverrideMs: Long? = null,
     ): ProactiveRunResult {
         val evalTimeMs = nowOverrideMs ?: signal.timestampEpochMs
@@ -125,7 +126,8 @@ class ProactiveEngine(
                 return ProactiveRunResult.DroppedAtL1(l1)
             }
             is L1Outcome.PassedWithDelta -> {
-                // Stage L2: 小模型 noteworthy 打分（定时晨间简报若无需单独快判则直接汇总）
+                // Stage L2: 小模型 noteworthy 打分（跨端缺陷 #3：进入 L2 提示词前强制脱敏）
+                val safeDeltaSummary = CredentialRedactor.redact(l1.deltaSummary)
                 val l2Score: L2NoteworthyScore? = if (l1.bypassL2ForScheduledBriefing) {
                     null
                 } else {
@@ -135,14 +137,14 @@ class ProactiveEngine(
                             signalId = l1.signalId,
                             category = l1.category,
                             topicKey = l1.topicKey,
-                            deltaSummary = l1.deltaSummary,
+                            deltaSummary = safeDeltaSummary,
                         )
                     )
                 }
 
                 val effectiveNoteworthy = l2Score?.noteworthy ?: true
                 val effectiveScore = l2Score?.compositeScore ?: 16
-                val effectiveSummary = l2Score?.summary?.ifBlank { l1.title } ?: l1.title
+                val effectiveSummary = CredentialRedactor.redact(l2Score?.summary?.ifBlank { l1.title } ?: l1.title)
 
                 // Stage 2.5: 静默时段与打扰预算桶节制阀门
                 val verdict = restraintGate.evaluateAndConsume(
@@ -174,15 +176,17 @@ class ProactiveEngine(
                             emptyList()
                         }
                         val card = L3ProactiveCardProducer.buildCard(
-                            delta = l1,
-                            l2Score = l2Score,
+                            delta = l1.copy(deltaSummary = safeDeltaSummary),
+                            l2Score = l2Score?.copy(summary = effectiveSummary),
                             extraPulseItems = extraPulse,
                         )
                         l3Produced.incrementAndGet()
 
-                        val receipt = channel?.send(
+                        val receipt = channel?.sendWithReceipt(
                             OutboundMessage(
+                                channel = channel.kind,
                                 chatId = targetChatId,
+                                text = card.markdownBody,
                                 card = card,
                                 idempotencyKey = "proactive:${l1.signalId}",
                                 silent = verdict.silentDelivery,
@@ -211,7 +215,7 @@ class ProactiveEngine(
         url: String,
         title: String = "",
         targetChatId: String,
-        channel: Channel? = null,
+        channel: ChannelConnector? = null,
         nowEpochMs: Long = clockMs(),
     ): ProactiveRunResult {
         val cleanUrl = url.trim()
@@ -244,7 +248,7 @@ class ProactiveEngine(
         datePrefix: String,
         events: List<FeishuCalendarEvent>,
         targetChatId: String,
-        channel: Channel? = null,
+        channel: ChannelConnector? = null,
         nowEpochMs: Long = clockMs(),
     ): ProactiveRunResult {
         val signal = ProactiveTriggerSignal.CalendarSnapshotSignal(
@@ -263,7 +267,7 @@ class ProactiveEngine(
         dateString: String,
         events: List<FeishuCalendarEvent>,
         targetChatId: String,
-        channel: Channel? = null,
+        channel: ChannelConnector? = null,
         nowEpochMs: Long = clockMs(),
     ): ProactiveRunResult {
         val signal = ProactiveTriggerSignal.ClockCronSignal(

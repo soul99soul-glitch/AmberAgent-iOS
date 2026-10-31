@@ -1,108 +1,57 @@
 package app.amber.cloud.channels
 
+import app.amber.cloud.channel.ButtonStyle
+import app.amber.cloud.channel.ConversationScope
+import app.amber.cloud.channel.ImApprovalDecision
+import app.amber.cloud.channel.InboundMessage
+import app.amber.cloud.channel.OutboundButton
+import app.amber.cloud.channel.OutboundCard
+import app.amber.cloud.channel.OutboundReceipt
+import app.amber.cloud.channel.SenderRole
+import app.amber.cloud.channel.TaintSandbox
+import app.amber.cloud.security.CredentialRedactor
+import app.amber.cloud.security.EnvelopeCredentialVault
+import app.amber.cloud.security.PlaceholderCredentialException
+import app.amber.core.native.AmberNativeBridge
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.nio.ByteBuffer
+import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
-import javax.crypto.Cipher
-import javax.crypto.Mac
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
-
-/**
- * 入站不可信文本沙箱封装（防提示词注入 Prompt Injection Defense）。
- */
-object TaintSandbox {
-    fun wrap(
-        rawText: String,
-        source: String,
-        senderId: String,
-        senderRole: SenderRole,
-    ): String {
-        val safeSource = escapeAttr(source)
-        val safeSender = escapeAttr(senderId)
-        val safeRole = senderRole.name.lowercase()
-        val escapedBody = rawText
-            .replace("</untrusted_input>", "&lt;/untrusted_input&gt;", ignoreCase = true)
-            .replace("<untrusted_input", "&lt;untrusted_input", ignoreCase = true)
-        return buildString {
-            append("<untrusted_input source=\"")
-            append(safeSource)
-            append("\" sender_id=\"")
-            append(safeSender)
-            append("\" sender_role=\"")
-            append(safeRole)
-            append("\">\n")
-            append(escapedBody)
-            append("\n</untrusted_input>")
-        }
-    }
-
-    private fun escapeAttr(input: String): String =
-        input
-            .replace("&", "&amp;")
-            .replace("\"", "&quot;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-}
 
 /**
  * 凭据占位符校验与敏感值包装器。
  *
- * - `toString()` 永远返回 `"<redacted>"`，防止直接打印或拼入异常日志时泄露 Token。
- * - 拒绝将 `<redacted>`、`[REDACTED]`、`***`、`••••`、`«已脱敏»` 等脱敏占位符写入凭据库（跨端缺陷清单 #4）。
+ * 委托 [CredentialRedactor.isPlaceholderCredential] 进行统一占位符拦截（跨端缺陷清单 #4），
+ * `toString()` 永远返回 `"<redacted>"`。
  */
 class SecretValue private constructor(
     private var bytes: ByteArray,
 ) {
     companion object {
-        private val PLACEHOLDERS = setOf(
-            "<redacted>",
-            "[redacted]",
-            "***",
-            "••••",
-            "••••••••",
-            "«已脱敏»",
-            "redacted",
-            "null",
-        )
-
         fun isPlaceholderCredential(raw: String): Boolean {
             val trimmed = raw.trim()
             if (trimmed.isEmpty()) return true
-            if (PLACEHOLDERS.contains(trimmed.lowercase())) return true
-            if (trimmed.all { it == '*' || it == '•' || it == '.' }) return true
-            if (trimmed.contains("<redacted>", ignoreCase = true) ||
-                trimmed.contains("[REDACTED]", ignoreCase = true) ||
-                trimmed.contains("«已脱敏»")
-            ) {
-                return true
-            }
-            return false
+            return CredentialRedactor.isPlaceholderCredential(trimmed)
         }
 
         fun of(raw: String, fieldName: String = "secret"): SecretValue {
-            require(!isPlaceholderCredential(raw)) {
-                "拒绝将空白或脱敏占位符写入凭据字段 $fieldName"
+            if (isPlaceholderCredential(raw)) {
+                throw PlaceholderCredentialException("拒绝将空白或脱敏占位符写入凭据字段 $fieldName")
             }
             return SecretValue(raw.trim().toByteArray(StandardCharsets.UTF_8))
         }
     }
 
-    /**
-     * 仅在构造底层 HTTP 鉴权头或签名时读取明文。
-     */
     internal fun expose(): String {
         check(bytes.isNotEmpty()) { "凭据已被擦除，无法继续读取" }
         return String(bytes, StandardCharsets.UTF_8)
@@ -131,43 +80,41 @@ class SecretValue private constructor(
 }
 
 /**
- * 信封加密配置保险箱（AES-256-GCM）。
- *
- * 用于在云端静息态安全存储 Bot Token、飞书 App Secret、Webhook Secret 等敏感凭据。
+ * 加密配置保险箱适配器：直接委托给统一的 [EnvelopeCredentialVault]（删除重复的 AES-GCM 实现）。
  */
 class EncryptedConfigVault(
-    masterKeyMaterial: String,
+    val delegate: EnvelopeCredentialVault,
 ) {
-    private val keySpec: SecretKeySpec
-    private val random = SecureRandom()
-    private val entries = mutableMapOf<String, String>()
     private val knownPlainSecrets = LinkedHashSet<String>()
 
-    init {
-        require(!SecretValue.isPlaceholderCredential(masterKeyMaterial) && masterKeyMaterial.length >= 8) {
-            "主密钥无效或长度不足"
+    constructor(
+        masterKeyMaterial: String,
+        vaultFile: File = Files.createTempFile("amber-channel-vault-", ".enc.json").toFile().also {
+            it.delete()
+            it.deleteOnExit()
+        },
+    ) : this(createDelegate(masterKeyMaterial, vaultFile))
+
+    companion object {
+        private fun createDelegate(masterKeyMaterial: String, vaultFile: File): EnvelopeCredentialVault {
+            if (SecretValue.isPlaceholderCredential(masterKeyMaterial) || masterKeyMaterial.length < 8) {
+                throw PlaceholderCredentialException("主密钥无效或长度不足")
+            }
+            return EnvelopeCredentialVault(
+                vaultFile = vaultFile,
+                masterSecretOverride = masterKeyMaterial,
+                pbkdf2Iterations = 10_000,
+            )
         }
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(masterKeyMaterial.toByteArray(StandardCharsets.UTF_8))
-        keySpec = SecretKeySpec(digest, "AES")
     }
 
     fun putEncrypted(key: String, plainSecret: String) {
-        require(!SecretValue.isPlaceholderCredential(plainSecret)) {
-            "拒绝将占位符写入加密配置项: $key"
+        if (SecretValue.isPlaceholderCredential(plainSecret)) {
+            throw PlaceholderCredentialException("拒绝将占位符写入加密配置项: $key")
         }
         val trimmed = plainSecret.trim()
         knownPlainSecrets.add(trimmed)
-        val iv = ByteArray(12).also { random.nextBytes(it) }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, keySpec, GCMParameterSpec(128, iv))
-        cipher.updateAAD(key.toByteArray(StandardCharsets.UTF_8))
-        val cipherBytes = cipher.doFinal(trimmed.toByteArray(StandardCharsets.UTF_8))
-        val combined = ByteBuffer.allocate(iv.size + cipherBytes.size)
-            .put(iv)
-            .put(cipherBytes)
-            .array()
-        entries[key] = Base64.getEncoder().encodeToString(combined)
+        delegate.putSecret(key, trimmed)
     }
 
     internal fun bindLogger(logger: RedactingChannelLogger) {
@@ -175,47 +122,60 @@ class EncryptedConfigVault(
     }
 
     fun getSecret(key: String): SecretValue? {
-        val encoded = entries[key] ?: return null
-        val combined = Base64.getDecoder().decode(encoded)
-        require(combined.size > 12) { "密文格式损坏: $key" }
-        val iv = combined.copyOfRange(0, 12)
-        val cipherBytes = combined.copyOfRange(12, combined.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, keySpec, GCMParameterSpec(128, iv))
-        cipher.updateAAD(key.toByteArray(StandardCharsets.UTF_8))
-        val plain = String(cipher.doFinal(cipherBytes), StandardCharsets.UTF_8)
+        val plain = delegate.getSecret(key) ?: return null
         return SecretValue.of(plain, key)
     }
-
-    fun rawCiphertext(key: String): String? = entries[key]
 }
 
 /**
- * 通道密钥加载器：强制只从加密配置保险箱（[EncryptedConfigVault]）或环境变量读取 Token，
+ * 通道密钥加载器：统一从 [EnvelopeCredentialVault]（或 [EncryptedConfigVault] 委托）及环境变量读取 Token，
  * 并自动向 [RedactingChannelLogger] 注册需脱敏的敏感字面量，严禁 Token 进入日志。
  */
 class ChannelSecretLoader(
-    private val vault: EncryptedConfigVault? = null,
+    private val envelopeVault: EnvelopeCredentialVault? = null,
+    private val configVault: EncryptedConfigVault? = null,
     private val envProvider: (String) -> String? = { System.getenv(it) },
     private val logger: RedactingChannelLogger,
 ) {
+    constructor(
+        vault: EncryptedConfigVault? = null,
+        envProvider: (String) -> String? = { System.getenv(it) },
+        logger: RedactingChannelLogger,
+    ) : this(
+        envelopeVault = vault?.delegate,
+        configVault = vault,
+        envProvider = envProvider,
+        logger = logger,
+    )
+
+    constructor(
+        vault: EnvelopeCredentialVault,
+        envProvider: (String) -> String? = { System.getenv(it) },
+        logger: RedactingChannelLogger,
+    ) : this(
+        envelopeVault = vault,
+        configVault = null,
+        envProvider = envProvider,
+        logger = logger,
+    )
+
     private val activeSecrets = mutableListOf<SecretValue>()
 
     init {
-        vault?.bindLogger(logger)
+        configVault?.bindLogger(logger)
     }
 
     fun requireSecret(configKey: String, envName: String): SecretValue {
-        val secret = resolveOptionalSecret(configKey, envName)
-            ?: throw IllegalStateException("未在加密配置 ($configKey) 或环境变量 ($envName) 中找到有效凭据")
-        return secret
+        return resolveOptionalSecret(configKey, envName)
+            ?: throw IllegalStateException("未在统一加密凭据库 ($configKey) 或环境变量 ($envName) 中找到有效凭据")
     }
 
     fun resolveOptionalSecret(configKey: String, envName: String): SecretValue? {
-        val fromVault = vault?.getSecret(configKey)
-        if (fromVault != null) {
-            register(fromVault)
-            return fromVault
+        val rawFromVault = envelopeVault?.getSecret(configKey)
+        if (!rawFromVault.isNullOrEmpty()) {
+            val secret = SecretValue.of(rawFromVault, configKey)
+            register(secret)
+            return secret
         }
         val fromEnv = envProvider(envName)?.trim()
         if (!fromEnv.isNullOrEmpty()) {
@@ -232,7 +192,7 @@ class ChannelSecretLoader(
     }
 
     /**
-     * 在通道关闭或异常终态时擦除所有已加载的凭据。
+     * 在通道关闭或异常终态时擦除所有已加载的内存凭据（跨端缺陷清单 #2）。
      */
     fun wipeAll() {
         activeSecrets.forEach { it.wipe() }
@@ -241,28 +201,13 @@ class ChannelSecretLoader(
 }
 
 /**
- * 自动脱敏日志记录器：确保任何注册的 Token、Telegram Bot URL、Bearer Token、飞书密钥绝不出现在日志中。
+ * 自动脱敏日志记录器：直接委托给统一的 [CredentialRedactor]，删除重复的脱敏正则实现。
  */
 class RedactingChannelLogger(
     private val sink: (String) -> Unit = {},
 ) {
     private val secretLiterals = LinkedHashSet<String>()
     private val entries = mutableListOf<String>()
-
-    private val patternScrubbers = listOf(
-        // Telegram bot token in URL or text: bot123456:ABC-DEF...
-        Regex("""bot\d{5,}:[A-Za-z0-9_-]{10,}""") to "bot<redacted>",
-        // Raw Telegram token shape: 123456789:AAH...
-        Regex("""\b\d{6,12}:[A-Za-z0-9_-]{20,}\b""") to "<redacted>",
-        // Authorization Bearer / Basic header values
-        Regex("""(?i)(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}""") to "$1 <redacted>",
-        // Feishu tenant_access_token / user_access_token (t-xxx / u-xxx)
-        Regex("""\b[tu]-[A-Za-z0-9._-]{12,}\b""") to "<redacted>",
-        // JSON fields containing secret/token/password
-        Regex("""(?i)("(?:bot_token|app_secret|webhook_secret|caldav_password|tenant_access_token|secret|password|token)"\s*:\s*)"[^"]+"""") to "$1\"<redacted>\"",
-        // Key-value log pairs containing secret/token/password
-        Regex("""(?i)\b(bot_token|app_secret|webhook_secret|caldav_password|tenant_access_token|appSecret|password|pass|secret|token)\s*=\s*[^\s,;)]+""") to "$1=<redacted>",
-    )
 
     @Synchronized
     fun registerSecret(secret: SecretValue) {
@@ -287,13 +232,10 @@ class RedactingChannelLogger(
         var result = message
         for (literal in secretLiterals) {
             if (literal.isNotEmpty() && result.contains(literal)) {
-                result = result.replace(literal, "<redacted>")
+                result = result.replace(literal, CredentialRedactor.MASK)
             }
         }
-        for ((regex, replacement) in patternScrubbers) {
-            result = regex.replace(result, replacement)
-        }
-        return result
+        return CredentialRedactor.redact(result)
     }
 
     @Synchronized
@@ -329,29 +271,40 @@ sealed class InboundGateVerdict {
 }
 
 /**
- * 主人身份绑定管理器（支持 `/bind <一次性码>`，一次性码 3 分钟有效且单次消费即刻销毁）。
+ * 主人身份绑定管理器（支持 `/bind <一次性码>`，3 分钟有效且单次消费即刻销毁，并支持落盘持久化）。
  *
- * 严格遵循 §7.3：
+ * 严格遵循 C3 v2 与 §7.3：
  * - Telegram 使用不可伪造的数字 `from.id`，飞书使用 `open_id` (`ou_xxx`)；
- * - 未绑定或非主人发来的私聊/群聊消息一律拒绝（[InboundGateVerdict.RejectedNonOwner]）。
+ * - 未绑定或非主人发来的私聊/群聊消息一律拒绝（[InboundGateVerdict.RejectedNonOwner]）；
+ * - 持久化已绑定的主人 ID 与私聊 `chatId`，使重启进程后主人绑定与主动推送目标不丢失。
  */
 class OwnerBindingManager(
     private val clockMs: () -> Long = { System.currentTimeMillis() },
     private val codeTtlMs: Long = 3 * 60 * 1000L,
+    private val persistenceFile: File? = null,
 ) {
     private data class PendingCode(
         val code: String,
         val expiresAtMs: Long,
     )
 
+    @Serializable
+    private data class PersistedBindings(
+        val boundOwners: Map<String, Set<String>> = emptyMap(),
+        val ownerDirectChatIds: Map<String, String> = emptyMap(),
+    )
+
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val random = SecureRandom()
     private val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
     private val pendingCodes = mutableMapOf<String, PendingCode>()
     private val boundOwners = mutableMapOf<String, MutableSet<String>>()
+    private val ownerDirectChatIds = mutableMapOf<String, String>()
 
-    /**
-     * 生成形如 `A9F3-7K2M` 的一次性绑定码。
-     */
+    init {
+        loadFromDisk()
+    }
+
     @Synchronized
     fun generateOneTimeCode(): String {
         pruneExpiredCodes()
@@ -362,29 +315,43 @@ class OwnerBindingManager(
         return code
     }
 
-    /**
-     * 供配置预置已绑定的主人 ID（可选）。
-     */
     @Synchronized
-    fun bindOwnerDirectly(channelId: String, senderId: String) {
+    fun bindOwnerDirectly(channelId: String, senderId: String, directChatId: String? = null) {
+        val cleanChannel = channelId.trim().lowercase()
         val cleanSender = senderId.trim()
         require(cleanSender.isNotEmpty() && !cleanSender.startsWith("@")) {
             "主人绑定必须使用平台不可变 ID（如 Telegram 数字 ID 或飞书 open_id），禁止使用可变 @username: $senderId"
         }
-        boundOwners.getOrPut(channelId) { mutableSetOf() }.add(cleanSender)
+        boundOwners.getOrPut(cleanChannel) { mutableSetOf() }.add(cleanSender)
+        ownerDirectChatIds[cleanChannel] = directChatId?.trim()?.takeIf { it.isNotEmpty() } ?: cleanSender
+        saveToDisk()
     }
 
     @Synchronized
     fun isOwner(channelId: String, senderId: String): Boolean {
-        return boundOwners[channelId]?.contains(senderId.trim()) == true
+        return boundOwners[channelId.trim().lowercase()]?.contains(senderId.trim()) == true
     }
 
-    /**
-     * 校验入站消息：处理 `/bind <一次性码>`，或校验发送者是否为已绑定主人。
-     */
+    @Synchronized
+    fun getOwnerDirectChatId(channelId: String): String? {
+        val cleanChannel = channelId.trim().lowercase()
+        return ownerDirectChatIds[cleanChannel] ?: boundOwners[cleanChannel]?.firstOrNull()
+    }
+
+    @Synchronized
+    fun allBoundOwnerChatTargets(): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for ((ch, owners) in boundOwners) {
+            val chatId = ownerDirectChatIds[ch] ?: owners.firstOrNull() ?: continue
+            out[ch] = chatId
+        }
+        return out
+    }
+
     @Synchronized
     fun evaluate(rawMessage: InboundMessage): InboundGateVerdict {
         pruneExpiredCodes()
+        val cleanChannel = rawMessage.channelId.trim().lowercase()
         val cleanSender = rawMessage.senderId.trim()
         if (cleanSender.isEmpty() || cleanSender.startsWith("@")) {
             return InboundGateVerdict.RejectedNonOwner(
@@ -396,7 +363,7 @@ class OwnerBindingManager(
 
         val trimmedText = rawMessage.text.trim()
         if (trimmedText.startsWith("/bind")) {
-            if (rawMessage.chatType != ChatType.DIRECT) {
+            if (rawMessage.scope != ConversationScope.DIRECT) {
                 return InboundGateVerdict.RejectedNonOwner(
                     channelId = rawMessage.channelId,
                     senderId = cleanSender,
@@ -413,9 +380,10 @@ class OwnerBindingManager(
                     reason = "绑定码无效或已过期",
                 )
             }
-            // 一次性消费：立即销毁该绑定码
             pendingCodes.remove(codeArg)
-            boundOwners.getOrPut(rawMessage.channelId) { mutableSetOf() }.add(cleanSender)
+            boundOwners.getOrPut(cleanChannel) { mutableSetOf() }.add(cleanSender)
+            ownerDirectChatIds[cleanChannel] = rawMessage.chatId.trim().ifEmpty { cleanSender }
+            saveToDisk()
             return InboundGateVerdict.BoundSuccess(
                 channelId = rawMessage.channelId,
                 ownerSenderId = cleanSender,
@@ -423,7 +391,7 @@ class OwnerBindingManager(
             )
         }
 
-        if (!isOwner(rawMessage.channelId, cleanSender)) {
+        if (!isOwner(cleanChannel, cleanSender)) {
             return InboundGateVerdict.RejectedNonOwner(
                 channelId = rawMessage.channelId,
                 senderId = cleanSender,
@@ -431,12 +399,19 @@ class OwnerBindingManager(
             )
         }
 
+        if (rawMessage.scope == ConversationScope.DIRECT && rawMessage.chatId.isNotBlank()) {
+            if (ownerDirectChatIds[cleanChannel] != rawMessage.chatId.trim()) {
+                ownerDirectChatIds[cleanChannel] = rawMessage.chatId.trim()
+                saveToDisk()
+            }
+        }
+
         val verifiedMessage = rawMessage.copy(
             senderRole = SenderRole.OWNER,
             tainted = true,
             sandboxedText = TaintSandbox.wrap(
                 rawText = rawMessage.text,
-                source = "${rawMessage.channelId}:${rawMessage.chatType.name.lowercase()}:${rawMessage.chatId}",
+                source = "${rawMessage.channelId}:${rawMessage.scope.name.lowercase()}:${rawMessage.chatId}",
                 senderId = cleanSender,
                 senderRole = SenderRole.OWNER,
             ),
@@ -453,6 +428,30 @@ class OwnerBindingManager(
             }
         }
     }
+
+    private fun loadFromDisk() {
+        val file = persistenceFile ?: return
+        if (!file.isFile) return
+        val loaded = runCatching {
+            json.decodeFromString<PersistedBindings>(file.readText())
+        }.getOrNull() ?: return
+        loaded.boundOwners.forEach { (ch, set) ->
+            boundOwners.getOrPut(ch) { mutableSetOf() }.addAll(set)
+        }
+        ownerDirectChatIds.putAll(loaded.ownerDirectChatIds)
+    }
+
+    private fun saveToDisk() {
+        val file = persistenceFile ?: return
+        runCatching {
+            file.parentFile?.mkdirs()
+            val snapshot = PersistedBindings(
+                boundOwners = boundOwners.mapValues { it.value.toSet() },
+                ownerDirectChatIds = ownerDirectChatIds.toMap(),
+            )
+            file.writeText(json.encodeToString(snapshot))
+        }
+    }
 }
 
 /**
@@ -463,9 +462,6 @@ class InboundMessageDeduplicator(
 ) {
     private val seenKeys = LinkedHashSet<String>()
 
-    /**
-     * 若首次见到则返回 `true` 并记录；若已存在则返回 `false`。
-     */
     @Synchronized
     fun markIfFirstSeen(channelId: String, messageId: String): Boolean {
         val cleanId = messageId.trim()
@@ -485,9 +481,6 @@ class InboundMessageDeduplicator(
 
 /**
  * 出站写操作幂等存储（移植自 `DesktopPluginIdempotency.swift`）。
- *
- * - 支持最多 [LIMIT] (200) 条记录，超限按时间淘汰最旧条目；
- * - 同一幂等键并发调用通过协程锁排队，后续调用直接返回带 `replayed = true` 的缓存回执，绝不重复外发。
  */
 class OutboundIdempotencyStore(
     private val maxEntries: Int = LIMIT,
@@ -503,9 +496,6 @@ class OutboundIdempotencyStore(
             return trimmed
         }
 
-        /**
-         * FNV-1a 8 位十六进制短摘要（与 `DesktopFeishuIdempotency.shortDigest` 算法完全一致）。
-         */
         fun shortDigest(text: String): String {
             var hash = 2_166_136_261u
             for (byte in text.toByteArray(StandardCharsets.UTF_8)) {
@@ -565,12 +555,12 @@ class OutboundIdempotencyStore(
 }
 
 /**
- * IM 审批按钮与回调门禁（落实跨端已知缺陷清单 #1 与已定决策 5）。
+ * IM 审批按钮与回调门禁（落实跨端已知缺陷清单 #1 与 C3 v2 审批语义）。
  *
  * 核心规则：
  * 1. 出站卡片：当涉及工具审批时，IM 卡片**只渲染「拒绝」按钮**，剥离任何「批准/允许」按钮；
  * 2. 入站回调：无论用户点击了什么按钮，或攻击者伪造了 `approve:<id>` / `{"allow":true}` 回调载荷，
- *    在 IM 通道入口处一律转化为 `allow = false`（只允许拒绝，严禁产生批准结果）。
+ *    在 IM 通道入口处一律转化为 `allow = false`（只允许拒绝，严禁产生批准结果），并标记 `coercedFromApproveAttempt = true`。
  */
 object ImApprovalGate {
     private val json = Json { ignoreUnknownKeys = true }
@@ -578,7 +568,6 @@ object ImApprovalGate {
     fun sanitizeOutboundButtons(card: OutboundCard): List<OutboundButton> {
         val approvalId = card.approvalToolCallId?.trim()
         if (!approvalId.isNullOrEmpty()) {
-            // 审批卡片：强制只保留一个「拒绝」按钮
             return listOf(
                 OutboundButton(
                     text = "❌ 拒绝此次操作",
@@ -587,7 +576,6 @@ object ImApprovalGate {
                 )
             )
         }
-        // 非显式标记 approvalToolCallId 的普通卡片，若按钮包含试图批准的动作也强制改写为拒绝
         return card.buttons.map { button ->
             val lower = button.actionData.lowercase()
             if (lower.startsWith("im_approval:approve:") || lower.startsWith("approve:")) {
@@ -603,11 +591,6 @@ object ImApprovalGate {
         }
     }
 
-    /**
-     * 解析按钮回调中的审批意图。
-     * 若回调是审批动作，无论原始请求是 `approve`、`allow=true` 还是 `deny`，
-     * 返回的 [ImApprovalDecision.allow] 恒为 `false`（拒绝）。
-     */
     fun resolveCallbackDecision(rawCallbackData: String?): ImApprovalDecision? {
         val data = rawCallbackData?.trim() ?: return null
         if (data.isEmpty()) return null
@@ -615,7 +598,8 @@ object ImApprovalGate {
         if (data.startsWith("im_approval:")) {
             val parts = data.split(":", limit = 3)
             val verb = parts.getOrNull(1)?.lowercase() ?: "deny"
-            val toolCallId = parts.getOrNull(2)?.ifBlank { "unknown" } ?: "unknown"
+            val rawTarget = parts.getOrNull(2)?.ifBlank { "unknown" } ?: "unknown"
+            val (sessionKey, toolCallId) = splitTarget(rawTarget)
             val attemptedApprove = verb == "approve" || verb == "allow"
             return ImApprovalDecision(
                 toolCallId = toolCallId,
@@ -627,12 +611,14 @@ object ImApprovalGate {
                 } else {
                     "已在 IM 通道拒绝该操作"
                 },
+                sessionKey = sessionKey,
             )
         }
 
         if (data.startsWith("approve:") || data.startsWith("deny:")) {
             val verb = data.substringBefore(":").lowercase()
-            val toolCallId = data.substringAfter(":").ifBlank { "unknown" }
+            val rawTarget = data.substringAfter(":").ifBlank { "unknown" }
+            val (sessionKey, toolCallId) = splitTarget(rawTarget)
             val attemptedApprove = verb == "approve"
             return ImApprovalDecision(
                 toolCallId = toolCallId,
@@ -644,6 +630,7 @@ object ImApprovalGate {
                 } else {
                     "已在 IM 通道拒绝该操作"
                 },
+                sessionKey = sessionKey,
             )
         }
 
@@ -652,6 +639,8 @@ object ImApprovalGate {
             val toolCallId = obj["toolCallId"]?.jsonPrimitive?.content
                 ?: obj["tool_call_id"]?.jsonPrimitive?.content
                 ?: return null
+            val sessionKey = obj["sessionKey"]?.jsonPrimitive?.content
+                ?: obj["session_key"]?.jsonPrimitive?.content
             val requestedAllow = obj["allow"]?.jsonPrimitive?.booleanOrNull == true ||
                 obj["action"]?.jsonPrimitive?.content?.equals("approve", ignoreCase = true) == true
             return ImApprovalDecision(
@@ -664,43 +653,46 @@ object ImApprovalGate {
                 } else {
                     "已在 IM 通道拒绝该操作"
                 },
+                sessionKey = sessionKey,
             )
         }
 
         return null
     }
+
+    private fun splitTarget(rawTarget: String): Pair<String?, String> {
+        return if (rawTarget.contains('|')) {
+            val sessionKey = rawTarget.substringBefore('|').takeIf { it.isNotBlank() }
+            val toolCallId = rawTarget.substringAfter('|').ifBlank { "unknown" }
+            sessionKey to toolCallId
+        } else {
+            null to rawTarget
+        }
+    }
 }
 
 /**
- * 密码学与签名工具（用于飞书 Webhook HMAC-SHA256 与事件回调 SHA-256 验签）。
+ * 密码学与签名工具：委托给 `:core:native` [AmberNativeBridge] 的 SHA-256 与 HMAC-SHA256 实现。
  */
 object ChannelCrypto {
-    /**
-     * 1:1 移植自 `DesktopPlugins.swift:2739` `computeFeishuWebhookSign(timestamp:secret:)`：
-     * 使用 `timestamp + "\n" + secret` 作为 HMAC-SHA256 密钥，对空字节数组计算签名并 Base64 编码。
-     */
     fun computeFeishuWebhookSign(timestamp: String, secret: String): String {
         val stringToSign = "$timestamp\n$secret"
-        val mac = Mac.getInstance("HmacSHA256")
-        val keySpec = SecretKeySpec(stringToSign.toByteArray(StandardCharsets.UTF_8), "HmacSHA256")
-        mac.init(keySpec)
-        val digest = mac.doFinal(ByteArray(0))
+        val digest = AmberNativeBridge.hmacSha256(
+            key = stringToSign.toByteArray(StandardCharsets.UTF_8),
+            message = ByteArray(0),
+        ) ?: error("HMAC-SHA256 unavailable on JVM")
         return Base64.getEncoder().encodeToString(digest)
     }
 
-    /**
-     * 飞书事件订阅（Event Callback v2）请求头 `X-Lark-Signature` 校验：
-     * `sha256(timestamp + nonce + encryptKey + rawBody)` 十六进制小写字符串恒定时间比对。
-     */
     fun computeFeishuEventSignature(
         timestamp: String,
         nonce: String,
         encryptKey: String,
         rawBody: String,
     ): String {
-        val digest = MessageDigest.getInstance("SHA-256")
         val payload = (timestamp + nonce + encryptKey + rawBody).toByteArray(StandardCharsets.UTF_8)
-        return digest.digest(payload).joinToString("") { "%02x".format(it) }
+        val digest = AmberNativeBridge.sha256(payload) ?: error("SHA-256 unavailable on JVM")
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     fun verifyFeishuEventSignature(

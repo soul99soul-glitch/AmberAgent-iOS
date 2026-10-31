@@ -13,7 +13,7 @@ kotlin {
         }
 
         commonMain.dependencies {
-            implementation(project(":cloud-channels"))
+            api(project(":cloud-channels"))
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)

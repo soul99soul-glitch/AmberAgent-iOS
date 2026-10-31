@@ -1,5 +1,11 @@
 package app.amber.cloud.channels
 
+import app.amber.cloud.channel.ButtonStyle
+import app.amber.cloud.channel.InboundMessage
+import app.amber.cloud.channel.OutboundButton
+import app.amber.cloud.channel.OutboundCard
+import app.amber.cloud.channel.OutboundMessage
+import app.amber.cloud.channel.SenderRole
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.test.runTest
@@ -212,14 +218,14 @@ class CloudChannelsTest {
         )
 
         // 1. 幂等发送测试：相同 idempotencyKey 连发两次，只触发 1 次 HTTP 请求
-        val firstReceipt = channel.send(
+        val firstReceipt = channel.sendWithReceipt(
             OutboundMessage(
                 chatId = "123456",
                 text = "思考中...",
                 idempotencyKey = "idem-tg-msg-001",
             )
         )
-        val secondReceipt = channel.send(
+        val secondReceipt = channel.sendWithReceipt(
             OutboundMessage(
                 chatId = "123456",
                 text = "思考中...",

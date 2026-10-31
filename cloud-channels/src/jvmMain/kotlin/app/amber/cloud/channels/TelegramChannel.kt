@@ -1,5 +1,16 @@
 package app.amber.cloud.channels
 
+import app.amber.cloud.channel.ChannelConnector
+import app.amber.cloud.channel.ChannelDecisionOutcome
+import app.amber.cloud.channel.ChannelIngress
+import app.amber.cloud.channel.ChannelKind
+import app.amber.cloud.channel.ConversationScope
+import app.amber.cloud.channel.InboundMessage
+import app.amber.cloud.channel.OutboundButton
+import app.amber.cloud.channel.OutboundCard
+import app.amber.cloud.channel.OutboundMessage
+import app.amber.cloud.channel.OutboundReceipt
+import app.amber.cloud.channel.SenderRole
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.header
@@ -31,13 +42,13 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
- * Telegram Bot API 通道实现（Long Polling + 文本 + 流式编辑 + Inline Keyboard 卡片）。
+ * Telegram Bot API 通道连接器实现（实现统一 SPI [ChannelConnector]）。
  *
  * 严格遵循安全边界：
- * 1. Bot Token 仅从 [ChannelSecretLoader]（加密配置或环境变量 `AMBER_TELEGRAM_BOT_TOKEN`）读取，且绝不进入日志；
+ * 1. Bot Token 仅从 [ChannelSecretLoader]（统一加密凭据库或环境变量 `AMBER_TELEGRAM_BOT_TOKEN`）读取，且绝不进入日志；
  * 2. 主人绑定基于不可变 64 位整数 `from.id`，支持 `/bind <一次性码>`，非主人消息直接拦截；
  * 3. 入站内容默认标记 `tainted = true` 并包裹 `<untrusted_input>` 沙箱；
- * 4. IM 内审批按钮只渲染「拒绝」，且任何审批回调均强制解析为 `allow = false`（拒绝）。
+ * 4. IM 内审批按钮只渲染「拒绝」，且任何伪造批准回调均被拦截并交由内核按 C3 v2 拒绝（403）。
  */
 class TelegramChannel(
     private val baseUrl: String = "https://api.telegram.org",
@@ -50,8 +61,9 @@ class TelegramChannel(
     private val pollIntervalMs: Long = 200L,
     private val pollTimeoutSeconds: Int = 5,
     private val streamEditMinIntervalMs: Long = 0L,
-) : Channel {
-    override val id: String = CHANNEL_ID
+) : ChannelConnector {
+    override val kind: ChannelKind = ChannelKind.TELEGRAM
+    val id: String = CHANNEL_ID
 
     companion object {
         const val CHANNEL_ID = "telegram"
@@ -65,22 +77,37 @@ class TelegramChannel(
     }
 
     private val botToken: SecretValue = secretLoader.requireSecret(CONFIG_KEY_BOT_TOKEN, ENV_BOT_TOKEN)
+    private var ingress: ChannelIngress? = null
+    private var inboundCallback: (suspend (InboundMessage) -> Unit)? = null
     private var nextUpdateOffset: Long = 0L
     private var pollingJob: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lastEditAtByMessage = mutableMapOf<String, Long>()
     private val rejectedMessages = mutableListOf<InboundGateVerdict.RejectedNonOwner>()
+    private val decisionOutcomes = mutableListOf<ChannelDecisionOutcome>()
 
     fun rejectedHistory(): List<InboundGateVerdict.RejectedNonOwner> =
         synchronized(rejectedMessages) { rejectedMessages.toList() }
 
-    override suspend fun start(onInbound: suspend (InboundMessage) -> Unit) {
+    fun decisionHistory(): List<ChannelDecisionOutcome> =
+        synchronized(decisionOutcomes) { decisionOutcomes.toList() }
+
+    override fun attachIngress(ingress: ChannelIngress) {
+        this.ingress = ingress
+    }
+
+    override suspend fun start() {
+        start(onInbound = {})
+    }
+
+    suspend fun start(onInbound: suspend (InboundMessage) -> Unit) {
+        this.inboundCallback = onInbound
         if (pollingJob?.isActive == true) return
-        logger.info("启动 Telegram Long Polling 通道 (endpoint=${ logger.redact(baseUrl) })")
+        logger.info("启动 Telegram Long Polling 通道 (endpoint=${logger.redact(baseUrl)})")
         pollingJob = scope.launch {
             while (isActive) {
                 try {
-                    pollOnce(onInbound)
+                    pollOnce(inboundCallback)
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
@@ -98,9 +125,9 @@ class TelegramChannel(
     }
 
     /**
-     * 执行单次 `getUpdates` 拉取并处理所有新增更新（便于确定性集成测试与受控轮询）。
+     * 执行单次 `getUpdates` 拉取并处理所有新增更新（支持连接到 [ChannelIngress] 内核或测试回调）。
      */
-    suspend fun pollOnce(onInbound: suspend (InboundMessage) -> Unit): Int {
+    suspend fun pollOnce(onInbound: (suspend (InboundMessage) -> Unit)? = null): Int {
         val requestBody = buildJsonObject {
             put("offset", nextUpdateOffset)
             put("timeout", pollTimeoutSeconds)
@@ -138,12 +165,33 @@ class TelegramChannel(
             when (val verdict = ownerBinding.evaluate(parsed)) {
                 is InboundGateVerdict.Allowed -> {
                     acceptedCount++
-                    onInbound(verdict.message)
+                    val verified = verdict.message
+                    onInbound?.invoke(verified)
+                    val attachedIngress = ingress
+                    if (attachedIngress != null) {
+                        val decision = verified.approvalDecision
+                        if (decision != null) {
+                            val outcome = attachedIngress.handleChannelDecision(
+                                channel = kind,
+                                senderId = verified.senderId,
+                                sessionKey = decision.sessionKey.orEmpty(),
+                                toolCallId = decision.toolCallId,
+                                allow = decision.coercedFromApproveAttempt,
+                            )
+                            synchronized(decisionOutcomes) {
+                                decisionOutcomes.add(outcome)
+                            }
+                        } else {
+                            val outbound = attachedIngress.handleInbound(verified)
+                            sendWithReceipt(outbound)
+                        }
+                    }
                 }
                 is InboundGateVerdict.BoundSuccess -> {
                     logger.info("Telegram 主人绑定成功: senderId=${verdict.ownerSenderId}")
-                    send(
+                    sendWithReceipt(
                         OutboundMessage(
+                            channel = kind,
                             chatId = parsed.chatId,
                             text = verdict.replyMessage,
                         )
@@ -161,9 +209,18 @@ class TelegramChannel(
         return acceptedCount
     }
 
-    override suspend fun send(message: OutboundMessage): OutboundReceipt {
+    override suspend fun send(message: OutboundMessage): Result<String> {
+        val receipt = sendWithReceipt(message)
+        return if (receipt.ok) {
+            Result.success(receipt.messageId)
+        } else {
+            Result.failure(IllegalStateException(receipt.note ?: "Telegram sendMessage failed"))
+        }
+    }
+
+    override suspend fun sendWithReceipt(message: OutboundMessage): OutboundReceipt {
         return idempotencyStore.executeIdempotent(message.idempotencyKey, id) {
-            val card = message.card
+            val card = message.effectiveCard()
             val displayText = if (card != null) {
                 buildString {
                     if (card.title.isNotBlank()) {
@@ -204,11 +261,11 @@ class TelegramChannel(
         }
     }
 
-    override suspend fun editStreamMessage(
+    suspend fun editStreamMessage(
         chatId: String,
         messageId: String,
         newText: String,
-        card: OutboundCard?,
+        card: OutboundCard? = null,
     ): OutboundReceipt {
         val key = "$chatId:$messageId"
         val now = System.currentTimeMillis()
@@ -286,7 +343,7 @@ class TelegramChannel(
             val chatObj = messageObj["chat"]?.jsonObject ?: return null
             val chatId = chatObj["id"]?.jsonPrimitive?.content ?: return null
             val rawChatType = chatObj["type"]?.jsonPrimitive?.content ?: "private"
-            val chatType = if (rawChatType == "private") ChatType.DIRECT else ChatType.GROUP
+            val scope = if (rawChatType == "private") ConversationScope.DIRECT else ConversationScope.GROUP
             val text = messageObj["text"]?.jsonPrimitive?.content
                 ?: messageObj["caption"]?.jsonPrimitive?.content
                 ?: ""
@@ -294,15 +351,16 @@ class TelegramChannel(
             val threadId = messageObj["message_thread_id"]?.jsonPrimitive?.intOrNull?.toString()
 
             return InboundMessage(
-                id = msgId,
-                channelId = id,
+                messageId = msgId,
+                channel = kind,
                 chatId = chatId,
-                chatType = chatType,
-                senderId = senderNumericId,
-                text = text,
-                tainted = true,
-                timestampEpochMs = dateSec * 1000L,
                 threadId = threadId,
+                senderId = senderNumericId,
+                senderRole = SenderRole.GUEST,
+                scope = scope,
+                text = text,
+                receivedAtEpochSeconds = dateSec,
+                tainted = true,
             )
         }
 
@@ -315,7 +373,7 @@ class TelegramChannel(
             val chatObj = msgObj?.get("chat")?.jsonObject
             val chatId = chatObj?.get("id")?.jsonPrimitive?.content ?: senderNumericId
             val rawChatType = chatObj?.get("type")?.jsonPrimitive?.content ?: "private"
-            val chatType = if (rawChatType == "private") ChatType.DIRECT else ChatType.GROUP
+            val scope = if (rawChatType == "private") ConversationScope.DIRECT else ConversationScope.GROUP
             val callbackData = callbackObj["data"]?.jsonPrimitive?.content ?: ""
 
             // 强制通过 ImApprovalGate 解析审批动作：任何批准请求在 IM 中一律转为 DENIED (allow = false)
@@ -333,14 +391,14 @@ class TelegramChannel(
             }
 
             return InboundMessage(
-                id = "cb_$callbackId",
-                channelId = id,
+                messageId = "cb_$callbackId",
+                channel = kind,
                 chatId = chatId,
-                chatType = chatType,
                 senderId = senderNumericId,
+                senderRole = SenderRole.GUEST,
+                scope = scope,
                 text = callbackData,
                 tainted = true,
-                timestampEpochMs = System.currentTimeMillis(),
                 callbackData = callbackData,
                 approvalDecision = approvalDecision,
             )

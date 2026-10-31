@@ -276,7 +276,7 @@ class EnvelopeCredentialVault(
             return "amberd-dev-local-default-master-key"
         }
 
-        internal fun setOwnerOnlyPermissions(file: File) {
+        fun setOwnerOnlyPermissions(file: File) {
             runCatching {
                 Files.setPosixFilePermissions(
                     file.toPath(),

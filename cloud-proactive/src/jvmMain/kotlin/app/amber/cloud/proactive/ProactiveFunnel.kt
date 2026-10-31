@@ -1,12 +1,13 @@
 package app.amber.cloud.proactive
 
-import app.amber.cloud.channels.ButtonStyle
+import app.amber.cloud.channel.ButtonStyle
+import app.amber.cloud.channel.OutboundButton
+import app.amber.cloud.channel.OutboundCard
 import app.amber.cloud.channels.FeishuCalendarClient
 import app.amber.cloud.channels.FeishuCalendarEvent
 import app.amber.cloud.channels.FeishuFreeSlot
 import app.amber.cloud.channels.ImApprovalGate
-import app.amber.cloud.channels.OutboundButton
-import app.amber.cloud.channels.OutboundCard
+import app.amber.core.native.AmberNativeBridge
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
@@ -128,12 +129,12 @@ class L1DeterministicFilter(
         }
 
         /**
-         * 计算文本的 SHA-256 十六进制摘要。
+         * 计算文本的 SHA-256 十六进制摘要（委托 `:core:native` [AmberNativeBridge]）。
          */
         fun sha256Hex(text: String): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            return digest.digest(text.toByteArray(StandardCharsets.UTF_8))
-                .joinToString("") { "%02x".format(it) }
+            val digest = AmberNativeBridge.sha256(text.toByteArray(StandardCharsets.UTF_8))
+                ?: error("SHA-256 unavailable on JVM")
+            return digest.joinToString("") { "%02x".format(it) }
         }
 
         /**
