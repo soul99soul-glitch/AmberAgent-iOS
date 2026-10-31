@@ -78,3 +78,5 @@ include(":ai-provider-claude")
 include(":shared")
 
 include(":desktop-shared")
+include(":cloud-channels")
+
