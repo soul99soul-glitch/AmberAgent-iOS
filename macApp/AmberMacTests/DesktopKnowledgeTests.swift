@@ -223,4 +223,82 @@ import XCTest
         let restoredIDs = try again.mergeRestoredMemories([removed], conversationIDs: [:])
         XCTAssertGreaterThan(try XCTUnwrap(restoredIDs.first), next.id)
     }
+
+    func testBuiltInPluginDevelopmentSkillListsLoadsAndToggles() throws {
+        let directory = temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DesktopKnowledgeStore(directory: directory)
+
+        let listOutput = try store.executeTool(name: "skills_list", argumentsJSON: "{}")
+        let listJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(listOutput.utf8)) as? [String: Any])
+        let listedSkills = try XCTUnwrap(listJSON["skills"] as? [[String: Any]])
+        let pluginSkill = try XCTUnwrap(listedSkills.first { ($0["name"] as? String) == "plugin-development" })
+        XCTAssertEqual(pluginSkill["enabled"] as? Bool, true)
+
+        let useOutput = try store.executeTool(name: "use_skill", argumentsJSON: #"{"name":"plugin-development"}"#)
+        XCTAssertTrue(useOutput.contains("严禁静默安装或直接启用插件"))
+        XCTAssertTrue(useOutput.contains("设置 (`⌘,`) → 插件 → + 导入插件"))
+        XCTAssertTrue(useOutput.contains("feishu_calendar"))
+        XCTAssertTrue(useOutput.contains("apple_schedule"))
+        XCTAssertTrue(useOutput.contains("watchtower"))
+
+        // Disable and verify persistence across restart:
+        _ = try store.executeTool(name: "skill_disable", argumentsJSON: #"{"name":"plugin-development"}"#)
+        XCTAssertThrowsError(try store.executeTool(name: "use_skill", argumentsJSON: #"{"name":"plugin-development"}"#))
+        let restarted = DesktopKnowledgeStore(directory: directory)
+        XCTAssertThrowsError(try restarted.executeTool(name: "use_skill", argumentsJSON: #"{"name":"plugin-development"}"#))
+
+        // Re-enable:
+        _ = try restarted.executeTool(name: "skill_enable", argumentsJSON: #"{"name":"plugin-development"}"#)
+        XCTAssertTrue(try restarted.executeTool(name: "use_skill", argumentsJSON: #"{"name":"plugin-development"}"#).contains("amber.http.fetch"))
+    }
+
+    func testBuiltInPluginDevelopmentSkillAPINamesMatchInjectedSandboxAPIsAndSampleImports() async throws {
+        let markdown = DesktopKnowledgeStore.builtInPluginDevelopmentSkillMarkdown
+        let regex = try NSRegularExpression(pattern: #"amber\.(?!plugin\.)[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+"#)
+        let nsRange = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
+        var mentionedAPIs = Set<String>()
+        for match in regex.matches(in: markdown, range: nsRange) {
+            if let range = Range(match.range, in: markdown) {
+                mentionedAPIs.insert(String(markdown[range]))
+            }
+        }
+        XCTAssertEqual(
+            mentionedAPIs,
+            DesktopPluginStore.injectedSandboxAPIs,
+            "Skill 文档中提到的 amber.* API 必须与 DesktopPluginStore 实际注入的沙箱 API 完全一致"
+        )
+
+        // Extract the minimal sample plugin from the skill markdown and verify it passes importPlugin & runs:
+        let jsonBlockRegex = try NSRegularExpression(pattern: #"```json\n(\{[\s\S]*?\})\n```"#)
+        let jsBlockRegex = try NSRegularExpression(pattern: #"```javascript\n([\s\S]*?)\n```"#)
+        let jsonMatch = try XCTUnwrap(jsonBlockRegex.firstMatch(in: markdown, range: nsRange))
+        let jsMatch = try XCTUnwrap(jsBlockRegex.firstMatch(in: markdown, range: nsRange))
+        let manifestText = String(markdown[try XCTUnwrap(Range(jsonMatch.range(at: 1), in: markdown))])
+        let scriptText = String(markdown[try XCTUnwrap(Range(jsMatch.range(at: 1), in: markdown))])
+
+        let root = temporary()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sampleDir = root.appendingPathComponent("note_helper", isDirectory: true)
+        try FileManager.default.createDirectory(at: sampleDir, withIntermediateDirectories: true)
+        try Data(manifestText.utf8).write(to: sampleDir.appendingPathComponent("plugin.json"))
+        try Data(scriptText.utf8).write(to: sampleDir.appendingPathComponent("main.js"))
+
+        let suiteName = "amber.skill.sample.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let pluginStore = DesktopPluginStore(
+            directory: root.appendingPathComponent("installed", isDirectory: true),
+            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+            defaults: defaults,
+            credentials: DesktopMemoryCredentials()
+        )
+        let importedID = try pluginStore.importPlugin(from: sampleDir)
+        XCTAssertEqual(importedID, "note_helper")
+        let output = try await pluginStore.executeTool(
+            qualifiedName: "plugin__note_helper__format_note",
+            argumentsJSON: #"{"text":"技能内最小完整示例验证通过"}"#
+        )
+        XCTAssertTrue(output.contains("【项目纪要】技能内最小完整示例验证通过"))
+    }
 }

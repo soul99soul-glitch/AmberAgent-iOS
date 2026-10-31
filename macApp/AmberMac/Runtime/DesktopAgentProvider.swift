@@ -582,7 +582,7 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                 }
                 output = try await knowledge.executeTool(name: tool.toolName, argumentsJSON: Self.json(ownedArguments))
                 if tool.toolName == "use_skill", let name = args["name"] as? String {
-                    let allowed = await MainActor.run { knowledge.skills.first(where: { $0.name == name && $0.enabled })?.allowedTools ?? [] }
+                    let allowed = await MainActor.run { knowledge.allSkills.first(where: { $0.name == name && $0.enabled })?.allowedTools ?? [] }
                     scopeLock.withLock { skillScope.apply(allowed) }
                 }
             case "mcp_list", "mcp_describe_tool", "mcp_call_tool":

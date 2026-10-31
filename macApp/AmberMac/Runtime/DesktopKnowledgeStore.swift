@@ -5,7 +5,16 @@ import Observation
 @MainActor @Observable
 final class DesktopKnowledgeStore {
     private(set) var skills: [DesktopSkill] = []
+    private(set) var builtInSkills: [DesktopSkill] = []
     private(set) var memories: [DesktopMemoryRecord] = []
+
+    var allSkills: [DesktopSkill] {
+        (builtInSkills + skills).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func isBuiltInSkill(_ name: String) -> Bool {
+        builtInSkills.contains { $0.name == name }
+    }
     private(set) var soulMarkdown = ""
     private(set) var soulSource: String?
     private(set) var loadError: String?
@@ -45,6 +54,18 @@ final class DesktopKnowledgeStore {
             let soulURL = directory.appendingPathComponent("SOUL.md")
             let soul = fm.fileExists(atPath: soulURL.path) ? try String(contentsOf: soulURL, encoding: .utf8) : ""
             let provenance = try? JSONDecoder().decode(SoulSource.self, from: Data(contentsOf: directory.appendingPathComponent("SOUL.source.json")))
+            let builtInParsed = try Self.parseSkill(Self.builtInPluginDevelopmentSkillMarkdown)
+            let builtInDisabledMarker = skillsURL.appendingPathComponent(".disabled-builtin-\(builtInParsed.name)")
+            let builtInEnabled = !fm.fileExists(atPath: builtInDisabledMarker.path)
+            builtInSkills = [
+                DesktopSkill(
+                    name: builtInParsed.name,
+                    description: builtInParsed.description,
+                    allowedTools: builtInParsed.tools,
+                    markdown: Self.builtInPluginDevelopmentSkillMarkdown,
+                    enabled: builtInEnabled
+                )
+            ]
             skills = loadedSkills
             memories = loadedMemories
             highestAllocatedMemoryID = max(savedHighWater, loadedMemories.map(\.id).max() ?? 999)
@@ -63,7 +84,7 @@ final class DesktopKnowledgeStore {
         try ready()
         let markdown = try readUTF8(url, maximumBytes: 1_024 * 1_024)
         let parsed = try Self.parseSkill(markdown)
-        guard !skills.contains(where: { $0.name == parsed.name }) else { throw failure("技能 \(parsed.name) 已存在，请在编辑中更新。") }
+        guard !allSkills.contains(where: { $0.name == parsed.name }) else { throw failure("技能 \(parsed.name) 已存在，请在编辑中更新。") }
         let target = try skillDirectory(parsed.name)
         guard !FileManager.default.fileExists(atPath: target.path) else { throw failure("技能目录已存在，请先检查其中的文件：\(parsed.name)。") }
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
@@ -85,6 +106,27 @@ final class DesktopKnowledgeStore {
 
     func setSkillEnabled(_ name: String, enabled: Bool) throws {
         try ready()
+        if let bIndex = builtInSkills.firstIndex(where: { $0.name == name }) {
+            let skillsURL = directory.appendingPathComponent("skills", isDirectory: true)
+            try FileManager.default.createDirectory(at: skillsURL, withIntermediateDirectories: true)
+            let disabledMarker = skillsURL.appendingPathComponent(".disabled-builtin-\(name)")
+            if enabled {
+                if FileManager.default.fileExists(atPath: disabledMarker.path) {
+                    try FileManager.default.removeItem(at: disabledMarker)
+                }
+            } else {
+                try Data().write(to: disabledMarker, options: .atomic)
+            }
+            let previous = builtInSkills[bIndex]
+            builtInSkills[bIndex] = DesktopSkill(
+                name: name,
+                description: previous.description,
+                allowedTools: previous.allowedTools,
+                markdown: previous.markdown,
+                enabled: enabled
+            )
+            return
+        }
         guard let index = skills.firstIndex(where: { $0.name == name }) else { throw failure("技能不存在。") }
         let marker = try skillDirectory(name).appendingPathComponent(".enabled")
         if enabled { try Data().write(to: marker, options: .atomic) }

@@ -110,10 +110,20 @@ struct DesktopKnowledgeView: View {
                 Spacer()
                 Button("导入 SKILL.md…") { chooseMarkdown { url in perform { _ = try store.importSkill(from: url) } } }
             }
-            List(store.skills) { skill in
+            List(store.allSkills) { skill in
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(skill.name).font(.system(size: 13, weight: .semibold))
+                        HStack(spacing: 6) {
+                            Text(skill.name).font(.system(size: 13, weight: .semibold))
+                            if store.isBuiltInSkill(skill.name) {
+                                Text("内置")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(DesktopTheme.accentInk)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(DesktopTheme.honeySoft, in: Capsule())
+                            }
+                        }
                         Text(skill.description).font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                         if !skill.allowedTools.isEmpty {
                             Text("声明工具：" + skill.allowedTools.joined(separator: "、")).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
@@ -122,9 +132,11 @@ struct DesktopKnowledgeView: View {
                     Spacer(minLength: 12)
                     Toggle("启用", isOn: Binding(get: { skill.enabled }, set: { enabled in perform { try store.setSkillEnabled(skill.name, enabled: enabled) } }))
                         .labelsHidden().help("启用 \(skill.name)")
-                    Button("编辑") { editingSkill = skill }
-                    Button { deletingSkill = skill.name } label: { Image(systemName: "trash") }
-                        .buttonStyle(.borderless).accessibilityLabel("移除技能 \(skill.name)")
+                    if !store.isBuiltInSkill(skill.name) {
+                        Button("编辑") { editingSkill = skill }
+                        Button { deletingSkill = skill.name } label: { Image(systemName: "trash") }
+                            .buttonStyle(.borderless).accessibilityLabel("移除技能 \(skill.name)")
+                    }
                 }
                 .padding(.vertical, 8)
             }
@@ -134,7 +146,7 @@ struct DesktopKnowledgeView: View {
             .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.border(colorScheme)))
             .overlay {
-                if store.skills.isEmpty {
+                if store.allSkills.isEmpty {
                     ContentUnavailableView("还没有技能", systemImage: "sparkles.rectangle.stack", description: Text("导入带有 name 和 description 的 SKILL.md，再选择是否启用。"))
                 }
             }
