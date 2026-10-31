@@ -3,7 +3,9 @@ import Foundation
 
 @MainActor
 final class ChatToolRuntime {
-    private let settingsStore: SettingsStore
+    /// SSH profile 工具与 provider/theme 服务共用同一个 store（同一实例也是设置页
+    /// 的真源，工具写入设置页立即可见）。
+    let settingsStore: SettingsStore
     let sharedSettings: IOSSharedSettingsStore
     let localToolExecutor: IOSLocalToolExecutor?
     let searchTransport: any IOSSearchHTTPTransport
@@ -513,6 +515,10 @@ final class ChatToolRuntime {
 
     /// 自动批准生效时，非低风险调用经 Jev 判定高风险则改为人工审批（前台与后台共用）。
     func hasAutoApprovalPolicy(for toolCall: UIMessagePart.Tool) -> Bool {
+        // SSH profile 写：高风险自动批准是最终裁定，不交给 Jev 复核。
+        // （普通自动批准不放行这一层已在审批分支里拦下。）
+        let isCredentialWrite = IOSSecretArgumentRedaction.carriesCredential(toolCall.toolName)
+        if isCredentialWrite { return effectiveHighRiskAutoApproveEnabled }
         // Terminal job tools can resolve to a different capability from their
         // static declaration. Use the same resolver as the local executor.
         let capabilityId = localToolExecutor?.terminalApprovalCapabilityId(
@@ -538,6 +544,9 @@ final class ChatToolRuntime {
         conversationId: KotlinUuid?,
         toolExposureBridge: IosToolExposureBridge?
     ) async -> Bool {
+        // SSH profile 写：高风险自动批准 = 直接放行（不送 Jev）；未开启 = 直接弹卡
+        // （也不送 Jev，避免白白花一次外部复核）。只看开关，不看该能力自身的 policy。
+        if IOSSecretArgumentRedaction.carriesCredential(toolCall.toolName) { return false }
         guard hasAutoApprovalPolicy(for: toolCall),
               sharedSettings.jevSettings.effectiveMode(for: .autoApprovalGate) != .off else { return false }
         let name = toolCall.toolName
@@ -547,17 +556,26 @@ final class ChatToolRuntime {
               !Self.execNestedToolExclusions.contains(name),
               !isIshAutoApproved(toolName: name, input: toolCall.input, runId: runId, conversationId: conversationId)
         else { return false }
+        // 送审的参数必须脱敏：API key / 密码 / 私钥不得发给外部判定模型。
+        let redactedInput: String
+        if IOSSecretArgumentRedaction.carriesCredential(name) {
+            redactedInput = IOSSecretArgumentRedaction.redactedArgumentsJSON(toolCall.input)
+        } else if IOSProviderConfigToolCatalog.toolNames.contains(name) {
+            redactedInput = IOSProviderConfigToolCatalog.redactedArgumentsJSON(toolCall.input)
+        } else {
+            redactedInput = toolCall.input
+        }
         let facts = IOSJevApprovalTriageService.StaticFacts.registeredTool(
             metadataJSON: toolExposureBridge?.approvalTriageFactsJsonForInvocation(
                 toolName: name,
-                argumentsJson: toolCall.input
+                argumentsJson: redactedInput
             )
         )
         guard !IOSJevAutoApprovalGate.isStaticallyLowRisk(facts) else { return false }
         return await autoApprovalGate.shouldEscalate(
             requestId: ChatToolCallParsing.requestId(for: toolCall),
             toolName: name,
-            argumentsJSON: toolCall.input,
+            argumentsJSON: redactedInput,
             recentUserTexts: recentUserTexts,
             runKey: runId
         )
@@ -820,6 +838,8 @@ final class ChatToolRuntime {
         .union(IOSMcpManagementToolCatalog.toolNames)
         .union(IOSProviderConfigToolCatalog.toolNames)
         .union(IOSThemePackToolCatalog.toolNames)
+        // SSH profile CRUD（读写同一 SettingsStore：见 IOSSSHProfileTools）。
+        .union(IOSSSHProfileToolCatalog.toolNames)
         // Wave B2: recipe_import（与 skill_import 同级，deferred 池）。
         .union(IOSRecipeToolCatalog.toolNames)
         // P3-a: exec 仅开关开时存在执行路径；关时零痕迹——模型调用 exec 走
@@ -990,10 +1010,13 @@ final class ChatToolRuntime {
 
                 didFinishToolCall = true
                 didChangeMessage = true
-                // Provider apply 入参可能含 api_key：落盘与后续轮次重传必须脱敏。
+                // Provider apply 入参可能含 api_key；SSH profile 工具可能含密码/私钥。
+                // 落盘与后续轮次重传必须脱敏。
                 let persistedInput: String
                 if IOSProviderConfigToolCatalog.toolNames.contains(toolPart.toolName) {
                     persistedInput = IOSProviderConfigToolCatalog.redactedArgumentsJSON(toolPart.input)
+                } else if IOSSSHProfileToolCatalog.contains(toolPart.toolName) {
+                    persistedInput = IOSSSHProfileToolCatalog.redactedArgumentsJSON(toolPart.input)
                 } else {
                     persistedInput = toolPart.input
                 }
@@ -1063,6 +1086,10 @@ final class ChatToolRuntime {
             // Provider 配置：无独立 capability 开关；写路径靠审批 + 前台限制。
             true
         case let name where IOSThemePackToolCatalog.toolNames.contains(name):
+            true
+        case let name where IOSSSHProfileToolCatalog.toolNames.contains(name):
+            // SSH profile 工具：无独立 capability 开关；写路径靠高风险审批 +
+            // 前台限制（后台只放 ssh_profile_list）。
             true
         case "exec":
             // P3-a: 与声明侧同源 gate。开关关时（理论上调用到不了这里，因为

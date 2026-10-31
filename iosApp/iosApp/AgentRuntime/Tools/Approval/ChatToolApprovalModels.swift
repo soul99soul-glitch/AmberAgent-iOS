@@ -232,6 +232,8 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
             "导入 MCP"
         } else if toolName == "theme_pack_import" {
             "试穿主题"
+        } else if IOSSSHProfileToolCatalog.mutatingToolNames.contains(toolName) {
+            toolName == IOSSSHProfileToolCatalog.deleteToolName ? "删除 SSH Profile" : "确认 SSH Profile 变更"
         } else if toolName.hasPrefix("skill_") || toolName == "mcp_test" {
             "确认扩展操作"
         } else {
@@ -247,6 +249,19 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
                 || toolName.hasSuffix("_cancel")
                 || toolName.hasSuffix("_remove")
         )
+    }
+
+    /// SSH profile writes use the local server chip like provider/theme tools,
+    /// but a delete is destructive chrome (red, trash glyph).
+    var isDestructiveLocalMutation: Bool {
+        !isAppleCapability && toolName == IOSSSHProfileToolCatalog.deleteToolName
+    }
+
+    /// 高风险本地写：不能在锁屏 Live Activity / 灵动岛 / 手表上批准。
+    /// 与 `IOSSSHProfileToolCatalog.highRiskToolNames` 及破坏性 Apple 动作同源，
+    /// 但用纯字符串集合表达，避免审批模型反向依赖工具目录类型。
+    var isHighRiskLocalMutation: Bool {
+        !isAppleCapability && IOSSecretArgumentRedaction.carriesCredential(toolName)
     }
 
     var displayToolName: String {
@@ -293,7 +308,11 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
             "workouts_scheduled_list": "查看已安排训练",
             "workout_scheduled_remove": "移除健身计划",
             "health_summary_read": "读取健康摘要",
-            "weather_read": "读取天气"
+            "weather_read": "读取天气",
+            "ssh_profile_list": "查看 SSH Profile",
+            "ssh_profile_create": "新建 SSH Profile",
+            "ssh_profile_update": "修改 SSH Profile",
+            "ssh_profile_delete": "删除 SSH Profile"
         ]
         return names[toolName] ?? toolName
     }
@@ -309,6 +328,9 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
         if IOSAppleAgentToolCatalog.workoutToolNames.contains(toolName) { return "figure.run" }
         if toolName.hasPrefix("health_") { return "heart.text.clipboard" }
         if toolName.hasPrefix("weather_") { return "cloud.sun" }
+        if IOSSSHProfileToolCatalog.contains(toolName) {
+            return toolName == IOSSSHProfileToolCatalog.deleteToolName ? "trash" : "server.rack"
+        }
         return themePackPreview == nil ? "point.3.connected.trianglepath.dotted" : "swatchpalette"
     }
 }

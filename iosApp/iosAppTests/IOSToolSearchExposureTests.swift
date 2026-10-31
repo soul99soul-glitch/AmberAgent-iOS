@@ -122,7 +122,10 @@ final class IOSToolSearchExposureTests: XCTestCase {
         let bridge = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
         XCTAssertTrue(terminalNames.isSubset(of: Set(bridge.fullToolDeclarations().map(\.name))))
 
-        let executePayload = bridge.executeToolSearch(argumentsJson: #"{"query":"Remote SSH command","limit":3}"#)
+        // SSH profile 工具加入目录后，"Remote SSH command" 的前 3 名会被同样命中
+        // SSH 关键字的 ssh_profile_* 占据；这里放宽名额，仍验证同一件事：
+        // terminal_execute 能被 tool_search 命中并进入下轮可见集。
+        let executePayload = bridge.executeToolSearch(argumentsJson: #"{"query":"Remote SSH command","limit":10}"#)
         XCTAssertTrue(executePayload.contains("terminal_execute"))
         XCTAssertTrue(Set(bridge.visibleTools().map(\.name)).contains("terminal_execute"))
 

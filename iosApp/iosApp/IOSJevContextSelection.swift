@@ -87,6 +87,8 @@ final class IOSJevContextSelectionService {
         "scrape_web", "wm_extract", "wm_observe",
         "session_read", "session_search",
         "workspace_file_search", "file_search", "workspace_file_list", "file_list",
+        // SSH profile 列表：本地只读快照，无副作用、不携带凭据，同参重读安全。
+        "ssh_profile_list",
     ]
 
     /// 用户明确要求全文的标记（出现即整轮不筛；中英文覆盖）。

@@ -356,6 +356,15 @@ struct ChatToolStepModel: Identifiable {
             detailInput = tool.input.isEmpty
                 ? nil
                 : IOSProviderConfigToolCatalog.redactedApprovalPreview(argumentsJSON: tool.input)
+        } else if IOSSSHProfileToolCatalog.contains(tool.toolName) {
+            // Never surface a password or private key on the tool capsule.
+            detailInput = tool.input.isEmpty
+                ? nil
+                : ChatToolCallParsing.truncatedMcpArguments(
+                    ChatToolCallParsing.jsonObject(
+                        IOSSSHProfileToolCatalog.redactedArgumentsJSON(tool.input)
+                    ) ?? [:]
+                )
         } else {
             detailInput = tool.input.isEmpty ? nil : tool.input
         }
@@ -475,8 +484,7 @@ struct ChatToolStepModel: Identifiable {
             "reminder_complete": Self.localized("完成提醒事项"),
             "notification_schedule": Self.localized("安排本地通知"),
             "notification_cancel": Self.localized("取消本地通知"),
-            "workout_plan_preview": Self.localized("预览健身计划"),
-            "workout_schedule": Self.localized("安排健身计划"),
+            "workout_plan_preview": Self.localized("预览健身计划"),            "workout_schedule": Self.localized("安排健身计划"),
             "workouts_scheduled_list": Self.localized("查看已安排训练"),
             "workout_scheduled_remove": Self.localized("移除健身计划"),
             "provider_config_status": Self.localized("查看模型配置"),
@@ -485,6 +493,10 @@ struct ChatToolStepModel: Identifiable {
             "settings_set_model_slot": Self.localized("设置默认模型"),
             "theme_pack_status": Self.localized("查看主题"),
             "theme_pack_import": Self.localized("试穿主题"),
+            IOSSSHProfileToolCatalog.listToolName: Self.localized("查看 SSH Profile"),
+            IOSSSHProfileToolCatalog.createToolName: Self.localized("新建 SSH Profile"),
+            IOSSSHProfileToolCatalog.updateToolName: Self.localized("修改 SSH Profile"),
+            IOSSSHProfileToolCatalog.deleteToolName: Self.localized("删除 SSH Profile"),
         ]
         if let mapped = known[name] { return mapped }
         // 动态工具名同样受列宽预算约束，完整名在详情 sheet。

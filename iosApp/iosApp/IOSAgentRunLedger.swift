@@ -874,6 +874,7 @@ enum IOSToolEffectClassMapping {
             .pure
         case .workspace, .ish, .webMount, .image, .advanced:
             // advanced covers mcp_call / subagent_dispatch / model_council_run.
+            // SSH profile 写同样落在 advanced，下面 forToolName 按名字细分。
             .sideEffect
         }
     }
@@ -923,6 +924,14 @@ enum IOSToolEffectClassMapping {
         }
         if toolName == "theme_pack_status" {
             return .pure
+        }
+        // SSH profile：list 是本地只读快照；三个写工具改本机配置 + 钥匙串凭证，
+        // 重放会在不同目标上再写一次，按 sideEffect 处理。
+        if toolName == "ssh_profile_list" {
+            return .pure
+        }
+        if IOSSecretArgumentRedaction.carriesCredential(toolName) {
+            return .sideEffect
         }
         if IOSProviderConfigToolCatalog.mutatingToolNames.contains(toolName) {
             return .sideEffect

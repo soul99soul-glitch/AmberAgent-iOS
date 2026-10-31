@@ -799,10 +799,9 @@ final class ChatRunKernelAdapter {
             executionPolicy: request.executionPolicy,
             recentUserTexts: working.filter { $0.role == MessageRole.user }.suffix(3).map { $0.toText() }
         )
-        let effectClass = IOSToolEffectClassMapping.forChatKind(
-            pendingToolCall.kind,
-            input: arguments
-        )
+        // forChatKind 只按粗粒度 kind 分类；工具名可再细分（如 ssh_profile_list
+        // 走 advanced 但是只读），因此这里以 forToolName 为准。
+        let effectClass = IOSToolEffectClassMapping.forToolName(name, input: arguments)
         guard await ledger.recordToolCallStarted(
             runId: request.runId,
             toolCallId: toolCall.toolCallId,

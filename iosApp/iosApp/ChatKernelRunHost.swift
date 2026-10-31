@@ -1023,7 +1023,7 @@ final class ChatKernelRunHost {
         guard currentRunId == runId,
               let prompt = approvalSession.prompt,
               ChatRunApprovalSession.requestId(of: prompt) == requestId,
-              ChatRunApprovalSession.category(of: prompt) != .askUser else {
+              ChatRunApprovalSession.remoteApprovalAllowsResolve(prompt, allow: allow) else {
             return false
         }
         return resolvePendingApproval(

@@ -19,6 +19,8 @@ extension ChatToolRuntime {
         "theme_pack_import",
     ]).union(IOSRemoteTerminalToolCatalog.jobToolNames)
         .union(IOSPhoneControlToolCatalog.toolNames)
+        // SSH profile 写：嵌套求值里批准卡无法呈现，且凭证会进脚本上下文。
+        .union(IOSSecretArgumentRedaction.credentialToolNames)
 
     /// P3-b: whitelist for one evaluation's `tools` object = the current
     /// round's visible tool set minus the exec exclusions. Same source for

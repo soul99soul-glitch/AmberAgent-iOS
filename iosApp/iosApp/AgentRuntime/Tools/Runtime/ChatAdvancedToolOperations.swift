@@ -340,6 +340,12 @@ extension ChatToolRuntime {
                 toolName: name,
                 argumentsJSON: toolCall.input
             )
+        case let name where IOSSSHProfileToolCatalog.toolNames.contains(name):
+            return IOSSSHProfileToolExecutor.execute(
+                toolName: name,
+                argumentsJSON: toolCall.input,
+                settingsStore: settingsStore
+            )
         case "exec":
             // P3-b: exec 求值可带嵌套 tools 桥（白名单 + 宿主 runner 由
             // executeAdvancedToolCall 传入；nil = 纯求值，同 P3-a）。
