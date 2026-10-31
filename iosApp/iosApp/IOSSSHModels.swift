@@ -5,13 +5,44 @@ enum IOSSSHAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
     case password
     case privateKey
 
+    static let key: IOSSSHAuthMethod = .privateKey
+
     var id: String { rawValue }
+
+    /// Canonical wire value for agent tools (`"password"` or `"key"`).
+    var wireName: String {
+        switch self {
+        case .password: "password"
+        case .privateKey: "key"
+        }
+    }
 
     var displayName: String {
         switch self {
         case .password: "密码"
-        case .privateKey: "私钥"
+        case .privateKey: "密钥"
         }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case "password":
+            self = .password
+        case "privateKey", "private_key", "key":
+            self = .privateKey
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown IOSSSHAuthMethod: \(raw)"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 
@@ -22,9 +53,12 @@ struct IOSSSHProfile: Codable, Identifiable, Equatable, Sendable {
     var port: Int
     var username: String
     var authMethod: IOSSSHAuthMethod
+    var keyId: String?
+    var jumpProfileId: String?
     var knownHostSHA256: String?
     var knownHostHost: String?
     var knownHostPort: Int?
+    var knownHostViaJump: String?
 
     init(
         id: String = UUID().uuidString,
@@ -33,9 +67,12 @@ struct IOSSSHProfile: Codable, Identifiable, Equatable, Sendable {
         port: Int = 22,
         username: String = "",
         authMethod: IOSSSHAuthMethod = .password,
+        keyId: String? = nil,
+        jumpProfileId: String? = nil,
         knownHostSHA256: String? = nil,
         knownHostHost: String? = nil,
-        knownHostPort: Int? = nil
+        knownHostPort: Int? = nil,
+        knownHostViaJump: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -43,9 +80,12 @@ struct IOSSSHProfile: Codable, Identifiable, Equatable, Sendable {
         self.port = port
         self.username = username
         self.authMethod = authMethod
+        self.keyId = keyId
+        self.jumpProfileId = jumpProfileId
         self.knownHostSHA256 = knownHostSHA256
         self.knownHostHost = knownHostHost
         self.knownHostPort = knownHostPort
+        self.knownHostViaJump = knownHostViaJump
     }
 
     var displayName: String {
@@ -63,19 +103,28 @@ struct IOSSSHProfile: Codable, Identifiable, Equatable, Sendable {
         copy.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.keyId = keyId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+        copy.jumpProfileId = jumpProfileId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         copy.knownHostSHA256 = knownHostSHA256?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         copy.knownHostHost = knownHostHost?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+        copy.knownHostViaJump = knownHostViaJump?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+
+        if copy.authMethod == .password {
+            copy.keyId = nil
+        }
 
         guard !copy.host.isEmpty else { throw IOSSSHError.invalidProfile("Host is required.") }
         guard !copy.username.isEmpty else { throw IOSSSHError.invalidProfile("Username is required.") }
         guard (1...65535).contains(copy.port) else { throw IOSSSHError.invalidProfile("Port must be between 1 and 65535.") }
-        let hasBoundKnownHostEndpoint = copy.knownHostHost != nil || copy.knownHostPort != nil
+        let hasBoundKnownHostEndpoint = copy.knownHostHost != nil || copy.knownHostPort != nil || copy.jumpProfileId != nil
+        let viaJumpMismatch = copy.knownHostViaJump != copy.jumpProfileId
         if copy.knownHostSHA256 != nil,
             hasBoundKnownHostEndpoint,
-            (copy.knownHostHost != copy.host || copy.knownHostPort != copy.port) {
+            (copy.knownHostHost != copy.host || copy.knownHostPort != copy.port || viaJumpMismatch) {
             copy.knownHostSHA256 = nil
             copy.knownHostHost = nil
             copy.knownHostPort = nil
+            copy.knownHostViaJump = nil
         }
         return copy
     }
@@ -90,6 +139,70 @@ enum IOSSSHTrustState: Equatable, Sendable {
 struct IOSSSHConnectionProbeResult: Equatable, Sendable {
     let fingerprint: String
     let trustState: IOSSSHTrustState
+}
+
+struct IOSSSHHopProbeResult: Equatable, Sendable {
+    let hopIndex: Int
+    let hopCount: Int
+    let profileId: String
+    let host: String
+    let port: Int
+    let fingerprint: String
+    let trustState: IOSSSHTrustState
+}
+
+struct IOSSSHHopFailure: Error, Equatable, Sendable {
+    let status: String
+    let hopIndex: Int
+    let hopCount: Int
+    let profileId: String
+    let display: String
+    let expectedFingerprint: String?
+    let presentedFingerprint: String?
+    let message: String
+
+    init(
+        status: String,
+        hopIndex: Int,
+        hopCount: Int,
+        profileId: String,
+        display: String = "",
+        expectedFingerprint: String? = nil,
+        presentedFingerprint: String? = nil,
+        message: String
+    ) {
+        self.status = status
+        self.hopIndex = hopIndex
+        self.hopCount = hopCount
+        self.profileId = profileId
+        self.display = display
+        self.expectedFingerprint = expectedFingerprint
+        self.presentedFingerprint = presentedFingerprint
+        self.message = message
+    }
+
+    func toToolFields() -> [String: Any] {
+        var fields: [String: Any] = [
+            "status": status,
+            "error_code": status,
+            "hop_index": hopIndex,
+            "hop_count": hopCount,
+            "profile_id": profileId,
+            "reason": message,
+            "message": message,
+            "error": message,
+        ]
+        if !display.isEmpty {
+            fields["display"] = display
+        }
+        if let expectedFingerprint {
+            fields["expected_fingerprint"] = expectedFingerprint
+        }
+        if let presentedFingerprint {
+            fields["presented_fingerprint"] = presentedFingerprint
+        }
+        return fields
+    }
 }
 
 struct IOSSSHCommandResult: Equatable, Sendable {
@@ -133,6 +246,7 @@ enum IOSSSHError: Error, LocalizedError, Equatable, Sendable {
     case noDefaultProfile
     case hostKeyNotTrusted(String)
     case hostKeyMismatch(expected: String, actual: String)
+    case hopFailure(IOSSSHHopFailure)
     case backendUnavailable
     case commandTimedOut
     case commandCancelled
@@ -144,13 +258,14 @@ enum IOSSSHError: Error, LocalizedError, Equatable, Sendable {
         case .missingPassword: "SSH password is required for this profile."
         case .missingPrivateKey: "请导入或生成 SSH 私钥。"
         case .invalidPrivateKey: "私钥格式无效或公私钥不匹配。"
-        case .unsupportedPrivateKey: "此私钥类型暂不支持，请使用 Ed25519 OpenSSH 或 ECDSA PEM 私钥。"
-        case .encryptedPrivateKey: "暂不支持导入带口令的私钥。可在 Amber 内生成专用密钥，私钥由本机钥匙串保护。"
+        case .unsupportedPrivateKey: "此私钥类型暂不支持，请使用 Ed25519 OpenSSH 或 ECDSA 私钥。"
+        case .encryptedPrivateKey: "私钥已加密，请提供口令（passphrase）后再导入。"
         case .authenticationFailed: "SSH 认证失败，请检查账户、密码或服务器上的公钥配置。"
         case .credentialUnavailable: "SSH 凭证不可用，请解锁设备后重试，或重新保存凭证。"
         case .noDefaultProfile: "Create and select a default SSH profile before running remote SSH commands."
         case .hostKeyNotTrusted(let fingerprint): "Host fingerprint must be trusted first: \(fingerprint)"
         case .hostKeyMismatch(let expected, let actual): "Host fingerprint mismatch. Expected \(expected), got \(actual)."
+        case .hopFailure(let failure): failure.message
         case .backendUnavailable: "SwiftNIO SSH is not linked in this build."
         case .commandTimedOut: "SSH command timed out."
         case .commandCancelled: "SSH command was cancelled."
@@ -163,17 +278,21 @@ enum IOSSSHError: Error, LocalizedError, Equatable, Sendable {
 enum IOSSSHCredential: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
     case password(String)
     case privateKey(String)
+    case secureEnclaveKey(Data)
 
     var authMethod: IOSSSHAuthMethod {
         switch self {
         case .password: .password
-        case .privateKey: .privateKey
+        case .privateKey, .secureEnclaveKey: .privateKey
         }
     }
 
     var secret: String {
         switch self {
-        case .password(let value), .privateKey(let value): value
+        case .password(let value), .privateKey(let value):
+            return value
+        case .secureEnclaveKey:
+            return ""
         }
     }
 
@@ -182,11 +301,19 @@ enum IOSSSHCredential: Equatable, Sendable, CustomStringConvertible, CustomDebug
 
     func validated(for profile: IOSSSHProfile) throws -> IOSSSHCredential {
         guard authMethod == profile.authMethod else { throw IOSSSHError.credentialUnavailable }
-        guard !secret.isEmpty else {
-            throw authMethod == .password ? IOSSSHError.missingPassword : IOSSSHError.missingPrivateKey
-        }
-        guard secret.utf8.count <= 64 * 1024 else {
-            throw IOSSSHError.invalidProfile("SSH 凭证不能超过 64 KB。")
+        switch self {
+        case .password(let value):
+            guard !value.isEmpty else { throw IOSSSHError.missingPassword }
+            guard value.utf8.count <= 64 * 1024 else {
+                throw IOSSSHError.invalidProfile("SSH 凭证不能超过 64 KB。")
+            }
+        case .privateKey(let value):
+            guard !value.isEmpty else { throw IOSSSHError.missingPrivateKey }
+            guard value.utf8.count <= 64 * 1024 else {
+                throw IOSSSHError.invalidProfile("SSH 凭证不能超过 64 KB。")
+            }
+        case .secureEnclaveKey(let token):
+            guard !token.isEmpty else { throw IOSSSHError.missingPrivateKey }
         }
         return self
     }

@@ -8,10 +8,10 @@ import Foundation
 /// extra refresh.
 ///
 /// Credential contract (write-only):
-/// - `password` / `private_key` are accepted and written through the existing
-///   `SettingsStore.upsertSSHProfile(_:credential:)` → `IOSSSHSecretStore`
-///   (Keychain) path. No tool result ever contains them: outputs carry booleans
-///   (`has_password` / `has_private_key`) only.
+/// - `password` / `private_key` / `passphrase` are accepted and written through
+///   `SettingsStore` → `IOSSSHSecretStore` / `IOSSSHKeyStore` (Keychain).
+///   No tool result ever contains them: outputs carry booleans (`has_password` /
+///   `has_private_key`) and key metadata (`key_id` / `key_fingerprint`) only.
 /// - `redactedArgumentsJSON(_:)` / `redactedApprovalMessages(_:)` strip those
 ///   fields before a call is persisted into the conversation or shown in the
 ///   approval card, so later turns never re-upload the secret.
@@ -40,26 +40,14 @@ enum IOSSSHProfileToolCatalog {
     /// Only the read-only listing may run during a background generation.
     static let backgroundAllowedToolNames: Set<String> = [listToolName]
 
-    private static let secretArgumentKeys: Set<String> = ["password", "private_key"]
+    private static let secretArgumentKeys: Set<String> = ["password", "private_key", "passphrase"]
 
     static func contains(_ toolName: String) -> Bool { toolNames.contains(toolName) }
 
     /// Replaces credential arguments with a status marker while keeping the
     /// payload valid JSON. Used for persistence, re-upload and card previews.
     static func redactedArgumentsJSON(_ argumentsJSON: String) -> String {
-        guard var args = ChatToolCallParsing.jsonObject(argumentsJSON) else { return argumentsJSON }
-        var changed = false
-        for key in secretArgumentKeys where args.keys.contains(key) {
-            let raw = (args[key] as? String) ?? ""
-            args[key] = raw.isEmpty ? "(empty)" : IOSSSHOutputRedactor.replacement
-            changed = true
-        }
-        guard changed else { return argumentsJSON }
-        guard let data = try? JSONSerialization.data(withJSONObject: args, options: [.sortedKeys]),
-              let text = String(data: data, encoding: .utf8) else {
-            return "{}"
-        }
-        return text
+        IOSSecretArgumentRedaction.redactedArgumentsJSON(argumentsJSON)
     }
 
     /// Approval snapshots are durable before the write runs. Keep the live call
@@ -120,8 +108,11 @@ enum IOSSSHProfileToolCatalog {
                 }
                 ?? "新 Profile"
             lines.append("新 Profile：\(String(name.prefix(80)))")
-            lines.append(authLine(args: args))
-            lines.append(credentialLine(args: args))
+            lines.append(authLine(args: args, store: store))
+            if let jumpLine = jumpLine(args: args, store: store) {
+                lines.append(jumpLine)
+            }
+            lines.append(credentialLine(args: args, store: store))
         case updateToolName:
             if let target {
                 lines.append("Profile：\(target.displayName)（\(target.username)@\(target.host):\(target.port)）")
@@ -129,11 +120,17 @@ enum IOSSSHProfileToolCatalog {
                 lines.append("Profile（id \(String(profileId.prefix(8)))…）")
             }
             lines.append("改动字段：\(changedFieldNames(args: args, target: target))")
-            if let credential = optionalCredentialLine(args: args) { lines.append(credential) }
+            if let jumpLine = jumpLine(args: args, store: store) {
+                lines.append(jumpLine)
+            }
+            if let credential = optionalCredentialLine(args: args, store: store) { lines.append(credential) }
             // 改连接目标/认证方式会清掉旧凭证（与 SettingsStore 同一规则），
             // 必须提前告知，否则用户会以为旧密码还在。
             if let target, credentialClearedByEndpointChange(args: args, target: target) {
                 lines.append(credentialClearedReason(args: args, target: target))
+            }
+            if let target, trustClearedByJumpChange(args: args, target: target) {
+                lines.append("改动了跳板机：将清除已信任的主机指纹，经新路由首次连接需重新核对。")
             }
         case deleteToolName:
             if let target {
@@ -142,11 +139,13 @@ enum IOSSSHProfileToolCatalog {
             } else {
                 lines.append("Profile（id \(String(profileId.prefix(8)))…）")
             }
-            if let target, store.hasCredentialForSSHProfile(target) {
+            if target?.keyId != nil {
+                lines.append("将解除本机密钥引用；密钥本身保留。")
+            } else if let target, store.hasCredentialForSSHProfile(target) {
                 lines.append("将一并清除本机已存凭证。")
             }
         default:
-            lines.append(argumentsJSON)
+            lines.append(redactedArgumentsJSON(argumentsJSON))
         }
         return truncated(lines.joined(separator: "\n"), maxLength: 480)
     }
@@ -154,7 +153,7 @@ enum IOSSSHProfileToolCatalog {
     static func approvalReason(toolName: String) -> String {
         switch toolName {
         case deleteToolName:
-            return "删除 SSH Profile 会同时清除本机钥匙串中的凭证，需要你确认。"
+            return "将删除 SSH Profile；引用的本机密钥保留，需要你确认。"
         case createToolName:
             return "将往本机写入新的 SSH Profile 与凭证，需要你确认。"
         case updateToolName:
@@ -164,26 +163,50 @@ enum IOSSSHProfileToolCatalog {
         }
     }
 
-    private static func authLine(args: [String: Any]) -> String {
+    private static func authLine(args: [String: Any], store: SettingsStore) -> String {
         let host = nonEmpty(args["host"] as? String) ?? "?"
         let port = (args["port"] as? Int) ?? Int(args["port"] as? String ?? "") ?? 22
         let user = nonEmpty(args["username"] as? String) ?? "?"
-        let method = nonEmpty(args["auth_method"] as? String) ?? "password"
-        return "\(user)@\(host):\(port) · \(method == "private_key" ? "私钥认证" : "密码认证")"
+        let rawMethod = nonEmpty(args["auth_method"] as? String)
+        let usesKey = rawMethod == "key" || rawMethod == "private_key" || rawMethod == "privateKey"
+            || nonEmpty(args["key_id"] as? String) != nil
+            || nonEmpty(args["private_key"] as? String) != nil
+        return "\(user)@\(host):\(port) · \(usesKey ? "密钥认证" : "密码认证")"
     }
 
-    private static func credentialLine(args: [String: Any]) -> String {
-        if let credential = optionalCredentialLine(args: args) { return credential }
+    private static func jumpLine(args: [String: Any], store: SettingsStore) -> String? {
+        guard args.keys.contains("jump_profile_id") else { return nil }
+        guard let jumpId = nonEmpty(args["jump_profile_id"] as? String) else {
+            return "跳板机：直连（清除跳板）"
+        }
+        if let jump = store.sshProfiles.first(where: { $0.id == jumpId }) {
+            return "跳板机：经 \(jump.displayName)（\(jump.username)@\(jump.host):\(jump.port)）"
+        }
+        return "跳板机：\(jumpId)"
+    }
+
+    private static func credentialLine(args: [String: Any], store: SettingsStore) -> String {
+        if let credential = optionalCredentialLine(args: args, store: store) { return credential }
         return "未提供凭证：保存后需解锁设备并补存凭证才能连接。"
     }
 
     /// 空字符串等同于“清除已存凭证”（与 SettingsStore 的语义一致）。
-    private static func optionalCredentialLine(args: [String: Any]) -> String? {
+    private static func optionalCredentialLine(args: [String: Any], store: SettingsStore) -> String? {
+        if let keyId = args["key_id"] as? String {
+            let trimmed = keyId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return "将解除绑定的本机 SSH 密钥。"
+            }
+            if let keyMeta = store.sshKeys.first(where: { $0.id == trimmed }) {
+                return "将绑定本机密钥：\(keyMeta.name)（\(keyMeta.fingerprintSHA256)）。"
+            }
+            return "将绑定本机密钥 ID：\(trimmed)。"
+        }
         if let password = args["password"] as? String {
             return password.isEmpty ? "将清除本机已存密码。" : "将设置/更换密码。"
         }
         if let key = args["private_key"] as? String {
-            return key.isEmpty ? "将清除本机已存私钥。" : "将设置/更换私钥。"
+            return key.isEmpty ? "将清除本机已存私钥。" : "将导入并绑定私钥。"
         }
         return nil
     }
@@ -200,6 +223,18 @@ enum IOSSSHProfileToolCatalog {
         if let user = args["username"] as? String, user != target?.username { names.append("用户名") }
         if let method = args["auth_method"] as? String,
            IOSSSHAuthMethod(rawValue: method) != target?.authMethod { names.append("认证方式") }
+        if args.keys.contains("jump_profile_id") {
+            let newJump = nonEmpty(args["jump_profile_id"] as? String)
+            if newJump != target?.jumpProfileId {
+                names.append("跳板机")
+            }
+        }
+        if args.keys.contains("key_id") {
+            let newKeyId = nonEmpty(args["key_id"] as? String)
+            if newKeyId != target?.keyId {
+                names.append("密钥")
+            }
+        }
         // 凭证变更本身也是“改动字段”：只改密码/私钥时不能显示“无”。
         if args["password"] != nil { names.append("密码") }
         if args["private_key"] != nil { names.append("私钥") }
@@ -213,7 +248,7 @@ enum IOSSSHProfileToolCatalog {
         target: IOSSSHProfile
     ) -> Bool {
         // 显式清空（传空字符串）已在 optionalCredentialLine 里说明，不重复提示。
-        if args["password"] != nil || args["private_key"] != nil { return false }
+        if args["password"] != nil || args["private_key"] != nil || args["key_id"] != nil { return false }
         let hostChanged = (args["host"] as? String).map { $0 != target.host } ?? false
         let portChanged = (args["port"]).map { raw in
             (raw as? Int ?? Int(raw as? String ?? "")) != target.port
@@ -222,6 +257,16 @@ enum IOSSSHProfileToolCatalog {
         let authChanged = (args["auth_method"] as? String)
             .flatMap(IOSSSHAuthMethod.init(rawValue:)).map { $0 != target.authMethod } ?? false
         return hostChanged || portChanged || userChanged || authChanged
+    }
+
+    private static func trustClearedByJumpChange(
+        args: [String: Any],
+        target: IOSSSHProfile
+    ) -> Bool {
+        guard target.knownHostSHA256?.isEmpty == false,
+              args.keys.contains("jump_profile_id") else { return false }
+        let newJump = nonEmpty(args["jump_profile_id"] as? String)
+        return newJump != target.jumpProfileId
     }
 
     private static func credentialClearedReason(
@@ -285,6 +330,19 @@ enum IOSSSHProfileToolExecutor {
             }
         } catch let error as IOSSSHProfileToolError {
             return fail(toolName, error.message, status: error.status)
+        } catch let error as IOSSSHRouteError {
+            return fail(
+                toolName,
+                error.localizedDescription,
+                status: error.status,
+                extraFields: error.toToolFields()
+            )
+        } catch let error as IOSSSHPrivateKeyError {
+            return fail(
+                toolName,
+                error.localizedDescription,
+                status: statusForPrivateKeyError(error)
+            )
         } catch let error as IOSSSHError {
             return fail(toolName, error.localizedDescription, status: "invalid_arguments")
         } catch {
@@ -297,20 +355,7 @@ enum IOSSSHProfileToolExecutor {
     private static func list(arguments: [String: Any], store: SettingsStore) throws -> String {
         guard arguments.isEmpty else { throw IOSSSHProfileToolError.invalidArguments("ssh_profile_list 不接受参数。") }
         let profiles = store.sshProfiles.map { profile -> [String: Any] in
-            let credential = credentialState(profile: profile, store: store)
-            return [
-                "id": profile.id,
-                "name": profile.name,
-                "display_name": profile.displayName,
-                "host": profile.host,
-                "port": profile.port,
-                "username": profile.username,
-                "auth_method": profile.authMethod.rawValue,
-                "has_password": credential.hasPassword,
-                "has_private_key": credential.hasPrivateKey,
-                "is_default": store.sshDefaultProfileId == profile.id,
-                "host_key_trusted": profile.knownHostSHA256?.isEmpty == false,
-            ]
+            profileSummaryDict(profile: profile, store: store)
         }
         let defaultProfile = store.defaultSSHProfile
         return IOSWorkspaceStore.json([
@@ -327,18 +372,49 @@ enum IOSSSHProfileToolExecutor {
         for key in arguments.keys where !allowedCreateKeys.contains(key) {
             throw IOSSSHProfileToolError.invalidArguments("未知参数：\(key)")
         }
-        let credential = try credential(from: arguments)
+        let parsedCred = try parseCredentialArguments(from: arguments)
         var profile = IOSSSHProfile()
         profile.name = try optionalString(arguments, "name")
         profile.host = try requiredString(arguments, "host")
         profile.port = try port(arguments, default: 22)
         profile.username = try requiredString(arguments, "username")
-        profile.authMethod = try authMethod(arguments, credential: credential, fallbackProfile: nil)
-        let validated = try profile.validated()
+        profile.jumpProfileId = try optionalNullableID(arguments, "jump_profile_id")
+        profile.keyId = parsedCred.keyId
+        profile.authMethod = try authMethod(
+            arguments,
+            parsedCred: parsedCred,
+            fallbackProfile: nil
+        )
+        var validated = try profile.validated()
         try ensureUniqueName(validated, store: store)
-        try validateCredential(credential, profile: validated, required: true)
-        try store.upsertSSHProfile(validated, credential: credential)
-        return success(toolName: IOSSSHProfileToolCatalog.createToolName, profile: validated, store: store, action: "created")
+        try validateAuthCombination(parsedCred: parsedCred, profile: validated, store: store, isCreate: true)
+
+        // Validate before importing so a rejected route cannot leave an orphan key.
+        _ = try IOSSSHRouteResolver.validateUpsert(candidate: validated, existingProfiles: store.sshProfiles)
+
+        var importedKeyId: String?
+        if let inlinePrivateKey = parsedCred.inlinePrivateKey {
+            let keyName = store.uniqueSSHKeyName(base: "\(validated.displayName)-imported")
+            let metadata = try store.importSSHKey(
+                name: keyName,
+                privateKey: inlinePrivateKey,
+                passphrase: parsedCred.passphrase
+            )
+            importedKeyId = metadata.id
+            validated.keyId = metadata.id
+            validated.authMethod = .privateKey
+        }
+
+        do {
+            try store.upsertSSHProfile(validated, credential: parsedCred.passwordCredential)
+        } catch {
+            if let importedKeyId {
+                try? store.deleteSSHKey(id: importedKeyId)
+            }
+            throw error
+        }
+        let saved = store.sshProfiles.first(where: { $0.id == validated.id }) ?? validated
+        return success(toolName: IOSSSHProfileToolCatalog.createToolName, profile: saved, store: store, action: "created")
     }
 
     private static func update(arguments: [String: Any], store: SettingsStore) throws -> String {
@@ -351,7 +427,7 @@ enum IOSSSHProfileToolExecutor {
                 "未找到 id 为 \(profileId) 的 SSH Profile。请先调用 ssh_profile_list 获取最新列表。"
             )
         }
-        let credential = try credential(from: arguments)
+        let parsedCred = try parseCredentialArguments(from: arguments)
         var profile = existing
         if arguments.keys.contains("name") {
             profile.name = try optionalString(arguments, "name")
@@ -365,16 +441,54 @@ enum IOSSSHProfileToolExecutor {
         if arguments.keys.contains("username") {
             profile.username = try requiredString(arguments, "username")
         }
-        if arguments.keys.contains("auth_method") {
-            profile.authMethod = try authMethod(arguments, credential: credential, fallbackProfile: existing)
+        if arguments.keys.contains("jump_profile_id") {
+            profile.jumpProfileId = try optionalNullableID(arguments, "jump_profile_id")
         }
-        let validated = try profile.validated()
+        if arguments.keys.contains("key_id") {
+            profile.keyId = parsedCred.keyId
+        }
+        if parsedCred.clearPrivateKey {
+            profile.keyId = nil
+        }
+        if arguments.keys.contains("auth_method") || parsedCred.keyId != nil || parsedCred.inlinePrivateKey != nil {
+            profile.authMethod = try authMethod(
+                arguments,
+                parsedCred: parsedCred,
+                fallbackProfile: existing
+            )
+        }
+        var validated = try profile.validated()
         try ensureUniqueName(validated, store: store)
-        try validateCredential(credential, profile: validated, required: false)
-        // Same retention rule as the settings editor: an omitted credential on
-        // an unchanged endpoint keeps the stored Keychain item.
-        try store.upsertSSHProfile(validated, credential: credential)
-        return success(toolName: IOSSSHProfileToolCatalog.updateToolName, profile: validated, store: store, action: "updated")
+        try validateAuthCombination(parsedCred: parsedCred, profile: validated, store: store, isCreate: false)
+
+        _ = try IOSSSHRouteResolver.validateUpsert(candidate: validated, existingProfiles: store.sshProfiles)
+
+        var importedKeyId: String?
+        if let inlinePrivateKey = parsedCred.inlinePrivateKey {
+            let keyName = store.uniqueSSHKeyName(base: "\(validated.displayName)-imported")
+            let metadata = try store.importSSHKey(
+                name: keyName,
+                privateKey: inlinePrivateKey,
+                passphrase: parsedCred.passphrase
+            )
+            importedKeyId = metadata.id
+            validated.keyId = metadata.id
+            validated.authMethod = .privateKey
+        }
+
+        do {
+            try store.upsertSSHProfile(validated, credential: parsedCred.passwordCredential)
+            if parsedCred.clearPassword || parsedCred.clearPrivateKey {
+                try? IOSSSHSecretStore.deleteCredential(profileId: validated.id)
+            }
+        } catch {
+            if let importedKeyId {
+                try? store.deleteSSHKey(id: importedKeyId)
+            }
+            throw error
+        }
+        let saved = store.sshProfiles.first(where: { $0.id == validated.id }) ?? validated
+        return success(toolName: IOSSSHProfileToolCatalog.updateToolName, profile: saved, store: store, action: "updated")
     }
 
     private static func delete(arguments: [String: Any], store: SettingsStore) throws -> String {
@@ -387,9 +501,8 @@ enum IOSSSHProfileToolExecutor {
                 "未找到 id 为 \(profileId) 的 SSH Profile。请先调用 ssh_profile_list 获取最新列表。"
             )
         }
-        // Mirrors the UI delete path, including Keychain cleanup and default
-        // reassignment. Running terminal jobs that still reference the profile
-        // fail with profile_not_found on their next step instead of being killed.
+        // Mirrors the UI delete path, including jump dependency protection, Keychain cleanup,
+        // and default reassignment.
         try store.deleteSSHProfile(id: profileId)
         return IOSWorkspaceStore.json([
             "ok": true,
@@ -406,13 +519,24 @@ enum IOSSSHProfileToolExecutor {
     // MARK: - Argument helpers
 
     private static let argumentKeys: Set<String> = [
-        "profile_id", "name", "host", "port", "username", "auth_method", "password", "private_key",
+        "profile_id", "name", "host", "port", "username", "auth_method",
+        "password", "key_id", "private_key", "passphrase", "jump_profile_id",
     ]
     private static let allowedCreateKeys: Set<String> = [
-        "name", "host", "port", "username", "auth_method", "password", "private_key",
+        "name", "host", "port", "username", "auth_method",
+        "password", "key_id", "private_key", "passphrase", "jump_profile_id",
     ]
     private static let allowedUpdateKeys: Set<String> = argumentKeys
     private static let allowedDeleteKeys: Set<String> = ["profile_id"]
+
+    private struct ParsedCredentialArguments {
+        var passwordCredential: IOSSSHCredential?
+        var clearPassword: Bool = false
+        var keyId: String?
+        var inlinePrivateKey: String?
+        var clearPrivateKey: Bool = false
+        var passphrase: String?
+    }
 
     private static func requiredString(_ arguments: [String: Any], _ key: String) throws -> String {
         let value = (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -428,6 +552,15 @@ enum IOSSSHProfileToolExecutor {
             throw IOSSSHProfileToolError.invalidArguments("\(key) 必须是字符串。")
         }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func optionalNullableID(_ arguments: [String: Any], _ key: String) throws -> String? {
+        guard let raw = arguments[key], !(raw is NSNull) else { return nil }
+        guard let text = raw as? String else {
+            throw IOSSSHProfileToolError.invalidArguments("\(key) 必须是字符串或 null。")
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func port(_ arguments: [String: Any], default fallback: Int) throws -> Int {
@@ -452,57 +585,130 @@ enum IOSSSHProfileToolExecutor {
 
     private static func authMethod(
         _ arguments: [String: Any],
-        credential: IOSSSHCredential?,
+        parsedCred: ParsedCredentialArguments,
         fallbackProfile: IOSSSHProfile?
     ) throws -> IOSSSHAuthMethod {
         if let raw = arguments["auth_method"] {
             guard let text = raw as? String,
                   let method = IOSSSHAuthMethod(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                throw IOSSSHProfileToolError.invalidArguments("auth_method 只能是 \"password\" 或 \"private_key\"。")
+                throw IOSSSHProfileToolError.invalidArguments("auth_method 只能是 \"password\"、\"key\" 或 \"private_key\"。")
             }
             return method
         }
-        if let credential { return credential.authMethod }
+        if parsedCred.keyId != nil || parsedCred.inlinePrivateKey != nil {
+            return .privateKey
+        }
+        if parsedCred.passwordCredential != nil {
+            return .password
+        }
         return fallbackProfile?.authMethod ?? .password
     }
 
-    private static func credential(from arguments: [String: Any]) throws -> IOSSSHCredential? {
-        let password = arguments["password"] as? String
-        let privateKey = arguments["private_key"] as? String
-        guard password == nil || privateKey == nil else {
-            throw IOSSSHProfileToolError.invalidArguments("password 与 private_key 只能提供一个。")
-        }
-        if let password {
-            guard !password.isEmpty else { return nil }
-            guard !isRedactionPlaceholder(password) else {
-                throw IOSSSHProfileToolError.invalidArguments(
-                    "password 是脱敏占位符而非真实凭证；待确认恢复后需要由用户重新确认，不能用占位符写入。"
-                )
+    private static func parseCredentialArguments(from arguments: [String: Any]) throws -> ParsedCredentialArguments {
+        var result = ParsedCredentialArguments()
+        let hasPasswordArg = arguments.keys.contains("password") && !(arguments["password"] is NSNull)
+        let hasPrivateKeyArg = arguments.keys.contains("private_key") && !(arguments["private_key"] is NSNull)
+        let hasKeyIdArg = arguments.keys.contains("key_id") && !(arguments["key_id"] is NSNull)
+
+        if hasKeyIdArg {
+            guard let text = arguments["key_id"] as? String else {
+                throw IOSSSHProfileToolError.invalidArguments("key_id 必须是字符串。")
             }
-            return .password(password)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            result.keyId = trimmed.isEmpty ? nil : trimmed
         }
-        if let privateKey {
-            guard !privateKey.isEmpty else { return nil }
-            guard privateKey.utf8.count <= 64 * 1024 else {
-                throw IOSSSHProfileToolError.invalidArguments("private_key 不能超过 64 KB。")
+
+        if hasPasswordArg {
+            guard let password = arguments["password"] as? String else {
+                throw IOSSSHProfileToolError.invalidArguments("password 必须是字符串。")
             }
-            guard !isRedactionPlaceholder(privateKey) else {
-                throw IOSSSHProfileToolError.invalidArguments(
-                    "private_key 是脱敏占位符而非真实凭证；待确认恢复后需要由用户重新确认，不能用占位符写入。"
-                )
+            if password.isEmpty {
+                result.clearPassword = true
+            } else {
+                guard !IOSSecretArgumentRedaction.isRedactionPlaceholder(password) else {
+                    throw IOSSSHProfileToolError.invalidArguments(
+                        "password 是脱敏占位符而非真实凭证；待确认恢复后需要由用户重新确认，不能用占位符写入。"
+                    )
+                }
+                result.passwordCredential = .password(password)
             }
-            return .privateKey(privateKey)
         }
-        return nil
+
+        if hasPrivateKeyArg {
+            guard let privateKey = arguments["private_key"] as? String else {
+                throw IOSSSHProfileToolError.invalidArguments("private_key 必须是字符串。")
+            }
+            if privateKey.isEmpty {
+                result.clearPrivateKey = true
+            } else {
+                guard privateKey.utf8.count <= IOSSSHPrivateKey.maxArmoredBytes else {
+                    throw IOSSSHProfileToolError.invalidArguments("private_key 不能超过 64 KB。")
+                }
+                guard !IOSSecretArgumentRedaction.isRedactionPlaceholder(privateKey) else {
+                    throw IOSSSHProfileToolError.invalidArguments(
+                        "private_key 是脱敏占位符而非真实凭证；待确认恢复后需要由用户重新确认，不能用占位符写入。"
+                    )
+                }
+                result.inlinePrivateKey = privateKey
+            }
+        }
+
+        if let rawPassphrase = arguments["passphrase"], !(rawPassphrase is NSNull) {
+            guard let passText = rawPassphrase as? String else {
+                throw IOSSSHProfileToolError.invalidArguments("passphrase 必须是字符串。")
+            }
+            if !passText.isEmpty {
+                guard !IOSSecretArgumentRedaction.isRedactionPlaceholder(passText) else {
+                    throw IOSSSHProfileToolError.invalidArguments(
+                        "passphrase 是脱敏占位符而非真实口令；待确认恢复后需要由用户重新确认，不能用占位符写入。"
+                    )
+                }
+                result.passphrase = passText
+            }
+        }
+
+        // Mutual exclusions
+        if hasPasswordArg && (hasPrivateKeyArg || result.keyId != nil) {
+            throw IOSSSHProfileToolError.invalidArguments("password 与 key_id / private_key 只能提供一种。")
+        }
+        if result.keyId != nil && result.inlinePrivateKey != nil {
+            throw IOSSSHProfileToolError.invalidArguments("key_id 与 private_key 不能同时提供；推荐使用 key_id 引用本机密钥。")
+        }
+        return result
     }
 
-    /// A resumed call may carry the redaction marker written into the durable
-    /// approval snapshot. Storing that marker as a credential would silently
-    /// persist a useless secret, so fail closed with an actionable message
-    /// instead.
-    private static func isRedactionPlaceholder(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed == "(empty)" || trimmed == IOSSSHOutputRedactor.replacement
+    private static func validateAuthCombination(
+        parsedCred: ParsedCredentialArguments,
+        profile: IOSSSHProfile,
+        store: SettingsStore,
+        isCreate: Bool
+    ) throws {
+        if let keyId = profile.keyId, !keyId.isEmpty {
+            guard store.sshKeys.contains(where: { $0.id == keyId }) else {
+                throw IOSSSHRouteError.keyNotFound(keyId: keyId)
+            }
+        }
+
+        switch profile.authMethod {
+        case .password:
+            if parsedCred.keyId != nil || parsedCred.inlinePrivateKey != nil {
+                throw IOSSSHProfileToolError.invalidArguments("auth_method=password 时不能提供 key_id 或 private_key。")
+            }
+            if isCreate && parsedCred.passwordCredential == nil {
+                throw IOSSSHProfileToolError.invalidArguments(
+                    "创建密码认证的 SSH Profile 需要同时提供 password。"
+                )
+            }
+        case .privateKey:
+            if parsedCred.passwordCredential != nil {
+                throw IOSSSHProfileToolError.invalidArguments("密钥认证的 SSH Profile 不能提供 password。")
+            }
+            if isCreate && (profile.keyId ?? "").isEmpty && parsedCred.inlinePrivateKey == nil {
+                throw IOSSSHProfileToolError.invalidArguments(
+                    "创建密钥认证的 SSH Profile 需要提供 key_id（推荐先调用 ssh_key_generate 或 ssh_key_list）或 private_key。"
+                )
+            }
+        }
     }
 
     private static func ensureUniqueName(_ profile: IOSSSHProfile, store: SettingsStore) throws {
@@ -520,37 +726,56 @@ enum IOSSSHProfileToolExecutor {
         }
     }
 
-    /// A supplied credential must match the profile's auth method. `saveCredential`
-    /// already fails closed on a mismatch; validating here keeps the failure a
-    /// readable argument error instead of a Keychain error after a partial write.
-    private static func validateCredential(
-        _ credential: IOSSSHCredential?,
-        profile: IOSSSHProfile,
-        required: Bool
-    ) throws {
-        guard let credential else {
-            guard !required else {
-                throw IOSSSHProfileToolError.invalidArguments(
-                    "创建 SSH Profile 需要同时提供 password 或 private_key；只有修改已有 Profile 时才能省略凭证。"
-                )
-            }
-            return
-        }
-        guard credential.authMethod == profile.authMethod else {
-            throw IOSSSHProfileToolError.invalidArguments(
-                "password 与 private_key 必须与 auth_method=\(profile.authMethod.rawValue) 一致。"
-            )
-        }
-    }
-
     private static func credentialState(
         profile: IOSSSHProfile,
         store: SettingsStore
     ) -> (hasPassword: Bool, hasPrivateKey: Bool) {
-        // Setting summaries use the metadata-only Keychain probe: the payload is
-        // never loaded here.
         guard store.hasCredentialForSSHProfile(profile) else { return (false, false) }
         return (profile.authMethod == .password, profile.authMethod == .privateKey)
+    }
+
+    private static func profileSummaryDict(
+        profile: IOSSSHProfile,
+        store: SettingsStore
+    ) -> [String: Any] {
+        let credential = credentialState(profile: profile, store: store)
+        let keyMeta = profile.keyId.flatMap { keyId in
+            store.sshKeys.first(where: { $0.id == keyId })
+        }
+        let routeHops: [[String: Any]]
+        if let resolved = try? store.resolveSSHRoute(for: profile) {
+            routeHops = resolved.enumerated().map { index, hop in
+                [
+                    "hop_index": index + 1,
+                    "profile_id": hop.id,
+                    "display_name": hop.displayName,
+                    "endpoint": "\(hop.username)@\(hop.host):\(hop.port)",
+                    "host_key_trusted": hop.knownHostSHA256?.isEmpty == false,
+                ]
+            }
+        } else {
+            routeHops = []
+        }
+        return [
+            "id": profile.id,
+            "name": profile.name,
+            "display_name": profile.displayName,
+            "host": profile.host,
+            "port": profile.port,
+            "username": profile.username,
+            "auth_method": profile.authMethod.rawValue,
+            "auth_method_wire": profile.authMethod.wireName,
+            "key_id": profile.keyId ?? NSNull(),
+            "key_name": keyMeta?.name ?? NSNull(),
+            "key_fingerprint": keyMeta?.fingerprintSHA256 ?? NSNull(),
+            "jump_profile_id": profile.jumpProfileId ?? NSNull(),
+            "has_password": credential.hasPassword,
+            "has_private_key": credential.hasPrivateKey,
+            "is_default": store.sshDefaultProfileId == profile.id,
+            "host_key_trusted": profile.knownHostSHA256?.isEmpty == false,
+            "route": routeHops,
+            "route_ready": store.isSSHRouteReady(for: profile),
+        ]
     }
 
     private static func success(
@@ -564,28 +789,50 @@ enum IOSSSHProfileToolExecutor {
             "ok": true,
             "tool": toolName,
             "status": action,
-            "profile": [
-                "id": profile.id,
-                "name": profile.name,
-                "display_name": profile.displayName,
-                "host": profile.host,
-                "port": profile.port,
-                "username": profile.username,
-                "auth_method": profile.authMethod.rawValue,
-                "has_password": credential.hasPassword,
-                "has_private_key": credential.hasPrivateKey,
-                "is_default": store.sshDefaultProfileId == profile.id,
-                "host_key_trusted": profile.knownHostSHA256?.isEmpty == false,
-            ] as [String: Any],
+            "profile": profileSummaryDict(profile: profile, store: store),
             "credential_saved": credential.hasPassword || credential.hasPrivateKey,
-            // A profile write cannot succeed the host-key probe: the settings
-            // page still needs an explicit fingerprint check + auth test.
-            "note": "凭证已写入本机钥匙串。连接前仍需在远程运行环境里核对主机指纹并验证认证。",
+            "note": "配置已写入本机。连接前仍需核对路由中每一跳的主机指纹并验证认证。",
         ])
     }
 
-    private static func fail(_ toolName: String, _ reason: String, status: String = "failed") -> String {
-        ChatToolOutputFormatter.toolFailureJSON(toolName: toolName, reason: reason, status: status)
+    private static func statusForPrivateKeyError(_ error: IOSSSHPrivateKeyError) -> String {
+        switch error {
+        case .passphraseRequired:
+            return "passphrase_required"
+        case .incorrectPassphrase:
+            return "incorrect_passphrase"
+        case .unsupportedAlgorithm:
+            return "unsupported_algorithm"
+        case .keyTooLarge:
+            return "invalid_arguments"
+        case .invalidFormat, .missingPrivateKey:
+            return "invalid_private_key"
+        case .secureEnclaveUnavailable:
+            return "secure_enclave_unavailable"
+        }
+    }
+
+    private static func fail(
+        _ toolName: String,
+        _ reason: String,
+        status: String = "failed",
+        extraFields: [String: Any] = [:]
+    ) -> String {
+        if extraFields.isEmpty {
+            return ChatToolOutputFormatter.toolFailureJSON(toolName: toolName, reason: reason, status: status)
+        }
+        var payload: [String: Any] = [
+            "ok": false,
+            "tool": toolName,
+            "status": status,
+            "error_code": status,
+            "reason": reason,
+            "message": reason,
+        ]
+        for (key, value) in extraFields {
+            payload[key] = value
+        }
+        return IOSWorkspaceStore.json(payload)
     }
 }
 

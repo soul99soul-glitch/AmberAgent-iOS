@@ -45,18 +45,18 @@ struct McpToolApprovalCard: View {
                 themePackPreview(preview)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    // SSH profile 是本地能力：用中文能力名，不展示裸工具名+local 前缀。
-                    let heading = request.isAppleCapability
+                    // SSH profile / key 是本地能力：用中文能力名，不展示裸工具名+local 前缀。
+                    let isLocalSSHTool = IOSSSHProfileToolCatalog.contains(request.toolName)
+                        || IOSSSHKeyToolCatalog.contains(request.toolName)
+                    let heading = request.isAppleCapability || isLocalSSHTool
                         ? request.displayToolName
-                        : (IOSSSHProfileToolCatalog.contains(request.toolName)
-                            ? request.displayToolName
-                            : "\(request.serverName) / \(request.toolName)")
+                        : "\(request.serverName) / \(request.toolName)"
                     Text(heading)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground2)
                         .lineLimit(1)
                     Text(request.argumentsPreview)
-                        .font(request.isAppleCapability || IOSSSHProfileToolCatalog.contains(request.toolName)
+                        .font(request.isAppleCapability || isLocalSSHTool
                             ? .footnote
                             : .system(size: 11, weight: .regular, design: .monospaced))
                         .foregroundStyle(AmberTheme.muted)

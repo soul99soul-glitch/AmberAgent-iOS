@@ -451,9 +451,12 @@ extension ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSThemePackToolCatalog.toolNames).sorted()
         ))
-        // SSH profile CRUD：非常驻 deferred；写工具仅前台 + 高风险审批。
+        // SSH profile & key CRUD：非常驻 deferred；写工具仅前台 + 高风险审批。
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSSSHProfileToolCatalog.toolNames).sorted()
+        ))
+        toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
+            names: Array(IOSSSHKeyToolCatalog.toolNames).sorted()
         ))
         // M5: discovery 引导（toolSearchDiscoveryGuidance）教模型用 tools_list
         // 识别精确工具名——iOS 主目录声明它（常驻；KMP IOS_RESIDENT_TOOL_NAMES

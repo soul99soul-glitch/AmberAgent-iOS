@@ -927,7 +927,7 @@ enum IOSToolEffectClassMapping {
         }
         // SSH profile：list 是本地只读快照；三个写工具改本机配置 + 钥匙串凭证，
         // 重放会在不同目标上再写一次，按 sideEffect 处理。
-        if toolName == "ssh_profile_list" {
+        if toolName == "ssh_profile_list" || toolName == "ssh_key_list" {
             return .pure
         }
         if IOSSecretArgumentRedaction.carriesCredential(toolName) {

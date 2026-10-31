@@ -25,6 +25,12 @@ class SSHProfileToolDeclarationTest {
         "ssh_profile_delete",
     )
 
+    private val keyWriterNames = listOf(
+        "ssh_key_generate",
+        "ssh_key_import",
+        "ssh_key_delete",
+    )
+
     @Test
     fun listIsReadOnlyAndRequiresNoApproval() {
         val tool = createSSHProfileListToolDeclaration()
@@ -62,8 +68,8 @@ class SSHProfileToolDeclarationTest {
         assertIs<InputSchema.Obj>(parameters)
 
         assertEquals(listOf("host", "username"), parameters.required)
-        listOf("name", "host", "username", "auth_method", "password", "private_key").forEach {
-            assertNotNull(parameters.properties[it], "缺少数段 $it")
+        listOf("name", "host", "username", "auth_method", "key_id", "jump_profile_id", "password", "private_key", "passphrase").forEach {
+            assertNotNull(parameters.properties[it], "缺少字段 $it")
             assertEquals(
                 "string",
                 parameters.properties[it]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull ?: "",
@@ -77,6 +83,7 @@ class SSHProfileToolDeclarationTest {
             parameters.properties["port"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull,
         )
         assertTrue("never echoed" in tool.description, tool.description)
+        assertTrue("ssh_key_generate" in tool.description, tool.description)
     }
 
     @Test
@@ -86,7 +93,7 @@ class SSHProfileToolDeclarationTest {
         assertIs<InputSchema.Obj>(parameters)
 
         assertEquals(listOf("profile_id"), parameters.required)
-        listOf("profile_id", "name", "host", "port", "username", "auth_method", "password", "private_key")
+        listOf("profile_id", "name", "host", "port", "username", "auth_method", "key_id", "jump_profile_id", "password", "private_key", "passphrase")
             .forEach { assertNotNull(parameters.properties[it], "缺少字段 $it") }
         assertTrue("Only provided fields change" in tool.description)
         assertTrue("clears the stored credential" in tool.description)
@@ -111,5 +118,46 @@ class SSHProfileToolDeclarationTest {
         assertEquals(names, tools.map { it.name })
         names.forEach { name -> assertEquals(name, iosToolDeclaration(name)?.name) }
         assertTrue(names.all { it in iosToolDeclarationNames() }, "声明必须进入 iOS 目录")
+    }
+
+    @Test
+    fun sshKeyToolsAreDeclaredWithHighRiskApprovalAndWorkflowGuidance() {
+        val keyList = createSSHKeyListToolDeclaration()
+        assertEquals("ssh_key_list", keyList.name)
+        assertFalse(keyList.needsApproval)
+        assertTrue(keyList.allowsAutoApproval)
+        assertFalse(keyList.mandatoryApproval)
+        assertTrue("never returned" in keyList.description)
+
+        val writers = iosToolDeclarations(keyWriterNames)
+        assertEquals(keyWriterNames, writers.map { it.name })
+        writers.forEach { tool ->
+            assertTrue(tool.needsApproval, tool.name)
+            assertFalse(tool.allowsAutoApproval, "${tool.name} 必须拒绝普通自动批准")
+            assertFalse(tool.mandatoryApproval, tool.name)
+        }
+
+        val generate = createSSHKeyGenerateToolDeclaration()
+        val genParams = generate.parameters()
+        assertIs<InputSchema.Obj>(genParams)
+        assertEquals(listOf("name"), genParams.required)
+        assertNotNull(genParams.properties["type"])
+        assertNotNull(genParams.properties["require_user_presence"])
+        assertTrue("authorized_keys" in generate.description)
+
+        val importTool = createSSHKeyImportToolDeclaration()
+        val importParams = importTool.parameters()
+        assertIs<InputSchema.Obj>(importParams)
+        assertEquals(listOf("name", "private_key"), importParams.required)
+        assertNotNull(importParams.properties["passphrase"])
+
+        val deleteTool = createSSHKeyDeleteToolDeclaration()
+        val deleteParams = deleteTool.parameters()
+        assertIs<InputSchema.Obj>(deleteParams)
+        assertEquals(listOf("key_id"), deleteParams.required)
+        assertTrue("key_in_use" in deleteTool.description)
+
+        val allKeyNames = listOf("ssh_key_list").plus(keyWriterNames)
+        assertTrue(allKeyNames.all { it in iosToolDeclarationNames() })
     }
 }

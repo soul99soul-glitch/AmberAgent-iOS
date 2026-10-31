@@ -277,6 +277,61 @@ final class IOSSSHProfileToolTests: XCTestCase {
         XCTAssertTrue(store.sshProfiles.isEmpty, "拒绝后不得写入")
     }
 
+    func testKeyImportSurvivesRedactedApprovalAndConsumesSecretsOnAllowAndDeny() async throws {
+        let keyBackend = IOSSSHInMemoryKeyBackend()
+        let store = SettingsStore(userDefaults: isolatedDefaults(), keyStore: IOSSSHKeyStore(backend: keyBackend))
+        let runtime = makeRuntime(store)
+        let key = try IOSSSHPrivateKey.generate()
+        let input = IOSWorkspaceStore.json(["name": "approved", "private_key": key.privateKey])
+        let call = makeToolCall(name: "ssh_key_import", input: input)
+        let pending = makePending(toolCall: call, executionPolicy: policy(highRisk: false, global: true))
+        let preparation = await runtime.execute(ChatPendingToolCall(kind: .advanced, toolCall: call), context: pending)
+        guard case .waitingForApproval(.mcp(let card)) = preparation else { return XCTFail("Ordinary approval cannot import a key") }
+        XCTAssertFalse(card.argumentsPreview.contains("PRIVATE KEY"))
+        XCTAssertEqual(runtime.dynamicToolLifecycle.sshArguments.count, 1)
+        let redactedCall = PromptTranscript.shared.doCopyTool(tool: call,
+            input: IOSSecretArgumentRedaction.redactedArgumentsJSON(input), output: [])
+        let restored = makePending(toolCall: redactedCall, executionPolicy: policy(highRisk: false))
+        let finished = await runtime.finishMcpApproval(pending: restored, allow: true)
+        XCTAssertEqual(store.sshKeys.count, 1, "The foreground owner restores original arguments only for execution")
+        XCTAssertEqual(runtime.dynamicToolLifecycle.sshArguments.count, 0)
+        XCTAssertFalse(String(describing: finished).contains(key.privateKey))
+
+        let denied = makeToolCall(name: "ssh_key_import", input: input)
+        let denyPending = makePending(toolCall: denied, executionPolicy: policy(highRisk: false))
+        _ = await runtime.execute(ChatPendingToolCall(kind: .advanced, toolCall: denied), context: denyPending)
+        _ = await runtime.finishMcpApproval(pending: denyPending, allow: false)
+        XCTAssertEqual(runtime.dynamicToolLifecycle.sshArguments.count, 0)
+        XCTAssertEqual(store.sshKeys.count, 1)
+
+        // A fresh runtime has no raw arguments after process recovery; the persisted marker fails closed.
+        let cold = makeRuntime(store)
+        let coldResult = await cold.finishMcpApproval(pending: restored, allow: true)
+        XCTAssertFalse(String(describing: coldResult).contains(key.privateKey))
+        XCTAssertEqual(store.sshKeys.count, 1)
+        let malformed = makeToolCall(name: "ssh_key_import", input: #"{"private_key":"never-echo-malformed"#)
+        let malformedPending = makePending(toolCall: malformed, executionPolicy: policy(highRisk: false))
+        let invalid = await runtime.execute(ChatPendingToolCall(kind: .advanced, toolCall: malformed), context: malformedPending)
+        guard case .completed(let invalidMessages) = invalid else { return XCTFail("Invalid JSON must not execute") }
+        for message in invalidMessages {
+            for case let tool as UIMessagePart.Tool in message.parts {
+                XCTAssertFalse(tool.input.contains("never-echo-malformed"))
+                XCTAssertFalse(String(describing: tool.output).contains("never-echo-malformed"))
+            }
+        }
+    }
+
+    func testHostTrustCardsCannotBeApprovedFromRemoteSurfaces() {
+        for canApprove in [true, false] {
+            let request = IshHandoffToolApprovalRequest(id: "host-trust", mode: .remoteSSH,
+                commandPreview: "echo ok", filename: "host", reason: "第 2 跳指纹",
+                allowsApprove: canApprove, requiresForegroundApproval: true)
+            let prompt = ChatToolApprovalPrompt.ish(request)
+            XCTAssertFalse(ChatRunApprovalSession.remoteApprovalAllowsResolve(prompt, allow: true))
+            XCTAssertTrue(ChatRunApprovalSession.remoteApprovalAllowsResolve(prompt, allow: false))
+        }
+    }
+
     // MARK: - Layer 3: storage (create → update → delete)
 
     func testCreateUpdateDeleteChainCleansKeychain() throws {

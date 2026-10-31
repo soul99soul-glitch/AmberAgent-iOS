@@ -122,14 +122,24 @@ enum IOSPOSIXWorkingDirectoryError: LocalizedError {
 /// Runtime errors are sanitized again at the job boundary before persistence.
 
 func remoteSSHTargetDigest(_ profile: IOSSSHProfile) -> String {
-    chatInputDigest(for: [
-        profile.id,
-        profile.authMethod.rawValue,
-        profile.username.trimmingCharacters(in: .whitespacesAndNewlines),
-        profile.host.trimmingCharacters(in: .whitespacesAndNewlines),
-        String(profile.port),
-        profile.knownHostSHA256?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-        profile.knownHostHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-        profile.knownHostPort.map(String.init) ?? "",
-    ].joined(separator: "\n"))
+    remoteSSHTargetDigest(route: [profile])
+}
+
+func remoteSSHTargetDigest(route: [IOSSSHProfile]) -> String {
+    let serializedHops = route.map { profile in
+        [
+            profile.id,
+            profile.authMethod.rawValue,
+            profile.keyId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            profile.jumpProfileId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            profile.username.trimmingCharacters(in: .whitespacesAndNewlines),
+            profile.host.trimmingCharacters(in: .whitespacesAndNewlines),
+            String(profile.port),
+            profile.knownHostSHA256?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            profile.knownHostHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            profile.knownHostPort.map(String.init) ?? "",
+            profile.knownHostViaJump?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+        ].joined(separator: "\n")
+    }.joined(separator: "\n---\n")
+    return chatInputDigest(for: serializedHops)
 }

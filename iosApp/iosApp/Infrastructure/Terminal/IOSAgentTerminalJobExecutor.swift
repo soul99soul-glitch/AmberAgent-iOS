@@ -65,6 +65,24 @@ enum IOSAgentTerminalJobExecutor {
             default:
                 throw IOSRemoteTerminalJobError.unsupportedTool(toolName)
             }
+        } catch let error as IOSSSHRouteError {
+            return failureJSON(
+                toolName: toolName,
+                jobId: nil,
+                runtime: .remoteSSH,
+                errorCode: error.status,
+                message: error.localizedDescription,
+                extraFields: error.toToolFields()
+            )
+        } catch let IOSSSHError.hopFailure(hopFailure) {
+            return failureJSON(
+                toolName: toolName,
+                jobId: nil,
+                runtime: .remoteSSH,
+                errorCode: hopFailure.status,
+                message: hopFailure.message,
+                extraFields: hopFailure.toToolFields()
+            )
         } catch let error as IOSRemoteTerminalJobError {
             let responseRuntime = error.jobId
                 .flatMap { taskStore.task(id: $0) }
@@ -163,9 +181,22 @@ enum IOSAgentTerminalJobExecutor {
         switch toolName {
         case IOSRemoteTerminalToolCatalog.jobStartToolName:
             guard let request = try? parseStartRequest(input) else { return nil }
-            guard let profile = resolvedProfile(profileId: request.profileId, settingsStore: settingsStore) else {
+            guard let profile = resolvedProfile(profileId: request.profileId, settingsStore: settingsStore),
+                  let route = try? settingsStore?.resolveSSHRoute(for: profile) else {
                 return nil
             }
+            var contextLines: [String] = []
+            if route.count > 1 {
+                let hopsLabel = route.enumerated().map { index, hop in
+                    "\(circledHopNumber(index + 1)) \(hop.displayName) (\(hop.username)@\(hop.host):\(hop.port))"
+                }.joined(separator: " → ")
+                contextLines.append("连接路由：\(hopsLabel)")
+            }
+            contextLines.append(contentsOf: [
+                "模式：异步 Job（无 PTY、无 stdin）",
+                "工作目录：\(request.workingDirectory ?? "SSH 账户默认目录")",
+                "超时：\(Int(request.timeoutSeconds)) 秒",
+            ])
             return IshHandoffToolApprovalRequest(
                 id: chatInputDigest(for: input),
                 mode: .remoteJobStart,
@@ -175,14 +206,12 @@ enum IOSAgentTerminalJobExecutor {
                     profileId: request.profileId,
                     workingDirectory: request.workingDirectory
                 ),
-                reason: "Amber 将在已信任的 Remote SSH 连接上启动一个可轮询的非 PTY 作业。",
-                contextLines: [
-                    "模式：异步 Job（无 PTY、无 stdin）",
-                    "工作目录：\(request.workingDirectory ?? "SSH 账户默认目录")",
-                    "超时：\(Int(request.timeoutSeconds)) 秒",
-                ],
+                reason: route.count > 1
+                    ? "Amber 将经跳板路由在已信任的 Remote SSH 目标机上启动一个可轮询的非 PTY 作业。"
+                    : "Amber 将在已信任的 Remote SSH 连接上启动一个可轮询的非 PTY 作业。",
+                contextLines: contextLines,
                 remoteProfileId: profile.id,
-                remoteTargetDigest: remoteSSHTargetDigest(profile)
+                remoteTargetDigest: remoteSSHTargetDigest(route: route)
             )
         case IOSRemoteTerminalToolCatalog.jobStopToolName:
             guard let request = try? parseReferenceRequest(input, allowsWait: false) else { return nil }
@@ -207,6 +236,16 @@ enum IOSAgentTerminalJobExecutor {
         }
     }
 
+    private static func circledHopNumber(_ number: Int) -> String {
+        switch number {
+        case 1: return "①"
+        case 2: return "②"
+        case 3: return "③"
+        case 4: return "④"
+        default: return "(\(number))"
+        }
+    }
+
     private static func start(
         request: IOSRemoteTerminalJobStartRequest,
         settingsStore: SettingsStore?,
@@ -228,11 +267,18 @@ enum IOSAgentTerminalJobExecutor {
             }
             throw IOSRemoteTerminalJobError.noDefaultProfile
         }
+        let route = try settingsStore.resolveSSHRoute(for: profile)
         if let expectedTargetDigest,
-           expectedTargetDigest != remoteSSHTargetDigest(profile) {
+           expectedTargetDigest != remoteSSHTargetDigest(route: route) {
             throw IOSRemoteTerminalJobError.approvedTargetChanged
         }
-        let credential = try settingsStore.credentialForSSHProfile(profile)
+        var routeCredentials: [String: IOSSSHCredential] = [:]
+        for hop in route {
+            if let cred = try settingsStore.credentialForSSHProfile(hop) {
+                routeCredentials[hop.id] = cred
+            }
+        }
+        let credential = routeCredentials[profile.id]
         let jobId = UUID().uuidString
         let now = Date()
         taskStore.startTask(
@@ -248,6 +294,7 @@ enum IOSAgentTerminalJobExecutor {
                 "runtime": IOSTerminalRuntimeKind.remoteSSH.rawValue,
                 "profile_id": profile.id,
                 "profile_name": profile.displayName,
+                "route": route.map(\.displayName).joined(separator: " -> "),
                 "purpose": request.purpose ?? "",
                 "cwd": request.workingDirectory ?? "",
                 "execution_mode": "background",
@@ -267,6 +314,8 @@ enum IOSAgentTerminalJobExecutor {
             workingDirectory: request.workingDirectory,
             sshProfile: profile,
             sshCredential: credential,
+            sshRoute: route.count > 1 ? route : nil,
+            sshRouteCredentials: route.count > 1 ? routeCredentials : nil,
             timeoutSeconds: request.timeoutSeconds,
             jobId: jobId
         )
@@ -467,6 +516,32 @@ enum IOSAgentTerminalJobExecutor {
         case .approvalRequired:
             summary = "\(runtimeTitle) 作业等待确认。"
         }
+        var metadata: [String: String] = [
+            "runtime_job_id": snapshot.id,
+            "runtime": snapshot.runtime.rawValue,
+            "stdout_tail": snapshot.stdoutTail,
+            "stderr_tail": snapshot.stderrTail,
+            "stdout_truncated": String(snapshot.stdoutTruncated),
+            "stderr_truncated": String(snapshot.stderrTruncated),
+            "stdout_persisted_truncated": String(snapshot.stdoutTail.count > 4_000),
+            "stderr_persisted_truncated": String(snapshot.stderrTail.count > 4_000),
+            "exit_code": snapshot.exitCode.map(String.init) ?? "",
+            "started_at_ms": milliseconds(snapshot.startedAt),
+            "updated_at_ms": milliseconds(snapshot.updatedAt),
+        ]
+        if let hopFailure = snapshot.hopFailure {
+            metadata["hop_failure_status"] = hopFailure.status
+            metadata["hop_index"] = String(hopFailure.hopIndex)
+            metadata["hop_count"] = String(hopFailure.hopCount)
+            metadata["hop_profile_id"] = hopFailure.profileId
+            metadata["hop_display"] = hopFailure.display
+            if let exp = hopFailure.expectedFingerprint {
+                metadata["expected_fingerprint"] = exp
+            }
+            if let pres = hopFailure.presentedFingerprint {
+                metadata["presented_fingerprint"] = pres
+            }
+        }
         taskStore.updateTask(
             id: taskId,
             status: status,
@@ -475,19 +550,7 @@ enum IOSAgentTerminalJobExecutor {
             error: snapshot.error ?? "",
             retryable: false,
             cancelCapability: status == .running,
-            metadata: [
-                "runtime_job_id": snapshot.id,
-                "runtime": snapshot.runtime.rawValue,
-                "stdout_tail": snapshot.stdoutTail,
-                "stderr_tail": snapshot.stderrTail,
-                "stdout_truncated": String(snapshot.stdoutTruncated),
-                "stderr_truncated": String(snapshot.stderrTruncated),
-                "stdout_persisted_truncated": String(snapshot.stdoutTail.count > 4_000),
-                "stderr_persisted_truncated": String(snapshot.stderrTail.count > 4_000),
-                "exit_code": snapshot.exitCode.map(String.init) ?? "",
-                "started_at_ms": milliseconds(snapshot.startedAt),
-                "updated_at_ms": milliseconds(snapshot.updatedAt),
-            ]
+            metadata: metadata
         )
     }
 
@@ -516,14 +579,18 @@ enum IOSAgentTerminalJobExecutor {
             commandOK = NSNull()
         }
         let errorCode: Any
-        if terminalStatus == .interrupted {
+        if let hopFailure = snapshot?.hopFailure {
+            errorCode = hopFailure.status
+        } else if let persistedHopStatus = record?.metadata["hop_failure_status"], !persistedHopStatus.isEmpty {
+            errorCode = persistedHopStatus
+        } else if terminalStatus == .interrupted {
             errorCode = "process_terminated"
         } else if terminalStatus == .timedOut {
             errorCode = "timeout"
         } else {
             errorCode = NSNull()
         }
-        return IOSWorkspaceStore.json([
+        var payload: [String: Any] = [
             "ok": operationOK,
             "tool": toolName,
             "runtime": runtime?.rawValue ?? "unknown",
@@ -531,7 +598,7 @@ enum IOSAgentTerminalJobExecutor {
             "cwd": record?.metadata["cwd"] ?? "",
             "background": record?.metadata["execution_mode"] == "background",
             "lifecycle": record?.metadata["lifecycle"] ?? "process_local",
-            "status": status,
+            "status": snapshot?.hopFailure?.status ?? record?.metadata["hop_failure_status"] ?? status,
             "running": terminalStatus == .running,
             "command_ok": commandOK,
             "exit_code": exitCode.map { $0 as Any } ?? NSNull(),
@@ -559,7 +626,23 @@ enum IOSAgentTerminalJobExecutor {
                 IOSRemoteTerminalToolCatalog.jobWaitToolName,
                 IOSRemoteTerminalToolCatalog.jobStopToolName,
             ],
-        ])
+        ]
+        if let hopFailure = snapshot?.hopFailure {
+            for (k, v) in hopFailure.toToolFields() {
+                payload[k] = v
+            }
+        } else if let hopIndexStr = record?.metadata["hop_index"],
+                  let hopIndex = Int(hopIndexStr),
+                  let hopCountStr = record?.metadata["hop_count"],
+                  let hopCount = Int(hopCountStr) {
+            payload["hop_index"] = hopIndex
+            payload["hop_count"] = hopCount
+            if let pid = record?.metadata["hop_profile_id"] { payload["profile_id"] = pid }
+            if let disp = record?.metadata["hop_display"] { payload["display"] = disp }
+            if let exp = record?.metadata["expected_fingerprint"] { payload["expected_fingerprint"] = exp }
+            if let pres = record?.metadata["presented_fingerprint"] { payload["presented_fingerprint"] = pres }
+        }
+        return IOSWorkspaceStore.json(payload)
     }
 
     private static func failureJSON(
@@ -567,14 +650,15 @@ enum IOSAgentTerminalJobExecutor {
         jobId: String?,
         runtime: IOSTerminalRuntimeKind?,
         errorCode: String,
-        message: String
+        message: String,
+        extraFields: [String: Any] = [:]
     ) -> String {
-        IOSWorkspaceStore.json([
+        var payload: [String: Any] = [
             "ok": false,
             "tool": toolName,
             "runtime": runtime?.rawValue ?? "unknown",
             "job_id": jobId ?? "",
-            "status": IOSTerminalJobStatus.failed.rawValue,
+            "status": extraFields["status"] as? String ?? IOSTerminalJobStatus.failed.rawValue,
             "running": false,
             "command_ok": NSNull(),
             "exit_code": NSNull(),
@@ -590,7 +674,11 @@ enum IOSAgentTerminalJobExecutor {
             "already_terminal": false,
             "error_code": errorCode,
             "error": message,
-        ])
+        ]
+        for (k, v) in extraFields {
+            payload[k] = v
+        }
+        return IOSWorkspaceStore.json(payload)
     }
 
     private static func parseStartRequest(_ input: String) throws -> IOSRemoteTerminalJobStartRequest {

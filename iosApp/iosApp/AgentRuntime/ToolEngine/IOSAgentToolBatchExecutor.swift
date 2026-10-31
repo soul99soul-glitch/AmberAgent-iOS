@@ -178,7 +178,10 @@ struct IOSAgentToolBatchExecutor {
             // model's next turn; executing anyway costs an invisible wrong answer.
             if let invalid = tool.parseInputStrict() as? ToolInputParse.Invalid {
                 outputs.append((tool, [UIMessagePart.Text(
-                    text: toolArgumentsInvalidJSON(message: invalid.message, rawPrefix: invalid.rawPrefix),
+                    text: toolArgumentsInvalidJSON(
+                        message: IOSSecretArgumentRedaction.carriesCredential(tool.toolName) ? "敏感工具参数不是有效的 JSON。" : invalid.message,
+                        rawPrefix: IOSSecretArgumentRedaction.carriesCredential(tool.toolName) ? "[redacted]" : invalid.rawPrefix
+                    ),
                     metadata: nil
                 )]))
                 continue

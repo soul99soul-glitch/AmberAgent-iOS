@@ -534,6 +534,21 @@ extension ChatToolRuntime {
             }
         }
 
+        // SSH key：后台仅 list（纯读）；生成/导入/删除需要前台高风险审批卡。
+        for name in IOSSSHKeyToolCatalog.toolNames where availableToolNames.contains(name) {
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+                guard let self else { return .failed("Chat runtime is unavailable.") }
+                if !IOSSSHKeyToolCatalog.backgroundAllowedToolNames.contains(toolName) {
+                    return .denied("SSH 密钥的生成、导入与删除需要回到 App 前台确认。")
+                }
+                return .filled(IOSSSHKeyToolExecutor.execute(
+                    toolName: toolName,
+                    argumentsJSON: arguments,
+                    settingsStore: self.settingsStore
+                ))
+            }
+        }
+
         // Theme pack: background only status (pure read); import needs the try-on card.
         for name in IOSThemePackToolCatalog.toolNames where availableToolNames.contains(name) {
             executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
@@ -664,6 +679,7 @@ extension ChatToolRuntime {
         .union(IOSProviderConfigToolCatalog.toolNames)
         .union(IOSThemePackToolCatalog.toolNames)
         .union(IOSSSHProfileToolCatalog.toolNames)
+        .union(IOSSSHKeyToolCatalog.toolNames)
         .union(IOSRecipeToolCatalog.toolNames)
         .union(IOSPluginToolCatalog.toolNames)
         if IOSDynamicToolRegistry.isDynamicWorkflowToolName(name) { return .advanced }

@@ -64,11 +64,14 @@ final class IOSChatApprovalCancellationTests: IOSChatKernelRunHostTestCase {
         }
         let claiming = await waitForCondition { gate.started }
         XCTAssertTrue(claiming)
+        runtime.dynamicToolLifecycle.sshArguments.stage(runId: "approval-claim-stop", toolCallId: "pending-key",
+            arguments: #"{"private_key":"fixture-private"}"#)
         if detach {
             adapter.detachForBackgroundHandoff()
         } else {
             adapter.cancel()
         }
+        XCTAssertEqual(runtime.dynamicToolLifecycle.sshArguments.count, 0, "Cancel and handoff immediately erase pending credentials")
         let frozenOutput = F.toolOutputText(toolCallId: "approved-question", in: published)
         let frozenPublications = publications
         if !detach {

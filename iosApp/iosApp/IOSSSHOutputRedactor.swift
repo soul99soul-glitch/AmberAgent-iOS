@@ -22,18 +22,26 @@ final class IOSSSHOutputRedactor: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private let credentialSecret: String?
+    private let credentialSecrets: [String]
     private var stdout = ChannelState()
     private var stderr = ChannelState()
     private var didFinish = false
 
-    init(credential: IOSSSHCredential) {
-        let secret = credential.secret
-        if secret.isEmpty || secret.utf8.count > Self.maxCredentialBytes {
-            credentialSecret = nil
-        } else {
-            credentialSecret = secret
+    convenience init(credential: IOSSSHCredential) {
+        self.init(credentials: [credential])
+    }
+
+    init(credentials: [IOSSSHCredential]) {
+        var seen: Set<String> = []
+        var valid: [String] = []
+        for cred in credentials {
+            let secret = cred.secret
+            guard !secret.isEmpty, secret.utf8.count <= Self.maxCredentialBytes else { continue }
+            if seen.insert(secret).inserted {
+                valid.append(secret)
+            }
         }
+        self.credentialSecrets = valid
     }
 
     /// Redacts one output chunk. `nil` means that the chunk is being held
@@ -77,8 +85,12 @@ final class IOSSSHOutputRedactor: @unchecked Sendable {
     /// Redacts a final result or error in one call. The same PEM and exact
     /// credential rules apply even when the caller has no stream boundaries.
     static func redact(_ string: String, credential: IOSSSHCredential) -> String {
+        redact(string, credentials: [credential])
+    }
+
+    static func redact(_ string: String, credentials: [IOSSSHCredential]) -> String {
         guard !string.isEmpty else { return string }
-        let redactor = IOSSSHOutputRedactor(credential: credential)
+        let redactor = IOSSSHOutputRedactor(credentials: credentials)
         var output = ""
         if let chunk = redactor.redact(IOSSSHOutputChunk(text: string, isStderr: false)) {
             output += chunk.text
@@ -115,7 +127,7 @@ final class IOSSSHOutputRedactor: @unchecked Sendable {
                 break
             }
 
-            let passwordRange = credentialSecret.flatMap { state.pending.range(of: $0) }
+            let passwordRange = earliestSecretRange(in: state.pending)
             let beginRange = privateKeyBeginRange(in: state.pending)
             guard let candidate = earliest(passwordRange, beginRange) else {
                 if finishing {
@@ -151,6 +163,14 @@ final class IOSSSHOutputRedactor: @unchecked Sendable {
                 break
             }
 
+            // A completed short credential can also be the prefix of another hop's
+            // credential. Keep it until the next frame disambiguates the longer match.
+            if !finishing, candidate == passwordRange,
+               let holdStart = safeHoldStart(in: state.pending), holdStart <= candidate.lowerBound {
+                pieces.append(String(state.pending[..<holdStart]))
+                state.pending = String(state.pending[holdStart...])
+                break
+            }
             pieces.append(String(state.pending[..<candidate.lowerBound]))
             if let passwordRange, candidate == passwordRange {
                 pieces.append(Self.replacement)
@@ -164,11 +184,28 @@ final class IOSSSHOutputRedactor: @unchecked Sendable {
         return pieces.joined()
     }
 
+    private func earliestSecretRange(in text: String) -> Range<String.Index>? {
+        var best: Range<String.Index>?
+        for secret in credentialSecrets {
+            guard let range = text.range(of: secret) else { continue }
+            if let current = best {
+                if range.lowerBound < current.lowerBound ||
+                   (range.lowerBound == current.lowerBound && range.upperBound > current.upperBound) {
+                    best = range
+                }
+            } else {
+                best = range
+            }
+        }
+        return best
+    }
+
     private func safeHoldStart(in text: String) -> String.Index? {
         var starts: [String.Index] = []
-        if let secret = credentialSecret,
-           let start = suffixPrefixStart(text, prefix: secret) {
-            starts.append(start)
+        for secret in credentialSecrets {
+            if let start = suffixPrefixStart(text, prefix: secret) {
+                starts.append(start)
+            }
         }
         if let start = possiblePrivateKeyBeginStart(in: text) {
             starts.append(start)

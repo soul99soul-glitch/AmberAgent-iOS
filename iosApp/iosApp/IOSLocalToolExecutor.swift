@@ -144,7 +144,7 @@ final class IOSLocalToolExecutor {
     private let webMountController: IOSWebMountController
     private let workspaceStore: IOSWorkspaceStore
     private let settingsStore: SettingsStore?
-    private let terminalRuntime: IOSTerminalRuntime
+    let terminalRuntime: IOSTerminalRuntime
     private let terminalTaskStore: IOSAdvancedTaskStore
 
     /// 全局自动批准：开启后普通工具自动放行。

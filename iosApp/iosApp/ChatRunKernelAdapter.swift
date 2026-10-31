@@ -127,6 +127,7 @@ final class ChatRunKernelAdapter {
     }
 
     private let runtime: ChatToolRuntime
+    private var sshArgumentsRunId: String?
     private let ledger: any IOSAgentRunLedgering
     private var callbacks: Callbacks
     private let nestedApprovalQueue = ChatNestedApprovalQueue()
@@ -196,6 +197,11 @@ final class ChatRunKernelAdapter {
         // Host 可能在 run() 进入前已取消(preamble 期间):不发任何回调,
         // 直接以初始消息返回(Host 的终态序列走 cancel 分支)。
         if isStoppedByHost { return request.initialMessages }
+        sshArgumentsRunId = request.runId
+        defer {
+            runtime.dynamicToolLifecycle.sshArguments.discard(runId: request.runId)
+            sshArgumentsRunId = nil
+        }
         durabilityFailureMessage = nil
         toolOutcomeUnknownSignal = nil
         activeCitationTracker = request.citationTracker
@@ -635,6 +641,7 @@ final class ChatRunKernelAdapter {
     ///    直接发布取消快照，不等待工具返回;
     /// 4) 终态 cancelled 只报一次；无 driver 的审批等待即时收口。
     func cancel(failureReason: String = "User cancelled.") {
+        if let sshArgumentsRunId { runtime.dynamicToolLifecycle.sshArguments.discard(runId: sshArgumentsRunId) }
         guard !didReportTerminal, !isStoppedByHost else { return }
         isCancelledByHost = true
         cancellationFailureReason = failureReason
@@ -676,6 +683,7 @@ final class ChatRunKernelAdapter {
     /// 后台协调器成功接管后只停止前台 driver，不发布 cancelled/failed，
     /// durable run 与可见 transcript 的终态所有权同时转移给后台。
     func detachForBackgroundHandoff() {
+        if let sshArgumentsRunId { runtime.dynamicToolLifecycle.sshArguments.discard(runId: sshArgumentsRunId) }
         guard !didReportTerminal, !isStoppedByHost else { return }
         isDetachedByHost = true
         lastAppliedSnapshotSeq = .max

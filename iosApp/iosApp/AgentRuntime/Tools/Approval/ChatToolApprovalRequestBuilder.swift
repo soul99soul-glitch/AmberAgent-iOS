@@ -166,7 +166,10 @@ enum ChatToolApprovalRequestBuilder {
                 contextLines: preview.contextLines,
                 remoteProfileId: preview.remoteProfileId,
                 remoteTargetDigest: preview.remoteTargetDigest,
-                runId: runId
+                runId: runId,
+                allowsApprove: preview.allowsApprove,
+                requiresForegroundApproval: preview.requiresForegroundApproval,
+                remoteHostTrust: preview.remoteHostTrust
             )
         }
         if IOSEmbeddedIshToolCatalog.supportedToolNames.contains(toolCall.toolName) {

@@ -465,8 +465,8 @@ final class ChatToolRuntime {
                 context.toolCall,
                 outputText: ChatToolOutputFormatter.toolArgumentsInvalidJSON(
                     toolName: context.toolCall.toolName,
-                    message: invalid.message,
-                    rawPrefix: invalid.rawPrefix
+                    message: IOSSecretArgumentRedaction.carriesCredential(context.toolCall.toolName) ? "敏感工具参数不是有效的 JSON。" : invalid.message,
+                    rawPrefix: IOSSecretArgumentRedaction.carriesCredential(context.toolCall.toolName) ? "[redacted]" : invalid.rawPrefix
                 ),
                 in: context.baseMessages
             )
@@ -841,8 +841,9 @@ final class ChatToolRuntime {
         .union(IOSMcpManagementToolCatalog.toolNames)
         .union(IOSProviderConfigToolCatalog.toolNames)
         .union(IOSThemePackToolCatalog.toolNames)
-        // SSH profile CRUD（读写同一 SettingsStore：见 IOSSSHProfileTools）。
+        // SSH profile & key CRUD（读写同一 SettingsStore：见 IOSSSHProfileTools / IOSSSHKeyTools）。
         .union(IOSSSHProfileToolCatalog.toolNames)
+        .union(IOSSSHKeyToolCatalog.toolNames)
         // Wave B2: recipe_import（与 skill_import 同级，deferred 池）。
         .union(IOSRecipeToolCatalog.toolNames)
         // P3-a: exec 仅开关开时存在执行路径；关时零痕迹——模型调用 exec 走
@@ -1020,6 +1021,8 @@ final class ChatToolRuntime {
                     persistedInput = IOSProviderConfigToolCatalog.redactedArgumentsJSON(toolPart.input)
                 } else if IOSSSHProfileToolCatalog.contains(toolPart.toolName) {
                     persistedInput = IOSSSHProfileToolCatalog.redactedArgumentsJSON(toolPart.input)
+                } else if IOSSSHKeyToolCatalog.contains(toolPart.toolName) {
+                    persistedInput = IOSSSHKeyToolCatalog.redactedArgumentsJSON(toolPart.input)
                 } else {
                     persistedInput = toolPart.input
                 }
@@ -1093,6 +1096,10 @@ final class ChatToolRuntime {
         case let name where IOSSSHProfileToolCatalog.toolNames.contains(name):
             // SSH profile 工具：无独立 capability 开关；写路径靠高风险审批 +
             // 前台限制（后台只放 ssh_profile_list）。
+            true
+        case let name where IOSSSHKeyToolCatalog.toolNames.contains(name):
+            // SSH key 工具：无独立 capability 开关；写路径靠高风险审批 +
+            // 前台限制（后台只放 ssh_key_list）。
             true
         case "exec":
             // P3-a: 与声明侧同源 gate。开关关时（理论上调用到不了这里，因为

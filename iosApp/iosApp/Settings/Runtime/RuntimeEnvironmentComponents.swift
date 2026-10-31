@@ -743,6 +743,9 @@ private struct RemoteTaskTextCard: View {
 
 struct HostFingerprintCard: View {
     let status: RuntimeEnvironmentView.SSHStatus
+    var hopLabel: String? = nil
+    var replacesFingerprint = false
+    var statusExpectedFingerprint = ""
     let onTrust: () -> Void
     let onCancel: () -> Void
 
@@ -758,7 +761,9 @@ struct HostFingerprintCard: View {
                 Text("读取服务器公钥的 SHA256 指纹，请稍候。")
                     .fingerprintDescription()
             case .needsTrust(_, let fingerprint):
-                FingerprintTitle(systemImage: "exclamationmark.triangle", title: "首次连接此 Host", color: AmberTheme.accentAmber)
+                FingerprintTitle(systemImage: "exclamationmark.triangle", title: replacesFingerprint ? "主机指纹变化，请人工核对" : "首次连接此 Host", color: replacesFingerprint ? AmberTheme.accentRed : AmberTheme.accentAmber)
+                if let hopLabel { Text(hopLabel).font(.caption.weight(.semibold)) }
+                if replacesFingerprint { Text("原指纹与当前主机不一致。请通过可信渠道核对后再替换。旧指纹：\(statusExpectedFingerprint)").fingerprintDescription() }
                 FingerprintHash(label: "SERVER KEY · SHA256", value: fingerprint)
                 Text("确认这是你信任的服务器后，显式点击「信任此 Host」才会保存指纹。")
                     .fingerprintDescription()
@@ -766,7 +771,7 @@ struct HostFingerprintCard: View {
                     Button {
                         onTrust()
                     } label: {
-                        Label("信任此 Host", systemImage: "checkmark")
+                        Label(replacesFingerprint ? "确认替换此跳指纹" : "信任此 Host", systemImage: "checkmark")
                     }
                     .buttonStyle(RuntimeFilledButtonStyle())
                     Button("取消", action: onCancel)

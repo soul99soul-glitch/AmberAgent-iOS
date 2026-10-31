@@ -96,6 +96,19 @@ extension ChatToolRuntime {
                 conversationId: pending.conversationId
             )
         )
+        if IOSSSHHostTrustApproval.needsProbe(output), sharedSettings.isCapabilityGateEnabled(.remoteRuntime),
+           pending.toolCall.toolName == "terminal_execute" || pending.toolCall.toolName == "terminal_job_start" {
+            do {
+                if let request = try await IOSSSHHostTrustApproval.prepare(
+                    tool: pending.toolCall, store: settingsStore,
+                    runtime: localToolExecutor?.terminalRuntime ?? .shared, runId: pending.runId
+                ) { return .waitingForApproval(.ish(request)) }
+            } catch {
+                return .completed(messagesByFinishingToolCall(pending.toolCall, outputText:
+                    ChatToolOutputFormatter.toolFailureJSON(toolName: pending.toolCall.toolName,
+                        reason: error.localizedDescription, status: "failed"), in: pending.baseMessages))
+            }
+        }
         if case .needsUserAction(let reason) = output,
            let request = ChatToolApprovalRequestBuilder.ishHandoff(
                for: pending.toolCall,

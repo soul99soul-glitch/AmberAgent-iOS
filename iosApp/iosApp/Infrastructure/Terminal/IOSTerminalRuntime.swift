@@ -3,6 +3,10 @@ import Foundation
 
 protocol IOSSSHRuntimeBackendProtocol: Sendable {
     func testConnection(profile: IOSSSHProfile) async throws -> IOSSSHConnectionProbeResult
+    func probeRoute(
+        route: [IOSSSHProfile],
+        credentials: [String: IOSSSHCredential]
+    ) async throws -> [IOSSSHHopProbeResult]
     func execute(
         command: String,
         profile: IOSSSHProfile,
@@ -10,6 +14,46 @@ protocol IOSSSHRuntimeBackendProtocol: Sendable {
         timeout: TimeInterval,
         output: @escaping @Sendable (IOSSSHOutputChunk) -> Void
     ) async throws -> IOSSSHCommandResult
+    func executeRoute(
+        command: String,
+        route: [IOSSSHProfile],
+        credentials: [String: IOSSSHCredential],
+        timeout: TimeInterval,
+        output: @escaping @Sendable (IOSSSHOutputChunk) -> Void
+    ) async throws -> IOSSSHCommandResult
+}
+
+extension IOSSSHRuntimeBackendProtocol {
+    func probeRoute(
+        route: [IOSSSHProfile],
+        credentials: [String: IOSSSHCredential]
+    ) async throws -> [IOSSSHHopProbeResult] {
+        guard route.count == 1, let first = route.first else { throw IOSSSHError.backendUnavailable }
+        let single = try await testConnection(profile: first)
+        return [IOSSSHHopProbeResult(hopIndex: 1, hopCount: 1, profileId: first.id,
+                                    host: first.host, port: first.port,
+                                    fingerprint: single.fingerprint, trustState: single.trustState)]
+    }
+
+    func executeRoute(
+        command: String,
+        route: [IOSSSHProfile],
+        credentials: [String: IOSSSHCredential],
+        timeout: TimeInterval,
+        output: @escaping @Sendable (IOSSSHOutputChunk) -> Void
+    ) async throws -> IOSSSHCommandResult {
+        _ = try IOSSSHMultiHopClient.preflightValidate(route: route, credentials: credentials)
+        guard route.count == 1, let target = route.last, let credential = credentials[target.id] else {
+            throw IOSSSHError.noDefaultProfile
+        }
+        return try await execute(
+            command: command,
+            profile: target,
+            credential: credential,
+            timeout: timeout,
+            output: output
+        )
+    }
 }
 
 /// Seam for embedded-iSH job execution. The production witness is
@@ -40,6 +84,7 @@ private final class IOSTerminalJobState {
     var stderrTruncated: Bool
     var lastOutputWasStderr: Bool?
     var error: String?
+    var hopFailure: IOSSSHHopFailure?
     var task: Task<Void, Never>?
 
     init(id: String, runtime: IOSTerminalRuntimeKind, startedAt: Date, status: IOSTerminalJobStatus) {
@@ -68,7 +113,8 @@ private final class IOSTerminalJobState {
             stderrTruncated: stderrTruncated,
             startedAt: startedAt,
             updatedAt: updatedAt,
-            error: error
+            error: error,
+            hopFailure: hopFailure
         )
     }
 }
@@ -98,6 +144,14 @@ final class IOSTerminalRuntime {
         try await sshBackend.testConnection(profile: profile.validated())
     }
 
+    func testSSHRoute(
+        route: [IOSSSHProfile],
+        credentials: [String: IOSSSHCredential]
+    ) async throws -> [IOSSSHHopProbeResult] {
+        let validatedRoute = try route.map { try $0.validated() }
+        return try await sshBackend.probeRoute(route: validatedRoute, credentials: credentials)
+    }
+
     func startJob(
         command: String,
         runtime: IOSTerminalRuntimeKind,
@@ -124,6 +178,8 @@ final class IOSTerminalRuntime {
         sshProfile: IOSSSHProfile?,
         sshPassword: String? = nil,
         sshCredential: IOSSSHCredential? = nil,
+        sshRoute: [IOSSSHProfile]? = nil,
+        sshRouteCredentials: [String: IOSSSHCredential]? = nil,
         timeoutSeconds: TimeInterval = 60,
         jobId: String? = nil,
         workspaceStore: IOSWorkspaceStore = .shared,
@@ -159,6 +215,8 @@ final class IOSTerminalRuntime {
                 now: now,
                 profile: sshProfile,
                 credential: sshCredential ?? sshPassword.map(IOSSSHCredential.password),
+                route: sshRoute,
+                routeCredentials: sshRouteCredentials,
                 timeoutSeconds: timeoutSeconds,
                 jobId: jobId
             )
@@ -264,6 +322,8 @@ final class IOSTerminalRuntime {
         now: Date,
         profile: IOSSSHProfile?,
         credential: IOSSSHCredential?,
+        route: [IOSSSHProfile]? = nil,
+        routeCredentials: [String: IOSSSHCredential]? = nil,
         timeoutSeconds: TimeInterval,
         jobId: String?
     ) -> IOSTerminalJobSnapshot {
@@ -292,18 +352,67 @@ final class IOSTerminalRuntime {
                 id: jobId
             )
         }
-        let validated: IOSSSHProfile
-        let credentialToUse: IOSSSHCredential
+
+        let validatedRoute: [IOSSSHProfile]
+        let validatedCredentials: [String: IOSSSHCredential]
+        let isMultiHopRequest = (route?.count ?? 0) > 1
         do {
-            guard let profile else { throw IOSSSHError.noDefaultProfile }
-            validated = try profile.validated()
-            guard validated.knownHostSHA256?.isEmpty == false else {
-                throw IOSSSHError.hostKeyNotTrusted("Run Test Connection and Trust Host first.")
+            if let route, !route.isEmpty {
+                var creds = routeCredentials ?? [:]
+                if let profile, let credential, creds[profile.id] == nil {
+                    creds[profile.id] = credential
+                }
+                if route.count == 1, let single = route.first {
+                    let validated = try single.validated()
+                    guard validated.knownHostSHA256?.isEmpty == false else {
+                        throw IOSSSHError.hopFailure(
+                            IOSSSHHopFailure(
+                                status: "host_key_untrusted",
+                                hopIndex: 1,
+                                hopCount: 1,
+                                profileId: validated.id,
+                                display: "\(validated.displayName) (\(validated.username)@\(validated.host):\(validated.port))",
+                                expectedFingerprint: nil,
+                                presentedFingerprint: nil,
+                                message: "Run Test Connection and Trust Host first."
+                            )
+                        )
+                    }
+                    guard let singleCred = creds[validated.id] else {
+                        throw validated.authMethod == .password ? IOSSSHError.missingPassword : IOSSSHError.missingPrivateKey
+                    }
+                    let validCred = try singleCred.validated(for: validated)
+                    validatedRoute = [validated]
+                    validatedCredentials = [validated.id: validCred]
+                } else {
+                    let preflight = try IOSSSHMultiHopClient.preflightValidate(route: route, credentials: creds)
+                    validatedRoute = preflight
+                    validatedCredentials = creds
+                }
+            } else {
+                guard let profile else { throw IOSSSHError.noDefaultProfile }
+                let validated = try profile.validated()
+                guard validated.knownHostSHA256?.isEmpty == false else {
+                    throw IOSSSHError.hopFailure(IOSSSHHopFailure(status: "host_key_untrusted", hopIndex: 1,
+                        hopCount: 1, profileId: validated.id, display: validated.displayName,
+                        message: "Run Test Connection and Trust Host first."))
+                }
+                guard let credential else {
+                    throw validated.authMethod == .password ? IOSSSHError.missingPassword : IOSSSHError.missingPrivateKey
+                }
+                let validCred = try credential.validated(for: validated)
+                validatedRoute = [validated]
+                validatedCredentials = [validated.id: validCred]
             }
-            guard let credential else {
-                throw validated.authMethod == .password ? IOSSSHError.missingPassword : IOSSSHError.missingPrivateKey
-            }
-            credentialToUse = try credential.validated(for: validated)
+        } catch let IOSSSHError.hopFailure(failure) {
+            return failedSnapshot(
+                runtime: .remoteSSH,
+                command: command,
+                now: now,
+                message: failure.message,
+                id: jobId,
+                hopFailure: failure
+            )
         } catch {
             return failedSnapshot(
                 runtime: .remoteSSH,
@@ -324,22 +433,41 @@ final class IOSTerminalRuntime {
 
         let jobId = job.id
         let sshBackend = sshBackend
+        let allCredentials = Array(validatedCredentials.values)
         job.task = Task {
             do {
-                let result = try await sshBackend.execute(
-                    command: IOSPOSIXWorkingDirectory.remoteCommand(
-                        validatedCommand,
-                        workingDirectory: normalizedWorkingDirectory
-                    ),
-                    profile: validated,
-                    credential: credentialToUse,
-                    timeout: timeoutSeconds,
-                    output: { chunk in
-                        Task { @MainActor in
-                            self.appendOutput(chunk, to: jobId)
-                        }
-                    }
+                let remoteCmd = IOSPOSIXWorkingDirectory.remoteCommand(
+                    validatedCommand,
+                    workingDirectory: normalizedWorkingDirectory
                 )
+                let result: IOSSSHCommandResult
+                if isMultiHopRequest || validatedRoute.count > 1 {
+                    result = try await sshBackend.executeRoute(
+                        command: remoteCmd,
+                        route: validatedRoute,
+                        credentials: validatedCredentials,
+                        timeout: timeoutSeconds,
+                        output: { chunk in
+                            Task { @MainActor in
+                                self.appendOutput(chunk, to: jobId)
+                            }
+                        }
+                    )
+                } else {
+                    let target = validatedRoute[0]
+                    let targetCred = validatedCredentials[target.id]!
+                    result = try await sshBackend.execute(
+                        command: remoteCmd,
+                        profile: target,
+                        credential: targetCred,
+                        timeout: timeoutSeconds,
+                        output: { chunk in
+                            Task { @MainActor in
+                                self.appendOutput(chunk, to: jobId)
+                            }
+                        }
+                    )
+                }
                 updateJob(
                     id: jobId,
                     status: result.exitCode == 0 ? .completed : .failed,
@@ -365,13 +493,39 @@ final class IOSTerminalRuntime {
                     output: nil,
                     error: IOSSSHError.commandTimedOut.localizedDescription
                 )
+            } catch IOSSSHError.hostKeyMismatch(let expected, let actual) {
+                let target = validatedRoute[0]
+                let failure = IOSSSHHopFailure(status: "host_key_changed", hopIndex: 1, hopCount: 1,
+                    profileId: target.id, display: target.displayName, expectedFingerprint: expected,
+                    presentedFingerprint: actual, message: "第 1 跳主机指纹变化，已拦截。请在设置中人工核对。")
+                updateJob(id: jobId, status: .failed, exitCode: nil, output: nil, error: failure.message, hopFailure: failure)
+            } catch let IOSSSHError.hopFailure(failure) {
+                let redactedMsg = IOSSSHOutputRedactor.redact(failure.message, credentials: allCredentials)
+                let redactedFailure = IOSSSHHopFailure(
+                    status: failure.status,
+                    hopIndex: failure.hopIndex,
+                    hopCount: failure.hopCount,
+                    profileId: failure.profileId,
+                    display: failure.display,
+                    expectedFingerprint: failure.expectedFingerprint,
+                    presentedFingerprint: failure.presentedFingerprint,
+                    message: redactedMsg
+                )
+                updateJob(
+                    id: jobId,
+                    status: .failed,
+                    exitCode: nil,
+                    output: nil,
+                    error: redactedMsg,
+                    hopFailure: redactedFailure
+                )
             } catch {
                 updateJob(
                     id: jobId,
                     status: .failed,
                     exitCode: nil,
                     output: nil,
-                    error: IOSSSHOutputRedactor.redact(error.localizedDescription, credential: credentialToUse)
+                    error: IOSSSHOutputRedactor.redact(error.localizedDescription, credentials: allCredentials)
                 )
             }
         }
@@ -429,7 +583,8 @@ final class IOSTerminalRuntime {
         stdout: String? = nil,
         stderr: String? = nil,
         stdoutTruncated: Bool? = nil,
-        stderrTruncated: Bool? = nil
+        stderrTruncated: Bool? = nil,
+        hopFailure: IOSSSHHopFailure? = nil
     ) {
         guard let job = jobs[id] else { return }
         guard !job.status.isTerminal else { return }
@@ -443,6 +598,9 @@ final class IOSTerminalRuntime {
         if let stderr {
             job.stderrTruncated = stderrTruncated ?? exceedsOutputLimit(stderr)
             job.stderrTail = limitedTail(stderr)
+        }
+        if let hopFailure {
+            job.hopFailure = hopFailure
         }
         job.status = status
         job.exitCode = exitCode
@@ -557,7 +715,8 @@ final class IOSTerminalRuntime {
         command: String,
         now: Date,
         message: String,
-        id: String? = nil
+        id: String? = nil,
+        hopFailure: IOSSSHHopFailure? = nil
     ) -> IOSTerminalJobSnapshot {
         IOSTerminalJobSnapshot(
             id: id ?? UUID().uuidString,
@@ -568,7 +727,8 @@ final class IOSTerminalRuntime {
             stdoutTail: "",
             startedAt: now,
             updatedAt: Date(),
-            error: message
+            error: message,
+            hopFailure: hopFailure
         )
     }
 }

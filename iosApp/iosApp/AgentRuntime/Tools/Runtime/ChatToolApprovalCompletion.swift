@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 @preconcurrency import Shared
 
 @MainActor
@@ -263,7 +264,23 @@ extension ChatToolRuntime {
         )
 
         let resultText: String
-        if allow {
+        if allow, let request = approvalRequest, !request.allowsApprove {
+            resultText = ChatToolOutputFormatter.toolFailureJSON(toolName: pending.toolCall.toolName,
+                reason: request.reason, status: "host_key_changed")
+        } else if allow, let proposal = approvalRequest?.remoteHostTrust {
+            do {
+                guard UIApplication.shared.applicationState == .active else {
+                    throw IOSSSHError.invalidProfile("首次信任只能在 App 前台确认。")
+                }
+                try IOSSSHHostTrustApproval.accept(proposal, store: settingsStore)
+                resultText = IOSWorkspaceStore.json(["ok": false, "status": "host_key_trusted",
+                    "requires_retry": true, "hop_index": proposal.hopIndex,
+                    "message": "此跳指纹已信任。本次尚未执行命令，请重新调用原工具继续。"])
+            } catch {
+                resultText = ChatToolOutputFormatter.toolFailureJSON(toolName: pending.toolCall.toolName,
+                    reason: error.localizedDescription, status: "host_trust_rejected")
+            }
+        } else if allow {
             let output = await ishToolExecutionOutput(
                 pending.toolCall,
                 isUserInitiated: true,
@@ -297,6 +314,9 @@ extension ChatToolRuntime {
         preparedSoulImport: IOSPreparedSoulImport? = nil,
         preparedMcpImport: IOSPreparedMcpImport? = nil
     ) async -> [UIMessage] {
+        let rawSSHArguments = dynamicToolLifecycle.sshArguments.take(
+            runId: pending.runId, toolCallId: pending.toolCall.toolCallId
+        )
         let audit: (capabilityId: String, actionName: String)
         if pending.toolCall.toolName == "mcp_call"
             || ToolKt.isExpandedMcpToolName(name: pending.toolCall.toolName)
@@ -311,6 +331,8 @@ extension ChatToolRuntime {
             audit = ("ios.settings.theme_pack", "Theme pack try-on")
         } else if IOSSSHProfileToolCatalog.mutatingToolNames.contains(pending.toolCall.toolName) {
             audit = ("ios.remote.command", "Remote SSH profile write")
+        } else if IOSSSHKeyToolCatalog.mutatingToolNames.contains(pending.toolCall.toolName) {
+            audit = ("ios.remote.command", "Remote SSH key write")
         } else if pending.toolCall.toolName == IOSSoulToolCatalog.toolName {
             audit = ("ios.skills.management", "Soul update")
         } else if IOSRecipeToolCatalog.toolNames.contains(pending.toolCall.toolName)
@@ -414,8 +436,11 @@ extension ChatToolRuntime {
                     status: "denied"
                 )
             } else {
+                let executionCall = rawSSHArguments.map {
+                    PromptTranscript.shared.doCopyTool(tool: pending.toolCall, input: $0, output: pending.toolCall.output)
+                } ?? pending.toolCall
                 resultText = await dispatchAdvancedToolCall(
-                    pending.toolCall,
+                    executionCall,
                     providerSetting: pending.providerSetting,
                     params: pending.params,
                     runId: pending.runId,

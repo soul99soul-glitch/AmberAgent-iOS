@@ -171,6 +171,7 @@ struct IOSTerminalJobSnapshot: Identifiable {
     let startedAt: Date
     let updatedAt: Date
     let error: String?
+    let hopFailure: IOSSSHHopFailure?
 
     init(
         id: String,
@@ -184,7 +185,8 @@ struct IOSTerminalJobSnapshot: Identifiable {
         stderrTruncated: Bool = false,
         startedAt: Date,
         updatedAt: Date,
-        error: String?
+        error: String?,
+        hopFailure: IOSSSHHopFailure? = nil
     ) {
         self.id = id
         self.runtime = runtime
@@ -198,6 +200,7 @@ struct IOSTerminalJobSnapshot: Identifiable {
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.error = error
+        self.hopFailure = hopFailure
     }
 }
 

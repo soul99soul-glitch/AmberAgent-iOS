@@ -94,7 +94,15 @@ struct IshHandoffToolApprovalCard: View {
                 Spacer(minLength: 0)
             }
 
-            if request.mode == .amberShell {
+            if !request.allowsApprove {
+                Label(
+                    "检测到主机指纹变化，无法在对话中直接批准。请前往「设置 → 远程运行环境」人工核对并替换指纹后再试。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(AmberTheme.accentRed)
+                .fixedSize(horizontal: false, vertical: true)
+            } else if request.mode == .amberShell || request.requiresForegroundApproval {
                 HStack(spacing: 10) {
                     Image(systemName: "hand.raised.fill")
                         .font(.footnote.weight(.semibold))
@@ -198,23 +206,25 @@ struct IshHandoffToolApprovalCard: View {
                 .chatApprovalHitTarget()
                 .accessibilityLabel("拒绝\(request.title)")
 
-                Button {
-                    onApprove(approvalScope)
-                } label: {
-                    Label(approvalScope == .global ? "批准并开启" : "批准", systemImage: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 13)
-                        .frame(minHeight: 32)
-                        .background(AmberTheme.accent, in: Capsule())
+                if request.allowsApprove {
+                    Button {
+                        onApprove(approvalScope)
+                    } label: {
+                        Label(approvalScope == .global ? "批准并开启" : "批准", systemImage: "checkmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 13)
+                            .frame(minHeight: 32)
+                            .background(AmberTheme.accent, in: Capsule())
+                    }
+                    .buttonStyle(IshApprovalPressStyle())
+                    .chatApprovalHitTarget()
+                    .accessibilityLabel(
+                        approvalScope == .global
+                            ? "批准\(request.title)并开启全局自动批准"
+                            : "批准\(request.title)，范围：\(approvalScope.title)"
+                    )
                 }
-                .buttonStyle(IshApprovalPressStyle())
-                .chatApprovalHitTarget()
-                .accessibilityLabel(
-                    approvalScope == .global
-                        ? "批准\(request.title)并开启全局自动批准"
-                        : "批准\(request.title)，范围：\(approvalScope.title)"
-                )
             }
         }
         .padding(12)

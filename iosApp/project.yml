@@ -74,6 +74,8 @@ targets:
         buildPhase: resources
       - path: Resources/Licenses/CPython-3.14.7.txt
         buildPhase: resources
+      - path: Resources/Licenses/OpenBSD-SSH.txt
+        buildPhase: resources
       - path: AmberShellPythonRuntime
         excludes:
           - README.md
@@ -453,6 +455,8 @@ targets:
       - path: Resources/Fonts/jetbrains_mono.ttf
         buildPhase: resources
       - path: Resources/Licenses/CPython-3.14.7.txt
+        buildPhase: resources
+      - path: Resources/Licenses/OpenBSD-SSH.txt
         buildPhase: resources
       - path: AmberShellPythonRuntime
         excludes:

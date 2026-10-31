@@ -346,6 +346,12 @@ extension ChatToolRuntime {
                 argumentsJSON: toolCall.input,
                 settingsStore: settingsStore
             )
+        case let name where IOSSSHKeyToolCatalog.toolNames.contains(name):
+            return IOSSSHKeyToolExecutor.execute(
+                toolName: name,
+                argumentsJSON: toolCall.input,
+                settingsStore: settingsStore
+            )
         case "exec":
             guard effectiveExecJavaScriptEnabled else {
                 return IOSWorkspaceStore.json([

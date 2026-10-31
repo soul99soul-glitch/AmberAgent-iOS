@@ -62,6 +62,7 @@ extension RuntimeEnvironmentView {
 
     func saveSSHProfile() {
         do {
+            if sshProfileDraft.authMethod == .privateKey, !sshPrivateKeyDraft.isEmpty { try persistSSHKeyDraft() }
             let profile = try currentSSHProfile()
             try settingsStore.upsertSSHProfile(profile, credential: draftSSHCredential())
             sshProfileDraft = settingsStore.sshProfiles.first { $0.id == profile.id } ?? profile
@@ -84,37 +85,37 @@ extension RuntimeEnvironmentView {
             return
         }
         do {
-            let profile = try currentSSHProfile()
-            let draftCredential = draftSSHCredential()
-            let persistedProfileBeforeProbe = settingsStore.sshProfiles.first { $0.id == profile.id }
+            if sshProfileDraft.authMethod == .privateKey, !sshPrivateKeyDraft.isEmpty { try persistSSHKeyDraft() }
+            let target = try currentSSHProfile()
+            let route = try settingsStore.resolveSSHRoute(for: target)
+            let persisted = settingsStore.sshProfiles
+            var credentials: [String: IOSSSHCredential] = [:]
+            // A probe only authenticates the already trusted prefix.
+            for hop in route.dropLast() {
+                guard hop.knownHostSHA256 != nil else { break }
+                credentials[hop.id] = try settingsStore.credentialForSSHProfile(hop)
+            }
             sshStatus = .testing
             sshVerificationTask = Task {
                 do {
-                    let result = try await IOSTerminalRuntime.shared.testSSHConnection(profile: profile)
+                    let results = try await IOSTerminalRuntime.shared.testSSHRoute(route: route, credentials: credentials)
                     guard !Task.isCancelled else { return }
-                    switch result.trustState {
+                    guard try currentSSHProfile() == target, settingsStore.sshProfiles == persisted,
+                          let last = results.last,
+                          let hop = route.first(where: { $0.id == last.profileId }) else {
+                        throw IOSSSHError.invalidProfile("连接配置已变化，请重新检查指纹。")
+                    }
+                    switch last.trustState {
                     case .trusted:
-                        await verifySSHCredential(
-                            profile: profile,
-                            draftCredential: draftCredential,
-                            persistedProfileBeforeVerification: persistedProfileBeforeProbe
-                        )
-                    case .needsTrust(let fingerprint):
-                        // Probing is read-only. Keep both the in-memory candidate
-                        // and the persisted snapshot until explicit trust + auth
-                        // succeeds, so cancelling cannot delete old credentials.
-                        guard settingsStore.sshProfiles.first(where: { $0.id == profile.id }) == persistedProfileBeforeProbe else {
-                            throw IOSSSHError.invalidProfile("连接配置已变化，请重新检查主机指纹。")
-                        }
+                        guard last.hopIndex == route.count else { throw IOSSSHError.credentialUnavailable }
+                        await verifySSHCredential(profile: target, persistedProfiles: persisted)
+                    case .needsTrust, .mismatch:
                         sshProbeSnapshot = SSHProbeSnapshot(
-                            candidate: profile,
-                            persistedProfile: persistedProfileBeforeProbe,
-                            fingerprint: fingerprint
+                            candidate: hop, persistedProfile: persisted.first { $0.id == hop.id },
+                            fingerprint: last.fingerprint, target: target, route: route,
+                            hopIndex: last.hopIndex, replacesFingerprint: hop.knownHostSHA256 != nil
                         )
-                        sshStatus = .needsTrust(profileId: profile.id, fingerprint: fingerprint)
-                    case .mismatch(let expected, let actual):
-                        sshProbeSnapshot = nil
-                        sshStatus = .failure("主机指纹不匹配。预期 \(expected)，实际 \(actual)。")
+                        sshStatus = .needsTrust(profileId: hop.id, fingerprint: last.fingerprint)
                     }
                 } catch {
                     guard !Task.isCancelled else { return }
@@ -125,81 +126,61 @@ extension RuntimeEnvironmentView {
     }
 
     func trustSSHHost() {
-        guard case .needsTrust(let profileId, _) = sshStatus,
-              let snapshot = sshProbeSnapshot,
-              snapshot.candidate.id == profileId else { return }
+        guard let snapshot = sshProbeSnapshot else { return }
         do {
-            let current = try currentSSHProfile()
-            guard current == snapshot.candidate,
-                  settingsStore.sshProfiles.first(where: { $0.id == profileId }) == snapshot.persistedProfile else {
-                throw IOSSSHError.invalidProfile("连接配置已变化，请重新检查主机指纹。")
+            guard try currentSSHProfile() == snapshot.target,
+                  try settingsStore.resolveSSHRoute(for: snapshot.target) == snapshot.route,
+                  settingsStore.sshProfiles.first(where: { $0.id == snapshot.candidate.id }) == snapshot.persistedProfile else {
+                throw IOSSSHError.invalidProfile("连接配置已变化，请重新检查指纹。")
             }
-            var trustedCandidate = snapshot.candidate
-            trustedCandidate.knownHostSHA256 = snapshot.fingerprint
-            trustedCandidate.knownHostHost = trustedCandidate.host
-            trustedCandidate.knownHostPort = trustedCandidate.port
-            trustedCandidate = try trustedCandidate.validated()
-            // Keep the trusted pin on the in-memory candidate while auth runs;
-            // SettingsStore is still untouched until authentication succeeds.
-            sshProfileDraft = trustedCandidate
-            sshPortDraft = String(trustedCandidate.port)
-            let draftCredential = draftSSHCredential()
-            sshStatus = .testing
-            sshVerificationTask = Task {
-                await verifySSHCredential(
-                    profile: trustedCandidate,
-                    draftCredential: draftCredential,
-                    persistedProfileBeforeVerification: snapshot.persistedProfile
-                )
+            var trusted = snapshot.candidate
+            trusted.knownHostSHA256 = snapshot.fingerprint
+            trusted.knownHostHost = trusted.host
+            trusted.knownHostPort = trusted.port
+            trusted.knownHostViaJump = trusted.jumpProfileId
+            if trusted.id == sshProfileDraft.id {
+                // Do not write credentials or a new endpoint until the target authenticates.
+                sshProfileDraft = trusted
+            } else {
+                try settingsStore.upsertSSHProfile(trusted, credential: nil)
             }
+            sshProbeSnapshot = nil
+            testSSHConnection()
         } catch { sshStatus = .failure(error.localizedDescription) }
     }
 
-    private func verifySSHCredential(
-        profile: IOSSSHProfile,
-        draftCredential: IOSSSHCredential?,
-        persistedProfileBeforeVerification: IOSSSHProfile?
-    ) async {
-        guard !Task.isCancelled else { return }
-        let savedProfileBefore = persistedProfileBeforeVerification
-        guard sharedSettings.isCapabilityGateEnabled(.remoteRuntime) else {
-            sshStatus = .failure(IOSCapabilityGate.remoteRuntime.disabledReason)
-            return
-        }
+    private func verifySSHCredential(profile: IOSSSHProfile, persistedProfiles: [IOSSSHProfile]) async {
         do {
-            let credential: IOSSSHCredential?
-            if let draftCredential { credential = draftCredential }
-            else { credential = try settingsStore.credentialForSSHProfile(profile) }
-            guard let credential else {
-                throw profile.authMethod == .password ? IOSSSHError.missingPassword : IOSSSHError.missingPrivateKey
+            let route = try settingsStore.resolveSSHRoute(for: profile)
+            var credentials: [String: IOSSSHCredential] = [:]
+            for hop in route {
+                if hop.id == profile.id, let draft = draftSSHCredential() { credentials[hop.id] = draft }
+                else { credentials[hop.id] = try settingsStore.credentialForSSHProfile(hop) }
             }
             let started = await IOSTerminalRuntime.shared.startJob(
-                command: "echo amber-terminal-auth-check",
-                runtime: .remoteSSH,
-                experimentalEnabled: false,
-                sshProfile: profile,
-                sshCredential: credential,
-                timeoutSeconds: 15
+                command: "echo amber-terminal-auth-check", runtime: .remoteSSH,
+                experimentalEnabled: false, sshProfile: profile,
+                sshCredential: credentials[profile.id], sshRoute: route,
+                sshRouteCredentials: credentials, timeoutSeconds: 15
             )
             let finished = started.status == IOSTerminalJobStatus.running.rawValue
                 ? await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 20) : started
             if Task.isCancelled { _ = IOSTerminalRuntime.shared.stopJob(id: started.id) }
             _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
             guard !Task.isCancelled else { return }
-            guard finished?.status == IOSTerminalJobStatus.completed.rawValue && finished?.exitCode == 0 else {
-                sshStatus = .failure(finished?.error ?? IOSSSHError.authenticationFailed.localizedDescription)
-                return
+            guard finished?.status == IOSTerminalJobStatus.completed.rawValue, finished?.exitCode == 0 else {
+                throw IOSSSHError.commandFailed(finished?.error ?? IOSSSHError.authenticationFailed.localizedDescription)
             }
-            // A late verification must not overwrite a newer saved target.
-            guard try currentSSHProfile() == profile,
-                  settingsStore.sshProfiles.first(where: { $0.id == profile.id }) == savedProfileBefore else {
+            guard try currentSSHProfile() == profile, settingsStore.sshProfiles == persistedProfiles else {
                 throw IOSSSHError.invalidProfile("连接配置已变化，请重新验证认证。")
             }
-            try settingsStore.upsertSSHProfile(profile, credential: credential)
+            // Key-id credentials already belong to the key store and must not be copied into the legacy store.
+            try settingsStore.upsertSSHProfile(profile, credential: profile.keyId == nil ? credentials[profile.id] : nil)
             sshPasswordDraft = ""
             sshPrivateKeyDraft = ""
+            sshPassphraseDraft = ""
             sshProbeSnapshot = nil
-            sshStatus = .success("主机已信任，SSH 认证通过，凭证已安全保存。")
+            sshStatus = .success("整条路由已信任，SSH 认证通过，配置已保存。")
         } catch {
             guard !Task.isCancelled else { return }
             sshStatus = .failure(error.localizedDescription)
@@ -218,18 +199,37 @@ extension RuntimeEnvironmentView {
     }
 
     private func persistSSHKeyDraft() throws {
-        let profile = try currentSSHProfile()
-        try settingsStore.upsertSSHProfile(profile, credential: .privateKey(sshPrivateKeyDraft))
-        sshProfileDraft = settingsStore.sshProfiles.first { $0.id == profile.id } ?? profile
+        let key = try settingsStore.importSSHKey(
+            name: settingsStore.uniqueSSHKeyName(base: "\(sshProfileDraft.displayName)-imported"),
+            privateKey: sshPrivateKeyDraft, passphrase: sshPassphraseDraft.isEmpty ? nil : sshPassphraseDraft
+        )
+        sshProfileDraft.authMethod = .privateKey
+        sshProfileDraft.keyId = key.id
         sshPrivateKeyDraft = ""
+        sshPassphraseDraft = ""
+        sshPublicKey = key.publicKeyOpenSSH
     }
 
     func generateSSHKey() {
         do {
-            let key = try IOSSSHPrivateKey.generate()
-            sshPrivateKeyDraft = key.privateKey
-            sshPublicKey = key.publicKey
-            sshStatus = .success("已生成专用密钥，请保存后将公钥添加到服务器。")
+            let key = try settingsStore.generateSSHKey(
+                name: settingsStore.uniqueSSHKeyName(base: "\(sshProfileDraft.displayName)-key"),
+                type: sshKeyGenerationType, requireUserPresence: sshKeyRequireUserPresence
+            )
+            sshProfileDraft.authMethod = .privateKey
+            sshProfileDraft.keyId = key.id
+            sshPrivateKeyDraft = ""
+            sshPassphraseDraft = ""
+            sshPublicKey = key.publicKeyOpenSSH
+            sshStatus = .success("密钥已保存。请复制公钥交给服务器管理员，并保存 Profile。")
+        } catch { sshStatus = .failure(error.localizedDescription) }
+    }
+
+    func deleteSavedSSHKey(_ key: IOSSSHKeyMetadata) {
+        do {
+            try settingsStore.deleteSSHKey(id: key.id)
+            if sshProfileDraft.keyId == key.id { sshProfileDraft.keyId = nil; sshPublicKey = "" }
+            sshStatus = .success("已删除密钥「\(key.name)」。")
         } catch { sshStatus = .failure(error.localizedDescription) }
     }
 
@@ -244,10 +244,9 @@ extension RuntimeEnvironmentView {
             guard data.count <= 65_536, let key = String(data: data, encoding: .utf8) else {
                 throw IOSSSHError.invalidPrivateKey
             }
-            let publicKey = try IOSSSHPrivateKey.publicKey(from: key)
             sshPrivateKeyDraft = key
-            sshPublicKey = publicKey
-            sshStatus = .success("私钥已读入，请保存。Amber 不会另存明文文件。")
+            sshPublicKey = ""
+            sshStatus = .success("私钥已读入；如已加密，请填写口令后导入。")
         } catch let error as IOSSSHError { sshStatus = .failure(error.localizedDescription) }
         catch { sshStatus = .failure("无法读取私钥文件，请重新选择。") }
     }
@@ -265,14 +264,15 @@ extension RuntimeEnvironmentView {
             }
             sshPublicKey = try currentSSHPublicKey()
             UIPasteboard.general.string = sshPublicKey
-            sshStatus = .success("公钥已复制。私钥如未保存，请点击保存私钥。")
+            sshStatus = .success("公钥已复制，请添加到服务器的 authorized_keys。")
         } catch { sshStatus = .failure(error.localizedDescription) }
     }
 
     private func currentSSHPublicKey() throws -> String {
         if !sshPrivateKeyDraft.isEmpty {
-            return try IOSSSHPrivateKey.publicKey(from: sshPrivateKeyDraft)
+            return try IOSSSHPrivateKey.publicKey(from: sshPrivateKeyDraft, passphrase: sshPassphraseDraft.isEmpty ? nil : sshPassphraseDraft)
         }
+        if let id = sshProfileDraft.keyId, let key = settingsStore.sshKey(id: id) { return key.publicKeyOpenSSH }
         let profile = try currentSSHProfile()
         guard case .privateKey(let key) = try settingsStore.credentialForSSHProfile(profile) else {
             throw IOSSSHError.missingPrivateKey
@@ -285,6 +285,7 @@ extension RuntimeEnvironmentView {
         sshVerificationTask = nil
         sshPasswordDraft = ""
         sshPrivateKeyDraft = ""
+        sshPassphraseDraft = ""
         sshPublicKey = ""
         showsSSHPublicKey = false
         sshProbeSnapshot = nil
@@ -306,9 +307,11 @@ extension RuntimeEnvironmentView {
 
     func clearSSHCredential() {
         do {
+            let hadKeyBinding = sshProfileDraft.keyId != nil
             try settingsStore.clearSSHCredential(profileId: sshProfileDraft.id)
+            sshProfileDraft.keyId = nil
             clearSSHDrafts()
-            sshStatus = .success("已清除本机保存的 SSH 凭证。")
+            sshStatus = .success(hadKeyBinding ? "已解除当前 Profile 的密钥绑定；本机密钥保留。" : "已清除本机保存的 SSH 凭证。")
         } catch { sshStatus = .failure(error.localizedDescription) }
     }
 

@@ -75,10 +75,12 @@ final class ChatRunApprovalSession {
                 defaultValue: "无法保存待确认恢复信息，请重试。"
             ))
         }
-        // Provider apply 入参的 api_key 与 SSH profile 入参的密码/私钥都不得随
+        // Provider apply 入参的 api_key 与 SSH profile / key 入参的密码/私钥/口令都不得随
         // 待确认快照落盘。
-        let approvalMessages = IOSSSHProfileToolCatalog.redactedApprovalMessages(
-            IOSProviderConfigToolCatalog.redactedApprovalMessages(bindings.getMessages())
+        let approvalMessages = IOSSSHKeyToolCatalog.redactedApprovalMessages(
+            IOSSSHProfileToolCatalog.redactedApprovalMessages(
+                IOSProviderConfigToolCatalog.redactedApprovalMessages(bindings.getMessages())
+            )
         )
         let didPersist = await bindings.persistMessagesSnapshot(approvalMessages, conversationId, writeBaseline)
         guard isCurrentRun() else { return .decision(nil) }
@@ -159,6 +161,9 @@ final class ChatRunApprovalSession {
         if case .mcp(let request) = prompt {
             return !request.isHighRiskLocalMutation
                 && !request.isDestructiveAppleAction
+        }
+        if case .ish(let request) = prompt {
+            return request.allowsApprove && !request.requiresForegroundApproval
         }
         return true
     }

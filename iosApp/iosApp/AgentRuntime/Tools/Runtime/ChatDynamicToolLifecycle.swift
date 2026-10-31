@@ -20,6 +20,7 @@ extension ChatToolRuntime {
 @MainActor
 final class ChatDynamicToolLifecycle {
     unowned let runtime: ChatToolRuntime
+    let sshArguments = IOSPendingSSHArguments()
     private var preparedSkillImportsForApproval: [String: IOSPreparedSkillImport] = [:]
     private var preparedSoulImportsForApproval: [String: IOSPreparedSoulImport] = [:]
     private var preparedMcpImportsForApproval: [String: IOSPreparedMcpImport] = [:]
@@ -242,33 +243,29 @@ final class ChatDynamicToolLifecycle {
             return .waitingForApproval(.mcp(request))
         }
 
-        // SSH profile 写入：高风险。普通自动批准不放行；高风险自动批准开启时直接执行（不额外拦截）。
-        if IOSSSHProfileToolCatalog.highRiskToolNames.contains(toolName) {
+        // SSH profile/key writes share one high-risk gate and one pending-secret lifetime.
+        let isSSHKeyWrite = IOSSSHKeyToolCatalog.highRiskToolNames.contains(toolName)
+        if isSSHKeyWrite || IOSSSHProfileToolCatalog.highRiskToolNames.contains(toolName) {
             if runtime.effectiveHighRiskAutoApproveEnabled {
-                let resultText = IOSSSHProfileToolExecutor.execute(
-                    toolName: toolName,
-                    argumentsJSON: pending.toolCall.input,
-                    settingsStore: runtime.settingsStore
-                )
+                let resultText = isSSHKeyWrite
+                    ? IOSSSHKeyToolExecutor.execute(toolName: toolName, argumentsJSON: pending.toolCall.input, settingsStore: runtime.settingsStore)
+                    : IOSSSHProfileToolExecutor.execute(toolName: toolName, argumentsJSON: pending.toolCall.input, settingsStore: runtime.settingsStore)
                 return .completed(runtime.messagesByFinishingToolCall(
-                    pending.toolCall,
-                    outputText: resultText,
-                    in: pending.baseMessages,
+                    pending.toolCall, outputText: resultText, in: pending.baseMessages,
                     conversationId: pending.conversationId
                 ))
             }
-            let request = McpToolApprovalRequest(
-                id: ChatToolCallParsing.requestId(for: pending.toolCall),
-                serverName: "local",
-                toolName: toolName,
-                argumentsPreview: IOSSSHProfileToolCatalog.approvalPreview(
-                    toolName: toolName,
-                    argumentsJSON: pending.toolCall.input,
-                    store: runtime.settingsStore
-                ),
-                reason: IOSSSHProfileToolCatalog.approvalReason(toolName: toolName)
-            )
-            return .waitingForApproval(.mcp(request))
+            sshArguments.stage(runId: pending.runId, toolCallId: pending.toolCall.toolCallId, arguments: pending.toolCall.input)
+            let preview = isSSHKeyWrite
+                ? IOSSSHKeyToolCatalog.approvalPreview(toolName: toolName, argumentsJSON: pending.toolCall.input, store: runtime.settingsStore)
+                : IOSSSHProfileToolCatalog.approvalPreview(toolName: toolName, argumentsJSON: pending.toolCall.input, store: runtime.settingsStore)
+            let reason = isSSHKeyWrite
+                ? IOSSSHKeyToolCatalog.approvalReason(toolName: toolName)
+                : IOSSSHProfileToolCatalog.approvalReason(toolName: toolName)
+            return .waitingForApproval(.mcp(McpToolApprovalRequest(
+                id: ChatToolCallParsing.requestId(for: pending.toolCall), serverName: "local",
+                toolName: toolName, argumentsPreview: preview, reason: reason
+            )))
         }
 
         // Theme pack import: try-on immediately, always show 套用/还原 (never skip the card).

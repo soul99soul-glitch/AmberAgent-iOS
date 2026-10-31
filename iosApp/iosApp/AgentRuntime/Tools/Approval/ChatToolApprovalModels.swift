@@ -234,6 +234,8 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
             "试穿主题"
         } else if IOSSSHProfileToolCatalog.mutatingToolNames.contains(toolName) {
             toolName == IOSSSHProfileToolCatalog.deleteToolName ? "删除 SSH Profile" : "确认 SSH Profile 变更"
+        } else if IOSSSHKeyToolCatalog.mutatingToolNames.contains(toolName) {
+            toolName == IOSSSHKeyToolCatalog.deleteToolName ? "删除 SSH 密钥" : "确认 SSH 密钥操作"
         } else if toolName.hasPrefix("skill_") || toolName == "mcp_test" {
             "确认扩展操作"
         } else {
@@ -251,10 +253,13 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
         )
     }
 
-    /// SSH profile writes use the local server chip like provider/theme tools,
+    /// SSH profile / key writes use the local server chip like provider/theme tools,
     /// but a delete is destructive chrome (red, trash glyph).
     var isDestructiveLocalMutation: Bool {
-        !isAppleCapability && toolName == IOSSSHProfileToolCatalog.deleteToolName
+        !isAppleCapability && (
+            toolName == IOSSSHProfileToolCatalog.deleteToolName
+                || toolName == IOSSSHKeyToolCatalog.deleteToolName
+        )
     }
 
     /// 高风险本地写：不能在锁屏 Live Activity / 灵动岛 / 手表上批准。
@@ -312,7 +317,11 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
             "ssh_profile_list": "查看 SSH Profile",
             "ssh_profile_create": "新建 SSH Profile",
             "ssh_profile_update": "修改 SSH Profile",
-            "ssh_profile_delete": "删除 SSH Profile"
+            "ssh_profile_delete": "删除 SSH Profile",
+            "ssh_key_list": "查看 SSH 密钥",
+            "ssh_key_generate": "生成 SSH 密钥",
+            "ssh_key_import": "导入 SSH 密钥",
+            "ssh_key_delete": "删除 SSH 密钥",
         ]
         return names[toolName] ?? toolName
     }
@@ -330,6 +339,9 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
         if toolName.hasPrefix("weather_") { return "cloud.sun" }
         if IOSSSHProfileToolCatalog.contains(toolName) {
             return toolName == IOSSSHProfileToolCatalog.deleteToolName ? "trash" : "server.rack"
+        }
+        if IOSSSHKeyToolCatalog.contains(toolName) {
+            return toolName == IOSSSHKeyToolCatalog.deleteToolName ? "trash" : "key.fill"
         }
         return themePackPreview == nil ? "point.3.connected.trianglepath.dotted" : "swatchpalette"
     }
@@ -381,6 +393,12 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
     var remoteProfileId: String? = nil
     var remoteTargetDigest: String? = nil
     var runId: String? = nil
+    /// Whether the user can approve this card (false when a host key fingerprint changed,
+    /// which requires manual replacement in Settings -> Remote Environment).
+    var allowsApprove: Bool = true
+    /// Whether approval is restricted to foreground UI only (e.g. first-time host key trust).
+    var requiresForegroundApproval: Bool = false
+    var remoteHostTrust: IOSSSHHostTrustProposal? = nil
 
     var capabilityId: String {
         switch mode {

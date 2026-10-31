@@ -172,7 +172,10 @@ enum IOSSubAgentToolPolicy {
     static let deniedToolNames: Set<String> = [
         "workspace_file_write", "workspace_file_edit", "workspace_file_move", "workspace_artifact_delete",
         "wm_open", "wm_clear_session", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select",
-        "mcp_call", "memory_tool", "generate_image", "subagent_dispatch", "model_council_run"
+        "mcp_call", "memory_tool", "generate_image", "subagent_dispatch", "model_council_run",
+        "ssh_profile_create", "ssh_profile_update", "ssh_profile_delete",
+        "ssh_key_generate", "ssh_key_import", "ssh_key_delete",
+        "terminal_execute", "terminal_job_start", "terminal_job_stop",
     ]
 
     /// WebMount names exposed only to an explicitly selected browser-capable

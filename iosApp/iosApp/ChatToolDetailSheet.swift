@@ -217,6 +217,9 @@ struct ChatToolDetailSheet: View {
             if IOSSSHProfileToolCatalog.contains(tool.toolName) {
                 return IOSSSHProfileToolCatalog.redactedArgumentsJSON(tool.input)
             }
+            if IOSSSHKeyToolCatalog.contains(tool.toolName) {
+                return IOSSSHKeyToolCatalog.redactedArgumentsJSON(tool.input)
+            }
             return tool.input
         }()
         if let pretty = Self.prettyJSON(parametersSource) {

@@ -13,9 +13,12 @@ struct RuntimeEnvironmentView: View {
     @State var sshPasswordDraft = ""
     @Environment(\.scenePhase) private var scenePhase
     @State var sshPrivateKeyDraft = ""
+    @State var sshPassphraseDraft = ""
+    @State var sshKeyGenerationType: IOSSSHKeyType = .ed25519
+    @State var sshKeyRequireUserPresence = false
     @State var sshPublicKey = ""
     @State var showsSSHPublicKey = false
-    @State private var showsSSHKeyImporter = false
+    @State var showsSSHKeyImporter = false
     @State private var showsSSHKeyManagement = false
     @State var sshProbeSnapshot: SSHProbeSnapshot?
     @State var sshVerificationTask: Task<Void, Never>?
@@ -41,6 +44,10 @@ struct RuntimeEnvironmentView: View {
         let candidate: IOSSSHProfile
         let persistedProfile: IOSSSHProfile?
         let fingerprint: String
+        let target: IOSSSHProfile
+        let route: [IOSSSHProfile]
+        let hopIndex: Int
+        let replacesFingerprint: Bool
     }
 
     private enum RuntimeEnvironmentSheet: String, Identifiable {
@@ -428,6 +435,8 @@ struct RuntimeEnvironmentView: View {
                 RuntimeDivider()
                 RuntimeTextFieldRow(title: "用户名", text: sshUsernameBinding, placeholder: "root", monospace: true)
                 RuntimeDivider()
+                sshJumpHostRow
+                RuntimeDivider()
                 if dynamicTypeSize.isAccessibilitySize {
                     Menu {
                         Picker("认证方式", selection: sshAuthMethodBinding) {
@@ -490,131 +499,6 @@ struct RuntimeEnvironmentView: View {
                 .padding(.top, 7)
         }
         .disabled(sshStatus.isTesting)
-    }
-
-    private var sshKeyManagementSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(text: "SSH 私钥")
-
-            AmberFormGroup {
-                RuntimeSecureFieldRow(
-                    title: "私钥",
-                    text: Binding(
-                        get: { sshPrivateKeyDraft },
-                        set: { newValue in
-                            sshPrivateKeyDraft = newValue
-                            sshPublicKey = ""
-                        }
-                    ),
-                    placeholder: "已保存则无需回填"
-                )
-                RuntimeDivider()
-                Menu {
-                    Button("从文件导入私钥", systemImage: "doc") {
-                        showsSSHKeyImporter = true
-                    }
-                    Button("生成 Ed25519 密钥", systemImage: "wand.and.stars") {
-                        generateSSHKey()
-                    }
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accent)
-                            .frame(width: 30, height: 30)
-                            .background(AmberTheme.accentTint, in: Circle())
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("更换密钥")
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(AmberTheme.foreground)
-                            Text("从文件导入，或生成新的 Ed25519 密钥")
-                                .font(.caption)
-                                .foregroundStyle(AmberTheme.muted2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(AmberTheme.muted2)
-                    }
-                    .frame(minHeight: 58)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            if !sshPrivateKeyDraft.isEmpty {
-                AmberFormGroup {
-                    RuntimeActionRow(title: "保存私钥到本机", color: AmberTheme.accent) {
-                        saveSSHKeyDraft()
-                    }
-                }
-                .padding(.top, 10)
-            }
-
-            AmberFormGroup {
-                RuntimeActionRow(title: sshPrivateKeyDraft.isEmpty ? "复制公钥" : "保存并复制公钥", color: AmberTheme.accent) {
-                    copySSHPublicKey()
-                }
-            }
-            .padding(.top, 10)
-
-            AmberFormGroup {
-                DisclosureGroup(isExpanded: $showsSSHPublicKey) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if !sshPublicKey.isEmpty {
-                            Text(sshPublicKey)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(AmberTheme.foreground2)
-                                .textSelection(.disabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(10)
-                                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .foregroundStyle(AmberTheme.accent)
-                        Text("查看完整公钥")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(AmberTheme.foreground)
-                        Spacer()
-                        Text("按需显示")
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted2)
-                    }
-                    .frame(minHeight: 52)
-                    .padding(.horizontal, 14)
-                }
-            }
-            .padding(.top, 10)
-
-            if case .success(let message) = sshStatus {
-                Text(message).font(.footnote).foregroundStyle(AmberTheme.accentGreen)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
-            } else if case .failure(let message) = sshStatus {
-                Text(message).font(.footnote).foregroundStyle(AmberTheme.accentRed)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
-            }
-
-            Text("私钥仅存本机钥匙串，不会回填。支持未加密 Ed25519 OpenSSH、ECDSA PEM；暂不支持 RSA 或带口令的私钥文件。复制后将公钥添加到服务器账户的 ~/.ssh/authorized_keys。")
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted2)
-                .lineSpacing(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 7)
-        }
-        .onAppear { showsSSHPublicKey = false }
-        .onChange(of: showsSSHPublicKey) { _, expanded in
-            if expanded, sshPublicKey.isEmpty {
-                showSSHPublicKey()
-            }
-        }
     }
 
     private var ishHandoffSection: some View {
@@ -717,6 +601,9 @@ struct RuntimeEnvironmentView: View {
             AmberSectionLabel(text: "Host 指纹信任")
             HostFingerprintCard(
                 status: sshStatus,
+                hopLabel: sshProbeSnapshot.map { "第 \($0.hopIndex)/\($0.route.count) 跳 · \($0.candidate.displayName)" },
+                replacesFingerprint: sshProbeSnapshot?.replacesFingerprint ?? false,
+                statusExpectedFingerprint: sshProbeSnapshot?.candidate.knownHostSHA256 ?? "",
                 onTrust: trustSSHHost,
                 onCancel: cancelSSHProbe
             )

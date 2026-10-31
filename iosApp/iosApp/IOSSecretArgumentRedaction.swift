@@ -18,17 +18,58 @@ enum IOSSecretArgumentRedaction {
     /// credential so an accidental write fails closed instead of storing it.
     static let replacement = "[redacted]"
 
-    /// Tools whose arguments may carry a password or private key.
+    /// Tools whose arguments may carry a password, private key, passphrase,
+    /// or perform high-risk local SSH key/profile mutations.
     static let credentialToolNames: Set<String> = [
         "ssh_profile_create",
         "ssh_profile_update",
         "ssh_profile_delete",
+        "ssh_key_generate",
+        "ssh_key_import",
+        "ssh_key_delete",
     ]
 
-    static let secretArgumentKeys: Set<String> = ["password", "private_key"]
+    static let secretArgumentKeys: Set<String> = ["password", "private_key", "passphrase"]
+
+    static let placeholderLiterals: Set<String> = [
+        "[redacted]",
+        "<redacted>",
+        "***",
+        "••••",
+        "(empty)",
+    ]
 
     static func carriesCredential(_ toolName: String) -> Bool {
         credentialToolNames.contains(toolName)
+    }
+
+    /// Rejects any redaction placeholder literal (`[redacted]`, `<redacted>`,
+    /// `***`, `••••`, `(empty)`) so a model or a cold-restored approval snapshot
+    /// can never write a placeholder into Keychain as a real secret.
+    static func isRedactionPlaceholder(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        if placeholderLiterals.contains(lower) || placeholderLiterals.contains(trimmed) {
+            return true
+        }
+        if lower.contains("[redacted]") || lower.contains("<redacted>") {
+            return true
+        }
+        return false
+    }
+
+    /// Returns true when any secret argument in `argumentsJSON` is a redaction placeholder.
+    static func containsRedactedSecretArgument(_ argumentsJSON: String) -> Bool {
+        guard let data = argumentsJSON.data(using: .utf8),
+              let args = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        for key in secretArgumentKeys {
+            if let raw = args[key] as? String, !raw.isEmpty, isRedactionPlaceholder(raw) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Replaces credential arguments with a status marker while keeping valid
@@ -36,7 +77,7 @@ enum IOSSecretArgumentRedaction {
     static func redactedArgumentsJSON(_ argumentsJSON: String) -> String {
         guard let data = argumentsJSON.data(using: .utf8),
               var args = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return argumentsJSON
+            return "{}"
         }
         var changed = false
         for key in secretArgumentKeys where args.keys.contains(key) {

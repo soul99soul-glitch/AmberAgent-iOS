@@ -365,6 +365,15 @@ struct ChatToolStepModel: Identifiable {
                         IOSSSHProfileToolCatalog.redactedArgumentsJSON(tool.input)
                     ) ?? [:]
                 )
+        } else if IOSSSHKeyToolCatalog.contains(tool.toolName) {
+            // Never surface a private key or passphrase on the tool capsule.
+            detailInput = tool.input.isEmpty
+                ? nil
+                : ChatToolCallParsing.truncatedMcpArguments(
+                    ChatToolCallParsing.jsonObject(
+                        IOSSSHKeyToolCatalog.redactedArgumentsJSON(tool.input)
+                    ) ?? [:]
+                )
         } else {
             detailInput = tool.input.isEmpty ? nil : tool.input
         }
@@ -499,6 +508,10 @@ struct ChatToolStepModel: Identifiable {
             IOSSSHProfileToolCatalog.createToolName: Self.localized("新建 SSH Profile"),
             IOSSSHProfileToolCatalog.updateToolName: Self.localized("修改 SSH Profile"),
             IOSSSHProfileToolCatalog.deleteToolName: Self.localized("删除 SSH Profile"),
+            IOSSSHKeyToolCatalog.listToolName: Self.localized("查看 SSH 密钥"),
+            IOSSSHKeyToolCatalog.generateToolName: Self.localized("生成 SSH 密钥"),
+            IOSSSHKeyToolCatalog.importToolName: Self.localized("导入 SSH 密钥"),
+            IOSSSHKeyToolCatalog.deleteToolName: Self.localized("删除 SSH 密钥"),
         ]
         if let mapped = known[name] { return mapped }
         // 动态工具名同样受列宽预算约束，完整名在详情 sheet。

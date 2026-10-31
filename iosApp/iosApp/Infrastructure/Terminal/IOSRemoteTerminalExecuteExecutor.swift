@@ -46,12 +46,26 @@ enum IOSRemoteTerminalExecuteExecutor {
                 }
                 profile = selected
             }
+            let route = try settingsStore.resolveSSHRoute(for: profile)
             if let expectedTargetDigest,
-               expectedTargetDigest != remoteSSHTargetDigest(profile) {
+               expectedTargetDigest != remoteSSHTargetDigest(route: route) {
                 throw IOSRemoteTerminalExecuteError.approvedTargetChanged
             }
-            let credential = try settingsStore.credentialForSSHProfile(profile)
-            return await execute(request: request, profile: profile, credential: credential, runtime: runtime)
+            var routeCredentials: [String: IOSSSHCredential] = [:]
+            for hop in route {
+                if let cred = try settingsStore.credentialForSSHProfile(hop) {
+                    routeCredentials[hop.id] = cred
+                }
+            }
+            return await execute(
+                request: request,
+                profile: profile,
+                credential: routeCredentials[profile.id],
+                route: route.count > 1 ? route : nil,
+                routeCredentials: route.count > 1 ? routeCredentials : nil,
+                routeSummary: route.map(\.displayName),
+                runtime: runtime
+            )
         } catch {
             return failureJSON(error)
         }
@@ -68,6 +82,9 @@ enum IOSRemoteTerminalExecuteExecutor {
                 request: try parseRequest(input),
                 profile: profile,
                 credential: .password(password),
+                route: nil,
+                routeCredentials: nil,
+                routeSummary: [profile.displayName],
                 runtime: runtime
             )
         } catch {
@@ -90,23 +107,49 @@ enum IOSRemoteTerminalExecuteExecutor {
             guard let selected = settingsStore.defaultSSHProfile else { return nil }
             profile = selected
         }
+        guard let route = try? settingsStore.resolveSSHRoute(for: profile) else {
+            return nil
+        }
         let profileLabel = "\(profile.displayName) · \(profile.username)@\(profile.host):\(profile.port)"
         let targetLabel = request.workingDirectory.map { "\(profileLabel) · \($0)" } ?? profileLabel
+        var contextLines: [String] = []
+        if route.count > 1 {
+            let hopsLabel = route.enumerated().map { index, hop in
+                "\(circledHopNumber(index + 1)) \(hop.displayName) (\(hop.username)@\(hop.host):\(hop.port))"
+            }.joined(separator: " → ")
+            contextLines.append("连接路由：\(hopsLabel)")
+        }
         return IshHandoffToolApprovalRequest(
             id: chatInputDigest(for: input),
             mode: .remoteSSH,
             commandPreview: request.command,
             filename: targetLabel,
-            reason: "Amber 将在已信任的 Remote SSH 连接上执行一次非交互命令，并回传 stdout/stderr/exit code。",
+            reason: route.count > 1
+                ? "Amber 将经跳板路由在已信任的 Remote SSH 目标机上执行一次非交互命令，并回传 stdout/stderr/exit code。"
+                : "Amber 将在已信任的 Remote SSH 连接上执行一次非交互命令，并回传 stdout/stderr/exit code。",
+            contextLines: contextLines,
             remoteProfileId: profile.id,
-            remoteTargetDigest: remoteSSHTargetDigest(profile)
+            remoteTargetDigest: remoteSSHTargetDigest(route: route)
         )
+    }
+
+    private static func circledHopNumber(_ number: Int) -> String {
+        switch number {
+        case 1: return "①"
+        case 2: return "②"
+        case 3: return "③"
+        case 4: return "④"
+        default: return "(\(number))"
+        }
     }
 
     private static func execute(
         request: IOSRemoteTerminalExecuteRequest,
         profile: IOSSSHProfile,
         credential: IOSSSHCredential?,
+        route: [IOSSSHProfile]?,
+        routeCredentials: [String: IOSSSHCredential]?,
+        routeSummary: [String],
         runtime: IOSTerminalRuntime
     ) async -> String {
         let started = await runtime.startJob(
@@ -116,6 +159,8 @@ enum IOSRemoteTerminalExecuteExecutor {
             workingDirectory: request.workingDirectory,
             sshProfile: profile,
             sshCredential: credential,
+            sshRoute: route,
+            sshRouteCredentials: routeCredentials,
             timeoutSeconds: request.timeoutSeconds
         )
         var snapshot = started
@@ -132,14 +177,15 @@ enum IOSRemoteTerminalExecuteExecutor {
 
         let completed = snapshot.status == IOSTerminalJobStatus.completed.rawValue && snapshot.exitCode == 0
         let exitCode: Any = snapshot.exitCode.map { $0 as Any } ?? NSNull()
-        return IOSWorkspaceStore.json([
+        var payload: [String: Any] = [
             "ok": completed,
             "tool": "terminal_execute",
             "runtime": IOSTerminalRuntimeKind.remoteSSH.rawValue,
             "profile_id": profile.id,
             "profile_name": profile.displayName,
+            "route": routeSummary,
             "cwd": request.workingDirectory ?? "",
-            "status": snapshot.status,
+            "status": snapshot.hopFailure?.status ?? snapshot.status,
             "purpose": request.purpose ?? "",
             "exit_code": exitCode,
             "stdout": snapshot.stdoutTail,
@@ -148,8 +194,14 @@ enum IOSRemoteTerminalExecuteExecutor {
             "stderr_available": true,
             "exit_code_available": snapshot.exitCode != nil,
             "timed_out": snapshot.status == IOSTerminalJobStatus.timedOut.rawValue,
-            "error": snapshot.error ?? ""
-        ])
+            "error": snapshot.error ?? "",
+        ]
+        if let hopFailure = snapshot.hopFailure {
+            for (key, value) in hopFailure.toToolFields() {
+                payload[key] = value
+            }
+        }
+        return IOSWorkspaceStore.json(payload)
     }
 
     private static func parseRequest(_ input: String) throws -> IOSRemoteTerminalExecuteRequest {
@@ -179,7 +231,7 @@ enum IOSRemoteTerminalExecuteExecutor {
     }
 
     private static func failureJSON(_ error: Error, purpose: String? = nil) -> String {
-        IOSWorkspaceStore.json([
+        var payload: [String: Any] = [
             "ok": false,
             "tool": "terminal_execute",
             "runtime": IOSTerminalRuntimeKind.remoteSSH.rawValue,
@@ -192,8 +244,20 @@ enum IOSRemoteTerminalExecuteExecutor {
             "stderr_available": false,
             "exit_code_available": false,
             "timed_out": false,
-            "error": (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        ])
+            "error": (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+        ]
+        if let routeError = error as? IOSSSHRouteError {
+            payload["status"] = routeError.status
+            payload["error_code"] = routeError.status
+            for (k, v) in routeError.toToolFields() {
+                payload[k] = v
+            }
+        } else if case let IOSSSHError.hopFailure(hopFailure) = error {
+            for (k, v) in hopFailure.toToolFields() {
+                payload[k] = v
+            }
+        }
+        return IOSWorkspaceStore.json(payload)
     }
 
     private static func nonEmptyString(_ value: Any?) -> String? {
@@ -215,9 +279,7 @@ enum IOSRemoteTerminalExecuteExecutor {
         if let string = value as? String { return Double(string) }
         return nil
     }
-
 }
-
 
 private enum IOSRemoteTerminalExecuteError: LocalizedError {
     case emptyInput
@@ -241,4 +303,3 @@ private enum IOSRemoteTerminalExecuteError: LocalizedError {
         }
     }
 }
-
