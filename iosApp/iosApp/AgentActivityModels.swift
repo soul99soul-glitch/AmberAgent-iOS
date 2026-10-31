@@ -132,6 +132,14 @@ struct AgentActivityApproval: Codable, Hashable, Sendable {
     let requestId: String
     /// 操作标题（如终端命令名）。仅在灵动岛展开态显示，锁屏只显示类别。
     let title: String
+    /// 是否允许在锁屏 / 灵动岛上直接点击「允许一次」。高风险工具只允许「拒绝」或点按回到 App 确认。
+    var allowsInlineApprove: Bool = true
+
+    init(requestId: String, title: String, allowsInlineApprove: Bool = true) {
+        self.requestId = requestId
+        self.title = title
+        self.allowsInlineApprove = allowsInlineApprove
+    }
 }
 
 enum AgentActivityFailureReason: String, Codable, Hashable, Sendable {
@@ -285,7 +293,8 @@ enum AgentActivityInlineControlPolicy {
         guard hasConversation else { return [] }
         switch presentation.displayPhase(isStale: isStale) {
         case .waitingForUser:
-            return presentation.approval == nil ? [] : [.deny, .approve]
+            guard let approval = presentation.approval else { return [] }
+            return approval.allowsInlineApprove ? [.deny, .approve] : [.deny]
         case .failed:
             return presentation.retryable == true ? [.retry] : []
         case .running:

@@ -341,6 +341,16 @@ extension ChatToolRuntime {
                 argumentsJSON: toolCall.input
             )
         case "exec":
+            guard effectiveExecJavaScriptEnabled else {
+                return IOSWorkspaceStore.json([
+                    "ok": false,
+                    "tool": toolCall.toolName,
+                    "status": "denied",
+                    "denied": true,
+                    "policy": "disabled",
+                    "reason": "\(toolCall.toolName) 未开启。请先在设置中启用对应能力。"
+                ])
+            }
             // P3-b: exec 求值可带嵌套 tools 桥（白名单 + 宿主 runner 由
             // executeAdvancedToolCall 传入；nil = 纯求值，同 P3-a）。
             // P3-c: conversationId = 会话作用域键（cell 注册表 + store/load）。
@@ -351,6 +361,16 @@ extension ChatToolRuntime {
                 storeScope: execStoreScope
             )
         case "wait":
+            guard effectiveExecJavaScriptEnabled else {
+                return IOSWorkspaceStore.json([
+                    "ok": false,
+                    "tool": toolCall.toolName,
+                    "status": "denied",
+                    "denied": true,
+                    "policy": "disabled",
+                    "reason": "\(toolCall.toolName) 未开启。请先在设置中启用对应能力。"
+                ])
+            }
             // P3-c: 续取本会话的 exec cell（yield/wait/terminate 三路径）。
             return await dispatchWaitToolCall(toolCall, conversationId: conversationId)
         default:

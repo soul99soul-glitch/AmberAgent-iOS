@@ -567,6 +567,7 @@ internal val IOS_RESIDENT_TOOL_NAMES: Set<String> = setOf(
     "subagent_dispatch",
     "model_council_run",
     "file_read_selected",
+    "history_search", "history_fetch",
 )
 
 internal fun iosResidentToolPolicy(name: String, category: String?): Boolean =

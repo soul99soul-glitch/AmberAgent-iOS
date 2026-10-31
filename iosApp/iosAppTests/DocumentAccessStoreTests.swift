@@ -256,6 +256,63 @@ final class DocumentAccessStoreTests: XCTestCase {
         }
     }
 
+    func testScannedPDFFallsBackToOCR() async throws {
+        let url = try makeScannedPDFFile(text: "AMBER OCR 2026")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = await DocumentAccessStore.previewFileForWorkspace(
+            url: url,
+            fileType: "application/pdf",
+            maxReadableBytes: 20 * 1024 * 1024,
+            maxPreviewBytes: Int.max,
+            maxPreviewCharacters: 10_000
+        )
+        let preview = try result.get()
+        XCTAssertTrue(preview.preview.uppercased().contains("AMBER"), preview.preview)
+        XCTAssertTrue(preview.preview.uppercased().contains("OCR"), preview.preview)
+    }
+
+    func testHybridPDFWithTinyPageNumberOnPageOneStillOCRsScannedPageAndMarksOverEightPagesTruncated() async throws {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 1_200, height: 600)).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1_200, height: 600))
+            ("HYBRID SCAN 2026" as NSString).draw(
+                at: CGPoint(x: 60, y: 240),
+                withAttributes: [
+                    .font: UIFont.systemFont(ofSize: 96, weight: .bold),
+                    .foregroundColor: UIColor.black,
+                ]
+            )
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: url) { context in
+            // Page 1 has only a 1-char page number ("1") plus scanned image text
+            context.beginPage()
+            "1".draw(at: CGPoint(x: 48, y: 48), withAttributes: [.font: UIFont.systemFont(ofSize: 12)])
+            image.draw(in: CGRect(x: 20, y: 100, width: 572, height: 286))
+            // Pages 2..9 have selectable text, plus Page 9 has only a 1-char header so >8 pages triggers truncation
+            for pageIndex in 2...9 {
+                context.beginPage()
+                let pageText = pageIndex <= 8 ? "Selectable text on page \(pageIndex)" : "9"
+                pageText.draw(at: CGPoint(x: 48, y: 48), withAttributes: [.font: UIFont.systemFont(ofSize: 16)])
+            }
+        }
+        let result = await DocumentAccessStore.previewFileForWorkspace(
+            url: url,
+            fileType: "application/pdf",
+            maxReadableBytes: 20 * 1024 * 1024,
+            maxPreviewBytes: Int.max,
+            maxPreviewCharacters: 50_000
+        )
+        let preview = try result.get()
+        XCTAssertTrue(preview.preview.uppercased().contains("HYBRID"), "Page 1 with only 1 char selectable text must fall back to OCR: \(preview.preview)")
+        XCTAssertTrue(preview.preview.contains("Selectable text on page 2"))
+        XCTAssertTrue(preview.isTruncated, "PDF with >8 pages requiring OCR must mark truncated=true")
+    }
+
     func testPDFExtractsReadableText() async throws {
         let store = DocumentAccessStore()
         let grant = store.registerPickedFile(try makePDFFile(text: "PDF readable text for AmberAgent"))
@@ -909,6 +966,29 @@ final class DocumentAccessStoreTests: XCTestCase {
                 at: CGPoint(x: 48, y: 48),
                 withAttributes: [.font: UIFont.systemFont(ofSize: 16)]
             )
+        }
+        return url
+    }
+
+    private func makeScannedPDFFile(text: String) throws -> URL {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 1_200, height: 600)).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1_200, height: 600))
+            (text as NSString).draw(
+                at: CGPoint(x: 60, y: 240),
+                withAttributes: [
+                    .font: UIFont.systemFont(ofSize: 96, weight: .bold),
+                    .foregroundColor: UIColor.black,
+                ]
+            )
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: url) { context in
+            context.beginPage()
+            image.draw(in: CGRect(x: 20, y: 100, width: 572, height: 286))
         }
         return url
     }

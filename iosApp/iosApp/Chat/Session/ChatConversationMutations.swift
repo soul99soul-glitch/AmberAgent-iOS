@@ -548,6 +548,16 @@ extension ChatViewModel {
         answerPendingAskUser("")
     }
 
+    func canApprovePendingToolFromWatch(
+        runId: String,
+        requestId: String
+    ) -> Bool {
+        host(runId: runId)?.canApprovePendingToolFromWatch(
+            runId: runId,
+            requestId: requestId
+        ) ?? false
+    }
+
     @discardableResult
     func resolvePendingToolApprovalFromWatch(
         runId: String,

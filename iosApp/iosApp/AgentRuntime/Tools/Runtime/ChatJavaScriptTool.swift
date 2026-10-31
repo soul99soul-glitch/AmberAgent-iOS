@@ -114,7 +114,10 @@ extension ChatToolRuntime {
         conversationId: KotlinUuid? = nil,
         storeScope: IOSJsStoreScope? = nil
     ) async -> String {
-        await javaScriptTool.execute(
+        guard effectiveExecJavaScriptEnabled else {
+            return ChatJavaScriptTool.disabledToolJSON(toolName: toolCall.toolName)
+        }
+        return await javaScriptTool.execute(
             toolCall, nestedTools: nestedTools,
             conversationId: conversationId, storeScope: storeScope
         )
@@ -124,7 +127,10 @@ extension ChatToolRuntime {
         _ toolCall: UIMessagePart.Tool,
         conversationId: KotlinUuid?
     ) async -> String {
-        await javaScriptTool.wait(toolCall, conversationId: conversationId)
+        guard effectiveExecJavaScriptEnabled else {
+            return ChatJavaScriptTool.disabledToolJSON(toolName: toolCall.toolName)
+        }
+        return await javaScriptTool.wait(toolCall, conversationId: conversationId)
     }
 }
 
@@ -133,15 +139,29 @@ final class ChatJavaScriptTool {
     private let jsCellRegistry: IOSJsCellRegistry
     private let jsSandboxEngine: IOSJsSandboxEngine
     private let sharedSettings: IOSSharedSettingsStore
+    private let isEnabled: () -> Bool
 
     init(
         jsCellRegistry: IOSJsCellRegistry,
         jsSandboxEngine: IOSJsSandboxEngine,
-        sharedSettings: IOSSharedSettingsStore
+        sharedSettings: IOSSharedSettingsStore,
+        isEnabled: @escaping () -> Bool = { true }
     ) {
         self.jsCellRegistry = jsCellRegistry
         self.jsSandboxEngine = jsSandboxEngine
         self.sharedSettings = sharedSettings
+        self.isEnabled = isEnabled
+    }
+
+    static func disabledToolJSON(toolName: String) -> String {
+        IOSWorkspaceStore.json([
+            "ok": false,
+            "tool": toolName,
+            "status": "denied",
+            "denied": true,
+            "policy": "disabled",
+            "reason": "\(toolName) 未开启。请先在设置中启用对应能力。"
+        ])
     }
 
     static func clampWaitTimeoutMs(_ value: Int) -> Int {
@@ -174,6 +194,9 @@ final class ChatJavaScriptTool {
         conversationId: KotlinUuid? = nil,
         storeScope: IOSJsStoreScope? = nil
     ) async -> String {
+        guard isEnabled() else {
+            return Self.disabledToolJSON(toolName: toolCall.toolName)
+        }
         guard let args = ChatToolCallParsing.jsonObject(toolCall.input),
               let code = args["code"] as? String, !code.isEmpty else {
             return ChatToolOutputFormatter.toolFailureJSON(
@@ -271,6 +294,9 @@ final class ChatJavaScriptTool {
         _ toolCall: UIMessagePart.Tool,
         conversationId: KotlinUuid?
     ) async -> String {
+        guard isEnabled() else {
+            return Self.disabledToolJSON(toolName: toolCall.toolName)
+        }
         guard let args = ChatToolCallParsing.jsonObject(toolCall.input),
               let cellId = args["cell_id"] as? String, !cellId.isEmpty else {
             return ChatToolOutputFormatter.toolFailureJSON(

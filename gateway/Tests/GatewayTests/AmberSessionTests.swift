@@ -109,6 +109,20 @@ struct AmberSessionTests {
         #expect(riskyPayload["toolCallId"] == nil)
         #expect(PushContent.render(risky, gatewayName: "Mac").body.contains("高风险"))
 
+        var unknown = ordinary
+        unknown.highRisk = nil
+        let unknownPayload = APNsSender.payload(PushMessage(unknown, gatewayName: "Mac"))
+        #expect((unknownPayload["aps"] as? [String: Any])?["category"] == nil, "unknown risk is not ordinary")
+        #expect(unknownPayload["toolCallId"] == nil)
+        #expect(PushContent.render(unknown, gatewayName: "Mac").body.contains("高风险"),
+                "an unactionable banner must not read like an ordinary approval")
+        #expect(!PushContent.render(ordinary, gatewayName: "Mac").body.contains("高风险"),
+                "ordinary approvals stay ordinary")
+        var noCall = ordinary
+        noCall.toolCallId = nil
+        #expect(!PushContent.render(noCall, gatewayName: "Mac").body.contains("高风险"),
+                "a turn-end wait has no tool call to approve")
+
         let claude = PushIntent(kind: .task, sessionKey: "claude:s", agent: .claude, subject: "p", state: .waiting, createdAt: t0)
         let plain = APNsSender.payload(PushMessage(claude, gatewayName: "Mac"))
         #expect(plain.keys.sorted() == ["aps"], "agent pushes are unchanged")

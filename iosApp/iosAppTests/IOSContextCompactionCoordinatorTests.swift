@@ -182,6 +182,35 @@ final class IOSContextCompactionCoordinatorTests: XCTestCase {
         XCTAssertTrue(provider.cancelled)
     }
 
+    /// I2.1: iOS 使用单一触发阈值（setting.forceRatio），KMP 的 0.70 预压值在 iOS 被刻意忽略。
+    /// 7 条约 7000 token 的历史在 0.70 预压方案下会压缩，在当前单阈值（0.85）下必须保持原文。
+    func testSingleThresholdIgnoresLegacyPrecompactRatio() {
+        let setting = ContextCompactionSetting(
+            enabled: true, notifyOnly: false, precompactRatio: 0.70, forceRatio: 0.85,
+            keepRecentTurns: 1, maxSummaryTokens: 200
+        )
+        let policy = IOSCompactPolicy(setting)
+        XCTAssertEqual(policy.triggerRatio, 0.85, accuracy: 0.0001)
+
+        func plan(messageCount: Int) -> IOSCompactPlan {
+            let messages = (0..<messageCount).map { _ in
+                UIMessage.companion.user(prompt: String(repeating: "x", count: 4_000))
+            }
+            return IOSContextCompactionCoordinator.planCompaction(
+                messages: messages, activeCompacts: [], policy: policy,
+                modelContextWindowTokens: 10_000, extraTokenEstimate: 0
+            )
+        }
+
+        let below = plan(messageCount: 7)
+        XCTAssertFalse(below.shouldCompact, "0.70 预压不应再触发")
+        XCTAssertEqual(below.reason, "below_threshold")
+
+        let triggered = plan(messageCount: 9)
+        XCTAssertTrue(triggered.shouldCompact)
+        XCTAssertEqual(triggered.reason, "force_threshold")
+    }
+
     func testAutomaticThresholdUsesCompactedHistoryAndNewRequestOverhead() {
         let history = (0..<10).map { _ in
             UIMessage.companion.user(prompt: String(repeating: "x", count: 4_000))
@@ -531,6 +560,94 @@ final class IOSContextCompactionCoordinatorTests: XCTestCase {
             .joined(separator: "\n")
         XCTAssertTrue(texts.contains("…[truncated"))
     }
+
+    func testCompactionDoesNotRetriggerOnEveryTurnAndRespectsKeepRecentTurns() async throws {
+        let provider = SuccessfulCompactProvider()
+        let coordinator = IOSContextCompactionCoordinator(textProvider: provider)
+        let defaults = UserDefaults(suiteName: "Compaction-NoRepeat-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults).snapshot
+        let model = Model(
+            modelId: "test-model", displayName: "Test Model", id: KotlinUuid.companion.random(),
+            type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: KotlinInt(value: 10_000), providerOverwrite: nil
+        )
+        let fallback = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Test", models: [model],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""), builtIn: false,
+            descriptionText: nil, shortDescriptionText: nil, apiKey: "test", baseUrl: "https://example.test",
+            chatCompletionsPath: "/chat/completions", useResponseApi: false, authMode: .apiKey, brand: .generic
+        )
+        let params = TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [], reasoningLevel: .off,
+            customHeaders: [], customBody: []
+        )
+        let conversationId = KotlinUuid.companion.random()
+        defer { try? coordinator.removeCompacts(conversationIds: [String(describing: conversationId)]) }
+
+        var history: [UIMessage] = (0..<26).map { index in
+            index.isMultiple(of: 2)
+                ? UIMessage.companion.user(prompt: "turn-\(index) " + String(repeating: "x", count: 1_400))
+                : UIMessage.companion.assistant(prompt: "reply-\(index) " + String(repeating: "y", count: 1_400))
+        }
+        let firstPrepared = try await coordinator.prepareMessagesForRequest(
+            uploadMessages: history,
+            conversationId: conversationId,
+            settings: settings,
+            params: params,
+            fallbackProvider: fallback
+        )
+        XCTAssertEqual(provider.calls, 1, "First over-threshold request should run exactly one regular compaction")
+        let keepCount = max(Int(settings.agentRuntime.contextCompaction.keepRecentTurns) * 2, 2)
+        let remainingNonSystem = firstPrepared.filter { $0.role != MessageRole.system }
+        XCTAssertGreaterThanOrEqual(remainingNonSystem.count, keepCount, "Regular compaction must preserve keepRecentTurns messages instead of shrinking to 1 turn")
+
+        // Next turn adds 1 user + 1 assistant message (< min incremental threshold when already compacted)
+        // and high promptOverheadTokens so total ratio is still >= triggerRatio.
+        history.append(UIMessage.companion.user(prompt: "follow-up user"))
+        history.append(UIMessage.companion.assistant(prompt: "follow-up assistant"))
+        _ = try await coordinator.prepareMessagesForRequest(
+            uploadMessages: history,
+            conversationId: conversationId,
+            settings: settings,
+            params: params,
+            fallbackProvider: fallback,
+            promptOverheadTokens: 2_800
+        )
+        XCTAssertEqual(provider.calls, 1, "Compaction must not re-trigger on the very next turn with only 2 uncovered messages")
+    }
+
+    func testEarlyReturnPreservesSystemMessages() async throws {
+        let defaults = UserDefaults(suiteName: "Compaction-EarlyReturn-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults).snapshot
+        let model = Model(
+            modelId: "test-model", displayName: "Test Model", id: KotlinUuid.companion.random(),
+            type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: KotlinInt(value: 10_000), providerOverwrite: nil
+        )
+        let fallback = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Test", models: [model],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""), builtIn: false,
+            descriptionText: nil, shortDescriptionText: nil, apiKey: "test", baseUrl: "https://example.test",
+            chatCompletionsPath: "/chat/completions", useResponseApi: false, authMode: .apiKey, brand: .generic
+        )
+        let params = TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [], reasoningLevel: .off,
+            customHeaders: [], customBody: []
+        )
+        let sys = UIMessage.companion.system(prompt: "System instruction that must survive early return")
+        let history = (0..<120).map { UIMessage.companion.user(prompt: "msg-\($0)") }
+        let prepared = try await IOSContextCompactionCoordinator.shared.prepareMessagesForRequest(
+            uploadMessages: [sys] + history,
+            conversationId: nil,
+            settings: settings,
+            params: params,
+            fallbackProvider: fallback
+        )
+        XCTAssertEqual(prepared.first?.role, MessageRole.system)
+        XCTAssertEqual(prepared.first?.toText(), "System instruction that must survive early return")
+    }
 }
 
 @MainActor
@@ -555,9 +672,12 @@ private final class SuccessfulCompactProvider: @preconcurrency IOSAgentTextProvi
     var calls = 0
     func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
         calls += 1
+        let summary = ##"""
+        {"schema_version":2,"timeline_summary":"The user is testing context compaction. Preserve the conversation history. Continue the current task. No external actions were performed.","handoff_markdown":"# Goal\nKeep testing context compaction with long filler history.\n# Progress\nTwenty-six filler user messages were sent.\n# Next Steps\nContinue the current task.","covered_compact_ids":[]}
+        """##
         return MessageChunk(id: "compact", model: "test", choices: [
             UIMessageChoice(index: 0, delta: nil,
-                message: UIMessage.companion.assistant(prompt: ##"{"schema_version":2,"timeline_summary":"The user is testing context compaction. Preserve the conversation history. Continue the current task. No external actions were performed.","handoff_markdown":"# Goal\nKeep testing context compaction with long filler history.\n# Progress\nTwenty-six filler user messages were sent.\n# Next Steps\nContinue the current task.","covered_compact_ids":[]}"##),
+                message: UIMessage.companion.assistant(prompt: summary),
                 finishReason: "stop")
         ], usage: nil)
     }

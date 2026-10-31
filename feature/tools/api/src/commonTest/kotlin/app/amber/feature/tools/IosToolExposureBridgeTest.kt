@@ -87,6 +87,7 @@ class IosToolExposureBridgeTest {
         "ish_handoff", "ios_ish_execute", "terminal_execute", "ios_shell_execute",
         "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "permissions_status", "runtime_status", "tools_list", "subagent_report",
+        "history_search", "history_fetch",
     )
 
     /** The pinned iOS resident policy set (see IosToolExposureBridge.kt). */
@@ -101,6 +102,7 @@ class IosToolExposureBridgeTest {
         "recipes_list",
         "subagent_dispatch", "model_council_run",
         "file_read_selected",
+        "history_search", "history_fetch",
     )
 
     private val deferredNames = setOf(

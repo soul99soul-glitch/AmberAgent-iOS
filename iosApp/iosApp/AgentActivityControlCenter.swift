@@ -126,11 +126,15 @@ final class AgentActivityControlCenter {
         } else {
             owner = await waitForOwner()
         }
-        return owner?.resolvePendingToolApprovalFromWatch(
+        guard let owner else { return false }
+        if allow, !owner.canApprovePendingToolFromWatch(runId: runId, requestId: requestId) {
+            return false
+        }
+        return owner.resolvePendingToolApprovalFromWatch(
             runId: runId,
             requestId: requestId,
             allow: allow
-        ) ?? false
+        )
     }
 
     private func waitForOwner() async -> ChatViewModel? {

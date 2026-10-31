@@ -458,6 +458,8 @@ struct ChatToolStepModel: Identifiable {
             "runtime_status": Self.localized("查看运行时状态"),
             "tool_search": Self.localized("查找工具"),
             "tools_list": Self.localized("列出可用工具"),
+            "history_search": Self.localized("检索历史原文"),
+            "history_fetch": Self.localized("读取历史原文"),
             "subagent_report": Self.localized("子智能体汇报"),
             "terminal_execute": Self.localized("Remote SSH 执行"),
             "ios_shell_execute": Self.localized("AmberShell 执行"),

@@ -19,7 +19,10 @@ struct IOSConversationCompact: Codable, Equatable {
 struct IOSCompactPolicy {
     let enabled: Bool
     let notifyOnly: Bool
-    let precompactRatio: Double
+    /// 自动压缩的唯一门槛。iOS 在上传前同步压缩，没有可异步“预压”的窗口；
+    /// 另设 0.70 预压只会更早丢弃上下文，所以这里固定等于 `forceRatio`。
+    let triggerRatio: Double
+    /// 强制压缩后的目标占用上限，也用于标记 force_threshold。
     let forceRatio: Double
     let keepRecentTurns: Int
     let maxSummaryTokens: Int
@@ -27,8 +30,7 @@ struct IOSCompactPolicy {
     init(_ setting: ContextCompactionSetting) {
         enabled = setting.enabled
         notifyOnly = setting.notifyOnly
-        // iOS uses one trigger: the configured force threshold (85% by default).
-        precompactRatio = Double(setting.forceRatio)
+        triggerRatio = Double(setting.forceRatio)
         forceRatio = Double(setting.forceRatio)
         keepRecentTurns = Int(setting.keepRecentTurns)
         maxSummaryTokens = Int(setting.maxSummaryTokens)
@@ -98,6 +100,17 @@ final class IOSContextCompactionCoordinator {
         }
         if let firstError { throw firstError }
     }
+
+    #if DEBUG
+    /// 测试支撑：写入一个 completed compact，用于验证 history_* 的 stale 标记。
+    /// 生产路径只由压缩流程写入；调用方负责用 removeCompacts 清理。
+    func insertTestCompact(_ compact: IOSConversationCompact) throws {
+        var compacts = store.load(conversationId: compact.conversationId)
+        compacts.removeAll { $0.id == compact.id }
+        compacts.append(compact)
+        try store.save(compacts, conversationId: compact.conversationId)
+    }
+    #endif
 
     static func estimatedTokensForRequest(_ messages: [UIMessage]) -> Int {
         estimateTokens(messages)
@@ -191,21 +204,22 @@ final class IOSContextCompactionCoordinator {
         }
         let removedToolResults = edited.removedToolResults
 
-        guard policy.enabled, let conversationId else {
-            return Self.limitContext(edited.messages, size: contextMessageSize)
-        }
-
         // Request-only system instructions retain their identity and budget, but are not durable history.
         let editedMessages = edited.messages.filter { $0.role != MessageRole.system }
+        guard policy.enabled, let conversationId else {
+            return systemMessages + Self.limitContext(editedMessages, size: contextMessageSize)
+        }
+
         let conversationKey = String(describing: conversationId)
         var compacts = store.load(conversationId: conversationKey)
+        let resolvedModelWindow = ChatContextSnapshot.resolvedContextWindowTokens(
+            modelWindow: Self.intValue(params.model.contextWindowTokens), modelId: params.model.modelId
+        )
         let plan = Self.planCompaction(
             messages: editedMessages,
             activeCompacts: compacts,
             policy: policy,
-            modelContextWindowTokens: ChatContextSnapshot.resolvedContextWindowTokens(
-                modelWindow: Self.intValue(params.model.contextWindowTokens), modelId: params.model.modelId
-            ),
+            modelContextWindowTokens: resolvedModelWindow,
             extraTokenEstimate: overheadEstimate
         )
 
@@ -216,7 +230,12 @@ final class IOSContextCompactionCoordinator {
             historyMessages.count < $0 + max(policy.keepRecentTurns * 2, 2)
         } ?? false
         var compactFailed = false
-        func compactOrDegrade(policy: IOSCompactPolicy, reason: String, force: Bool) async throws -> IOSConversationCompact? {
+        func compactOrDegrade(
+            policy: IOSCompactPolicy,
+            reason: String,
+            force: Bool,
+            extraTokenEstimate: Int
+        ) async throws -> IOSConversationCompact? {
             compactFailed = false
             do {
                 let compact = try await compactConversation(
@@ -227,9 +246,14 @@ final class IOSContextCompactionCoordinator {
                     model: params.model,
                     fallbackProvider: fallbackProvider,
                     reason: reason,
-                    force: force
+                    force: force,
+                    extraTokenEstimate: extraTokenEstimate
                 )
-                failedCompactionHistoryCount[conversationKey] = nil
+                if compact != nil {
+                    failedCompactionHistoryCount[conversationKey] = nil
+                } else {
+                    failedCompactionHistoryCount[conversationKey] = historyMessages.count
+                }
                 return compact
             } catch {
                 if error is CancellationError || Task.isCancelled { throw error }
@@ -241,14 +265,16 @@ final class IOSContextCompactionCoordinator {
             }
         }
 
+        var ranCompactionPass = false
         if plan.shouldCompact && !policy.notifyOnly && !inFailureCooldown {
+            ranCompactionPass = true
             onEvent?(.planning)
             onEvent?(.compacting)
-            let force = plan.reason == "force_threshold"
             let result = try await compactOrDegrade(
                 policy: policy,
-                reason: force ? "auto_force" : "auto_precompact",
-                force: force
+                reason: "auto_precompact",
+                force: false,
+                extraTokenEstimate: overheadEstimate
             )
             if let result {
                 onEvent?(.completed(summary: Self.timelineSummary(result.summary) ?? "上下文已压缩。"))
@@ -265,11 +291,7 @@ final class IOSContextCompactionCoordinator {
             contextMessageSize: contextMessageSize,
             removedToolResults: removedToolResults
         )
-        let contextWindow = Self.estimateContextWindow(
-            ChatContextSnapshot.resolvedContextWindowTokens(
-                modelWindow: Self.intValue(params.model.contextWindowTokens), modelId: params.model.modelId
-            )
-        )
+        let contextWindow = Self.estimateContextWindow(resolvedModelWindow)
         let forceBudget = max(Int(Double(contextWindow) * policy.forceRatio), 1)
         let softTotalBudget = max(forceBudget, 4_000)
         // Compaction folds covered prompt transitions into a checkpoint. Recompute
@@ -277,38 +299,51 @@ final class IOSContextCompactionCoordinator {
         overheadEstimate = overhead(for: preparedMessages)
         var estimate = Self.estimateTokens(preparedMessages) + overheadEstimate
 
-        // At most one summary cycle per request; use the existing local budget fit afterwards.
-        if !policy.notifyOnly && estimate > forceBudget && !plan.shouldCompact && !inFailureCooldown {
+        // At most one summary cycle per request unless regular compaction left us over forceBudget;
+        // check planForceCompaction before entering so we never spin when nothing is compactable.
+        if !policy.notifyOnly && estimate > forceBudget && !inFailureCooldown && !compactFailed {
             let fitPolicy = IOSCompactPolicy(
                 enabled: policy.enabled,
                 notifyOnly: policy.notifyOnly,
-                precompactRatio: policy.precompactRatio,
+                triggerRatio: policy.triggerRatio,
                 forceRatio: policy.forceRatio,
                 keepRecentTurns: max(policy.keepRecentTurns / 2, 2),
                 maxSummaryTokens: policy.maxSummaryTokens
             )
-            onEvent?(.compacting)
-            let compact = try await compactOrDegrade(
-                policy: fitPolicy,
-                reason: "auto_fit_model_window",
-                force: true
-            )
-            compacts = store.load(conversationId: conversationKey)
-            if let compact {
-                onEvent?(.completed(summary: Self.timelineSummary(compact.summary) ?? "上下文已压缩。"))
-            } else if !compactFailed {
-                // No new summary: the budget fit below trims instead; do not replay an old one as "completed".
-                onEvent?(.idle)
-            }
-            preparedMessages = Self.prepareMessagesWithCompacts(
+            let forcePlan = Self.planForceCompaction(
                 messages: editedMessages,
                 activeCompacts: compacts,
                 policy: fitPolicy,
-                contextMessageSize: contextMessageSize,
-                removedToolResults: removedToolResults
+                modelContextWindowTokens: resolvedModelWindow,
+                extraTokenEstimate: overheadEstimate
             )
-            overheadEstimate = overhead(for: preparedMessages)
-            estimate = Self.estimateTokens(preparedMessages) + overheadEstimate
+            if forcePlan.shouldCompact && !ranCompactionPass && plan.reason != "already_compacted" {
+                onEvent?(.compacting)
+                let compact = try await compactOrDegrade(
+                    policy: fitPolicy,
+                    reason: "auto_fit_model_window",
+                    force: true,
+                    extraTokenEstimate: overheadEstimate
+                )
+                compacts = store.load(conversationId: conversationKey)
+                if let compact {
+                    onEvent?(.completed(summary: Self.timelineSummary(compact.summary) ?? "上下文已压缩。"))
+                } else if !compactFailed {
+                    // No new summary: the budget fit below trims instead; do not replay an old one as "completed".
+                    onEvent?(.idle)
+                }
+                preparedMessages = Self.prepareMessagesWithCompacts(
+                    messages: editedMessages,
+                    activeCompacts: compacts,
+                    policy: fitPolicy,
+                    contextMessageSize: contextMessageSize,
+                    removedToolResults: removedToolResults
+                )
+                overheadEstimate = overhead(for: preparedMessages)
+                estimate = Self.estimateTokens(preparedMessages) + overheadEstimate
+            } else if !forcePlan.shouldCompact {
+                failedCompactionHistoryCount[conversationKey] = historyMessages.count
+            }
         }
 
         if estimate > forceBudget {
@@ -369,7 +404,8 @@ final class IOSContextCompactionCoordinator {
         model: Model,
         fallbackProvider: ProviderSetting,
         reason: String,
-        force: Bool
+        force: Bool,
+        extraTokenEstimate: Int = 0
     ) async throws -> IOSConversationCompact? {
         while let task = activeCompactionTasks[conversationKey] {
             do {
@@ -389,7 +425,8 @@ final class IOSContextCompactionCoordinator {
                 model: model,
                 fallbackProvider: fallbackProvider,
                 reason: reason,
-                force: force
+                force: force,
+                extraTokenEstimate: extraTokenEstimate
             )
         }
         activeCompactionTasks[conversationKey] = task
@@ -408,26 +445,27 @@ final class IOSContextCompactionCoordinator {
         model: Model,
         fallbackProvider: ProviderSetting,
         reason: String,
-        force: Bool
+        force: Bool,
+        extraTokenEstimate: Int = 0
     ) async throws -> IOSConversationCompact? {
         var compacts = store.load(conversationId: conversationKey)
+        let resolvedModelWindow = ChatContextSnapshot.resolvedContextWindowTokens(
+            modelWindow: Self.intValue(model.contextWindowTokens), modelId: model.modelId
+        )
         let plan = force
             ? Self.planForceCompaction(
                 messages: messages,
                 activeCompacts: compacts,
                 policy: policy,
-                modelContextWindowTokens: ChatContextSnapshot.resolvedContextWindowTokens(
-                    modelWindow: Self.intValue(model.contextWindowTokens), modelId: model.modelId
-                )
+                modelContextWindowTokens: resolvedModelWindow,
+                extraTokenEstimate: extraTokenEstimate
             )
             : Self.planCompaction(
                 messages: messages,
                 activeCompacts: compacts,
                 policy: policy,
-                modelContextWindowTokens: ChatContextSnapshot.resolvedContextWindowTokens(
-                    modelWindow: Self.intValue(model.contextWindowTokens), modelId: model.modelId
-                ),
-                extraTokenEstimate: 0
+                modelContextWindowTokens: resolvedModelWindow,
+                extraTokenEstimate: extraTokenEstimate
             )
         guard plan.shouldCompact else { return nil }
 
@@ -457,7 +495,7 @@ final class IOSContextCompactionCoordinator {
         // model that triggered the plan. Oldest messages go first; the rest stay raw
         // and are picked up by a later pass.
         let candidateInputs = candidates.map { Self.buildCompressionInput([$0]) }
-        func fittingInputs(for candidateModel: Model) -> [String] {
+        func fittingInputs(for candidateModel: Model) -> (inputs: [String], truncated: Bool) {
             let window = Self.estimateContextWindow(ChatContextSnapshot.resolvedContextWindowTokens(
                 modelWindow: Self.intValue(candidateModel.contextWindowTokens), modelId: candidateModel.modelId
             ))
@@ -466,9 +504,13 @@ final class IOSContextCompactionCoordinator {
                 additionalPrompt: Self.compactionRetryPrompt, coveredCompactIds: offeredCompactIds,
                 previousCompactContext: previousCompactContext
             )
+            // The fidelity block is added after this sizing pass; reserve its
+            // worst case so a small summarizer window is not overrun on attempt 1.
             var remaining = Int(Double(window) * Self.compressionInputRatio)
                 - max(policy.maxSummaryTokens, 1_024) - Self.estimatePromptTokens(base)
+                - Self.compactionFidelityReserveTokens
             var selected: [String] = []
+            var truncated = false
             for input in candidateInputs {
                 let cost = Self.estimatePromptTokens(input) + 1
                 guard cost <= remaining else {
@@ -476,20 +518,24 @@ final class IOSContextCompactionCoordinator {
                     // Budget tokens ≥ weighted chars / 4, so this many chars always fits.
                     if selected.isEmpty, remaining >= 1_000 {
                         selected.append(input.takeMiddle(maxChars: remaining))
+                        truncated = true
                     }
                     break
                 }
                 remaining -= cost
                 selected.append(input)
             }
-            return selected
+            return (selected, truncated)
         }
-        var sourceInputs = fittingInputs(for: compressionModel)
+        var fitting = fittingInputs(for: compressionModel)
+        var sourceInputs = fitting.inputs
+        var sourceWasTruncated = fitting.truncated
         if sourceInputs.count < min(candidates.count, 2), compressionModel.id != model.id {
             // The configured summarizer is too small for even the oldest turns; use the chat model.
-            let chatInputs = fittingInputs(for: model)
-            if chatInputs.count > sourceInputs.count {
-                sourceInputs = chatInputs
+            let chatFitting = fittingInputs(for: model)
+            if chatFitting.inputs.count > sourceInputs.count {
+                sourceInputs = chatFitting.inputs
+                sourceWasTruncated = chatFitting.truncated
                 compressionModel = model
                 rawProvider = fallbackProvider
             }
@@ -502,6 +548,11 @@ final class IOSContextCompactionCoordinator {
         }
         let sourceMessageIds = candidates.prefix(sourceInputs.count).map(Self.messageId)
         let sourceContent = sourceInputs.joined(separator: "\n\n")
+        // A middle-truncated giant message was not fully visible to the model; requiring
+        // entities from its dropped head/tail would guarantee a false rejection.
+        let mustNotLose = sourceWasTruncated
+            ? []
+            : IOSContextCompactionFidelity.extract(from: Array(candidates.prefix(sourceInputs.count)))
 
         func summarize(additionalPrompt: String) async throws -> String? {
             let prompt = Self.buildCompressionPrompt(
@@ -510,7 +561,8 @@ final class IOSContextCompactionCoordinator {
                 targetTokens: policy.maxSummaryTokens,
                 additionalPrompt: additionalPrompt,
                 coveredCompactIds: offeredCompactIds,
-                previousCompactContext: previousCompactContext
+                previousCompactContext: previousCompactContext,
+                mustNotLose: mustNotLose
             )
         let raw = try await generateCompactSummary(
                 provider: rawProvider,
@@ -522,7 +574,8 @@ final class IOSContextCompactionCoordinator {
                 raw,
                 sourceMessageIds: sourceMessageIds,
                 offeredCompactIds: offeredCompactIds,
-                createdAt: createdAt
+                createdAt: createdAt,
+                mustNotLose: mustNotLose
             )
         }
         // A summary that fails the gate is never saved: it would replace real history.
@@ -614,14 +667,14 @@ extension IOSCompactPolicy {
     init(
         enabled: Bool,
         notifyOnly: Bool,
-        precompactRatio: Double,
+        triggerRatio: Double,
         forceRatio: Double,
         keepRecentTurns: Int,
         maxSummaryTokens: Int
     ) {
         self.enabled = enabled
         self.notifyOnly = notifyOnly
-        self.precompactRatio = precompactRatio
+        self.triggerRatio = triggerRatio
         self.forceRatio = forceRatio
         self.keepRecentTurns = keepRecentTurns
         self.maxSummaryTokens = maxSummaryTokens
@@ -675,9 +728,25 @@ private final class IOSConversationCompactStore {
 
     func save(_ compacts: [IOSConversationCompact], conversationId: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let data = try encoder.encode(compacts)
+        let sanitized = compacts.map { compact in
+            IOSConversationCompact(
+                id: compact.id,
+                conversationId: compact.conversationId,
+                summary: IOSContextCompactionFidelity.redactCredentials(compact.summary),
+                level: compact.level,
+                sourceStartIndex: compact.sourceStartIndex,
+                sourceEndIndex: compact.sourceEndIndex,
+                sourceMessageIds: compact.sourceMessageIds,
+                tokenEstimate: compact.tokenEstimate,
+                createdAt: compact.createdAt,
+                updatedAt: compact.updatedAt,
+                status: compact.status,
+                timelineAnchorMessageId: compact.timelineAnchorMessageId
+            )
+        }
+        let data = try encoder.encode(sanitized)
         try data.write(to: fileURL(conversationId: conversationId), options: .atomic)
-        cache[conversationId] = compacts
+        cache[conversationId] = sanitized
     }
 
     private func fileURL(conversationId: String) -> URL {
@@ -737,7 +806,7 @@ enum ContextCompactionEditTestSupport {
         )
         let plan = IOSContextCompactionCoordinator.planCompaction(
             messages: messages, activeCompacts: coveredIds.isEmpty ? [] : [compact],
-            policy: IOSCompactPolicy(enabled: true, notifyOnly: false, precompactRatio: 0.7,
+            policy: IOSCompactPolicy(enabled: true, notifyOnly: false, triggerRatio: 0.9,
                                      forceRatio: 0.9, keepRecentTurns: 2, maxSummaryTokens: 200),
             modelContextWindowTokens: 10_000, extraTokenEstimate: overheadTokens
         )
@@ -749,9 +818,10 @@ enum ContextCompactionEditTestSupport {
     static func plannedSourceIds(
         messages: [UIMessage], compacts: [(id: String, sources: [String], covered: [String])]
     ) -> [String] {
+        // Forced-pass helper: trigger 0 is intentionally not a pair settings can produce.
         IOSContextCompactionCoordinator.planCompaction(
             messages: messages, activeCompacts: testCompacts(compacts),
-            policy: IOSCompactPolicy(enabled: true, notifyOnly: false, precompactRatio: 0,
+            policy: IOSCompactPolicy(enabled: true, notifyOnly: false, triggerRatio: 0,
                                      forceRatio: 0.9, keepRecentTurns: 1, maxSummaryTokens: 200),
             modelContextWindowTokens: 10_000, extraTokenEstimate: 0
         ).sourceMessageIds

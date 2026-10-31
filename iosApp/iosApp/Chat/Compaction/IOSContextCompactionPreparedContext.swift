@@ -44,9 +44,11 @@ extension IOSContextCompactionCoordinator {
         targetTokens: Int,
         additionalPrompt: String,
         coveredCompactIds: [String],
-        previousCompactContext: String
+        previousCompactContext: String,
+        mustNotLose: [IOSHandoffEntity] = []
     ) -> String {
         let coveredIds = coveredCompactIds.map { "\"\($0)\"" }.joined(separator: ", ")
+        let fidelity = IOSContextCompactionFidelity.promptLines(mustNotLose)
         let structured = """
         Return valid JSON only. Required schema:
         {
@@ -58,6 +60,8 @@ extension IOSContextCompactionCoordinator {
         Carry every previous handoff below forward; `covered_compact_ids` lists the ids whose content this handoff carries.
         Preserve concrete names, files, commands, errors, user preferences, rejected approaches, tool outcomes, and unresolved decisions.
         The timeline summary is for the human timeline; the handoff Markdown is what the next model will receive.
+
+        \(fidelity)
 
         Agent-editable handoff instructions:
         \(defaultHandoffPrompt)
@@ -99,13 +103,14 @@ extension IOSContextCompactionCoordinator {
         _ raw: String,
         sourceMessageIds: [String],
         offeredCompactIds: [String],
-        createdAt: Int64
+        createdAt: Int64,
+        mustNotLose: [IOSHandoffEntity] = []
     ) -> String? {
         let object = parseJSONObject(raw)
-        let handoff: String
+        let rawHandoff: String
         let carriedCompactIds: [String]
         if let object {
-            handoff = cleanMarkdown(stringValue(object["handoff_markdown"]) ?? "")
+            rawHandoff = cleanMarkdown(stringValue(object["handoff_markdown"]) ?? "")
             // Ancestors drop out of injection only when the model says it carried them forward.
             let claimed = Set(stringList(object["covered_compact_ids"]))
             carriedCompactIds = offeredCompactIds.filter(claimed.contains)
@@ -113,25 +118,39 @@ extension IOSContextCompactionCoordinator {
             let text = cleanMarkdown(raw
                 .replacingOccurrences(of: "```markdown", with: "")
                 .replacingOccurrences(of: "```", with: ""))
-            handoff = text.hasPrefix("{") ? "" : text
+            rawHandoff = text.hasPrefix("{") ? "" : text
             carriedCompactIds = []
         }
+        let handoff = IOSContextCompactionFidelity.redactCredentials(rawHandoff)
         guard isUsableHandoff(handoff) else { return nil }
-        let timeline = coerceTimelineSummary(
+        let sanitizedMustNotLose = mustNotLose.map { entity in
+            IOSHandoffEntity(
+                kind: entity.kind,
+                value: IOSContextCompactionFidelity.redactCredentials(entity.value)
+            )
+        }
+        let cappedHandoff = String(handoff.prefix(maxHandoffChars))
+        // I2.2 / S5: host-extracted hard anchors must survive verbatim after truncation;
+        // soft natural-language entities are tracked without rejecting the handoff.
+        guard IOSContextCompactionFidelity.missingHardAnchors(sanitizedMustNotLose, in: cappedHandoff).isEmpty else { return nil }
+        _ = IOSContextCompactionFidelity.missingSoftEntities(sanitizedMustNotLose, in: cappedHandoff)
+        let rawTimeline = coerceTimelineSummary(
             stringValue(object?["timeline_summary"])
                 ?? stringValue(object?["display_summary"])
                 ?? stringValue(object?["summary"])
-                ?? String(handoff
+                ?? String(cappedHandoff
                     .split(separator: "\n")
                     .filter { !$0.hasPrefix("#") }
                     .joined(separator: " ")
                     .prefix(280))
         )
+        let timeline = IOSContextCompactionFidelity.redactCredentials(rawTimeline)
         return jsonString([
             "schema_version": 2,
             "timeline_summary": String(timeline.prefix(maxTimelineSummaryChars)),
-            "handoff_markdown": String(handoff.prefix(maxHandoffChars)),
+            "handoff_markdown": cappedHandoff,
             "covered_compact_ids": Array(Set(carriedCompactIds)).sorted(),
+            "must_not_lose": IOSContextCompactionFidelity.payload(sanitizedMustNotLose),
             "source_message_ids": Array(Set(sourceMessageIds)).sorted(),
             "created_at": createdAt
         ])
@@ -165,7 +184,8 @@ extension IOSContextCompactionCoordinator {
 
     static func injectionText(id: String, summary: String, sourceMessageIds: [String], removedToolResults: Int = 0) -> String {
         let payload = payloadObject(summary)
-        let handoff = cleanMarkdown(stringValue(payload?["handoff_markdown"]) ?? timelineSummary(summary) ?? summary)
+        let rawHandoff = cleanMarkdown(stringValue(payload?["handoff_markdown"]) ?? timelineSummary(summary) ?? summary)
+        let handoff = IOSContextCompactionFidelity.redactCredentials(rawHandoff)
         let covered = stringList(payload?["covered_compact_ids"])
         var lines = [
             "[Conversation compact handoff: \(id)]",
@@ -179,6 +199,8 @@ extension IOSContextCompactionCoordinator {
         }
         lines.append("")
         lines.append(handoff)
+        lines.append("")
+        lines.append("Retrieval: the original messages behind this boundary are still stored and unmodified. Call history_search with a query, then history_fetch with the returned message_id, when exact earlier wording, commands, errors, paths or decisions are needed. Results with stale=true are outside the live context.")
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -190,13 +212,15 @@ extension IOSContextCompactionCoordinator {
 
     static func timelineSummary(_ summary: String) -> String? {
         guard let payload = payloadObject(summary) else {
-            return cleanHumanText(summary)
+            return cleanHumanText(IOSContextCompactionFidelity.redactCredentials(summary))
         }
         return coerceTimelineSummary(
-            stringValue(payload["timeline_summary"])
-                ?? stringValue(payload["display_summary"])
-                ?? stringValue(payload["summary"])
-                ?? ""
+            IOSContextCompactionFidelity.redactCredentials(
+                stringValue(payload["timeline_summary"])
+                    ?? stringValue(payload["display_summary"])
+                    ?? stringValue(payload["summary"])
+                    ?? ""
+            )
         )
     }
 

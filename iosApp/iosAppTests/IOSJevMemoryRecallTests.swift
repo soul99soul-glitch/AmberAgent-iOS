@@ -38,7 +38,7 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             }
         }
         let payload: [String: Any] = ["model": "jev-latest", "answers": answers]
-        return try! JSONSerialization.data(withJSONObject: payload)
+        return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
     }
 
     private func makeSettings(mode: IOSJevMode, pinned: String? = "jev-fixed-v1") -> IOSJevSettings {
@@ -307,6 +307,49 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         )
         let viaBuilder = builder.memoryRecallResult(for: messages, override: selection)
         XCTAssertEqual(viaBuilder.ids, selection?.ids)
+    }
+
+    /// I2.4: 记忆召回随 query 变化，必须排在稳定 system 片段之后；两次不同召回的
+    /// 稳定前缀逐字一致，只有 memory 片段变化。（provider 层的 checkpoint 合并
+    /// 仍会把整段 system 作为一个缓存单元，单独记录在 Phase 2 报告中。）
+    func testMemoryRecallKeepsStableSystemPrefixUnchanged() {
+        let messages = [userMessage(text: "继续当前任务")]
+        let builder = ChatRuntimeContextBuilder(
+            sharedSettings: makeSettingsStore(),
+            mcpTools: [],
+            miniAppRepository: makeMiniAppRepository(),
+            miniAppRuntimeEnabled: false
+        )
+        func injected(_ prompt: String) -> [UIMessage] {
+            builder.injectingRuntimeContext(
+                into: messages,
+                coalesceSystemMessages: false,
+                memoryRecallOverride: ChatMemoryContextBuilder.RecallResult(prompt: prompt, records: [])
+            )
+        }
+        let first = injected("memory A")
+        let second = injected("memory B")
+
+        // 直接按文本识别 memory 片段，避免 Swift 端读取 Kotlin JsonObject 元数据的桥接差异。
+        func memoryIndex(_ list: [UIMessage], prompt: String) -> Int? {
+            list.firstIndex { message in
+                message.role == MessageRole.system && message.toText().contains(prompt)
+            }
+        }
+        guard let firstIndex = memoryIndex(first, prompt: "memory A"),
+              let secondIndex = memoryIndex(second, prompt: "memory B") else {
+            return XCTFail("记忆召回没有注入 system 片段")
+        }
+        XCTAssertEqual(
+            first[..<firstIndex].map { $0.toText() },
+            second[..<secondIndex].map { $0.toText() },
+            "召回变化不得改动其前的稳定 system 前缀"
+        )
+        XCTAssertEqual(first.lastIndex { $0.role == MessageRole.system }, firstIndex)
+        XCTAssertEqual(second.lastIndex { $0.role == MessageRole.system }, secondIndex)
+        XCTAssertNotEqual(first[firstIndex].toText(), second[secondIndex].toText())
+        XCTAssertTrue(first[firstIndex].toText().contains("memory A"))
+        XCTAssertTrue(second[secondIndex].toText().contains("memory B"))
     }
 
     func testOffFlowMakesZeroNetworkCallsAndNoSelection() async {

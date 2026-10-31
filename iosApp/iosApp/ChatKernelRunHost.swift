@@ -1014,6 +1014,19 @@ final class ChatKernelRunHost {
         answerPendingAskUser("")
     }
 
+    func canApprovePendingToolFromWatch(
+        runId: String,
+        requestId: String
+    ) -> Bool {
+        guard currentRunId == runId,
+              let prompt = approvalSession.prompt,
+              ChatRunApprovalSession.requestId(of: prompt) == requestId,
+              ChatRunApprovalSession.category(of: prompt) != .askUser else {
+            return false
+        }
+        return WatchTaskSnapshotBuilder.allowsApprovalOnWatch(prompt)
+    }
+
     @discardableResult
     func resolvePendingToolApprovalFromWatch(
         runId: String,
@@ -1024,6 +1037,9 @@ final class ChatKernelRunHost {
               let prompt = approvalSession.prompt,
               ChatRunApprovalSession.requestId(of: prompt) == requestId,
               ChatRunApprovalSession.category(of: prompt) != .askUser else {
+            return false
+        }
+        if allow, !WatchTaskSnapshotBuilder.allowsApprovalOnWatch(prompt) {
             return false
         }
         return resolvePendingApproval(

@@ -107,4 +107,22 @@ enum IOSProviderConfigToolCatalog {
         }
         return parts.joined(separator: " ")
     }
+
+    static func containsRedactedPlaceholderValue(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let lower = trimmed.lowercased()
+        let placeholders = [
+            "<redacted>", "[redacted]", "(redacted)", "(clear)", "«已脱敏»",
+            "***", "••••", "sk-xxx", "sk-...", "your_key", "your-api-key",
+            "xxx", "todo", "placeholder", "example"
+        ]
+        if placeholders.contains(where: { lower == $0 || lower.contains($0) }) {
+            return true
+        }
+        if lower.hasPrefix("sk-xxxx") || (lower.contains("your") && lower.contains("key")) {
+            return true
+        }
+        return false
+    }
 }

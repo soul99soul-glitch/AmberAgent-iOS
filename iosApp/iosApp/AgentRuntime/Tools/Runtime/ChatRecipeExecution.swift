@@ -563,10 +563,14 @@ final class ChatRecipeExecution {
             // The resumed step is the one the user just approved — skip its
             // gate (the top-level post-approval contract); later steps gate
             // normally (§10.3.5: each mutation step pauses again).
-            switch await advanceRecipeExecution(
-                state: &state, context: pending, bridge: toolExposureBridge,
-                skipGateForFirstStep: true
-            ) {
+            let executionPolicy = pending.executionPolicy ?? IOSExecutionPolicyContext.snapshot
+            let advanceOutcome = await runtime.withExecutionPolicy(executionPolicy) {
+                await advanceRecipeExecution(
+                    state: &state, context: pending, bridge: toolExposureBridge,
+                    skipGateForFirstStep: true
+                )
+            }
+            switch advanceOutcome {
             case .completed(let messages):
                 return .completed(messages)
             case .needsApproval(let request):
@@ -784,7 +788,9 @@ final class ChatRecipeExecution {
                 ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output)
             )
         case .sessionRead:
-            return recipePrimitiveResult(await runtime.dispatchSessionReadToolCall(toolCall))
+            return recipePrimitiveResult(await runtime.dispatchSessionReadToolCall(
+                toolCall, conversationId: context.conversationId
+            ))
         case .discovery:
             guard let bridge else {
                 return .failure("\(tool) 当前不可用（缺少工具目录）。")
@@ -811,6 +817,9 @@ final class ChatRecipeExecution {
             )
             return recipePrimitiveResult(result)
         case .advanced:
+            if (tool == "exec" || tool == "wait"), !runtime.effectiveExecJavaScriptEnabled {
+                return .failure("\(tool) 未开启。请先在设置中启用对应能力。")
+            }
             return recipePrimitiveResult(await runtime.dispatchAdvancedToolCall(
                 toolCall,
                 providerSetting: context.providerSetting,
@@ -906,9 +915,14 @@ final class ChatRecipeExecution {
                     return .approvalRequired(reason: "模型议会会发起多次模型请求，需要你确认。")
                 }
                 return .proceed
+            case "exec", "wait":
+                guard runtime.effectiveExecJavaScriptEnabled else {
+                    return .unsupported(reason: "\(tool) 未开启。请先在设置中启用对应能力。")
+                }
+                return .proceed
             default:
-                // 编排工具（spawn/list/interrupt/send/followup/wait_agent）与
-                // exec/wait：顶层路径无审批卡，步骤同样直接执行。
+                // 编排工具（spawn/list/interrupt/send/followup/wait_agent）：
+                // 顶层路径无审批卡，步骤同样直接执行。
                 return .proceed
             }
         case .skill:

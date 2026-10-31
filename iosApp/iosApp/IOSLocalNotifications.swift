@@ -582,6 +582,7 @@ enum MacGatewayApprovalNotification {
         case denyAction: allow = false
         default: return nil
         }
+        if allow, (userInfo["highRisk"] as? Bool) == true { return nil }
         guard let key = userInfo["sessionKey"] as? String, key.hasPrefix("amber:"),
               let call = userInfo["toolCallId"] as? String, !call.isEmpty else { return nil }
         return Decision(sessionKey: key, toolCallId: call, allow: allow)

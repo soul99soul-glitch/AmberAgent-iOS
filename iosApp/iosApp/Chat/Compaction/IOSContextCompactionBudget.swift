@@ -8,6 +8,8 @@ extension IOSContextCompactionCoordinator {
     static let maxCompressionTextChars = 48_000
     /// Share of the summarizer's window the summary request may use (the rest is output).
     static let compressionInputRatio = 0.75
+    /// must_not_lose 最多 24 项；按 app 的 CJK 权重估算最坏约 3.0–3.6k token，预留 3.2k + 其余余量。
+    static let compactionFidelityReserveTokens = 3_200
 
     static func estimatePromptTokens(_ text: String) -> Int {
         text.weightedTokenChars / 4 + 1
@@ -110,7 +112,7 @@ extension IOSContextCompactionCoordinator {
         let estimatedTokens = estimatePreparedMessages(messages, activeCompacts: activeCompacts) + max(extraTokenEstimate, 0)
         let contextWindow = estimateContextWindow(modelContextWindowTokens)
         let ratio = Double(estimatedTokens) / Double(contextWindow)
-        guard ratio >= policy.precompactRatio else {
+        guard ratio >= policy.triggerRatio else {
             return IOSCompactPlan(
                 shouldCompact: false,
                 reason: "below_threshold",
@@ -147,7 +149,13 @@ extension IOSContextCompactionCoordinator {
         while let last = sourceIndices.last, messageHasPendingTool(messages[last]) {
             sourceIndices.removeLast()
         }
-        guard sourceIndices.count >= 2 else {
+        // Once a conversation already has a valid compact, require at least a kept
+        // window's worth of uncovered messages (min 4) before running another regular
+        // compaction pass; forced compaction (triggerRatio <= 0) still accepts >= 2.
+        let minSourceMessages = (coveredIds.isEmpty || policy.triggerRatio <= 0)
+            ? 2
+            : max(policy.keepRecentTurns * 2, 4)
+        guard sourceIndices.count >= minSourceMessages else {
             return IOSCompactPlan(
                 shouldCompact: false,
                 reason: coveredIds.isEmpty ? "not_enough_new_history" : "already_compacted",
@@ -173,7 +181,8 @@ extension IOSContextCompactionCoordinator {
         messages: [UIMessage],
         activeCompacts: [IOSConversationCompact],
         policy: IOSCompactPolicy,
-        modelContextWindowTokens: Int?
+        modelContextWindowTokens: Int?,
+        extraTokenEstimate: Int = 0
     ) -> IOSCompactPlan {
         var turns: [Int] = []
         var current = max(policy.keepRecentTurns, 1)
@@ -193,7 +202,7 @@ extension IOSContextCompactionCoordinator {
             let attemptPolicy = IOSCompactPolicy(
                 enabled: true,
                 notifyOnly: policy.notifyOnly,
-                precompactRatio: 0,
+                triggerRatio: 0,
                 forceRatio: .greatestFiniteMagnitude,
                 keepRecentTurns: keepRecentTurns,
                 maxSummaryTokens: policy.maxSummaryTokens
@@ -203,7 +212,7 @@ extension IOSContextCompactionCoordinator {
                 activeCompacts: activeCompacts,
                 policy: attemptPolicy,
                 modelContextWindowTokens: modelContextWindowTokens,
-                extraTokenEstimate: 0
+                extraTokenEstimate: extraTokenEstimate
             )
             lastPlan = plan
             if plan.shouldCompact {
@@ -213,7 +222,7 @@ extension IOSContextCompactionCoordinator {
                     activeCompacts: activeCompacts,
                     plan: plan,
                     maxSummaryTokens: policy.maxSummaryTokens
-                ) <= targetTokens {
+                ) + max(extraTokenEstimate, 0) <= targetTokens {
                     return IOSCompactPlan(
                         shouldCompact: true,
                         reason: "force_threshold",

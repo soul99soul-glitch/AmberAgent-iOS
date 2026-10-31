@@ -232,10 +232,8 @@ final class IOSProviderConfigToolService {
                 return fail("provider_config_apply", "api_key 必须是字符串；省略表示不改，空字符串表示清除。")
             }
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            let lowered = trimmed.lowercased()
             if !trimmed.isEmpty {
-                let placeholders = ["sk-xxx", "your_key", "your-api-key", "xxx", "todo", "placeholder"]
-                if placeholders.contains(where: { lowered == $0 || lowered.contains($0) }) {
+                if Self.looksLikePlaceholderKey(trimmed) {
                     return fail("provider_config_apply", "api_key 看起来是占位符，已拒绝写入。")
                 }
                 if trimmed.count < 8 {
@@ -593,11 +591,7 @@ final class IOSProviderConfigToolService {
     ]
 
     private static func looksLikePlaceholderKey(_ value: String) -> Bool {
-        let lower = value.lowercased()
-        if lower.contains("your") && lower.contains("key") { return true }
-        if lower.contains("placeholder") || lower.contains("example") { return true }
-        if lower == "sk-xxx" || lower == "sk-..." || lower.hasPrefix("sk-xxxx") { return true }
-        return false
+        IOSProviderConfigToolCatalog.containsRedactedPlaceholderValue(value)
     }
 
     private static func apiKey(of provider: ProviderSetting) -> String {

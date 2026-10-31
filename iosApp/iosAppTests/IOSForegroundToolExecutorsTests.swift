@@ -305,6 +305,31 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
         XCTAssertNotNil(executors["tool_search"], "桥自动追加的发现工具必须有执行器")
     }
 
+    func testExecAndWaitAreNotRegisteredWhenSandboxIsOff() {
+        let (runtime, _, _) = makeRuntime()
+        let bridge = IosToolExposureBridge(
+            tools: ToolKt.iosToolDeclarations(names: ["exec", "wait"])
+        )
+        let executors = runtime.foregroundToolExecutors(
+            providerSetting: F.makeProviderSetting(),
+            params: F.makeParams(toolNames: [], tools: bridge.visibleTools()),
+            runId: "run-exec-off",
+            startedAt: 1,
+            inputDigest: "digest",
+            conversationId: nil,
+            toolExposureBridge: bridge,
+            baseMessagesProvider: { [F.userMessage("hi")] },
+            approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox(),
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:], globalAutoApproveEnabled: false,
+                highRiskAutoApproveEnabled: false, execJavaScriptEnabled: false,
+                webSearchEnabled: false
+            )
+        )
+        XCTAssertNil(executors["exec"], "JavaScript 沙箱默认关闭时不得注册 exec")
+        XCTAssertNil(executors["wait"], "wait 与 exec 同开关")
+    }
+
     // MARK: - 跨隔离调用辅助
 
     /// 执行器存在性值与 KMP 工具部件均非 Sendable;测试把所有权一次性交给

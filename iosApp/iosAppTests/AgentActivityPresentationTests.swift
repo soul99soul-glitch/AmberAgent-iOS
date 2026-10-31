@@ -488,10 +488,20 @@ final class AgentActivityPresentationTests: XCTestCase {
             )
         }
         let approval = AgentActivityApproval(requestId: "req-1", title: "终端命令")
+        let highRiskApproval = AgentActivityApproval(
+            requestId: "req-high-risk",
+            title: "终端命令",
+            allowsInlineApprove: false
+        )
 
         XCTAssertEqual(controls(.generatingResponse(modelName: "model"), false, true), [])
         XCTAssertEqual(controls(.generatingResponse(modelName: "model"), true, true), [])
         XCTAssertEqual(controls(.waitingForUser(approval: approval), false, true), [.deny, .approve])
+        XCTAssertEqual(
+            controls(.waitingForUser(approval: highRiskApproval), false, true),
+            [.deny],
+            "高风险审批在锁屏和灵动岛上只允许拒绝，不允许内联批准"
+        )
         XCTAssertEqual(
             controls(.waitingForUser(), false, true),
             [],
@@ -850,5 +860,50 @@ final class AgentActivityPresentationTests: XCTestCase {
         XCTAssertFalse(json.contains("statusText"))
         XCTAssertFalse(json.contains("toolTitle"))
         XCTAssertFalse(json.contains("steps"))
+    }
+
+    @MainActor
+    func testActivityApprovalAlignsInlineApproveWithWatchHighRiskPolicy() {
+        let terminalPrompt = ChatToolApprovalPrompt.ish(
+            IshHandoffToolApprovalRequest(
+                id: "ish-1",
+                mode: .embeddedExecute,
+                commandPreview: "rm -rf /tmp/test",
+                filename: "cmd.sh",
+                reason: "终端命令需要确认",
+                runId: "run-1"
+            )
+        )
+        let terminalApproval = ChatRunApprovalSession.activityApproval(for: terminalPrompt)
+        XCTAssertEqual(terminalApproval?.allowsInlineApprove, false)
+        XCTAssertEqual(
+            AgentActivityInlineControlPolicy.controls(
+                presentation: .waitingForUser(approval: terminalApproval),
+                isStale: false,
+                hasConversation: true
+            ),
+            [.deny]
+        )
+
+        let searchPrompt = ChatToolApprovalPrompt.search(
+            SearchToolApprovalRequest(
+                id: "search-1",
+                toolName: "search_web",
+                target: "swift concurrency",
+                providerName: "Exa",
+                providerType: "exa",
+                reason: "搜索需要确认"
+            )
+        )
+        let searchApproval = ChatRunApprovalSession.activityApproval(for: searchPrompt)
+        XCTAssertEqual(searchApproval?.allowsInlineApprove, true)
+        XCTAssertEqual(
+            AgentActivityInlineControlPolicy.controls(
+                presentation: .waitingForUser(approval: searchApproval),
+                isStale: false,
+                hasConversation: true
+            ),
+            [.deny, .approve]
+        )
     }
 }

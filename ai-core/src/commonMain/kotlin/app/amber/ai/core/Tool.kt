@@ -1705,6 +1705,73 @@ fun createSessionReadToolDeclaration(): Tool = Tool(
     execute = { emptyList() }
 )
 
+/**
+ * Current-conversation history retrieval (`history_search` + `history_fetch`).
+ * Complements compaction: the original transcript is never rewritten, so the
+ * agent can recover exact commands/errors/paths after a summary replaced them.
+ * Read-only, no approval; iOS executes locally in ChatToolRuntime (Swift).
+ */
+fun createHistorySearchToolDeclaration(): Tool = Tool(
+    name = "history_search",
+    description = """
+        Search the CURRENT conversation's original transcript (including messages compacted out
+        of the live context). Use after context compaction, or whenever exact earlier wording,
+        commands, errors or decisions are needed. Read-only. Follow up with `history_fetch`
+        using the returned message_id to read the full text. Results marked stale=true are
+        covered by a compaction summary and are not in the live context.
+    """.trimIndent().replace("\n", " "),
+    parameters = { historySearchParameters() },
+    needsApproval = false,
+    execute = { emptyList() }
+)
+
+fun createHistoryFetchToolDeclaration(): Tool = Tool(
+    name = "history_fetch",
+    description = """
+        Read one message from the CURRENT conversation's original transcript by message_id
+        (from history_search). Read-only. Returns projected text in pages: pass the returned
+        next_offset as offset until it is null. The original transcript is never modified.
+    """.trimIndent().replace("\n", " "),
+    parameters = { historyFetchParameters() },
+    needsApproval = false,
+    execute = { emptyList() }
+)
+
+private fun historySearchParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("query", buildJsonObject {
+            put("type", "string")
+            put("description", "Required. Keywords to search in the current conversation's original transcript.")
+        })
+        put("limit", buildJsonObject {
+            put("type", "integer")
+            put("description", "Optional. Maximum hit messages to return, clamped to [1, 8]; defaults to 5.")
+        })
+    },
+    required = listOf("query"),
+)
+
+private fun historyFetchParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("message_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Required. A message_id from history_search results.")
+        })
+        put("offset", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 0)
+            put("description", "Optional. Non-negative character offset; defaults to 0. Continue from next_offset.")
+        })
+        put("max_chars", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 1)
+            put("maximum", 8_000)
+            put("description", "Optional. Maximum page characters, clamped to [1, 8000]; defaults to 2000.")
+        })
+    },
+    required = listOf("message_id"),
+)
+
 private fun sessionSearchParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         put("query", buildJsonObject {
@@ -2003,6 +2070,8 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "wait_agent" to ::createWaitAgentToolDeclaration,
     "session_search" to ::createSessionSearchToolDeclaration,
     "session_read" to ::createSessionReadToolDeclaration,
+    "history_search" to ::createHistorySearchToolDeclaration,
+    "history_fetch" to ::createHistoryFetchToolDeclaration,
     "provider_config_status" to ::createProviderConfigStatusToolDeclaration,
     "provider_config_apply" to ::createProviderConfigApplyToolDeclaration,
     "provider_config_create" to ::createProviderConfigCreateToolDeclaration,

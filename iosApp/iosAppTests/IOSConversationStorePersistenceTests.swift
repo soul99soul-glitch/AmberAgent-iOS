@@ -487,4 +487,95 @@ final class IOSConversationStorePersistenceTests: IOSConversationStoreTestCase {
         )
     }
 
+    func testCompactionSidecarLeavesTranscriptAndBackupImmutableAndIsCleanedOnRestoreAndDelete() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreC4Compaction-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("source")
+        let target = root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = IOSConversationStore(baseDirectory: source)
+        await store.bootstrap()
+        let messages: [UIMessage] = (1...8).flatMap { turn in
+            [
+                UIMessage.companion.user(prompt: "Turn \(turn) user message on iosApp/iosApp/AppShell.swift " + String(repeating: "context ", count: 30)),
+                UIMessage.companion.assistant(prompt: "Turn \(turn) assistant reply with commit abc1234 " + String(repeating: "detail ", count: 30))
+            ]
+        }
+        await store.saveCurrent(messages: messages)
+        let convId = try XCTUnwrap(store.currentConversation?.id)
+        let convIdString = String(describing: convId).lowercased()
+        defer { try? IOSContextCompactionCoordinator.shared.removeCompacts(conversationIds: [convIdString]) }
+
+        let transcriptPath = source.appendingPathComponent("\(convIdString).json")
+        let transcriptBeforeCompaction = try String(contentsOf: transcriptPath, encoding: .utf8)
+
+        let compactsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("conversation-compacts", isDirectory: true)
+        try FileManager.default.createDirectory(at: compactsDir, withIntermediateDirectories: true)
+        let compactFile = compactsDir.appendingPathComponent("\(convIdString).json")
+        defer { try? FileManager.default.removeItem(at: compactFile) }
+
+        let coveredIds = messages.prefix(12).map { String(describing: $0.id) }
+        let compactRecord: [String: Any] = [
+            "id": "compact-c4-1",
+            "conversationId": convIdString,
+            "summary": """
+            <compact_handoff version="1">
+            {"goal":"Verify C4 immutability","progress":["completed turns 1-6"],"decisions":[],"open_items":[],"next_step":"continue turn 7","critical_facts":["iosApp/iosApp/AppShell.swift","abc1234"],"artifacts":["iosApp/iosApp/AppShell.swift"],"Verify":"true"}
+            </compact_handoff>
+            """,
+            "level": 1,
+            "sourceStartIndex": 0,
+            "sourceEndIndex": 11,
+            "sourceMessageIds": coveredIds,
+            "tokenEstimate": 120,
+            "createdAt": 1_000,
+            "updatedAt": 1_000,
+            "status": "completed"
+        ]
+        try JSONSerialization.data(withJSONObject: [compactRecord]).write(to: compactFile)
+
+        let boundaries = IOSContextCompactionCoordinator().timelineBoundaries(
+            conversationId: convId,
+            messages: store.currentMessages
+        )
+        XCTAssertEqual(boundaries.count, 1, "压缩应生成会话级上下文摘要边界")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: compactFile.path))
+
+        // C4: Original transcript on disk and in store must remain 100% immutable after compaction
+        let transcriptAfterCompaction = try String(contentsOf: transcriptPath, encoding: .utf8)
+        XCTAssertEqual(transcriptAfterCompaction, transcriptBeforeCompaction, "压缩只写独立 sidecar，严禁改动原始会话 JSON")
+        XCTAssertEqual(store.currentMessages.count, messages.count, "压缩不得裁剪 store.currentMessages 原文")
+
+        // Backup exports full uncompacted conversation; restoring into a store clears stale local compaction sidecar
+        let zip = try XCTUnwrap(IOSSyncBackup.conversationsZip(fromDirectory: source))
+        let documents = try IOSSyncBackup.conversationDocuments(zipData: zip)
+        XCTAssertEqual(documents.count, 1)
+
+        _ = try await store.importConversationDocuments(documents)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: compactFile.path),
+            "导入备份覆盖会话时应清理旧的本地压缩 sidecar"
+        )
+        XCTAssertTrue(
+            IOSContextCompactionCoordinator().timelineBoundaries(
+                conversationId: convId,
+                messages: store.currentMessages
+            ).isEmpty
+        )
+
+        // Re-write compact sidecar and then delete conversation: deletion must also remove compaction sidecar
+        try JSONSerialization.data(withJSONObject: [compactRecord]).write(to: compactFile)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: compactFile.path))
+        let didDelete = await store.deleteConversation(id: convId)
+        XCTAssertTrue(didDelete)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: compactFile.path),
+            "删除会话后应同步清理对应的压缩 sidecar"
+        )
+    }
+
 }

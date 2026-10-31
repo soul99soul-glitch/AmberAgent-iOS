@@ -87,11 +87,16 @@ extension IOSContextCompactionCoordinator {
         case let text as UIMessagePart.Text:
             // Message text is what the covered history is replaced with; keep it whole up
             // to a generous cap (the summarizer budget fit decides how many messages go in).
-            return "text: \(text.text.takeMiddle(maxChars: maxCompressionTextChars))"
+            let redactedText = IOSContextCompactionFidelity.redactCredentials(text.text)
+            return "text: \(redactedText.takeMiddle(maxChars: maxCompressionTextChars))"
         case let reasoning as UIMessagePart.Reasoning:
             return "reasoning_marker: \(reasoning.reasoning.count) chars"
         case let tool as UIMessagePart.Tool:
-            return "tool: \(tool.toolName) id=\(tool.toolCallId) executed=\(!tool.output.isEmpty) input=\(tool.input.takeMiddle(maxChars: 2_000)) output=\(summarizeToolOutput(tool.output))"
+            let catalogRedacted = ChatToolCallParsing.jsonObject(tool.input) != nil
+                ? IOSProviderConfigToolCatalog.redactedArgumentsJSON(tool.input)
+                : tool.input
+            let redactedInput = IOSContextCompactionFidelity.redactCredentials(catalogRedacted)
+            return "tool: \(tool.toolName) id=\(tool.toolCallId) executed=\(!tool.output.isEmpty) input=\(redactedInput.takeMiddle(maxChars: 2_000)) output=\(summarizeToolOutput(tool.output))"
         case let image as UIMessagePart.Image:
             return "image: \(String(image.url.suffix(80)))"
         case let video as UIMessagePart.Video:
@@ -109,13 +114,15 @@ extension IOSContextCompactionCoordinator {
 
     static func summarizeToolOutput(_ parts: [UIMessagePart], maxChars: Int = 8_000) -> String {
         let raw = parts.map { part -> String in
-            if let text = part as? UIMessagePart.Text { return text.text }
+            if let text = part as? UIMessagePart.Text {
+                return IOSContextCompactionFidelity.redactCredentials(text.text)
+            }
             if let tool = part as? UIMessagePart.Tool {
                 return "nested_tool:\(tool.toolName):\(summarizeToolOutput(tool.output, maxChars: maxChars / 2))"
             }
             return String(describing: part)
         }.joined(separator: "\n")
-        return raw.takeMiddle(maxChars: maxChars)
+        return IOSContextCompactionFidelity.redactCredentials(raw).takeMiddle(maxChars: maxChars)
     }
 
     static func editMessageTools(
@@ -216,6 +223,8 @@ extension IOSContextCompactionCoordinator {
         "conversation_context_status",
         "conversation_search",
         "conversation_expand",
+        "history_search",
+        "history_fetch",
         "runtime_status",
         "agent_runtime_status",
         "agent_task_list",
@@ -269,7 +278,7 @@ extension IOSContextCompactionCoordinator {
         message.parts.contains { ($0 as? UIMessagePart.Tool)?.output.isEmpty == false }
     }
 
-    static func messageHasPendingTool(_ message: UIMessage) -> Bool {
+    nonisolated static func messageHasPendingTool(_ message: UIMessage) -> Bool {
         message.parts.contains { ($0 as? UIMessagePart.Tool)?.output.isEmpty == true }
     }
 

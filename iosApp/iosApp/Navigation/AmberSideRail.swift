@@ -9,6 +9,34 @@ struct AmberSideRailItem: Identifiable {
     let action: () -> Void
 }
 
+/// 竖条内容所需的最小高度：上组 + 间隔 + 下组。
+/// 低于此高度时整条不启用：否则 VStack 会在宿主 `.frame` 内居中溢入上下安全区，
+/// 而顶栏 / FAB 重复按钮已经被隐藏。
+enum AmberSideRailMetrics {
+    /// 低于此宽度的尾侧安全区放不下 44pt 按钮外加呼吸边距。
+    static let minimumRailWidth: CGFloat = 60
+    static let buttonDiameter: CGFloat = 44
+    static let spacing: CGFloat = 14
+
+    static func requiredHeight(topCount: Int, bottomCount: Int) -> CGFloat {
+        let top = max(topCount, 0)
+        let bottom = max(bottomCount, 0)
+        guard top + bottom > 0 else { return 0 }
+        let topStack = CGFloat(top) * buttonDiameter + CGFloat(max(top - 1, 0)) * spacing
+        let bottomStack = CGFloat(bottom) * buttonDiameter + CGFloat(max(bottom - 1, 0)) * spacing
+        // VStack 中间始终有 `Spacer(minLength: spacing)`。
+        return topStack + bottomStack + spacing
+    }
+
+    /// 是否启用竖条。底部按钮会随滚动/生成出现或消失，激活阈值固定预留一个底部位置，
+    /// 否则同一屏高下整条会随滚动闪烁，把顶栏返回键一起藏掉。
+    static func isActive(topCount: Int, bottomCount: Int, availableHeight: CGFloat) -> Bool {
+        guard topCount > 0 || bottomCount > 0 else { return false }
+        let reserved = requiredHeight(topCount: topCount, bottomCount: max(bottomCount, 1))
+        return availableHeight >= reserved
+    }
+}
+
 /// iPhone Duo 外屏右侧竖条（状态栏 / 摄像头所在的 84pt 安全区外带）承载关键操作。
 ///
 /// 只在「竖持且尾侧安全区够宽」时启用：普通 iPhone 横屏的刘海侧 verticalSizeClass 为
@@ -22,17 +50,20 @@ private struct AmberSideRailModifier: ViewModifier {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    /// 低于此宽度的尾侧安全区放不下 44pt 按钮外加呼吸边距。
-    static let minimumRailWidth: CGFloat = 60
-    private static let buttonDiameter: CGFloat = 44
-    private static let spacing: CGFloat = 14
+    private static let buttonDiameter = AmberSideRailMetrics.buttonDiameter
+    private static let spacing = AmberSideRailMetrics.spacing
 
     func body(content: Content) -> some View {
         content.overlay {
             GeometryReader { proxy in
                 // 只给外屏（compact 宽）用；内屏 regular 宽走双栏，不需要竖条。
                 let layout = horizontalSizeClass == .compact
-                    ? Self.layout(for: proxy, verticalSizeClass: verticalSizeClass)
+                    ? Self.layout(
+                        for: proxy,
+                        verticalSizeClass: verticalSizeClass,
+                        topCount: top.count,
+                        bottomCount: bottom.count
+                    )
                     : nil
                 ZStack(alignment: .topLeading) {
                     if let layout {
@@ -94,10 +125,12 @@ private struct AmberSideRailModifier: ViewModifier {
 
     private static func layout(
         for proxy: GeometryProxy,
-        verticalSizeClass: UserInterfaceSizeClass?
+        verticalSizeClass: UserInterfaceSizeClass?,
+        topCount: Int,
+        bottomCount: Int
     ) -> Layout? {
         let trailing = proxy.safeAreaInsets.trailing
-        guard verticalSizeClass == .regular, trailing >= minimumRailWidth else { return nil }
+        guard verticalSizeClass == .regular, trailing >= AmberSideRailMetrics.minimumRailWidth else { return nil }
         // proxy 坐标：原点为安全区左上角，竖条从安全区右缘开始。
         let minX = proxy.size.width
         var topY: CGFloat = 12
@@ -108,7 +141,11 @@ private struct AmberSideRailModifier: ViewModifier {
             }
         }
         let bottomY = proxy.size.height - 12
-        guard bottomY - topY >= buttonDiameter * 2 else { return nil }
+        guard AmberSideRailMetrics.isActive(
+            topCount: topCount,
+            bottomCount: bottomCount,
+            availableHeight: bottomY - topY
+        ) else { return nil }
         return Layout(minX: minX, width: trailing, topY: topY, bottomY: bottomY)
     }
 }

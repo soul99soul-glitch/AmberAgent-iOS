@@ -412,6 +412,13 @@ final class IOSConversationStore {
         } catch {
             publishIOError(operation: "清理回顾", detail: error.localizedDescription)
         }
+        do {
+            try IOSContextCompactionCoordinator.shared.removeCompacts(
+                conversationIds: Array(restoredIds)
+            )
+        } catch {
+            publishIOError(operation: "清理上下文摘要", detail: error.localizedDescription)
+        }
         var relationRestoreError: Error?
         if let restoredEdges, let edgeDao {
             do {

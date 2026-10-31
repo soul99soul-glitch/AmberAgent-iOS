@@ -365,8 +365,12 @@ enum IOSAppleAgentToolCatalog {
 enum IOSEventKitAgentToolExecutor {
     static func execute(toolName: String, input: String) async -> String {
         #if canImport(EventKit)
-        guard IOSAppleAgentToolCatalog.eventKitToolNames.contains(toolName),
-              var arguments = object(input) else {
+        // 先区分未知工具与坏 JSON：两者都在创建 EKEventStore 之前收口，
+        // 但错误原因不能混在一起。
+        guard IOSAppleAgentToolCatalog.eventKitToolNames.contains(toolName) else {
+            return failure(toolName, "未知 Apple 工具。")
+        }
+        guard var arguments = object(input) else {
             return failure(toolName, "参数不是有效的 JSON 对象。")
         }
         arguments.removeValue(forKey: "display_title")
@@ -504,9 +508,11 @@ enum IOSEventKitAgentToolExecutor {
         ]),
               let title = nonBlank(arguments["title"] as? String),
               let start = try date(arguments["start_at"] as? String),
-              let end = try date(arguments["end_at"] as? String),
-              end > start else {
+              let end = try date(arguments["end_at"] as? String) else {
             throw IOSAppleAgentToolError.invalidArguments
+        }
+        guard end > start, end.timeIntervalSince(start) <= 366 * 86_400 else {
+            throw IOSAppleAgentToolError.invalidDateRange
         }
         let calendar = try eventCalendar(store, identifier: arguments["calendar_id"] as? String)
         let event = EKEvent(eventStore: store)
@@ -518,7 +524,7 @@ enum IOSEventKitAgentToolExecutor {
         event.calendar = calendar
         event.recurrenceRules = try recurrenceRules(arguments, start: start)
         try store.save(event, span: .thisEvent, commit: true)
-        return json(eventPayload(event, tool: IOSAppleAgentToolCatalog.calendarEventCreate))
+        return json(withConflicts(eventPayload(event, tool: IOSAppleAgentToolCatalog.calendarEventCreate), event: event, store: store))
     }
 
     private static func updateEvent(_ store: EKEventStore, arguments: [String: Any]) throws -> String {
@@ -538,7 +544,10 @@ enum IOSEventKitAgentToolExecutor {
         }
         if arguments.keys.contains("start_at") { event.startDate = try requiredDate(arguments["start_at"]) }
         if arguments.keys.contains("end_at") { event.endDate = try requiredDate(arguments["end_at"]) }
-        guard event.endDate > event.startDate else { throw IOSAppleAgentToolError.invalidDateRange }
+        guard event.endDate > event.startDate,
+              event.endDate.timeIntervalSince(event.startDate) <= 366 * 86_400 else {
+            throw IOSAppleAgentToolError.invalidDateRange
+        }
         if let location = arguments["location"] as? String { event.location = String(location.prefix(300)) }
         if let notes = arguments["notes"] as? String { event.notes = String(notes.prefix(2_000)) }
         if arguments.keys.contains("calendar_id") {
@@ -550,7 +559,48 @@ enum IOSEventKitAgentToolExecutor {
             throw IOSAppleAgentToolError.invalidRecurrence
         }
         try store.save(event, span: .thisEvent, commit: true)
-        return json(eventPayload(event, tool: IOSAppleAgentToolCatalog.calendarEventUpdate))
+        return json(withConflicts(eventPayload(event, tool: IOSAppleAgentToolCatalog.calendarEventUpdate), event: event, store: store))
+    }
+
+    /// 写入后附带时间重叠提示（不阻断：写入已获批准）。只写权限读不到其他日程，此时不提示。
+    private static func withConflicts(_ payload: [String: Any], event: EKEvent, store: EKEventStore) -> [String: Any] {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        guard status == .fullAccess || status == .authorized,
+              !event.isAllDay,
+              event.endDate > event.startDate,
+              event.endDate.timeIntervalSince(event.startDate) <= IOSCalendarConflictCandidate.maxConflictSpan else {
+            return payload
+        }
+        let candidates = store.events(matching: store.predicateForEvents(withStart: event.startDate, end: event.endDate, calendars: nil))
+            .map {
+                IOSCalendarConflictCandidate(
+                    id: $0.eventIdentifier ?? "",
+                    title: $0.title ?? "",
+                    start: $0.startDate,
+                    end: $0.endDate,
+                    allDay: $0.isAllDay,
+                    isCanceled: $0.status == .canceled,
+                    isFreeAvailability: $0.availability == .free
+                )
+            }
+        let conflicts = IOSCalendarConflictCandidate.overlapping(
+            candidates,
+            start: event.startDate,
+            end: event.endDate,
+            excluding: event.eventIdentifier
+        )
+        guard !conflicts.isEmpty else { return payload }
+        var result = payload
+        result["conflicts"] = conflicts.map {
+            [
+                "event_id": $0.id,
+                "title": $0.title,
+                "start_at": formatter.string(from: $0.start),
+                "end_at": formatter.string(from: $0.end)
+            ]
+        }
+        result["conflict_hint"] = "该时间段与已有日程重叠；已按批准写入，请告知用户并询问是否需要调整。"
+        return result
     }
 
     private static func deleteEvent(_ store: EKEventStore, arguments: [String: Any]) throws -> String {
@@ -823,6 +873,45 @@ enum IOSEventKitAgentToolExecutor {
     private static func json(_ payload: [String: Any]) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// 日程重叠判定（纯函数，便于单测）：全天事件、已取消事件、空闲（free）事件与自身不算冲突，端点相接不算重叠。
+struct IOSCalendarConflictCandidate: Equatable {
+    let id: String
+    let title: String
+    let start: Date
+    let end: Date
+    let allDay: Bool
+    var isCanceled: Bool = false
+    var isFreeAvailability: Bool = false
+
+    static let maxReported = 5
+    /// 冲突检测窗口最大跨度（30 天），避免超长跨度事件扫描过多日程。
+    static let maxConflictSpan: TimeInterval = 30 * 86_400
+
+    static func overlapping(
+        _ candidates: [IOSCalendarConflictCandidate],
+        start: Date,
+        end: Date,
+        excluding id: String?
+    ) -> [IOSCalendarConflictCandidate] {
+        guard end > start, end.timeIntervalSince(start) <= maxConflictSpan else {
+            return []
+        }
+        return Array(
+            candidates
+                .filter {
+                    !$0.allDay
+                        && !$0.isCanceled
+                        && !$0.isFreeAvailability
+                        && $0.id != id
+                        && $0.start < end
+                        && $0.end > start
+                }
+                .sorted { $0.start < $1.start }
+                .prefix(maxReported)
+        )
     }
 }
 

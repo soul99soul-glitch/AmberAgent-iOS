@@ -234,6 +234,10 @@ final class MacGatewayStore {
     /// Phone-side answer to an Amber scheduled run's tool call. The Mac re-checks the call and the risk class.
     @discardableResult
     func decide(sessionKey: String, toolCallId: String, allow: Bool) async -> Bool {
+        if allow, isKnownHighRiskApproval(sessionKey: sessionKey, toolCallId: toolCallId) {
+            notice = Notice(text: localized("高风险操作，请在 Mac 上核对后批准"), isError: true)
+            return false
+        }
         guard let client else {
             notice = Notice(text: localized("未与 Mac 配对"), isError: true)
             return false
@@ -250,6 +254,20 @@ final class MacGatewayStore {
             await refresh()
             return false
         }
+    }
+
+    func isKnownHighRiskApproval(sessionKey: String, toolCallId: String) -> Bool {
+        if let boardApproval = boardItems.compactMap(\.approval).first(where: {
+            $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
+        }) {
+            return boardApproval.highRisk
+        }
+        if let session = status?.sessions.first(where: { $0.key == sessionKey }),
+           let pending = session.pendingApproval,
+           pending.toolCallId == toolCallId {
+            return pending.highRisk
+        }
+        return false
     }
 
     // MARK: - Task board

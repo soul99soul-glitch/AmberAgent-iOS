@@ -92,7 +92,10 @@ final class ChatToolRuntime {
     lazy var sessionReadTool = ChatSessionReadTool(conversationStoreProvider: conversationStoreProvider)
     lazy var runtimeStatusTool = ChatRuntimeStatusTool(runtime: self)
     lazy var javaScriptTool = ChatJavaScriptTool(
-        jsCellRegistry: jsCellRegistry, jsSandboxEngine: jsSandboxEngine, sharedSettings: sharedSettings
+        jsCellRegistry: jsCellRegistry,
+        jsSandboxEngine: jsSandboxEngine,
+        sharedSettings: sharedSettings,
+        isEnabled: { [weak self] in self?.effectiveExecJavaScriptEnabled ?? false }
     )
 
     var effectiveGlobalAutoApproveEnabled: Bool {

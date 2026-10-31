@@ -37,13 +37,21 @@ struct MacGatewayTests {
     /// Expected value from `openssl x509 -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64`,
     /// the same computation `amber-gateway` prints next to the QR code.
     @Test func spkiFingerprintMatchesOpenSSL() throws {
-        let der = try #require(Data(base64Encoded: "MIIBDDCBtAIJAMN/Mwv8flerMAoGCCqGSM49BAMCMA8xDTALBgNVBAMMBHRlc3QwHhcNMjYwOTI3MDgxNTQyWhcNMzYwOTI0MDgxNTQyWjAPMQ0wCwYDVQQDDAR0ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtTyzbJf2Lqbe6fzit0tZ0xqhGOURe8QYdiII4wJoCeGsc8IoQlZmHNwODZnE794HYpLN7JYkX3LI6cTzsqwewzAKBggqhkjOPQQDAgNHADBEAiA/beSwfzzuB7jNcmn8goG4gV0HW5GxSHluQ81VTdrRqgIgWx8s9aOv82hBH0+QqudgrUnE89gAGA/lm4bsOaFQ9EE="))
+        let derBase64 = "MIIBDDCBtAIJAMN/Mwv8flerMAoGCCqGSM49BAMCMA8xDTALBgNVBAMMBHRlc3QwHhcNMjYwOTI3MDgxNTQyWhcNMzYwOTI0MDgxNTQyWjAPMQ0wCwYDVQQDDAR0ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtTyzbJf2Lqbe6fzit0tZ0xqhGOURe8QYdiII4wJoCeGsc8IoQlZmHNwODZnE794HYpLN7JYkX3LI6cTzsqwewzAKBggqhkjOPQQDAgNHADBEAiA/beSwfzzuB7jNcmn8goG4gV0HW5GxSHluQ81VTdrRqgIgWx8s9aOv82hBH0+QqudgrUnE89gAGA/lm4bsOaFQ9EE="
+        let der = try #require(Data(base64Encoded: derBase64))
         let certificate = try #require(SecCertificateCreateWithData(nil, der as CFData))
         #expect(MacGatewayPinningDelegate.spkiFingerprint(of: certificate) == "E1koSGeJkiwpjjeThRw6ApEq2SvdvsQLpfEav0yC6Iw=")
     }
 
     @Test func statusDecodesAmberPendingApproval() throws {
-        let json = #"{"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[{"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1800000000,"pendingApproval":{"toolCallId":"c1","tool":"workspace_file_write","detail":"path a.txt","highRisk":false}},{"key":"claude:s","agent":"claude","subject":"p","origin":"interactive","state":"running","abnormal":false,"monitored":true,"updatedAt":1800000000}]}"#
+        let json = #"""
+        {"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,
+         "sessions":[
+          {"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1800000000,
+           "pendingApproval":{"toolCallId":"c1","tool":"workspace_file_write","detail":"path a.txt","highRisk":false}},
+          {"key":"claude:s","agent":"claude","subject":"p","origin":"interactive","state":"running","abnormal":false,"monitored":true,"updatedAt":1800000000}
+         ]}
+        """#
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let status = try decoder.decode(MacGatewayStatus.self, from: Data(json.utf8))
@@ -57,6 +65,25 @@ struct MacGatewayTests {
         named.state = "stopped"
         #expect(named.displayTitle == "在 amber-macos 实现定时任务")
         #expect(!named.isOpen, "ended tasks get no push switch")
+    }
+
+    /// A phone updated before its Mac must keep the boundary: an unknown risk is not an ordinary call.
+    @Test func missingHighRiskDecodesAsHighRiskInStatusAndBoard() throws {
+        let statusJSON = #"""
+        {"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,
+         "sessions":[{"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1800000000,
+                     "pendingApproval":{"toolCallId":"c1","tool":"workspace_file_write"}}]}
+        """#
+        let boardJSON = #"[{"id":"run:A","kind":"run","column":"needsYou","title":"每日汇总","detail":"等你确认","updatedAt":1800000000,"waitingForReply":false,"failed":false,"approval":{"sessionKey":"amber:r1","toolCallId":"c1","tool":"workspace_file_write"}}]"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+
+        let status = try decoder.decode(MacGatewayStatus.self, from: Data(statusJSON.utf8))
+        #expect(status.sessions[0].pendingApproval?.highRisk == true,
+                "a missing highRisk must not offer approve on the phone")
+
+        let board = try decoder.decode([MacGatewayBoardItem].self, from: Data(boardJSON.utf8))
+        #expect(board[0].approval?.highRisk == true)
     }
 
     @Test func approvalNotificationActionsMapToDecisions() {
@@ -110,7 +137,15 @@ struct MacGatewayTests {
         }
     }
 
-    private static let boardJSON = #"{"status":200,"board":[{"id":"run:A","kind":"run","column":"needsYou","title":"每日汇总","detail":"等你确认 · workspace_file_write","updatedAt":1800000000,"scheduleId":"A","conversationId":"C","waitingForReply":false,"failed":false,"approval":{"sessionKey":"amber:r1","toolCallId":"c1","tool":"workspace_file_write","detail":"path a.txt","highRisk":false}},{"id":"session:claude:s1","kind":"agentSession","column":"running","title":"重构看板","detail":"Claude Code · 运行中","updatedAt":1800000100,"waitingForReply":false,"failed":false},{"id":"schedule:B","kind":"schedule","column":"scheduled","title":"清理","detail":"每天 03:00","updatedAt":1800003600,"scheduleId":"B","nextRunAt":1800003600,"waitingForReply":false,"failed":false},{"id":"done:R","kind":"run","column":"done","title":"清理","detail":"删了 3 个文件","updatedAt":1799990000,"scheduleId":"B","waitingForReply":false,"failed":true}]}"#
+    private static let boardJSON = #"""
+    {"status":200,"board":[
+     {"id":"run:A","kind":"run","column":"needsYou","title":"每日汇总","detail":"等你确认 · workspace_file_write","updatedAt":1800000000,"scheduleId":"A","conversationId":"C","waitingForReply":false,"failed":false,
+      "approval":{"sessionKey":"amber:r1","toolCallId":"c1","tool":"workspace_file_write","detail":"path a.txt","highRisk":false}},
+     {"id":"session:claude:s1","kind":"agentSession","column":"running","title":"重构看板","detail":"Claude Code · 运行中","updatedAt":1800000100,"waitingForReply":false,"failed":false},
+     {"id":"schedule:B","kind":"schedule","column":"scheduled","title":"清理","detail":"每天 03:00","updatedAt":1800003600,"scheduleId":"B","nextRunAt":1800003600,"waitingForReply":false,"failed":false},
+     {"id":"done:R","kind":"run","column":"done","title":"清理","detail":"删了 3 个文件","updatedAt":1799990000,"scheduleId":"B","waitingForReply":false,"failed":true}
+    ]}
+    """#
 
     private static func decodeBoard() throws -> [MacGatewayBoardItem] {
         struct Response: Decodable { var board: [MacGatewayBoardItem] }
@@ -156,7 +191,18 @@ struct MacGatewayTests {
     }
 
     @Test @MainActor func fallbackBoardGroupsGatewaySessionsWithoutAmber() throws {
-        let json = #"{"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[{"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","abnormal":false,"monitored":true,"updatedAt":1800000000},{"key":"amber:r2","agent":"amber","subject":"清理","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1799999000,"pendingApproval":{"toolCallId":"c9","tool":"shell_run","highRisk":true}},{"key":"codex:a","agent":"codex","subject":"p","summary":"修 bug","origin":"interactive","state":"stopped","abnormal":true,"monitored":true,"updatedAt":1800000000},{"key":"claude:b","agent":"claude","subject":"q","origin":"interactive","state":"waiting","waitReason":"input","abnormal":false,"monitored":true,"updatedAt":1800000050},{"key":"claude:c","agent":"claude","subject":"r","summary":"跑测试","origin":"interactive","state":"stalled","abnormal":false,"monitored":true,"updatedAt":1800000010},{"key":"claude:e","agent":"claude","subject":"arquiel","origin":"host","host":"Synara","state":"stopped","abnormal":false,"monitored":true,"updatedAt":1800000060}]}"#
+        let json = #"""
+        {"gateway":{"id":"g","name":"Mac"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,
+         "sessions":[
+          {"key":"amber:r1","agent":"amber","subject":"每日汇总","origin":"headless","state":"waiting","abnormal":false,"monitored":true,"updatedAt":1800000000},
+          {"key":"amber:r2","agent":"amber","subject":"清理","origin":"headless","state":"waiting","waitReason":"permission","abnormal":false,"monitored":true,"updatedAt":1799999000,
+           "pendingApproval":{"toolCallId":"c9","tool":"shell_run","highRisk":true}},
+          {"key":"codex:a","agent":"codex","subject":"p","summary":"修 bug","origin":"interactive","state":"stopped","abnormal":true,"monitored":true,"updatedAt":1800000000},
+          {"key":"claude:b","agent":"claude","subject":"q","origin":"interactive","state":"waiting","waitReason":"input","abnormal":false,"monitored":true,"updatedAt":1800000050},
+          {"key":"claude:c","agent":"claude","subject":"r","summary":"跑测试","origin":"interactive","state":"stalled","abnormal":false,"monitored":true,"updatedAt":1800000010},
+          {"key":"claude:e","agent":"claude","subject":"arquiel","origin":"host","host":"Synara","state":"stopped","abnormal":false,"monitored":true,"updatedAt":1800000060}
+         ]}
+        """#
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let status = try decoder.decode(MacGatewayStatus.self, from: Data(json.utf8))
@@ -190,5 +236,63 @@ struct MacGatewayTests {
         ] {
             #expect(IOSAppDeepLink.parse(try #require(URL(string: text)), expectedScheme: "amber-test") == nil, "\(text)")
         }
+    }
+
+    @Test @MainActor func c3AndC5ApprovalContractBlocksHighRiskApproveAndDefaultsMissingHighRiskToTrue() async throws {
+        // C5: missing `highRisk` field in JSON defaults to `true` (fail-closed)
+        let missingHighRiskJSON = #"{"sessionKey":"amber:r1","toolCallId":"c1","tool":"shell_run"}"#
+        let decoded = try JSONDecoder().decode(MacGatewayBoardItem.Approval.self, from: Data(missingHighRiskJSON.utf8))
+        #expect(decoded.highRisk == true)
+
+        // C5: push notification decision blocks `approveAction` if `highRisk == true` in userInfo, while still allowing `denyAction`
+        let riskyPushInfo: [AnyHashable: Any] = [
+            "sessionKey": "amber:r1",
+            "toolCallId": "c1",
+            "highRisk": true
+        ]
+        #expect(MacGatewayApprovalNotification.decision(
+            actionIdentifier: MacGatewayApprovalNotification.approveAction,
+            userInfo: riskyPushInfo
+        ) == nil)
+        #expect(MacGatewayApprovalNotification.decision(
+            actionIdentifier: MacGatewayApprovalNotification.denyAction,
+            userInfo: riskyPushInfo
+        )?.allow == false)
+    }
+
+    @Test @MainActor func staleApprovalClaimNeverAffectsNewRunOrMismatchedRequestId() async {
+        let session = ChatRunApprovalSession()
+        let prompt = ChatToolApprovalPrompt.ish(
+            IshHandoffToolApprovalRequest(
+                id: "req-run-1",
+                mode: .embeddedExecute,
+                commandPreview: "ls -la",
+                filename: "cmd.sh",
+                reason: "终端命令需要确认",
+                runId: "run-1"
+            )
+        )
+        let waitTask = Task { @MainActor in
+            await session.wait(for: prompt)
+        }
+        await Task.yield()
+        #expect(session.hasPendingApproval)
+
+        // Stale requestId or mismatched runId must not claim the active waiter
+        #expect(session.claim(category: .ish, requestId: "req-stale", runId: "run-1") == nil)
+        #expect(session.claim(category: .ish, requestId: "req-run-1", runId: "run-2") == nil)
+        #expect(session.hasPendingApproval)
+
+        // Matching runId and requestId claims and resolves cleanly
+        let claimed = session.claim(category: .ish, requestId: "req-run-1", runId: "run-1")
+        #expect(claimed != nil)
+        claimed?.waiter.resume(returning: .deny)
+        let decision = await waitTask.value
+        if case .deny = decision {
+            // expected
+        } else {
+            Issue.record("Expected .deny, got \(String(describing: decision))")
+        }
+        #expect(!session.hasPendingApproval)
     }
 }

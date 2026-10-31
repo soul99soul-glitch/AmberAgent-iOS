@@ -86,6 +86,7 @@ final class IOSJevContextSelectionService {
         "workspace_file_read", "file_read", "workspace_artifact_read",
         "scrape_web", "wm_extract", "wm_observe",
         "session_read", "session_search",
+        "history_search", "history_fetch",
         "workspace_file_search", "file_search", "workspace_file_list", "file_list",
     ]
 

@@ -33,7 +33,10 @@ public enum PushContent {
             if intent.agent == .amber {
                 // A scheduled run that did not finish is a failure, not the user stopping it.
                 if intent.state == .stopped { body = "未完成" }
-                if intent.state == .waiting, intent.highRisk == true { body = "等你确认（高风险，请在 Mac 上核对）" }
+                // 带 toolCallId 但风险未知（nil）与高风险同文案：推送不带按钮，必须回 Mac 核对。
+                if intent.state == .waiting, intent.toolCallId != nil, intent.highRisk != false {
+                    body = "等你确认（高风险，请在 Mac 上核对）"
+                }
             }
             return ("\(agent) · \(intent.subject)", body)
         case .health:

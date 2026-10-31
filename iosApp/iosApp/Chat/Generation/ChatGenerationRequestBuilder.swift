@@ -439,6 +439,11 @@ extension ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: ["session_search", "session_read"]
         ))
+        // 当前会话原始历史检索（history_search/history_fetch）。常驻：压缩后
+        // 模型必须能立刻回查原文，不能先依赖 tool_search 的额外一轮。
+        toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
+            names: ["history_search", "history_fetch"]
+        ))
         // Agent 自配置 provider/model：非常驻 deferred；写密钥仅前台 + 审批。
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSProviderConfigToolCatalog.toolNames).sorted()

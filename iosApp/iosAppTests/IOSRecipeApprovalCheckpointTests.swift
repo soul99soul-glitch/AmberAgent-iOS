@@ -788,4 +788,52 @@ final class IOSRecipeApprovalCheckpointTests: IOSRecipeIntegrationTestCase {
         XCTAssertEqual(stepFinish?["artifactVersion"] as? String, "1.0.0")
     }
 
+    func testRecipeStepCannotBypassDisabledJavaScriptSandbox() async throws {
+        let root = tempRoot()
+        let store = makeStore(root: root)
+        let registry = makeRegistry(store: store)
+        let (_, dao) = makeDatabase(root: root)
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runtime = makeRuntime(root: root, ledger: ledger)
+        let runId = "recipe-exec-disabled-\(UUID().uuidString)"
+        try await seedDurableRun(runId, dao: dao)
+
+        try apply(store: store, json: try singleStepRecipeJSON(
+            name: "js_bypass_probe",
+            tool: "exec",
+            arguments: ["code": "40 + 2"]
+        ))
+        let snapshot = try unwrapSnapshot(await registry.refresh())
+        let bridge = IOSDynamicToolBridgeRebuilder.rebuiltBridge(
+            from: IosToolExposureBridge(tools: fullIosDeclarations()),
+            snapshot: snapshot
+        )
+        let call = makeRecipeToolCall(name: "recipe__js_bypass_probe", input: "{}")
+        let disabledPolicy = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [:],
+            globalAutoApproveEnabled: true,
+            highRiskAutoApproveEnabled: true,
+            execJavaScriptEnabled: false,
+            webSearchEnabled: true,
+            mcpEnabled: true
+        )
+        let result = await executeRecipeCall(
+            runtime: runtime,
+            toolCall: call,
+            snapshot: snapshot,
+            bridge: bridge,
+            runId: runId,
+            executionPolicy: disabledPolicy
+        )
+        guard case .completed(let messages) = result else {
+            return XCTFail("disabled exec step inside recipe must fail closed, got \(result)")
+        }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
+        let parsed = try XCTUnwrap(parse(output))
+        XCTAssertEqual(parsed["ok"] as? Bool, false, output)
+        XCTAssertEqual(parsed["step"] as? String, "action")
+        XCTAssertTrue(output.contains("未开启"), "must report exec is disabled: \(output)")
+        XCTAssertFalse(output.contains("42"), "JS code must not have been evaluated: \(output)")
+    }
+
 }

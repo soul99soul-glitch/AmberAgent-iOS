@@ -1,7 +1,9 @@
 import CryptoKit
 import Foundation
 import PDFKit
+import UIKit
 import UniformTypeIdentifiers
+import Vision
 
 struct SelectedDocumentGrant: Identifiable, Hashable {
     let id: String
@@ -421,6 +423,9 @@ final class DocumentAccessStore {
         )
     }
 
+    nonisolated private static let minSelectableCharsPerPage = 8
+    nonisolated private static let maxOCRPages = 8
+
     nonisolated private static func readPDFPreview(
         url: URL,
         fileType: String,
@@ -432,21 +437,43 @@ final class DocumentAccessStore {
         }
         var chunks: [String] = []
         var truncated = false
+        var ocrPagesProcessed = 0
+        let renderSize = CGSize(width: 1_600, height: 1_600)
+
         for index in 0..<document.pageCount {
-            guard let page = document.page(at: index),
-                  let text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else {
-                continue
+            try Task.checkCancellation()
+            let pageChunk: String? = autoreleasepool {
+                guard let page = document.page(at: index) else { return nil }
+                let rawText = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let nonWhitespaceCount = rawText.unicodeScalars.filter {
+                    !CharacterSet.whitespacesAndNewlines.contains($0)
+                }.count
+                if nonWhitespaceCount >= Self.minSelectableCharsPerPage {
+                    return rawText
+                }
+                guard index < Self.maxOCRPages, ocrPagesProcessed < Self.maxOCRPages else {
+                    truncated = true
+                    return rawText.isEmpty ? nil : rawText
+                }
+                ocrPagesProcessed += 1
+                if let ocrText = Self.ocrPDFPage(page, renderSize: renderSize), !ocrText.isEmpty {
+                    return ocrText
+                }
+                return rawText.isEmpty ? nil : rawText
             }
-            chunks.append(text)
-            if chunks.joined(separator: "\n\n").count > maxPreviewCharacters {
-                truncated = true
-                break
+            if let pageChunk, !pageChunk.isEmpty {
+                chunks.append(pageChunk)
+                if chunks.joined(separator: "\n\n").count > maxPreviewCharacters {
+                    truncated = true
+                    break
+                }
             }
         }
         let text = chunks.joined(separator: "\n\n")
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw DocumentAccessError.noReadableText("PDF 中没有可提取文本；扫描版 PDF 需要 OCR，iOS 文件上下文暂不假装 OCR。")
+            throw DocumentAccessError.noReadableText(
+                "PDF 中没有可提取文本，OCR 也没有识别出文字；请提供可复制文本的 PDF，或把扫描件作为图片附件交给视觉模型。"
+            )
         }
         return buildReadResult(
             fileName: url.lastPathComponent,
@@ -458,6 +485,72 @@ final class DocumentAccessStore {
             maxPreviewBytes: Int(fileSize),
             maxPreviewCharacters: maxPreviewCharacters
         )
+    }
+
+    private struct PDFOCRResult {
+        let text: String
+        let truncated: Bool
+    }
+
+    /// 扫描版 PDF 的 OCR 回退：最多 8 页、每页渲染后交给 Vision，按阅读顺序拼接。
+    /// 在 `readPreview` 的 detached task 内执行，不阻塞主线程。
+    nonisolated private static func ocrPDFText(
+        document: PDFDocument,
+        maxPreviewCharacters: Int
+    ) -> PDFOCRResult {
+        let pageLimit = min(document.pageCount, Self.maxOCRPages)
+        let renderSize = CGSize(width: 1_600, height: 1_600)
+        var chunks: [String] = []
+        var truncated = document.pageCount > pageLimit
+        for index in 0..<pageLimit {
+            if Task.isCancelled {
+                truncated = true
+                break
+            }
+            let pageText: String? = autoreleasepool {
+                guard let page = document.page(at: index) else { return nil }
+                return Self.ocrPDFPage(page, renderSize: renderSize)
+            }
+            guard let pageText, !pageText.isEmpty else { continue }
+            chunks.append(pageText)
+            if chunks.joined(separator: "\n\n").count > maxPreviewCharacters {
+                truncated = true
+                break
+            }
+        }
+        var text = chunks.joined(separator: "\n\n")
+        if text.count > maxPreviewCharacters {
+            text = String(text.prefix(maxPreviewCharacters))
+            truncated = true
+        }
+        return PDFOCRResult(text: text, truncated: truncated)
+    }
+
+    nonisolated private static func ocrPDFPage(
+        _ page: PDFPage,
+        renderSize: CGSize
+    ) -> String? {
+        let thumbnail = page.thumbnail(of: renderSize, for: .mediaBox)
+        guard let cgImage = thumbnail.cgImage else { return nil }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.automaticallyDetectsLanguage = true
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        guard (try? handler.perform([request])) != nil,
+              let observations = request.results else { return nil }
+        let lines = observations
+            .sorted { lhs, rhs in
+                if abs(lhs.boundingBox.maxY - rhs.boundingBox.maxY) > 0.02 {
+                    return lhs.boundingBox.maxY > rhs.boundingBox.maxY
+                }
+                return lhs.boundingBox.minX < rhs.boundingBox.minX
+            }
+            .compactMap { $0.topCandidates(1).first?.string }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return nil }
+        return lines.joined(separator: "\n")
     }
 
     nonisolated private static func readDocxPreview(

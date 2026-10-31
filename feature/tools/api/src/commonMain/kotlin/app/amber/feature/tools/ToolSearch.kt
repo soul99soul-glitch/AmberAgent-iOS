@@ -388,6 +388,10 @@ class ToolSearchIndex(
         if (name == "session_search" || name == "session_read") {
             addAll(listOf("会话", "历史", "别的对话", "另一个会话", "session", "聊天记录", "过去的对话", "跨会话"))
         }
+        // 当前会话原始历史检索（压缩后可回查），与跨会话 session_* 分开。
+        if (name == "history_search" || name == "history_fetch") {
+            addAll(listOf("压缩历史", "原始对话", "回查上下文", "history", "compaction", "原文"))
+        }
         if (name.startsWith("provider_config_") || name == "settings_set_model_slot") {
             addAll(
                 listOf(

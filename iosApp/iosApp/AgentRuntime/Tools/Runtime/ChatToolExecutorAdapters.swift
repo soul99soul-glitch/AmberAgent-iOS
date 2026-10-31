@@ -482,11 +482,12 @@ extension ChatToolRuntime {
 
         // 跨会话读取（session_search/session_read）：本地只读、无审批，前后台
         // 同注册（照 tool_search 先例）。只注册当前轮 params 可见的名字。
-        for name in ["session_search", "session_read"] where availableToolNames.contains(name) {
+        for name in ["session_search", "session_read", "history_search", "history_fetch"] where availableToolNames.contains(name) {
             executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 return .filled(await self.dispatchSessionReadToolCall(
-                    self.toolCall(name: toolName, input: arguments)
+                    self.toolCall(name: toolName, input: arguments),
+                    conversationId: conversationId
                 ))
             }
         }
@@ -632,7 +633,7 @@ extension ChatToolRuntime {
         if name == "memory_tool" { return .memory }
         if name == "generate_image" { return .image }
         if name == "ask_user" { return .askUser }
-        if ["session_search", "session_read"].contains(name) { return .sessionRead }
+        if ["session_search", "session_read", "history_search", "history_fetch"].contains(name) { return .sessionRead }
         if name == "runtime_status" { return .runtimeStatus }
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
@@ -667,7 +668,7 @@ extension ChatToolRuntime {
     /// - parameter baseMessagesProvider: 执行器被引擎调用时取当前 run 的
     ///   工作消息,充当 `ChatPendingToolApproval.baseMessages`(回填锚点)。
     ///   适配器必须返回引擎当轮 working 的最新值。
-    func foregroundToolExecutors(
+    func foregroundToolExecutors(  // swiftlint:disable:this function_parameter_count
         providerSetting: ProviderSetting,
         params: TextGenerationParams,
         runId: String,

@@ -78,6 +78,10 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
         var detail: String?
         /// High-risk calls are only approved on the Mac; the phone can still deny.
         var highRisk: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case toolCallId, tool, detail, highRisk
+        }
     }
 
     var gateway: Gateway
@@ -87,6 +91,17 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
     /// Where Synara-hosted tasks are answered from outside the LAN; opened in the browser.
     var synaraURL: String?
     var sessions: [Session]
+}
+
+extension MacGatewayStatus.PendingApproval {
+    /// Older gateways omit `highRisk`. Unknown risk fails closed: only the Mac may approve it then.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        toolCallId = try container.decode(String.self, forKey: .toolCallId)
+        tool = try container.decode(String.self, forKey: .tool)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        highRisk = try container.decodeIfPresent(Bool.self, forKey: .highRisk) ?? true
+    }
 }
 
 /// An Amber scheduled task as the Mac reports it (`/v1/amber/schedules`).
@@ -114,6 +129,10 @@ struct MacGatewayBoardItem: Decodable, Equatable, Sendable, Identifiable {
         var detail: String?
         /// High-risk calls are only approved on the Mac; the phone can still deny.
         var highRisk: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case sessionKey, toolCallId, tool, detail, highRisk
+        }
     }
 
     var id: String
@@ -132,6 +151,18 @@ struct MacGatewayBoardItem: Decodable, Equatable, Sendable, Identifiable {
     var sessionKey: String? {
         guard kind == .agentSession, id.hasPrefix("session:") else { return nil }
         return String(id.dropFirst("session:".count))
+    }
+}
+
+extension MacGatewayBoardItem.Approval {
+    /// Same rule as the status payload: a missing `highRisk` must not unlock remote approval.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionKey = try container.decode(String.self, forKey: .sessionKey)
+        toolCallId = try container.decode(String.self, forKey: .toolCallId)
+        tool = try container.decode(String.self, forKey: .tool)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        highRisk = try container.decodeIfPresent(Bool.self, forKey: .highRisk) ?? true
     }
 }
 

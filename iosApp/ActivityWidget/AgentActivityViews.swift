@@ -488,15 +488,18 @@ private struct AgentActivityButtons: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if let approval = state.presentation.approval,
-               controls.contains(.approve) {
-                Button(intent: approvalIntent(approval, allow: false)) {
-                    label(copy("control.deny", state), background: AgentIslandPalette.line,
-                          foreground: AgentIslandPalette.primary, fills: false)
+            if let approval = state.presentation.approval {
+                if controls.contains(.deny) {
+                    Button(intent: approvalIntent(approval, allow: false)) {
+                        label(copy("control.deny", state), background: AgentIslandPalette.line,
+                              foreground: AgentIslandPalette.primary, fills: false)
+                    }
                 }
-                Button(intent: approvalIntent(approval, allow: true)) {
-                    label(copy("control.approveOnce", state), background: AgentIslandPalette.accent,
-                          foreground: .black, fills: true)
+                if controls.contains(.approve) {
+                    Button(intent: approvalIntent(approval, allow: true)) {
+                        label(copy("control.approveOnce", state), background: AgentIslandPalette.accent,
+                              foreground: .black, fills: true)
+                    }
                 }
             }
             if controls.contains(.humanTakeover) {

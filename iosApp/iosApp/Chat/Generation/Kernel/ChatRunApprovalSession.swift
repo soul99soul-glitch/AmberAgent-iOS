@@ -131,11 +131,16 @@ final class ChatRunApprovalSession {
         }
     }
 
-    /// 提问（askUser）需要打字作答，不在灵动岛上给「允许 / 拒绝」。
+    /// 提问（askUser）需要打字作答，不在灵动岛上给「允许 / 拒绝」；
+    /// 高风险审批与 Watch 口径对齐，锁屏 / 灵动岛只允许「拒绝」或打开 App 确认。
     static func activityApproval(for prompt: ChatToolApprovalPrompt) -> AgentActivityApproval? {
         guard category(of: prompt) != .askUser,
               let requestId = requestId(of: prompt) else { return nil }
-        return AgentActivityApproval(requestId: requestId, title: prompt.toolTitle)
+        return AgentActivityApproval(
+            requestId: requestId,
+            title: prompt.toolTitle,
+            allowsInlineApprove: WatchTaskSnapshotBuilder.allowsApprovalOnWatch(prompt)
+        )
     }
 
     static func requestId(of prompt: ChatToolApprovalPrompt) -> String? {

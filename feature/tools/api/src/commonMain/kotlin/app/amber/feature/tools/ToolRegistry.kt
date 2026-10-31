@@ -531,7 +531,7 @@ private fun Tool.riskProfile(): RiskProfile = when {
     name == "mcp_call_tool" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name == "wm_eval" -> RiskProfile(ToolRisk.High, explicit = true)
     name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
-    name in setOf("session_read", "session_expand") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
+    name in setOf("session_search", "session_read", "session_expand", "history_search", "history_fetch") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name == "pdf_render_page" -> RiskProfile(ToolRisk.High, explicit = true)
     name in setOf("agent_task_cancel", "agent_task_retry", "agent_task_cleanup") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name == "subagent_start" -> RiskProfile(ToolRisk.Normal, explicit = true)
@@ -587,7 +587,7 @@ private fun Tool.concurrencySafe(): Boolean = when {
 }
 
 private fun Tool.sensitiveRead(): Boolean =
-    name in setOf("session_read", "session_expand") ||
+    name in setOf("session_search", "session_read", "session_expand", "history_search", "history_fetch") ||
         name == "workouts_scheduled_list" ||
         name in setOf("contacts_pick", "photos_pick", "journaling_suggestion_pick") ||
         name.startsWith("screen_") ||

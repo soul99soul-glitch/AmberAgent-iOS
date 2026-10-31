@@ -34,7 +34,7 @@ enum IOSRecipePrimitiveCatalog {
         if tool == "wm_site_memory" { return .unsupported }
         if IOSWebMountToolCatalog.supportedToolNames.contains(tool) { return .webMount }
         if tool == "memory_tool" { return .memory }
-        if tool == "session_search" || tool == "session_read" { return .sessionRead }
+        if ["session_search", "session_read", "history_search", "history_fetch"].contains(tool) { return .sessionRead }
         // runtime_status 同为本地只读自省（无会话 store 依赖），复用 .sessionRead
         // 路由：dispatchSessionReadToolCall 内按名字先分流。
         if tool == "runtime_status" { return .sessionRead }
