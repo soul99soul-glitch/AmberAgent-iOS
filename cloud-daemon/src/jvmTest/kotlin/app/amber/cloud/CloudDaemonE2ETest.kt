@@ -76,6 +76,13 @@ class CloudDaemonE2ETest {
 
     private val testJson = Json { ignoreUnknownKeys = true }
 
+    // Keep P1's synchronous approval/credential checks on their original direct entry.
+    // CloudRouterIngressTest exercises the default production connector registration.
+    private fun CloudAgentKernel.registerP1Connector(connector: ChannelConnector) {
+        registerConnector(connector)
+        connector.attachIngress(this)
+    }
+
     private class FakeChannelConnector(
         override val kind: ChannelKind,
     ) : ChannelConnector {
@@ -149,8 +156,8 @@ class CloudDaemonE2ETest {
             )
             val telegram1 = FakeChannelConnector(ChannelKind.TELEGRAM)
             val feishu1 = FakeChannelConnector(ChannelKind.FEISHU)
-            kernel1.registerConnector(telegram1)
-            kernel1.registerConnector(feishu1)
+            kernel1.registerP1Connector(telegram1)
+            kernel1.registerP1Connector(feishu1)
 
             // Turn 1 on Telegram DM (writes explicit memory + conversation turn)
             val out1 = telegram1.simulateUserMessage(
@@ -190,7 +197,7 @@ class CloudDaemonE2ETest {
             )
             kernel2.recoverColdStartConversations()
             val telegram2 = FakeChannelConnector(ChannelKind.TELEGRAM)
-            kernel2.registerConnector(telegram2)
+            kernel2.registerP1Connector(telegram2)
 
             // Turn 3 after restart: verify previous 2 turns (4 messages) + recalled memory are still in context!
             val out3 = telegram2.simulateUserMessage(
@@ -283,7 +290,7 @@ class CloudDaemonE2ETest {
 
         // 3. Trigger a high-risk tool call from Telegram channel
         val telegram = FakeChannelConnector(ChannelKind.TELEGRAM)
-        kernel.registerConnector(telegram)
+        kernel.registerP1Connector(telegram)
         val outbound = telegram.simulateUserMessage(
             chatId = "tg-dm-1",
             senderId = "tg-owner-1",
@@ -446,7 +453,7 @@ class CloudDaemonE2ETest {
                 masterSecretOverride = "nine-defects-master-key",
             )
             val tg = FakeChannelConnector(ChannelKind.TELEGRAM)
-            kernel.registerConnector(tg)
+            kernel.registerP1Connector(tg)
 
             // --- Defect #2: Verify credential wipe across all 6 terminal paths ---
             // Path 1: DENIED (from IM channel)
@@ -730,8 +737,8 @@ class CloudDaemonE2ETest {
                     env = envMap,
                 )
             )
-            kernel1.registerConnector(tgChannel1)
-            kernel1.registerConnector(feishuChannel1)
+            kernel1.registerP1Connector(tgChannel1)
+            kernel1.registerP1Connector(feishuChannel1)
             kernel1.startProactiveLoop(pollIntervalMs = 300_000L)
             assertTrue(kernel1.isProactiveLoopRunning)
 
@@ -955,7 +962,7 @@ class CloudDaemonE2ETest {
                     env = emptyMap(),
                 )
             )
-            kernel2.registerConnector(tgChannel2)
+            kernel2.registerP1Connector(tgChannel2)
 
             telegramUpdatesQueue.add(
                 """{"update_id":105,"message":{"message_id":5,"from":{"id":10001},"chat":{"id":10001,"type":"private"},"date":1730380100,"text":"重启后确认一下：下周二我们要发布什么？"}}"""

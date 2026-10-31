@@ -204,6 +204,14 @@ flowchart TD
 
 ## 5. 关键代码索引
 
+### 生产入口与验证边界（2026-11-01 续接修正）
+
+`CloudAgentKernel.registerConnector` 默认注册 `CloudRouterIngress`：入站消息先写入会话并返回一条确认，由连接器发送；Router 在后台规划，Worker 后台执行开关在生产装配中开启。Router 沿用主时间线的历史、记忆与压缩预算，并将净化后的最终回复写回原会话。批处理按会话隔离，批次结算沿用来源会话。
+
+原 `CloudAgentKernel.handleInbound` 同步入口保留给已有直接调用与 P1 审批链路，注册后的 IM 通道不再调用它。`CloudDaemonE2ETest` 显式验证该旧入口的审批、凭据和 C3 行为；`CloudRouterIngressTest` 验证默认注册通道的即时确认、Router/Worker 工具隔离、后台完成、同条状态编辑，以及跨通道与重启后的历史/记忆连续性。这些是本地替身模型与连接器验证，不代表真实 Telegram/飞书或 provider 已完成线上验收。
+
+### 文件索引
+
 - **数据模型与配置契约**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/CloudOrchestrationModels.kt`
 - **SQLite 持久化存储与 CAS 归档**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/CloudOrchestrationStore.kt`
 - **编排内核门面（Facade）**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/DefaultCloudOrchestrationKernel.kt`
@@ -216,4 +224,5 @@ flowchart TD
 - **面向人的交互路由与外发净化器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/CloudRouter.kt`
 - **模型桥接适配器（Router / Worker）**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationModelAdapters.kt`
 - **守护进程主内核装配与内置工具注册**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/runtime/CloudAgentKernel.kt`、`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/runtime/CloudBuiltinTools.kt`
+- **注册通道的异步入站与会话持久化**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/runtime/CloudRouterIngress.kt`
 - **P2.5 编排内核完整测试套件**：`cloud-daemon/src/jvmTest/kotlin/app/amber/cloud/orchestration/CloudOrchestrationKernelTest.kt`、`cloud-daemon/src/jvmTest/kotlin/app/amber/cloud/orchestration/CloudOrchestrationInteractionAndInspectionTest.kt`

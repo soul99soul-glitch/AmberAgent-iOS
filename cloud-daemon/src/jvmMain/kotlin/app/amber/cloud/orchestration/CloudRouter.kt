@@ -173,6 +173,7 @@ class CloudRouter(
     executionToolNames: Set<String> = emptySet(),
     private val clockMs: () -> Long = { System.currentTimeMillis() },
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val onReply: suspend (conversationId: String, text: String) -> Unit = { _, _ -> },
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = false }
 
@@ -273,7 +274,9 @@ class CloudRouter(
                     if (events.isEmpty()) break
                     kernel.isRouterTurnBusy = true
                     try {
-                        runCatching { processTurn(events) }
+                        for (conversationEvents in events.groupBy { it.conversationId }.values) {
+                            runCatching { processTurn(conversationEvents) }
+                        }
                     } finally {
                         kernel.isRouterTurnBusy = false
                     }
@@ -298,7 +301,9 @@ class CloudRouter(
             ?: lastOwnerAddress
         val input = RouterTurnInput(
             events = events,
-            activeTasks = kernel.store.listWorkItems().filter { !it.state.isTerminal },
+            activeTasks = kernel.store.listWorkItems().filter { item ->
+                !item.state.isTerminal && item.sourceProvenance.any { it.sessionId == events.first().conversationId }
+            },
             ownerAuthorizedMessageIds = ownerIds,
             batchPrompt = kernel.formatRouterBatchPrompt(events),
         )
@@ -362,7 +367,7 @@ class CloudRouter(
             replies += events.filter { it.kind == "batch_rollup" }.joinToString("\n") { it.summaryText }
         }
         if (address != null) {
-            for (reply in replies) emit(address, reply)
+            for (reply in replies) emit(address, reply, events.first().conversationId)
         }
     }
 
@@ -451,7 +456,7 @@ class CloudRouter(
             RouterTriggerEvent(
                 eventId = eventId,
                 kind = "batch_rollup",
-                conversationId = rollup.batchId,
+                conversationId = items.firstOrNull()?.sourceProvenance?.firstOrNull()?.sessionId ?: rollup.batchId,
                 channelId = address?.channel?.wireName ?: "internal",
                 chatId = address?.chatId ?: "internal",
                 senderId = "system",
@@ -465,10 +470,11 @@ class CloudRouter(
     // 4. 统一出口：净化 + 100 词预算 + 归档引用
     // ------------------------------------------------------------------------
 
-    private suspend fun emit(address: ImAddress, raw: String): String {
+    private suspend fun emit(address: ImAddress, raw: String, conversationId: String? = null): String {
         val sanitized = OutwardTextSanitizer.sanitize(raw, forbiddenToolNames).ifBlank { "好的。" }
         val budgeted = kernel.enforceImReplyWordBudget(sanitized)
         outboundLog.add(budgeted)
+        if (conversationId != null) onReply(conversationId, budgeted)
         return sink.post(address, budgeted)
     }
 

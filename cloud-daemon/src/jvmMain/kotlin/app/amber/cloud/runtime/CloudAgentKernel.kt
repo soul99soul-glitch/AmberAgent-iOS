@@ -171,6 +171,7 @@ class CloudAgentKernel(
         conversationStorage = conversationStorage,
         toolRegistry = toolRegistry,
         proactiveEngine = proactiveEngine,
+        autoExecuteWorkersInBackground = true,
     )
     val workerTurnRunner = ModelWorkerTurnRunner(
         kernel = orchestrationKernel,
@@ -178,6 +179,7 @@ class CloudAgentKernel(
         toolRegistry = toolRegistry,
     )
     val router: CloudRouter
+    private val routerIngress by lazy { CloudRouterIngress(this) }
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -219,10 +221,12 @@ class CloudAgentKernel(
             sink = ConnectorImStatusSink { kind -> connectors[kind] },
             brain = RouterBrain { RouterDecision() },
             executionToolNames = toolRegistry.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }.toSet(),
+            onReply = { conversationId, text -> routerIngress.recordReply(conversationId, text) },
         ).also { r ->
             r.brain = ModelRouterBrain(
                 modelClient = modelClient,
                 routerTools = { r.routerTools },
+                contextMessages = { input -> routerIngress.contextMessages(input) },
             )
         }
         // Wire gateway decision callback into the kernel
@@ -281,7 +285,7 @@ class CloudAgentKernel(
     }
 
     fun registerConnector(connector: ChannelConnector) {
-        connector.attachIngress(this)
+        connector.attachIngress(routerIngress)
         connectors[connector.kind] = connector
     }
 
@@ -405,6 +409,8 @@ class CloudAgentKernel(
         return pushed.copy(receipt = firstReceipt)
     }
 
+    // Retained synchronous entry for existing direct callers and the P1 approval lifecycle.
+    // Registered IM connectors use CloudRouterIngress and never run this model/tool loop.
     override suspend fun handleInbound(message: InboundMessage): OutboundMessage {
         val convId = resolveConversationId(message)
 
@@ -682,7 +688,7 @@ class CloudAgentKernel(
         return true
     }
 
-    private suspend fun interruptWaitingRunsForConversation(conversationId: Uuid) {
+    internal suspend fun interruptWaitingRunsForConversation(conversationId: Uuid) {
         val matching = pendingRunsBySessionKey.values.filter { it.conversationId == conversationId }
         for (pending in matching) {
             terminatePendingRun(pending.sessionKey, AgentRunStatus.INTERRUPTED, "interrupted_by_new_message")
@@ -815,7 +821,7 @@ class CloudAgentKernel(
         )
     }
 
-    private fun extractExplicitMemoryIfPresent(text: String, conversationId: String) {
+    internal fun extractExplicitMemoryIfPresent(text: String, conversationId: String) {
         val trimmed = text.trim()
         val prefixes = listOf("记住：", "记住:", "请记住：", "请记住:", "remember:", "remember ")
         val matchedPrefix = prefixes.firstOrNull { trimmed.startsWith(it, ignoreCase = true) } ?: return

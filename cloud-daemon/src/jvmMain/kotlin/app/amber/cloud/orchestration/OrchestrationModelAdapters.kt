@@ -24,15 +24,18 @@ class ModelRouterBrain(
     private val routerTools: () -> CloudToolRegistry,
     private val systemPrompt: String = DEFAULT_ROUTER_SYSTEM_PROMPT,
     private val maxReadSteps: Int = 2,
+    private val contextMessages: suspend (RouterTurnInput) -> List<UIMessage> = { emptyList() },
 ) : RouterBrain {
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun decide(input: RouterTurnInput): RouterDecision {
         val registry = routerTools()
         val tools = registry.declaredTools(ExecutionScope.MAIN_AGENT)
-        val messages = mutableListOf(
-            UIMessage.system(systemPrompt),
-            UIMessage.user(
+        val history = contextMessages(input)
+        val messages = history.toMutableList()
+        if (messages.isEmpty()) messages += UIMessage.system(systemPrompt)
+        if (history.isEmpty() || input.activeTasks.isNotEmpty() || input.events.any { it.kind != "user_message" }) {
+            messages += UIMessage.user(
                 buildString {
                     if (input.activeTasks.isNotEmpty()) {
                         append("<active_tasks>\n")
@@ -44,8 +47,8 @@ class ModelRouterBrain(
                     }
                     append(CredentialRedactor.redact(input.batchPrompt))
                 }
-            ),
-        )
+            )
+        }
         val dispatch = mutableListOf<WorkItemSubmissionSpec>()
         val steer = mutableListOf<RouterSteer>()
         var reply: String? = null
