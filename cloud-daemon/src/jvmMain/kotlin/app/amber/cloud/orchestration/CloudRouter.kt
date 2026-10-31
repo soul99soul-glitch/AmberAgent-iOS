@@ -133,6 +133,7 @@ object OutwardTextSanitizer {
 
     fun sanitize(text: String, forbiddenToolNames: Set<String> = emptySet()): String {
         var out = CredentialRedactor.redact(text)
+        out = out.replace(CredentialRedactor.MASK, "")
         out = reasoningBlock.replace(out, "")
         out = codeFence.replace(out, "")
         out = jsonLike.replace(out, "")

@@ -2087,12 +2087,13 @@ class DefaultCloudOrchestrationKernel(
             )
             val engine = proactiveEngine
             val cardToDeliver = if (engine != null) {
+                val lifecycleState = disabledReason ?: "l3_anomaly"
                 val signal = ProactiveTriggerSignal.TaskLifecycleSignal(
                     signalId = "auto_${automationId}_$runId",
                     taskId = automationId,
-                    lifecycleState = disabledReason ?: "l3_anomaly",
+                    lifecycleState = lifecycleState,
                     detail = "$cardTitle: $safeBody",
-                    topicKey = "automation:$automationId",
+                    topicKey = "automation:$automationId:$lifecycleState",
                     timestampEpochMs = nowEpochMs,
                 )
                 when (val proactiveRes = engine.processSignal(signal, targetChatId = "", channel = null, nowOverrideMs = nowEpochMs)) {
