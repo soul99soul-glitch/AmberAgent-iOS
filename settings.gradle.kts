@@ -79,4 +79,6 @@ include(":shared")
 
 include(":desktop-shared")
 include(":cloud-channels")
+include(":cloud-proactive")
+
 
