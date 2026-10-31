@@ -128,3 +128,20 @@ enum IOSAppLocalization {
         return String(format: format, locale: locale, arguments: arguments)
     }
 }
+
+// Xcode 27.2 SDK marks Foundation.Date.<= and >= as @backDeployed(before: iOS 27.2),
+// causing the compiler-emitted thunk to jump to Foundation's exported symbol whenever
+// _stdlib_isOSVersionAtLeast(27, 2, 0) returns true. On iOS 27.2 Beta (24B5089g),
+// Foundation.framework does not yet export these symbols, leaving the weak import at
+// 0x0 and crashing with EXC_BAD_ACCESS on launch. Providing strong definitions here
+// satisfies the linker and prevents the null-pointer jump on 27.2 beta builds.
+@_silgen_name("$s10Foundation4DateV2leoiySbAC_ACtFZ")
+public func __amber_ios27_2_beta_date_le(_ lhs: Date, _ rhs: Date) -> Bool {
+    lhs.timeIntervalSinceReferenceDate <= rhs.timeIntervalSinceReferenceDate
+}
+
+@_silgen_name("$s10Foundation4DateV2geoiySbAC_ACtFZ")
+public func __amber_ios27_2_beta_date_ge(_ lhs: Date, _ rhs: Date) -> Bool {
+    lhs.timeIntervalSinceReferenceDate >= rhs.timeIntervalSinceReferenceDate
+}
+

@@ -24,6 +24,7 @@ xcodebuild -project AmberAgent.xcodeproj -scheme "${SCHEME}" \
   -destination "platform=iOS,id=${DESTINATION_ID}" \
   -allowProvisioningUpdates DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" CODE_SIGN_STYLE=Automatic \
   AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER="${BUNDLE_ID}" AGENT_ACTIVITY_URL_SCHEME="${URL_SCHEME}" \
+  ENABLE_DEBUG_DYLIB=NO \
   -skipMacroValidation -skipPackagePluginValidation \
   -derivedDataPath "${DERIVED_DATA_PATH}" build 2>&1 | tee "${BUILD_LOG}"
 build_status=${PIPESTATUS[0]}
