@@ -206,8 +206,14 @@ flowchart TD
 
 - **数据模型与配置契约**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/CloudOrchestrationModels.kt`
 - **SQLite 持久化存储与 CAS 归档**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/CloudOrchestrationStore.kt`
-- **确定性编排内核实现**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/DefaultCloudOrchestrationKernel.kt`
+- **编排内核门面（Facade）**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/DefaultCloudOrchestrationKernel.kt`
+- **WorkItem 队列、三层幂等与状态机协作器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationWorkQueueCoordinator.kt`
+- **进度结算与 BatchRollup 唤醒锁协作器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationRollupCoordinator.kt`
+- **60s 确定性健康巡检、45m 豁免与自愈阶梯协作器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationHealthMonitor.kt`
+- **两层无损会话读取、取证诊断与链式召回协作器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationSessionInspector.kt`
+- **三模式自动化与 ProactiveEngine 桥接协作器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationAutomationRunner.kt`
+- **Thread 订阅直通、Router 批处理与 100 词预算桥接器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationRouterBridge.kt`
 - **面向人的交互路由与外发净化器**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/CloudRouter.kt`
 - **模型桥接适配器（Router / Worker）**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/orchestration/OrchestrationModelAdapters.kt`
-- **守护进程主内核装配**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/runtime/CloudAgentKernel.kt`
-- **P2.5 编排内核完整测试套件**：`cloud-daemon/src/jvmTest/kotlin/app/amber/cloud/orchestration/CloudOrchestrationKernelTest.kt`
+- **守护进程主内核装配与内置工具注册**：`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/runtime/CloudAgentKernel.kt`、`cloud-daemon/src/jvmMain/kotlin/app/amber/cloud/runtime/CloudBuiltinTools.kt`
+- **P2.5 编排内核完整测试套件**：`cloud-daemon/src/jvmTest/kotlin/app/amber/cloud/orchestration/CloudOrchestrationKernelTest.kt`、`cloud-daemon/src/jvmTest/kotlin/app/amber/cloud/orchestration/CloudOrchestrationInteractionAndInspectionTest.kt`
