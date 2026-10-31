@@ -130,4 +130,54 @@ import XCTest
         XCTAssertEqual(approved.status, 200)
         _ = await decision.value
     }
+
+    func testPluginInstallIsHighRiskAndPluginListIsReadOnly() async throws {
+        XCTAssertEqual(DesktopToolRegistry.effect(for: "plugin_list", arguments: "{}"), .pure)
+        XCTAssertFalse(DesktopToolRegistry.isHighRisk("plugin_list"))
+        XCTAssertEqual(DesktopToolRegistry.effect(for: "plugin_install", arguments: #"{"path":"demo_plugin"}"#), .sideEffect)
+        XCTAssertTrue(DesktopToolRegistry.isHighRisk("plugin_install"))
+
+        let ordinaryOnly = DesktopApprovalPolicy(autoApproveOrdinary: true, autoApproveHighRisk: false)
+        XCTAssertFalse(ordinaryOnly.autoApproves("plugin_install"), "plugin_install 属于高风险操作，普通自动批准不能放行")
+        XCTAssertTrue(ordinaryOnly.autoApproves("plugin_list"))
+        let everything = DesktopApprovalPolicy(autoApproveOrdinary: true, autoApproveHighRisk: true)
+        XCTAssertTrue(everything.autoApproves("plugin_install"))
+
+        let tasks = DesktopAgentTasks(defaults: UserDefaults(suiteName: "amber.plugin.install.notify.\(UUID().uuidString)")!)
+        await tasks.waitUntilLoaded()
+        let owner = UUID()
+        tasks.unattendedConversations[owner] = "安装自研插件"
+
+        let installRun = try await tasks.begin(conversationID: owner, title: "install", cancel: {})
+        try await tasks.requestApproval(runID: installRun, approval: DesktopToolApproval(
+            id: "call-plugin-install",
+            name: "plugin_install",
+            arguments: #"{"path":"demo_plugin"}"#,
+            reason: "即将安装插件「演示插件」（ID: demo_plugin，版本 v1.0.0）"
+        ))
+        let notifyApprove = await tasks.decideFromNotification(runID: installRun, toolID: "call-plugin-install", allow: true)
+        XCTAssertFalse(notifyApprove, "通知/锁屏不能批准 plugin_install")
+        XCTAssertEqual(tasks.records.first { $0.id == installRun }?.status, .waiting)
+        XCTAssertNil(tasks.decision(runID: installRun, toolID: "call-plugin-install"))
+
+        let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("agc-plugin-install-\(UUID().uuidString.prefix(8))")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let paths = GatewayPaths(stateDir: dir)
+        let reporter = DesktopGatewayReporter(paths: paths, isEnabled: { true }, process: nil)
+        let control = DesktopGatewayControl(paths: paths, tasks: tasks, reporter: reporter, scheduler: nil)
+        reporter.runStarted(runID: UUID(), conversationID: owner, taskName: "安装自研插件")
+
+        var key: String?
+        let deadline = Date().addingTimeInterval(2)
+        while key == nil, Date() < deadline {
+            Spool(dir: paths.spoolDir).drain { if $0.kind == .runStart { key = "amber:" + $0.sessionId } }
+            if key == nil { try? await Task.sleep(for: .milliseconds(20)) }
+        }
+        let sessionKey = try XCTUnwrap(key)
+
+        let phoneApprove = await control.handle(.init(action: .decide, sessionKey: sessionKey, toolCallId: "call-plugin-install", allow: true))
+        XCTAssertEqual(phoneApprove.status, 403, "手机远程不能批准 plugin_install")
+        let phoneDeny = await control.handle(.init(action: .decide, sessionKey: sessionKey, toolCallId: "call-plugin-install", allow: false))
+        XCTAssertEqual(phoneDeny.status, 200, "手机远程可以拒绝 plugin_install")
+    }
 }

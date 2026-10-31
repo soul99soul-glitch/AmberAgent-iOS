@@ -92,8 +92,8 @@ extension DesktopKnowledgeStore {
 ---
 name: plugin-development
 description: >
-  指导在 Amber macOS 中设计、编写、自检与手动导入 amber.plugin.v2 扩展插件（含受控 HTTPS、工作区前缀读写、检查器卡片与高风险审批规范）。
-allowed-tools: [skills_list, use_skill, workspace_list, workspace_read, workspace_write]
+  指导在 Amber macOS 中设计、编写、自检并通过 plugin_install / plugin_list 安装与验证 amber.plugin.v2 扩展插件（含受控 HTTPS、工作区前缀读写、检查器卡片与高风险审批规范）。
+allowed-tools: [skills_list, use_skill, workspace_file_list, workspace_file_read, workspace_file_write, workspace_list, workspace_read, workspace_write, plugin_install, plugin_list]
 ---
 
 # Amber macOS 插件开发技能（`plugin-development`）
@@ -102,10 +102,10 @@ allowed-tools: [skills_list, use_skill, workspace_list, workspace_read, workspac
 
 ## 一、核心铁律（必须遵守）
 
-1. **严禁静默安装或直接启用插件**：
-   - 协助用户编写插件时，**只能在当前会话工作区**（例如 `<id>/plugin.json` 与 `<id>/main.js`）生成插件草稿。
-   - **绝不允许**直接读写或拷贝到 `~/Library/Application Support/Amber/plugins/`，也绝不允许尝试替用户自动安装或启用插件。
-   - 草稿生成并完成 6 项自检后，必须引导用户通过 **「设置 (`⌘,`) → 插件 → + 导入插件」** 手动导入，或在修改后点击 **「↻ 重新加载」**。
+1. **工作区编写 + 高风险审批安装（严禁绕过审批直接写应用支持目录）**：
+   - 协助用户编写插件时，**必须先在当前会话工作区**（例如 `<id>/plugin.json` 与 `<id>/main.js`）生成插件文件并完成 6 项自检。
+   - **绝不允许**通过终端命令或脚本直接写入 `~/Library/Application Support/Amber/plugins/`。
+   - 自检通过后，调用 `plugin_install`（传入工作区相对路径如 `{"path": "<id>"}`；若升级或覆盖同名已装插件，须核对版本差异并显式传 `"overwrite": true`），由用户在 Mac 主窗口审批卡片上核对插件名称、版本与申请权限后批准安装；安装完成后调用只读工具 `plugin_list` 验证插件已安装并处于启用状态（用户也可通过 **「设置 (`⌘,`) → 插件 → + 导入插件」** 手动导入）。
 2. **保留 ID 与核心插件边界**：
    - 官方内置扩展插件保留 ID 为 `feishu_calendar`、`apple_schedule`、`watchtower`，第三方插件禁止使用。
    - 5 个一级核心插件 ID 为 `task_board`、`knowledge`、`collaborations`、`recipes`、`image_generation`。
@@ -334,7 +334,7 @@ function renderNoteInspector() {
 3. [ ] `capabilities.networkDomains` 仅填写纯域名（不含 `https://`、端口或斜杠），读写工作区文件已声明 `workspaceReadPrefixes` / `workspaceWritePrefixes`，且未声明 `hostModules`。
 4. [ ] 凡调用 `amber.workspace.write` 或产生外部变更的工具，`effect` 均已声明为 `"sideEffect"` 或 `"idempotent"`。
 5. [ ] 每个工具的 `input_schema` 顶层均为 `"type": "object"`，字段附带清晰中文 `description`。
-6. [ ] 已向用户说明：请前往 **设置 (`⌘,`) → 插件 → + 导入插件** 手动选择工作区中的插件文件夹完成安装。
+6. [ ] 自检通过后，使用 `plugin_install`（如 `{"path": "<id>"}`）发起高风险安装审批（同名插件升级/覆盖须说明版本对比并传 `"overwrite": true`），并在用户批准后用 `plugin_list` 验证插件状态（或提示用户在 **设置 (`⌘,`) → 插件 → + 导入插件** 手动导入）。
 
 ### 常见错误排查表
 
@@ -347,5 +347,6 @@ function renderNoteInspector() {
 | `未授权访问域名` | 请求域名未列入 `networkDomains` | 将目标域名加入 `capabilities.networkDomains` |
 | `未授权访问工作区路径` | 路径未命中 `workspaceReadPrefixes` / `workspaceWritePrefixes` | 在 `capabilities` 中补充对应子目录前缀（如 `"notes/"`） |
 | `只读工具禁止调用 amber.workspace.write` | 工具 `effect` 为 `pure` 或 `networkRead` | 将工具 `effect` 改为 `"sideEffect"` 或 `"idempotent"` |
+| `同名插件已安装，不能静默覆盖` | 已存在相同 `id` 的插件且未传 `overwrite=true` | 向用户说明旧版与新版版本号对比后，显式传入 `"overwrite": true` 调用 `plugin_install` |
 """#
 }

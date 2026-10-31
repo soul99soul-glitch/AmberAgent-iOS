@@ -4,11 +4,13 @@ import Foundation
 /// available in the card's details; unknown tools fall back to it.
 struct DesktopToolActivity: Equatable {
     let title: String
+    let englishTitle: String
     let detail: String?
 
     private static let detailLimit = 48
 
     var summary: String { detail.map { "\(title) · \($0)" } ?? title }
+    var englishSummary: String { detail.map { "\(englishTitle) · \($0)" } ?? englishTitle }
 
     init(_ tool: DesktopToolCall) {
         let arguments = Self.arguments(tool.input)
@@ -17,6 +19,7 @@ struct DesktopToolActivity: Equatable {
                 .first { !$0.isEmpty }
         }
         let action: (running: String, done: String)
+        var englishAction: (running: String, done: String)?
         var detail: String?
         switch tool.name {
         case "memory_tool":
@@ -46,6 +49,12 @@ struct DesktopToolActivity: Equatable {
             action = ("正在启用技能", "已启用技能"); detail = string("name")
         case "skill_disable":
             action = ("正在停用技能", "已停用技能"); detail = string("name")
+        case "plugin_list":
+            action = ("正在查看已安装插件", "已查看已安装插件")
+            englishAction = ("Listing installed plugins", "Listed installed plugins")
+        case "plugin_install":
+            action = ("正在安装插件", "已安装插件"); detail = string("path").map(Self.fileName)
+            englishAction = ("Installing plugin", "Installed plugin")
         case "mcp_list":
             action = ("正在查看 MCP 服务", "已查看 MCP 服务")
         case "mcp_describe_tool":
@@ -88,11 +97,20 @@ struct DesktopToolActivity: Equatable {
                 action = ("正在使用 \(tool.name)", "已使用 \(tool.name)")
             }
         }
+        let resolvedEnglish = englishAction ?? ("Running \(tool.name)", "Ran \(tool.name)")
         switch tool.status {
-        case .running: title = action.running
-        case .complete: title = action.done
-        case .pending: title = "等待确认：" + Self.stripRunning(action.running)
-        case .denied: title = "已拒绝：" + Self.stripRunning(action.running)
+        case .running:
+            title = action.running
+            englishTitle = resolvedEnglish.running
+        case .complete:
+            title = action.done
+            englishTitle = resolvedEnglish.done
+        case .pending:
+            title = "等待确认：" + Self.stripRunning(action.running)
+            englishTitle = "Awaiting approval: " + resolvedEnglish.running
+        case .denied:
+            title = "已拒绝：" + Self.stripRunning(action.running)
+            englishTitle = "Denied: " + resolvedEnglish.running
         }
         self.detail = detail.flatMap(Self.clipped)
     }

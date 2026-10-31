@@ -43,6 +43,9 @@ enum DesktopToolRegistry {
             properties: ["query": "string", "max_results": "integer"], required: ["query"]),
         declaration("scrape_web", "读取一个公开HTTP/HTTPS网页的正文。", properties: ["url": "string"], required: ["url"]),
         declaration("terminal_exec", "在当前会话工作区执行一条macOS shell命令；每次需要批准，返回真实退出码和输出。", properties: ["command": "string"], required: ["command"], approval: true),
+        declaration("plugin_list", "列出已安装的插件、版本和启用状态；只读，免审批。", properties: [:]),
+        declaration("plugin_install", "从当前会话工作区内的插件目录或 plugin.json 路径安装插件；高风险操作，需在 Mac 上批准，同名插件已存在时须设置 overwrite=true。",
+            properties: ["path": "string", "overwrite": "boolean"], required: ["path"], approval: true),
     ]
 
     /// High risk = can reach outside the conversation workspace or destroy data (iOS「含任意公网网站、远程命令等」).
@@ -58,7 +61,8 @@ enum DesktopToolRegistry {
             let declared = effect(for: name, arguments: "{}")
             return declared == .sideEffect || declared == .idempotent
         }
-        return name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool" || name == "interrupt_agent"
+        return name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool"
+            || name == "interrupt_agent" || name == "plugin_install"
     }
 
     static func effect(for name: String, arguments: String, pluginEffect: ((String) -> DesktopToolEffect)? = nil) -> DesktopToolEffect {
@@ -84,7 +88,8 @@ enum DesktopToolRegistry {
         }
         switch name {
         case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill",
-             "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list", "history_search", "history_fetch": return .pure
+             "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list", "history_search", "history_fetch",
+             "plugin_list": return .pure
         case "search_web", "scrape_web": return .networkRead
         case "memory_tool": return memoryEffect(arguments)
         default: return .sideEffect
