@@ -9,6 +9,7 @@ private final class MockPluginHTTPTransport: DesktopPluginHTTPTransport, @unchec
         let method: String
         let authorization: String?
         let body: String
+        let timeoutInterval: TimeInterval
     }
 
     private let lock = NSLock()
@@ -20,7 +21,8 @@ private final class MockPluginHTTPTransport: DesktopPluginHTTPTransport, @unchec
             url: request.url?.absoluteString ?? "",
             method: request.httpMethod ?? "GET",
             authorization: request.value(forHTTPHeaderField: "Authorization"),
-            body: request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            body: request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? "",
+            timeoutInterval: request.timeoutInterval
         )
         lock.withLock { requests.append(record) }
         return try handler(request)
@@ -70,6 +72,17 @@ final class DesktopPluginTests: XCTestCase {
         components.hour = 9
         components.minute = 30
         return components.date!
+    }
+
+    private func makeStore(transport: MockPluginHTTPTransport = MockPluginHTTPTransport()) -> DesktopPluginStore {
+        let now = fixedDate()
+        return DesktopPluginStore(
+            directory: tempDirectory.appendingPathComponent("installed", isDirectory: true),
+            defaults: defaults,
+            credentials: credentials,
+            httpTransport: transport,
+            referenceDateProvider: { now }
+        )
     }
 
     func testBuiltInFeishuCalendarPluginSeedsEventsAndBuildsProjections() async throws {
@@ -575,5 +588,422 @@ final class DesktopPluginTests: XCTestCase {
         XCTAssertEqual(perm.capabilityCountBadge, "8 项工具 · 6 条命令 · 2 个视图")
         XCTAssertTrue(perm.technicalMetadataLine.contains("feishu_calendar"))
         XCTAssertTrue(perm.technicalMetadataLine.contains("amber.plugin.v2"))
+    }
+
+    // MARK: - Developer Guide Alignment Tests (Sandbox HTTP, Workspace Read/Write, Inspector Entry & Sample Plugin)
+
+    func testSandboxHTTPAllowlistAndHTTPSValidation() async throws {
+        let transport = MockPluginHTTPTransport()
+        transport.handler = { request in
+            let body = #"{"ok":true,"host":"\#(request.url?.host ?? "")","method":"\#(request.httpMethod ?? "")"}"#
+            return (Data(body.utf8), 200)
+        }
+        let store = makeStore(transport: transport)
+        let pkgDir = tempDirectory.appendingPathComponent("http_tester", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgDir, withIntermediateDirectories: true)
+
+        let manifest = """
+        {
+          "schema": "amber.plugin.v2",
+          "id": "http_tester",
+          "name": "HTTP 测试插件",
+          "version": "1.0.0",
+          "description": "验证受控 HTTPS 与域名白名单。",
+          "capabilities": {
+            "networkDomains": ["api.example.com"],
+            "workspaceReadPrefixes": [],
+            "workspaceWritePrefixes": []
+          },
+          "settings_schema": [
+            { "key": "api_secret", "title": "密钥", "kind": "secret", "defaultValue": "top_secret_123" },
+            { "key": "label", "title": "标签", "kind": "string", "defaultValue": "prod" }
+          ],
+          "tools": [
+            {
+              "name": "call_api",
+              "description": "请求外部接口",
+              "effect": "networkRead",
+              "entry": "callApi",
+              "input_schema": {
+                "type": "object",
+                "properties": { "url": { "type": "string" } },
+                "required": ["url"]
+              }
+            }
+          ]
+        }
+        """
+        let script = """
+        function callApi(input) {
+          const leakedSecret = amber.settings.get("api_secret");
+          const label = amber.settings.get("label");
+          const res = amber.http.fetch(input.url, { method: "POST", body: { hello: "world" } });
+          return {
+            ok: res.ok,
+            status: res.status,
+            data: res.json,
+            leakedSecret: leakedSecret,
+            label: label
+          };
+        }
+        """
+        try Data(manifest.utf8).write(to: pkgDir.appendingPathComponent("plugin.json"))
+        try Data(script.utf8).write(to: pkgDir.appendingPathComponent("main.js"))
+
+        let pluginID = try store.importPlugin(from: pkgDir)
+        try store.saveSettings(pluginID: pluginID, values: ["api_secret": "real_secret_value", "label": "staging"])
+
+        // 1. Exact domain and subdomain over HTTPS succeed, and secret never enters JS:
+        let okOutput = try await store.executeTool(
+            qualifiedName: "plugin__http_tester__call_api",
+            argumentsJSON: #"{"url":"https://sub.api.example.com/v1/ping"}"#
+        )
+        let parsed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(okOutput.utf8)) as? [String: Any])
+        XCTAssertEqual(parsed["ok"] as? Bool, true)
+        XCTAssertEqual(parsed["status"] as? Int, 200)
+        XCTAssertEqual(parsed["leakedSecret"] as? String, "", "secret 字段绝不能进入 JS 沙箱")
+        XCTAssertEqual(parsed["label"] as? String, "staging")
+        XCTAssertEqual(transport.requests.last?.timeoutInterval, 20)
+
+        // 2. Non-HTTPS (http://) is rejected:
+        do {
+            _ = try await store.executeTool(
+                qualifiedName: "plugin__http_tester__call_api",
+                argumentsJSON: #"{"url":"http://api.example.com/v1/ping"}"#
+            )
+            XCTFail("Expected non-HTTPS URL to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("仅允许访问 HTTPS"), error.localizedDescription)
+        }
+
+        // 3. Unauthorized domain is rejected:
+        do {
+            _ = try await store.executeTool(
+                qualifiedName: "plugin__http_tester__call_api",
+                argumentsJSON: #"{"url":"https://evil.example.org/steal"}"#
+            )
+            XCTFail("Expected unauthorized domain to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("未授权访问域名"), error.localizedDescription)
+        }
+    }
+
+    func testSandboxWorkspaceReadWritePrefixTraversalSymlinkAndEffectGuards() async throws {
+        let store = makeStore()
+        let workspaceDir = tempDirectory.appendingPathComponent("session_workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDir, withIntermediateDirectories: true)
+
+        let pkgDir = tempDirectory.appendingPathComponent("ws_guard", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgDir, withIntermediateDirectories: true)
+
+        let manifest = """
+        {
+          "schema": "amber.plugin.v2",
+          "id": "ws_guard",
+          "name": "工作区守卫测试",
+          "version": "1.0.0",
+          "description": "测试会话工作区读写前缀、路径穿越、符号链接与工具副作用约束。",
+          "capabilities": {
+            "networkDomains": [],
+            "workspaceReadPrefixes": ["notes/", "reports/"],
+            "workspaceWritePrefixes": ["notes/"]
+          },
+          "tools": [
+            {
+              "name": "write_file",
+              "description": "写入工作区文件",
+              "effect": "sideEffect",
+              "entry": "writeFile",
+              "input_schema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
+                "required": ["path", "content"]
+              }
+            },
+            {
+              "name": "read_file",
+              "description": "读取工作区文件",
+              "effect": "pure",
+              "entry": "readFile",
+              "input_schema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+              }
+            },
+            {
+              "name": "sneaky_write",
+              "description": "声明为 pure 但试图写文件",
+              "effect": "pure",
+              "entry": "writeFile",
+              "input_schema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
+                "required": ["path", "content"]
+              }
+            }
+          ]
+        }
+        """
+        let script = """
+        function writeFile(input) {
+          amber.workspace.write(input.path, input.content);
+          return { ok: true, path: input.path };
+        }
+        function readFile(input) {
+          return { ok: true, text: amber.workspace.read(input.path) };
+        }
+        """
+        try Data(manifest.utf8).write(to: pkgDir.appendingPathComponent("plugin.json"))
+        try Data(script.utf8).write(to: pkgDir.appendingPathComponent("main.js"))
+
+        _ = try store.importPlugin(from: pkgDir)
+
+        // 1. Authorized write and read under `notes/`:
+        _ = try await store.executeTool(
+            qualifiedName: "plugin__ws_guard__write_file",
+            argumentsJSON: ##"{"path":"notes/daily.md","content":"# 今日纪要"}"##,
+            workspaceDirectory: workspaceDir
+        )
+        let readOut = try await store.executeTool(
+            qualifiedName: "plugin__ws_guard__read_file",
+            argumentsJSON: #"{"path":"notes/daily.md"}"#,
+            workspaceDirectory: workspaceDir
+        )
+        XCTAssertTrue(readOut.contains("# 今日纪要"))
+
+        // 2. Unauthorized prefix rejection (`secret/keys.txt` and writing to read-only `reports/`):
+        do {
+            _ = try await store.executeTool(
+                qualifiedName: "plugin__ws_guard__read_file",
+                argumentsJSON: #"{"path":"secret/keys.txt"}"#,
+                workspaceDirectory: workspaceDir
+            )
+            XCTFail("Expected unauthorized read prefix to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("未授权访问工作区路径"), error.localizedDescription)
+        }
+
+        do {
+            _ = try await store.executeTool(
+                qualifiedName: "plugin__ws_guard__write_file",
+                argumentsJSON: #"{"path":"reports/out.md","content":"nope"}"#,
+                workspaceDirectory: workspaceDir
+            )
+            XCTFail("Expected write to read-only prefix reports/ to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("未授权访问工作区路径"), error.localizedDescription)
+        }
+
+        // 3. Path traversal (`..`) rejection:
+        do {
+            _ = try await store.executeTool(
+                qualifiedName: "plugin__ws_guard__read_file",
+                argumentsJSON: #"{"path":"notes/../../etc/passwd"}"#,
+                workspaceDirectory: workspaceDir
+            )
+            XCTFail("Expected path traversal to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("越界访问"), error.localizedDescription)
+        }
+
+        // 4. Symlink escape rejection:
+        let outsideFile = tempDirectory.appendingPathComponent("outside_secret.txt")
+        try Data("outside".utf8).write(to: outsideFile)
+        let symlinkURL = workspaceDir.appendingPathComponent("notes/escape_link.md")
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: outsideFile)
+        do {
+            _ = try await store.executeTool(
+                qualifiedName: "plugin__ws_guard__read_file",
+                argumentsJSON: #"{"path":"notes/escape_link.md"}"#,
+                workspaceDirectory: workspaceDir
+            )
+            XCTFail("Expected symlink escape to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("符号链接"), error.localizedDescription)
+        }
+
+        // 5. Read-only (`pure`) tool attempting `amber.workspace.write` is rejected:
+        do {
+            _ = try await store.executeTool(
+                qualifiedName: "plugin__ws_guard__sneaky_write",
+                argumentsJSON: #"{"path":"notes/sneaky.md","content":"bad"}"#,
+                workspaceDirectory: workspaceDir
+            )
+            XCTFail("Expected pure tool calling amber.workspace.write to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("禁止调用 amber.workspace.write"), error.localizedDescription)
+        }
+    }
+
+    func testNoteHelperEndToEndSamplePluginAndInspectorCardEntry() async throws {
+        let store = makeStore()
+        let workspaceDir = tempDirectory.appendingPathComponent("note_helper_ws", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDir, withIntermediateDirectories: true)
+
+        let pkgDir = tempDirectory.appendingPathComponent("note_helper", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgDir, withIntermediateDirectories: true)
+
+        let manifest = """
+        {
+          "schema": "amber.plugin.v2",
+          "id": "note_helper",
+          "name": "会议纪要助手",
+          "version": "1.0.0",
+          "description": "统计纪要字数、附加统一前缀并归档到当前会话工作区。",
+          "icon": "doc.text.magnifyingglass",
+          "capabilities": {
+            "networkDomains": [],
+            "workspaceReadPrefixes": ["notes/"],
+            "workspaceWritePrefixes": ["notes/"]
+          },
+          "settings_schema": [
+            {
+              "key": "prefix",
+              "title": "纪要标题前缀",
+              "kind": "string",
+              "placeholder": "【项目纪要】",
+              "defaultValue": "【项目纪要】"
+            }
+          ],
+          "tools": [
+            {
+              "name": "format_note",
+              "description": "格式化会议纪要文本并统计累计运行次数。",
+              "effect": "pure",
+              "entry": "formatNote",
+              "input_schema": {
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"]
+              }
+            },
+            {
+              "name": "save_note",
+              "description": "将整理好的会议纪要写入当前会话工作区 notes/ 目录。",
+              "effect": "sideEffect",
+              "entry": "saveNote",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "filename": { "type": "string" },
+                  "text": { "type": "string" }
+                },
+                "required": ["filename", "text"]
+              }
+            }
+          ],
+          "ui": {
+            "inspectorCards": [
+              {
+                "id": "note_summary",
+                "title": "纪要助手状态",
+                "symbol": "doc.text.magnifyingglass",
+                "entry": "renderNoteInspector"
+              }
+            ],
+            "workspaceViews": [
+              {
+                "id": "note_board",
+                "title": "纪要工作台",
+                "symbol": "doc.text",
+                "subtitle": "查看已格式化的纪要统计与快捷整理命令。"
+              }
+            ],
+            "commands": [
+              {
+                "id": "cmd_format_note",
+                "title": "格式化当前会议纪要",
+                "slash": "/note-format",
+                "symbol": "doc.badge.gearshape",
+                "prompt_template": "请调用 plugin__note_helper__format_note 工具整理纪要："
+              }
+            ]
+          }
+        }
+        """
+        let script = """
+        function formatNote(input) {
+          const prefix = amber.settings.get("prefix") || "【纪要】";
+          const rawText = String((input && input.text) || "").trim();
+          const runs = Number(amber.storage.get("runs") || "0") + 1;
+          const formatted = prefix + rawText;
+          amber.storage.set("runs", String(runs));
+          amber.storage.set("last_note", formatted);
+          return { ok: true, formatted: formatted, char_count: rawText.length, run_count: runs };
+        }
+        function saveNote(input) {
+          const name = String((input && input.filename) || "summary.md").replace(/^\\/+/, "");
+          const path = name.indexOf("notes/") === 0 ? name : "notes/" + name;
+          const content = String((input && input.text) || "");
+          amber.workspace.write(path, content);
+          return { ok: true, saved_path: path, read_back: amber.workspace.read(path) };
+        }
+        function renderNoteInspector() {
+          const runs = Number(amber.storage.get("runs") || "0");
+          const lastNote = amber.storage.get("last_note");
+          if (!lastNote) {
+            return {
+              statusBadge: "待命",
+              emptyMessage: "尚未整理纪要，输入 /note-format 即可快速开始。",
+              items: []
+            };
+          }
+          return {
+            statusBadge: "已处理 " + runs + " 次",
+            emptyMessage: "暂无纪要记录",
+            items: [
+              {
+                id: "latest_note",
+                badge: "最近纪要",
+                title: lastNote,
+                subtitle: "累计执行 " + runs + " 次",
+                actionTitle: "继续润色",
+                prompt: "请基于以下纪要继续提炼行动项：\\n" + lastNote
+              }
+            ]
+          };
+        }
+        """
+        try Data(manifest.utf8).write(to: pkgDir.appendingPathComponent("plugin.json"))
+        try Data(script.utf8).write(to: pkgDir.appendingPathComponent("main.js"))
+
+        let importedID = try store.importPlugin(from: pkgDir)
+        XCTAssertEqual(importedID, "note_helper")
+
+        // Initial projection before running tool:
+        let initialCard = try XCTUnwrap(store.inspectorSnapshots.first { $0.pluginID == "note_helper" })
+        XCTAssertEqual(initialCard.statusBadge, "待命")
+        XCTAssertTrue(initialCard.items.isEmpty)
+        XCTAssertEqual(initialCard.emptyMessage, "尚未整理纪要，输入 /note-format 即可快速开始。")
+
+        // Run `format_note` tool -> updates storage and triggers `rebuildProjections()`:
+        let formatOutput = try await store.executeTool(
+            qualifiedName: "plugin__note_helper__format_note",
+            argumentsJSON: #"{"text":"确认周五发布 macOS 插件 v2"}"#,
+            workspaceDirectory: workspaceDir
+        )
+        XCTAssertTrue(formatOutput.contains("【项目纪要】确认周五发布 macOS 插件 v2"))
+
+        // Verify inspector card snapshot updated from `renderNoteInspector` entry:
+        let updatedCard = try XCTUnwrap(store.inspectorSnapshots.first { $0.pluginID == "note_helper" })
+        XCTAssertEqual(updatedCard.statusBadge, "已处理 1 次")
+        XCTAssertEqual(updatedCard.items.count, 1)
+        XCTAssertEqual(updatedCard.items.first?.title, "【项目纪要】确认周五发布 macOS 插件 v2")
+        XCTAssertEqual(updatedCard.items.first?.actionTitle, "继续润色")
+
+        // Verify workspaceView badgeCount reflects card items count (1):
+        let viewEntry = try XCTUnwrap(store.activeWorkspaceViews.first { $0.pluginID == "note_helper" })
+        XCTAssertEqual(viewEntry.badgeCount, 1)
+
+        // Run `save_note` tool -> writes to `notes/weekly.md` and reads back:
+        let saveOutput = try await store.executeTool(
+            qualifiedName: "plugin__note_helper__save_note",
+            argumentsJSON: #"{"filename":"weekly.md","text":"【项目纪要】确认周五发布 macOS 插件 v2"}"#,
+            workspaceDirectory: workspaceDir
+        )
+        XCTAssertTrue(saveOutput.contains("notes/weekly.md"))
+        let savedOnDisk = try String(contentsOf: workspaceDir.appendingPathComponent("notes/weekly.md"), encoding: .utf8)
+        XCTAssertEqual(savedOnDisk, "【项目纪要】确认周五发布 macOS 插件 v2")
     }
 }

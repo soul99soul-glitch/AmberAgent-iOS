@@ -638,7 +638,12 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
             default:
                 if tool.toolName.hasPrefix("plugin__") {
                     guard let plugins else { return .failed("插件运行时未初始化。") }
-                    output = try await plugins.executeTool(qualifiedName: tool.toolName, argumentsJSON: tool.input)
+                    let workspaceDir = try? await files.commandDirectory(conversationID: owner)
+                    output = try await plugins.executeTool(
+                        qualifiedName: tool.toolName,
+                        argumentsJSON: tool.input,
+                        workspaceDirectory: workspaceDir
+                    )
                 } else {
                     return .failed("当前桌面工具目录没有此执行器。")
                 }

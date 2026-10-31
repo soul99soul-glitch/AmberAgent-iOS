@@ -53,6 +53,72 @@ import ServiceManagement
                                 .frame(width: 880, height: 1180), 880, 1180, dark)
                     }
                 }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PLUGIN_INSPECTOR"] != nil {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    await workspace.agentTasks.waitUntilLoaded()
+                    let tempPkg = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("amber-snap-plugin-\(UUID().uuidString)", isDirectory: true)
+                        .appendingPathComponent("note_helper", isDirectory: true)
+                    try FileManager.default.createDirectory(at: tempPkg, withIntermediateDirectories: true)
+                    let manifest = """
+                    {
+                      "schema": "amber.plugin.v2",
+                      "id": "note_helper",
+                      "name": "会议纪要助手",
+                      "version": "1.0.0",
+                      "description": "统计纪要字数、附加统一前缀并归档到当前会话工作区。",
+                      "icon": "doc.text.magnifyingglass",
+                      "capabilities": { "networkDomains": [], "workspaceReadPrefixes": ["notes/"], "workspaceWritePrefixes": ["notes/"] },
+                      "settings_schema": [{ "key": "prefix", "title": "纪要标题前缀", "kind": "string", "defaultValue": "【项目纪要】" }],
+                      "tools": [{ "name": "format_note", "description": "格式化会议纪要文本", "effect": "pure", "entry": "formatNote", "input_schema": { "type": "object", "properties": { "text": { "type": "string" } } } }],
+                      "ui": {
+                        "inspectorCards": [{ "id": "note_summary", "title": "纪要助手状态", "symbol": "doc.text.magnifyingglass", "entry": "renderNoteInspector" }],
+                        "workspaceViews": [{ "id": "note_board", "title": "纪要工作台", "symbol": "doc.text", "subtitle": "查看已格式化的纪要统计与快捷整理命令。" }]
+                      }
+                    }
+                    """
+                    let script = """
+                    function formatNote(input) {
+                      const prefix = amber.settings.get("prefix") || "【纪要】";
+                      const rawText = String((input && input.text) || "").trim();
+                      const runs = Number(amber.storage.get("runs") || "0") + 1;
+                      const formatted = prefix + rawText;
+                      amber.storage.set("runs", String(runs));
+                      amber.storage.set("last_note", formatted);
+                      return { ok: true, formatted: formatted, run_count: runs };
+                    }
+                    function renderNoteInspector() {
+                      const runs = Number(amber.storage.get("runs") || "0");
+                      const lastNote = amber.storage.get("last_note");
+                      return {
+                        statusBadge: "已处理 " + runs + " 次",
+                        emptyMessage: "暂无纪要记录",
+                        items: [{
+                          id: "latest_note",
+                          badge: "最近纪要",
+                          title: lastNote || "【项目纪要】确认周五上线 macOS 插件 v2",
+                          subtitle: "累计执行 " + runs + " 次 · 工作区前缀 notes/",
+                          actionTitle: "继续润色",
+                          prompt: "请基于以下纪要继续提炼行动项"
+                        }]
+                      };
+                    }
+                    """
+                    try Data(manifest.utf8).write(to: tempPkg.appendingPathComponent("plugin.json"))
+                    try Data(script.utf8).write(to: tempPkg.appendingPathComponent("main.js"))
+                    _ = try workspace.plugins.importPlugin(from: tempPkg)
+                    _ = try await workspace.plugins.executeTool(
+                        qualifiedName: "plugin__note_helper__format_note",
+                        argumentsJSON: #"{"text":"确认周五上线 macOS 插件 v2 与内置开发技能"}"#
+                    )
+                    for dark in [false, true] {
+                        try await capture("plugin-inspector-\(dark ? "dark" : "light")",
+                            DesktopInspector(workspace: workspace, onLocate: { _ in }, onOpenFiles: {}, onOpenTasks: {})
+                                .frame(width: 340, height: 820)
+                                .background(DesktopTheme.paper),
+                            340, 820, dark)
+                    }
+                }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_RECOVERY"] != nil { try await reviewRecovery() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PHASE3_UI"] != nil { try await reviewPhase3UI() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PERF3_CACHE"] != nil { try await reviewPerf3Cache() }

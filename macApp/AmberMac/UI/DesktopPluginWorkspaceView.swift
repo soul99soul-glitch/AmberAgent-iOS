@@ -953,18 +953,52 @@ struct DesktopPluginWorkspaceView: View {
     }
 
     private var genericPluginBoard: some View {
-        VStack(spacing: 12) {
-            Image(systemName: plugin?.manifest.icon ?? "puzzlepiece.extension")
+        let pluginCommands = workspace.plugins.activeSlashCommands.filter { $0.pluginID == pluginID }
+        return VStack(spacing: 16) {
+            Image(systemName: viewEntry?.symbol ?? plugin?.manifest.icon ?? "puzzlepiece.extension")
                 .font(.system(size: 32))
                 .foregroundStyle(DesktopTheme.accent)
             Text(viewEntry?.title ?? plugin?.manifest.name ?? "插件视图")
                 .font(DesktopTheme.serif(size: 20, weight: .semibold))
                 .foregroundStyle(DesktopTheme.ink)
-            Text(plugin?.manifest.description ?? "")
+            Text(viewEntry?.subtitle.isEmpty == false ? (viewEntry?.subtitle ?? "") : (plugin?.manifest.description ?? ""))
                 .font(.system(size: 13))
                 .foregroundStyle(DesktopTheme.inkSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 460)
+
+            if !pluginCommands.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("快捷命令")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                    ForEach(pluginCommands) { cmd in
+                        Button {
+                            sendPromptToChat(cmd.promptTemplate)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: cmd.symbol)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(DesktopTheme.accent)
+                                Text(cmd.title)
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(DesktopTheme.ink)
+                                Spacer(minLength: 8)
+                                Text(cmd.slash)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(DesktopTheme.inkTertiary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: 420)
+                .padding(.top, 4)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

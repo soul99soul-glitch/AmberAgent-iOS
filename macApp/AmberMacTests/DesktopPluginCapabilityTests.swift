@@ -12,15 +12,16 @@ import XCTest
         return DesktopInstalledPlugin(manifest: manifest, scriptSource: "", enabled: true, isBuiltIn: builtIn)
     }
 
-    func testSandboxNetworkAndFilesAreReportedAsDeclaredButNotWired() {
+    func testSandboxNetworkAndFilesAreReportedAsWiredWhenDeclared() {
         let thirdParty = plugin(domains: ["news.example.com"], write: ["outputs"])
         let rows = DesktopPluginSettingsPresentation.capabilityRows(for: thirdParty)
         XCTAssertEqual(rows.map(\.id), ["compute", "storage", "host", "network", "files", "ui"])
-        XCTAssertEqual(rows.first { $0.id == "network" }?.state, .declaredNotWired)
-        XCTAssertTrue(rows.first { $0.id == "network" }?.detail.contains("沙箱没有 HTTP 能力") == true)
-        XCTAssertEqual(rows.first { $0.id == "files" }?.state, .declaredNotWired)
+        XCTAssertEqual(rows.first { $0.id == "network" }?.state, .wired)
+        XCTAssertTrue(rows.first { $0.id == "network" }?.detail.contains("amber.http.fetch") == true)
+        XCTAssertEqual(rows.first { $0.id == "files" }?.state, .wired)
+        XCTAssertTrue(rows.first { $0.id == "files" }?.detail.contains("amber.workspace") == true)
         XCTAssertEqual(rows.first { $0.id == "storage" }?.state, .wired)
-        XCTAssertEqual(rows.first { $0.id == "network" }?.badge, "未接线")
+        XCTAssertEqual(rows.first { $0.id == "network" }?.badge, "已接线")
     }
 
     func testBuiltInPluginNetworkIsHostNativeWhileFilesStayUnwired() {
@@ -97,12 +98,14 @@ import XCTest
         }
     }
 
-    /// The permission summary is the human-readable paragraph; it must not promise a network the sandbox lacks.
-    func testPermissionSummaryDoesNotPromisUnsandboxedNetworkForThirdParty() {
+    /// The permission summary describes the controlled HTTPS allowlist and workspace prefix boundaries accurately.
+    func testPermissionSummaryDescribesControlledSandboxCapabilities() {
         let thirdParty = plugin(id: "feed_watch", domains: ["news.example.com"], write: ["outputs"])
         let summary = DesktopPluginSettingsPresentation.permissionSummary(for: thirdParty)
-        XCTAssertTrue(summary.networkSummary.contains("沙箱网络尚未接线"), summary.networkSummary)
-        XCTAssertTrue(summary.workspaceSummary.contains("写入不会发生"), summary.workspaceSummary)
+        XCTAssertTrue(summary.networkSummary.contains("白名单域名"), summary.networkSummary)
+        XCTAssertTrue(summary.networkSummary.contains("news.example.com"), summary.networkSummary)
+        XCTAssertTrue(summary.workspaceSummary.contains("受控前缀内写入"), summary.workspaceSummary)
+        XCTAssertTrue(summary.workspaceSummary.contains("outputs"), summary.workspaceSummary)
 
         let apple = DesktopPluginStore.makeBuiltInAppleSchedulePlugin(enabled: true)
         let appleSummary = DesktopPluginSettingsPresentation.permissionSummary(for: apple)

@@ -242,27 +242,40 @@ struct DesktopPluginSettingsPresentation: Equatable, Sendable {
         )
     }
 
-    /// Declared capability versus what the host can actually run. The JS sandbox exposes configuration and
-    /// persistent storage only, so network and workspace access must read as declared-but-not-wired instead of
-    /// implying a permission the runtime cannot honour. A declared host module counts as wired only when this
-    /// build implements it (see `DesktopPluginHostModule.implemented`).
+    /// Declared capability versus what the host can actually run. Built-in plugins use native host clients,
+    /// while third-party plugins access declared HTTPS domains via `amber.http.fetch` and declared workspace
+    /// directory prefixes via `amber.workspace.read` / `write`. Undeclared capabilities remain `.declaredNotWired`.
     static func capabilityRows(for plugin: DesktopInstalledPlugin) -> [DesktopPluginCapabilityRow] {
         let capabilities = plugin.manifest.capabilities
         let domains = capabilities.networkDomains
         let writePrefixes = capabilities.workspaceWritePrefixes
         let readPrefixes = capabilities.workspaceReadPrefixes
-        let network: DesktopPluginCapabilityRow = plugin.isBuiltIn && !domains.isEmpty
-            ? .init(id: "network", title: "网络访问", state: .hostNative,
-                    detail: "内置模块经宿主原生客户端访问 \(domains.count) 个域名，不经过沙箱。")
-            : .init(id: "network", title: "网络访问", state: .declaredNotWired,
-                    detail: domains.isEmpty
-                        ? "未声明域名；沙箱也没有 HTTP 能力。"
-                        : "已声明 \(domains.count) 个域名，但沙箱没有 HTTP 能力，这些请求当前不会发出。")
-        let files: DesktopPluginCapabilityRow = .init(id: "files", title: "工作区文件",
-            state: .declaredNotWired,
-            detail: readPrefixes.isEmpty && writePrefixes.isEmpty
-                ? "未声明工作区路径；沙箱也没有文件 API。"
-                : "已声明工作区路径，但沙箱文件桥尚未接线。")
+        let network: DesktopPluginCapabilityRow = if plugin.isBuiltIn && !domains.isEmpty {
+            .init(id: "network", title: "网络访问", state: .hostNative,
+                  detail: "内置模块经宿主原生客户端访问 \(domains.count) 个域名，不经过沙箱。")
+        } else if !domains.isEmpty {
+            .init(id: "network", title: "网络访问", state: plugin.enabled ? .wired : .declaredNotWired,
+                  detail: plugin.enabled
+                      ? "经受控 HTTPS 桥（amber.http.fetch）访问 \(domains.count) 个白名单域名。"
+                      : "已声明 \(domains.count) 个白名单域名；插件已停用，当前不发出请求。")
+        } else {
+            .init(id: "network", title: "网络访问", state: .declaredNotWired,
+                  detail: "未声明域名；沙箱拒绝一切外部网络请求。")
+        }
+        let hasWorkspacePrefixes = !readPrefixes.isEmpty || !writePrefixes.isEmpty
+        let files: DesktopPluginCapabilityRow = if !plugin.isBuiltIn && hasWorkspacePrefixes {
+            .init(id: "files", title: "工作区文件",
+                  state: plugin.enabled ? .wired : .declaredNotWired,
+                  detail: plugin.enabled
+                      ? "经受控文件桥（amber.workspace）访问已声明的会话子目录前缀。"
+                      : "已声明工作区子目录前缀；插件已停用，当前不读写文件。")
+        } else {
+            .init(id: "files", title: "工作区文件",
+                  state: .declaredNotWired,
+                  detail: !hasWorkspacePrefixes
+                      ? "未声明工作区路径；沙箱拒绝读写会话文件。"
+                      : "内置模块不使用沙箱工作区文件桥。")
+        }
         let interfaces = plugin.manifest.ui
         return [
             .init(id: "compute", title: "纯计算与命令", state: .wired,
@@ -272,9 +285,9 @@ struct DesktopPluginSettingsPresentation: Equatable, Sendable {
             network,
             files,
             .init(id: "ui", title: "界面入口", state: .wired,
-                  detail: interfaces.commands.isEmpty && interfaces.workspaceViews.isEmpty
+                  detail: interfaces.commands.isEmpty && interfaces.workspaceViews.isEmpty && interfaces.inspectorCards.isEmpty
                       ? "未声明命令或视图，仅提供工具。"
-                      : "命令与工作区视图由宿主渲染，不执行插件自带界面代码。"),
+                      : "命令、检查器卡片与工作区视图由宿主渲染，不执行动态界面代码。"),
         ]
     }
 
@@ -323,7 +336,7 @@ struct DesktopPluginSettingsPresentation: Equatable, Sendable {
         } else if plugin.isBuiltIn {
             "内置模块经宿主原生客户端访问 \(domains.count) 个已声明 HTTPS 域名"
         } else {
-            "已声明 \(domains.count) 个 HTTPS 域名，但沙箱网络尚未接线，请求不会发出"
+            "仅限受控 HTTPS 访问已声明的 \(domains.count) 个白名单域名（\(domains.joined(separator: "、"))，20 秒超时）"
         }
 
         let sideEffectTools = plugin.manifest.tools.filter { $0.effect == .sideEffect || $0.effect == .idempotent }
@@ -336,11 +349,16 @@ struct DesktopPluginSettingsPresentation: Equatable, Sendable {
             "\(readTools.count) 项只读查询直接可用；\(sideEffectTools.count) 项外部写入\(writeExamplesClause(for: sideEffectTools))需经你批准"
         }
 
+        let readPrefixes = plugin.manifest.capabilities.workspaceReadPrefixes
         let writePrefixes = plugin.manifest.capabilities.workspaceWritePrefixes
-        let workspaceSummary: String = if writePrefixes.isEmpty {
+        let workspaceSummary: String = if readPrefixes.isEmpty && writePrefixes.isEmpty {
             "禁止直接写入当前会话工作区文件"
+        } else if writePrefixes.isEmpty {
+            "仅允许读取当前会话工作区子目录：\(readPrefixes.joined(separator: "、"))；禁止写入文件"
+        } else if readPrefixes.isEmpty {
+            "仅允许在受控前缀内写入当前会话工作区：\(writePrefixes.joined(separator: "、"))"
         } else {
-            "已声明写入 \(writePrefixes.joined(separator: "、"))，但沙箱文件桥尚未接线，写入不会发生"
+            "仅允许读取 \(readPrefixes.joined(separator: "、"))，并在受控前缀内写入 \(writePrefixes.joined(separator: "、"))"
         }
 
         var counts: [String] = []

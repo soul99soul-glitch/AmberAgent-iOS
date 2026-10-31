@@ -519,7 +519,9 @@ struct DesktopWorkspaceView: View {
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         if entry.badgeCount > 0 {
-                            Text("今日 \(entry.badgeCount)")
+                            Text(entry.pluginID == "feishu_calendar" && entry.viewID != "bot_studio"
+                                ? "今日 \(entry.badgeCount)"
+                                : "\(entry.badgeCount)")
                                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                                 .foregroundStyle(DesktopTheme.accentInk)
                                 .padding(.horizontal, 7)

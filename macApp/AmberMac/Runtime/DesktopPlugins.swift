@@ -639,6 +639,7 @@ final class DesktopPluginStore {
     private(set) var isSyncingPluginID: String?
 
     @ObservationIgnored let directory: URL
+    @ObservationIgnored var workspaceDirectory: URL
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let credentials: any DesktopCredentialStore
     @ObservationIgnored private let httpTransport: any DesktopPluginHTTPTransport
@@ -648,6 +649,15 @@ final class DesktopPluginStore {
     @ObservationIgnored private var inFlightIdempotencyWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     @ObservationIgnored var onStateChanged: (() -> Void)?
 
+    nonisolated static let injectedSandboxAPIs: Set<String> = [
+        "amber.settings.get",
+        "amber.storage.get",
+        "amber.storage.set",
+        "amber.http.fetch",
+        "amber.workspace.read",
+        "amber.workspace.write"
+    ]
+
     static var defaultDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Amber/plugins", isDirectory: true)
@@ -655,6 +665,7 @@ final class DesktopPluginStore {
 
     init(
         directory: URL = DesktopPluginStore.defaultDirectory,
+        workspaceDirectory: URL? = nil,
         defaults: UserDefaults = .standard,
         credentials: any DesktopCredentialStore = DesktopKeychain(service: "app.amber.macos.plugins.credentials"),
         httpTransport: any DesktopPluginHTTPTransport = URLSessionPluginHTTPTransport(),
@@ -662,6 +673,8 @@ final class DesktopPluginStore {
         referenceDateProvider: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.directory = directory
+        self.workspaceDirectory = workspaceDirectory
+            ?? directory.deletingLastPathComponent().appendingPathComponent("workspace", isDirectory: true)
         self.defaults = defaults
         self.credentials = credentials
         self.httpTransport = httpTransport
@@ -1625,7 +1638,7 @@ final class DesktopPluginStore {
         return tool.effect
     }
 
-    func executeTool(qualifiedName: String, argumentsJSON: String) async throws -> String {
+    func executeTool(qualifiedName: String, argumentsJSON: String, workspaceDirectory: URL? = nil) async throws -> String {
         guard let parsed = Self.parseQualifiedToolName(qualifiedName) else {
             throw DesktopRuntimeError.message("无效的插件工具名称：\(qualifiedName)。")
         }
@@ -1802,7 +1815,12 @@ final class DesktopPluginStore {
             return try await feishuMeetingCloseout(arguments: args)
         }
 
-        return try evaluateJSTool(plugin: plugin, tool: tool, arguments: args)
+        return try await evaluateJSTool(
+            plugin: plugin,
+            tool: tool,
+            argumentsData: argsData,
+            workspaceDirectory: workspaceDirectory
+        )
     }
 
     /// Writes the minutes document and the group receipt for one meeting.
@@ -1919,27 +1937,342 @@ final class DesktopPluginStore {
         writePluginStorage(pluginID: "feishu_calendar", storage: storage)
     }
 
+    private final class SandboxHTTPBox: @unchecked Sendable {
+        var result: Result<(Data, Int), Error>?
+    }
+
+    nonisolated static func resolveAuthorizedWorkspaceFileURL(
+        rootDirectory: URL,
+        relativePath: String,
+        allowedPrefixes: [String],
+        createParents: Bool
+    ) throws -> URL {
+        let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let components = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        guard !trimmed.isEmpty,
+              !trimmed.hasPrefix("/"),
+              !trimmed.contains("\\"),
+              !trimmed.contains("\0"),
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            throw DesktopRuntimeError.message("工作区文件路径无效或包含越界访问：\(relativePath)")
+        }
+
+        let normalizedPath = components.joined(separator: "/")
+        let normalizedPrefixes = allowedPrefixes.compactMap { raw -> String? in
+            let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return clean.isEmpty ? nil : clean
+        }
+        let isAuthorized = normalizedPrefixes.contains { prefix in
+            normalizedPath == prefix || normalizedPath.hasPrefix(prefix + "/")
+        }
+        guard isAuthorized else {
+            throw DesktopRuntimeError.message("插件未授权访问工作区路径 \(normalizedPath)（允许前缀：\(allowedPrefixes.joined(separator: ", "))）。")
+        }
+
+        let manager = FileManager.default
+        if let kind = try? manager.attributesOfItem(atPath: rootDirectory.path)[.type],
+           kind as? FileAttributeType == .typeSymbolicLink {
+            throw DesktopRuntimeError.message("工作区路径不能包含符号链接。")
+        }
+        let standardizedRoot = rootDirectory.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
+            .appendingPathComponent(rootDirectory.lastPathComponent, isDirectory: true)
+        if createParents {
+            try manager.createDirectory(at: standardizedRoot, withIntermediateDirectories: true)
+        }
+
+        var url = standardizedRoot
+        for component in components {
+            url.appendPathComponent(String(component))
+            if let kind = try? manager.attributesOfItem(atPath: url.path)[.type],
+               kind as? FileAttributeType == .typeSymbolicLink {
+                throw DesktopRuntimeError.message("工作区路径不能包含符号链接：\(relativePath)")
+            }
+        }
+        guard url.standardizedFileURL.path.hasPrefix(standardizedRoot.path + "/") else {
+            throw DesktopRuntimeError.message("文件路径越出了当前会话工作区：\(relativePath)")
+        }
+        if createParents {
+            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        return url
+    }
+
     private func evaluateJSTool(
         plugin: DesktopInstalledPlugin,
         tool: DesktopPluginToolManifest,
-        arguments: [String: Any]
-    ) throws -> String {
-        guard let context = JSContext() else {
-            throw DesktopRuntimeError.message("无法初始化插件 JavaScript 沙箱。")
-        }
-        var jsException: String?
-        context.exceptionHandler = { _, exception in
-            jsException = exception?.toString() ?? "未知脚本错误"
-        }
-
-        var currentStorage = readPluginStorage(pluginID: plugin.id)
-        var storageMutated = false
+        argumentsData: Data,
+        workspaceDirectory: URL?
+    ) async throws -> String {
+        let initialStorage = readPluginStorage(pluginID: plugin.id)
         var settingsMap: [String: String] = [:]
         for field in plugin.manifest.settingsSchema where field.kind != .secret {
             settingsMap[field.key] = settingValue(pluginID: plugin.id, key: field.key)
         }
         settingsMap["today"] = Self.dateFormatter.string(from: referenceDateProvider())
         settingsMap["mode"] = (plugin.id == "feishu_calendar" && hasFeishuRemoteCredentials) ? "feishu" : "local"
+        let frozenSettingsMap = settingsMap
+        let transport = self.httpTransport
+        let targetWorkspaceDir = workspaceDirectory ?? self.workspaceDirectory
+
+        let (jsonString, updatedStorage, storageMutated) = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<(String, [String: String], Bool), Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let context = JSContext() else {
+                    continuation.resume(throwing: DesktopRuntimeError.message("无法初始化插件 JavaScript 沙箱。"))
+                    return
+                }
+                var jsException: String?
+                context.exceptionHandler = { _, exception in
+                    jsException = exception?.toString() ?? "未知脚本错误"
+                }
+
+                var currentStorage = initialStorage
+                var storageMutated = false
+                let arguments = (try? JSONSerialization.jsonObject(with: argumentsData) as? [String: Any]) ?? [:]
+
+                let getSettingBlock: @convention(block) (String) -> String = { key in
+                    frozenSettingsMap[key] ?? ""
+                }
+                let getStorageBlock: @convention(block) (String) -> String = { key in
+                    currentStorage[key] ?? ""
+                }
+                let setStorageBlock: @convention(block) (String, String) -> Void = { key, value in
+                    currentStorage[key] = value
+                    storageMutated = true
+                }
+                let httpFetchBlock: @convention(block) (String, String) -> String = { urlString, optionsJSON in
+                    guard let url = URL(string: urlString),
+                          url.scheme?.lowercased() == "https",
+                          let host = url.host?.lowercased() else {
+                        return "__AMBER_ERR__:插件仅允许访问 HTTPS 地址：\(urlString)"
+                    }
+                    let allowedDomains = plugin.manifest.capabilities.networkDomains.map { $0.lowercased() }
+                    let permitted = allowedDomains.contains { allowed in
+                        host == allowed || host.hasSuffix("." + allowed)
+                    }
+                    guard permitted else {
+                        return "__AMBER_ERR__:插件 \(plugin.manifest.name) 未授权访问域名 \(host)（允许列表：\(allowedDomains.joined(separator: ", "))）。"
+                    }
+
+                    let optionsData = Data(optionsJSON.utf8)
+                    let options = (try? JSONSerialization.jsonObject(with: optionsData) as? [String: Any]) ?? [:]
+                    let method = ((options["method"] as? String) ?? "GET").uppercased()
+                    var request = URLRequest(url: url)
+                    request.httpMethod = method
+                    request.timeoutInterval = 20
+                    if let headers = options["headers"] as? [String: Any] {
+                        for (k, v) in headers {
+                            request.setValue(String(describing: v), forHTTPHeaderField: k)
+                        }
+                    }
+                    if let bodyString = options["body"] as? String {
+                        request.httpBody = Data(bodyString.utf8)
+                    } else if let bodyObj = options["body"],
+                              !(bodyObj is NSNull),
+                              JSONSerialization.isValidJSONObject(bodyObj),
+                              let data = try? JSONSerialization.data(withJSONObject: bodyObj) {
+                        request.httpBody = data
+                    }
+
+                    let box = SandboxHTTPBox()
+                    let semaphore = DispatchSemaphore(value: 0)
+                    let capturedRequest = request
+                    Task.detached {
+                        do {
+                            let response = try await transport.send(request: capturedRequest)
+                            box.result = .success(response)
+                        } catch {
+                            box.result = .failure(error)
+                        }
+                        semaphore.signal()
+                    }
+                    if semaphore.wait(timeout: .now() + 22) == .timedOut {
+                        return "__AMBER_ERR__:外部请求超时（20 秒）：\(host)"
+                    }
+                    switch box.result {
+                    case .success(let (data, status)):
+                        let bodyText = String(decoding: data, as: UTF8.self)
+                        let parsedJSON = (try? JSONSerialization.jsonObject(with: data)) ?? NSNull()
+                        let payload: [String: Any] = [
+                            "ok": (200...299).contains(status),
+                            "status": status,
+                            "body": bodyText,
+                            "text": bodyText,
+                            "json": parsedJSON
+                        ]
+                        if let encoded = try? DesktopPluginStore.encodeJSONObject(payload) {
+                            return encoded
+                        }
+                        return #"{"ok":false,"status":500,"body":""}"#
+                    case .failure(let error):
+                        return "__AMBER_ERR__:\(error.localizedDescription)"
+                    case .none:
+                        return "__AMBER_ERR__:外部请求未返回结果：\(host)"
+                    }
+                }
+                let workspaceReadBlock: @convention(block) (String) -> String = { relativePath in
+                    do {
+                        let url = try DesktopPluginStore.resolveAuthorizedWorkspaceFileURL(
+                            rootDirectory: targetWorkspaceDir,
+                            relativePath: relativePath,
+                            allowedPrefixes: plugin.manifest.capabilities.workspaceReadPrefixes,
+                            createParents: false
+                        )
+                        guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                            return "__AMBER_ERR__:工作区文件不存在或不是普通文件：\(relativePath)"
+                        }
+                        let data = try Data(contentsOf: url)
+                        guard let text = String(data: data, encoding: .utf8) else {
+                            return "__AMBER_ERR__:工作区文件不是有效的 UTF-8 文本：\(relativePath)"
+                        }
+                        return text
+                    } catch {
+                        return "__AMBER_ERR__:\(error.localizedDescription)"
+                    }
+                }
+                let workspaceWriteBlock: @convention(block) (String, String) -> String = { relativePath, content in
+                    guard tool.effect == .sideEffect || tool.effect == .idempotent else {
+                        return "__AMBER_ERR__:只读工具（\(tool.name)，effect=\(tool.effect.rawValue)）禁止调用 amber.workspace.write 写入工作区文件；请将工具 effect 声明为 sideEffect 或 idempotent。"
+                    }
+                    do {
+                        let url = try DesktopPluginStore.resolveAuthorizedWorkspaceFileURL(
+                            rootDirectory: targetWorkspaceDir,
+                            relativePath: relativePath,
+                            allowedPrefixes: plugin.manifest.capabilities.workspaceWritePrefixes,
+                            createParents: true
+                        )
+                        try Data(content.utf8).write(to: url, options: .atomic)
+                        return "ok"
+                    } catch {
+                        return "__AMBER_ERR__:\(error.localizedDescription)"
+                    }
+                }
+
+                context.setObject(getSettingBlock, forKeyedSubscript: "__amberGetSetting" as NSString)
+                context.setObject(getStorageBlock, forKeyedSubscript: "__amberGetStorage" as NSString)
+                context.setObject(setStorageBlock, forKeyedSubscript: "__amberSetStorage" as NSString)
+                context.setObject(httpFetchBlock, forKeyedSubscript: "__amberHttpFetch" as NSString)
+                context.setObject(workspaceReadBlock, forKeyedSubscript: "__amberWorkspaceRead" as NSString)
+                context.setObject(workspaceWriteBlock, forKeyedSubscript: "__amberWorkspaceWrite" as NSString)
+
+                let bootstrap = """
+                function __amberUnwrap(raw) {
+                    if (typeof raw === 'string' && raw.indexOf('__AMBER_ERR__:') === 0) {
+                        throw new Error(raw.slice('__AMBER_ERR__:'.length));
+                    }
+                    return raw;
+                }
+                const amber = Object.freeze({
+                    settings: Object.freeze({
+                        get: function(key) { return __amberGetSetting(String(key)); }
+                    }),
+                    storage: Object.freeze({
+                        get: function(key) { return __amberGetStorage(String(key)); },
+                        set: function(key, val) { __amberSetStorage(String(key), typeof val === 'string' ? val : JSON.stringify(val)); }
+                    }),
+                    http: Object.freeze({
+                        fetch: function(url, options) {
+                            const raw = __amberUnwrap(__amberHttpFetch(String(url), options == null ? '{}' : JSON.stringify(options)));
+                            return JSON.parse(raw);
+                        }
+                    }),
+                    workspace: Object.freeze({
+                        read: function(path) {
+                            return __amberUnwrap(__amberWorkspaceRead(String(path)));
+                        },
+                        write: function(path, content) {
+                            __amberUnwrap(__amberWorkspaceWrite(String(path), typeof content === 'string' ? content : JSON.stringify(content)));
+                            return true;
+                        }
+                    })
+                });
+                """
+                context.evaluateScript(bootstrap)
+                context.evaluateScript(plugin.scriptSource)
+                if let jsException {
+                    continuation.resume(throwing: DesktopRuntimeError.message("插件 \(plugin.manifest.name) 脚本加载失败：\(jsException)"))
+                    return
+                }
+
+                guard let fn = context.objectForKeyedSubscript(tool.entry), !fn.isUndefined else {
+                    continuation.resume(throwing: DesktopRuntimeError.message("插件 \(plugin.manifest.name) 缺少入口函数 \(tool.entry)。"))
+                    return
+                }
+                guard let resultValue = fn.call(withArguments: [arguments]) else {
+                    continuation.resume(throwing: DesktopRuntimeError.message("插件工具 \(tool.name) 未返回结果。"))
+                    return
+                }
+                if let jsException {
+                    continuation.resume(throwing: DesktopRuntimeError.message("插件工具 \(tool.name) 执行异常：\(jsException)"))
+                    return
+                }
+
+                let serialized: String
+                if let json = context.objectForKeyedSubscript("JSON")?
+                    .objectForKeyedSubscript("stringify")?
+                    .call(withArguments: [resultValue])?
+                    .toString(),
+                   json != "undefined" {
+                    serialized = json
+                } else {
+                    serialized = resultValue.toString() ?? "{}"
+                }
+                continuation.resume(returning: (serialized, currentStorage, storageMutated))
+            }
+        }
+
+        if storageMutated {
+            writePluginStorage(pluginID: plugin.id, storage: updatedStorage)
+            if plugin.id == "feishu_calendar" {
+                loadCalendarEventsFromStorage()
+                loadBotActivitiesFromStorage()
+            }
+            rebuildProjections()
+        }
+
+        return jsonString
+    }
+
+    private func evaluateInspectorCardSnapshot(
+        plugin: DesktopInstalledPlugin,
+        card: DesktopPluginInspectorCardManifest,
+        today: String
+    ) -> DesktopInspectorCardSnapshot {
+        let defaultFooter = plugin.manifest.ui.workspaceViews.first.map { "打开\($0.title)…" }
+        let defaultViewID = plugin.manifest.ui.workspaceViews.first?.id
+        let fallback = DesktopInspectorCardSnapshot(
+            pluginID: plugin.id,
+            pluginName: plugin.manifest.name,
+            cardID: card.id,
+            title: card.title,
+            symbol: card.symbol,
+            statusBadge: "已启用",
+            items: [],
+            emptyMessage: "\(plugin.manifest.name) 已就绪。",
+            footerActionTitle: defaultFooter,
+            opensWorkspaceViewID: defaultViewID
+        )
+
+        let entryName = card.entry.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !entryName.isEmpty,
+              !plugin.scriptSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let context = JSContext() else {
+            return fallback
+        }
+
+        var hadException = false
+        context.exceptionHandler = { _, _ in
+            hadException = true
+        }
+
+        let currentStorage = readPluginStorage(pluginID: plugin.id)
+        var settingsMap: [String: String] = [:]
+        for field in plugin.manifest.settingsSchema where field.kind != .secret {
+            settingsMap[field.key] = settingValue(pluginID: plugin.id, key: field.key)
+        }
+        settingsMap["today"] = today
+        settingsMap["mode"] = "local"
 
         let getSettingBlock: @convention(block) (String) -> String = { key in
             settingsMap[key] ?? ""
@@ -1947,14 +2280,8 @@ final class DesktopPluginStore {
         let getStorageBlock: @convention(block) (String) -> String = { key in
             currentStorage[key] ?? ""
         }
-        let setStorageBlock: @convention(block) (String, String) -> Void = { key, value in
-            currentStorage[key] = value
-            storageMutated = true
-        }
-
         context.setObject(getSettingBlock, forKeyedSubscript: "__amberGetSetting" as NSString)
         context.setObject(getStorageBlock, forKeyedSubscript: "__amberGetStorage" as NSString)
-        context.setObject(setStorageBlock, forKeyedSubscript: "__amberSetStorage" as NSString)
 
         let bootstrap = """
         const amber = Object.freeze({
@@ -1963,43 +2290,86 @@ final class DesktopPluginStore {
             }),
             storage: Object.freeze({
                 get: function(key) { return __amberGetStorage(String(key)); },
-                set: function(key, val) { __amberSetStorage(String(key), typeof val === 'string' ? val : JSON.stringify(val)); }
+                set: function() {}
             })
         });
         """
         context.evaluateScript(bootstrap)
         context.evaluateScript(plugin.scriptSource)
-        if let jsException {
-            throw DesktopRuntimeError.message("插件 \(plugin.manifest.name) 脚本加载失败：\(jsException)")
+        guard !hadException,
+              let fn = context.objectForKeyedSubscript(entryName),
+              !fn.isUndefined,
+              let rawResult = fn.call(withArguments: []),
+              !hadException,
+              !rawResult.isUndefined,
+              !rawResult.isNull else {
+            return fallback
         }
 
-        guard let fn = context.objectForKeyedSubscript(tool.entry), !fn.isUndefined else {
-            throw DesktopRuntimeError.message("插件 \(plugin.manifest.name) 缺少入口函数 \(tool.entry)。")
-        }
-        guard let resultValue = fn.call(withArguments: [arguments]) else {
-            throw DesktopRuntimeError.message("插件工具 \(tool.name) 未返回结果。")
-        }
-        if let jsException {
-            throw DesktopRuntimeError.message("插件工具 \(tool.name) 执行异常：\(jsException)")
-        }
-
-        if storageMutated {
-            writePluginStorage(pluginID: plugin.id, storage: currentStorage)
-            if plugin.id == "feishu_calendar" {
-                loadCalendarEventsFromStorage()
-                loadBotActivitiesFromStorage()
+        func parseItems(_ array: [[String: Any]]) -> [DesktopInspectorCardItem] {
+            array.enumerated().compactMap { index, dict in
+                let title = ((dict["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty else { return nil }
+                let id = ((dict["id"] as? String) ?? "item_\(index)").trimmingCharacters(in: .whitespacesAndNewlines)
+                let badge = (dict["badge"] as? String) ?? ""
+                let subtitle = dict["subtitle"] as? String
+                let actionTitle = (dict["actionTitle"] as? String) ?? (dict["action_title"] as? String)
+                let prompt = dict["prompt"] as? String
+                return DesktopInspectorCardItem(
+                    id: id.isEmpty ? "item_\(index)" : id,
+                    badge: badge,
+                    title: title,
+                    subtitle: subtitle,
+                    actionTitle: actionTitle,
+                    prompt: prompt
+                )
             }
-            rebuildProjections()
         }
 
-        guard let jsonString = context.objectForKeyedSubscript("JSON")?
-            .objectForKeyedSubscript("stringify")?
-            .call(withArguments: [resultValue])?
-            .toString(),
-              jsonString != "undefined" else {
-            return resultValue.toString() ?? "{}"
+        if let dict = rawResult.toObject() as? [String: Any] {
+            let rawItems = (dict["items"] as? [[String: Any]]) ?? []
+            let items = parseItems(rawItems)
+            let statusBadge = (dict["statusBadge"] as? String)
+                ?? (dict["status_badge"] as? String)
+                ?? (items.isEmpty ? "已启用" : "\(items.count)")
+            let emptyMessage = (dict["emptyMessage"] as? String)
+                ?? (dict["empty_message"] as? String)
+                ?? "\(plugin.manifest.name) 已就绪。"
+            let footerActionTitle = (dict["footerActionTitle"] as? String)
+                ?? (dict["footer_action_title"] as? String)
+                ?? defaultFooter
+            let opensViewID = (dict["opensWorkspaceViewID"] as? String)
+                ?? (dict["opens_workspace_view_id"] as? String)
+                ?? defaultViewID
+            return DesktopInspectorCardSnapshot(
+                pluginID: plugin.id,
+                pluginName: plugin.manifest.name,
+                cardID: card.id,
+                title: card.title,
+                symbol: card.symbol,
+                statusBadge: statusBadge,
+                items: items,
+                emptyMessage: emptyMessage,
+                footerActionTitle: footerActionTitle,
+                opensWorkspaceViewID: opensViewID
+            )
+        } else if let rawItems = rawResult.toObject() as? [[String: Any]] {
+            let items = parseItems(rawItems)
+            return DesktopInspectorCardSnapshot(
+                pluginID: plugin.id,
+                pluginName: plugin.manifest.name,
+                cardID: card.id,
+                title: card.title,
+                symbol: card.symbol,
+                statusBadge: items.isEmpty ? "已启用" : "\(items.count)",
+                items: items,
+                emptyMessage: "\(plugin.manifest.name) 已就绪。",
+                footerActionTitle: defaultFooter,
+                opensWorkspaceViewID: defaultViewID
+            )
         }
-        return jsonString
+
+        return fallback
     }
 
     // MARK: Precomputed Projections for Zero-IO SwiftUI Rendering
@@ -2031,6 +2401,44 @@ final class DesktopPluginStore {
                 ))
             }
 
+            var pluginCards: [DesktopInspectorCardSnapshot] = []
+            for card in plugin.manifest.ui.inspectorCards {
+                if plugin.id == "feishu_calendar" {
+                    let todayEvents = calendarEvents.filter { $0.datePrefix == today }
+                    let displayEvents = todayEvents.isEmpty ? Array(calendarEvents.prefix(3)) : todayEvents
+                    let items = displayEvents.map { event in
+                        let subParts = [event.location, event.attendees.isEmpty ? nil : "\(event.attendees.count) 人参会"]
+                            .compactMap { $0 }.filter { !$0.isEmpty }
+                        return DesktopInspectorCardItem(
+                            id: event.id,
+                            badge: event.timeRangeText,
+                            title: event.summary,
+                            subtitle: subParts.isEmpty ? nil : subParts.joined(separator: " · "),
+                            actionTitle: "准备",
+                            prompt: event.preparationPrompt
+                        )
+                    }
+                    let badgeText = todayEvents.isEmpty ? "\(calendarEvents.count)" : "\(todayEvents.count)"
+                    pluginCards.append(DesktopInspectorCardSnapshot(
+                        pluginID: plugin.id,
+                        pluginName: plugin.manifest.name,
+                        cardID: card.id,
+                        title: card.title,
+                        symbol: card.symbol,
+                        statusBadge: badgeText,
+                        items: items,
+                        emptyMessage: "今日暂无飞书日程，可在日历视图新建或让 Amber 帮你安排。",
+                        footerActionTitle: "打开飞书工作台",
+                        opensWorkspaceViewID: plugin.manifest.ui.workspaceViews.first?.id
+                    ))
+                } else {
+                    pluginCards.append(evaluateInspectorCardSnapshot(plugin: plugin, card: card, today: today))
+                }
+            }
+            nextCards.append(contentsOf: pluginCards)
+
+            let pluginStorage = plugin.id == "feishu_calendar" ? [:] : readPluginStorage(pluginID: plugin.id)
+            let fallbackCardItemsCount = pluginCards.reduce(0) { $0 + $1.items.count }
             for view in plugin.manifest.ui.workspaceViews {
                 let badge: Int
                 if plugin.id == "feishu_calendar" {
@@ -2039,8 +2447,10 @@ final class DesktopPluginStore {
                     } else {
                         badge = calendarEvents.filter { $0.datePrefix == today }.count
                     }
+                } else if let explicit = Int(pluginStorage["badge:\(view.id)"] ?? pluginStorage["badge_count"] ?? "") {
+                    badge = max(0, explicit)
                 } else {
-                    badge = 0
+                    badge = fallbackCardItemsCount
                 }
                 nextViews.append(DesktopPluginWorkspaceViewEntry(
                     pluginID: plugin.id,
@@ -2063,51 +2473,6 @@ final class DesktopPluginStore {
                     symbol: command.symbol,
                     promptTemplate: command.promptTemplate
                 ))
-            }
-
-            for card in plugin.manifest.ui.inspectorCards {
-                if plugin.id == "feishu_calendar" {
-                    let todayEvents = calendarEvents.filter { $0.datePrefix == today }
-                    let displayEvents = todayEvents.isEmpty ? Array(calendarEvents.prefix(3)) : todayEvents
-                    let items = displayEvents.map { event in
-                        let subParts = [event.location, event.attendees.isEmpty ? nil : "\(event.attendees.count) 人参会"]
-                            .compactMap { $0 }.filter { !$0.isEmpty }
-                        return DesktopInspectorCardItem(
-                            id: event.id,
-                            badge: event.timeRangeText,
-                            title: event.summary,
-                            subtitle: subParts.isEmpty ? nil : subParts.joined(separator: " · "),
-                            actionTitle: "准备",
-                            prompt: event.preparationPrompt
-                        )
-                    }
-                    let badgeText = todayEvents.isEmpty ? "\(calendarEvents.count)" : "\(todayEvents.count)"
-                    nextCards.append(DesktopInspectorCardSnapshot(
-                        pluginID: plugin.id,
-                        pluginName: plugin.manifest.name,
-                        cardID: card.id,
-                        title: card.title,
-                        symbol: card.symbol,
-                        statusBadge: badgeText,
-                        items: items,
-                        emptyMessage: "今日暂无飞书日程，可在日历视图新建或让 Amber 帮你安排。",
-                        footerActionTitle: "打开飞书工作台",
-                        opensWorkspaceViewID: plugin.manifest.ui.workspaceViews.first?.id
-                    ))
-                } else {
-                    nextCards.append(DesktopInspectorCardSnapshot(
-                        pluginID: plugin.id,
-                        pluginName: plugin.manifest.name,
-                        cardID: card.id,
-                        title: card.title,
-                        symbol: card.symbol,
-                        statusBadge: "已启用",
-                        items: [],
-                        emptyMessage: "\(plugin.manifest.name) 已就绪。",
-                        footerActionTitle: plugin.manifest.ui.workspaceViews.first.map { "打开\($0.title)…" },
-                        opensWorkspaceViewID: plugin.manifest.ui.workspaceViews.first?.id
-                    ))
-                }
             }
         }
 
@@ -2897,7 +3262,7 @@ final class DesktopPluginStore {
         )
     }
 
-    private static func encodeJSONObject(_ object: [String: Any]) throws -> String {
+    nonisolated private static func encodeJSONObject(_ object: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }
