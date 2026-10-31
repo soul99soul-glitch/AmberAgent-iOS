@@ -17,6 +17,8 @@ kotlin {
 
         val jvmMain by getting {
             dependencies {
+                api(project(":cloud-channels"))
+                api(project(":cloud-proactive"))
                 implementation(project(":ai-core"))
                 implementation(project(":ai-provider-claude"))
                 implementation(project(":ai-provider-openai"))

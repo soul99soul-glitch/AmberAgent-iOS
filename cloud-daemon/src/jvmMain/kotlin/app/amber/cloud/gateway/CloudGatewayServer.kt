@@ -1,5 +1,6 @@
 package app.amber.cloud.gateway
 
+import app.amber.cloud.channels.FeishuChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -44,7 +45,10 @@ import java.nio.charset.StandardCharsets
  * - `POST /v1/amber/schedules/{id}/run`
  * - `POST /v1/tasks/{key}/monitor`
  */
-fun Application.configureCloudGateway(state: CloudGatewayState) {
+fun Application.configureCloudGateway(
+    state: CloudGatewayState,
+    feishuChannel: FeishuChannel? = null,
+) {
     val gatewayJson = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -184,7 +188,13 @@ fun Application.configureCloudGateway(state: CloudGatewayState) {
             val isUntrustedSurface = surfaceHeader in UNTRUSTED_SURFACES
             val foregroundHeader = call.request.header("X-Amber-Trusted-Foreground")?.equals("true", ignoreCase = true) == true
             val foregroundBody = body["trustedForeground"]?.jsonPrimitive?.booleanOrNull == true
-            val trustedForeground = device.trustedApprovalSurface && !isUntrustedSurface && (foregroundHeader || foregroundBody)
+            val biometricHeader = call.request.header("X-Amber-Biometric-Verified")?.lowercase()
+            val biometricBody = body["biometricVerified"]?.jsonPrimitive?.booleanOrNull
+            val biometricExplicitlyFailed = biometricHeader == "false" || biometricBody == false
+            val trustedForeground = device.trustedApprovalSurface &&
+                !isUntrustedSurface &&
+                !biometricExplicitlyFailed &&
+                (foregroundHeader || foregroundBody)
 
             val decisionResult = state.processDecision(
                 sessionKey = sessionKey,
@@ -286,6 +296,22 @@ fun Application.configureCloudGateway(state: CloudGatewayState) {
                 val resp = buildJsonObject { put("monitored", monitored) }
                 call.respondJson(200, gatewayJson.encodeToString(JsonObject.serializer(), resp))
             }
+        }
+
+        post("/v1/channels/feishu/webhook") {
+            val ch = feishuChannel
+            if (ch == null) {
+                call.respondError(404, "飞书通道未启用")
+                return@post
+            }
+            val rawBody = runCatching { call.receiveText() }.getOrDefault("")
+            val headers = buildMap<String, String> {
+                for (name in call.request.headers.names()) {
+                    call.request.headers[name]?.let { put(name, it) }
+                }
+            }
+            val resp = ch.handleWebhookEvent(headers = headers, rawBody = rawBody)
+            call.respondJson(resp.statusCode, resp.bodyJson)
         }
     }
 }

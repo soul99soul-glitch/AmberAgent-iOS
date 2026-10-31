@@ -638,26 +638,28 @@ class CloudGatewayState(
             return DecisionHttpResult(409, "这次审批已经结束", outcome = "stale")
         }
 
-        // C3 v2 + Defect #1: High-risk `allow=true` from any non-trusted or non-foreground source -> 403!
-        if (allow && pending.highRisk && !trustedForegroundSource) {
-            recordAudit(
-                "amber-decision-result",
-                mapOf(
-                    "task" to sessionKey,
-                    "run" to runId,
-                    "tool" to pending.tool,
-                    "toolCallId" to toolCallId,
-                    "allow" to "true",
-                    "decision" to "allow",
-                    "outcome" to "rejected_high_risk",
-                    "device" to actorDevice,
-                ),
-            )
-            return DecisionHttpResult(
-                status = 403,
-                error = "高风险操作只能在已配对且已解锁的原生 App 前台核对后批准",
-                outcome = "rejected_high_risk",
-            )
+        // C3 v2 + Defect #1: High-risk or IM `allow=true` from any non-trusted or non-foreground source -> 403!
+        if (allow && (pending.highRisk || !trustedForegroundSource)) {
+            if (!trustedForegroundSource) {
+                recordAudit(
+                    "amber-decision-result",
+                    mapOf(
+                        "task" to sessionKey,
+                        "run" to runId,
+                        "tool" to pending.tool,
+                        "toolCallId" to toolCallId,
+                        "allow" to "true",
+                        "decision" to "allow",
+                        "outcome" to "rejected_high_risk",
+                        "device" to actorDevice,
+                    ),
+                )
+                return DecisionHttpResult(
+                    status = 403,
+                    error = "操作只能在已配对、解锁且经过生物识别的原生 App 前台核对后批准（IM 仅可拒绝）",
+                    outcome = "rejected_high_risk",
+                )
+            }
         }
 
         val listeners = synchronized(this) { decisionListeners.toList() }

@@ -18,12 +18,22 @@ import app.amber.cloud.channel.ChannelKind
 import app.amber.cloud.channel.ConversationScope
 import app.amber.cloud.channel.InboundMessage
 import app.amber.cloud.channel.OutboundMessage
+import app.amber.cloud.channel.OutboundReceipt
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.channel.SenderRole
 import app.amber.cloud.channel.resolveConversationId
+import app.amber.cloud.channels.OwnerBindingManager
 import app.amber.cloud.gateway.CloudGatewayState
 import app.amber.cloud.gateway.PendingApprovalDto
 import app.amber.cloud.gateway.SessionDto
+import app.amber.cloud.proactive.InterruptionBudgetConfig
+import app.amber.cloud.proactive.L2NoteworthyScore
+import app.amber.cloud.proactive.NoteworthyJudgeProvider
+import app.amber.cloud.proactive.ProactiveEngine
+import app.amber.cloud.proactive.ProactiveRunResult
+import app.amber.cloud.proactive.ProactiveRestraintGate
+import app.amber.cloud.proactive.ProactiveTriggerSignal
+import app.amber.cloud.proactive.QuietHoursConfig
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
@@ -35,6 +45,14 @@ import app.amber.core.model.MemoryScope
 import app.amber.core.model.toMessageNode
 import app.amber.core.storage.conversation.ConversationFile
 import app.amber.core.storage.conversation.JsonConversationStorage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -101,6 +119,23 @@ class CloudAgentKernel(
     masterSecretOverride: String? = null,
     val contextWindowTokens: Int = 32_000,
     val autoApproveOrdinaryTools: Boolean = false,
+    val ownerBinding: OwnerBindingManager = OwnerBindingManager(
+        persistenceFile = File(dataDir, "owner-bindings.json"),
+    ),
+    val proactiveEngine: ProactiveEngine = ProactiveEngine(
+        l2Judge = NoteworthyJudgeProvider { req ->
+            L2NoteworthyScore(
+                noteworthy = true,
+                urgency = 4,
+                importance = 4,
+                summary = req.deltaSummary.lines().firstOrNull()?.take(80) ?: req.topicKey,
+            )
+        },
+        restraintGate = ProactiveRestraintGate(
+            quietHours = QuietHoursConfig(),
+            budgetConfig = InterruptionBudgetConfig(),
+        ),
+    ),
 ) : ChannelIngress {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -122,6 +157,8 @@ class CloudAgentKernel(
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
+    private val proactiveScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var proactiveJob: Job? = null
 
     data class PendingRunRecord(
         val runId: String,
@@ -194,6 +231,112 @@ class CloudAgentKernel(
         connectors[connector.kind] = connector
     }
 
+    /**
+     * Starts the resident proactive intelligence engine background loop inside `amberd`.
+     */
+    fun startProactiveLoop(pollIntervalMs: Long = 60_000L) {
+        if (proactiveJob?.isActive == true) return
+        proactiveJob = proactiveScope.launch {
+            while (isActive) {
+                try {
+                    runProactiveCycle()
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                    // Keep resident loop alive on transient sensor errors
+                }
+                delay(pollIntervalMs)
+            }
+        }
+    }
+
+    fun stopProactiveLoop() {
+        proactiveJob?.cancel()
+        proactiveJob = null
+    }
+
+    val isProactiveLoopRunning: Boolean
+        get() = proactiveJob?.isActive == true
+
+    /**
+     * Polls all registered proactive trigger sources and routes produced L3 cards through
+     * the kernel's restraint gate (quiet hours + interruption budget) to the owner's private chats.
+     */
+    suspend fun runProactiveCycle(nowOverrideMs: Long? = null): List<ProactiveRunResult> {
+        val rawResults = proactiveEngine.pollAllSources(targetChatId = "", channel = null)
+        return rawResults.map { res ->
+            if (res is ProactiveRunResult.PushedAtL3) {
+                deliverProactiveCardToOwner(res)
+            } else {
+                res
+            }
+        }
+    }
+
+    /**
+     * Evaluates a single [ProactiveTriggerSignal] in the kernel (enforcing L1, L2, quiet hours,
+     * and interruption budget) and delivers any produced L3 card to the owner's private chats
+     * across registered outbound [ChannelConnector]s while recording it on [PRIMARY_CONVERSATION_ID].
+     */
+    suspend fun triggerProactiveSignal(
+        signal: ProactiveTriggerSignal,
+        nowOverrideMs: Long? = null,
+    ): ProactiveRunResult {
+        val res = proactiveEngine.processSignal(
+            signal = signal,
+            targetChatId = "",
+            channel = null,
+            nowOverrideMs = nowOverrideMs,
+        )
+        return if (res is ProactiveRunResult.PushedAtL3) {
+            deliverProactiveCardToOwner(res)
+        } else {
+            res
+        }
+    }
+
+    private suspend fun deliverProactiveCardToOwner(pushed: ProactiveRunResult.PushedAtL3): ProactiveRunResult.PushedAtL3 {
+        val card = pushed.card
+        var firstReceipt: OutboundReceipt? = pushed.receipt
+
+        // Record the proactive card in the primary timeline so context is continuous across restarts
+        val existing = conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)
+            ?: Conversation(
+                id = PRIMARY_CONVERSATION_ID,
+                assistantId = DEFAULT_ASSISTANT_ID,
+                title = "主时间线",
+                messageNodes = emptyList(),
+            )
+        val proactiveMsg = sanitizeAssistantMessage(
+            UIMessage.assistant("【主动提醒 · ${card.title}】\n${card.markdownBody}")
+        )
+        conversationStorage.saveConversation(
+            existing.copy(
+                messageNodes = existing.messageNodes + proactiveMsg.toMessageNode(),
+                updateAt = Clock.System.now(),
+            )
+        )
+
+        // Dispatch outbound card to all registered connectors where the owner has a bound private chat
+        for ((kind, connector) in connectors) {
+            val ownerChatId = ownerBinding.getOwnerDirectChatId(kind.wireName) ?: continue
+            val outbound = OutboundMessage(
+                channel = kind,
+                chatId = ownerChatId,
+                text = card.markdownBody,
+                conversationId = PRIMARY_CONVERSATION_ID.toString(),
+                silent = pushed.restraintVerdict.silentDelivery,
+                card = card,
+                idempotencyKey = "proactive:${pushed.l1Delta.signalId}:${kind.wireName}",
+            )
+            val receipt = connector.sendWithReceipt(outbound)
+            if (firstReceipt == null) {
+                firstReceipt = receipt
+            }
+        }
+        return pushed.copy(receipt = firstReceipt)
+    }
+
     override suspend fun handleInbound(message: InboundMessage): OutboundMessage {
         val convId = resolveConversationId(message)
 
@@ -223,6 +366,7 @@ class CloudAgentKernel(
 
         // Auto-extract explicit memory directive in direct owner chat
         if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
+            ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
             extractExplicitMemoryIfPresent(message.text, convId.toString())
         }
 
@@ -353,7 +497,7 @@ class CloudAgentKernel(
                 toolName = toolCall.toolName,
                 redactedDetail = redactedArgsJson,
                 highRisk = highRisk,
-                allowApproveInChannel = !highRisk,
+                allowApproveInChannel = false,
             )
             val notice = if (highRisk) {
                 "正在等待你在已配对且已解锁的原生 App 前台核对批准高风险工具 `${toolCall.toolName}`（当前通道仅可点拒绝）。"
@@ -411,8 +555,11 @@ class CloudAgentKernel(
         toolCallId: String,
         allow: Boolean,
     ): ChannelDecisionOutcome {
+        val resolvedSessionKey = sessionKey.trim().ifEmpty {
+            pendingRunsBySessionKey.values.firstOrNull { it.toolCallId == toolCallId }?.sessionKey.orEmpty()
+        }
         val result = gatewayState.processDecision(
-            sessionKey = sessionKey,
+            sessionKey = resolvedSessionKey,
             toolCallId = toolCallId,
             allow = allow,
             actorDevice = "${channel.wireName}:$senderId",
