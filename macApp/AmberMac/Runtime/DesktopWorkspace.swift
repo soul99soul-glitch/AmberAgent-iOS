@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
 import Observation
 @preconcurrency import GatewayCore
 
@@ -283,6 +286,49 @@ final class DesktopWorkspace {
         self.plugins.onStateChanged = { [weak self] in
             self?.reconcilePluginState()
         }
+        self.plugins.conversationSnapshotProvider = { [weak self] in
+            guard let self, let conv = self.selectedConversation else {
+                return DesktopPluginConversationSnapshot(id: "", title: "当前对话", messageCount: 0, messages: [])
+            }
+            let recent = conv.messages.suffix(20).map { msg in
+                DesktopPluginConversationSnapshot.MessageItem(
+                    id: msg.id.uuidString,
+                    role: msg.role.rawValue,
+                    content: msg.text
+                )
+            }
+            return DesktopPluginConversationSnapshot(
+                id: conv.id.uuidString,
+                title: conv.title,
+                messageCount: conv.messages.count,
+                messages: recent
+            )
+        }
+        self.plugins.onInsertToComposerRequest = { [weak self] text in
+            guard let self else { return }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            if self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.draft = trimmed
+            } else {
+                self.draft += "\n\n" + trimmed
+            }
+        }
+        self.plugins.onOpenPluginViewRequest = { [weak self] pluginID, viewID in
+            self?.openPluginView(pluginID: pluginID, viewID: viewID)
+        }
+        #if canImport(AppKit)
+        if self.plugins.onConfirmRequest == nil {
+            self.plugins.onConfirmRequest = { title, message in
+                let alert = NSAlert()
+                alert.messageText = title
+                alert.informativeText = message
+                alert.addButton(withTitle: "确定")
+                alert.addButton(withTitle: "取消")
+                return alert.runModal() == .alertFirstButtonReturn
+            }
+        }
+        #endif
         reconcilePluginState()
         if let initialConversations {
             conversations = initialConversations
@@ -456,6 +502,11 @@ final class DesktopWorkspace {
             pendingAttachments = attachments[id] ?? []
             errorMessage = conversationErrors[id]
             reloadFiles()
+            let title = summaries.first(where: { $0.id == id })?.title ?? "对话"
+            plugins.broadcastHostEvent("conversation:changed", payload: [
+                "conversationId": id.uuidString,
+                "title": title
+            ])
         }
         insights.load(id)
         loadConversation(id)

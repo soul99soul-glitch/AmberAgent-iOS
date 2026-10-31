@@ -35,6 +35,30 @@ struct DesktopInspector: View {
                         }
                     }
 
+                    // Module 1b: Custom WebView Inspector / Right Sidebar Views (amber.plugin.v3)
+                    ForEach(workspace.plugins.activeCustomViews.filter { $0.slot == .inspector || $0.slot == .rightSidebar }) { customView in
+                        floatingIsland {
+                            sectionBlock(
+                                "plugin.webview.\(customView.id)",
+                                title: customView.title,
+                                glyph: .calendar,
+                                tone: .amber,
+                                badge: customView.pluginName
+                            ) {
+                                DesktopPluginWebView(
+                                    store: workspace.plugins,
+                                    pluginID: customView.pluginID,
+                                    viewID: customView.viewID,
+                                    entryPath: customView.entryPath,
+                                    reloadRevision: workspace.plugins.pluginReloadRevisions[customView.pluginID] ?? 0,
+                                    isDark: scheme == .dark
+                                )
+                                .frame(height: max(180, customView.height ?? 240))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+
                     // Module 2: Conversation Context & Intelligence Island
                     floatingIsland {
                         sectionBlock(

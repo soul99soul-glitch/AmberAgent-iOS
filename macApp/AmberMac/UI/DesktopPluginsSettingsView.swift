@@ -24,6 +24,7 @@ struct DesktopPluginsSettingsView: View {
     @State private var statusMessage: String?
     @State private var statusIsError = false
     @State private var confirmsDeletePluginID: String?
+    @State private var pendingInstallPlan: DesktopPluginInstallPlan?
 
     init(
         plugins: DesktopPluginStore,
@@ -80,6 +81,32 @@ struct DesktopPluginsSettingsView: View {
             Button("取消", role: .cancel) { confirmsDeletePluginID = nil }
         } message: {
             Text("插件目录、配置与保存在钥匙串中的凭据将被一并移除。")
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { pendingInstallPlan != nil },
+                set: { if !$0 { pendingInstallPlan = nil } }
+            )
+        ) {
+            if let plan = pendingInstallPlan {
+                DesktopPluginPermissionConsentSheet(
+                    plan: plan,
+                    onApprove: {
+                        do {
+                            let id = try plugins.importPlugin(from: plan.sourceURL, approvePermissions: true)
+                            selection = .ext(id)
+                            loadDraftSettings()
+                            setStatus("已批准权限并导入插件「\(plan.manifest.name)」。", isError: false)
+                        } catch {
+                            setStatus(error.localizedDescription, isError: true)
+                        }
+                        pendingInstallPlan = nil
+                    },
+                    onCancel: {
+                        pendingInstallPlan = nil
+                    }
+                )
+            }
         }
     }
 
@@ -1454,7 +1481,12 @@ struct DesktopPluginsSettingsView: View {
         panel.allowedContentTypes = [.json, .folder]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let id = try plugins.importPlugin(from: url)
+            let plan = try plugins.inspectPluginPackage(at: url)
+            if plan.requiresUserApproval {
+                pendingInstallPlan = plan
+                return
+            }
+            let id = try plugins.importPlugin(from: url, approvePermissions: true)
             selection = .ext(id)
             loadDraftSettings()
             setStatus("已成功导入并启用插件「\(id)」。", isError: false)

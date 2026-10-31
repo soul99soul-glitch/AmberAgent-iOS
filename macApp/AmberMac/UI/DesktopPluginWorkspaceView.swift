@@ -43,6 +43,16 @@ struct DesktopPluginWorkspaceView: View {
         workspace.plugins.activeWorkspaceViews.first { $0.pluginID == pluginID && $0.viewID == viewID }
     }
 
+    private var customViewEntry: DesktopPluginCustomViewEntry? {
+        workspace.plugins.activeCustomViews.first { $0.pluginID == pluginID && $0.viewID == viewID }
+    }
+
+    private var customEntryPath: String? {
+        if let path = customViewEntry?.entryPath, !path.isEmpty { return path }
+        if let path = viewEntry?.entryPath, !path.isEmpty { return path }
+        return nil
+    }
+
     private var todayString: String {
         workspace.plugins.todayDateString
     }
@@ -72,45 +82,58 @@ struct DesktopPluginWorkspaceView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
+        if let entryPath = customEntryPath {
+            DesktopPluginCustomViewContainer(
+                workspace: workspace,
+                pluginID: pluginID,
+                viewID: viewID,
+                title: customViewEntry?.title ?? viewEntry?.title ?? plugin?.manifest.name ?? "插件视图",
+                subtitle: customViewEntry?.subtitle ?? viewEntry?.subtitle ?? plugin?.manifest.description ?? "",
+                symbol: customViewEntry?.symbol ?? viewEntry?.symbol ?? plugin?.manifest.icon ?? "puzzlepiece.extension",
+                entryPath: entryPath,
+                showHeader: true
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
 
-            if let statusBannerText {
-                HStack(spacing: 8) {
-                    Image(systemName: statusIsError ? "exclamationmark.triangle" : "checkmark.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(statusIsError ? DesktopTheme.danger : DesktopTheme.accent)
-                    Text(statusBannerText)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(statusIsError ? DesktopTheme.danger : DesktopTheme.inkSecondary)
-                    Spacer()
-                    Button {
-                        self.statusBannerText = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(DesktopTheme.inkTertiary)
+                if let statusBannerText {
+                    HStack(spacing: 8) {
+                        Image(systemName: statusIsError ? "exclamationmark.triangle" : "checkmark.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(statusIsError ? DesktopTheme.danger : DesktopTheme.accent)
+                        Text(statusBannerText)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(statusIsError ? DesktopTheme.danger : DesktopTheme.inkSecondary)
+                        Spacer()
+                        Button {
+                            self.statusBannerText = nil
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DesktopTheme.inkTertiary)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("关闭提示")
                     }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("关闭提示")
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 9)
+                    .background(DesktopTheme.honeySoft)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 9)
-                .background(DesktopTheme.honeySoft)
-            }
 
-            if pluginID == "feishu_calendar" {
-                if isFeishuBotView {
-                    feishuBotBoard
+                if pluginID == "feishu_calendar" {
+                    if isFeishuBotView {
+                        feishuBotBoard
+                    } else {
+                        feishuCalendarBoard
+                    }
                 } else {
-                    feishuCalendarBoard
+                    genericPluginBoard
                 }
-            } else {
-                genericPluginBoard
             }
+            .background(DesktopTheme.paper)
         }
-        .background(DesktopTheme.paper)
     }
 
     // MARK: - Header

@@ -199,6 +199,12 @@ struct DesktopWorkspaceView: View {
                 onFocusComposer: { composerFocusRequest += 1 }
             )
         }
+        .sheet(item: Binding(
+            get: { workspace.plugins.activeModal },
+            set: { workspace.plugins.activeModal = $0 }
+        )) { modal in
+            DesktopPluginModalSheet(workspace: workspace, modal: modal)
+        }
         .onChange(of: commandPaletteRequest) {
             commandPalettePresented = true
         }

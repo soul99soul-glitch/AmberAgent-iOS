@@ -276,14 +276,16 @@ struct DesktopPluginWorkspaceViewManifest: Codable, Equatable, Identifiable, Sen
     let title: String
     var symbol: String = "calendar"
     var subtitle: String = ""
+    var entry: String? = nil
 
-    enum CodingKeys: String, CodingKey { case id, title, symbol, subtitle }
+    enum CodingKeys: String, CodingKey { case id, title, symbol, subtitle, entry, html }
 
-    init(id: String, title: String, symbol: String = "calendar", subtitle: String = "") {
+    init(id: String, title: String, symbol: String = "calendar", subtitle: String = "", entry: String? = nil) {
         self.id = id
         self.title = title
         self.symbol = symbol
         self.subtitle = subtitle
+        self.entry = entry
     }
 
     init(from decoder: Decoder) throws {
@@ -292,6 +294,17 @@ struct DesktopPluginWorkspaceViewManifest: Codable, Equatable, Identifiable, Sen
         title = try container.decode(String.self, forKey: .title)
         symbol = try container.decodeIfPresent(String.self, forKey: .symbol) ?? "calendar"
         subtitle = try container.decodeIfPresent(String.self, forKey: .subtitle) ?? ""
+        entry = try container.decodeIfPresent(String.self, forKey: .entry)
+            ?? (try container.decodeIfPresent(String.self, forKey: .html))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(symbol, forKey: .symbol)
+        if !subtitle.isEmpty { try container.encode(subtitle, forKey: .subtitle) }
+        try container.encodeIfPresent(entry, forKey: .entry)
     }
 }
 
@@ -339,15 +352,22 @@ struct DesktopPluginUIManifest: Codable, Equatable, Sendable {
     var inspectorCards: [DesktopPluginInspectorCardManifest]
     var workspaceViews: [DesktopPluginWorkspaceViewManifest]
     var commands: [DesktopPluginCommandManifest]
+    var views: [DesktopPluginViewManifest]
+
+    enum CodingKeys: String, CodingKey {
+        case inspectorCards, workspaceViews, commands, views
+    }
 
     init(
         inspectorCards: [DesktopPluginInspectorCardManifest] = [],
         workspaceViews: [DesktopPluginWorkspaceViewManifest] = [],
-        commands: [DesktopPluginCommandManifest] = []
+        commands: [DesktopPluginCommandManifest] = [],
+        views: [DesktopPluginViewManifest] = []
     ) {
         self.inspectorCards = inspectorCards
         self.workspaceViews = workspaceViews
         self.commands = commands
+        self.views = views
     }
 
     init(from decoder: Decoder) throws {
@@ -355,79 +375,175 @@ struct DesktopPluginUIManifest: Codable, Equatable, Sendable {
         inspectorCards = try container.decodeIfPresent([DesktopPluginInspectorCardManifest].self, forKey: .inspectorCards) ?? []
         workspaceViews = try container.decodeIfPresent([DesktopPluginWorkspaceViewManifest].self, forKey: .workspaceViews) ?? []
         commands = try container.decodeIfPresent([DesktopPluginCommandManifest].self, forKey: .commands) ?? []
+        views = try container.decodeIfPresent([DesktopPluginViewManifest].self, forKey: .views) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if !inspectorCards.isEmpty { try container.encode(inspectorCards, forKey: .inspectorCards) }
+        if !workspaceViews.isEmpty { try container.encode(workspaceViews, forKey: .workspaceViews) }
+        if !commands.isEmpty { try container.encode(commands, forKey: .commands) }
+        if !views.isEmpty { try container.encode(views, forKey: .views) }
     }
 }
 
 struct DesktopPluginManifest: Codable, Equatable, Identifiable, Sendable {
+    static let schemaV3 = "amber.plugin.v3"
     static let schemaV2 = "amber.plugin.v2"
     static let schemaV1 = "amber.plugin.v1"
 
     var schema: String = DesktopPluginManifest.schemaV2
+    var manifestVersion: Int? = nil
     let id: String
     let name: String
     let version: String
     let description: String
     var icon: String = "puzzlepiece.extension"
+    var main: String = "main.js"
+    var devReload: Bool = false
+    var permissions: [String] = []
     var capabilities: DesktopPluginCapabilities = .init()
     var settingsSchema: [DesktopPluginSettingField] = []
     var tools: [DesktopPluginToolManifest] = []
     var ui: DesktopPluginUIManifest = .init()
 
+    var isV3: Bool {
+        schema == Self.schemaV3
+            || manifestVersion == 3
+            || (version.hasPrefix("3.") && (!permissions.isEmpty || !ui.views.isEmpty || devReload))
+    }
+
     enum CodingKeys: String, CodingKey {
-        case schema, id, name, version, description, icon, capabilities
+        case schema
+        case manifestVersion = "manifest_version"
+        case apiVersion = "api_version"
+        case id, name, version, description, icon, main
+        case devReload = "dev_reload"
+        case devReloadCamel = "devReload"
+        case permissions, capabilities
         case settingsSchema = "settings_schema"
         case tools, ui
     }
 
     init(
         schema: String = DesktopPluginManifest.schemaV2,
+        manifestVersion: Int? = nil,
         id: String,
         name: String,
         version: String,
         description: String,
         icon: String = "puzzlepiece.extension",
+        main: String = "main.js",
+        devReload: Bool = false,
+        permissions: [String] = [],
         capabilities: DesktopPluginCapabilities = .init(),
         settingsSchema: [DesktopPluginSettingField] = [],
         tools: [DesktopPluginToolManifest] = [],
         ui: DesktopPluginUIManifest = .init()
     ) {
         self.schema = schema
+        self.manifestVersion = manifestVersion
         self.id = id
         self.name = name
         self.version = version
         self.description = description
         self.icon = icon
+        self.main = main
+        self.devReload = devReload
+        self.permissions = permissions
         self.capabilities = capabilities
         self.settingsSchema = settingsSchema
         self.tools = tools
         self.ui = ui
+        mergePermissionsIntoCapabilities()
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        schema = try container.decodeIfPresent(String.self, forKey: .schema) ?? Self.schemaV2
+        let decodedManifestVer = try container.decodeIfPresent(Int.self, forKey: .manifestVersion)
+            ?? (try container.decodeIfPresent(Int.self, forKey: .apiVersion))
+        manifestVersion = decodedManifestVer
+        if let explicitSchema = try container.decodeIfPresent(String.self, forKey: .schema) {
+            schema = explicitSchema
+        } else if decodedManifestVer == 3 {
+            schema = Self.schemaV3
+        } else {
+            schema = Self.schemaV2
+        }
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         version = try container.decode(String.self, forKey: .version)
         description = try container.decode(String.self, forKey: .description)
         icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? "puzzlepiece.extension"
+        main = try container.decodeIfPresent(String.self, forKey: .main) ?? "main.js"
+        devReload = try container.decodeIfPresent(Bool.self, forKey: .devReload)
+            ?? (try container.decodeIfPresent(Bool.self, forKey: .devReloadCamel))
+            ?? false
+        permissions = try container.decodeIfPresent([String].self, forKey: .permissions) ?? []
         capabilities = try container.decodeIfPresent(DesktopPluginCapabilities.self, forKey: .capabilities) ?? .init()
         settingsSchema = try container.decodeIfPresent([DesktopPluginSettingField].self, forKey: .settingsSchema) ?? []
         tools = try container.decodeIfPresent([DesktopPluginToolManifest].self, forKey: .tools) ?? []
         ui = try container.decodeIfPresent(DesktopPluginUIManifest.self, forKey: .ui) ?? .init()
+        mergePermissionsIntoCapabilities()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schema, forKey: .schema)
+        try container.encodeIfPresent(manifestVersion, forKey: .manifestVersion)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(version, forKey: .version)
+        try container.encode(description, forKey: .description)
+        try container.encode(icon, forKey: .icon)
+        if main != "main.js" { try container.encode(main, forKey: .main) }
+        if devReload { try container.encode(devReload, forKey: .devReload) }
+        if !permissions.isEmpty { try container.encode(permissions, forKey: .permissions) }
+        try container.encode(capabilities, forKey: .capabilities)
+        if !settingsSchema.isEmpty { try container.encode(settingsSchema, forKey: .settingsSchema) }
+        if !tools.isEmpty { try container.encode(tools, forKey: .tools) }
+        try container.encode(ui, forKey: .ui)
+    }
+
+    private mutating func mergePermissionsIntoCapabilities() {
+        for raw in permissions {
+            let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if token.hasPrefix("http:") {
+                let domain = String(token.dropFirst("http:".count)).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if !domain.isEmpty && !capabilities.networkDomains.contains(where: { $0.lowercased() == domain }) {
+                    capabilities.networkDomains.append(domain)
+                }
+            } else if token.hasPrefix("workspace.read:") {
+                let prefix = String(token.dropFirst("workspace.read:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !prefix.isEmpty && !capabilities.workspaceReadPrefixes.contains(prefix) {
+                    capabilities.workspaceReadPrefixes.append(prefix)
+                }
+            } else if token.hasPrefix("workspace.write:") {
+                let prefix = String(token.dropFirst("workspace.write:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !prefix.isEmpty && !capabilities.workspaceWritePrefixes.contains(prefix) {
+                    capabilities.workspaceWritePrefixes.append(prefix)
+                }
+            }
+        }
     }
 
     func validated() throws {
-        guard schema == Self.schemaV2 || schema == Self.schemaV1 else {
-            throw DesktopRuntimeError.message("插件 schema 须为 amber.plugin.v2 或 amber.plugin.v1。")
+        guard schema == Self.schemaV3 || schema == Self.schemaV2 || schema == Self.schemaV1 else {
+            throw DesktopRuntimeError.message("插件 schema 须为 amber.plugin.v3、amber.plugin.v2 或 amber.plugin.v1。")
         }
-        guard Self.isValidIdentifier(id, minLength: 2) else {
-            throw DesktopRuntimeError.message("插件 id 无效：\(id)（须为 2–32 位小写字母、数字或下划线）。")
+        guard Self.isValidPluginID(id, minLength: 2) else {
+            throw DesktopRuntimeError.message("插件 id 无效：\(id)（须为 2–32 位小写字母、数字、下划线或连字符）。")
         }
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DesktopRuntimeError.message("插件 name、version 与 description 不能为空。")
+        }
+        guard Self.isValidRelativeAssetPath(main) else {
+            throw DesktopRuntimeError.message("插件入口脚本路径无效：\(main)。")
+        }
+        for perm in permissions {
+            try DesktopPluginPermissionCatalog.validateToken(perm)
         }
         var seenTools = Set<String>()
         for tool in tools {
@@ -438,6 +554,25 @@ struct DesktopPluginManifest: Codable, Equatable, Identifiable, Sendable {
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   object["type"] as? String == "object" else {
                 throw DesktopRuntimeError.message("插件工具 \(tool.name) 的参数 Schema 须为 JSON object。")
+            }
+        }
+        var seenViews = Set<String>()
+        for view in ui.views {
+            guard Self.isValidPluginID(view.id, minLength: 1), seenViews.insert(view.id).inserted else {
+                throw DesktopRuntimeError.message("插件视图 ID 无效或重复：\(view.id)。")
+            }
+            guard !view.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw DesktopRuntimeError.message("插件视图 \(view.id) 的标题不能为空。")
+            }
+            guard Self.isValidRelativeAssetPath(view.entry) else {
+                throw DesktopRuntimeError.message("插件视图 \(view.id) 的入口资源路径无效：\(view.entry)。")
+            }
+        }
+        for wv in ui.workspaceViews {
+            if let entry = wv.entry, !entry.isEmpty {
+                guard Self.isValidRelativeAssetPath(entry) else {
+                    throw DesktopRuntimeError.message("插件工作区视图 \(wv.id) 的入口资源路径无效：\(entry)。")
+                }
             }
         }
         for domain in capabilities.networkDomains {
@@ -454,6 +589,24 @@ struct DesktopPluginManifest: Codable, Equatable, Identifiable, Sendable {
     static func isValidIdentifier(_ value: String, minLength: Int) -> Bool {
         guard value.count >= minLength && value.count <= 32 else { return false }
         return value.range(of: "^[a-z][a-z0-9_]*$", options: .regularExpression) == value.startIndex..<value.endIndex
+    }
+
+    static func isValidPluginID(_ value: String, minLength: Int) -> Bool {
+        guard value.count >= minLength && value.count <= 32 else { return false }
+        return value.range(of: "^[a-z][a-z0-9_-]*$", options: .regularExpression) == value.startIndex..<value.endIndex
+    }
+
+    static func isValidRelativeAssetPath(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.hasPrefix("/"),
+              !trimmed.contains("\\"),
+              !trimmed.contains(":"),
+              !trimmed.contains("\0") else {
+            return false
+        }
+        let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        return parts.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 }
 
@@ -537,6 +690,11 @@ struct DesktopPluginWorkspaceViewEntry: Equatable, Identifiable, Sendable {
     let symbol: String
     let subtitle: String
     let badgeCount: Int
+    var entryPath: String? = nil
+
+    var isCustomWebView: Bool {
+        !(entryPath ?? "").isEmpty
+    }
 }
 
 struct DesktopPluginSlashCommandEntry: Equatable, Identifiable, Sendable {
@@ -622,11 +780,12 @@ final class DesktopPluginStore {
     private static let settingsPrefix = "desktop.plugins.settings.v1."
 
     private(set) var disabledCorePlugins: Set<DesktopCorePlugin> = []
-    private(set) var plugins: [DesktopInstalledPlugin] = []
+    var plugins: [DesktopInstalledPlugin] = []
     private(set) var calendarEvents: [DesktopPluginEventItem] = []
     private(set) var botActivities: [DesktopPluginBotActivityItem] = []
     private(set) var inspectorSnapshots: [DesktopInspectorCardSnapshot] = []
     private(set) var activeWorkspaceViews: [DesktopPluginWorkspaceViewEntry] = []
+    private(set) var activeCustomViews: [DesktopPluginCustomViewEntry] = []
     private(set) var activeSlashCommands: [DesktopPluginSlashCommandEntry] = []
     private(set) var activeToolDeclarations: [DesktopToolDeclaration] = []
     private(set) var todayFreeSlots: [DesktopPluginFreeSlot] = []
@@ -637,25 +796,56 @@ final class DesktopPluginStore {
     private(set) var hasFeishuRemoteCredentials: Bool = false
     private(set) var loadError: String?
     private(set) var isSyncingPluginID: String?
+    var activeModal: DesktopPluginModalPresentation?
+    var latestNotice: DesktopPluginNoticeBanner?
+    var lastInsertedComposerText: String?
+    var pluginReloadRevisions: [String: Int] = [:]
+    var isDarkThemeActive: Bool = false
 
     @ObservationIgnored let directory: URL
     @ObservationIgnored var workspaceDirectory: URL
-    @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let credentials: any DesktopCredentialStore
-    @ObservationIgnored private let httpTransport: any DesktopPluginHTTPTransport
+    @ObservationIgnored let defaults: UserDefaults
+    @ObservationIgnored let credentials: any DesktopCredentialStore
+    @ObservationIgnored let httpTransport: any DesktopPluginHTTPTransport
     @ObservationIgnored let calendarService: any DesktopCalendarService
-    @ObservationIgnored private let referenceDateProvider: @Sendable () -> Date
+    @ObservationIgnored let referenceDateProvider: @Sendable () -> Date
     @ObservationIgnored private var settingsCache: [String: [String: String]] = [:]
     @ObservationIgnored private var inFlightIdempotencyWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    @ObservationIgnored var runtimeHosts: [String: DesktopPluginRuntimeHost] = [:]
+    @ObservationIgnored var webViewCoordinators: [String: DesktopPluginWebViewCoordinator] = [:]
+    @ObservationIgnored var conversationSnapshotProvider: (() -> DesktopPluginConversationSnapshot)?
+    @ObservationIgnored var onInsertToComposerRequest: ((String) -> Void)?
+    @ObservationIgnored var onOpenPluginViewRequest: ((String, String) -> Void)?
+    @ObservationIgnored var onConfirmRequest: ((String, String) async -> Bool)?
     @ObservationIgnored var onStateChanged: (() -> Void)?
 
     nonisolated static let injectedSandboxAPIs: Set<String> = [
         "amber.settings.get",
+        "amber.settings.set",
+        "amber.settings.getAll",
         "amber.storage.get",
         "amber.storage.set",
+        "amber.storage.remove",
+        "amber.storage.keys",
+        "amber.storage.all",
         "amber.http.fetch",
         "amber.workspace.read",
-        "amber.workspace.write"
+        "amber.workspace.write",
+        "amber.workspace.list",
+        "amber.workspace.watch",
+        "amber.commands.register",
+        "amber.commands.list",
+        "amber.events.on",
+        "amber.events.off",
+        "amber.events.emit",
+        "amber.ui.notice",
+        "amber.ui.confirm",
+        "amber.ui.openView",
+        "amber.ui.openModal",
+        "amber.ui.closeModal",
+        "amber.agent.registerTool",
+        "amber.agent.getConversation",
+        "amber.agent.insertToComposer"
     ]
 
     static var defaultDirectory: URL {
@@ -674,7 +864,7 @@ final class DesktopPluginStore {
     ) {
         self.directory = directory
         self.workspaceDirectory = workspaceDirectory
-            ?? directory.deletingLastPathComponent().appendingPathComponent("workspace", isDirectory: true)
+        ?? directory.deletingLastPathComponent().appendingPathComponent("workspace", isDirectory: true)
         self.defaults = defaults
         self.credentials = credentials
         self.httpTransport = httpTransport
@@ -746,7 +936,7 @@ final class DesktopPluginStore {
                 guard manifest.id == name else {
                     throw DesktopRuntimeError.message("插件目录名 \(name) 与 plugin.json id \(manifest.id) 不一致。")
                 }
-                let scriptURL = folder.appendingPathComponent("main.js")
+                let scriptURL = folder.appendingPathComponent(manifest.main)
                 let script = FileManager.default.fileExists(atPath: scriptURL.path)
                     ? try String(contentsOf: scriptURL, encoding: .utf8)
                     : ""
@@ -759,10 +949,33 @@ final class DesktopPluginStore {
                 ))
             }
 
+            let loadedIDs = Set(loaded.map(\.id))
+            for (hostID, host) in runtimeHosts where !loadedIDs.contains(hostID) {
+                host.stop()
+                runtimeHosts.removeValue(forKey: hostID)
+            }
+
             settingsCache.removeAll()
             if plugins != loaded { plugins = loaded }
             loadCalendarEventsFromStorage()
             loadBotActivitiesFromStorage()
+
+            for plugin in plugins where !plugin.isBuiltIn {
+                if plugin.enabled && plugin.manifest.isV3 {
+                    let host = runtimeHosts[plugin.id] ?? DesktopPluginRuntimeHost(pluginID: plugin.id, store: self)
+                    runtimeHosts[plugin.id] = host
+                    try? host.start(plugin: plugin, workspaceDirectory: workspaceDirectory)
+                    if plugin.manifest.devReload {
+                        let folder = directory.appendingPathComponent(plugin.id, isDirectory: true)
+                        host.startDirectoryHotReloadWatcher(folderURL: folder) { [weak self] in
+                            try? self?.reloadPlugin(id: plugin.id)
+                        }
+                    }
+                } else if let host = runtimeHosts[plugin.id] {
+                    host.stop()
+                }
+            }
+
             rebuildProjections()
             if loadError != nil { loadError = nil }
         } catch {
@@ -782,11 +995,21 @@ final class DesktopPluginStore {
         var updated = plugins
         updated[index].enabled = enabled
         if plugins != updated { plugins = updated }
+        let plugin = updated[index]
+        if !plugin.isBuiltIn && plugin.manifest.isV3 {
+            if enabled {
+                let host = runtimeHosts[id] ?? DesktopPluginRuntimeHost(pluginID: id, store: self)
+                runtimeHosts[id] = host
+                try? host.start(plugin: plugin, workspaceDirectory: workspaceDirectory)
+            } else if let host = runtimeHosts[id] {
+                host.stop()
+            }
+        }
         rebuildProjections()
     }
 
     @discardableResult
-    func importPlugin(from url: URL) throws -> String {
+    func importPlugin(from url: URL, approvePermissions: Bool = true) throws -> String {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
 
@@ -798,16 +1021,18 @@ final class DesktopPluginStore {
 
         let manifestData: Data
         let scriptSource: String
+        let packageRootURL: URL?
         if isDir.boolValue {
             let manifestURL = url.appendingPathComponent("plugin.json")
             guard fm.fileExists(atPath: manifestURL.path) else {
                 throw DesktopRuntimeError.message("插件目录缺少 plugin.json。")
             }
             manifestData = try Data(contentsOf: manifestURL)
-            let scriptURL = url.appendingPathComponent("main.js")
-            scriptSource = fm.fileExists(atPath: scriptURL.path) ? try String(contentsOf: scriptURL, encoding: .utf8) : ""
+            packageRootURL = url
+            scriptSource = ""
         } else {
             manifestData = try Data(contentsOf: url)
+            packageRootURL = nil
             let siblingScript = url.deletingLastPathComponent().appendingPathComponent("main.js")
             scriptSource = fm.fileExists(atPath: siblingScript.path) ? (try? String(contentsOf: siblingScript, encoding: .utf8)) ?? "" : ""
         }
@@ -832,14 +1057,54 @@ final class DesktopPluginStore {
 
         let targetFolder = directory.appendingPathComponent(manifest.id, isDirectory: true)
         try fm.createDirectory(at: targetFolder, withIntermediateDirectories: true)
+
+        if let packageRootURL,
+           packageRootURL.standardizedFileURL.path != targetFolder.standardizedFileURL.path {
+            try Self.copyPluginPackageContents(from: packageRootURL, to: targetFolder)
+        } else if !scriptSource.isEmpty {
+            try Data(scriptSource.utf8).write(to: targetFolder.appendingPathComponent(manifest.main), options: .atomic)
+        }
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try encoder.encode(manifest).write(to: targetFolder.appendingPathComponent("plugin.json"), options: .atomic)
-        if !scriptSource.isEmpty {
-            try Data(scriptSource.utf8).write(to: targetFolder.appendingPathComponent("main.js"), options: .atomic)
+
+        if approvePermissions {
+            let canonical = DesktopPluginPermissionCatalog.canonicalPermissions(for: manifest)
+            defaults.set(canonical.sorted(), forKey: Self.approvedPermissionsPrefix + manifest.id)
+        } else {
+            defaults.set([String](), forKey: Self.approvedPermissionsPrefix + manifest.id)
         }
+
         reload()
         return manifest.id
+    }
+
+    private static func copyPluginPackageContents(from sourceDir: URL, to targetDir: URL) throws {
+        let fm = FileManager.default
+        let items = (try? fm.contentsOfDirectory(
+            at: sourceDir,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for item in items {
+            let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true { continue }
+            let name = item.lastPathComponent
+            if name == "storage.json" && fm.fileExists(atPath: targetDir.appendingPathComponent(name).path) {
+                continue
+            }
+            let dest = targetDir.appendingPathComponent(name, isDirectory: values?.isDirectory == true)
+            if values?.isDirectory == true {
+                try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+                try copyPluginPackageContents(from: item, to: dest)
+            } else {
+                if fm.fileExists(atPath: dest.path) {
+                    try fm.removeItem(at: dest)
+                }
+                try fm.copyItem(at: item, to: dest)
+            }
+        }
     }
 
     func removePlugin(id: String) throws {
@@ -849,6 +1114,9 @@ final class DesktopPluginStore {
         guard !plugin.isBuiltIn else {
             throw DesktopRuntimeError.message("内置插件不能删除，可通过开关停用。")
         }
+        if let host = runtimeHosts.removeValue(forKey: id) {
+            host.stop()
+        }
         let targetFolder = directory.appendingPathComponent(id, isDirectory: true)
         if FileManager.default.fileExists(atPath: targetFolder.path) {
             try FileManager.default.removeItem(at: targetFolder)
@@ -857,6 +1125,7 @@ final class DesktopPluginStore {
             try? credentials.delete(id: secretKeyUUID(pluginID: id, key: field.key))
         }
         defaults.removeObject(forKey: Self.settingsPrefix + id)
+        defaults.removeObject(forKey: Self.approvedPermissionsPrefix + id)
         settingsCache.removeValue(forKey: id)
         reload()
     }
@@ -1631,8 +1900,13 @@ final class DesktopPluginStore {
 
     func toolEffect(for qualifiedName: String) -> DesktopToolEffect {
         guard let parsed = Self.parseQualifiedToolName(qualifiedName),
-              let plugin = plugins.first(where: { $0.id == parsed.pluginID && $0.enabled }),
-              let tool = plugin.manifest.tools.first(where: { $0.name == parsed.toolName }) else {
+              let plugin = plugins.first(where: { $0.id == parsed.pluginID && $0.enabled }) else {
+            return .sideEffect
+        }
+        if let dynamic = runtimeHosts[plugin.id]?.dynamicTools[parsed.toolName] {
+            return dynamic.manifest.effect
+        }
+        guard let tool = plugin.manifest.tools.first(where: { $0.name == parsed.toolName }) else {
             return .sideEffect
         }
         return tool.effect
@@ -1648,8 +1922,13 @@ final class DesktopPluginStore {
         guard plugin.enabled else {
             throw DesktopRuntimeError.message("插件 \(plugin.manifest.name) 当前已停用，请先在设置 → 插件中启用。")
         }
-        guard let tool = plugin.manifest.tools.first(where: { $0.name == parsed.toolName }) else {
+        let dynamicTool = runtimeHosts[plugin.id]?.dynamicTools[parsed.toolName]?.manifest
+        guard let tool = dynamicTool ?? plugin.manifest.tools.first(where: { $0.name == parsed.toolName }) else {
             throw DesktopRuntimeError.message("插件 \(plugin.manifest.name) 不包含工具 \(parsed.toolName)。")
+        }
+
+        if plugin.manifest.isV3 {
+            try requirePermission(plugin: plugin, permission: "agent.tools")
         }
 
         let argsData = argumentsJSON.data(using: .utf8) ?? Data("{}".utf8)
@@ -1815,6 +2094,16 @@ final class DesktopPluginStore {
             return try await feishuMeetingCloseout(arguments: args)
         }
 
+        if plugin.manifest.isV3 {
+            let host = ensureRuntimeHost(for: plugin)
+            return try await host.invokeTool(
+                plugin: plugin,
+                tool: tool,
+                arguments: args,
+                workspaceDirectory: workspaceDirectory ?? self.workspaceDirectory
+            )
+        }
+
         return try await evaluateJSTool(
             plugin: plugin,
             tool: tool,
@@ -1941,6 +2230,42 @@ final class DesktopPluginStore {
         var result: Result<(Data, Int), Error>?
     }
 
+    func performSynchronousHTTPRequest(request: URLRequest, host: String) throws -> String {
+        let transport = self.httpTransport
+        let box = SandboxHTTPBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        let capturedRequest = request
+        Task.detached {
+            do {
+                let response = try await transport.send(request: capturedRequest)
+                box.result = .success(response)
+            } catch {
+                box.result = .failure(error)
+            }
+            semaphore.signal()
+        }
+        if semaphore.wait(timeout: .now() + 22) == .timedOut {
+            throw DesktopRuntimeError.message("外部请求超时（20 秒）：\(host)")
+        }
+        switch box.result {
+        case .success(let (data, status)):
+            let bodyText = String(decoding: data, as: UTF8.self)
+            let parsedJSON = (try? JSONSerialization.jsonObject(with: data)) ?? NSNull()
+            let payload: [String: Any] = [
+                "ok": (200...299).contains(status),
+                "status": status,
+                "body": bodyText,
+                "text": bodyText,
+                "json": parsedJSON
+            ]
+            return try Self.encodeJSONObject(payload)
+        case .failure(let error):
+            throw error
+        case .none:
+            throw DesktopRuntimeError.message("外部请求未返回结果：\(host)")
+        }
+    }
+
     nonisolated static func resolveAuthorizedWorkspaceFileURL(
         rootDirectory: URL,
         relativePath: String,
@@ -1964,7 +2289,7 @@ final class DesktopPluginStore {
             return clean.isEmpty ? nil : clean
         }
         let isAuthorized = normalizedPrefixes.contains { prefix in
-            normalizedPath == prefix || normalizedPath.hasPrefix(prefix + "/")
+            prefix == "*" || normalizedPath == prefix || normalizedPath.hasPrefix(prefix + "/")
         }
         guard isAuthorized else {
             throw DesktopRuntimeError.message("插件未授权访问工作区路径 \(normalizedPath)（允许前缀：\(allowedPrefixes.joined(separator: ", "))）。")
@@ -2384,21 +2709,35 @@ final class DesktopPluginStore {
 
         var nextDeclarations: [DesktopToolDeclaration] = []
         var nextViews: [DesktopPluginWorkspaceViewEntry] = []
+        var nextCustomViews: [DesktopPluginCustomViewEntry] = []
         var nextCommands: [DesktopPluginSlashCommandEntry] = []
         var nextCards: [DesktopInspectorCardSnapshot] = []
 
         var nextEffects: [String: DesktopToolEffect] = [:]
         for plugin in plugins where plugin.enabled {
-            for tool in plugin.manifest.tools {
-                let qName = plugin.qualifiedToolName(tool.name)
-                nextEffects[qName] = tool.effect
-                let needsApproval = tool.effect == .sideEffect || tool.effect == .idempotent
-                nextDeclarations.append(DesktopToolDeclaration(
-                    name: qName,
-                    description: "[\(plugin.manifest.name)] \(tool.description)",
-                    parametersJSON: tool.parametersJSON,
-                    needsApproval: needsApproval
-                ))
+            let canRegisterTools = !plugin.manifest.isV3 || hasPermission(plugin: plugin, permission: "agent.tools")
+            if canRegisterTools {
+                var combinedTools: [DesktopPluginToolManifest] = plugin.manifest.tools
+                if let host = runtimeHosts[plugin.id] {
+                    for dynamic in host.dynamicTools.values.sorted(by: { $0.manifest.name < $1.manifest.name }) {
+                        if let existingIdx = combinedTools.firstIndex(where: { $0.name == dynamic.manifest.name }) {
+                            combinedTools[existingIdx] = dynamic.manifest
+                        } else {
+                            combinedTools.append(dynamic.manifest)
+                        }
+                    }
+                }
+                for tool in combinedTools {
+                    let qName = plugin.qualifiedToolName(tool.name)
+                    nextEffects[qName] = tool.effect
+                    let needsApproval = tool.effect == .sideEffect || tool.effect == .idempotent
+                    nextDeclarations.append(DesktopToolDeclaration(
+                        name: qName,
+                        description: "[\(plugin.manifest.name)] \(tool.description)",
+                        parametersJSON: tool.parametersJSON,
+                        needsApproval: needsApproval
+                    ))
+                }
             }
 
             var pluginCards: [DesktopInspectorCardSnapshot] = []
@@ -2459,20 +2798,74 @@ final class DesktopPluginStore {
                     title: view.title,
                     symbol: view.symbol,
                     subtitle: view.subtitle,
-                    badgeCount: badge
+                    badgeCount: badge,
+                    entryPath: view.entry
                 ))
             }
 
-            for command in plugin.manifest.ui.commands {
-                nextCommands.append(DesktopPluginSlashCommandEntry(
-                    pluginID: plugin.id,
-                    pluginName: plugin.manifest.name,
-                    commandID: command.id,
-                    title: command.title,
-                    slash: command.slash,
-                    symbol: command.symbol,
-                    promptTemplate: command.promptTemplate
-                ))
+            let canRenderCustomViews = !plugin.manifest.isV3 || hasPermission(plugin: plugin, permission: "ui.views")
+            if canRenderCustomViews {
+                var allCustomViews = plugin.manifest.ui.views
+                if let host = runtimeHosts[plugin.id] {
+                    for dv in host.dynamicViews.values.sorted(by: { $0.id < $1.id }) {
+                        if !allCustomViews.contains(where: { $0.id == dv.id }) {
+                            allCustomViews.append(dv)
+                        }
+                    }
+                }
+                for customView in allCustomViews {
+                    nextCustomViews.append(DesktopPluginCustomViewEntry(
+                        pluginID: plugin.id,
+                        pluginName: plugin.manifest.name,
+                        viewID: customView.id,
+                        title: customView.title,
+                        slot: customView.slot,
+                        symbol: customView.symbol,
+                        subtitle: customView.subtitle,
+                        entryPath: customView.entry,
+                        width: customView.width,
+                        height: customView.height
+                    ))
+                    if customView.slot == .workspace,
+                       !nextViews.contains(where: { $0.pluginID == plugin.id && $0.viewID == customView.id }) {
+                        let badge = Int(pluginStorage["badge:\(customView.id)"] ?? pluginStorage["badge_count"] ?? "") ?? fallbackCardItemsCount
+                        nextViews.append(DesktopPluginWorkspaceViewEntry(
+                            pluginID: plugin.id,
+                            pluginName: plugin.manifest.name,
+                            viewID: customView.id,
+                            title: customView.title,
+                            symbol: customView.symbol,
+                            subtitle: customView.subtitle,
+                            badgeCount: max(0, badge),
+                            entryPath: customView.entry
+                        ))
+                    }
+                }
+            }
+
+            let canRegisterCommands = !plugin.manifest.isV3 || hasPermission(plugin: plugin, permission: "commands")
+            if canRegisterCommands {
+                var allCommands = plugin.manifest.ui.commands
+                if let host = runtimeHosts[plugin.id] {
+                    for dc in host.dynamicCommands.values.sorted(by: { $0.id < $1.id }) {
+                        if let idx = allCommands.firstIndex(where: { $0.id == dc.id }) {
+                            allCommands[idx] = dc
+                        } else {
+                            allCommands.append(dc)
+                        }
+                    }
+                }
+                for command in allCommands {
+                    nextCommands.append(DesktopPluginSlashCommandEntry(
+                        pluginID: plugin.id,
+                        pluginName: plugin.manifest.name,
+                        commandID: command.id,
+                        title: command.title,
+                        slash: command.slash,
+                        symbol: command.symbol,
+                        promptTemplate: command.promptTemplate
+                    ))
+                }
             }
         }
 
@@ -2493,6 +2886,10 @@ final class DesktopPluginStore {
         }
         if activeWorkspaceViews != nextViews {
             activeWorkspaceViews = nextViews
+            stateChanged = true
+        }
+        if activeCustomViews != nextCustomViews {
+            activeCustomViews = nextCustomViews
             stateChanged = true
         }
         if activeSlashCommands != nextCommands { activeSlashCommands = nextCommands }
