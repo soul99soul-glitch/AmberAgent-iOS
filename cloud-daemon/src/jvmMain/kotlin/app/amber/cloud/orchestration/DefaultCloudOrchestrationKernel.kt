@@ -7,6 +7,8 @@ import app.amber.cloud.channel.InboundMessage
 import app.amber.cloud.channel.OutboundCard
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.channel.SenderRole
+import app.amber.cloud.proactive.ProactiveEngine
+import app.amber.cloud.proactive.ProactiveRunResult
 import app.amber.cloud.proactive.ProactiveTriggerSignal
 import app.amber.cloud.runtime.CloudToolRegistry
 import app.amber.cloud.runtime.ExecutionScope
@@ -17,10 +19,17 @@ import app.amber.core.model.toMessageNode
 import app.amber.core.storage.conversation.JsonConversationStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -59,6 +68,7 @@ class DefaultCloudOrchestrationKernel(
     var workerTurnRunner: (suspend (CloudWorkItemRecord, CloudPrincipal.Worker) -> WorkerSettlementReport?)? = null,
     var onBatchRollupWoken: (suspend (BatchRollupRecord) -> Unit)? = null,
     var onOwnerNotificationCard: (suspend (OutboundCard, String) -> Unit)? = null,
+    var proactiveEngine: ProactiveEngine? = null,
     var watchdogJudge: CloudWatchdogJudge? = null,
     var completionPolicyEvaluator: CompletionPolicyEvaluator = CompletionPolicyEvaluator { policy, runOutput, memoryText ->
         val clause = policy.stopWhenClause.trim().lowercase()
@@ -87,6 +97,9 @@ class DefaultCloudOrchestrationKernel(
     private val asyncToolJobs = ConcurrentHashMap<String, Job>()
     private val asyncToolStatus = ConcurrentHashMap<String, String>()
 
+    /** 活跃后台 Worker 协程表（workItemId -> Job） */
+    private val activeWorkerJobs = ConcurrentHashMap<String, Job>()
+
     /** Router 全局可观测事件流（包含直通给 Worker 的事件，供 Router 全局感知与召回） */
     private val observableEvents = CopyOnWriteArrayList<RouterTriggerEvent>()
 
@@ -103,6 +116,41 @@ class DefaultCloudOrchestrationKernel(
     val batchRollupWakeCount = AtomicInteger(0)
     val directPassThroughCount = AtomicInteger(0)
     val routerBatchedCallCount = AtomicInteger(0)
+
+    /** WorkItem 生命周期 → 面向人的 [ActivityStatus]（由 Router 层转换为人话并编辑 IM 状态消息） */
+    var activityListener: (suspend (CloudWorkItemRecord, ActivityPhase) -> Unit)? = null
+
+    /** 有新事件进入 Router 批处理队列时唤醒 Router（异步工具完成、Rollup 等） */
+    var routerWakeListener: (() -> Unit)? = null
+
+    private val submitMutex = Mutex()
+    private var healthJob: Job? = null
+
+    private suspend fun emitActivity(record: CloudWorkItemRecord, phase: ActivityPhase) {
+        val listener = activityListener ?: return
+        runCatching { listener(record, phase) }
+    }
+
+    /**
+     * 启动每 [intervalMs]（默认 60 秒）一次的零 Token 确定性巡检；Watchdog 模型判定默认关闭。
+     */
+    fun startHealthLoop(intervalMs: Long = 60_000L) {
+        if (healthJob?.isActive == true) return
+        healthJob = scope.launch {
+            while (isActive) {
+                delay(intervalMs)
+                runCatching { runDeterministicHealthTick(clockMs()) }
+                if (config.modelWatchdogEnabled) runCatching { runWatchdogTick(clockMs()) }
+            }
+        }
+    }
+
+    fun stopHealthLoop() {
+        healthJob?.cancel()
+        healthJob = null
+    }
+
+    val isHealthLoopRunning: Boolean get() = healthJob?.isActive == true
 
     // ========================================================================
     // 0. 配对 Mac 节点在线状态管理与重启恢复
@@ -162,6 +210,7 @@ class DefaultCloudOrchestrationKernel(
      */
     suspend fun recoverAfterRestart(nowEpochMs: Long = clockMs()): List<CloudWorkItemRecord> {
         val all = store.listWorkItems()
+        val toRelaunch = mutableListOf<CloudWorkItemRecord>()
         for (item in all) {
             if (item.state == WorkItemState.STARTING || item.state == WorkItemState.WORKING) {
                 store.appendDiagnosticEvent(
@@ -171,10 +220,71 @@ class DefaultCloudOrchestrationKernel(
                     detail = "守护进程重启，恢复未完结任务 ${item.workItemId} (原状态=${item.state})",
                     nowMs = nowEpochMs,
                 )
+                // 重启后进程内 Worker 协程已丢失：刷新活动时间，避免立刻被巡检误判静默
+                val refreshed = item.copy(lastActivityAtMs = nowEpochMs, updatedAtMs = nowEpochMs)
+                store.upsertWorkItem(refreshed)
+                toRelaunch.add(refreshed)
             }
         }
         pumpWorkQueue(nowEpochMs)
+        if (autoExecuteWorkersInBackground) {
+            toRelaunch.forEach { launchWorkerRunner(it) }
+        }
         return store.listWorkItems()
+    }
+
+    private fun launchWorkerRunner(item: CloudWorkItemRecord) {
+        val runner = workerTurnRunner ?: return
+        val workerPrincipal = workerPrincipalFor(item)
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val report = runCatching { runner(item, workerPrincipal) }.getOrElse { t ->
+                    if (t is CancellationException) throw t
+                    WorkerSettlementReport(
+                        workItemId = item.workItemId,
+                        outcome = "failed",
+                        summary = "执行异常: ${CredentialRedactor.redact(t.message.orEmpty())}",
+                    )
+                }
+                if (report != null) {
+                    runCatching { reportWorkerSettlement(workerPrincipal, report, clockMs()) }
+                }
+            } finally {
+                activeWorkerJobs.remove(item.workItemId)
+            }
+        }
+        activeWorkerJobs[item.workItemId] = job
+        job.start()
+    }
+
+    suspend fun awaitBackgroundWorkers() {
+        while (true) {
+            val jobs = activeWorkerJobs.values.filter { it.isActive }
+            if (jobs.isEmpty()) break
+            jobs.forEach { it.join() }
+        }
+    }
+
+    fun workerPrincipalFor(item: CloudWorkItemRecord): CloudPrincipal.Worker = CloudPrincipal.Worker(
+        principalId = "worker:${item.workItemId}",
+        workItemId = item.workItemId,
+        batchId = item.batchId,
+        targetNode = item.targetNode,
+    )
+
+    /**
+     * Worker 工具执行门禁：强制将执行作用域锁定为 [ExecutionScope.SUBAGENT]，
+     * 物理剥离所有高风险与写工具（跨端缺陷清单 #5 与 C3 v2 边界）。
+     */
+    suspend fun executeWorkerTool(
+        principal: CloudPrincipal,
+        toolName: String,
+        args: JsonObject = JsonObject(emptyMap()),
+    ): JsonElement {
+        if (principal !is CloudPrincipal.Worker) {
+            throw PrincipalPermissionException("executeWorkerTool 仅限 Worker 主体调用")
+        }
+        return toolRegistry.executeGate(toolName, args, ExecutionScope.SUBAGENT)
     }
 
     // ========================================================================
@@ -221,6 +331,16 @@ class DefaultCloudOrchestrationKernel(
     // ========================================================================
 
     override suspend fun submitWorkBatch(
+        principal: CloudPrincipal,
+        requestId: String,
+        contextMessageIds: List<String>,
+        items: List<WorkItemSubmissionSpec>,
+        nowEpochMs: Long,
+    ): BatchSubmissionResult = submitMutex.withLock {
+        submitWorkBatchLocked(principal, requestId, contextMessageIds, items, nowEpochMs)
+    }
+
+    private suspend fun submitWorkBatchLocked(
         principal: CloudPrincipal,
         requestId: String,
         contextMessageIds: List<String>,
@@ -404,7 +524,7 @@ class DefaultCloudOrchestrationKernel(
      * 按 FIFO 顺序从 `QUEUED` 队列中唤醒可执行任务（跳过当前离线的 `PairedMacNode` 任务）。
      */
     suspend fun pumpWorkQueue(nowEpochMs: Long = clockMs()) {
-        val toAutoRun = mutableListOf<CloudWorkItemRecord>()
+        val started = mutableListOf<CloudWorkItemRecord>()
         synchronized(store) {
             var activeSlots = store.countHeldSlots()
             val queued = store.listQueuedWorkItems()
@@ -431,26 +551,13 @@ class DefaultCloudOrchestrationKernel(
                     nowMs = nowEpochMs,
                 )
                 activeSlots++
-                if (autoExecuteWorkersInBackground && workerTurnRunner != null) {
-                    toAutoRun.add(claimed)
-                }
+                started.add(claimed)
             }
         }
 
-        for (item in toAutoRun) {
-            val runner = workerTurnRunner ?: continue
-            val workerPrincipal = CloudPrincipal.Worker(
-                principalId = "worker:${item.workItemId}",
-                workItemId = item.workItemId,
-                batchId = item.batchId,
-                targetNode = item.targetNode,
-            )
-            scope.launch {
-                val report = runCatching { runner(item, workerPrincipal) }.getOrNull()
-                if (report != null) {
-                    reportWorkerSettlement(workerPrincipal, report, clockMs())
-                }
-            }
+        for (item in started) {
+            emitActivity(item, ActivityPhase.STARTED)
+            if (autoExecuteWorkersInBackground) launchWorkerRunner(item)
         }
     }
 
@@ -536,6 +643,7 @@ class DefaultCloudOrchestrationKernel(
             detail = "rev=${updated.progressRevision}, tool=${updated.activeToolName ?: "none"}, note=${updated.latestProgressNote}",
             nowMs = nowEpochMs,
         )
+        emitActivity(updated, ActivityPhase.PROGRESS)
         return updated
     }
 
@@ -555,7 +663,10 @@ class DefaultCloudOrchestrationKernel(
 
         val existing = store.getWorkItem(report.workItemId)
             ?: throw IllegalArgumentException("找不到 WorkItem: ${report.workItemId}")
-
+        if (existing.state.isTerminal) {
+            // 终态幂等：重复结算（如重启后 Worker 重放）不得二次释放槽位或二次唤醒 Rollup
+            return existing
+        }
         // 1. 生成无时间戳的幂等结算报告 Markdown 并写入 SQLite + 原子文件
         val reportDocPath = "inbox/${existing.workItemId}/report.md"
         val reportMarkdown = formatTimestampFreeSettlementMarkdown(existing, report)
@@ -624,6 +735,7 @@ class DefaultCloudOrchestrationKernel(
         )
 
         // 2. 释放并发槽位后立即唤醒队列中的下一个 QUEUED 任务
+        emitActivity(settled, if (targetState == WorkItemState.COMPLETED) ActivityPhase.DONE else ActivityPhase.FAILED)
         pumpWorkQueue(nowEpochMs)
 
         // 3. 检查所属 batchId 是否全部进入终态；若是则通过 wakeClaim 锁生成单次 BatchRollup
@@ -891,21 +1003,8 @@ class DefaultCloudOrchestrationKernel(
                         detail = "直通投递话题事件 $threadKey -> ${sub.workItemId}",
                         nowMs = nowEpochMs,
                     )
-                    if (autoExecuteWorkersInBackground && workerTurnRunner != null) {
-                        val runner = workerTurnRunner!!
-                        val workerPrincipal = CloudPrincipal.Worker(
-                            principalId = "worker:${sub.workItemId}",
-                            workItemId = sub.workItemId,
-                            batchId = sub.batchId,
-                            targetNode = sub.targetNode,
-                        )
-                        scope.launch {
-                            val report = runCatching { runner(sub, workerPrincipal) }.getOrNull()
-                            if (report != null) {
-                                reportWorkerSettlement(workerPrincipal, report, clockMs())
-                            }
-                        }
-                    }
+                    // 注意：直通只投递到 Worker 会话收件箱，运行中的 Worker 在下一步读取会话时自然看到；
+                    // 不在此重复启动 Worker 协程，避免同一 WorkItem 并发执行两份。
                 }
                 return InboundRoutingDecision.DirectPassThroughToWorkers(
                     threadKey = threadKey,
@@ -915,7 +1014,7 @@ class DefaultCloudOrchestrationKernel(
             }
         }
 
-        // Slow Path: 未被订阅的事件进入 Router（支持上一轮推理期间积压批处理）
+        // Slow Path: 未被订阅的事件进入 Router 批处理队列（由 Router 循环统一 drain，积压事件合并到下一次调用）
         synchronized(pendingRouterBatchQueue) {
             pendingRouterBatchQueue.addLast(triggerEvent)
             if (isRouterTurnBusy) {
@@ -924,12 +1023,7 @@ class DefaultCloudOrchestrationKernel(
                     currentBatchSize = pendingRouterBatchQueue.size,
                 )
             }
-            val drained = pendingRouterBatchQueue.toList()
-            pendingRouterBatchQueue.clear()
-            if (drained.size > 1) {
-                routerBatchedCallCount.incrementAndGet()
-            }
-            return InboundRoutingDecision.RouteToCoordinatorNow(batchedEvents = drained)
+            return InboundRoutingDecision.RouteToCoordinatorNow(batchedEvents = pendingRouterBatchQueue.toList())
         }
     }
 
@@ -941,7 +1035,10 @@ class DefaultCloudOrchestrationKernel(
         synchronized(pendingRouterBatchQueue) {
             pendingRouterBatchQueue.addLast(event)
         }
+        routerWakeListener?.invoke()
     }
+
+    fun hasPendingRouterEvents(): Boolean = synchronized(pendingRouterBatchQueue) { pendingRouterBatchQueue.isNotEmpty() }
 
     fun drainPendingRouterBatch(): List<RouterTriggerEvent> {
         synchronized(pendingRouterBatchQueue) {
@@ -1114,6 +1211,8 @@ class DefaultCloudOrchestrationKernel(
                         updatedAtMs = nowEpochMs,
                     )
                     store.upsertWorkItem(expired)
+                    store.unsubscribeAllForWorkItem(item.workItemId)
+                    emitActivity(expired, ActivityPhase.FAILED)
                     val detail = "派给 Mac 节点 (${target.deviceId}) 的任务「${item.title}」因设备离线超过 24 小时已转为 FAILED"
                     store.appendDiagnosticEvent(
                         sessionId = item.workerSessionId ?: item.workItemId,
@@ -1252,6 +1351,8 @@ class DefaultCloudOrchestrationKernel(
                 updatedAtMs = nowEpochMs,
             )
             store.upsertWorkItem(exhausted)
+            store.unsubscribeAllForWorkItem(item.workItemId)
+            emitActivity(exhausted, ActivityPhase.FAILED)
             val detail = "任务「${item.title}」(${item.workItemId}) 异常 ($finding) 且已用尽 ${config.maxRecoveryAttempts} 次自愈上限，请求主人介入"
             store.appendDiagnosticEvent(
                 sessionId = sessionId,
@@ -1712,11 +1813,29 @@ class DefaultCloudOrchestrationKernel(
             stopAfterConsecutiveFailures = spec.stopAfterConsecutiveFailures.coerceAtLeast(1),
             memoryText = existing?.memoryText ?: "",
             completionPolicy = spec.completionPolicy,
+            intervalMs = spec.intervalMs.coerceAtLeast(60_000L),
             createdAtMs = existing?.createdAtMs ?: nowEpochMs,
             updatedAtMs = nowEpochMs,
         )
         store.upsertAutomation(record)
         return record
+    }
+
+    /**
+     * 由 ProactiveEngine 常驻循环调用：执行所有到期的已启用自动化（首次立即、之后按 intervalMs；HEARTBEAT 延后重试按 nextRetryAtMs）。
+     */
+    suspend fun runDueAutomations(
+        nowEpochMs: Long = clockMs(),
+        turnExecutor: suspend (AutomationRunEnvelope, CloudPrincipal.AutomationRunner, String) -> AutomationTurnOutput,
+    ): List<AutomationRunResult> {
+        val due = store.listAutomations().filter { rec ->
+            rec.enabled && rec.activeRunId == null && when {
+                rec.nextRetryAtMs != null -> nowEpochMs >= rec.nextRetryAtMs
+                rec.lastRunAtMs == null -> true
+                else -> nowEpochMs - rec.lastRunAtMs >= rec.intervalMs
+            }
+        }
+        return due.map { executeAutomationRun(it.automationId, nowEpochMs, turnExecutor) }
     }
 
     /**
@@ -1951,6 +2070,7 @@ class DefaultCloudOrchestrationKernel(
             -> output.decision.equals("notify", ignoreCase = true) || output.l3AnomalyDetected || disabled
         }
 
+        var actuallyPushed = false
         if (shouldPushCard) {
             val cardTitle = when {
                 output.l3AnomalyDetected -> "自动化 L3 异动预警 · ${record.title}"
@@ -1958,15 +2078,34 @@ class DefaultCloudOrchestrationKernel(
                 disabledReason == "failures" -> "自动化连续失败熔断 · ${record.title}"
                 else -> "自动化通知 · ${record.title}"
             }
-            onOwnerNotificationCard?.invoke(
-                OutboundCard(
-                    title = cardTitle,
-                    markdownBody = CredentialRedactor.redact(output.summary),
-                    headerTemplate = if (output.failed || output.l3AnomalyDetected) "amber" else "wathet",
-                    highRisk = false,
-                ),
-                automationId,
+            val safeBody = CredentialRedactor.redact(output.summary)
+            val fallbackCard = OutboundCard(
+                title = cardTitle,
+                markdownBody = safeBody,
+                headerTemplate = if (output.failed || output.l3AnomalyDetected) "amber" else "wathet",
+                highRisk = false,
             )
+            val engine = proactiveEngine
+            val cardToDeliver = if (engine != null) {
+                val signal = ProactiveTriggerSignal.TaskLifecycleSignal(
+                    signalId = "auto_${automationId}_$runId",
+                    taskId = automationId,
+                    lifecycleState = disabledReason ?: "l3_anomaly",
+                    detail = "$cardTitle: $safeBody",
+                    topicKey = "automation:$automationId",
+                    timestampEpochMs = nowEpochMs,
+                )
+                when (val proactiveRes = engine.processSignal(signal, targetChatId = "", channel = null, nowOverrideMs = nowEpochMs)) {
+                    is ProactiveRunResult.PushedAtL3 -> proactiveRes.card
+                    else -> null
+                }
+            } else {
+                fallbackCard
+            }
+            if (cardToDeliver != null) {
+                actuallyPushed = true
+                onOwnerNotificationCard?.invoke(cardToDeliver, automationId)
+            }
         }
 
         return AutomationRunResult(
@@ -1976,7 +2115,7 @@ class DefaultCloudOrchestrationKernel(
             mode = record.mode,
             iteration = nextIteration,
             decision = if (shouldPushCard) "notify" else "silent",
-            cardPushed = shouldPushCard,
+            cardPushed = actuallyPushed,
             disabled = disabled,
             disabledReason = disabledReason,
         )
@@ -1998,8 +2137,7 @@ class DefaultCloudOrchestrationKernel(
         nowEpochMs: Long = clockMs(),
     ): String {
         val safeText = CredentialRedactor.redact(rawText.trim())
-        val words = safeText.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (words.size <= config.routerMaxReplyWords) {
+        if (OrchestrationHash.countWords(safeText) <= config.routerMaxReplyWords) {
             return safeText
         }
 
@@ -2016,16 +2154,18 @@ class DefaultCloudOrchestrationKernel(
             deduplicateIfSameSha256 = true,
             nowMs = nowEpochMs,
         )
-        val suffixTokens = listOf(
-            "...",
-            "[完整内容已归档:",
-            "archive://${archived.docPath}",
-            "sha256:${archived.contentSha256.take(12)}]",
-        )
-        val keepCount = (config.routerMaxReplyWords - suffixTokens.size).coerceAtLeast(10)
-        val head = words.take(keepCount).joinToString(" ")
-        return "$head ${suffixTokens.joinToString(" ")}"
+        val suffix = "… [全文 doc:${archived.docPath}]"
+        val suffixWords = OrchestrationHash.countWords(suffix)
+        val keepCount = (config.routerMaxReplyWords - suffixWords).coerceAtLeast(10)
+        val head = OrchestrationHash.truncateToWords(safeText, keepCount).first
+        return "$head $suffix"
     }
+
+    suspend fun appendWorkerMessage(
+        sessionId: String,
+        message: UIMessage,
+        nowEpochMs: Long = clockMs(),
+    ) = appendMessageToSession(sessionId, message, nowEpochMs)
 
     private suspend fun appendMessageToSession(
         sessionId: String,

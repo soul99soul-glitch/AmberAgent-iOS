@@ -3,6 +3,7 @@ package app.amber.cloud.orchestration
 import app.amber.cloud.channel.SenderRole
 import app.amber.cloud.runtime.ExecutionScope
 import app.amber.core.native.AmberNativeBridge
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.nio.charset.StandardCharsets
 
@@ -456,6 +457,30 @@ data class AsyncToolStopResult(
     val status: String,
 )
 
+/**
+ * 面向人的统一活动状态事件（对外唯一的进度表达）。
+ * - `label` 是人话短语（≤ 20 字），必须经过 `CredentialRedactor` 与对外文本净化，不含工具名/参数/原始返回/推理；
+ * - IM 通过编辑同一条状态消息来呈现 started → progress → done|failed。
+ */
+@Serializable
+enum class ActivityPhase {
+    @SerialName("started") STARTED,
+    @SerialName("progress") PROGRESS,
+    @SerialName("done") DONE,
+    @SerialName("failed") FAILED;
+
+    val wireName: String get() = name.lowercase()
+    val isTerminal: Boolean get() = this == DONE || this == FAILED
+}
+
+@Serializable
+data class ActivityStatus(
+    val taskId: String,
+    val label: String,
+    val phase: ActivityPhase,
+    val updatedAtMs: Long,
+)
+
 @Serializable
 data class RouterTriggerEvent(
     val eventId: String,
@@ -558,6 +583,8 @@ data class CloudAutomationSpec(
     val stopAfterConsecutiveFailures: Int = 3,
     val completionPolicy: CompletionPolicy? = null,
     val targetSessionId: String? = null,
+    /** 调度间隔（默认 1 小时；ProactiveEngine 常驻循环每轮检查到期自动化） */
+    val intervalMs: Long = 60 * 60_000L,
 )
 
 @Serializable
@@ -580,6 +607,7 @@ data class CloudAutomationRecord(
     val activeRunId: String? = null,
     val lastRunAtMs: Long? = null,
     val nextRetryAtMs: Long? = null,
+    val intervalMs: Long = 60 * 60_000L,
     val createdAtMs: Long,
     val updatedAtMs: Long,
 )
@@ -729,11 +757,57 @@ object OrchestrationHash {
      * - 英文/数字按连续空白分隔词统计；
      * - CJK 汉字按每个字计 1 词（或当全为空白分词时按 token 计），确保中英文都能严格受限于 100 词。
      */
-    fun countWords(text: String): Int {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return 0
-        val tokens = trimmed.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        return tokens.size
+    fun countWords(text: String): Int = wordTokenEndOffsets(text).size
+
+    /**
+     * 返回每个“词”在原文中的结束偏移（不拆代理对）：
+     * - CJK 表意文字/假名/谚文每个字符计 1 词；
+     * - 其余非空白连续片段计 1 词。
+     */
+    fun wordTokenEndOffsets(text: String): List<Int> {
+        val ends = mutableListOf<Int>()
+        var i = 0
+        var inRun = false
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            val width = Character.charCount(cp)
+            when {
+                Character.isWhitespace(cp) -> {
+                    if (inRun) ends.add(i)
+                    inRun = false
+                }
+                isCjk(cp) -> {
+                    if (inRun) ends.add(i)
+                    inRun = false
+                    ends.add(i + width)
+                }
+                else -> inRun = true
+            }
+            i += width
+        }
+        if (inRun) ends.add(text.length)
+        return ends
+    }
+
+    /** 截取前 [maxWords] 个词（CJK 安全、代理对安全），返回是否截断。 */
+    fun truncateToWords(text: String, maxWords: Int): Pair<String, Boolean> {
+        val ends = wordTokenEndOffsets(text)
+        if (ends.size <= maxWords) return text to false
+        if (maxWords <= 0) return "" to true
+        return text.substring(0, ends[maxWords - 1]).trimEnd() to true
+    }
+
+    private fun isCjk(cp: Int): Boolean {
+        val block = Character.UnicodeBlock.of(cp) ?: return false
+        return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+            block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
+            block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B ||
+            block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
+            block == Character.UnicodeBlock.HIRAGANA ||
+            block == Character.UnicodeBlock.KATAKANA ||
+            block == Character.UnicodeBlock.HANGUL_SYLLABLES ||
+            block == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION ||
+            block == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS
     }
 }
 

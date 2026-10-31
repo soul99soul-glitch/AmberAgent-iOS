@@ -26,6 +26,16 @@ import app.amber.cloud.channels.OwnerBindingManager
 import app.amber.cloud.gateway.CloudGatewayState
 import app.amber.cloud.gateway.PendingApprovalDto
 import app.amber.cloud.gateway.SessionDto
+import app.amber.cloud.orchestration.AutomationTurnOutput
+import app.amber.cloud.orchestration.CloudOrchestrationStore
+import app.amber.cloud.orchestration.CloudRouter
+import app.amber.cloud.orchestration.ConnectorImStatusSink
+import app.amber.cloud.orchestration.DefaultCloudOrchestrationKernel
+import app.amber.cloud.orchestration.ModelRouterBrain
+import app.amber.cloud.orchestration.ModelWorkerTurnRunner
+import app.amber.cloud.orchestration.OrchestrationConfig
+import app.amber.cloud.orchestration.RouterBrain
+import app.amber.cloud.orchestration.RouterDecision
 import app.amber.cloud.proactive.InterruptionBudgetConfig
 import app.amber.cloud.proactive.L2NoteworthyScore
 import app.amber.cloud.proactive.NoteworthyJudgeProvider
@@ -154,6 +164,20 @@ class CloudAgentKernel(
     val contextManager = CloudContextManager(checkpointsDir)
     val toolRegistry = CloudToolRegistry()
     val gatewayState = CloudGatewayState(dataDir)
+    val orchestrationStore = CloudOrchestrationStore(dataDir)
+    val orchestrationKernel = DefaultCloudOrchestrationKernel(
+        config = OrchestrationConfig(),
+        store = orchestrationStore,
+        conversationStorage = conversationStorage,
+        toolRegistry = toolRegistry,
+        proactiveEngine = proactiveEngine,
+    )
+    val workerTurnRunner = ModelWorkerTurnRunner(
+        kernel = orchestrationKernel,
+        modelClient = modelClient,
+        toolRegistry = toolRegistry,
+    )
+    val router: CloudRouter
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -172,6 +196,35 @@ class CloudAgentKernel(
 
     init {
         registerBuiltinTools()
+        orchestrationKernel.workerTurnRunner = { item, principal ->
+            workerTurnRunner.run(item, principal)
+        }
+        orchestrationKernel.onOwnerNotificationCard = { card, key ->
+            for ((kind, connector) in connectors) {
+                val ownerChatId = ownerBinding.getOwnerDirectChatId(kind.wireName) ?: continue
+                connector.sendWithReceipt(
+                    OutboundMessage(
+                        channel = kind,
+                        chatId = ownerChatId,
+                        text = card.markdownBody,
+                        conversationId = PRIMARY_CONVERSATION_ID.toString(),
+                        card = card,
+                        idempotencyKey = "orch:$key:${kind.wireName}:${System.nanoTime()}",
+                    )
+                )
+            }
+        }
+        router = CloudRouter(
+            kernel = orchestrationKernel,
+            sink = ConnectorImStatusSink { kind -> connectors[kind] },
+            brain = RouterBrain { RouterDecision() },
+            executionToolNames = toolRegistry.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }.toSet(),
+        ).also { r ->
+            r.brain = ModelRouterBrain(
+                modelClient = modelClient,
+                routerTools = { r.routerTools },
+            )
+        }
         // Wire gateway decision callback into the kernel
         gatewayState.registerDecisionListener { sessionKey, toolCallId, allow ->
             onGatewayDecision(sessionKey, toolCallId, allow)
@@ -224,6 +277,7 @@ class CloudAgentKernel(
                 conversationStorage.saveConversation(conv.copy(messageNodes = repairedNodes))
             }
         }
+        orchestrationKernel.recoverAfterRestart()
     }
 
     fun registerConnector(connector: ChannelConnector) {
@@ -235,6 +289,7 @@ class CloudAgentKernel(
      * Starts the resident proactive intelligence engine background loop inside `amberd`.
      */
     fun startProactiveLoop(pollIntervalMs: Long = 60_000L) {
+        orchestrationKernel.startHealthLoop(pollIntervalMs)
         if (proactiveJob?.isActive == true) return
         proactiveJob = proactiveScope.launch {
             while (isActive) {
@@ -251,6 +306,7 @@ class CloudAgentKernel(
     }
 
     fun stopProactiveLoop() {
+        orchestrationKernel.stopHealthLoop()
         proactiveJob?.cancel()
         proactiveJob = null
     }
@@ -263,6 +319,18 @@ class CloudAgentKernel(
      * the kernel's restraint gate (quiet hours + interruption budget) to the owner's private chats.
      */
     suspend fun runProactiveCycle(nowOverrideMs: Long? = null): List<ProactiveRunResult> {
+        val nowMs = nowOverrideMs ?: System.currentTimeMillis()
+        if (orchestrationStore.listAutomations().isNotEmpty()) {
+            orchestrationKernel.runDueAutomations(nowMs) { envelope, _, sessionId ->
+                val convUuid = runCatching { Uuid.parse(sessionId) }.getOrNull()
+                val msgs = convUuid?.let { conversationStorage.loadConversation(it) }?.messageNodes?.map { it.currentMessage }.orEmpty()
+                val reply = modelClient.generateReply(msgs, toolRegistry.declaredTools(ExecutionScope.SUBAGENT))
+                AutomationTurnOutput(
+                    summary = CredentialRedactor.redact(reply.toText().ifBlank { "已完成巡检 #${envelope.iteration}" }),
+                    decision = "silent",
+                )
+            }
+        }
         val rawResults = proactiveEngine.pollAllSources(targetChatId = "", channel = null)
         return rawResults.map { res ->
             if (res is ProactiveRunResult.PushedAtL3) {
