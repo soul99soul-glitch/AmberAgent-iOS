@@ -27,59 +27,71 @@ struct ChatTaskInlineCardView: View {
                     isShowingGroupSheet = true
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    // Duet-style lightweight branch row: ╭─ [A] Headline · Status
-                    HStack(alignment: .center, spacing: 7) {
+                VStack(alignment: .leading, spacing: 6) {
+                    // Duet-style curved branch header: ╭─ [Agent Badge] Headline · Status >
+                    HStack(alignment: .center, spacing: 8) {
                         DuetBranchConnectorShape()
                             .stroke(
                                 rollup.isFailureOrNeedsUser ? rollup.tintColor.opacity(0.65) : AmberTheme.border,
                                 style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
                             )
-                            .frame(width: 12, height: 15)
+                            .frame(width: 12, height: 16)
                             .offset(y: 2)
 
                         agentAvatarBadge
 
                         Text(segment.headline)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(AmberTheme.foreground2)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        Text("·")
-                            .font(.subheadline)
+                        Spacer(minLength: 4)
+
+                        statusPill
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(AmberTheme.muted)
-
-                        Text(rollup.statusBadgeText)
-                            .font(.subheadline.weight(rollup.isFailureOrNeedsUser ? .semibold : .regular))
-                            .foregroundStyle(rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted)
-                            .lineLimit(1)
-
-                        Spacer(minLength: 0)
                     }
 
-                    // Only show a second line when user action/attention is required
-                    if rollup.isFailureOrNeedsUser, let subtitle = segment.subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(rollup.tintColor)
-                            .lineLimit(1)
-                            .padding(.leading, 20)
+                    // Secondary human-readable progress or failure callout
+                    if let subtitle = segment.subtitle, !subtitle.isEmpty {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            if case .needsAttention = rollup {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(AmberTheme.accentRed)
+                            } else if case .approvalPending = rollup {
+                                Image(systemName: "hand.raised.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(AmberTheme.accentAmber)
+                            } else if case .working = rollup {
+                                Circle()
+                                    .fill(AmberTheme.accent)
+                                    .frame(width: 5, height: 5)
+                                    .offset(y: -1)
+                            }
+
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(
+                                    rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted
+                                )
+                                .lineLimit(rollup.isFailureOrNeedsUser ? 2 : 1)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .padding(.leading, 20)
                     }
                 }
-                .padding(.horizontal, rollup.isFailureOrNeedsUser ? 12 : 4)
-                .padding(.vertical, rollup.isFailureOrNeedsUser ? 8 : 3)
-                .background(
-                    rollup.isFailureOrNeedsUser ? cardFill : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
-                    if rollup.isFailureOrNeedsUser {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(cardStroke, lineWidth: 0.9)
-                    }
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(cardStroke, lineWidth: rollup.isFailureOrNeedsUser ? 1.0 : 0.7)
                 }
-                .contentShape(Rectangle())
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
             .accessibilityElement(children: .combine)
