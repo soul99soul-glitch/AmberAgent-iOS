@@ -656,6 +656,9 @@ class OpenAIKmpProvider internal constructor(
                 if (hasReasoningContent || !reasoning.isNullOrEmpty()) {
                     add(UIMessagePart.Reasoning(reasoning = reasoning.orEmpty(), finishedAt = null))
                 }
+                // 文本必须排在工具前：否则请求构建会把同一条回复拆成 tool_calls 和一条缺 reasoning_content 的纯文本 assistant。
+                if (content.isNotEmpty()) add(UIMessagePart.Text(content))
+                if (refusal.isNotEmpty()) add(UIMessagePart.Text(refusal))
                 toolCalls.forEach { tc ->
                     val tcObj = tc.obj() ?: return@forEach
                     val toolCallIndex = tcObj.int("index")
@@ -676,8 +679,6 @@ class OpenAIKmpProvider internal constructor(
                         )
                     )
                 }
-                if (content.isNotEmpty()) add(UIMessagePart.Text(content))
-                if (refusal.isNotEmpty()) add(UIMessagePart.Text(refusal))
             },
             annotations = parseAnnotations(jsonObject["annotations"]?.arr() ?: emptyList()),
         )
