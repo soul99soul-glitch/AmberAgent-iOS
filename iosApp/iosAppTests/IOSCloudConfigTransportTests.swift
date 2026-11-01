@@ -76,7 +76,7 @@ final class IOSCloudConfigTransportTests: XCTestCase {
         let key = try TestRSAKey()
         let harness = Harness(
             importKeyJSON: key.importKeyJSON(gatewayId: "gw", deviceId: "dev-1"),
-            viewJSON: viewJSON(revision: 2)
+            viewJSON: viewJSON(revision: 99)
         )
         let clock = StepClock(start: key.serverTime, step: 10)
         let transport = IOSCloudConfigClient(
@@ -91,7 +91,9 @@ final class IOSCloudConfigTransportTests: XCTestCase {
             freeSources: ["duckduckgo"]
         )
 
-        let receipt = try await transport.applyCloudConfiguration(bundle, requestId: "req-1")
+        // The user reviewed revision 2; the transport must submit exactly that —
+        // not a POST-time refetched value that would authorize a stale draft.
+        let receipt = try await transport.applyCloudConfiguration(bundle, requestId: "req-1", expectedRevision: 2)
 
         XCTAssertEqual(receipt.requestId, "req-1")
         XCTAssertEqual(receipt.revision, 3)
@@ -105,7 +107,10 @@ final class IOSCloudConfigTransportTests: XCTestCase {
         XCTAssertEqual(payload["gatewayId"] as? String, "gw")
         XCTAssertEqual(payload["deviceId"] as? String, "dev-1")
         XCTAssertEqual(payload["requestId"] as? String, "req-1")
-        XCTAssertEqual(payload["expectedRevision"] as? Int, 2, "expectedRevision 必须等于刚拉到的云端 revision")
+        XCTAssertEqual(payload["expectedRevision"] as? Int, 2,
+                       "expectedRevision 必须是用户审过的 revision，而非 POST 前新拉到的 99")
+        let configGets = await harness.configGetCount
+        XCTAssertEqual(configGets, 0, "apply 不得在 POST 前重新拉 revision 给旧草稿授权")
         XCTAssertEqual(payload["issuedAt"] as? Int, Int(key.serverTime + 10),
                        "issuedAt 跟随服务端时钟加本地流逝")
         XCTAssertEqual(payload["expiresAt"] as? Int, Int(key.serverTime + 10 + 120))
@@ -138,7 +143,7 @@ final class IOSCloudConfigTransportTests: XCTestCase {
                                              kidStore: harness.kidStore, now: { key.serverTime })
         let receipt = try await transport.applyCloudConfiguration(
             IOSCloudConfigBundle(model: nil, search: [], freeSources: [], extraCredentials: ["exaApiKey": .delete]),
-            requestId: "req-2"
+            requestId: "req-2", expectedRevision: 0
         )
 
         XCTAssertTrue(receipt.replayed, "410 后应同 requestId 重封重试一次")
@@ -162,7 +167,7 @@ final class IOSCloudConfigTransportTests: XCTestCase {
             try await transport.applyCloudConfiguration(
                 IOSCloudConfigBundle(model: nil, search: [], freeSources: [],
                                      extraCredentials: ["exaApiKey": .replace("fake")]),
-                requestId: "req-3"
+                requestId: "req-3", expectedRevision: 1
             )
         ) {
             XCTAssertEqual($0 as? IOSCloudConfigError, .revisionConflict(current: 7))
@@ -183,7 +188,7 @@ final class IOSCloudConfigTransportTests: XCTestCase {
             try await transport.applyCloudConfiguration(
                 IOSCloudConfigBundle(model: .init(providerKind: "claude", modelId: "m", baseUrl: "", credential: .keep),
                                      search: [], freeSources: []),
-                requestId: "req-4"
+                requestId: "req-4", expectedRevision: 0
             )
         ) { XCTAssertEqual($0 as? IOSCloudConfigError, .credentialActionRequired) }
 
@@ -219,7 +224,7 @@ final class IOSCloudConfigTransportTests: XCTestCase {
             try await transport.applyCloudConfiguration(
                 IOSCloudConfigBundle(model: nil, search: [], freeSources: [],
                                      extraCredentials: ["exaApiKey": .replace("fake")]),
-                requestId: "req-5"
+                requestId: "req-5", expectedRevision: 0
             )
         ) {
             XCTAssertEqual($0 as? IOSCloudConfigError, .importKeyChanged,
@@ -255,6 +260,7 @@ final class IOSCloudConfigTransportTests: XCTestCase {
         nonisolated let kidStore = IOSCloudImportKidStore.ephemeral()
         private(set) var lastPostJWE: String?
         private(set) var postCount = 0
+        private(set) var configGetCount = 0
         private var postResponses: [(Int, String)]
 
         private let cannedImportKey: String
@@ -283,6 +289,7 @@ final class IOSCloudConfigTransportTests: XCTestCase {
             let body: String
             switch (request.httpMethod, path) {
             case ("GET", "/v2/configuration"):
+                configGetCount += 1
                 (status, body) = (cannedViewStatus, cannedView)
             case ("GET", "/v2/configuration/import-key"):
                 (status, body) = (200, cannedImportKey)

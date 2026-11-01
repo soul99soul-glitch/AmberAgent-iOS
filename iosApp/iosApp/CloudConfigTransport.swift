@@ -338,16 +338,18 @@ actor IOSCloudConfigClient: IOSCloudConfigTransport {
         snapshot(try await fetchViewDTO())
     }
 
-    func applyCloudConfiguration(_ bundle: IOSCloudConfigBundle, requestId: String) async throws -> IOSCloudConfigApplyReceipt {
+    /// `expectedRevision` is the revision the user reviewed when confirming —
+    /// supplied by the caller, never re-fetched here. Refetching just before
+    /// POST would bless a stale draft over another device's unseen update.
+    func applyCloudConfiguration(_ bundle: IOSCloudConfigBundle, requestId: String, expectedRevision: Int) async throws -> IOSCloudConfigApplyReceipt {
         let key = try await verifiedImportKey()
         let keyFetchedAt = now()
-        let revision = try await fetchViewDTO().revision
         do {
-            return try await post(bundle: bundle, key: key, keyFetchedAt: keyFetchedAt, requestId: requestId, expectedRevision: revision)
+            return try await post(bundle: bundle, key: key, keyFetchedAt: keyFetchedAt, requestId: requestId, expectedRevision: expectedRevision)
         } catch IOSCloudConfigError.envelopeExpired {
             // Same requestId + same operation re-sealed: if the original was
             // already applied the server answers the stored receipt instead.
-            return try await post(bundle: bundle, key: key, keyFetchedAt: keyFetchedAt, requestId: requestId, expectedRevision: revision)
+            return try await post(bundle: bundle, key: key, keyFetchedAt: keyFetchedAt, requestId: requestId, expectedRevision: expectedRevision)
         }
     }
 

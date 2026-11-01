@@ -50,12 +50,16 @@ extension MacGatewayStore {
 
     /// Uploads the draft's selected configuration. Credentials resolve at this
     /// explicit action; the draft keeps its selections on conflict/failure.
+    /// `expectedRevision` is the revision the confirming UI displayed — never a
+    /// refetched value, so a stale draft can't silently cover another device's
+    /// unseen update.
     @discardableResult
     func applyCloudImport(
         draft: IOSCloudImportDraft,
-        sharedSettings: IOSSharedSettingsStore
+        sharedSettings: IOSSharedSettingsStore,
+        expectedRevision: Int?
     ) async -> String? {
-        await applyCloudBundle(draft.bundle(using: sharedSettings))
+        await applyCloudBundle(draft.bundle(using: sharedSettings), expectedRevision: expectedRevision)
     }
 
     /// Uploads one bundle (from local import or manual edit). Secrets live only
@@ -64,10 +68,11 @@ extension MacGatewayStore {
     /// or a user-readable error.
     ///
     /// requestId semantics: bound to the operation's wire-level hash — retrying
-    /// the same selection replays the same id (the server answers its stored
-    /// receipt), while a changed selection generates a fresh one.
+    /// the same selection while the outcome is unknown replays the same id;
+    /// a successful receipt ends the operation so the next submit (even with
+    /// identical content) is a new operation with a fresh id.
     @discardableResult
-    func applyCloudBundle(_ bundle: IOSCloudConfigBundle) async -> String? {
+    func applyCloudBundle(_ bundle: IOSCloudConfigBundle, expectedRevision: Int? = nil) async -> String? {
         guard !cloudImporting else { return nil }
         guard let transport = cloudConfigTransport else {
             return localized("云端还不支持配置导入，请等待服务端更新")
@@ -75,15 +80,25 @@ extension MacGatewayStore {
         guard !bundle.isEmpty else {
             return localized("没有选择要导入的配置")
         }
+        let revision = expectedRevision ?? cloudConfig?.revision
+        guard let expected = revision else {
+            // The user never saw a snapshot — submitting now could overwrite an
+            // unseen remote config. Refresh once so the UI shows the truth,
+            // then make the user re-confirm rather than silently baseline.
+            await refreshCloudConfig()
+            return cloudConfig == nil
+                ? localized("无法读取云端配置，请刷新后重试")
+                : localized("云端配置已更新，请重新查看后提交")
+        }
         cloudImporting = true
         defer { cloudImporting = false }
-        let operationKey = bundle.operationKey
-        let requestId = (pendingImportOperationKey == operationKey ? pendingImportRequestId : nil)
-            ?? UUID().uuidString
-        pendingImportOperationKey = operationKey
-        pendingImportRequestId = requestId
+        let requestId = pendingImportOperation.requestId(forOperationKey: bundle.operationKey)
         do {
-            let receipt = try await transport.applyCloudConfiguration(bundle, requestId: requestId)
+            let receipt = try await transport.applyCloudConfiguration(
+                bundle, requestId: requestId, expectedRevision: expected)
+            // Terminal receipt — this operation is over. Keeping the id would
+            // let a later identical-but-new submit silently replay this receipt.
+            pendingImportOperation.finish()
             cloudImportKeyChanged = false
             notice = Notice(
                 text: receipt.replayed
@@ -95,8 +110,9 @@ extension MacGatewayStore {
             return nil
         } catch {
             if forgetIfRevoked(error) { return MacGatewayError.unauthorized.localizedDescription }
-            // A changed remote revision invalidates any staged retry context —
-            // the next attempt re-reads it; the draft's selections survive.
+            // Result unknown or a clean 409: the pending id survives so a
+            // verbatim retry merges/replays instead of doubling the apply;
+            // the draft's selections survive for the user to re-review.
             if case IOSCloudConfigError.revisionConflict = error {
                 await refreshCloudConfig()
             }

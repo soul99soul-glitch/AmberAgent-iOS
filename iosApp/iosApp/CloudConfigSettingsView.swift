@@ -57,7 +57,9 @@ struct CloudConfigSettingsView: View {
                     importing: store.cloudImporting,
                     onConfirm: {
                         Task {
-                            let error = await store.applyCloudImport(draft: draft, sharedSettings: sharedSettings)
+                            let error = await store.applyCloudImport(
+                                draft: draft, sharedSettings: sharedSettings,
+                                expectedRevision: store.cloudConfig?.revision)
                             if let error { importError = error } else { presentingPreview = false }
                         }
                     }
@@ -87,7 +89,8 @@ struct CloudConfigSettingsView: View {
     }
 
     private func applyManual(bundle: IOSCloudConfigBundle) async {
-        if let error = await store.applyCloudBundle(bundle) {
+        if let error = await store.applyCloudBundle(
+            bundle, expectedRevision: store.cloudConfig?.revision) {
             importError = error
         } else {
             manualSheet = nil
@@ -283,10 +286,18 @@ struct CloudConfigSettingsView: View {
         .opacity(provider.isExportable ? 1 : 0.55)
     }
 
+    /// Tapping a provider toggles its selection — tapping the selected row
+    /// clears the model choice entirely so a search-only import (e.g. just
+    /// Exa/Brave keys) doesn't drag the model and its key along.
     private func select(_ provider: IOSCloudProviderExportItem, in draft: IOSCloudImportDraft) {
         var next = draft
-        next.providerId = provider.providerId
-        next.modelUuid = provider.defaultModelUuid
+        if next.providerId == provider.providerId {
+            next.providerId = nil
+            next.modelUuid = nil
+        } else {
+            next.providerId = provider.providerId
+            next.modelUuid = provider.defaultModelUuid
+        }
         self.draft = next
     }
 

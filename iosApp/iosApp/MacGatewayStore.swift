@@ -65,8 +65,8 @@ final class MacGatewayStore {
     /// Import idempotency state: the requestId is bound to the operation's
     /// semantic hash, so retries of the same selection replay while a changed
     /// selection gets a fresh id (same id + different operation → server 409).
-    @ObservationIgnored var pendingImportOperationKey: String?
-    @ObservationIgnored var pendingImportRequestId: String?
+    /// A successful receipt ends the operation — the next submit gets a new id.
+    @ObservationIgnored var pendingImportOperation = IOSCloudPendingOperation()
     var pendingPairing: MacGatewayPairingPayload?
     var notice: Notice?
 
@@ -511,8 +511,7 @@ final class MacGatewayStore {
         cloudConfigLoading = false
         cloudImporting = false
         cloudImportKeyChanged = false
-        pendingImportOperationKey = nil
-        pendingImportRequestId = nil
+        pendingImportOperation = IOSCloudPendingOperation()
         isReachable = nil
         pushError = nil
     }

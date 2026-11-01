@@ -402,6 +402,58 @@ final class IOSCloudConfigTests: XCTestCase {
         XCTAssertEqual(draft.enableWebSearch, snapshot.enableWebSearch)
     }
 
+    // ---- R7: model deselection → search-only import ----
+
+    func testDeselectingProviderImportsOnlySelectedSearchKeys() throws {
+        let store = makeStore()
+        let provider = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "ProviderB", apiKey: "sk-b", baseUrl: "https://b.example/v1",
+            modelName: "ModelB", modelId: "model-b"
+        ))
+        let model = try XCTUnwrap(provider.models.first)
+        store.setCurrentChatModelId(model.id.description())
+        store.addSearchProvider(name: "Exa", apiKey: "exa-key", serviceType: "exa")
+
+        var draft = IOSCloudImportDraft.make(from: store)
+        XCTAssertNotNil(draft.providerId, "默认选中当前服务商")
+        // 用户点掉模型选择、只勾 Exa —— 只导入所选搜索 Key，不顺带模型与模型 Key。
+        draft.providerId = nil
+        draft.modelUuid = nil
+        let exaItem = try XCTUnwrap(draft.searches.first { $0.typeLabel == "exa" })
+        draft.selectedSearchIds = [exaItem.serviceId]
+        let bundle = draft.bundle(using: store)
+
+        XCTAssertNil(bundle.model, "取消选择后不得发送模型配置")
+        XCTAssertFalse(bundle.isEmpty, "仅搜索选择仍是有效导入")
+        XCTAssertNil(bundle.credentialPatch?.modelApiKey, "不得顺带模型 Key")
+        XCTAssertEqual(bundle.credentialPatch?.exaApiKey?.value, "exa-key")
+        XCTAssertEqual(bundle.configurationPatch?.search?.sources.first, "exa")
+
+        let rebuilt = draft.rebuilt(from: store)
+        XCTAssertNil(rebuilt.providerId, "重建不得复活被显式取消的模型选择")
+        XCTAssertNil(rebuilt.modelUuid)
+        XCTAssertEqual(rebuilt.selectedSearchIds, draft.selectedSearchIds,
+                       "搜索选择保留")
+    }
+
+    // ---- R2: requestId lifecycle ----
+
+    func testPendingOperationReusesIdUntilReceiptThenFreshId() {
+        var pending = IOSCloudPendingOperation()
+
+        let first = pending.requestId(forOperationKey: "op-a")
+        XCTAssertEqual(pending.requestId(forOperationKey: "op-a"), first,
+                       "结果未知的同一操作重试必须沿用同一 requestId")
+        XCTAssertNotEqual(pending.requestId(forOperationKey: "op-b"), first,
+                          "内容变化是独立操作，必须换新 id")
+
+        pending.finish()
+        XCTAssertNil(pending.requestId)
+        XCTAssertNil(pending.operationKey)
+        XCTAssertNotEqual(pending.requestId(forOperationKey: "op-b"), first,
+                          "成功 receipt 后同内容的新提交也是新操作新 id")
+    }
+
     // ---- helpers ----
 
     private func makeStore() -> IOSSharedSettingsStore {

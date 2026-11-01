@@ -283,9 +283,14 @@ struct IOSCloudImportDraft: Equatable {
     }
 
     /// A stable refresh path: rebuild items while keeping the user's selections.
+    /// An explicit "no model" deselection (`providerId == nil`) survives too —
+    /// the rebuilt draft must not resurrect the default provider.
     func rebuilt(from sharedSettings: IOSSharedSettingsStore) -> IOSCloudImportDraft {
         var next = IOSCloudImportDraft.make(from: sharedSettings)
-        if let providerId, next.providers.contains(where: { $0.providerId == providerId && $0.isExportable }) {
+        if providerId == nil {
+            next.providerId = nil
+            next.modelUuid = nil
+        } else if let providerId, next.providers.contains(where: { $0.providerId == providerId && $0.isExportable }) {
             next.providerId = providerId
             next.modelUuid = modelUuid ?? next.providers.first { $0.providerId == providerId }?.defaultModelUuid
         }
@@ -694,6 +699,36 @@ extension IOSCloudImportDraft {
     }
 }
 
+// MARK: - Pending operation (requestId lifecycle)
+
+/// Idempotency state for one in-flight cloud-config operation, owned by
+/// `MacGatewayStore`. A successful receipt *finishes* the operation — the next
+/// submit, even with identical content, is a new operation with a fresh id so
+/// the server applies it instead of replaying the old receipt. A retry whose
+/// result is unknown (network drop, timeout, unreadable response) keeps the
+/// pending id: the server merges the same semantic operation or answers its
+/// stored receipt rather than applying twice.
+struct IOSCloudPendingOperation: Equatable, Sendable {
+    private(set) var operationKey: String?
+    private(set) var requestId: String?
+
+    /// The id to send for this operation: the pending id while the same
+    /// operation retries, otherwise a fresh UUID for a new operation.
+    mutating func requestId(forOperationKey key: String) -> String {
+        if operationKey == key, let requestId { return requestId }
+        let id = UUID().uuidString
+        operationKey = key
+        requestId = id
+        return id
+    }
+
+    /// Terminal receipt received (applied or replayed) — the operation is over.
+    mutating func finish() {
+        operationKey = nil
+        requestId = nil
+    }
+}
+
 // MARK: - Wire seam (contract: docs/architecture/cloud-configuration-api.md)
 
 /// Transport for the cloud configuration API over the paired HTTPS/SPKI
@@ -705,9 +740,11 @@ protocol IOSCloudConfigTransport: Sendable {
     /// Current cloud configuration (non-secret view; `keyConfigured` flags only).
     func fetchCloudConfiguration() async throws -> IOSCloudConfigSnapshot
     /// Seals the bundle's secrets in memory and uploads over the pinned pairing.
-    /// The caller supplies the requestId: retries of the same semantic
-    /// operation reuse it, a changed selection must use a fresh one. Revision
+    /// The caller supplies both idempotency anchors: `requestId` (same semantic
+    /// operation reuses it, a changed selection uses a fresh one) and
+    /// `expectedRevision` — the revision the user actually reviewed, never a
+    /// POST-time refetch that would silently authorize a stale draft. Revision
     /// conflicts surface as `IOSCloudConfigError.revisionConflict` so drafts
     /// survive and the store can refresh.
-    func applyCloudConfiguration(_ bundle: IOSCloudConfigBundle, requestId: String) async throws -> IOSCloudConfigApplyReceipt
+    func applyCloudConfiguration(_ bundle: IOSCloudConfigBundle, requestId: String, expectedRevision: Int) async throws -> IOSCloudConfigApplyReceipt
 }
