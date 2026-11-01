@@ -453,7 +453,14 @@ enum ChatTaskStreamGrouping {
             }
         }
 
-        let primaryTitle = distinctTitles.first ?? IOSAppLocalization.string("任务执行", defaultValue: "任务执行")
+        let rawPrimaryTitle = distinctTitles.first ?? IOSAppLocalization.string("任务执行", defaultValue: "任务执行")
+        let primaryTitle: String
+        if rawPrimaryTitle == "新建 SSH Profile",
+           tools.contains(where: { $0.input.localizedCaseInsensitiveContains("jump") || $0.input.contains("跳板") }) {
+            primaryTitle = "新建 SSH 跳板机 Profile"
+        } else {
+            primaryTitle = rawPrimaryTitle
+        }
         let headline: String
         if distinctTitles.count == 1 {
             headline = primaryTitle

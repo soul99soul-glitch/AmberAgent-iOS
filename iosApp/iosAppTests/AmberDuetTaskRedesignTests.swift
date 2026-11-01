@@ -202,23 +202,23 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             ),
             AmberHubItem(
                 id: "hub-amber-core",
-                title: "Amber 核心研发",
+                title: "机房视觉检测",
                 thesis: "四端架构与云端任务协同",
                 template: .coding,
                 memoryPolicy: .sharedWithGlobal,
                 pinnedSupertags: ["#Amber", "#iOS"],
-                documentCountHint: 5,
-                statusSummaryOverride: "5 份资料 · 1 项云端运行中"
+                documentCountHint: 3,
+                statusSummaryOverride: "3 份资料 · 1 项云端运行中"
             ),
             AmberHubItem(
                 id: "hub-novel-ash-city",
-                title: "长篇小说 · 灰烬之城",
+                title: "小说 · 雾港手记",
                 thesis: "世界观设定与章节大纲",
                 template: .novel,
                 memoryPolicy: .hubIsolated,
                 pinnedSupertags: ["#小说", "#设定"],
-                documentCountHint: 18,
-                statusSummaryOverride: "独立记忆 · 18 份设定与草稿"
+                documentCountHint: 4,
+                statusSummaryOverride: "独立记忆 · 第 4 章草稿"
             )
         ]
         let previewCollections: [AmberSmartCollectionItem] = [
@@ -371,6 +371,15 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
 
         let outDir = URL(fileURLWithPath: "/tmp/amber-duet-previews", isDirectory: true)
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let parityDir = URL(
+            fileURLWithPath: "/Users/arquiel/.synara/userdata/project-context/0f3f2134-3ef9-4137-8b75-6d1496ff94d1/library/design/ios-redesign-visual-parity",
+            isDirectory: true
+        )
+        try? FileManager.default.createDirectory(at: parityDir, withIntermediateDirectories: true)
+
+        if let warmEditorial = AmberArquielThemePresets.all.first(where: { $0.id == "arquiel-warm-editorial" }) {
+            try? AmberThemeRuntime.shared.apply(warmEditorial)
+        }
 
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousKey = scene.windows.first(where: \.isKeyWindow)
@@ -384,28 +393,64 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         func capture<V: View>(
             _ name: String,
             style: UIUserInterfaceStyle = .light,
-            width: CGFloat = 402,
-            height: CGFloat = 874,
+            width: CGFloat = 393,
+            height: CGFloat = 832,
+            dimStatusBar: Bool = false,
             @ViewBuilder content: () -> V
         ) async throws {
             window.overrideUserInterfaceStyle = style
             window.frame = CGRect(x: 0, y: 0, width: width, height: height)
-            let root = content()
-                .environment(center)
-                .environment(conversations)
-                .environment(router)
-                .environment(\.locale, Locale(identifier: "zh_Hans"))
-                .environment(\.dynamicTypeSize, .large)
+            let root = ZStack(alignment: .top) {
+                content()
+                    .environment(center)
+                    .environment(conversations)
+                    .environment(router)
+                    .environment(\.locale, Locale(identifier: "zh_Hans"))
+                    .environment(\.dynamicTypeSize, .large)
+
+                HStack {
+                    Text("14:05")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AmberTheme.foreground.opacity(dimStatusBar ? 0.38 : 1.0))
+                    Spacer()
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.black.opacity(dimStatusBar ? 0.55 : 0.88))
+                        .frame(width: 96, height: 25)
+                    Spacer()
+                    HStack(spacing: 5) {
+                        Image(systemName: "wifi")
+                        Image(systemName: "battery.100")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AmberTheme.foreground.opacity(dimStatusBar ? 0.38 : 1.0))
+                }
+                .padding(.horizontal, 26)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
+            }
             let host = UIHostingController(rootView: root)
             window.rootViewController = host
             window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+            host.additionalSafeAreaInsets = UIEdgeInsets(
+                top: 43 - window.safeAreaInsets.top,
+                left: 0,
+                bottom: -window.safeAreaInsets.bottom,
+                right: 0
+            )
             try await Task.sleep(for: .milliseconds(550))
             window.layoutIfNeeded()
-            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            let fmt = UIGraphicsImageRendererFormat()
+            fmt.scale = 2.0
+            let image = UIGraphicsImageRenderer(bounds: window.bounds, format: fmt).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
+            let pngData = try XCTUnwrap(image.pngData())
             let fileURL = outDir.appendingPathComponent("\(name).png")
-            try XCTUnwrap(image.pngData()).write(to: fileURL, options: .atomic)
+            try pngData.write(to: fileURL, options: .atomic)
+            try? pngData.write(to: parityDir.appendingPathComponent("\(name).png"), options: .atomic)
             print("DUET_PREVIEW_SAVED \(fileURL.path)")
         }
 
@@ -546,6 +591,8 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         }
 
         // 4. Canonical Argon 01–04 Screens + Theme Compatibility Captures
+        UserDefaults.standard.set(1.0, forKey: IOSDisplayPreferenceKeys.fontScale)
+        UserDefaults.standard.set(IOSChatFont.default.rawValue, forKey: IOSDisplayPreferenceKeys.chatFont)
         let failSSHMsg = makeAssistantMessage(parts: [
             makeTool(id: "ssh-a1", name: "ssh_profile_create", input: #"{"name":"JumpHost"}"#, outputJSON: failOutput),
             makeTool(id: "ssh-a2", name: "ssh_profile_create", input: #"{"name":"JumpHost"}"#, outputJSON: failOutput),
@@ -555,8 +602,11 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         let doneRouteMsg = makeAssistantMessage(parts: [
             makeTool(id: "route-done-1", name: "web_search", input: #"{"query":"京都大德寺步行路线"}"#, outputJSON: doneOutput)
         ])
+        let timeoutRouteMsg = makeAssistantMessage(parts: [
+            makeTool(id: "route-timeout-1", name: "web_search", input: #"{"query":"岚山小火车实时余票"}"#, outputJSON: #"{"ok":true,"status":"completed","timedOut":true}"#)
+        ])
         let argonChatMessages: [UIMessage] = [
-            UIMessage.companion.user(prompt: "下周去京都四天，前两天在乌丸御池开会，后两天想找安静的步行路线。另外视频闪烁检测模型先在后台跑着。"),
+            UIMessage.companion.user(prompt: "帮我后台跑机房视频闪烁检测模型；同时聊聊大德寺下午怎么逛最清静。"),
             makeAssistantMessage(parts: [
                 makeTool(
                     id: "cloud-video-1",
@@ -566,12 +616,10 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
                 ),
                 UIMessagePart.Text(
                     text: """
-                    视频闪烁检测模型已在云端启动。后两天想避开人潮，推荐两条安静步行线：
+                    模型训练已交由云端后台推进。大德寺下午慢走建议只挑两座塔头：
 
-                    1. **哲学之道北段 → 法然院 → 真如堂**：青苔庭院幽静，几乎无旅行团。
-                    2. **大德寺塔头群 → 今宫神社**：枯山水尺度克制，出东门可尝烤麻薯。
-
-                    伴手礼建议去寺町通的**一保堂茶铺**（玉露）与**鸠居堂**（线香与和纸）。
+                    - 14:00 龙源院与高桐院：看最小巧壶庭「东滴壶」与枫竹参道。
+                    - 15:30 出东门今宫神社茶屋尝烤麻薯，顺路逛紫野器皿小店。
                     """,
                     metadata: nil
                 )
@@ -617,12 +665,12 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         // Screen 02: Tasks Panel (Collapsed composer + Goal/Status grouped tasks + Collapsed history)
         await viewModel.startNewConversation()
         let tasksConvId = try XCTUnwrap(conversations.currentConversation?.id)
-        _ = await conversations.save(messages: [failSSHMsg, doneRouteMsg] + argonChatMessages, to: tasksConvId)
+        _ = await conversations.save(messages: [failSSHMsg, doneRouteMsg, timeoutRouteMsg] + argonChatMessages, to: tasksConvId)
         await conversations.renameConversation(id: tasksConvId, title: "京都旅行")
         viewModel.reloadFromStore(reason: .conversationSwitch)
         var tasksTabState = ChatComposerLocalState()
         tasksTabState.activeDuetTab = .tasks
-        try await capture("ios-argon-02-tasks-sheet-sim") {
+        try await capture("ios-argon-02-tasks-sheet-sim", dimStatusBar: true) {
             NavigationStack {
                 ChatView(
                     settingsStore: settings,
@@ -635,11 +683,9 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         }
 
         // Screen 03: Hubs Panel (Collapsed composer + Iconless typography + Smart Collections bar)
-        await conversations.selectConversation(id: argonId)
-        viewModel.reloadFromStore(reason: .conversationSwitch)
         var hubsTabState = ChatComposerLocalState()
         hubsTabState.activeDuetTab = .hubs
-        try await capture("ios-argon-03-hubs-sheet-sim") {
+        try await capture("ios-argon-03-hubs-sheet-sim", dimStatusBar: true) {
             NavigationStack {
                 ChatView(
                     settingsStore: settings,
@@ -652,7 +698,9 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         }
 
         // Screen 04: Background Handoff (In-place morphed "交办 ↗" + "● 云端 · 京都旅行 ⌄")
-        viewModel.inputText = "帮忙并行核对岚山竹林路线，并把视频闪烁检测模型挂到云端跑"
+        await conversations.selectConversation(id: argonId)
+        viewModel.reloadFromStore(reason: .conversationSwitch)
+        viewModel.inputText = "盯一下 11.16 岚山小火车余票"
         var handoffState = ChatComposerLocalState()
         handoffState.enterBackgroundHandoffMode()
         try await capture("ios-argon-04-background-handoff-sim") {

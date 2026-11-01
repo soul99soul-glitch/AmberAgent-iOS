@@ -86,34 +86,37 @@ struct ChatTopBarView: View {
     }
 
     private var dockState: ChatTopBarDockState {
-        .resolve(hasMessages: hasMessages || !snippets.isEmpty, notices: notices, artifactCount: artifacts.count + snippets.count)
+        .resolve(
+            hasMessages: hasMessages || !snippets.isEmpty || backgroundRunningCount > 0,
+            notices: notices,
+            artifactCount: artifacts.count + snippets.count + backgroundRunningCount
+        )
     }
 
     var body: some View {
         let activeArrival = arrivalState.arrival
         return GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
+            ZStack(alignment: .top) {
                 // Soft top scroll backdrop so scrolling chat text fades cleanly under floating top bar pills.
                 LinearGradient(
                     colors: [
                         AmberTheme.background,
-                        AmberTheme.background.opacity(0.88),
+                        AmberTheme.background.opacity(0.92),
                         AmberTheme.background.opacity(0)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: ChatTopBarLayout.controlsHeight + 24)
-                .offset(y: 14)
+                .frame(height: ChatTopBarLayout.controlsHeight + 18)
                 .ignoresSafeArea(edges: .top)
                 .allowsHitTesting(false)
 
-                // 两侧玻璃与岛保持独立，避免系统合并玻璃后穿透正文。
+                // 两侧圆形按钮与岛保持独立，对齐顶栏上沿（.padding(.top, 10)）。
                 HStack {
                     if showsBackButton {
                     ChatToolbarIconButton(
                         systemImage: backSystemImage, accessibilityLabel: backAccessibilityLabel,
-                        size: ChatTopBarLayout.toolbarButtonDiameter, symbolSize: 18, action: onBack
+                        size: ChatTopBarLayout.toolbarButtonDiameter, symbolSize: 14.5, action: onBack
                     )
                     .accessibilityIdentifier("topbar-back")
                     }
@@ -128,8 +131,10 @@ struct ChatTopBarView: View {
                     .scaleEffect(reduceMotion ? 1 : dockScale)
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.dock = $0 }
                 }
+                .padding(.top, 10)
 
                 island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))
+                    .padding(.top, 2)
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.island = $0 }
 
                 if flightVisible, !reduceMotion {
@@ -146,7 +151,7 @@ struct ChatTopBarView: View {
                         .accessibilityHidden(true)
                 }
             }
-            .frame(height: ChatTopBarLayout.controlsHeight, alignment: .bottom)
+            .frame(height: ChatTopBarLayout.controlsHeight, alignment: .top)
             .overlay(alignment: .topTrailing) {
                 if panel == .shelf || panel == .notices {
                     panelChrome(dockPanel)
@@ -316,7 +321,7 @@ struct ChatTopBarView: View {
         ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,
                                conversationKey: conversationID, announcement: announcement,
                                backgroundRunningCount: backgroundRunningCount)
-            .frame(height: 44)
+            .frame(height: 73)
             .contentShape(Capsule())
             .scaleEffect(x: reduceMotion ? 1 : islandScale, y: 1)
             .onTapGesture {

@@ -32,14 +32,13 @@ struct ChatTaskInlineCardView: View {
                     HStack(alignment: .center, spacing: 8) {
                         DuetBranchConnectorShape()
                             .stroke(
-                                rollup.isFailureOrNeedsUser ? rollup.tintColor.opacity(0.65) : AmberTheme.border,
+                                rollup.isFailureOrNeedsUser ? rollup.tintColor.opacity(0.65) : AmberTheme.accent.opacity(0.38),
                                 style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
                             )
-                            .frame(width: 12, height: 14)
-                            .offset(y: 1)
+                            .frame(width: 11, height: 14)
 
                         Text(segment.headline)
-                            .font(.footnote.weight(.semibold))
+                            .font(.system(size: 13.2, weight: .semibold))
                             .foregroundStyle(AmberTheme.foreground)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -49,8 +48,8 @@ struct ChatTaskInlineCardView: View {
                         statusPill
 
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(AmberTheme.muted)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AmberTheme.muted2)
                     }
 
                     // Second line is reserved exclusively for unrecovered failure or pending user approval
@@ -65,12 +64,12 @@ struct ChatTaskInlineCardView: View {
                             .padding(.leading, 20)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10.5)
                 .background(cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(cardStroke, lineWidth: rollup.isFailureOrNeedsUser ? 1.0 : 0.7)
+                        .stroke(cardStroke, lineWidth: rollup.isFailureOrNeedsUser ? 1.0 : 0.8)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
@@ -118,38 +117,34 @@ struct ChatTaskInlineCardView: View {
                 .frame(width: 5, height: 5)
 
             Text(segment.inlineStatusBadgeText)
-                .font(.caption2.weight(.semibold))
+                .font(.system(size: 11.2, weight: .medium))
                 .foregroundStyle(rollup.tintColor)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 8.5)
         .padding(.vertical, 3.5)
-        .background(rollup.tintColor.opacity(0.12), in: Capsule(style: .continuous))
+        .background(rollup.tintColor.opacity(0.09), in: Capsule(style: .continuous))
     }
 
     private var cardFill: Color {
         switch rollup {
         case .needsAttention:
-            return AmberTheme.accentRed.opacity(0.06)
+            return AmberTheme.accentRed.opacity(0.045)
         case .approvalPending:
             return AmberTheme.accentAmber.opacity(0.08)
-        case .working:
-            return AmberTheme.surface.opacity(0.95)
-        case .completed, .cancelled:
-            return AmberTheme.surface.opacity(0.75)
+        case .working, .completed, .cancelled:
+            return AmberTheme.surfaceElevated
         }
     }
 
     private var cardStroke: Color {
         switch rollup {
         case .needsAttention:
-            return AmberTheme.accentRed.opacity(0.32)
+            return AmberTheme.accentRed.opacity(0.28)
         case .approvalPending:
             return AmberTheme.accentAmber.opacity(0.36)
-        case .working:
-            return AmberTheme.accent.opacity(0.26)
-        case .completed, .cancelled:
-            return AmberTheme.borderSoft
+        case .working, .completed, .cancelled:
+            return AmberTheme.border
         }
     }
 }

@@ -15,11 +15,11 @@ struct AmberPalette {
 // getters read the @Observable runtime, any SwiftUI body that reads AmberTheme.* auto-tracks
 // theme changes and re-renders — with zero changes at the ~1500 existing call sites.
 enum AmberTheme {
-    // 暖纸：画布 #EFE7D6、卡片 #FFFDF7，投影偏暖棕。
+    // 暖纸（Argon Warm Editorial）：画布 #FBF9F5、次表面 #F3EFEA、纯白抬升卡片 #FFFFFF。
     static let paperLight = AmberPalette(
-        background: 0xEFE7D6, surface: 0xFFFDF7, surface2: 0xF0EBE2,
-        foreground: 0x1B1813, foreground2: 0x5B5449, muted: 0x746D62, muted2: 0x918A80,
-        border: 0xDBCEBC, borderSoft: 0xECE3D6
+        background: 0xFBF9F5, surface: 0xF3EFEA, surface2: 0xEAE4DC,
+        foreground: 0x1E1B18, foreground2: 0x3D3731, muted: 0x787067, muted2: 0x9E958B,
+        border: 0xE6E0D6, borderSoft: 0xEFEAE1
     )
     // 暖灰（E 版默认）：画布 #ECE8E4 + 暖白卡片 #F6F5F3。
     static let neutralLight = AmberPalette(
@@ -152,6 +152,25 @@ enum AmberTheme {
     }
     static var surface: Color { base(\.surface) }
     static var surface2: Color { base(\.surface2) }
+    /// 抬升纯白卡片面（Argon `surfaceElevated`）：浅色暖纸/中性画布上为 #FFFFFF，深色下为 `surface2`。
+    static var surfaceElevated: Color {
+        let paper = AmberThemeRuntime.shared.paper
+        let design = AmberThemeRuntime.shared.design
+        return Color(uiColor: UIColor { trait in
+            if trait.userInterfaceStyle == .dark {
+                let darkHex = resolvedCanvasPalette(paper: paper, design: design, dark: true).surface2
+                return UIColor(hex: darkHex)
+            }
+            if let designLight = design?.light {
+                let resolved = designLight.resolving(paper.lightPalette)
+                if resolved.background > 0x808080 {
+                    return UIColor(hex: 0xFFFFFF)
+                }
+                return UIColor(hex: resolved.surface2)
+            }
+            return UIColor(hex: paper.isImmersive ? paper.lightPalette.surface2 : 0xFFFFFF)
+        })
+    }
     static var card: Color { base(\.surface) }
     static var foreground: Color { base(\.foreground) }
     static var foreground2: Color { base(\.foreground2) }
@@ -173,9 +192,9 @@ enum AmberTheme {
     static let accentAmber = Color(hex: statusAmberHex)
     /// Alias for call sites that want the semantic name (same as `accentAmber`).
     static var statusAmber: Color { accentAmber }
-    static let accentGreen = Color(hex: 0x3DA35D)
+    static let accentGreen = Color(hex: 0x2E7D5B)
     static let accentCyan = Color(hex: 0x2AA0BC)
-    static let accentRed = Color(hex: 0xC8402F)
+    static let accentRed = Color(hex: 0xC84031)
 
     static var glass: Color { base(\.background, alpha: 0.72) }
     static var glassStrong: Color { base(\.background, alpha: 0.85) }
@@ -634,11 +653,10 @@ final class AmberThemeRuntime {
         } else {
             design = nil
         }
-        // 默认主题 = 中性暖灰 × 琥珀金（E 版定稿）；用户显式选择过的偏好仍以持久化值为准。
-        // Style 槽缺省 = 现状观感，旧安装升级后仍匹配原 6 色 pack。
-        paper = Paper(rawValue: d.string(forKey: Keys.paper) ?? "") ?? .neutral
-        accentHex = (d.object(forKey: Keys.accent) as? Int).map { UInt32($0) } ?? AmberAccentOption.amberGold.accentHex
-        accentInkHex = (d.object(forKey: Keys.accentInk) as? Int).map { UInt32($0) } ?? AmberAccentOption.amberGold.inkHex
+        // 默认主题 = 暖纸 × 赤陶（Argon Warm Editorial 定稿）；用户显式选择过的偏好仍以持久化值为准。
+        paper = Paper(rawValue: d.string(forKey: Keys.paper) ?? "") ?? .paper
+        accentHex = (d.object(forKey: Keys.accent) as? Int).map { UInt32($0) } ?? AmberAccentOption.terracotta.accentHex
+        accentInkHex = (d.object(forKey: Keys.accentInk) as? Int).map { UInt32($0) } ?? AmberAccentOption.terracotta.inkHex
         canvasStyle = AmberCanvasStyle(rawValue: d.string(forKey: Keys.canvasStyle) ?? "") ?? .flat
         brandMarkStyle = AmberBrandMarkStyle(rawValue: d.string(forKey: Keys.brandMark) ?? "") ?? .systemWordmark
         shortcutIconStyle = AmberShortcutIconStyle(rawValue: d.string(forKey: Keys.shortcutIconStyle) ?? "") ?? .phosphorFill
@@ -807,7 +825,7 @@ enum AmberAccentOption: String, CaseIterable, Identifiable {
     var accentHex: UInt32 {
         switch self {
         case .amberGold:  0xB9863A
-        case .terracotta: 0xB8623A
+        case .terracotta: 0xC96442
         case .sage:       0x5E9C6E
         case .mistBlue:   0x4F86D6
         case .steelBlue:  0x6B8CAD // pi-dotgrid / Open Design

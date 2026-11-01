@@ -2,10 +2,10 @@ import SwiftUI
 import Shared
 
 enum ChatLayout {
-    static let assistantPartSpacing: CGFloat = 8
-    static let contentHorizontalInset: CGFloat = 22
-    static let userMaxWidth: CGFloat = 300
-    static let userMessageRowVerticalPadding: CGFloat = 10
+    static let assistantPartSpacing: CGFloat = 9
+    static let contentHorizontalInset: CGFloat = 18
+    static let userMaxWidth: CGFloat = 319
+    static let userMessageRowVerticalPadding: CGFloat = 7
     static let followBottomGap: CGFloat = 96
     /// 用户真实拖拽/惯性结束在底部附近时恢复自动跟随的意图阈值。
     /// 它必须大于 `bottomStickThreshold`：后者只描述物理 true-bottom，不能混用。
@@ -50,8 +50,9 @@ struct ChatAgentName: View {
     var body: some View {
         if agentName {
             Text("Amber")
-                .font(.caption.weight(.semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(AmberTheme.muted)
+                .padding(.leading, 4)
         }
     }
 }
@@ -60,7 +61,7 @@ struct ChatUserBubble: View {
     let text: String
     @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
     @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 14
 
     private var boundedScale: Double {
         min(max(fontScale, 0.88), 1.25)
@@ -97,14 +98,14 @@ struct ChatUserBubble: View {
         Text(text)
             .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.accentInk)
-            .lineSpacing(3 * boundedScale)
+            .lineSpacing(2.5 * boundedScale)
             // cell self-sizing 测量会传入受限的垂直 proposal,普通 Text 会按 proposal
             // 截断——曾表现为用户消息只显示一行。fixedSize 让文本按理想高度完整布局;
             // 超长消息以 50 行为折叠上限,避免单条消息占掉数十屏。
             .lineLimit(50)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 10.5)
             .background(AmberTheme.accent, in: Self.bubbleShape)
             .overlay {
                 Self.bubbleShape
@@ -120,7 +121,7 @@ struct ChatAssistantText<Content: View>: View {
     let content: Content
     @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
     @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 13.8
 
     init(@ViewBuilder content: () -> Content) {
         self.content = content()
@@ -138,16 +139,14 @@ struct ChatAssistantText<Content: View>: View {
         content
             .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.foreground)
-            .lineSpacing(4 * boundedScale)
+            .lineSpacing(2.6 * boundedScale)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Custom appWide + lineGrid only: wash keeps body readable over grid.
-            // Builtin Pi is shell-scoped (chat is flat pi paper), so this is usually a no-op.
-            .background {
-                if AmberThemeRuntime.shared.canvasStyle == .lineGrid,
-                   AmberThemeRuntime.shared.showsCanvasTexture(on: .app) {
-                    AmberTheme.background.opacity(0.92)
-                }
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(AmberTheme.border, lineWidth: 0.7)
             }
     }
 }

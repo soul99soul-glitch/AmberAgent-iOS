@@ -60,7 +60,7 @@ struct AmberDuetBottomSwitcher: View {
     var onExitHandoffMode: (() -> Void)? = nil
 
     private var badgeCount: Int {
-        needsAttentionCount > 0 ? needsAttentionCount : activeTaskCount
+        needsAttentionCount + activeTaskCount
     }
 
     private var badgeColor: Color {
@@ -109,10 +109,10 @@ struct AmberDuetBottomSwitcher: View {
                 }
             }
             .padding(3.5)
-            .background(AmberTheme.surface.opacity(0.96), in: Capsule(style: .continuous))
+            .background(AmberTheme.surface, in: Capsule(style: .continuous))
             .overlay {
                 Capsule(style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
+                    .stroke(AmberTheme.border, lineWidth: 0.7)
             }
 
             Spacer(minLength: 4)
@@ -124,25 +124,24 @@ struct AmberDuetBottomSwitcher: View {
                 Button(action: onDelegateCloudTask) {
                     HStack(spacing: 4) {
                         Text(IOSAppLocalization.string("后台交办", defaultValue: "后台交办"))
-                            .font(.caption.weight(.semibold))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AmberTheme.foreground2)
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accent)
                     }
-                    .foregroundStyle(AmberTheme.accent)
                     .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .background(AmberTheme.surface.opacity(0.95), in: Capsule(style: .continuous))
+                    .padding(.vertical, 7.5)
+                    .background(AmberTheme.surface, in: Capsule(style: .continuous))
                     .overlay {
                         Capsule(style: .continuous)
-                            .stroke(AmberTheme.accent.opacity(0.28), lineWidth: 0.85)
+                            .stroke(AmberTheme.border, lineWidth: 0.7)
                     }
                 }
                 .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.97, haptic: .selection))
                 .accessibilityIdentifier("chat.duet.delegateTaskButton")
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.duet.bottomSwitcher")
     }
@@ -209,23 +208,24 @@ struct AmberDuetBottomSwitcher: View {
             HStack(spacing: 5) {
                 Circle()
                     .fill(handoffExecutionTarget == .cloud ? AmberTheme.accentGreen : AmberTheme.accent)
-                    .frame(width: 6, height: 6)
+                    .frame(width: 5.5, height: 5.5)
 
                 Text("\(handoffExecutionTarget.shortLabel) · \(hubName)")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 11.8, weight: .semibold))
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9.5, weight: .bold))
+                    .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(AmberTheme.muted)
             }
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(AmberTheme.surface.opacity(0.96), in: Capsule(style: .continuous))
+            .padding(.vertical, 7.5)
+            .background(AmberTheme.surfaceElevated, in: Capsule(style: .continuous))
             .overlay {
                 Capsule(style: .continuous)
-                    .stroke(AmberTheme.border, lineWidth: 0.85)
+                    .stroke(AmberTheme.accent.opacity(0.38), lineWidth: 0.8)
             }
         }
         .accessibilityIdentifier("chat.duet.handoffTargetMenu")
@@ -241,28 +241,28 @@ struct AmberDuetBottomSwitcher: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Text(tab.title)
-                    .font(.caption.weight(isSelected ? .semibold : .medium))
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
                     .lineLimit(1)
 
                 if badgeCount > 0 {
                     Text("\(badgeCount)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.system(size: 10, weight: .bold))
                         .monospacedDigit()
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
+                        .padding(.vertical, 1)
                         .background(badgeColor, in: Capsule(style: .continuous))
                 }
             }
             .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(isSelected ? AmberTheme.foreground : AmberTheme.muted)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, tab == .tasks ? 13 : 14)
             .padding(.vertical, 6)
             .background {
                 if isSelected {
                     Capsule(style: .continuous)
                         .fill(AmberTheme.background)
-                        .shadow(color: Color.black.opacity(0.06), radius: 2, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
                 }
             }
             .contentShape(Capsule(style: .continuous))
@@ -308,106 +308,93 @@ struct AmberDuetTaskCenterCard: View {
 
     var body: some View {
         let groups = groupedTasks
-        VStack(alignment: .leading, spacing: 14) {
-            // Drag indicator
-            HStack {
-                Spacer()
-                Capsule()
-                    .fill(AmberTheme.border)
-                    .frame(width: 36, height: 4)
-                Spacer()
-            }
-            .padding(.top, 8)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(spacing: 12) {
+                // Drag indicator
+                HStack {
+                    Spacer()
+                    Capsule()
+                        .fill(AmberTheme.border)
+                        .frame(width: 36, height: 4)
+                    Spacer()
+                }
+                .padding(.top, 10)
 
-            // Header: 任务 + 全部中心 ⌄
-            HStack(alignment: .center) {
-                Text(IOSAppLocalization.string("任务", defaultValue: "任务"))
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(AmberTheme.foreground)
+                // Header: 任务 + 全部中心 ⌄
+                HStack(alignment: .center) {
+                    Text(IOSAppLocalization.string("任务", defaultValue: "任务"))
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(AmberTheme.foreground)
 
-                Spacer()
+                    Spacer()
 
-                Menu {
-                    Button {
-                        selectedHubFilterId = nil
-                    } label: {
-                        HStack {
-                            Text(IOSAppLocalization.string("全部中心", defaultValue: "全部中心"))
-                            if selectedHubFilterId == nil {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                    ForEach(hubStore.hubs) { hub in
+                    Menu {
                         Button {
-                            selectedHubFilterId = hub.id
+                            selectedHubFilterId = nil
                         } label: {
                             HStack {
-                                Text(hub.title)
-                                if selectedHubFilterId == hub.id {
+                                Text(IOSAppLocalization.string("全部中心", defaultValue: "全部中心"))
+                                if selectedHubFilterId == nil {
                                     Image(systemName: "checkmark")
                                 }
                             }
                         }
+                        ForEach(hubStore.hubs) { hub in
+                            Button {
+                                selectedHubFilterId = hub.id
+                            } label: {
+                                HStack {
+                                    Text(hub.title)
+                                    if selectedHubFilterId == hub.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(filterHubTitle)
+                                .font(.system(size: 12, weight: .medium))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundStyle(AmberTheme.muted)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5.5)
+                        .background(AmberTheme.surface, in: Capsule(style: .continuous))
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(filterHubTitle)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(AmberTheme.foreground2)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(AmberTheme.muted)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5.5)
-                    .background(AmberTheme.background.opacity(0.85), in: Capsule(style: .continuous))
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
-                    }
+                    .accessibilityIdentifier("chat.duet.tasks.hubFilter")
                 }
-                .accessibilityIdentifier("chat.duet.tasks.hubFilter")
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 20)
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 10) {
-                    // 1. Needs-Attention / Failed Tasks (Top Priority, No Warning Icon)
-                    ForEach(groups.needsAttention) { item in
-                        needsAttentionCard(item)
-                    }
-
-                    // 2. Active / Running Tasks
-                    ForEach(groups.running) { item in
-                        runningTaskCard(item)
-                    }
-
-                    if groups.needsAttention.isEmpty && groups.running.isEmpty && groups.recent.isEmpty {
-                        Text(IOSAppLocalization.string("当前暂无运行中或待处理的任务", defaultValue: "当前暂无运行中或待处理的任务"))
-                            .font(.subheadline)
-                            .foregroundStyle(AmberTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
-                            .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-
-                    // 3. Collapsed Recent Terminal Results Summary Bar (No Clock Icon)
-                    if !groups.recent.isEmpty {
-                        recentResultsSection(groups.recent)
-                    }
+            VStack(alignment: .leading, spacing: 10) {
+                // 1. Needs-Attention / Failed Tasks (Top Priority, No Warning Icon)
+                ForEach(groups.needsAttention) { item in
+                    needsAttentionCard(item)
                 }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 14)
+
+                // 2. Active / Running Tasks
+                ForEach(groups.running) { item in
+                    runningTaskCard(item)
+                }
+
+                if groups.needsAttention.isEmpty && groups.running.isEmpty && groups.recent.isEmpty {
+                    Text(IOSAppLocalization.string("当前暂无运行中或待处理的任务", defaultValue: "当前暂无运行中或待处理的任务"))
+                        .font(.subheadline)
+                        .foregroundStyle(AmberTheme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                // 3. Collapsed Recent Terminal Results Summary Bar (No Clock Icon)
+                if !groups.recent.isEmpty {
+                    recentResultsSection(groups.recent)
+                }
             }
-            .frame(maxHeight: 340)
+            .padding(.horizontal, 20)
         }
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.85)
-        }
-        .shadow(color: Color.black.opacity(0.08), radius: 18, x: 0, y: -4)
         .accessibilityIdentifier("chat.duet.tasksPanel")
         .sheet(item: $selectedSegment) { segment in
             ChatTaskGroupDetailSheet(
@@ -432,23 +419,23 @@ struct AmberDuetTaskCenterCard: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(spacing: 6) {
                     Text(item.title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(1)
 
                     Spacer(minLength: 8)
 
                     Text(item.statusBadgeText)
-                        .font(.caption.weight(.semibold))
+                        .font(.system(size: 11.2, weight: .semibold))
                         .foregroundStyle(AmberTheme.accentRed)
                 }
 
                 HStack(alignment: .center) {
                     Text(item.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.accentRed.opacity(0.9))
+                        .font(.system(size: 12.2))
+                        .foregroundStyle(AmberTheme.muted)
                         .lineLimit(1)
 
                     Spacer(minLength: 8)
@@ -462,10 +449,10 @@ struct AmberDuetTaskCenterCard: View {
                             }
                         } label: {
                             Text(actionTitle)
-                                .font(.caption2.weight(.semibold))
+                                .font(.system(size: 11.5, weight: .semibold))
                                 .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4.5)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
                                 .background(AmberTheme.accentRed, in: Capsule(style: .continuous))
                         }
                         .buttonStyle(.plain)
@@ -473,11 +460,11 @@ struct AmberDuetTaskCenterCard: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(AmberTheme.accentRed.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.vertical, 13)
+            .background(AmberTheme.accentRed.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(AmberTheme.accentRed.opacity(0.28), lineWidth: 0.9)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AmberTheme.accentRed.opacity(0.24), lineWidth: 0.85)
             }
         }
         .buttonStyle(.plain)
@@ -491,43 +478,43 @@ struct AmberDuetTaskCenterCard: View {
                 onFollowupTask(item)
             }
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .center, spacing: 8) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.system(size: 13.8, weight: .semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(1)
 
-                    Spacer(minLength: 8)
-
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(AmberTheme.accent)
-                            .frame(width: 5, height: 5)
-                        Text(item.statusBadgeText)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(AmberTheme.accent)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                    Text(item.subtitle)
+                        .font(.system(size: 12))
                         .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(1)
                 }
 
-                Text(item.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(1)
+                Spacer(minLength: 8)
+
+                HStack(spacing: 4.5) {
+                    Circle()
+                        .fill(AmberTheme.accent)
+                        .frame(width: 5, height: 5)
+                    Text(item.statusBadgeText)
+                        .font(.system(size: 11.2, weight: .medium))
+                        .foregroundStyle(AmberTheme.accent)
+                }
+                .padding(.horizontal, 8.5)
+                .padding(.vertical, 3.5)
+                .background(AmberTheme.accent.opacity(0.09), in: Capsule(style: .continuous))
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(AmberTheme.muted2)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(AmberTheme.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(AmberTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(AmberTheme.border, lineWidth: 0.75)
             }
         }
         .buttonStyle(.plain)
@@ -543,31 +530,27 @@ struct AmberDuetTaskCenterCard: View {
             } label: {
                 HStack(spacing: 6) {
                     Text("最近结果 · \(recentItems.count) 项")
-                        .font(.caption.weight(.semibold))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AmberTheme.foreground2)
 
-                    Spacer(minLength: 6)
-
                     Text(summaryText)
-                        .font(.caption)
+                        .font(.system(size: 12))
                         .foregroundStyle(AmberTheme.muted)
                         .lineLimit(1)
 
+                    Spacer(minLength: 6)
+
                     Text(isRecentExpanded ? "收起" : "展开")
-                        .font(.caption.weight(.medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(AmberTheme.muted)
 
                     Image(systemName: isRecentExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(AmberTheme.muted)
+                        .foregroundStyle(AmberTheme.muted2)
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
-                }
+                .padding(.vertical, 12)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chat.duet.tasks.recentSummaryBar")
@@ -591,7 +574,7 @@ struct AmberDuetTaskCenterCard: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(AmberTheme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -684,64 +667,56 @@ struct AmberDuetHubsCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Drag indicator
-            HStack {
-                Spacer()
-                Capsule()
-                    .fill(AmberTheme.border)
-                    .frame(width: 36, height: 4)
-                Spacer()
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(spacing: 12) {
+                // Drag indicator
+                HStack {
+                    Spacer()
+                    Capsule()
+                        .fill(AmberTheme.border)
+                        .frame(width: 36, height: 4)
+                    Spacer()
+                }
+                .padding(.top, 10)
+
+                // Header: 中心 + [1 个合集可升级 | +]
+                HStack(alignment: .center) {
+                    Text(IOSAppLocalization.string("中心", defaultValue: "中心"))
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(AmberTheme.foreground)
+
+                    Spacer()
+
+                    headerActionCapsule
+                }
             }
-            .padding(.top, 8)
-
-            // Header: 中心 + [1 个合集可升级 | +]
-            HStack(alignment: .center) {
-                Text(IOSAppLocalization.string("中心", defaultValue: "中心"))
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(AmberTheme.foreground)
-
-                Spacer()
-
-                headerActionCapsule
-            }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 20)
 
             if isShowingCreateHubForm {
                 createHubInlineForm
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, 20)
             }
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 10) {
-                    if hubStore.hubs.isEmpty {
-                        Text(IOSAppLocalization.string("尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心", defaultValue: "尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心"))
-                            .font(.subheadline)
-                            .foregroundStyle(AmberTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
-                            .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    } else {
-                        // Pure-typography Hub cards (No left category icon boxes)
-                        ForEach(hubStore.hubs) { hub in
-                            hubRowCard(hub)
-                        }
+            VStack(alignment: .leading, spacing: 10) {
+                if hubStore.hubs.isEmpty {
+                    Text(IOSAppLocalization.string("尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心", defaultValue: "尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心"))
+                        .font(.subheadline)
+                        .foregroundStyle(AmberTheme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                } else {
+                    // Pure-typography Hub cards (No left category icon boxes)
+                    ForEach(hubStore.hubs) { hub in
+                        hubRowCard(hub)
                     }
-
-                    // Collapsed single-line Smart Collections bar
-                    smartCollectionsSection
                 }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 14)
+
+                // Collapsed single-line Smart Collections bar
+                smartCollectionsSection
             }
-            .frame(maxHeight: 340)
+            .padding(.horizontal, 20)
         }
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.85)
-        }
-        .shadow(color: Color.black.opacity(0.08), radius: 18, x: 0, y: -4)
         .accessibilityIdentifier("chat.duet.hubsPanel")
     }
 
@@ -755,13 +730,13 @@ struct AmberDuetHubsCard: View {
                     }
                 } label: {
                     Text("\(upgradableCount) 个合集可升级")
-                        .font(.caption.weight(.semibold))
+                        .font(.system(size: 11.8, weight: .medium))
                         .foregroundStyle(AmberTheme.accent)
                 }
                 .buttonStyle(.plain)
 
                 Rectangle()
-                    .fill(AmberTheme.accent.opacity(0.28))
+                    .fill(AmberTheme.accent.opacity(0.25))
                     .frame(width: 1, height: 11)
             }
 
@@ -771,19 +746,15 @@ struct AmberDuetHubsCard: View {
                 }
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AmberTheme.accent)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chat.duet.hubs.createButton")
         }
-        .padding(.horizontal, 11)
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(AmberTheme.accent.opacity(0.10), in: Capsule(style: .continuous))
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(AmberTheme.accent.opacity(0.24), lineWidth: 0.75)
-        }
+        .background(AmberTheme.accent.opacity(0.09), in: Capsule(style: .continuous))
     }
 
     private var createHubInlineForm: some View {
@@ -823,7 +794,7 @@ struct AmberDuetHubsCard: View {
             }
         }
         .padding(12)
-        .background(AmberTheme.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func hubRowCard(_ hub: AmberHubItem) -> some View {
@@ -840,24 +811,24 @@ struct AmberDuetHubsCard: View {
             }
             onSelectHub?(hub)
         } label: {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3.5) {
+                    HStack(spacing: 7) {
                         Text(hub.title)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.system(size: 14.2, weight: .semibold))
                             .foregroundStyle(AmberTheme.foreground)
                             .lineLimit(1)
 
                         if isCurrent {
                             Text(IOSAppLocalization.string("当前", defaultValue: "当前"))
-                                .font(.caption2.weight(.semibold))
+                                .font(.system(size: 10.2, weight: .medium))
                                 .foregroundStyle(AmberTheme.accentGreen)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 2)
-                                .background(AmberTheme.accentGreen.opacity(0.14), in: Capsule(style: .continuous))
+                                .padding(.horizontal, 6.5)
+                                .padding(.vertical, 1.5)
+                                .background(AmberTheme.accentGreen.opacity(0.11), in: Capsule(style: .continuous))
                         }
 
-                        if hub.memoryPolicy == .hubIsolated {
+                        if hub.memoryPolicy == .hubIsolated && !subtitle.contains("独立记忆") {
                             Text(IOSAppLocalization.string("独立记忆", defaultValue: "独立记忆"))
                                 .font(.caption2)
                                 .foregroundStyle(AmberTheme.muted)
@@ -865,7 +836,7 @@ struct AmberDuetHubsCard: View {
                     }
 
                     Text(subtitle)
-                        .font(.caption)
+                        .font(.system(size: 12))
                         .foregroundStyle(AmberTheme.muted)
                         .lineLimit(1)
                 }
@@ -873,15 +844,15 @@ struct AmberDuetHubsCard: View {
                 Spacer(minLength: 8)
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AmberTheme.muted)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(AmberTheme.muted2)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 15)
             .padding(.vertical, 13)
-            .background(AmberTheme.background.opacity(isCurrent ? 0.95 : 0.75), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .background(AmberTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .stroke(isCurrent ? AmberTheme.accent.opacity(0.55) : AmberTheme.borderSoft, lineWidth: isCurrent ? 1.15 : 0.75)
+                    .stroke(isCurrent ? AmberTheme.accent.opacity(0.30) : AmberTheme.border, lineWidth: isCurrent ? 0.9 : 0.75)
             }
         }
         .buttonStyle(.plain)
@@ -898,38 +869,36 @@ struct AmberDuetHubsCard: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(IOSAppLocalization.string("智能合集", defaultValue: "智能合集"))
-                        .font(.caption.weight(.semibold))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AmberTheme.foreground2)
-
-                    Spacer(minLength: 6)
 
                     if let summary = hubStore.smartCollectionsSummaryText {
                         Text(summary)
-                            .font(.caption)
+                            .font(.system(size: 12))
                             .foregroundStyle(AmberTheme.muted)
                             .lineLimit(1)
 
+                        Spacer(minLength: 6)
+
                         Text(isSmartCollectionsExpanded ? "收起" : "展开")
-                            .font(.caption.weight(.medium))
+                            .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(AmberTheme.muted)
 
                         Image(systemName: isSmartCollectionsExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(AmberTheme.muted)
+                            .foregroundStyle(AmberTheme.muted2)
                     } else {
+                        Spacer(minLength: 6)
+
                         Text(IOSAppLocalization.string("暂无自动归拢项", defaultValue: "暂无自动归拢项"))
-                            .font(.caption)
+                            .font(.system(size: 12))
                             .foregroundStyle(AmberTheme.muted)
                             .lineLimit(1)
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
-                }
+                .padding(.vertical, 12)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chat.duet.hubs.smartCollectionsBar")
@@ -965,7 +934,7 @@ struct AmberDuetHubsCard: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
-                    .background(AmberTheme.background.opacity(0.55), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
             }
         }

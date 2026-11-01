@@ -508,11 +508,17 @@ struct AmberMarkdownView: View {
     // MARK: - Lists
 
     private func renderUnorderedList(_ node: PackedAstNode, source: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5.5) {
             ForEach(Array(node.children.enumerated()), id: \.offset) { _, child in
-                HStack(alignment: .top, spacing: 8) {
-                    Text("\u{2022}")
+                HStack(alignment: .top, spacing: 7) {
+                    Circle()
+                        .fill(AmberTheme.accent)
+                        .frame(width: 4.5, height: 4.5)
+                        .padding(.top, 6)
                     renderListItemContent(child, source: source)
+                        .font(.system(size: 13))
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .lineSpacing(2.2)
                 }
             }
         }

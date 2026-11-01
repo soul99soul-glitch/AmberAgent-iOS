@@ -611,14 +611,24 @@ enum AmberUnifiedTaskBuilder {
                 }
                 let stepNumber = max(1, segment.steps.count)
                 if isDispatched {
-                    subtitle = stepNumber > 1 ? "云端后台 · 第 \(stepNumber) 步" : "云端后台 · \(stepTitle)"
+                    let cleanStep = stepTitle == "启动子智能体" ? "第 2 步" : stepTitle
+                    subtitle = stepNumber > 1 ? "云端后台 · 第 \(stepNumber) 步" : "云端后台 · \(cleanStep)"
                 } else {
                     subtitle = stepNumber > 1 ? "本机 · 第 \(stepNumber) 步" : stepTitle
                 }
             case .completed(let count):
-                phase = .completed
-                statusText = "已完成"
-                subtitle = count > 1 ? "已完成 \(count) 步 · 本机" : "已完成 · 本机"
+                let isTimedOut = segment.tools.contains { tool in
+                    tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined().contains("\"timedOut\":true")
+                }
+                if isTimedOut {
+                    phase = .timedOutOrFailedTerminal
+                    statusText = "超时"
+                    subtitle = "执行超时 · 本机"
+                } else {
+                    phase = .completed
+                    statusText = "已完成"
+                    subtitle = count > 1 ? "已完成 \(count) 步 · 本机" : "已完成 · 本机"
+                }
             case .cancelled:
                 phase = .cancelled
                 statusText = "已取消"

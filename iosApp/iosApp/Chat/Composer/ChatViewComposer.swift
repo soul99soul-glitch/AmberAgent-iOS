@@ -149,7 +149,7 @@ extension ChatView {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                VStack(spacing: 8) {
+                VStack(spacing: collapsesComposerForDuetPanel ? 0 : 8) {
                         // P1-a: 排队条与整行 dock 同宽（右缘对齐发送键），空队列零占位。
                         if !viewModel.steerQueue.isEmpty && !collapsesComposerForDuetPanel {
                             ChatSteerQueueStrip(
@@ -158,52 +158,131 @@ extension ChatView {
                             )
                         }
 
-                        if composerState.isBackgroundHandoffMode && !collapsesComposerForDuetPanel {
+                        if composerState.isBackgroundHandoffMode && !collapsesComposerForDuetPanel,
+                           (composerState.handoffFollowupTask != nil || composerState.handoffErrorMessage != nil) {
                             handoffContextBanner
                         }
 
                         // Inline Argon Panels (02 Tasks / 03 Hubs) when composer input is collapsed
-                        if composerState.activeDuetTab == .tasks {
-                            AmberDuetTaskCenterCard(
-                                conversationSegments: currentConversationTaskSegments(),
-                                gateway: MacGatewayStore.shared,
-                                subAgentStore: activityStore,
-                                hubStore: AmberHubStore.shared,
-                                onOpenFullTaskBoard: {
-                                    composerState.activeDuetTab = .chat
-                                    router.navigate(to: .macTasks)
-                                },
-                                onSelectTool: { tool in
-                                    composerState.activeDuetTab = .chat
-                                    duetSelectedToolTarget = ToolDetailTarget(tool: tool)
-                                },
-                                onFollowupTask: { task in
-                                    withAnimation(.snappy(duration: 0.22)) {
-                                        enterBackgroundHandoffMode(followupTask: task)
-                                    }
-                                },
-                                onDismissPanel: {
-                                    withAnimation(.snappy(duration: 0.22)) {
-                                        composerState.activeDuetTab = .chat
-                                    }
+                        if collapsesComposerForDuetPanel {
+                            VStack(alignment: .leading, spacing: 18) {
+                                if composerState.activeDuetTab == .tasks {
+                                    AmberDuetTaskCenterCard(
+                                        conversationSegments: currentConversationTaskSegments(),
+                                        gateway: MacGatewayStore.shared,
+                                        subAgentStore: activityStore,
+                                        hubStore: AmberHubStore.shared,
+                                        onOpenFullTaskBoard: {
+                                            composerState.activeDuetTab = .chat
+                                            router.navigate(to: .macTasks)
+                                        },
+                                        onSelectTool: { tool in
+                                            composerState.activeDuetTab = .chat
+                                            duetSelectedToolTarget = ToolDetailTarget(tool: tool)
+                                        },
+                                        onFollowupTask: { task in
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                enterBackgroundHandoffMode(followupTask: task)
+                                            }
+                                        },
+                                        onDismissPanel: {
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                composerState.activeDuetTab = .chat
+                                            }
+                                        }
+                                    )
+                                } else if composerState.activeDuetTab == .hubs {
+                                    AmberDuetHubsCard(
+                                        hubStore: AmberHubStore.shared,
+                                        conversationStore: conversationStore,
+                                        conversationSegments: currentConversationTaskSegments(),
+                                        gateway: MacGatewayStore.shared,
+                                        subAgentStore: activityStore,
+                                        onSelectHub: { _ in
+                                            syncIslandPresentation()
+                                        },
+                                        onDismissPanel: {
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                composerState.activeDuetTab = .chat
+                                            }
+                                        }
+                                    )
                                 }
+
+                                Spacer(minLength: 0)
+
+                                AmberDuetBottomSwitcher(
+                                    selectedTab: composerState.activeDuetTab,
+                                    activeTaskCount: duetActiveTaskCount,
+                                    needsAttentionCount: duetNeedsAttentionCount,
+                                    isBackgroundHandoffMode: false,
+                                    handoffExecutionTarget: composerState.handoffExecutionTarget,
+                                    activeHubTitle: AmberHubStore.shared.activeHub?.title,
+                                    hubs: AmberHubStore.shared.hubs,
+                                    cloudAgents: MacGatewayStore.shared.cloudAgents,
+                                    selectedCloudAgentId: composerState.handoffSelectedCloudAgentId,
+                                    onSelectTab: { tab in
+                                        withAnimation(.snappy(duration: 0.22)) {
+                                            selectDuetTab(tab)
+                                        }
+                                    },
+                                    onOpenTasks: {
+                                        withAnimation(.snappy(duration: 0.22)) {
+                                            selectDuetTab(.tasks)
+                                        }
+                                    },
+                                    onOpenWorkspace: {
+                                        withAnimation(.snappy(duration: 0.22)) {
+                                            selectDuetTab(.hubs)
+                                        }
+                                    },
+                                    onDelegateCloudTask: {
+                                        withAnimation(.snappy(duration: 0.22)) {
+                                            enterBackgroundHandoffMode()
+                                        }
+                                    },
+                                    onSelectHub: { hubId in
+                                        AmberHubStore.shared.selectHub(hubId)
+                                        syncIslandPresentation()
+                                    },
+                                    onSelectExecutionTarget: { target in
+                                        composerState.handoffExecutionTarget = target
+                                        composerState.handoffErrorMessage = nil
+                                    },
+                                    onSelectCloudAgent: { agentId in
+                                        composerState.handoffSelectedCloudAgentId = agentId
+                                    },
+                                    onExitHandoffMode: {
+                                        withAnimation(.snappy(duration: 0.2)) {
+                                            composerState.exitBackgroundHandoffModePreservingDraft()
+                                        }
+                                    }
+                                )
+                                .padding(.horizontal, 18)
+                                .padding(.top, 8)
+                                .padding(.bottom, 16)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: max(420, (chatSize.height > 0 ? chatSize.height : 832) - 220))
+                            .background(
+                                AmberTheme.background,
+                                in: UnevenRoundedRectangle(
+                                    topLeadingRadius: 28,
+                                    bottomLeadingRadius: 0,
+                                    bottomTrailingRadius: 0,
+                                    topTrailingRadius: 28,
+                                    style: .continuous
+                                )
                             )
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                        } else if composerState.activeDuetTab == .hubs {
-                            AmberDuetHubsCard(
-                                hubStore: AmberHubStore.shared,
-                                conversationStore: conversationStore,
-                                conversationSegments: currentConversationTaskSegments(),
-                                gateway: MacGatewayStore.shared,
-                                subAgentStore: activityStore,
-                                onSelectHub: { _ in
-                                    syncIslandPresentation()
-                                },
-                                onDismissPanel: {
-                                    withAnimation(.snappy(duration: 0.22)) {
-                                        composerState.activeDuetTab = .chat
-                                    }
-                                }
+                            .overlay(
+                                UnevenRoundedRectangle(
+                                    topLeadingRadius: 28,
+                                    bottomLeadingRadius: 0,
+                                    bottomTrailingRadius: 0,
+                                    topTrailingRadius: 28,
+                                    style: .continuous
+                                )
+                                .stroke(AmberTheme.border, lineWidth: 0.8)
                             )
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
@@ -250,7 +329,7 @@ extension ChatView {
                             // Apple Music dock：左侧输入胶囊 + 右侧发送键（或在后台交办模式下原地变形为「交办 ↗」）；
                             // 打开「任务」或「中心」面板时折叠高度为 0，但保持 UITextView 挂载以完整保留草稿。
                             HStack(alignment: .bottom, spacing: 8) {
-                                HStack(alignment: .center, spacing: 6) {
+                                HStack(alignment: .center, spacing: 9) {
                                     ComposerAttachToggleButton(
                                         isExpanded: composerState.isAttachExpanded,
                                         isBusy: viewModel.isAttachingSelectedFile,
@@ -265,6 +344,8 @@ extension ChatView {
                                         }
                                     }
 
+                                    let usesCompactSingleLineDisplay = !composerState.isInputFocused && (viewModel.inputText.isEmpty || composerState.isBackgroundHandoffMode || composerState.composerInputHeight <= 42)
+
                                     ZStack(alignment: .leading) {
                                         ComposerInputTextView(
                                             text: $viewModel.inputText,
@@ -277,16 +358,24 @@ extension ChatView {
                                             controller: composerInputController,
                                             onSubmit: composerState.isBackgroundHandoffMode ? submitBackgroundHandoff : sendComposerMessage
                                         )
-                                        .frame(height: composerState.composerInputHeight)
+                                        .frame(height: usesCompactSingleLineDisplay ? 34 : max(34, composerState.composerInputHeight - 6))
+                                        .opacity(usesCompactSingleLineDisplay ? 0.01 : 1)
 
                                         if viewModel.inputText.isEmpty {
                                             Text(composerState.isBackgroundHandoffMode ? "描述要后台交办的目标…" : inputPlaceholder)
-                                                .font(.body)
+                                                .font(.system(size: 14))
                                                 .foregroundStyle(AmberTheme.muted2)
+                                                .lineLimit(1)
+                                                .allowsHitTesting(false)
+                                        } else if usesCompactSingleLineDisplay {
+                                            Text(viewModel.inputText)
+                                                .font(.system(size: composerState.isBackgroundHandoffMode ? 13.8 : 14))
+                                                .foregroundStyle(AmberTheme.foreground)
+                                                .lineLimit(1)
                                                 .allowsHitTesting(false)
                                         }
                                     }
-                                    .frame(minHeight: 40)
+                                    .frame(minHeight: 34)
 
                                     if composerState.isBackgroundHandoffMode {
                                         Button {
@@ -294,40 +383,52 @@ extension ChatView {
                                                 composerState.exitBackgroundHandoffModePreservingDraft()
                                             }
                                         } label: {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .font(.system(size: 17, weight: .medium))
-                                                .foregroundStyle(AmberTheme.muted)
+                                            ZStack {
+                                                Circle()
+                                                    .fill(AmberTheme.surface)
+                                                    .frame(width: 21, height: 21)
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 9, weight: .semibold))
+                                                    .foregroundStyle(AmberTheme.muted)
+                                            }
                                         }
                                         .buttonStyle(.plain)
                                         .accessibilityLabel("退出后台交办模式并保留草稿")
                                         .accessibilityIdentifier("chat.duet.handoffExitButton")
                                     }
                                 }
-                                .padding(.leading, 8)
-                                .padding(.trailing, composerState.isBackgroundHandoffMode ? 12 : 18)
+                                .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
-                                .composerDockGlass(cornerRadius: 27)
+                                .frame(minHeight: 44)
+                                .background(AmberTheme.surfaceElevated, in: Capsule(style: .continuous))
                                 .overlay {
-                                    if composerState.isBackgroundHandoffMode {
-                                        RoundedRectangle(cornerRadius: AmberTheme.controlRadius(27), style: .continuous)
-                                            .stroke(AmberTheme.accent.opacity(0.48), lineWidth: 1.1)
-                                            .allowsHitTesting(false)
-                                    }
+                                    Capsule(style: .continuous)
+                                        .stroke(
+                                            composerState.isBackgroundHandoffMode ? AmberTheme.accent.opacity(0.42) : AmberTheme.border,
+                                            lineWidth: composerState.isBackgroundHandoffMode ? 0.95 : 0.8
+                                        )
+                                        .allowsHitTesting(false)
                                 }
+                                .shadow(
+                                    color: composerState.isBackgroundHandoffMode ? AmberTheme.accent.opacity(0.06) : Color.black.opacity(0.03),
+                                    radius: composerState.isBackgroundHandoffMode ? 5 : 4,
+                                    x: 0,
+                                    y: composerState.isBackgroundHandoffMode ? 2 : 1.5
+                                )
 
                                 if composerState.isBackgroundHandoffMode {
                                     ComposerDockHandoffButton(
                                         isSubmitting: composerState.isSubmittingHandoff,
                                         needsRetry: composerState.handoffNeedsRetry,
                                         isEnabled: !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                        height: 52,
+                                        height: 44,
                                         onSubmit: submitBackgroundHandoff
                                     )
                                 } else {
                                     ComposerDockSendButton(
                                         isLoading: isComposerStopMode,
                                         sendEnabled: sendEnabled,
-                                        diameter: 54,
+                                        diameter: 44,
                                         onSend: sendComposerMessage,
                                         onStop: {
                                             if viewModel.isRecognizingImages {
@@ -400,7 +501,7 @@ extension ChatView {
                                 .allowsHitTesting(showsComposerMeta && !collapsesComposerForDuetPanel)
                                 .accessibilityHidden(!(showsComposerMeta && !collapsesComposerForDuetPanel))
 
-                                if !showsComposerMeta || collapsesComposerForDuetPanel {
+                                if !showsComposerMeta && !collapsesComposerForDuetPanel {
                                     AmberDuetBottomSwitcher(
                                         selectedTab: composerState.activeDuetTab,
                                         activeTaskCount: duetActiveTaskCount,
@@ -465,22 +566,24 @@ extension ChatView {
                 if abs(composerState.composerAuxiliaryHeight - height) > 0.5 { composerState.composerAuxiliaryHeight = height }
             }
         }
-        .padding(.horizontal, ChatLayout.contentHorizontalInset)
-        .padding(.top, composerState.isSubAgentBarVisible ? 4 : 8)
-        .padding(.bottom, 8)
+        .padding(.horizontal, collapsesComposerForDuetPanel ? 0 : ChatLayout.contentHorizontalInset)
+        .padding(.top, collapsesComposerForDuetPanel ? 0 : (composerState.isSubAgentBarVisible ? 4 : 8))
+        .padding(.bottom, collapsesComposerForDuetPanel ? 0 : 16)
         .background(alignment: .bottom) {
-            LinearGradient(
-                colors: [
-                    AmberTheme.background.opacity(0),
-                    AmberTheme.background.opacity(0.92),
-                    AmberTheme.background
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .padding(.top, -18)
-            .ignoresSafeArea(edges: .bottom)
-            .allowsHitTesting(false)
+            if !collapsesComposerForDuetPanel {
+                LinearGradient(
+                    colors: [
+                        AmberTheme.background.opacity(0),
+                        AmberTheme.background.opacity(0.95),
+                        AmberTheme.background
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .padding(.top, -18)
+                .ignoresSafeArea(edges: .bottom)
+                .allowsHitTesting(false)
+            }
         }
         .animation(.spring(response: 0.26, dampingFraction: 0.86), value: showsComposerMeta)
         // 完成瞬间建议条插入会让 composer 长高一截：旧实现里转场动画只管建议条

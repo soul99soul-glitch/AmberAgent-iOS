@@ -91,8 +91,8 @@ struct MessageBubbleView: View {
                 ChatSubAgentResultCard(message: message, displaySetting: displaySetting)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if isUser {
-                HStack {
-                    Spacer(minLength: 48)
+                HStack(spacing: 0) {
+                    Spacer(minLength: 56)
 
                     VStack(alignment: .trailing, spacing: 4) {
                         if let sender = IosMailboxMessageBridge.shared.sender(message: message) {

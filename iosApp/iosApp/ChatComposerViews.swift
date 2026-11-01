@@ -123,11 +123,10 @@ struct ChatToolbarIconButton: View {
 
                 Image(systemName: systemImage)
                     .symbolRenderingMode(.monochrome)
-                    .font(.system(size: symbolSize, weight: .semibold))
+                    .font(.system(size: symbolSize, weight: .medium))
                     .foregroundStyle(tint)
             }
             .frame(width: size, height: size)
-            .frame(minWidth: 44, minHeight: 44)
             .contentShape(Circle())
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.9, haptic: .lightImpact))
@@ -136,18 +135,13 @@ struct ChatToolbarIconButton: View {
 
     @ViewBuilder
     private var circleGlass: some View {
-        if #available(iOS 26.0, *) {
-            Circle()
-                .fill(AmberTheme.glass.opacity(0.16))
-                .glassEffect(.regular.interactive(), in: Circle())
-        } else {
-            Circle()
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    Circle()
-                        .stroke(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
-                }
-        }
+        Circle()
+            .fill(AmberTheme.surfaceElevated)
+            .overlay {
+                Circle()
+                    .stroke(AmberTheme.border, lineWidth: 0.75)
+            }
+            .shadow(color: .black.opacity(0.03), radius: 3, y: 1)
     }
 }
 
@@ -266,15 +260,18 @@ struct ComposerAttachToggleButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isBusy ? "paperclip.circle.fill" : "plus")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(AmberTheme.muted)
-                .frame(width: 32, height: 32)
+            Circle()
+                .fill(AmberTheme.surface)
+                .frame(width: 28, height: 28)
+                .overlay {
+                    Image(systemName: isBusy ? "paperclip" : "plus")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .rotationEffect(.degrees(isExpanded ? 45 : 0))
+                        .contentTransition(.symbolEffect(.replace.downUp))
+                }
+                .frame(width: 28, height: 28)
                 .contentShape(Circle())
-                .rotationEffect(.degrees(isExpanded ? 45 : 0))
-                .contentTransition(.symbolEffect(.replace.downUp))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.88, haptic: .lightImpact))
         .disabled(isDisabled)

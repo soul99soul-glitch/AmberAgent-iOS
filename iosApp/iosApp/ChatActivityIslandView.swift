@@ -341,31 +341,34 @@ struct ChatActivityIslandView: View {
         if presentation.isTerminalHold || state.kind == .awaitingUser || state.tint == .red {
             return .alert
         }
-        return state.isActive ? .working : .idle
+        return (state.isActive || backgroundRunningCount > 0) ? .working : .idle
     }
 
     var body: some View {
-        // Lock hug width BEFORE glass. glassEffect sizes to the offered proposal;
-        // if fixedSize comes after, the capsule still paints full bar width.
-        islandContent
-            .padding(.horizontal, 13)
-            .frame(height: 30)
-            .fixedSize(horizontal: true, vertical: false)
-            .background { glowUnderlay }
-            .modifier(ChatActivityIslandGlass())
-            .background(alignment: .top) {
-                AmberAgentPersonaMedallionView(mood: personaMood, diameter: 52)
-                    .offset(y: -30)
-                    .allowsHitTesting(false)
-            }
-            .frame(height: 40, alignment: .bottom)
-            .contentShape(Capsule())
-            .animation(
-                reduceMotion ? nil : .easeInOut(duration: 0.22),
-                value: state.visualKey
-            )
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(accessibilitySummary))
+        VStack(spacing: -11) {
+            AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
+                .allowsHitTesting(false)
+                .zIndex(0)
+
+            islandContent
+                .padding(.horizontal, 12)
+                .frame(height: state.kind == .title ? 26 : 30)
+                .fixedSize(horizontal: true, vertical: false)
+                .background { glowUnderlay }
+                .background(AmberTheme.surfaceElevated, in: Capsule())
+                .overlay {
+                    Capsule().stroke(AmberTheme.border, lineWidth: 0.75)
+                }
+                .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 1.5)
+                .zIndex(1)
+        }
+        .contentShape(Capsule())
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.22),
+            value: state.visualKey
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(accessibilitySummary))
     }
 
     private var accessibilitySummary: String {
@@ -434,21 +437,21 @@ struct ChatActivityIslandView: View {
                 .transition(.opacity)
             } else if state.kind == .title {
                 Circle()
-                    .fill(AmberTheme.accentGreen)
+                    .fill(backgroundRunningCount > 0 ? AmberTheme.accent : AmberTheme.accentGreen)
                     .frame(width: 6, height: 6)
             }
 
             ZStack {
                 HStack(spacing: 4) {
                     Text(state.title)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(.system(size: 12.2, weight: .semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(1)
                         .truncationMode(.tail)
 
                     if state.kind == .title && backgroundRunningCount > 0 {
                         Text("· \(backgroundRunningCount) 项后台运行")
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(AmberTheme.accent)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)

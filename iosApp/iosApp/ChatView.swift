@@ -29,7 +29,7 @@ struct ChatView: View {
     /// iPhone Duo 外屏右侧竖条是否承载了返回 / 新对话等操作。
     @State private var sideRailActive = false
     @State private var scrollToBottomSource: NativeTimelineBottomIntentSource = .button
-    @State private var chatSize: CGSize = .zero
+    @State var chatSize: CGSize = .zero
     @State var requestedMessageAnchor: ChatMessageAnchor?
     @State var islandPresentation: ChatIslandPresentation?
     @State var islandHoldToken = 0
@@ -90,6 +90,8 @@ struct ChatView: View {
                         .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
                         .allowsHitTesting(false)
                 }
+                .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
+                .allowsHitTesting(composerState.activeDuetTab == .chat)
 
             if let record = compactWebMountSession {
                 VStack {
@@ -131,7 +133,7 @@ struct ChatView: View {
 
             // Tap-outside scrim for the attachment glass panel or inline Argon panels (Tasks / Hubs).
             if composerState.isAttachExpanded || composerState.activeDuetTab != .chat {
-                Color.black.opacity(composerState.activeDuetTab != .chat ? 0.14 : 0.06)
+                (composerState.activeDuetTab != .chat ? AmberTheme.surface : Color.black.opacity(0.06))
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -148,7 +150,9 @@ struct ChatView: View {
                     .transition(.opacity)
             }
             // 面板需要参与正文区域命中测试，不能挂在仅顶栏高度的 safeAreaBar 内。
-            topBar.zIndex(20)
+            topBar
+                .opacity(composerState.activeDuetTab == .chat ? 1.0 : 0.35)
+                .zIndex(20)
         }
         .onGeometryChange(for: CGSize.self) { proxy in
             CGSize(width: proxy.size.width,

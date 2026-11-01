@@ -105,34 +105,33 @@ struct ChatTopBarTrailingDock: View {
 
     private var dockButtonContent: some View {
         Button(action: onTap) {
-            ZStack {
-                dockGlass
+            ZStack(alignment: .topTrailing) {
+                ZStack {
+                    dockGlass
 
-                Image(systemName: symbolName)
-                    .symbolRenderingMode(.hierarchical)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(symbolTint)
-                    .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
+                    Image(systemName: symbolName)
+                        .symbolRenderingMode(.monochrome)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(symbolTint)
+                        .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
+                }
+                .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
+                       height: ChatTopBarLayout.toolbarButtonDiameter)
 
                 if let badgeText {
                     Text(badgeText)
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .font(.system(size: 9.5, weight: .bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .frame(minWidth: 15, minHeight: 15)
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1)
                         .background(badgeTint, in: Capsule())
-                        .overlay(Capsule().stroke(.white.opacity(0.86), lineWidth: 1))
-                        .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
-                               height: ChatTopBarLayout.toolbarButtonDiameter,
-                               alignment: .topTrailing)
-                        .padding(1)
+                        .offset(x: 3, y: -2)
                         .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
                         .accessibilityHidden(true)
                 }
             }
             .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
                    height: ChatTopBarLayout.toolbarButtonDiameter)
-            .frame(minWidth: 44, minHeight: 44)
             .contentShape(Circle())
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.9, haptic: .lightImpact))
@@ -160,10 +159,10 @@ struct ChatTopBarTrailingDock: View {
 
     private var dockGlass: some View {
         Circle()
-            .fill(AmberTheme.glass.opacity(0.16))
+            .fill(AmberTheme.surfaceElevated)
             .overlay {
                 if let dockTint {
-                    Circle().fill(dockTint.opacity(0.12))
+                    Circle().fill(dockTint.opacity(0.10))
                 }
             }
             .overlay {
@@ -183,9 +182,9 @@ struct ChatTopBarTrailingDock: View {
                 }
             }
             .overlay {
-                Circle().stroke((dockTint ?? AmberTheme.border).opacity(0.28), lineWidth: 0.5)
+                Circle().stroke(dockTint?.opacity(0.35) ?? AmberTheme.border, lineWidth: 0.75)
             }
-            .modifier(ChatTopBarDockGlass())
+            .shadow(color: .black.opacity(0.03), radius: 3, y: 1)
             .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
                    height: ChatTopBarLayout.toolbarButtonDiameter)
             .accessibilityHidden(true)
@@ -194,7 +193,7 @@ struct ChatTopBarTrailingDock: View {
     private var symbolName: String {
         switch state {
         case .hidden, .shelf:
-            "tray.full"
+            "tray"
         case let .satellite(notice, _):
             switch notice.kind {
             case .awaitingUser: "questionmark.bubble.fill"

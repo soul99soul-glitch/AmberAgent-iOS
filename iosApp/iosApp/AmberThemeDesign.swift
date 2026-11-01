@@ -527,7 +527,7 @@ enum AmberArquielThemePresets {
             id: "arquiel-warm-editorial",
             displayName: "初版 · 暖纸赤陶",
             paper: AmberThemeRuntime.Paper.paper.rawValue,
-            accentHex: "#B85535",
+            accentHex: "#C96442",
             inkHex: "#FFFFFF",
             canvasStyle: AmberCanvasStyle.flat.rawValue,
             brandMark: AmberBrandMarkStyle.systemWordmark.rawValue,
@@ -535,11 +535,11 @@ enum AmberArquielThemePresets {
             chromeTypeface: AmberChromeTypeface.system.rawValue,
             design: AmberThemeDesign(
                 light: .init(
-                    background: "#FAF8F4",
-                    surface: "#F2EFE9",
-                    foreground: "#1E1C1A",
-                    mutedForeground: "#6B645B",
-                    border: "#DFDAD2"
+                    background: "#FBF9F5",
+                    surface: "#F3EFEA",
+                    foreground: "#1E1B18",
+                    mutedForeground: "#787067",
+                    border: "#E6E0D6"
                 ),
                 dark: .init(
                     background: "#141210",

@@ -285,7 +285,7 @@ enum AmberAgentPersonaMood: Equatable, Sendable {
 
 struct AmberAgentPersonaMedallionView: View {
     let mood: AmberAgentPersonaMood
-    var diameter: CGFloat = 54
+    var diameter: CGFloat = 58
     var presetOverride: AmberPersonaPreset? = nil
     var accentOverride: Color? = nil
 
@@ -303,27 +303,27 @@ struct AmberAgentPersonaMedallionView: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(AmberTheme.elevatedPanel)
+                .fill(AmberTheme.surfaceElevated)
                 .overlay {
                     RadialGradient(
                         colors: [
-                            accentColor.opacity(mood == .working ? 0.18 : 0.10),
+                            accentColor.opacity(mood == .working ? 0.14 : 0.08),
                             Color.clear,
                         ],
                         center: .init(x: 0.5, y: 0.45),
                         startRadius: 2,
-                        endRadius: diameter * 0.48
+                        endRadius: diameter * 0.46
                     )
                     .clipShape(Circle())
                 }
                 .overlay {
                     Circle()
                         .strokeBorder(
-                            mood == .alert ? AmberTheme.accentRed.opacity(0.55) : AmberTheme.border,
-                            lineWidth: mood == .working ? 1.1 : 0.85
+                            mood == .alert ? AmberTheme.accentRed.opacity(0.45) : AmberTheme.border,
+                            lineWidth: 0.85
                         )
                 }
-                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
+                .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
 
             switch activePreset {
             case .customPortrait:
@@ -351,7 +351,7 @@ struct AmberAgentPersonaMedallionView: View {
             let w = size.width
             let h = size.height
             let cx = w * 0.5
-            let cy = h * 0.49
+            let cy = h * 0.51
 
             // 1. Left & Right Kitsune Ears (Warm Amber Terracotta + Inner Cream)
             let earLift: CGFloat = mood == .alert ? -2.0 : (mood == .working ? 0.5 : 0)
@@ -405,7 +405,7 @@ struct AmberAgentPersonaMedallionView: View {
                 with: .color(accentColor)
             )
 
-            let cheekW = w * 0.38
+            let cheekW = w * 0.39
             let cheekH = h * 0.20
             let cheekRect = CGRect(x: cx - cheekW * 0.5, y: cy - cheekH * 0.10, width: cheekW, height: cheekH)
             context.fill(
@@ -430,7 +430,7 @@ struct AmberAgentPersonaMedallionView: View {
             }
 
             // Tiny nose dot
-            let noseR = max(1.2, w * 0.024)
+            let noseR = max(1.4, w * 0.023)
             context.fill(
                 Path(ellipseIn: CGRect(x: cx - noseR, y: cy + h * 0.03 - noseR, width: noseR * 2, height: noseR * 2)),
                 with: .color(AmberTheme.foreground)
