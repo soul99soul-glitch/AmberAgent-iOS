@@ -67,7 +67,7 @@ struct ComposerDockSendButton: View {
     var isLoading: Bool
     var isStopping: Bool = false
     var sendEnabled: Bool
-    var diameter: CGFloat = 44
+    var diameter: CGFloat = 54
     let onSend: () -> Void
     let onStop: () -> Void
 
@@ -79,23 +79,20 @@ struct ComposerDockSendButton: View {
             if isLoading { onStop() } else { onSend() }
         } label: {
             ZStack {
-                Circle()
-                    .fill(buttonFill)
-                    .shadow(color: buttonFill.opacity(0.22), radius: 5, y: 2)
-
                 Image(systemName: isLoading ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(iconColor)
                     .opacity(isStopping ? 0 : 1)
-                // 只在停止中挂载：透明的 ProgressView 仍会持续动画并逐帧重绘按钮。
+                // 只在停止中挂载：透明的 ProgressView 仍会持续动画并逐帧重绘玻璃按钮。
                 if isStopping {
                     ProgressView()
                         .controlSize(.small)
-                        .tint(.white)
+                        .tint(AmberTheme.muted)
                 }
             }
             .frame(width: diameter, height: diameter)
             .contentShape(Circle())
+            .modifier(ComposerDockCircleGlass(tint: glassTint))
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.88, haptic: isLoading ? .mediumImpact : .lightImpact))
         .disabled(!isActionable)
@@ -107,11 +104,15 @@ struct ComposerDockSendButton: View {
     }
 
     private var iconColor: Color {
-        AmberTheme.accentInk
+        if isLoading { return .white }
+        // 启用时白色箭头叠在 accent 玻璃上;禁用时用 muted(与左侧「+」同档),
+        // 比更淡的 muted2 在深色玻璃上更清晰,不再暗淡。
+        return sendEnabled ? .white : AmberTheme.muted
     }
 
-    private var buttonFill: Color {
-        isLoading ? AmberTheme.accentRed : AmberTheme.accent
+    private var glassTint: Color? {
+        if isLoading { return AmberTheme.accentRed }
+        return sendEnabled ? AmberTheme.accent : nil
     }
 }
 
@@ -120,7 +121,7 @@ struct ComposerDockHandoffButton: View {
     var isSubmitting: Bool
     var needsRetry: Bool
     var isEnabled: Bool
-    var height: CGFloat = 44
+    var height: CGFloat = 54
     let onSubmit: () -> Void
 
     var body: some View {
@@ -134,31 +135,49 @@ struct ComposerDockHandoffButton: View {
                         .controlSize(.small)
                         .tint(.white)
                     Text(IOSAppLocalization.string("提交中…", defaultValue: "提交中…"))
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                 } else if needsRetry {
                     Text(IOSAppLocalization.string("重试", defaultValue: "重试"))
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                 } else {
                     Text(IOSAppLocalization.string("交办", defaultValue: "交办"))
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                 }
             }
             .foregroundStyle(isEnabled ? Color.white : AmberTheme.muted)
-            .padding(.horizontal, 15)
+            .padding(.horizontal, 16)
             .frame(height: height)
-            .background(
-                isEnabled ? AmberTheme.accent : AmberTheme.surface,
-                in: Capsule(style: .continuous)
-            )
-            .shadow(color: isEnabled ? AmberTheme.accent.opacity(0.22) : .clear, radius: 5, y: 2)
+            .modifier(ComposerDockCapsuleGlass(tint: isEnabled ? AmberTheme.accent : nil))
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
         .disabled(!isEnabled || isSubmitting)
         .accessibilityIdentifier("chat.duet.handoffSubmitButton")
+    }
+}
+
+struct ComposerDockCapsuleGlass: ViewModifier {
+    var tint: Color?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.tint(tint).interactive(), in: Capsule(style: .continuous))
+        } else {
+            content
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.thinMaterial))
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(AmberTheme.border.opacity(0.42), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        }
     }
 }
 

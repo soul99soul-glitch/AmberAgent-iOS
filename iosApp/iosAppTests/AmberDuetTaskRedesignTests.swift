@@ -772,4 +772,111 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         ).get()
         XCTAssertTrue(enriched.contains("source_image_url"), "Expected generate_image input to bind persona reference URL")
     }
+
+    @MainActor
+    func testComposerInputHitTestFocusAndTypingRegression() async throws {
+        let suite = "AmberComposerHitTest.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let conversations = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: { [] })
+        await conversations.bootstrap()
+
+        let settings = SettingsStore(userDefaults: defaults)
+        settings.apiKey = "sk-test"
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let viewModel = ChatViewModel(settingsStore: settings, sharedSettings: sharedSettings)
+        viewModel.conversationStore = conversations
+        await viewModel.startNewConversation()
+        viewModel.inputText = ""
+
+        let dao = IosDatabaseFactory.shared.createDatabase(
+            atFilePath: directory.appendingPathComponent("runs.db").path
+        ).agentRuntimeDao()
+        let center = ConversationActivityCenter(conversationStore: conversations, dao: dao, startedAt: .distantPast)
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activityStore = IOSSubAgentActivityStore(
+            tasks: tasks,
+            defaults: defaults,
+            launchedAt: Date(),
+            loadRuns: { [] }
+        )
+        let router = RouterPath()
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKey = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKey?.makeKey()
+        }
+
+        let root = NavigationStack {
+            ChatView(
+                settingsStore: settings,
+                sharedSettings: sharedSettings,
+                viewModel: viewModel,
+                activityStore: activityStore
+            )
+        }
+        .environment(center)
+        .environment(conversations)
+        .environment(router)
+
+        let host = UIHostingController(rootView: root)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+
+        func findTextView(in view: UIView) -> UITextView? {
+            if let tv = view as? UITextView { return tv }
+            for sub in view.subviews {
+                if let found = findTextView(in: sub) { return found }
+            }
+            return nil
+        }
+
+        let textView = try XCTUnwrap(findTextView(in: host.view), "Composer UITextView must be mounted")
+        XCTAssertTrue(textView.isEditable, "Composer UITextView must be editable in empty conversation")
+
+        let centerInWindow = textView.convert(CGPoint(x: textView.bounds.midX, y: textView.bounds.midY), to: window)
+        let hitView = window.hitTest(centerInWindow, with: nil)
+        XCTAssertTrue(
+            hitView === textView || (hitView?.isDescendant(of: textView) == true),
+            "Tapping composer center (\(centerInWindow)) must hit UITextView, but hit: \(String(describing: hitView))"
+        )
+
+        _ = textView.becomeFirstResponder()
+        textView.insertText("测试主对话输入\n第二行")
+        XCTAssertEqual(viewModel.inputText, "测试主对话输入\n第二行")
+
+        // Verify existing conversation with messages also keeps UITextView hit-testable and editable
+        if let convId = conversations.currentConversation?.id {
+            _ = await conversations.save(
+                messages: [UIMessage.companion.user(prompt: "已有历史消息")],
+                to: convId
+            )
+            viewModel.reloadFromStore(reason: .conversationSwitch)
+            try await Task.sleep(for: .milliseconds(200))
+            window.layoutIfNeeded()
+        }
+
+        let centerAfterMessages = textView.convert(CGPoint(x: textView.bounds.midX, y: textView.bounds.midY), to: window)
+        let hitAfterMessages = window.hitTest(centerAfterMessages, with: nil)
+        XCTAssertTrue(
+            hitAfterMessages === textView || (hitAfterMessages?.isDescendant(of: textView) == true),
+            "Tapping composer center in existing conversation must hit UITextView, but hit: \(String(describing: hitAfterMessages))"
+        )
+        textView.insertText("，继续追加")
+        XCTAssertEqual(viewModel.inputText, "测试主对话输入\n第二行，继续追加")
+    }
 }

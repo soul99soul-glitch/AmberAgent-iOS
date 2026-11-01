@@ -302,28 +302,7 @@ struct AmberAgentPersonaMedallionView: View {
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(AmberTheme.surfaceElevated)
-                .overlay {
-                    RadialGradient(
-                        colors: [
-                            accentColor.opacity(mood == .working ? 0.14 : 0.08),
-                            Color.clear,
-                        ],
-                        center: .init(x: 0.5, y: 0.45),
-                        startRadius: 2,
-                        endRadius: diameter * 0.46
-                    )
-                    .clipShape(Circle())
-                }
-                .overlay {
-                    Circle()
-                        .strokeBorder(
-                            mood == .alert ? AmberTheme.accentRed.opacity(0.45) : AmberTheme.border,
-                            lineWidth: 0.85
-                        )
-                }
-                .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
+            personaBackdropGlass
 
             switch activePreset {
             case .customPortrait:
@@ -344,6 +323,38 @@ struct AmberAgentPersonaMedallionView: View {
         }
         .frame(width: diameter, height: diameter)
         .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var personaBackdropGlass: some View {
+        let baseCircle = Circle()
+            .fill(AmberTheme.glass.opacity(0.18))
+            .overlay {
+                RadialGradient(
+                    colors: [
+                        accentColor.opacity(mood == .working ? 0.16 : 0.09),
+                        Color.clear,
+                    ],
+                    center: .init(x: 0.5, y: 0.45),
+                    startRadius: 2,
+                    endRadius: diameter * 0.46
+                )
+                .clipShape(Circle())
+            }
+            .overlay {
+                Circle()
+                    .strokeBorder(
+                        mood == .alert ? AmberTheme.accentRed.opacity(0.45) : AmberTheme.border.opacity(0.32),
+                        lineWidth: 0.75
+                    )
+            }
+        if #available(iOS 26.0, *) {
+            baseCircle.glassEffect(.regular, in: Circle())
+        } else {
+            baseCircle
+                .background(Circle().fill(.ultraThinMaterial))
+                .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+        }
     }
 
     private var amberFoxCanvas: some View {

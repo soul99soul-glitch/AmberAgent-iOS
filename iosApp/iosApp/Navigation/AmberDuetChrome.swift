@@ -109,11 +109,7 @@ struct AmberDuetBottomSwitcher: View {
                 }
             }
             .padding(3.5)
-            .background(AmberTheme.surface, in: Capsule(style: .continuous))
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(AmberTheme.border, lineWidth: 0.7)
-            }
+            .modifier(DuetBottomCapsuleGlass(isHighlighted: false))
 
             Spacer(minLength: 4)
 
@@ -132,11 +128,7 @@ struct AmberDuetBottomSwitcher: View {
                     }
                     .padding(.horizontal, 13)
                     .padding(.vertical, 7.5)
-                    .background(AmberTheme.surface, in: Capsule(style: .continuous))
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .stroke(AmberTheme.border, lineWidth: 0.7)
-                    }
+                    .modifier(DuetBottomCapsuleGlass(isHighlighted: false))
                 }
                 .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.97, haptic: .selection))
                 .accessibilityIdentifier("chat.duet.delegateTaskButton")
@@ -222,11 +214,7 @@ struct AmberDuetBottomSwitcher: View {
             .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 12)
             .padding(.vertical, 7.5)
-            .background(AmberTheme.surfaceElevated, in: Capsule(style: .continuous))
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(AmberTheme.accent.opacity(0.38), lineWidth: 0.8)
-            }
+            .modifier(DuetBottomCapsuleGlass(isHighlighted: true))
         }
         .accessibilityIdentifier("chat.duet.handoffTargetMenu")
     }
@@ -261,14 +249,48 @@ struct AmberDuetBottomSwitcher: View {
             .background {
                 if isSelected {
                     Capsule(style: .continuous)
-                        .fill(AmberTheme.background)
-                        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                        .fill(AmberTheme.surfaceElevated)
+                        .shadow(color: Color.black.opacity(0.06), radius: 2.5, x: 0, y: 1)
                 }
             }
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.duet.tab.\(tab.rawValue)")
+    }
+}
+
+private struct DuetBottomCapsuleGlass: ViewModifier {
+    var isHighlighted: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let shape = Capsule(style: .continuous)
+        if #available(iOS 26.0, *) {
+            content
+                .background(AmberTheme.glass.opacity(0.16), in: shape)
+                .glassEffect(.regular.interactive(), in: shape)
+                .overlay {
+                    shape
+                        .strokeBorder(
+                            isHighlighted ? AmberTheme.accent.opacity(0.42) : AmberTheme.border.opacity(0.32),
+                            lineWidth: isHighlighted ? 0.9 : 0.6
+                        )
+                        .allowsHitTesting(false)
+                }
+        } else {
+            content
+                .background(.thinMaterial, in: shape)
+                .overlay {
+                    shape
+                        .strokeBorder(
+                            isHighlighted ? AmberTheme.accent.opacity(0.42) : AmberTheme.border,
+                            lineWidth: 0.75
+                        )
+                        .allowsHitTesting(false)
+                }
+                .shadow(color: .black.opacity(0.05), radius: 8, y: 3)
+        }
     }
 }
 

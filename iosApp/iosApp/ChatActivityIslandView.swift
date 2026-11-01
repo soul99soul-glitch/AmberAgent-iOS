@@ -355,11 +355,7 @@ struct ChatActivityIslandView: View {
                 .frame(height: state.kind == .title ? 26 : 30)
                 .fixedSize(horizontal: true, vertical: false)
                 .background { glowUnderlay }
-                .background(AmberTheme.surfaceElevated, in: Capsule())
-                .overlay {
-                    Capsule().stroke(AmberTheme.border, lineWidth: 0.75)
-                }
-                .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 1.5)
+                .modifier(ChatActivityIslandGlass())
                 .zIndex(1)
         }
         .contentShape(Capsule())

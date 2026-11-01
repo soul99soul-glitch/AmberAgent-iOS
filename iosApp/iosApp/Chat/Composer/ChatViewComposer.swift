@@ -329,7 +329,7 @@ extension ChatView {
                             // Apple Music dock：左侧输入胶囊 + 右侧发送键（或在后台交办模式下原地变形为「交办 ↗」）；
                             // 打开「任务」或「中心」面板时折叠高度为 0，但保持 UITextView 挂载以完整保留草稿。
                             HStack(alignment: .bottom, spacing: 8) {
-                                HStack(alignment: .center, spacing: 9) {
+                                HStack(alignment: .center, spacing: 6) {
                                     ComposerAttachToggleButton(
                                         isExpanded: composerState.isAttachExpanded,
                                         isBusy: viewModel.isAttachingSelectedFile,
@@ -344,8 +344,6 @@ extension ChatView {
                                         }
                                     }
 
-                                    let usesCompactSingleLineDisplay = !composerState.isInputFocused && (viewModel.inputText.isEmpty || composerState.isBackgroundHandoffMode || composerState.composerInputHeight <= 42)
-
                                     ZStack(alignment: .leading) {
                                         ComposerInputTextView(
                                             text: $viewModel.inputText,
@@ -358,24 +356,17 @@ extension ChatView {
                                             controller: composerInputController,
                                             onSubmit: composerState.isBackgroundHandoffMode ? submitBackgroundHandoff : sendComposerMessage
                                         )
-                                        .frame(height: usesCompactSingleLineDisplay ? 34 : max(34, composerState.composerInputHeight - 6))
-                                        .opacity(usesCompactSingleLineDisplay ? 0.01 : 1)
+                                        .frame(height: composerState.composerInputHeight)
 
                                         if viewModel.inputText.isEmpty {
                                             Text(composerState.isBackgroundHandoffMode ? "描述要后台交办的目标…" : inputPlaceholder)
-                                                .font(.system(size: 14))
+                                                .font(.body)
                                                 .foregroundStyle(AmberTheme.muted2)
-                                                .lineLimit(1)
-                                                .allowsHitTesting(false)
-                                        } else if usesCompactSingleLineDisplay {
-                                            Text(viewModel.inputText)
-                                                .font(.system(size: composerState.isBackgroundHandoffMode ? 13.8 : 14))
-                                                .foregroundStyle(AmberTheme.foreground)
                                                 .lineLimit(1)
                                                 .allowsHitTesting(false)
                                         }
                                     }
-                                    .frame(minHeight: 34)
+                                    .frame(minHeight: 40)
 
                                     if composerState.isBackgroundHandoffMode {
                                         Button {
@@ -385,10 +376,10 @@ extension ChatView {
                                         } label: {
                                             ZStack {
                                                 Circle()
-                                                    .fill(AmberTheme.surface)
-                                                    .frame(width: 21, height: 21)
+                                                    .fill(AmberTheme.surface.opacity(0.85))
+                                                    .frame(width: 24, height: 24)
                                                 Image(systemName: "xmark")
-                                                    .font(.system(size: 9, weight: .semibold))
+                                                    .font(.system(size: 10, weight: .bold))
                                                     .foregroundStyle(AmberTheme.muted)
                                             }
                                         }
@@ -397,38 +388,31 @@ extension ChatView {
                                         .accessibilityIdentifier("chat.duet.handoffExitButton")
                                     }
                                 }
-                                .padding(.horizontal, 10)
+                                .padding(.leading, 8)
+                                .padding(.trailing, composerState.isBackgroundHandoffMode ? 12 : 18)
                                 .padding(.vertical, 5)
-                                .frame(minHeight: 44)
-                                .background(AmberTheme.surfaceElevated, in: Capsule(style: .continuous))
+                                .composerDockGlass(cornerRadius: 27)
                                 .overlay {
-                                    Capsule(style: .continuous)
-                                        .stroke(
-                                            composerState.isBackgroundHandoffMode ? AmberTheme.accent.opacity(0.42) : AmberTheme.border,
-                                            lineWidth: composerState.isBackgroundHandoffMode ? 0.95 : 0.8
-                                        )
-                                        .allowsHitTesting(false)
+                                    if composerState.isBackgroundHandoffMode {
+                                        RoundedRectangle(cornerRadius: AmberTheme.controlRadius(27), style: .continuous)
+                                            .strokeBorder(AmberTheme.accent.opacity(0.45), lineWidth: 1.0)
+                                            .allowsHitTesting(false)
+                                    }
                                 }
-                                .shadow(
-                                    color: composerState.isBackgroundHandoffMode ? AmberTheme.accent.opacity(0.06) : Color.black.opacity(0.03),
-                                    radius: composerState.isBackgroundHandoffMode ? 5 : 4,
-                                    x: 0,
-                                    y: composerState.isBackgroundHandoffMode ? 2 : 1.5
-                                )
 
                                 if composerState.isBackgroundHandoffMode {
                                     ComposerDockHandoffButton(
                                         isSubmitting: composerState.isSubmittingHandoff,
                                         needsRetry: composerState.handoffNeedsRetry,
                                         isEnabled: !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                        height: 44,
+                                        height: 54,
                                         onSubmit: submitBackgroundHandoff
                                     )
                                 } else {
                                     ComposerDockSendButton(
                                         isLoading: isComposerStopMode,
                                         sendEnabled: sendEnabled,
-                                        diameter: 44,
+                                        diameter: 54,
                                         onSend: sendComposerMessage,
                                         onStop: {
                                             if viewModel.isRecognizingImages {

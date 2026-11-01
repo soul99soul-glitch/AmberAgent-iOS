@@ -116,7 +116,7 @@ struct ChatTopBarView: View {
                     if showsBackButton {
                     ChatToolbarIconButton(
                         systemImage: backSystemImage, accessibilityLabel: backAccessibilityLabel,
-                        size: ChatTopBarLayout.toolbarButtonDiameter, symbolSize: 14.5, action: onBack
+                        size: ChatTopBarLayout.toolbarButtonDiameter, symbolSize: 18, action: onBack
                     )
                     .accessibilityIdentifier("topbar-back")
                     }
@@ -510,8 +510,7 @@ struct ChatTopBarView: View {
             return
         }
         switch dockState {
-        case .hidden: break
-        case .shelf: panel = .shelf
+        case .hidden, .shelf: panel = .shelf
         case .satellite(let notice, let extraCount):
             if extraCount == 0 { open(notice.conversationId) }
             else { panel = .notices }
