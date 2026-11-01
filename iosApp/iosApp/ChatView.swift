@@ -45,6 +45,7 @@ struct ChatView: View {
     @State private var pendingDeleteMessageId: String?
     @State var isPresentingDuetTasks = false
     @State var isPresentingDuetWorkspace = false
+    @State var isPresentingPersonaStudio = false
     @State var duetSelectedToolTarget: ToolDetailTarget?
     @Environment(IOSConversationStore.self)  var conversationStore
     @Environment(ConversationActivityCenter.self) private var conversationActivityCenter
@@ -346,6 +347,13 @@ struct ChatView: View {
                 onNavigate: { destination in
                     router.navigate(to: destination)
                 }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isPresentingPersonaStudio) {
+            AmberPersonaStudioSheet(
+                sharedSettings: sharedSettings
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -821,7 +829,10 @@ struct ChatView: View {
             onRefreshRecap: requestRecap,
             onLocateRecapNode: locateRecapNode,
             onRecapNextStep: fillRecapNextStep,
-            backgroundRunningCount: duetActiveTaskCount
+            backgroundRunningCount: duetActiveTaskCount,
+            onAvatarTap: {
+                isPresentingPersonaStudio = true
+            }
         )
         .onAppear { syncIslandPresentation() }
         .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }

@@ -304,23 +304,26 @@ struct ChatActivityIslandView: View {
     var conversationKey: String? = nil
     var announcement: ConversationActivityNotice? = nil
     var backgroundRunningCount: Int = 0
+    var onAvatarTap: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
 
     init(presentation: ChatIslandPresentation, maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth,
          conversationKey: String? = nil, announcement: ConversationActivityNotice? = nil,
-         backgroundRunningCount: Int = 0) {
+         backgroundRunningCount: Int = 0, onAvatarTap: (() -> Void)? = nil) {
         self.presentation = presentation
         self.maxWidth = maxWidth
         self.conversationKey = conversationKey
         self.announcement = announcement
         self.backgroundRunningCount = backgroundRunningCount
+        self.onAvatarTap = onAvatarTap
     }
 
     /// 兼容既有调用（wiring canary / 预览）：纯态直接包装，无停留行为。
-    init(state: ChatActivityIslandState, backgroundRunningCount: Int = 0) {
+    init(state: ChatActivityIslandState, backgroundRunningCount: Int = 0, onAvatarTap: (() -> Void)? = nil) {
         self.presentation = state.isActive ? .active(state) : .idle(state)
         self.backgroundRunningCount = backgroundRunningCount
+        self.onAvatarTap = onAvatarTap
     }
 
     private var state: ChatActivityIslandState {
@@ -346,9 +349,20 @@ struct ChatActivityIslandView: View {
 
     var body: some View {
         VStack(spacing: -11) {
-            AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
-                .allowsHitTesting(false)
+            if let onAvatarTap {
+                Button(action: onAvatarTap) {
+                    AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+                .accessibilityIdentifier("chat.topBar.personaAvatarButton")
+                .accessibilityLabel(Text(IOSAppLocalization.string("形象设定", defaultValue: "形象设定")))
                 .zIndex(0)
+            } else {
+                AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
+                    .allowsHitTesting(false)
+                    .zIndex(0)
+            }
 
             islandContent
                 .padding(.horizontal, 12)

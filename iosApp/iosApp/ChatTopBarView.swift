@@ -58,6 +58,7 @@ struct ChatTopBarView: View {
     var onLocateRecapNode: (ConversationRecap.Node) -> Bool = { _ in false }
     var onRecapNextStep: (String) -> Bool = { _ in false }
     var backgroundRunningCount: Int = 0
+    var onAvatarTap: (() -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressedPresentation: ChatIslandPresentation?
@@ -320,7 +321,8 @@ struct ChatTopBarView: View {
     private func island(maxWidth: CGFloat) -> some View {
         ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,
                                conversationKey: conversationID, announcement: announcement,
-                               backgroundRunningCount: backgroundRunningCount)
+                               backgroundRunningCount: backgroundRunningCount,
+                               onAvatarTap: onAvatarTap)
             .frame(height: 73)
             .contentShape(Capsule())
             .scaleEffect(x: reduceMotion ? 1 : islandScale, y: 1)
@@ -344,6 +346,19 @@ struct ChatTopBarView: View {
                 onCancel()
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             })
+            .overlay(alignment: .top) {
+                if let onAvatarTap {
+                    Button(action: onAvatarTap) {
+                        Color.clear
+                            .frame(width: 58, height: 47)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chat.topBar.personaAvatarButton")
+                    .accessibilityLabel("形象设定")
+                    .accessibilityHint("轻点上传形象图或生成多帧微动画")
+                }
+            }
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("topbar-island")
             .accessibilityHint(announcement != nil ? "轻点进入播报的对话"
@@ -354,6 +369,11 @@ struct ChatTopBarView: View {
                 else { tapIsland(presentation) }
             }
             .accessibilityActions {
+                if let onAvatarTap {
+                    Button("形象设定") {
+                        onAvatarTap()
+                    }
+                }
                 if isGenerating {
                     Button("停止生成") {
                         onCancel()
