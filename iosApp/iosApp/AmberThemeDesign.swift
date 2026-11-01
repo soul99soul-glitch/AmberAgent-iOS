@@ -515,3 +515,202 @@ private func amberThemeDesignOpacity(_ value: Double) -> Double {
     guard value.isFinite else { return 0 }
     return min(max(value, 0), 0.3)
 }
+
+// MARK: - Curated Arquiel Design Color Palettes (Preserving Spatial Geometry)
+
+enum AmberArquielThemePresets {
+    static let all: [AmberThemePackDocument] = [
+        // 0 · 初版 Warm Editorial (暖羊皮纸 × 赤陶橙)
+        AmberThemePackDocument(
+            format: AmberThemePackDocument.formatID,
+            version: AmberThemePackDocument.currentVersion,
+            id: "arquiel-warm-editorial",
+            displayName: "初版 · 暖纸赤陶",
+            paper: AmberThemeRuntime.Paper.paper.rawValue,
+            accentHex: "#B85535",
+            inkHex: "#FFFFFF",
+            canvasStyle: AmberCanvasStyle.flat.rawValue,
+            brandMark: AmberBrandMarkStyle.systemWordmark.rawValue,
+            shortcutIconStyle: AmberShortcutIconStyle.phosphorFill.rawValue,
+            chromeTypeface: AmberChromeTypeface.system.rawValue,
+            design: AmberThemeDesign(
+                light: .init(
+                    background: "#FAF8F4",
+                    surface: "#F2EFE9",
+                    foreground: "#1E1C1A",
+                    mutedForeground: "#6B645B",
+                    border: "#DFDAD2"
+                ),
+                dark: .init(
+                    background: "#141210",
+                    surface: "#211D19",
+                    foreground: "#F5F0E8",
+                    mutedForeground: "#A89E92",
+                    border: "#38312A"
+                ),
+                gradient: nil,
+                patterns: []
+            )
+        ),
+        // A · Things 3 原生精修 (挺括白纸 × 瑞士冷灰 × 经典蓝)
+        AmberThemePackDocument(
+            format: AmberThemePackDocument.formatID,
+            version: AmberThemePackDocument.currentVersion,
+            id: "arquiel-things-polish",
+            displayName: "Things 3 · 原生精修",
+            paper: AmberThemeRuntime.Paper.white.rawValue,
+            accentHex: "#2B6CE6",
+            inkHex: "#FFFFFF",
+            canvasStyle: AmberCanvasStyle.flat.rawValue,
+            brandMark: AmberBrandMarkStyle.systemWordmark.rawValue,
+            shortcutIconStyle: AmberShortcutIconStyle.phosphorFill.rawValue,
+            chromeTypeface: AmberChromeTypeface.system.rawValue,
+            design: AmberThemeDesign(
+                light: .init(
+                    background: "#FFFFFF",
+                    surface: "#F4F6F9",
+                    foreground: "#1D1D1F",
+                    mutedForeground: "#5E6572",
+                    border: "#E3E7ED"
+                ),
+                dark: .init(
+                    background: "#101216",
+                    surface: "#1B1E24",
+                    foreground: "#F3F5F8",
+                    mutedForeground: "#949BA8",
+                    border: "#2C313B"
+                ),
+                gradient: nil,
+                patterns: []
+            )
+        ),
+        // B · 天文图录与琉璃绀 (奶油纸白 × 普鲁士蓝 × 深海墨)
+        AmberThemePackDocument(
+            format: AmberThemePackDocument.formatID,
+            version: AmberThemePackDocument.currentVersion,
+            id: "arquiel-comet-indigo",
+            displayName: "天文图录 · 琉璃绀",
+            paper: AmberThemeRuntime.Paper.pi.rawValue,
+            accentHex: "#234B8C",
+            inkHex: "#FFFFFF",
+            canvasStyle: AmberCanvasStyle.flat.rawValue,
+            brandMark: AmberBrandMarkStyle.serifWordmark.rawValue,
+            shortcutIconStyle: AmberShortcutIconStyle.phosphorFill.rawValue,
+            chromeTypeface: AmberChromeTypeface.system.rawValue,
+            design: AmberThemeDesign(
+                light: .init(
+                    background: "#F7F4EC",
+                    surface: "#EEE9DD",
+                    foreground: "#141B29",
+                    mutedForeground: "#5A6373",
+                    border: "#DDD6C7"
+                ),
+                dark: .init(
+                    background: "#0E131D",
+                    surface: "#182030",
+                    foreground: "#F0EDE4",
+                    mutedForeground: "#949FB2",
+                    border: "#2A354B"
+                ),
+                gradient: nil,
+                patterns: []
+            )
+        ),
+        // C · Takram 砂岩与松林苔绿 (砂岩暖白 × 竹青深绿)
+        AmberThemePackDocument(
+            format: AmberThemePackDocument.formatID,
+            version: AmberThemePackDocument.currentVersion,
+            id: "arquiel-takram-moss",
+            displayName: "Takram · 松林苔绿",
+            paper: AmberThemeRuntime.Paper.neutral.rawValue,
+            accentHex: "#1E6B4E",
+            inkHex: "#FFFFFF",
+            canvasStyle: AmberCanvasStyle.flat.rawValue,
+            brandMark: AmberBrandMarkStyle.systemWordmark.rawValue,
+            shortcutIconStyle: AmberShortcutIconStyle.phosphorFill.rawValue,
+            chromeTypeface: AmberChromeTypeface.system.rawValue,
+            design: AmberThemeDesign(
+                light: .init(
+                    background: "#F6F6F1",
+                    surface: "#ECEEE6",
+                    foreground: "#17211B",
+                    mutedForeground: "#55635B",
+                    border: "#D8DDD3"
+                ),
+                dark: .init(
+                    background: "#0F1512",
+                    surface: "#19221D",
+                    foreground: "#EEF2EE",
+                    mutedForeground: "#92A198",
+                    border: "#2A362F"
+                ),
+                gradient: nil,
+                patterns: []
+            )
+        ),
+        // D · 吕敬人书衣与故宫朱砂 (宣纸米白 × 松烟墨 × 朱砂红)
+        AmberThemePackDocument(
+            format: AmberThemePackDocument.formatID,
+            version: AmberThemePackDocument.currentVersion,
+            id: "arquiel-bookcraft-cinnabar",
+            displayName: "吕敬人 · 故宫朱砂",
+            paper: AmberThemeRuntime.Paper.paper.rawValue,
+            accentHex: "#AE3528",
+            inkHex: "#FFFFFF",
+            canvasStyle: AmberCanvasStyle.flat.rawValue,
+            brandMark: AmberBrandMarkStyle.serifWordmark.rawValue,
+            shortcutIconStyle: AmberShortcutIconStyle.phosphorFill.rawValue,
+            chromeTypeface: AmberChromeTypeface.serif.rawValue,
+            design: AmberThemeDesign(
+                light: .init(
+                    background: "#F6F1E7",
+                    surface: "#EDE6D8",
+                    foreground: "#1E1B18",
+                    mutedForeground: "#635A50",
+                    border: "#DDD3C2"
+                ),
+                dark: .init(
+                    background: "#151210",
+                    surface: "#221D19",
+                    foreground: "#F4EFE6",
+                    mutedForeground: "#A69B8E",
+                    border: "#3A312A"
+                ),
+                gradient: nil,
+                patterns: []
+            )
+        ),
+        // E · Linear × Raycast 暗色发丝美学 (碳黑画布 × 靛紫蓝)
+        AmberThemePackDocument(
+            format: AmberThemePackDocument.formatID,
+            version: AmberThemePackDocument.currentVersion,
+            id: "arquiel-linear-terminal",
+            displayName: "Linear · 暗色发丝",
+            paper: AmberThemeRuntime.Paper.neutral.rawValue,
+            accentHex: "#5E6AD2",
+            inkHex: "#FFFFFF",
+            canvasStyle: AmberCanvasStyle.flat.rawValue,
+            brandMark: AmberBrandMarkStyle.systemWordmark.rawValue,
+            shortcutIconStyle: AmberShortcutIconStyle.phosphorFill.rawValue,
+            chromeTypeface: AmberChromeTypeface.system.rawValue,
+            design: AmberThemeDesign(
+                light: .init(
+                    background: "#0C0D10",
+                    surface: "#15171C",
+                    foreground: "#F2F3F5",
+                    mutedForeground: "#8B91A1",
+                    border: "#262932"
+                ),
+                dark: .init(
+                    background: "#0C0D10",
+                    surface: "#15171C",
+                    foreground: "#F2F3F5",
+                    mutedForeground: "#8B91A1",
+                    border: "#262932"
+                ),
+                gradient: nil,
+                patterns: []
+            )
+        ),
+    ]
+}

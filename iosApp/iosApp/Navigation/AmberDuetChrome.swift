@@ -349,6 +349,179 @@ struct AmberDuetTaskCenterSheet: View {
     }
 }
 
+// MARK: - Personal Agent Persona Medallion (Duet-Style Top Character Presence)
+
+enum AmberAgentPersonaMood: Equatable, Sendable {
+    case idle
+    case working
+    case alert
+}
+
+struct AmberAgentPersonaMedallionView: View {
+    let mood: AmberAgentPersonaMood
+    var diameter: CGFloat = 54
+    var accentOverride: Color? = nil
+
+    private var accentColor: Color {
+        if let accentOverride { return accentOverride }
+        return mood == .alert ? AmberTheme.accentRed : AmberTheme.accent
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(AmberTheme.elevatedPanel)
+                .overlay {
+                    RadialGradient(
+                        colors: [
+                            accentColor.opacity(mood == .working ? 0.16 : 0.09),
+                            Color.clear,
+                        ],
+                        center: .init(x: 0.5, y: 0.44),
+                        startRadius: 2,
+                        endRadius: diameter * 0.48
+                    )
+                    .clipShape(Circle())
+                }
+                .overlay {
+                    Circle()
+                        .strokeBorder(
+                            mood == .alert ? AmberTheme.accentRed.opacity(0.45) : AmberTheme.border,
+                            lineWidth: 0.85
+                        )
+                }
+                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
+
+            Canvas { context, size in
+                let w = size.width
+                let h = size.height
+                let cx = w * 0.5
+                let cy = h * 0.47
+
+                // 1. Warm Amber Spirit Dome (half-sun character body)
+                let domeW = w * 0.36
+                let domeH = h * 0.28
+                let domeRect = CGRect(
+                    x: cx - domeW * 0.5 + (mood == .working ? 1.0 : 0),
+                    y: cy - domeH * 0.68 + (mood == .alert ? -1.5 : 0),
+                    width: domeW,
+                    height: domeH * 1.35
+                )
+                var domePath = Path()
+                domePath.addRoundedRect(
+                    in: domeRect,
+                    cornerSize: CGSize(width: domeW * 0.5, height: domeW * 0.5),
+                    style: .continuous
+                )
+                context.fill(domePath, with: .color(accentColor))
+
+                // 2. Calligraphic Horizon & Expressive Loop Ribbon (Duet/Arquiel brush stroke)
+                let strokeW = max(2.0, w * 0.044)
+                var horizon = Path()
+                switch mood {
+                case .idle:
+                    horizon.move(to: CGPoint(x: w * 0.21, y: cy + h * 0.05))
+                    horizon.addQuadCurve(
+                        to: CGPoint(x: cx, y: cy + h * 0.02),
+                        control: CGPoint(x: w * 0.35, y: cy + h * 0.09)
+                    )
+                    horizon.addQuadCurve(
+                        to: CGPoint(x: w * 0.79, y: cy + h * 0.04),
+                        control: CGPoint(x: w * 0.65, y: cy - h * 0.02)
+                    )
+                case .working:
+                    // Calligraphic cursive loop across the character ("Thinking it through")
+                    horizon.move(to: CGPoint(x: w * 0.20, y: cy + h * 0.05))
+                    horizon.addCurve(
+                        to: CGPoint(x: cx + w * 0.04, y: cy - h * 0.08),
+                        control1: CGPoint(x: w * 0.36, y: cy + h * 0.06),
+                        control2: CGPoint(x: cx + w * 0.08, y: cy + h * 0.02)
+                    )
+                    horizon.addCurve(
+                        to: CGPoint(x: cx - w * 0.02, y: cy + h * 0.04),
+                        control1: CGPoint(x: cx - w * 0.03, y: cy - h * 0.14),
+                        control2: CGPoint(x: cx - w * 0.08, y: cy - h * 0.01)
+                    )
+                    horizon.addQuadCurve(
+                        to: CGPoint(x: w * 0.80, y: cy + h * 0.05),
+                        control: CGPoint(x: w * 0.66, y: cy + h * 0.09)
+                    )
+                case .alert:
+                    horizon.move(to: CGPoint(x: w * 0.21, y: cy + h * 0.06))
+                    horizon.addQuadCurve(
+                        to: CGPoint(x: cx, y: cy + h * 0.01),
+                        control: CGPoint(x: w * 0.36, y: cy - h * 0.02)
+                    )
+                    horizon.addQuadCurve(
+                        to: CGPoint(x: w * 0.79, y: cy + h * 0.05),
+                        control: CGPoint(x: w * 0.64, y: cy + h * 0.07)
+                    )
+                }
+                context.stroke(
+                    horizon,
+                    with: .color(AmberTheme.foreground),
+                    style: StrokeStyle(lineWidth: strokeW, lineCap: .round, lineJoin: .round)
+                )
+
+                // 3. Expressive Eye / Gaze & State Spark
+                if mood != .working {
+                    let eyeR = max(2.2, w * 0.048)
+                    let eyeCenter = CGPoint(
+                        x: cx + (mood == .alert ? 0 : w * 0.02),
+                        y: cy - h * (mood == .alert ? 0.08 : 0.05)
+                    )
+                    let eyeRect = CGRect(
+                        x: eyeCenter.x - eyeR,
+                        y: eyeCenter.y - eyeR,
+                        width: eyeR * 2,
+                        height: eyeR * 2
+                    )
+                    context.fill(Path(ellipseIn: eyeRect), with: .color(AmberTheme.foreground))
+                    let specR = max(0.8, eyeR * 0.36)
+                    let specRect = CGRect(
+                        x: eyeCenter.x - eyeR * 0.35,
+                        y: eyeCenter.y - eyeR * 0.45,
+                        width: specR * 2,
+                        height: specR * 2
+                    )
+                    context.fill(Path(ellipseIn: specRect), with: .color(.white.opacity(0.9)))
+                }
+
+                // 4. Floating Companion Spark / Badge
+                switch mood {
+                case .idle:
+                    let sparkCenter = CGPoint(x: cx + w * 0.20, y: cy - h * 0.20)
+                    let r = max(2.0, w * 0.04)
+                    var spark = Path()
+                    spark.move(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y - r))
+                    spark.addLine(to: CGPoint(x: sparkCenter.x + r, y: sparkCenter.y))
+                    spark.addLine(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y + r))
+                    spark.addLine(to: CGPoint(x: sparkCenter.x - r, y: sparkCenter.y))
+                    spark.closeSubpath()
+                    context.fill(spark, with: .color(accentColor.opacity(0.75)))
+                case .working:
+                    let dot1 = CGRect(x: cx + w * 0.19, y: cy - h * 0.22, width: w * 0.065, height: w * 0.065)
+                    let dot2 = CGRect(x: cx - w * 0.24, y: cy - h * 0.16, width: w * 0.048, height: w * 0.048)
+                    context.fill(Path(ellipseIn: dot1), with: .color(accentColor))
+                    context.fill(Path(ellipseIn: dot2), with: .color(AmberTheme.accentAmber.opacity(0.85)))
+                case .alert:
+                    let badgeR = max(3.2, w * 0.068)
+                    let badgeRect = CGRect(
+                        x: cx + w * 0.16 - badgeR,
+                        y: cy - h * 0.22 - badgeR,
+                        width: badgeR * 2,
+                        height: badgeR * 2
+                    )
+                    context.fill(Path(ellipseIn: badgeRect), with: .color(AmberTheme.accentRed))
+                }
+            }
+            .frame(width: diameter, height: diameter)
+        }
+        .frame(width: diameter, height: diameter)
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Secondary Workspace & Session History Drawer Sheet
 
 struct AmberDuetWorkspaceDrawerSheet: View {
@@ -374,6 +547,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     agentPrimaryCard
+                    arquielPaletteStripSection
                     capabilityGridSection
                     recentHistorySection
                 }
@@ -409,14 +583,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
 
     private var agentPrimaryCard: some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(AmberTheme.accent.opacity(0.15))
-                    .frame(width: 44, height: 44)
-                Text("A")
-                    .font(.system(size: 22, weight: .bold, design: .serif))
-                    .foregroundStyle(AmberTheme.accent)
-            }
+            AmberAgentPersonaMedallionView(mood: .idle, diameter: 46)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Amber 主对话")
@@ -450,6 +617,51 @@ struct AmberDuetWorkspaceDrawerSheet: View {
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
+        }
+    }
+
+    private var arquielPaletteStripSection: some View {
+        let runtime = AmberThemeRuntime.shared
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(IOSAppLocalization.string("主题配色 (Arquiel Design)", defaultValue: "主题配色 (Arquiel Design)"))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(AmberArquielThemePresets.all, id: \.id) { preset in
+                        let isSelected = preset.matches(runtime: runtime)
+                        let swatchHex = (try? AmberThemePackTransfer.parseHex(preset.accentHex)) ?? 0xC96442
+                        Button {
+                            try? runtime.apply(preset)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color(hex: swatchHex))
+                                    .frame(width: 10, height: 10)
+                                Text(preset.displayName)
+                                    .font(.caption.weight(isSelected ? .semibold : .medium))
+                                    .foregroundStyle(AmberTheme.foreground)
+                            }
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 7)
+                            .background(
+                                isSelected ? AmberTheme.accent.opacity(0.14) : AmberTheme.surface,
+                                in: Capsule(style: .continuous)
+                            )
+                            .overlay {
+                                Capsule(style: .continuous)
+                                    .stroke(isSelected ? AmberTheme.accent : AmberTheme.borderSoft, lineWidth: isSelected ? 1.1 : 0.7)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 

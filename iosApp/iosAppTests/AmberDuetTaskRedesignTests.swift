@@ -349,4 +349,26 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             }
         }
     }
+
+    @MainActor
+    func testArquielThemePresetsAndPersonalAgentPersonaMedallion() throws {
+        let presets = AmberArquielThemePresets.all
+        XCTAssertEqual(presets.count, 6)
+        let runtime = AmberThemeRuntime.shared
+        let snapshot = AmberThemePackTransfer.document(from: runtime)
+        defer {
+            try? runtime.apply(snapshot)
+        }
+
+        for preset in presets {
+            XCTAssertNoThrow(try AmberThemePackTransfer.validate(preset), "Preset \(preset.id) must pass validation")
+            XCTAssertNoThrow(try runtime.apply(preset), "Preset \(preset.id) must apply cleanly")
+            XCTAssertTrue(preset.matches(runtime: runtime), "Preset \(preset.id) must match runtime after apply")
+        }
+
+        for mood in [AmberAgentPersonaMood.idle, .working, .alert] {
+            let medallion = AmberAgentPersonaMedallionView(mood: mood, diameter: 54)
+            XCTAssertEqual(medallion.mood, mood)
+        }
+    }
 }

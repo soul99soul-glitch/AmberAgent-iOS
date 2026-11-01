@@ -333,15 +333,28 @@ struct ChatActivityIslandView: View {
         }
     }
 
+    private var personaMood: AmberAgentPersonaMood {
+        if presentation.isTerminalHold || state.kind == .awaitingUser || state.tint == .red {
+            return .alert
+        }
+        return state.isActive ? .working : .idle
+    }
+
     var body: some View {
         // Lock hug width BEFORE glass. glassEffect sizes to the offered proposal;
         // if fixedSize comes after, the capsule still paints full bar width.
         islandContent
             .padding(.horizontal, 13)
-            .frame(height: 40)
+            .frame(height: 30)
             .fixedSize(horizontal: true, vertical: false)
             .background { glowUnderlay }
             .modifier(ChatActivityIslandGlass())
+            .background(alignment: .top) {
+                AmberAgentPersonaMedallionView(mood: personaMood, diameter: 52)
+                    .offset(y: -30)
+                    .allowsHitTesting(false)
+            }
+            .frame(height: 40, alignment: .bottom)
             .contentShape(Capsule())
             .animation(
                 reduceMotion ? nil : .easeInOut(duration: 0.22),
