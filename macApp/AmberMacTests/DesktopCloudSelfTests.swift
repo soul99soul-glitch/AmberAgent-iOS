@@ -26,16 +26,19 @@ final class DesktopCloudSelfTests: XCTestCase {
             configuredSecrets: ["modelApiKey"], revision: 3)
         var applyError: (any Error)?
         var fetchError: (any Error)?
+        /// 模拟「POST 已应用但回读失败」——receipt 确认后 GET 出错。
+        var readbackFails = false
         var received: [(apply: DesktopCloudConfigApply, requestId: String)] = []
 
         func fetchConfig() async throws -> DesktopCloudRemoteConfig {
             if let fetchError { throw fetchError }
             return remote
         }
-        func applyConfig(_ request: DesktopCloudConfigApply, requestId: String) async throws -> DesktopCloudRemoteConfig {
+        func applyConfig(_ request: DesktopCloudConfigApply, requestId: String) async throws -> DesktopCloudApplyOutcome {
             received.append((request, requestId))
             if let applyError { throw applyError }
-            return remote
+            return DesktopCloudApplyOutcome(config: readbackFails ? nil : remote,
+                revision: remote.revision + 1, refreshed: !readbackFails)
         }
     }
 
@@ -216,11 +219,11 @@ final class DesktopCloudSelfTests: XCTestCase {
         let plan = DesktopCloudImportPlan(
             providerID: provider.id, searchServices: [.free, .exa],
             searchMode: .sequentialFallback)
-        let error = await store.import(plan, catalog: catalog, requestId: "req-1")
+        let error = await store.import(plan, catalog: catalog)
         XCTAssertNil(error)
 
         let (apply, requestId) = try XCTUnwrap(sync.received.last)
-        XCTAssertEqual(requestId, "req-1")
+        XCTAssertFalse(requestId.isEmpty)
         // 只上传所选：exa 在选、brave 不在选 → brave 不得出现在打包内容里。
         XCTAssertEqual(apply.secrets["modelApiKey"], "sk-import-fake")
         XCTAssertEqual(apply.secrets["exaApiKey"], "exa-import-fake")
@@ -251,7 +254,7 @@ final class DesktopCloudSelfTests: XCTestCase {
         let sync = FakeSync()
         let (store, _, _) = makePairedStore(sync: sync, settings: (settings, credentials))
         let plan = DesktopCloudImportPlan(providerID: provider.id)
-        let error = await store.import(plan, catalog: store.importCatalog(), requestId: "req-x")
+        let error = await store.import(plan, catalog: store.importCatalog())
         XCTAssertNotNil(error)
         XCTAssertTrue(sync.received.isEmpty, "没有 Key 的项不得发出上传请求")
     }
@@ -268,7 +271,7 @@ final class DesktopCloudSelfTests: XCTestCase {
         let sync = FakeSync()
         let (store, _, _) = makePairedStore(sync: sync, settings: (settings, credentials))
         let error = await store.import(
-            DesktopCloudImportPlan(providerID: oauth.id), catalog: store.importCatalog(), requestId: "req-oauth")
+            DesktopCloudImportPlan(providerID: oauth.id), catalog: store.importCatalog())
         XCTAssertNotNil(error)
         XCTAssertTrue(sync.received.isEmpty)
     }
@@ -282,7 +285,7 @@ final class DesktopCloudSelfTests: XCTestCase {
             modelProvider: "claude", modelId: "claude-sonnet-4", modelBaseURL: "https://api.anthropic.com/v1",
             searchSources: ["brave"], searchMode: "aggregate", baseRevision: 3)
         draft.deletes = ["exaApiKey"]
-        let error = await store.applyRemoteConfig(draft, requestId: "req-keep")
+        let error = await store.applyRemoteConfig(draft)
         XCTAssertNil(error)
         let (apply, _) = try XCTUnwrap(sync.received.last)
         XCTAssertTrue(apply.secrets.isEmpty, "空 Key 输入必须保留原值，不得上传空串")
@@ -296,10 +299,60 @@ final class DesktopCloudSelfTests: XCTestCase {
         let (store, _, _) = makePairedStore(sync: sync)
         let draft = DesktopCloudConfigDraft(modelProvider: "openai", modelId: "gpt-5-mini",
             modelApiKey: "••••••••", baseRevision: 3)
-        let error = await store.applyRemoteConfig(draft, requestId: "req-ph")
+        let error = await store.applyRemoteConfig(draft)
         XCTAssertNil(error)
         XCTAssertTrue(try XCTUnwrap(sync.received.last).apply.secrets.isEmpty,
                       "脱敏占位符不得作为 Key 上传")
+    }
+
+    // MARK: R3/R4 定点失败证据（独立审查 cloud-configuration-independent-review.md）
+
+    /// R3：手动页同槽位「填新 Key + 勾选删除」必须被拒绝，不能静默以 replace 为准。
+    @MainActor func testApplyRejectsSameSlotReplaceAndDelete() async throws {
+        let sync = FakeSync()
+        let (store, _, _) = makePairedStore(sync: sync)
+        var draft = DesktopCloudConfigDraft(modelProvider: "openai", modelId: "gpt-5-mini",
+            modelApiKey: "sk-new-fake", baseRevision: 3)
+        draft.deletes = ["modelApiKey"]
+        let error = await store.applyRemoteConfig(draft)
+        XCTAssertNotNil(error, "同槽位替换+删除必须显式拒绝（当前静默 replace，UI 承诺删除未兑现）")
+    }
+
+    /// R3：导入页勾选 provider 又勾选删除同一云端 Key 时必须被拒绝。
+    @MainActor func testImportRejectsSameSlotDeleteAndReplace() async throws {
+        let sync = FakeSync()
+        let credentials = DesktopMemoryCredentials()
+        let settings = DesktopSettings(
+            defaults: UserDefaults(suiteName: "t.r3.providers.\(UUID().uuidString)")!,
+            credentials: credentials)
+        let provider = DesktopProviderConfiguration(
+            name: "OpenAI", kind: .openAI, baseURL: "https://api.openai.com/v1", modelID: "gpt-5-mini")
+        try settings.saveProvider(provider, apiKey: "sk-r3-fake")
+        let (store, _, _) = makePairedStore(sync: sync, settings: (settings, credentials))
+        await store.refreshRemoteConfig()
+        let plan = DesktopCloudImportPlan(providerID: provider.id, deletes: ["modelApiKey"])
+        let error = await store.import(plan, catalog: store.importCatalog())
+        XCTAssertNotNil(error, "同槽位导入+删除必须显式拒绝")
+    }
+
+    /// R4：Gemini（云端不支持协议）即使有 Key 也不得进入模型导入，整批应被阻止而非 422。
+    @MainActor func testImportRejectsCloudUnsupportedProvider() async throws {
+        let sync = FakeSync()
+        let credentials = DesktopMemoryCredentials()
+        let settings = DesktopSettings(
+            defaults: UserDefaults(suiteName: "t.r4.providers.\(UUID().uuidString)")!,
+            credentials: credentials)
+        let gemini = DesktopProviderConfiguration(
+            name: "Gemini", kind: .gemini, baseURL: "https://generativelanguage.googleapis.com",
+            modelID: "gemini-3-flash")
+        try settings.saveProvider(gemini, apiKey: "gem-key-fake")
+        settings.selectedProviderID = gemini.id
+        let (store, _, _) = makePairedStore(sync: sync, settings: (settings, credentials))
+        await store.refreshRemoteConfig()
+        let plan = DesktopCloudImportPlan(providerID: gemini.id)
+        let error = await store.import(plan, catalog: store.importCatalog())
+        XCTAssertNotNil(error, "云端不支持的 provider 必须在客户端拦截（当前会带上 gemini 致整批 422）")
+        XCTAssertTrue(sync.received.isEmpty)
     }
 
     /// 契约 credential_action_required：已存模型 Key 时改 provider/baseURL 必须带真 Key 或删除。
@@ -310,40 +363,102 @@ final class DesktopCloudSelfTests: XCTestCase {
         // 换 provider 不带 Key 不删除 → 客户端提前拒绝，不发出请求。
         let blocked = await store.applyRemoteConfig(
             DesktopCloudConfigDraft(modelProvider: "claude", modelId: "claude-sonnet-4",
-                modelBaseURL: "https://api.openai.com/v1", baseRevision: 3), requestId: "req-g1")
+                modelBaseURL: "https://api.openai.com/v1", baseRevision: 3))
         guard case .server(let message) = blocked else { return XCTFail("应被客户端拦截") }
         XCTAssertTrue(message.contains("模型 Key"))
         XCTAssertTrue(sync.received.isEmpty, "拦截在客户端，不得发出请求")
         // 只改 modelId → 允许（Key 保留）。
         let ok = await store.applyRemoteConfig(
             DesktopCloudConfigDraft(modelProvider: "openai", modelId: "gpt-5-mini",
-                modelBaseURL: "https://api.openai.com/v1", baseRevision: 3), requestId: "req-g2")
+                modelBaseURL: "https://api.openai.com/v1", baseRevision: 3))
         XCTAssertNil(ok)
         // 换 provider + 显式删除旧 Key → 允许。
         var deleting = DesktopCloudConfigDraft(modelProvider: "claude", modelId: "claude-sonnet-4",
             modelBaseURL: "https://api.openai.com/v1", baseRevision: 3)
         deleting.deletes = ["modelApiKey"]
-        let deleted = await store.applyRemoteConfig(deleting, requestId: "req-g3")
+        let deleted = await store.applyRemoteConfig(deleting)
         XCTAssertNil(deleted)
         // 换 baseURL + 新 Key → 允许。
         let replaced = await store.applyRemoteConfig(
             DesktopCloudConfigDraft(modelProvider: "openai", modelId: "m",
                 modelBaseURL: "https://api.deepseek.com/v1", modelApiKey: "sk-new",
-                baseRevision: 3), requestId: "req-g4")
+                baseRevision: 3))
         XCTAssertNil(replaced)
         XCTAssertEqual(sync.received.count, 3)
     }
 
+    /// R5：传输失败（结果未知）时重试同一内容必须复用同一 requestId。
     @MainActor func testApplyRemoteConfigRetryKeepsSameRequestId() async throws {
         let sync = FakeSync()
         sync.applyError = DesktopCloudError.unreachable
         let (store, _, _) = makePairedStore(sync: sync)
         let draft = DesktopCloudConfigDraft(modelProvider: "openai", modelId: "gpt-5-mini",
             modelApiKey: "sk-retry", baseRevision: 3)
-        _ = await store.applyRemoteConfig(draft, requestId: "req-stable")
-        sync.applyError = nil
-        _ = await store.applyRemoteConfig(draft, requestId: "req-stable")
-        XCTAssertEqual(sync.received.map { $0.requestId }, ["req-stable", "req-stable"])
+        _ = await store.applyRemoteConfig(draft)
+        _ = await store.applyRemoteConfig(draft)
+        let ids = sync.received.map(\.requestId)
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertEqual(ids[0], ids[1], "结果未知时重试必须复用同一 requestId")
+    }
+
+    /// R5：receipt 确认成功即结束该操作——随后的独立保存必须换新的 requestId，
+    /// 哪怕内容相同；POST 成功而回读失败时也算完成并单独标记回读失败。
+    @MainActor func testConfirmedReceiptEndsOperationAndRefreshesIndependently() async throws {
+        let sync = FakeSync()
+        let (store, _, _) = makePairedStore(sync: sync)
+        await store.refreshRemoteConfig()
+        let draft = DesktopCloudConfigDraft(modelProvider: "openai", modelId: "gpt-5-mini",
+            modelBaseURL: "https://api.openai.com/v1", modelApiKey: "sk-fake-1", baseRevision: 3)
+        let first = await store.applyRemoteConfig(draft)
+        XCTAssertNil(first)
+        // 同一内容再保存 = 新操作，必须是新 requestId，而不是复用旧 ID 靠 replayed 兜底。
+        let second = await store.applyRemoteConfig(draft)
+        XCTAssertNil(second)
+        let ids = sync.received.map(\.requestId)
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertNotEqual(ids[0], ids[1], "已确认的操作结束后，新操作不得继承旧 requestId")
+
+        // receipt 确认、回读失败：仍算成功，且把「已提交/回读失败」单独呈现。
+        sync.readbackFails = true
+        var deletes = DesktopCloudConfigDraft(modelProvider: "openai", modelId: "gpt-5-mini",
+            modelBaseURL: "https://api.openai.com/v1", baseRevision: 4)
+        deletes.deletes = ["modelApiKey"]
+        let readbackError = await store.applyRemoteConfig(deletes)
+        XCTAssertNil(readbackError)
+        XCTAssertEqual(store.remoteConfig?.revision, 4, "回读失败也要按 receipt revision 推进")
+        XCTAssertEqual(store.remoteConfig?.configuredSecrets, [],
+                       "回读失败也要把提交的删除反映为本地预测状态")
+        XCTAssertNotNil(store.remoteConfigError, "回读失败必须单独呈现而非当提交失败")
+    }
+
+    /// R6：409 后不能只换 revision 重发旧完整对象——未编辑字段采纳远端新值，已编辑字段保留。
+    @MainActor func testConflictMergePreservesEditsAndAdoptsUntouched() async throws {
+        let base = DesktopCloudRemoteConfig(
+            model: .init(provider: "openai", modelId: "gpt-old", baseURL: "https://api.openai.com/v1",
+                         keyConfigured: true),
+            search: .init(sources: ["bing"], mode: "fallback",
+                          exaKeyConfigured: false, braveKeyConfigured: false),
+            revision: 3)
+        var draft = DesktopCloudConfigDraft(
+            modelProvider: base.model.provider, modelId: base.model.modelId,
+            modelBaseURL: base.model.baseURL, searchSources: base.search.sources,
+            searchMode: base.search.mode, baseRevision: base.revision)
+        // 用户只编辑了 modelId；远端同时改了 provider/baseURL/searchSources。
+        draft.modelId = "gpt-5-mini"
+        let fresh = DesktopCloudRemoteConfig(
+            model: .init(provider: "claude", modelId: "claude-sonnet-4",
+                         baseURL: "https://api.anthropic.com/v1", keyConfigured: true),
+            search: .init(sources: ["brave"], mode: "aggregate",
+                          exaKeyConfigured: false, braveKeyConfigured: true),
+            revision: 4)
+        let (merged, adopted) = draft.mergedPreservingEdits(base: base, into: fresh)
+        XCTAssertEqual(merged.modelId, "gpt-5-mini", "已编辑字段保留本地值")
+        XCTAssertEqual(merged.modelProvider, "claude", "未编辑字段采纳远端新值")
+        XCTAssertEqual(merged.modelBaseURL, "https://api.anthropic.com/v1")
+        XCTAssertEqual(merged.searchSources, ["brave"])
+        XCTAssertEqual(merged.searchMode, "aggregate")
+        XCTAssertEqual(merged.baseRevision, 4)
+        XCTAssertEqual(Set(adopted), ["服务商", "接口地址", "搜索来源", "执行方式"])
     }
 
     // MARK: failure semantics — 401吊销 / 冲突与失败保留配对
@@ -352,7 +467,7 @@ final class DesktopCloudSelfTests: XCTestCase {
         let sync = FakeSync()
         sync.applyError = DesktopCloudError.unauthorized
         let (store, tokens, defaults) = makePairedStore(sync: sync)
-        _ = await store.applyRemoteConfig(DesktopCloudConfigDraft(), requestId: "req-401")
+        _ = await store.applyRemoteConfig(DesktopCloudConfigDraft())
         XCTAssertNil(store.connection)
         XCTAssertNil(tokens.load(key: "cloudSelf.deviceToken"))
         XCTAssertNil(defaults.data(forKey: "desktop.cloudSelf.connection.v1"))
@@ -367,8 +482,7 @@ final class DesktopCloudSelfTests: XCTestCase {
         // 只改 modelId（保留 provider/baseURL/Key）让冲突能到达 sync 层。
         let error = await store.applyRemoteConfig(
             DesktopCloudConfigDraft(modelProvider: "openai", modelId: "gpt-5-mini",
-                modelBaseURL: "https://api.openai.com/v1", baseRevision: 3),
-            requestId: "req-conflict")
+                modelBaseURL: "https://api.openai.com/v1", baseRevision: 3))
         guard case .conflict = error else { return XCTFail("冲突必须透传") }
         XCTAssertNotNil(store.connection, "冲突不得清掉配对")
         XCTAssertEqual(store.remoteConfig?.revision, 3, "冲突后旧云端配置仍可用")

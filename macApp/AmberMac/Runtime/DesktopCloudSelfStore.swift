@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 
@@ -58,6 +59,33 @@ struct DesktopCloudConfigDraft: Equatable, Sendable {
     var braveKey = ""
     var deletes: Set<String> = []
     var baseRevision = 0
+
+    /// Conflict recovery: fields the user did not change since `base` (i.e. still equal to the
+    /// snapshot the draft was built from) adopt the freshly-read remote values; edited fields
+    /// stay. Returns the merged draft and the display names of fields taken from the fresh
+    /// snapshot, so the UI can say exactly what moved.
+    func mergedPreservingEdits(base: DesktopCloudRemoteConfig,
+                               into fresh: DesktopCloudRemoteConfig) -> (draft: Self, adopted: [String]) {
+        var merged = self
+        var adopted: [String] = []
+        if modelProvider == base.model.provider, merged.modelProvider != fresh.model.provider {
+            merged.modelProvider = fresh.model.provider; adopted.append("服务商")
+        }
+        if modelId == base.model.modelId, merged.modelId != fresh.model.modelId {
+            merged.modelId = fresh.model.modelId; adopted.append("模型标识")
+        }
+        if modelBaseURL == base.model.baseURL, merged.modelBaseURL != fresh.model.baseURL {
+            merged.modelBaseURL = fresh.model.baseURL; adopted.append("接口地址")
+        }
+        if searchSources == base.search.sources, merged.searchSources != fresh.search.sources {
+            merged.searchSources = fresh.search.sources; adopted.append("搜索来源")
+        }
+        if searchMode == base.search.mode, merged.searchMode != fresh.search.mode {
+            merged.searchMode = fresh.search.mode; adopted.append("执行方式")
+        }
+        merged.baseRevision = fresh.revision
+        return (merged, adopted)
+    }
 }
 
 /// One apply call: non-secret fields plus the plaintext secrets the user chose to upload.
@@ -71,11 +99,21 @@ struct DesktopCloudConfigApply: Equatable, Sendable {
     var secrets: [String: String] = [:]
 }
 
+/// Result of one apply: the POST receipt confirms the write regardless of the follow-up read.
+/// `config` is nil only when the receipt was accepted but the refresh GET failed — the apply
+/// still took effect; the caller reports read-back failure separately from submit failure.
+struct DesktopCloudApplyOutcome: Equatable, Sendable {
+    var config: DesktopCloudRemoteConfig?
+    /// Server-assigned revision of this write, from the receipt.
+    var revision: Int
+    var refreshed: Bool
+}
+
 /// The cloud configuration transport (`/v2/configuration`, JWE-sealed applies).
 /// `DesktopCloudClientConfigSync` in production, a fake in tests. Secrets never appear in fetch results.
 protocol DesktopCloudConfigSync: Sendable {
     func fetchConfig() async throws -> DesktopCloudRemoteConfig
-    func applyConfig(_ request: DesktopCloudConfigApply, requestId: String) async throws -> DesktopCloudRemoteConfig
+    func applyConfig(_ request: DesktopCloudConfigApply, requestId: String) async throws -> DesktopCloudApplyOutcome
 }
 
 // MARK: - Local import catalog
@@ -92,9 +130,13 @@ struct DesktopCloudImportCatalog: Equatable, Sendable {
         var hasAPIKey: Bool
         /// apiKey / plan providers can export a key; OAuth login state is device-bound and is not offered.
         var exportable: Bool
+        /// The mapped cloud protocol is in the daemon's supported set (gemini is not).
+        var supported: Bool
         /// True for the provider this Mac currently runs on — the import sheet preselects it.
         var selectedLocally: Bool
         var note: String?
+        /// What the import UI may offer/select: a key-bearing local credential on a supported protocol.
+        var selectable: Bool { exportable && supported }
     }
     struct SearchItem: Equatable, Identifiable, Sendable {
         var id: DesktopSearchService
@@ -312,9 +354,10 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     var canSyncConfig: Bool { sync != nil }
 
     /// Saves the manual-edit draft. Empty key fields keep stored values; `deletes` are explicit.
-    /// Retries keep the same requestId; on conflict the caller keeps the draft and re-reads.
+    /// Retries of the same unconfirmed operation keep the same requestId; a confirmed receipt
+    /// ends it and the next save mints a fresh ID. On conflict the caller keeps the draft.
     @discardableResult
-    func applyRemoteConfig(_ draft: DesktopCloudConfigDraft, requestId: String) async -> DesktopCloudError? {
+    func applyRemoteConfig(_ draft: DesktopCloudConfigDraft) async -> DesktopCloudError? {
         guard let sync else { return .server("云端配置接口尚未接入，等待后端契约") }
         do {
             var secrets: [String: String] = [:]
@@ -322,17 +365,22 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
             if let key = Self.realSecret(draft.modelApiKey) { secrets["modelApiKey"] = key }
             if let key = Self.realSecret(draft.exaKey) { secrets["exaApiKey"] = key }
             if let key = Self.realSecret(draft.braveKey) { secrets["braveApiKey"] = key }
+            // One slot can't be replaced and deleted in the same request — the UI promises both
+            // actions, so the ambiguity must surface instead of silently preferring replace.
+            if let overlap = secrets.keys.sorted().first(where: { draft.deletes.contains($0) }) {
+                return .server("「\(Self.secretDisplayName(overlap))」不能同时上传新 Key 并删除，请只保留一种操作")
+            }
             // Contract guard: with a stored model key, switching provider or effective baseURL
             // requires an explicit credential action in the same request (else 422
             // credential_action_required and nothing applies). Fail early with a clearer message.
             if credentialActionMissing(for: draft, secrets: secrets) {
                 return .server("云端已存有模型 Key：更换服务商或接口地址需同时粘贴新 Key，或在下方勾选删除后切换")
             }
-            remoteConfig = try await sync.applyConfig(
-                DesktopCloudConfigApply(config: draft, includesModel: true, includesSearch: true,
-                                        secrets: secrets), requestId: requestId)
-            remoteConfigError = nil
-            lastConfiguredSecrets = remoteConfig?.configuredSecrets
+            let apply = DesktopCloudConfigApply(config: draft, includesModel: true,
+                includesSearch: true, secrets: secrets)
+            let outcome = try await sync.applyConfig(apply, requestId: requestId(for: apply))
+            pendingRequest = nil
+            applyOutcome(outcome, apply: apply)
             return nil
         } catch let error as DesktopCloudError {
             if error == .unauthorized { forgetIfRevoked(error) }
@@ -344,10 +392,19 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
 
     // MARK: - Import from this Mac
 
+    /// Cloud provider protocol names the daemon accepts; the GET response's supported list wins,
+    /// falling back to the contract's current set when the remote hasn't been fetched yet.
+    nonisolated static func supportedModelProviderNames(remote: DesktopCloudRemoteConfig?) -> Set<String> {
+        let listed = remote?.supportedModelProviders ?? []
+        return listed.isEmpty ? ["openai", "claude"] : Set(listed)
+    }
+
     /// Snapshot of what this Mac can offer; reads key *presence* only.
     func importCatalog() -> DesktopCloudImportCatalog {
+        let supportedProviders = Self.supportedModelProviderNames(remote: remoteConfig)
         let providers = settings.providers.map { provider in
             let exportable = provider.authMode == .apiKey || provider.authMode.isPlan
+            let supported = supportedProviders.contains(Self.cloudProviderName(for: provider.kind))
             let model = provider.selectedModel
             return DesktopCloudImportCatalog.ProviderItem(
                 id: provider.id,
@@ -358,8 +415,10 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                 hasAPIKey: exportable && (try? settings.apiKey(for: provider.id))?
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
                 exportable: exportable,
+                supported: supported,
                 selectedLocally: provider.id == settings.selectedProviderID,
-                note: exportable ? nil : "OAuth 登录态只在本机有效，不上传"
+                note: !exportable ? "OAuth 登录态只在本机有效，不上传"
+                    : !supported ? "云端不支持 \(provider.kind.title) 服务商" : nil
             )
         }
         let search = searchSettings.serviceOrder.compactMap { service -> DesktopCloudImportCatalog.SearchItem? in
@@ -397,10 +456,9 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
 
     /// Executes the confirmed import: reads the selected keys from Keychain into memory, seals and
     /// uploads through the paired channel. Empty/unselected items keep existing cloud values.
-    /// `requestId` stays stable across retries of the same user action.
+    /// The requestId stays stable across retries of the same unconfirmed operation only.
     @discardableResult
-    func `import`(_ plan: DesktopCloudImportPlan, catalog: DesktopCloudImportCatalog,
-                  requestId: String) async -> DesktopCloudError? {
+    func `import`(_ plan: DesktopCloudImportPlan, catalog: DesktopCloudImportCatalog) async -> DesktopCloudError? {
         guard let sync else { return .server("云端配置接口尚未接入，等待后端契约") }
         guard !isImporting else { return nil }
         isImporting = true
@@ -419,6 +477,12 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                let provider = settings.providers.first(where: { $0.id == providerID }) {
                 guard provider.authMode == .apiKey || provider.authMode.isPlan else {
                     return .server("OAuth 登录态只在本机有效，无法上传到云端；请改用 API Key 服务商")
+                }
+                // Cloud protocol gate: an unsupported provider would make the daemon reject the
+                // whole batch (422), so block it here and let search-only imports still proceed.
+                guard Self.supportedModelProviderNames(remote: remoteConfig)
+                        .contains(Self.cloudProviderName(for: provider.kind)) else {
+                    return .server("云端不支持 \(provider.kind.title) 服务商；请改选 openai/claude 服务商，或取消模型勾选只导入搜索项")
                 }
                 let key = try settings.apiKey(for: provider.id).trimmingCharacters(in: .whitespacesAndNewlines)
                 if key.isEmpty || DesktopHistoryRedaction.isPlaceholderCredential(key) {
@@ -444,11 +508,15 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                 draft.searchMode = plan.searchMode == .parallel ? "aggregate" : "fallback"
             }
             draft.deletes = plan.deletes
-            remoteConfig = try await sync.applyConfig(
-                DesktopCloudConfigApply(config: draft, includesModel: plan.providerID != nil,
-                    includesSearch: !plan.searchServices.isEmpty, secrets: secrets), requestId: requestId)
-            remoteConfigError = nil
-            lastConfiguredSecrets = remoteConfig?.configuredSecrets
+            if let overlap = secrets.keys.sorted().first(where: { draft.deletes.contains($0) }) {
+                return .server("「\(Self.secretDisplayName(overlap))」不能同时导入并删除，请在删除区取消勾选或取消该导入项")
+            }
+            let apply = DesktopCloudConfigApply(config: draft,
+                includesModel: plan.providerID != nil, includesSearch: !plan.searchServices.isEmpty,
+                secrets: secrets)
+            let outcome = try await sync.applyConfig(apply, requestId: requestId(for: apply))
+            pendingRequest = nil
+            applyOutcome(outcome, apply: apply)
             return nil
         } catch let error as DesktopCloudError {
             if error == .unauthorized { forgetIfRevoked(error) }
@@ -476,6 +544,63 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     }
 
     // MARK: - Private
+
+    /// Idempotency state: while an operation's outcome is unknown (no confirmed receipt), retries
+    /// of the same content reuse its requestId. A confirmed receipt — or any content change —
+    /// ends it; the next save mints a fresh ID. Never survives unpair/forget.
+    @ObservationIgnored private var pendingRequest: (fingerprint: String, requestId: String)?
+
+    /// Applies a confirmed outcome to local state. A fresh GET result wins; a failed read-back
+    /// still counts the write as done (receipt confirmed), so we predict key presence locally
+    /// and flag the read failure separately instead of treating the apply as failed.
+    private func applyOutcome(_ outcome: DesktopCloudApplyOutcome, apply: DesktopCloudConfigApply) {
+        if let fresh = outcome.config {
+            remoteConfig = fresh
+            remoteConfigError = nil
+            lastConfiguredSecrets = fresh.configuredSecrets
+        } else {
+            var configured = remoteConfig?.configuredSecrets ?? []
+            configured.formUnion(apply.secrets.keys)
+            configured.subtract(apply.config.deletes)
+            lastConfiguredSecrets = configured
+            remoteConfig?.configuredSecrets = configured
+            remoteConfig?.revision = outcome.revision
+            remoteConfigError = "已提交成功，但回读云端状态失败（稍后自动重新读取）"
+        }
+    }
+
+    /// Contract idempotency: the requestId binds to operation *content*, not to a sheet session.
+    private func requestId(for apply: DesktopCloudConfigApply) -> String {
+        let fingerprint = Self.fingerprint(of: apply)
+        if let pending = pendingRequest, pending.fingerprint == fingerprint { return pending.requestId }
+        let id = UUID().uuidString
+        pendingRequest = (fingerprint, id)
+        return id
+    }
+
+    /// Content identity of one operation — everything on the wire except requestId and the
+    /// per-seal timestamps. Secret values enter only as hashes inside the in-memory fingerprint.
+    nonisolated static func fingerprint(of apply: DesktopCloudConfigApply) -> String {
+        var secretHashes: [String: String] = [:]
+        for (key, value) in apply.secrets {
+            secretHashes[key] = SHA256.hash(data: Data(value.utf8))
+                .compactMap { String(format: "%02x", $0) }.joined()
+        }
+        let canonical: [String: Any] = [
+            "includesModel": apply.includesModel,
+            "includesSearch": apply.includesSearch,
+            "baseRevision": apply.config.baseRevision,
+            "modelProvider": apply.config.modelProvider,
+            "modelId": apply.config.modelId,
+            "modelBaseURL": apply.config.modelBaseURL,
+            "searchSources": apply.config.searchSources,
+            "searchMode": apply.config.searchMode,
+            "deletes": apply.config.deletes.sorted(),
+            "secrets": secretHashes,
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: canonical, options: [.sortedKeys])) ?? Data()
+        return SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
+    }
 
     /// True when the draft redirects the model endpoint while the cloud still holds a key for the
     /// old one and no `replace`/`delete` rides along — the request the backend must reject.
@@ -507,6 +632,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         client = nil
         sync = nil
         status = nil
+        pendingRequest = nil
         remoteConfig = nil
         remoteConfigError = nil
         lastConfiguredSecrets = nil

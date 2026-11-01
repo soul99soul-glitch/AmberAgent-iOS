@@ -8,11 +8,13 @@ struct DesktopCloudConfigSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var draft = DesktopCloudConfigDraft()
+    /// The remote snapshot the draft was built from; conflict recovery merges against it.
+    @State private var baseConfig: DesktopCloudRemoteConfig?
     @State private var loaded = false
-    @State private var requestId = UUID().uuidString
     @State private var saving = false
     @State private var error: String?
     @State private var conflicted = false
+    @State private var mergedNote: String?
 
     private static let cloudProviders = ["openai", "claude"]
     private static let cloudSources = ["bing", "duckduckgo", "exa", "brave"]
@@ -43,6 +45,7 @@ struct DesktopCloudConfigSheet: View {
 
     private func loadDraft() async {
         if store.remoteConfig == nil { await store.refreshRemoteConfig() }
+        baseConfig = store.remoteConfig ?? DesktopCloudRemoteConfig()
         if let config = store.remoteConfig {
             draft = DesktopCloudConfigDraft(
                 modelProvider: config.model.provider.isEmpty ? "openai" : config.model.provider,
@@ -115,6 +118,17 @@ struct DesktopCloudConfigSheet: View {
         }
     }
 
+    /// Slots about to be replaced with a newly typed key — their delete toggles are meaningless
+    /// in the same request (a slot can't be replaced and deleted at once).
+    private func willReplace(_ key: String) -> Bool {
+        switch key {
+        case "modelApiKey": DesktopCloudSelfStore.realSecret(draft.modelApiKey) != nil
+        case "exaApiKey": DesktopCloudSelfStore.realSecret(draft.exaKey) != nil
+        case "braveApiKey": DesktopCloudSelfStore.realSecret(draft.braveKey) != nil
+        default: false
+        }
+    }
+
     @ViewBuilder private var secretSection: some View {
         let remoteSecrets = (store.remoteConfig?.configuredSecrets ?? []).sorted()
         if !remoteSecrets.isEmpty {
@@ -127,9 +141,13 @@ struct DesktopCloudConfigSheet: View {
                         HStack {
                             Text(DesktopCloudSelfStore.secretDisplayName(key)).font(.system(size: 12))
                             Text(key).font(.system(size: 11, design: .monospaced)).foregroundStyle(DesktopTheme.inkTertiary)
+                            if willReplace(key) {
+                                Text("上方已填新 Key 将替换").font(.system(size: 11)).foregroundStyle(DesktopTheme.accent)
+                            }
                         }
                     }
                     .toggleStyle(.checkbox)
+                    .disabled(willReplace(key))
                 }
             }
         }
@@ -147,7 +165,12 @@ struct DesktopCloudConfigSheet: View {
                     Spacer()
                     Button("重新读取") { Task { await reloadKeepingDraft() } }
                 }
-            } else if let error {
+            }
+            if let mergedNote {
+                Text(mergedNote).font(.system(size: 11)).foregroundStyle(DesktopTheme.inkTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !conflicted, let error {
                 Text(error).font(.system(size: 12)).foregroundStyle(DesktopTheme.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -163,9 +186,21 @@ struct DesktopCloudConfigSheet: View {
         .padding(16)
     }
 
+    /// Conflict recovery: re-read the remote, then merge — fields the user never touched adopt
+    /// the fresh values, edited fields stay, and the diff is surfaced instead of silently
+    /// re-submitting the stale full object.
     private func reloadKeepingDraft() async {
         await store.refreshRemoteConfig()
-        if let config = store.remoteConfig { draft.baseRevision = config.revision }
+        guard let fresh = store.remoteConfig else {
+            mergedNote = store.remoteConfigError ?? "云端暂时不可达，稍后再试"
+            return
+        }
+        let result = draft.mergedPreservingEdits(base: baseConfig ?? fresh, into: fresh)
+        draft = result.draft
+        baseConfig = fresh
+        mergedNote = result.adopted.isEmpty
+            ? "已按云端最新版本重新读取；你的编辑未受影响。"
+            : "已合并未编辑字段：\(result.adopted.joined(separator: "、")) 更新为云端最新值，其余编辑保留。"
         conflicted = false
     }
 
@@ -173,7 +208,7 @@ struct DesktopCloudConfigSheet: View {
         saving = true
         defer { saving = false }
         error = nil
-        if let failure = await store.applyRemoteConfig(draft, requestId: requestId) {
+        if let failure = await store.applyRemoteConfig(draft) {
             if case .conflict = failure { conflicted = true } else { error = failure.localizedDescription }
             return
         }

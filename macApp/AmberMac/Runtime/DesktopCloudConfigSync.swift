@@ -316,26 +316,37 @@ actor DesktopCloudClientConfigSync: DesktopCloudConfigSync {
 
     // MARK: apply
 
-    func applyConfig(_ request: DesktopCloudConfigApply, requestId: String) async throws -> DesktopCloudRemoteConfig {
+    func applyConfig(_ request: DesktopCloudConfigApply, requestId: String) async throws -> DesktopCloudApplyOutcome {
         try await apply(request, requestId: requestId, retriedAfterExpiry: false)
     }
 
     /// One internal retry on 410: the envelope window elapsed, so resealing with fresh
     /// issuedAt/expiresAt under the same requestId is the intended retry path.
+    /// A confirmed POST receipt ends the operation — a failed read-back afterwards is reported
+    /// as `refreshed: false`, never as an apply failure.
     private func apply(_ request: DesktopCloudConfigApply, requestId: String,
-                       retriedAfterExpiry: Bool) async throws -> DesktopCloudRemoteConfig {
+                       retriedAfterExpiry: Bool) async throws -> DesktopCloudApplyOutcome {
         let key = try await fetchImportKey()
         let payload = try buildPayload(request, requestId: requestId,
             serverTime: key.serverTime, lifetime: key.maxLifetime)
         let jwe = try DesktopCloudJWE.seal(payload: payload, publicKey: key.secKey, kid: key.kid)
+        let receipt: DesktopCloudApplyResponse
         do {
-            let response: DesktopCloudApplyResponse = try await client.decode(
+            receipt = try await client.decode(
                 client.send("POST", "/v2/configuration", body: ["jwe": jwe]))
-            guard response.requestId == requestId else { throw DesktopCloudError.invalidResponse }
+            guard receipt.requestId == requestId else { throw DesktopCloudError.invalidResponse }
         } catch DesktopCloudError.envelopeExpired where !retriedAfterExpiry {
             return try await apply(request, requestId: requestId, retriedAfterExpiry: true)
         }
-        return try await fetchConfig()
+        // Receipt confirmed: the write took effect. Best-effort refresh; revocation still wins.
+        do {
+            return DesktopCloudApplyOutcome(config: try await fetchConfig(),
+                                            revision: receipt.revision, refreshed: true)
+        } catch DesktopCloudError.unauthorized {
+            throw DesktopCloudError.unauthorized
+        } catch {
+            return DesktopCloudApplyOutcome(config: nil, revision: receipt.revision, refreshed: false)
+        }
     }
 
     /// GET the daemon's import key, recompute the RFC7638 thumbprint, cross-check the SPKI DER

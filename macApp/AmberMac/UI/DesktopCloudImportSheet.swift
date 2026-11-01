@@ -11,9 +11,9 @@ struct DesktopCloudImportSheet: View {
     @State private var searchServices: Set<DesktopSearchService> = []
     @State private var searchMode: DesktopSearchExecutionMode = .sequentialFallback
     @State private var deletes: Set<String> = []
-    @State private var requestId = UUID().uuidString
     @State private var error: String?
     @State private var conflicted = false
+    @State private var mergedNote: String?
     @State private var showDeletes = false
 
     var body: some View {
@@ -36,7 +36,7 @@ struct DesktopCloudImportSheet: View {
         .task {
             let built = store.importCatalog()
             catalog = built
-            providerID = built.providers.first(where: { $0.exportable && $0.selectedLocally })?.id
+            providerID = built.providers.first(where: { $0.selectable && $0.selectedLocally })?.id
             searchServices = Set(built.search.filter { $0.supported && ($0.enabledLocally || $0.id == .free) }.map(\.id))
             searchMode = built.executionMode
         }
@@ -67,7 +67,7 @@ struct DesktopCloudImportSheet: View {
     private func providerRow(_ provider: DesktopCloudImportCatalog.ProviderItem) -> some View {
         let selected = providerID == provider.id
         return Button {
-            if provider.exportable { providerID = selected ? nil : provider.id }
+            if provider.selectable { providerID = selected ? nil : provider.id }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -81,7 +81,7 @@ struct DesktopCloudImportSheet: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
                 Spacer()
-                if !provider.exportable {
+                if !provider.selectable {
                     Text(provider.note ?? "不可导入").font(.system(size: 11)).foregroundStyle(DesktopTheme.inkTertiary)
                 } else {
                     keyBadge(configured: provider.hasAPIKey)
@@ -93,7 +93,7 @@ struct DesktopCloudImportSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!provider.exportable)
+        .disabled(!provider.selectable)
     }
 
     // MARK: search
@@ -187,6 +187,17 @@ struct DesktopCloudImportSheet: View {
 
     // MARK: explicit deletion
 
+    /// Slots the current selections will replace with a fresh key — their delete toggles are
+    /// meaningless in this same request (a slot can't be replaced and deleted at once).
+    private func willReplace(_ key: String) -> Bool {
+        switch key {
+        case "modelApiKey": providerID != nil
+        case "exaApiKey": searchServices.contains(.exa)
+        case "braveApiKey": searchServices.contains(.brave)
+        default: false
+        }
+    }
+
     @ViewBuilder private var deleteSection: some View {
         let remoteSecrets = (store.remoteConfig?.configuredSecrets ?? []).sorted()
         if !remoteSecrets.isEmpty {
@@ -200,11 +211,15 @@ struct DesktopCloudImportSheet: View {
                             HStack {
                                 Text(DesktopCloudSelfStore.secretDisplayName(key)).font(.system(size: 12))
                                 Text(key).font(.system(size: 11, design: .monospaced)).foregroundStyle(DesktopTheme.inkTertiary)
+                                if willReplace(key) {
+                                    Text("本次将替换").font(.system(size: 11)).foregroundStyle(DesktopTheme.accent)
+                                }
                             }
                         }
                         .toggleStyle(.checkbox)
+                        .disabled(willReplace(key))
                     }
-                    Text("勾选的 Key 会在本次上传中从云端保管库删除，本机不受影响。")
+                    Text("勾选的 Key 会在本次上传中从云端保管库删除，本机不受影响。已勾选导入的项以新 Key 替换为准。")
                         .font(.system(size: 11)).foregroundStyle(DesktopTheme.inkTertiary)
                 }
                 .padding(.top, 8)
@@ -224,9 +239,14 @@ struct DesktopCloudImportSheet: View {
                     Text("云端配置刚被其它来源更新。你的选择已保留，可重新读取后再试。")
                         .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkSecondary)
                     Spacer()
-                    Button("重新读取") { Task { await store.refreshRemoteConfig(); conflicted = false } }
+                    Button("重新读取") { Task { await rereadRemote() } }
                 }
-            } else if let error {
+            }
+            if let mergedNote {
+                Text(mergedNote).font(.system(size: 11)).foregroundStyle(DesktopTheme.inkTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !conflicted, let error {
                 Text(error).font(.system(size: 12)).foregroundStyle(DesktopTheme.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -247,12 +267,34 @@ struct DesktopCloudImportSheet: View {
         .padding(16)
     }
 
+    /// 409 恢复：重新读取云端，并把「远端变了什么」显式呈现——未选择的模型/搜索区块在上传时
+    /// 会以刚读到的远端值重建，选择区不受影响。
+    private func rereadRemote() async {
+        let before = store.remoteConfig
+        await store.refreshRemoteConfig()
+        guard let fresh = store.remoteConfig else {
+            mergedNote = store.remoteConfigError ?? "云端暂时不可达，稍后再试"
+            return
+        }
+        var changed: [String] = []
+        if fresh.model.provider != before?.model.provider { changed.append("服务商") }
+        if fresh.model.modelId != before?.model.modelId { changed.append("模型标识") }
+        if fresh.model.baseURL != before?.model.baseURL { changed.append("接口地址") }
+        if fresh.search.sources != before?.search.sources { changed.append("搜索来源") }
+        if fresh.search.mode != before?.search.mode { changed.append("执行方式") }
+        if fresh.configuredSecrets != before?.configuredSecrets { changed.append("已存 Key 状态") }
+        mergedNote = changed.isEmpty
+            ? "已重新读取到云端最新版本（r\(fresh.revision)），字段无变化。"
+            : "云端变化：\(changed.joined(separator: "、"))（r\(before?.revision ?? 0) → r\(fresh.revision)）。你的导入选择保持不变。"
+        conflicted = false
+    }
+
     private func upload() async {
         guard let catalog else { return }
         error = nil
         let plan = DesktopCloudImportPlan(providerID: providerID, searchServices: searchServices,
                                           searchMode: searchMode, deletes: deletes)
-        if let failure = await store.import(plan, catalog: catalog, requestId: requestId) {
+        if let failure = await store.import(plan, catalog: catalog) {
             if case .conflict = failure { conflicted = true } else { error = failure.localizedDescription }
             return
         }
