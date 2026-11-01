@@ -35,6 +35,7 @@ kotlin {
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.okhttp)
+                implementation("org.jsoup:jsoup:1.23.2")
                 implementation(libs.ktor.client.content.negotiation)
                 implementation(libs.ktor.serialization.kotlinx.json)
                 implementation("io.ktor:ktor-server-core-jvm:${libs.versions.ktor.get()}")

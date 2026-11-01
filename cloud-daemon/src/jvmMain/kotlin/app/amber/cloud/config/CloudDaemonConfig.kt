@@ -44,6 +44,8 @@ data class CloudDaemonConfig(
     val quietHoursStart: String = "23:00",
     val quietHoursEnd: String = "08:00",
     val dailyMaxPushes: Int = 5,
+    val searchSources: String = "bing,duckduckgo",
+    val searchMode: String = "fallback",
     val modelProvider: String = "claude",
     val modelId: String = "claude-sonnet-4-5-20250929",
     val modelBaseUrl: String = "",
@@ -140,6 +142,8 @@ object CloudConfigLoader {
         KEY_FEISHU_CALDAV_PASSWORD to ENV_FEISHU_CALDAV_PASSWORD,
         KEY_PROACTIVE_L2_API_KEY to ENV_PROACTIVE_L2_API_KEY,
         KEY_MODEL_API_KEY to ENV_MODEL_API_KEY,
+        "search.exa_key" to "AMBER_SEARCH_EXA_KEY",
+        "search.brave_key" to "AMBER_SEARCH_BRAVE_KEY",
     )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -198,6 +202,8 @@ object CloudConfigLoader {
             quietHoursStart = resolveValue(KEY_PROACTIVE_QUIET_START, ENV_PROACTIVE_QUIET_START) ?: "23:00",
             quietHoursEnd = resolveValue(KEY_PROACTIVE_QUIET_END, ENV_PROACTIVE_QUIET_END) ?: "08:00",
             dailyMaxPushes = resolveValue(KEY_PROACTIVE_DAILY_MAX_PUSHES, ENV_PROACTIVE_DAILY_MAX_PUSHES)?.toIntOrNull() ?: 5,
+            searchSources = resolveValue("search.sources", "AMBER_SEARCH_SOURCES") ?: "bing,duckduckgo",
+            searchMode = resolveValue("search.mode", "AMBER_SEARCH_MODE") ?: "fallback",
             modelProvider = resolveValue(KEY_MODEL_PROVIDER, ENV_MODEL_PROVIDER) ?: "claude",
             modelId = resolveValue(KEY_MODEL_ID, ENV_MODEL_ID) ?: "claude-sonnet-4-5-20250929",
             modelBaseUrl = resolveValue(KEY_MODEL_BASE_URL, ENV_MODEL_BASE_URL).orEmpty(),

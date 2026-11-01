@@ -272,6 +272,7 @@ data class CloudWorkItemRecord(
     val sourceProvenance: List<SourceMessageProvenance>,
     val subscribedThreadKeys: List<String> = emptyList(),
     val settlementReportPath: String? = null,
+    val settlementOutcome: String? = null,
     val failureReason: String? = null,
     val needsYouEscalated: Boolean = false,
     val createdAtMs: Long,

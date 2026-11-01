@@ -5,6 +5,7 @@ import app.amber.ai.core.Tool
 import app.amber.ai.ui.UIMessagePart
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.PlaceholderCredentialException
+import app.amber.cloud.tasks.TaskCallContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -30,6 +31,7 @@ enum class ExecutionScope {
 enum class ToolEffect {
     PURE,
     NETWORK_READ,
+    TASK_LOCAL,
     SIDE_EFFECT,
 }
 
@@ -40,7 +42,8 @@ data class CloudToolDefinition(
     val effect: ToolEffect,
     val requiredCapability: String? = null,
     val parameters: InputSchema? = null,
-    val handler: suspend (JsonObject) -> JsonElement,
+    val taskHandler: (suspend (JsonObject, TaskCallContext) -> JsonElement)? = null,
+    val handler: suspend (JsonObject) -> JsonElement = { error("工具需要任务调用上下文") },
 )
 
 /**
@@ -54,6 +57,7 @@ class CapabilityConfig(
 ) {
     private val switches = ConcurrentHashMap<String, Boolean>().apply {
         put("history_tools", true)
+        put("network_tools", true)
         put("memory_tools", true)
         put("workspace_files", true)
         put("terminal", true)
@@ -80,7 +84,7 @@ class CapabilityConfig(
  *
  * Enforces:
  * - Defect #4: Rejects placeholder credentials (`<redacted>`, `***`, `••••`, `«已脱敏»`) in tool inputs.
- * - Defect #5: Subagents, ModelCouncil, and JS Sandbox never receive high-risk or side-effect write tools.
+ * - Defect #5: Subagents receive only authorized task-local writes; high-risk and host side effects remain excluded.
  * - Defect #8: Default-disabled capabilities cannot be bypassed via `recipe_run` or nested invocation.
  * - Defect #9: Declared tools strictly match registered, capability-enabled executors.
  */
@@ -130,7 +134,7 @@ class CloudToolRegistry(
                 mandatoryApproval = def.highRisk,
                 execute = { args ->
                     val obj = runCatching { args.jsonObject }.getOrDefault(JsonObject(emptyMap()))
-                    listOf(UIMessagePart.Text(def.handler(obj).toString()))
+                    listOf(UIMessagePart.Text(executeGate(def.name, obj, scope).toString()))
                 },
             )
         }
@@ -159,7 +163,12 @@ class CloudToolRegistry(
         toolName: String,
         args: JsonObject,
         scope: ExecutionScope = ExecutionScope.MAIN_AGENT,
+        context: TaskCallContext? = null,
+        recipeDepth: Int = 0,
     ): JsonElement {
+        if (context != null && toolName !in context.allowedTools) return buildJsonObject {
+            put("ok", false); put("error", "Agent 未获授该工具")
+        }
         val def = get(toolName)
             ?: return buildJsonObject {
                 put("ok", false)
@@ -181,7 +190,7 @@ class CloudToolRegistry(
         ) {
             return buildJsonObject {
                 put("ok", false)
-                put("error", "当前执行域 ($scope) 禁止调用高风险或写工具: $toolName")
+                put("error", "当前执行域 ($scope) 禁止调用高风险或宿主写工具: $toolName")
             }
         }
 
@@ -191,7 +200,18 @@ class CloudToolRegistry(
             throw PlaceholderCredentialException("工具参数 $placeholderKey 包含占位符凭据，已拒绝执行")
         }
 
-        return def.handler(args)
+        if (toolName == "recipe_run") {
+            require(recipeDepth < 4) { "recipe 嵌套超过限额" }
+            val nested = args["tool"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            require(nested.isNotBlank()) { "recipe_run 需要 tool 和 args，不接受配方名或 steps" }
+            return executeGate(nested, args["args"]?.jsonObject ?: JsonObject(emptyMap()), scope, context, recipeDepth + 1)
+        }
+        val scopedArgs = if (context != null && toolName in setOf("history_search", "history_fetch")) {
+            val requested = args["conversation_id"]?.jsonPrimitive?.contentOrNull
+            require(requested == null || requested == context.sessionId) { "禁止跨会话读取" }
+            JsonObject(args + ("conversation_id" to JsonPrimitive(context.sessionId)))
+        } else args
+        return def.taskHandler?.invoke(scopedArgs, requireNotNull(context) { "工具需要已认证任务身份" }) ?: def.handler(scopedArgs)
     }
 
     companion object {

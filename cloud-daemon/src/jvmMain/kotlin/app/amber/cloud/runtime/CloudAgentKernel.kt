@@ -143,6 +143,8 @@ class CloudAgentKernel(
     val autoApproveOrdinaryTools: Boolean = false,
     val modelClients: Map<String, CloudModelClient> = emptyMap(),
     ownerToolScope: Set<String>? = null,
+    searchSources: List<String> = listOf("bing","duckduckgo"),
+    searchMode: String = "fallback",
     val ownerBinding: OwnerBindingManager = OwnerBindingManager(
         persistenceFile = File(dataDir, "owner-bindings.json"),
     ),
@@ -177,6 +179,11 @@ class CloudAgentKernel(
     val memoryStore = CloudMemoryStore(memoryDir)
     val contextManager = CloudContextManager(checkpointsDir)
     val toolRegistry = CloudToolRegistry()
+    val taskProcesses = app.amber.cloud.tasks.TaskProcessRunner(File(dataDir, "toolchain").also { it.mkdirs() })
+    val taskWorkspace = app.amber.cloud.tasks.TaskWorkspace(File(dataDir, "task-workspaces"), taskProcesses)
+    val publicHttp = app.amber.cloud.tasks.PublicHttp()
+    val taskToolchain = app.amber.cloud.tasks.TaskToolchain(publicHttp,taskProcesses,taskWorkspace)
+    val search = app.amber.cloud.tasks.CloudSearch(publicHttp, vault, searchSources, searchMode, workspace = taskWorkspace)
     val gatewayState = CloudGatewayState(dataDir)
     val orchestrationStore = CloudOrchestrationStore(dataDir)
     val agentRegistry = AgentRegistry(dataDir, orchestrationStore,
@@ -235,8 +242,13 @@ class CloudAgentKernel(
 
     init {
         registerBuiltinTools()
+        app.amber.cloud.tasks.TaskExecutionTools(taskWorkspace, taskProcesses).register(toolRegistry)
+        app.amber.cloud.tasks.TaskNetworkTools(publicHttp, taskWorkspace).register(toolRegistry)
+        search.register(toolRegistry)
+        taskToolchain.register(toolRegistry)
         orchestrationKernel.workerTurnRunner = { item, principal ->
-            val report = workerTurnRunner.run(item, principal)
+            val report = try { workerTurnRunner.run(item, principal) }
+                finally { kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { taskProcesses.stopTask(item.workItemId) } }
             val disabledSource = item.sourceProvenance.map { it.sessionId }.distinct().any { id ->
                 val uuid = runCatching { Uuid.parse(id) }.getOrNull()
                 val mode = uuid?.let { conversationStorage.loadConversation(it)?.memoryMode }

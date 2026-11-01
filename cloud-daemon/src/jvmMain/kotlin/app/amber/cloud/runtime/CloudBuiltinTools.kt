@@ -35,6 +35,7 @@ internal object CloudBuiltinTools {
                 highRisk = false,
                 effect = ToolEffect.PURE,
                 requiredCapability = "history_tools",
+                parameters = app.amber.cloud.tasks.schema("{\"query\":{\"type\":\"string\"},\"message_id\":{\"type\":\"string\"},\"conversation_id\":{\"type\":\"string\"}}"),
             ) { args ->
                 val query = args["query"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
                 val convIdStr = args["conversation_id"]?.jsonPrimitive?.contentOrNull
@@ -71,6 +72,7 @@ internal object CloudBuiltinTools {
                 highRisk = false,
                 effect = ToolEffect.PURE,
                 requiredCapability = "history_tools",
+                parameters = app.amber.cloud.tasks.schema("{\"query\":{\"type\":\"string\"},\"message_id\":{\"type\":\"string\"},\"conversation_id\":{\"type\":\"string\"}}"),
             ) { args ->
                 val messageId = args["message_id"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 val convIdStr = args["conversation_id"]?.jsonPrimitive?.contentOrNull
@@ -154,8 +156,8 @@ internal object CloudBuiltinTools {
             ) { args ->
                 val cmd = args["command"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 buildJsonObject {
-                    put("ok", true)
-                    put("executed", CredentialRedactor.redact(cmd))
+                    put("ok", false)
+                    put("error", "宿主终端执行未接入；任务脚本请用 process_run（需要任务身份与OS隔离）")
                 }
             }
         )
@@ -190,8 +192,8 @@ internal object CloudBuiltinTools {
                 requiredCapability = "js_sandbox",
             ) { args ->
                 buildJsonObject {
-                    put("ok", true)
-                    put("result", args["code"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                    put("ok", false)
+                    put("error", "JS运行时未接入，请使用已隔离的 process_run")
                 }
             }
         )
@@ -199,7 +201,8 @@ internal object CloudBuiltinTools {
         toolRegistry.register(
             CloudToolDefinition(
                 name = "recipe_run",
-                description = "按步骤调用已注册工具（严格经过同一权限与能力开关门禁）",
+                description = "调用一个已注册工具，继承真实调用者权限和任务作用域；参数为tool/args，不支持命名配方或steps",
+                parameters = app.amber.cloud.tasks.schema("{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"}}", "tool", "args"),
                 highRisk = false,
                 effect = ToolEffect.PURE,
             ) { args ->

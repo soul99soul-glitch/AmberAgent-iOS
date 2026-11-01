@@ -8,7 +8,8 @@ import app.amber.cloud.runtime.ExecutionScope
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.agents.AgentProfile
 import app.amber.cloud.runtime.CloudMemoryStore
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -62,6 +63,7 @@ class ModelRouterBrain(
             reply = answer.toText().takeIf { it.isNotBlank() } ?: reply
             if (calls.isEmpty()) return RouterDecision(reply, dispatch, steer, proposal)
             var needsFollowup = false
+            var finish: WorkerSettlementReport? = null
             val executed = calls.map { call ->
                 val args = runCatching { json.parseToJsonElement(call.input.ifBlank { "{}" }).jsonObject }
                     .getOrDefault(JsonObject(emptyMap()))
@@ -107,7 +109,7 @@ class ModelWorkerTurnRunner(
     private val kernel: DefaultCloudOrchestrationKernel,
     private val modelClient: CloudModelClient,
     private val toolRegistry: CloudToolRegistry,
-    private val maxSteps: Int = 6,
+    private val maxSteps: Int = 20,
     private val memoryStore: CloudMemoryStore? = null,
     private val modelClients: Map<String, CloudModelClient> = emptyMap(),
 ) {
@@ -119,12 +121,13 @@ class ModelWorkerTurnRunner(
         val registry = kernel.agentRegistry
         val profile = registry?.let { it.get(item.agentId) ?: error("Agent 已不存在") }
         val allowedTools = profile?.let { registry.effectiveTools(it) }
-        val tools = toolRegistry.declaredTools(ExecutionScope.SUBAGENT).filter { allowedTools == null || it.name in allowedTools }
+        val tools = toolRegistry.declaredTools(ExecutionScope.SUBAGENT).filter { allowedTools == null || it.name in allowedTools || it.name == "task_finish" }
         val client = profile?.modelPreference?.let { modelClients[it] ?: error("Agent 模型配置已移除") } ?: modelClient
         val memories = if (profile != null) memoryStore?.recallForPrompt(item.brief, agentId = profile.id, memoryPolicy = profile.memoryPolicy).orEmpty() else emptyList()
         val systemPrompt = buildString {
             append(if (profile != null) memoryStore?.loadSoulPrompt(profile.memoryPolicy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN)
             append("\n你是受管 Worker，只处理当前任务；不得创建 agent、派单或向其他 agent 发送消息。\n")
+            append("任务文件以相对路径访问。脚本执行受OS隔离且不能联网，用HTTP/搜索工具联网。工具失败必须检查并修正或报告阻塞。写代码文本不等于执行。最终必须调用 task_finish，明确completed/blocked/failed并列出实际产物；没有工具调用的回答不会自动成功。\n")
             append(profile?.instructions.orEmpty())
             append('\n').append((item.targetNode as? ExecutionTargetNode.CloudSubagent)?.rolePrompt.orEmpty())
             if (memories.isNotEmpty()) append("\n<agent_memory>\n").append(memories.joinToString("\n") { it.content }).append("\n</agent_memory>")
@@ -141,8 +144,9 @@ class ModelWorkerTurnRunner(
             lastText = answer.toText().ifBlank { lastText }
             if (calls.isEmpty()) {
                 kernel.appendWorkerMessage(sessionId, sanitize(answer))
-                return WorkerSettlementReport(item.workItemId, "completed", CredentialRedactor.redact(lastText.ifBlank { "完成" }))
+                return WorkerSettlementReport(item.workItemId, "blocked", CredentialRedactor.redact(lastText.ifBlank { "模型未显式结算，无法确认目标成功" }))
             }
+            var finish: WorkerSettlementReport? = null
             val executed = calls.map { call ->
                 val current = kernel.store.getWorkItem(item.workItemId) ?: return WorkerSettlementReport(item.workItemId, "failed", "任务记录丢失")
                 if (current.state.isTerminal) return WorkerSettlementReport(item.workItemId, "cancelled", "任务已结束")
@@ -151,8 +155,17 @@ class ModelWorkerTurnRunner(
                 }
                 val args = runCatching { json.parseToJsonElement(call.input.ifBlank { "{}" }).jsonObject }
                     .getOrDefault(JsonObject(emptyMap()))
-                val out = runCatching { kernel.executeWorkerTool(principal, call.toolName, args).toString() }
-                    .getOrElse { e -> "{\"ok\":false,\"error\":\"${CredentialRedactor.redact(e.message.orEmpty()).replace("\"", "'")}\"}" }
+                val out = try {
+                    require(finish == null) { "结算后不能再执行工具" }
+                    val result = kernel.executeWorkerTool(principal, call.toolName, args)
+                    if (call.toolName == "task_finish" && result.jsonObject["ok"]?.jsonPrimitive?.booleanOrNull == true) {
+                        finish = WorkerSettlementReport(item.workItemId, result.jsonObject.getValue("outcome").jsonPrimitive.content,
+                            CredentialRedactor.redact(result.jsonObject.getValue("summary").jsonPrimitive.content),
+                            artifacts = result.jsonObject["artifacts"]?.jsonArray?.map { it.jsonObject.getValue("path").jsonPrimitive.content }.orEmpty())
+                    }
+                    result.toString()
+                } catch (e: CancellationException) { throw e }
+                  catch (e: Exception) { buildJsonObject { put("ok",false);put("error",CredentialRedactor.redact(e.message.orEmpty())) }.toString() }
                 call.copy(
                     input = CredentialRedactor.redact(call.input),
                     output = listOf(UIMessagePart.Text(CredentialRedactor.redact(out))),
@@ -164,6 +177,7 @@ class ModelWorkerTurnRunner(
                     if (part is UIMessagePart.Tool) executed.firstOrNull { it.toolCallId == part.toolCallId } ?: part else part
                 })),
             )
+            finish?.let { return it }
         }
         return WorkerSettlementReport(item.workItemId, "failed", "超过最大步数仍未完成: ${CredentialRedactor.redact(lastText.take(200))}")
     }

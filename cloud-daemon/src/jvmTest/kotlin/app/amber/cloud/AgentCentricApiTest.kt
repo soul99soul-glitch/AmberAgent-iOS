@@ -50,13 +50,13 @@ class AgentCentricApiTest {
             prompts += messages.joinToString("\n") { message ->
                 message.toText() + message.getTools().flatMap { it.output }.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
             }
-            assertEquals(listOf("history_search"), tools.map { it.name })
+            assertEquals(listOf("history_search","task_finish"), tools.map { it.name })
             workerCalls++
             if (workerCalls == 1) UIMessage.assistant("").copy(parts = listOf(
                 UIMessagePart.Tool("denied-call", "history_fetch", "{}"),
                 UIMessagePart.Tool("cross-history", "history_search", """{"conversation_id":"$PRIMARY_CONVERSATION_ID","query":"全局"}"""),
             ))
-            else UIMessage.assistant("已按编码约束完成。")
+            else UIMessage.assistant("").copy(parts=listOf(UIMessagePart.Tool("finish", "task_finish", """{"outcome":"completed","summary":"已按编码约束完成。"}""")))
         }
         val kernel = CloudAgentKernel(dir, CloudModelClient { _, _ -> UIMessage.assistant("已完成汇报。") },
             masterSecretOverride = "agent-runtime-test", modelClients = mapOf("coding-model" to preferred))

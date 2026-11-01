@@ -209,13 +209,21 @@ class ConfiguredDaemonRecoveryTest {
                     put("id", "local-response"); put("model", "local-stub-model")
                     if (exchange.requestURI.path.endsWith("/messages")) {
                         put("type", "message"); put("role", "assistant"); put("stop_reason", "end_turn")
-                        put("content", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", text) }) })
+                        put("content", buildJsonArray { add(buildJsonObject {
+                            if(!tagging && body.toString().contains("受管 Worker")) {
+                                put("type","tool_use");put("id","finish");put("name","task_finish");put("input",buildJsonObject {put("outcome","completed");put("summary",text)})
+                            }else {put("type", "text"); put("text", text)}
+                        }) })
                         put("usage", buildJsonObject { put("input_tokens", 1); put("output_tokens", 1) })
                     } else {
                         put("object", "chat.completion")
                         put("choices", buildJsonArray { add(buildJsonObject {
                             put("index", 0); put("finish_reason", "stop")
-                            put("message", buildJsonObject { put("role", "assistant"); put("content", text) })
+                            put("message", buildJsonObject { put("role", "assistant"); put("content", text)
+                                if(!tagging && body.toString().contains("受管 Worker"))put("tool_calls",buildJsonArray {add(buildJsonObject {
+                                    put("id","finish");put("type","function");put("function",buildJsonObject {put("name","task_finish");put("arguments",buildJsonObject {put("outcome","completed");put("summary",text)}.toString())})
+                                })})
+                            })
                         }) })
                     }
                 }.toString().toByteArray(Charsets.UTF_8)

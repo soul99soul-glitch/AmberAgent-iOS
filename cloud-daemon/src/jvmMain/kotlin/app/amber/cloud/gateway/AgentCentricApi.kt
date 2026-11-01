@@ -25,7 +25,7 @@ data class TimelineEntry(val id: String, val role: String, val agentId: String =
 @Serializable
 data class TimelinePage(val items: List<TimelineEntry>, val nextCursor: String? = null)
 @Serializable
-data class PublicWorkDetail(val workItem: PublicWorkItem, val brief: String, val failure: String?, val sessionArchived: Boolean, val resultMarkdown: String? = null)
+data class PublicWorkDetail(val workItem: PublicWorkItem, val brief: String, val failure: String?, val sessionArchived: Boolean, val resultMarkdown: String? = null, val outcome: String? = null)
 
 /** Explicit public projections: raw profiles, tool parts, reasoning and session identities never serialize here. */
 class AgentCentricApi(val kernel: CloudAgentKernel) {
@@ -54,7 +54,7 @@ class AgentCentricApi(val kernel: CloudAgentKernel) {
     fun workItem(id: String): PublicWorkDetail? = kernel.orchestrationStore.getWorkItem(id)?.let {
         // Final output may intentionally contain code/JSON. Activity sanitization would destroy that result.
         val result = if (it.state.isTerminal) it.settlementReportPath?.let(kernel.orchestrationStore::readArchivedDocumentText) else null
-        PublicWorkDetail(publicWork(it), safe(it.brief), it.failureReason?.let(::safe), it.state.isTerminal, result)
+        PublicWorkDetail(publicWork(it), safe(it.brief), it.failureReason?.let(::safe), it.state.isTerminal, result, it.settlementOutcome)
     }
 
     suspend fun timeline(before: String? = null, limit: Int = 50): TimelinePage {

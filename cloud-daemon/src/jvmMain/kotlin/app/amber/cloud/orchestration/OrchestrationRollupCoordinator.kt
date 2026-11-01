@@ -145,6 +145,7 @@ internal class OrchestrationRollupCoordinator(
             recoveriesUsed = if (targetState == WorkItemState.COMPLETED) 0 else existing.recoveriesUsed,
             recoveryStage = RecoveryStage.NONE,
             settlementReportPath = archivedDoc.docPath,
+            settlementOutcome = report.outcome,
             failureReason = if (targetState == WorkItemState.FAILED) CredentialRedactor.redact(report.summary) else null,
             lastActivityAtMs = nowEpochMs,
             updatedAtMs = nowEpochMs,

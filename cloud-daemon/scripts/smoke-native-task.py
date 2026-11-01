@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import socket
 import subprocess
@@ -59,8 +60,23 @@ def main():
                 output = '{"tags":[]}'
             else:
                 output = "本地汇报完成"
+            message = {"role": "assistant", "content": output}
+            if "受管 Worker" in text:
+                python = "/Library/Developer/CommandLineTools/usr/bin/python3" if platform.system() == "Darwin" else "/usr/bin/python3"
+                script = "import csv,json\nr=list(csv.DictReader(open('data.csv')))\njson.dump({'sum':sum(int(x['value']) for x in r)},open('result.json','w'))"
+                steps = [
+                    ("host_info", {}),
+                    ("workspace_file_write", {"path": "data.csv", "content": "name,value\na,2\nb,3\n"}),
+                    ("workspace_file_write", {"path": "run.py", "content": script}),
+                    ("process_run", {"argv": [python, "run.py"]}),
+                    ("workspace_file_read", {"path": "result.json"}),
+                    ("task_finish", {"outcome": "completed", "summary": output, "artifacts": ["result.json"]}),
+                ]
+                name, arguments = steps[len(worker_calls) - 1]
+                message["tool_calls"] = [{"id": "call-" + str(len(worker_calls)), "type": "function", "function": {
+                    "name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}}]
             data = json.dumps({"id": "package-smoke", "object": "chat.completion", "choices": [
-                {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": output}}
+                {"index": 0, "finish_reason": "stop", "message": message}
             ]}, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -142,6 +158,12 @@ def main():
                 else:
                     raise AssertionError("packaged task did not complete")
                 assert '{"package":true}' in detail["resultMarkdown"]
+                assert detail["outcome"] == "completed"
+                status, artifacts = request(base_url + "/v2/work-items/" + work_id + "/artifacts", token=token)
+                assert status == 200
+                result_file = next(item for item in artifacts if item["path"] == "result.json")
+                status, csv_result = request(base_url + "/v2/work-items/" + work_id + "/artifacts/download?path=result.json", token=token)
+                assert status == 200 and csv_result == {"sum": 5}
                 stop()
                 del env["AMBER_MODEL_API_KEY"]  # Restart must use the existing encrypted vault.
                 boot()
@@ -149,11 +171,11 @@ def main():
                 assert status == 200 and recovered["resultMarkdown"] == detail["resultMarkdown"]
                 status, replay = request(base_url + "/v2/work-items", body, token)
                 assert status == 200 and replay["replayed"] and replay["workItem"]["id"] == work_id
-                assert len(worker_calls) == 1
+                assert len(worker_calls) == 6
                 assert all(hashlib.sha256((data_dir / name).read_bytes()).hexdigest() == sha for name, sha in original.items())
                 assert "local-http-provider-key" not in (data_dir / "secrets.enc.json").read_text()
                 print(json.dumps({"entrypoint": "packaged MainKt", "provider": "loopback OpenAI HTTP stub",
-                    "state": "COMPLETED", "workerCalls": len(worker_calls), "restartResultAndTokenReused": True,
+                    "state": "COMPLETED", "csvResult": csv_result, "artifactSha256": result_file["sha256"], "workerCalls": len(worker_calls), "restartResultAndTokenReused": True,
                     "identityAndCertificateUnchanged": True, "realProviderCalled": False}, ensure_ascii=False))
             finally:
                 stop()

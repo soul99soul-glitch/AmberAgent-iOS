@@ -43,5 +43,6 @@ internal fun loadConfiguredDaemon(
     return ConfiguredCloudDaemon(config, CloudAgentKernel(
         dataDir = dataDir, modelClient = modelClient, masterSecretOverride = masterSecret,
         ownerBinding = ownerBinding, proactiveEngine = proactive,
+        searchSources = config.searchSources.split(',').map { it.trim() }.filter { it.isNotEmpty() }, searchMode = config.searchMode,
     ))
 }

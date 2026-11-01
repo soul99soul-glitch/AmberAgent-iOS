@@ -9,6 +9,7 @@ import app.amber.cloud.proactive.ProactiveEngine
 import app.amber.cloud.runtime.CloudToolRegistry
 import app.amber.cloud.runtime.ExecutionScope
 import app.amber.cloud.security.CredentialRedactor
+import app.amber.cloud.tasks.TaskCallContext
 import app.amber.core.model.Conversation
 import app.amber.core.model.DEFAULT_ASSISTANT_ID
 import app.amber.core.model.toMessageNode
@@ -234,18 +235,16 @@ class DefaultCloudOrchestrationKernel(
             ?: throw PrincipalPermissionException("Worker 任务不存在")
         if (principal != workerPrincipalFor(item) || item.state.isTerminal) throw PrincipalPermissionException("Worker 身份或状态无效")
         val registry = agentRegistry
-        if (registry != null) {
+        val allowed = if (registry == null) {
+            toolRegistry.availableDefinitions(ExecutionScope.SUBAGENT).map { it.name }.toSet()
+        } else {
             val agent = registry.get(item.agentId) ?: throw PrincipalPermissionException("Agent 不存在")
-            if (toolName !in registry.effectiveTools(agent)) throw PrincipalPermissionException("Agent 未获授该工具")
-            // History tools must never reopen the global timeline or another agent's session.
-            if (toolName in setOf("history_search", "history_fetch")) {
-                val requested = (args["conversation_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
-                if (requested != null && requested != item.workerSessionId) throw PrincipalPermissionException("禁止跨会话读取")
-                val scopedArgs = JsonObject(args + ("conversation_id" to kotlinx.serialization.json.JsonPrimitive(item.workerSessionId)))
-                return toolRegistry.executeGate(toolName, scopedArgs, ExecutionScope.SUBAGENT)
-            }
-        }
-        return toolRegistry.executeGate(toolName, args, ExecutionScope.SUBAGENT)
+            registry.effectiveTools(agent)
+        } + "task_finish"
+        if (toolName !in allowed) throw PrincipalPermissionException("Agent 未获授该工具")
+        val context = TaskCallContext(item.workItemId, item.agentId, item.workerSessionId!!, allowed)
+        // The gate owns nested recipes and history scoping too; no second, weaker execution path.
+        return toolRegistry.executeGate(toolName, args, ExecutionScope.SUBAGENT, context)
     }
 
     fun sendLateralMessage(
