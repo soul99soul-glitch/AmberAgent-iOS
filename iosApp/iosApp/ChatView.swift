@@ -332,7 +332,7 @@ struct ChatView: View {
                     router.goBack()
                 },
                 onNavigate: { destination in
-                    router.navigate(to: destination)
+                    router.navigate(to: destination.route)
                 }
             )
             .presentationDetents([.medium, .large])

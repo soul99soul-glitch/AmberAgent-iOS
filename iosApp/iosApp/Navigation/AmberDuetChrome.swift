@@ -205,13 +205,13 @@ struct AmberDuetTaskCenterSheet: View {
                                     Text(item.title)
                                         .font(.subheadline.weight(.medium))
                                         .foregroundStyle(AmberTheme.foreground)
-                                    Text(item.subtitle)
+                                    Text(item.statusTitle)
                                         .font(.caption)
                                         .foregroundStyle(AmberTheme.muted)
                                         .lineLimit(1)
                                 }
                                 Spacer()
-                                statusTag(for: item.status)
+                                statusTag(for: IOSSubAgentActivityStatus(item.status))
                             }
                             .padding(.vertical, 2)
                         }

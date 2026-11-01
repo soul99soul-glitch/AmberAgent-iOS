@@ -52,6 +52,21 @@ final class MacGatewayStore {
     var cloudAgentActivities: [String: MacGatewayCloudAgentActivity] = [:]
     var cloudTasks: [MacGatewayCloudTaskRecord] = []
     var busyCloudTaskIds: Set<String> = []
+    /// Cloud configuration (/v2 config API): non-secret remote view plus fetch/
+    /// import state. Owned here so behavior extensions in CloudConfigStore.swift
+    /// stay tracked by @Observable.
+    var cloudConfig: IOSCloudConfigSnapshot?
+    var cloudConfigError: String?
+    var cloudConfigLoading = false
+    var cloudImporting = false
+    /// The gateway's import kid no longer matches the pinned one — the UI shows
+    /// the explicit re-trust action (`resetCloudImportKeyTrust`).
+    var cloudImportKeyChanged = false
+    /// Import idempotency state: the requestId is bound to the operation's
+    /// semantic hash, so retries of the same selection replay while a changed
+    /// selection gets a fresh id (same id + different operation → server 409).
+    @ObservationIgnored var pendingImportOperationKey: String?
+    @ObservationIgnored var pendingImportRequestId: String?
     var pendingPairing: MacGatewayPairingPayload?
     var notice: Notice?
 
@@ -491,6 +506,13 @@ final class MacGatewayStore {
         cloudAgents = []
         cloudTasks = []
         busyCloudTaskIds = []
+        cloudConfig = nil
+        cloudConfigError = nil
+        cloudConfigLoading = false
+        cloudImporting = false
+        cloudImportKeyChanged = false
+        pendingImportOperationKey = nil
+        pendingImportRequestId = nil
         isReachable = nil
         pushError = nil
     }

@@ -128,6 +128,7 @@ enum ChatTaskStreamGrouping {
     ///   surface as `.needsAttention` so tool errors are never silently masked as success.
     /// - Standalone finished `Reasoning` pills before a completed text reply are hidden from the main stream,
     ///   while live in-progress thinking stays visible.
+    @MainActor
     static func segments(
         for message: UIMessage,
         messageID: String,
@@ -229,6 +230,7 @@ enum ChatTaskStreamGrouping {
         return result
     }
 
+    @MainActor
     private static func buildTaskSegment(
         messageID: String,
         runStart: Int,
@@ -512,6 +514,7 @@ enum ChatTaskStreamGrouping {
         return String(line.prefix(56))
     }
 
+    @MainActor
     private static func reasoningDuration(_ reasoning: UIMessagePart.Reasoning) -> Double? {
         guard let end = reasoning.finishedAt else { return nil }
         let start = MessageBubbleView.instantToDate(reasoning.createdAt)

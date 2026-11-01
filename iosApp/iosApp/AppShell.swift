@@ -1189,6 +1189,8 @@ private extension View {
                 SearchServicesView(sharedSettings: sharedSettings)
             case .searchProvider:
                 SearchProviderView(sharedSettings: sharedSettings)
+            case .cloudConfig:
+                CloudConfigSettingsView(sharedSettings: sharedSettings)
             case .ttsSettings:
                 TTSSettingsView(sharedSettings: sharedSettings)
             case .board:
