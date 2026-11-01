@@ -333,7 +333,7 @@ struct DesktopTranscript: View {
 
     /// Normal conversations use the eager stack (exact heights, stable bottom) plus windowing; long ones stay lazy.
     private var windowed: Bool { conversation.messages.count <= 120 }
-    private static let contentSpace = "desktop-transcript-content"
+    nonisolated private static let contentSpace = "desktop-transcript-content"
 
     private func updateFind() { find.update(findQuery, messages: conversation.messages) }
 

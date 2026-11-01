@@ -223,7 +223,6 @@ extension DesktopWorkspace {
         return recipes.start(name: name, inputs: inputs, conversationID: owner)
     }
 
-    @discardableResult
     /// Starts the composer's collaboration mode with the draft as the objective; the result is saved into the
     /// owner conversation when the run ends, exactly like「保存到会话」in the collaboration panel.
     func sendCollaboration() {
