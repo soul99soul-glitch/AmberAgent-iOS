@@ -3,23 +3,10 @@ import Shared
 
 /// Restores helper bridges referenced across the Duet / Argon 3+1 navigation and task stream files.
 typealias ChatSubAgentAvatarIdentity = String
+typealias IOSSubAgentActivityStatus = IOSAdvancedTaskStatus
+typealias IOSSubAgentActivityItem = IOSSubAgentActivity
 
-extension IOSSubAgentActivityStatus {
-    init(_ status: IOSAdvancedTaskStatus) {
-        switch status {
-        case .running:
-            self = .running
-        case .completed:
-            self = .completed
-        case .failed:
-            self = .failed
-        case .cancelled:
-            self = .cancelled
-        }
-    }
-}
-
-extension IOSSubAgentActivityItem {
+extension IOSSubAgentActivity {
     var subtitle: String {
         statusTitle
     }
