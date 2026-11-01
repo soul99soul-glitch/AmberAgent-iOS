@@ -41,6 +41,8 @@ class TaskProcessRunner(val toolsRoot: File, val python: String = if (System.get
         for (path in listOf("/usr", "/bin", "/sbin", "/lib", "/lib64")) if (File(path).exists()) cmd += listOf("--ro-bind", path, path)
         cmd += listOf("--dir", "/etc")
         if (File("/etc/ld.so.cache").exists()) cmd += listOf("--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache")
+        // Debian-family shared libraries (for example FFmpeg's libblas) resolve through these symlinks.
+        if (File("/etc/alternatives").isDirectory) cmd += listOf("--ro-bind", "/etc/alternatives", "/etc/alternatives")
         cmd += listOf("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--bind", dir.canonicalPath, "/workspace")
         if (toolsRoot.exists()) cmd += listOf("--ro-bind", toolsRoot.canonicalPath, toolsRoot.canonicalPath)
         cmd += listOf("--chdir", "/workspace", "--setenv", "HOME", "/workspace/.home", "--") + args
