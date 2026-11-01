@@ -71,19 +71,21 @@ struct DesktopRiseIn: ViewModifier {
 /// While a reply streams in, a soft Claude Desktop warm-gray shimmer travels along its leading edge.
 struct DesktopStreamingEdge: ViewModifier {
     let active: Bool
-    @State private var phase: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
         content.overlay(alignment: .leading) {
             if active {
-                GeometryReader { proxy in
-                    Rectangle()
-                        .fill(LinearGradient(colors: [.clear, DesktopTheme.inkTertiary.opacity(0.38), .clear], startPoint: .top, endPoint: .bottom))
-                        .frame(width: 1.5, height: min(proxy.size.height, max(24, proxy.size.height * 0.35)))
-                        // Travels the full height and back, easing at both ends, forever.
-                        .offset(y: phase * max(0, proxy.size.height - max(24, proxy.size.height * 0.35)))
-                        .onAppear {
-                            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { phase = 1 }
-                        }
+                TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion)) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    let phase: CGFloat = reduceMotion ? 0.5 : CGFloat(0.5 * (1.0 - cos(t * .pi / 1.6)))
+                    GeometryReader { proxy in
+                        let barHeight = min(proxy.size.height, max(24, proxy.size.height * 0.35))
+                        Rectangle()
+                            .fill(LinearGradient(colors: [.clear, DesktopTheme.inkTertiary.opacity(0.38), .clear], startPoint: .top, endPoint: .bottom))
+                            .frame(width: 1.5, height: barHeight)
+                            .offset(y: phase * max(0, proxy.size.height - barHeight))
+                    }
                 }
                 .frame(width: 1.5)
                 .offset(x: -16)
@@ -346,29 +348,27 @@ extension View {
 /// a gentle luminance wave that never glares or changes color saturation.
 struct DesktopSoftShimmer: ViewModifier {
     let active: Bool
-    @State private var phase: CGFloat = -0.6
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        if active {
+        if active && !reduceMotion {
             content
                 .overlay {
-                    GeometryReader { proxy in
-                        LinearGradient(
-                            colors: [.clear, DesktopTheme.ink.opacity(0.45), .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: max(36, proxy.size.width * 0.55))
-                        .offset(x: phase * proxy.size.width * 1.6)
+                    TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+                        let cycle = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.8) / 1.8
+                        let phase = CGFloat(-0.6 + 1.8 * cycle)
+                        GeometryReader { proxy in
+                            LinearGradient(
+                                colors: [.clear, DesktopTheme.ink.opacity(0.45), .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: max(36, proxy.size.width * 0.55))
+                            .offset(x: phase * proxy.size.width * 1.6)
+                        }
                     }
                     .mask(content)
                     .allowsHitTesting(false)
-                }
-                .onAppear {
-                    phase = -0.6
-                    withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
-                        phase = 1.2
-                    }
                 }
         } else {
             content

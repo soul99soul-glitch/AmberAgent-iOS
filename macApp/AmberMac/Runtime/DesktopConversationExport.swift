@@ -148,6 +148,12 @@ extension DesktopConversationExport {
                 }
                 result.append(NSAttributedString(string: "\n"))
             case .divider: result.append(NSAttributedString(string: "────────────────\n\n", attributes: attributes(size: 10, color: 0.6)))
+            case .images(let images):
+                appendImages(images, to: result)
+            case .video(let video):
+                appendInline("[视频：\(video.displayTitle)] (\(video.url))\n\n", to: result, indent: quoteLevel * 14)
+            case .audio(let audio):
+                appendInline("[音频：\(audio.displayTitle)] (\(audio.url))\n\n", to: result, indent: quoteLevel * 14)
             }
         }
     }

@@ -13,16 +13,6 @@ import XCTest
         var runs: [DesktopGeneration] = []
         var cancelledFlags: [Bool] = []
 
-        func userMessage(id: UUID, text: String, attachments: [DesktopMessageAttachment]) throws -> DesktopMessage {
-            let images = attachments.compactMap { item -> DesktopMessageImage? in
-                guard item.kind == .image, let url = item.dataURL else { return nil }
-                return DesktopMessageImage(url: url, name: item.name)
-            }
-            let docs = attachments.filter { $0.kind == .text }.map { "[附件：\($0.name)]\n\($0.text ?? "")\n[附件结束]" }
-            let merged = ([text] + docs).filter { !$0.isEmpty }.joined(separator: "\n\n")
-            return DesktopMessage(id: id, role: .user, text: merged, images: images)
-        }
-
         func start(configuration: DesktopProviderConfiguration, apiKey: String,
                    messages: [DesktopMessage], responseID: UUID) throws -> DesktopGeneration {
             let run = DesktopGeneration()
@@ -328,5 +318,60 @@ import XCTest
         workspace.select(firstID)
         XCTAssertEqual(workspace.selectedConversation?.messages.last?.state, .complete)
         XCTAssertEqual(workspace.selectedConversation?.messages.last?.text, "会话A的流式回答")
+    }
+
+    func testInterleavedTextAndPastedImagesPreserveExactSegmentOrder() async throws {
+        let (workspace, provider, tempRoot) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        // 1. 输入第一段文字，粘贴单张图片
+        workspace.draft = "这是修改前的截图："
+        let pb1 = NSPasteboard(name: NSPasteboard.Name("amber.test.interleaved.1.\(UUID().uuidString)"))
+        pb1.clearContents()
+        XCTAssertTrue(pb1.setData(try makeImageData(type: .png, width: 48, height: 32, red: 0.8), forType: .png))
+        XCTAssertTrue(workspace.pasteFromPasteboard(pb1))
+        await waitForAttachments(workspace)
+
+        // 2. 继续输入第二段文字，连续粘贴两张图片
+        workspace.draft = "这是修改前的截图：\n这是修改后的两组对比："
+        let img2URL = tempRoot.appendingPathComponent("after-1.png")
+        let img3URL = tempRoot.appendingPathComponent("after-2.png")
+        try makeImageData(type: .png, width: 60, height: 40, red: 0.2).write(to: img2URL)
+        try makeImageData(type: .png, width: 60, height: 40, red: 0.4).write(to: img3URL)
+        let pb2 = NSPasteboard(name: NSPasteboard.Name("amber.test.interleaved.2.\(UUID().uuidString)"))
+        pb2.clearContents()
+        XCTAssertTrue(pb2.writeObjects([img2URL as NSURL, img3URL as NSURL]))
+        XCTAssertTrue(workspace.pasteFromPasteboard(pb2))
+        await waitForAttachments(workspace)
+
+        XCTAssertEqual(workspace.pendingAttachments.count, 3)
+
+        // 3. 发送并检查用户消息的顺序段：文字 -> 单图 -> 文字 -> 多图
+        workspace.send()
+        let userMsg = try XCTUnwrap(provider.requests.first?.last(where: { $0.role == .user }))
+        XCTAssertEqual(userMsg.images.count, 3)
+        let blocks = userMsg.orderedDisplayBlocks(streaming: false)
+        XCTAssertEqual(blocks.count, 4)
+        if case .text(let firstText) = blocks[0] {
+            XCTAssertEqual(firstText, "这是修改前的截图：")
+        } else {
+            XCTFail("Expected first block to be .text, got \(blocks[0])")
+        }
+        if case .images(let firstImages) = blocks[1] {
+            XCTAssertEqual(firstImages.count, 1)
+        } else {
+            XCTFail("Expected second block to be single .images, got \(blocks[1])")
+        }
+        if case .text(let secondText) = blocks[2] {
+            XCTAssertEqual(secondText, "这是修改后的两组对比：")
+        } else {
+            XCTFail("Expected third block to be .text, got \(blocks[2])")
+        }
+        if case .images(let secondImages) = blocks[3] {
+            XCTAssertEqual(secondImages.count, 2)
+            XCTAssertEqual(secondImages.map(\.name), ["after-1.png", "after-2.png"])
+        } else {
+            XCTFail("Expected fourth block to be 2 .images, got \(blocks[3])")
+        }
     }
 }

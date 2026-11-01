@@ -7,8 +7,17 @@ struct DesktopToolCallCard: View {
 
     var body: some View {
         let activity = DesktopToolActivity(tool)
-        VStack(alignment: .leading, spacing: 0) {
+        let images = tool.resolvedImages
+        let videos = tool.resolvedVideos
+        let audios = tool.resolvedAudios
+        VStack(alignment: .leading, spacing: 8) {
             HeaderButton(tool: tool, activity: activity, expanded: $expanded)
+
+            if !images.isEmpty {
+                DesktopMessageImageGallery(images: images, maxWidth: 480, alignment: .leading)
+            }
+            forEachVideo(videos)
+            forEachAudio(audios)
 
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
@@ -34,9 +43,23 @@ struct DesktopToolCallCard: View {
                 .padding(.leading, 12)
                 .padding(.vertical, 6)
                 .overlay(alignment: .leading) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1) }
-                .padding(.top, 4)
+                .padding(.top, 2)
                 .transition(.opacity)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func forEachVideo(_ videos: [DesktopVideoMedia]) -> some View {
+        ForEach(Array(videos.enumerated()), id: \.offset) { _, video in
+            DesktopVideoCard(video: video, maxWidth: 380)
+        }
+    }
+
+    @ViewBuilder
+    private func forEachAudio(_ audios: [DesktopAudioMedia]) -> some View {
+        ForEach(Array(audios.enumerated()), id: \.offset) { _, audio in
+            DesktopAudioCard(audio: audio, maxWidth: 360)
         }
     }
 

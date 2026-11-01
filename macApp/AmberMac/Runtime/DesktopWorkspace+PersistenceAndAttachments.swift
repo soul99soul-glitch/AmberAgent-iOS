@@ -219,6 +219,7 @@ extension DesktopWorkspace {
         conversations.removeAll { $0.id == id }
         drafts[id] = nil
         attachments[id] = nil
+        attachmentDraftAnchors[id] = nil
         instructionQueue.removeAll { $0.conversationID == id }
         refreshSidebar()
         if selectedID == id {
@@ -311,7 +312,10 @@ extension DesktopWorkspace {
                 self.conversations[index].messages[messageIndex].editableText = actual.editableText
                 self.conversations[index].messages[messageIndex].estimatedTokens = actual.estimatedTokens
                 self.conversations[index].messages[messageIndex].images = actual.images
+                self.conversations[index].messages[messageIndex].videos = actual.videos
+                self.conversations[index].messages[messageIndex].audios = actual.audios
                 self.conversations[index].messages[messageIndex].tools = actual.tools
+                self.conversations[index].messages[messageIndex].parts = actual.parts
             }
         }
     }
@@ -450,6 +454,7 @@ extension DesktopWorkspace {
         guard !isLoading, !selectedConversationUnavailable else { return nil }
         if selectedID == nil { createConversation() }
         guard let owner = selectedID else { return nil }
+        let anchorDraft = selectedID == owner ? draft : (drafts[owner] ?? "")
         let token = UUID()
         attachmentLoadCounts[owner, default: 0] += 1
         let task = Task {
@@ -477,6 +482,9 @@ extension DesktopWorkspace {
                 let existing = selectedID == owner ? pendingAttachments : attachments[owner] ?? []
                 let result = existing + imported
                 try validateAttachmentBudget(result)
+                for document in imported where document.kind == .image {
+                    attachmentDraftAnchors[owner, default: [:]][document.id] = anchorDraft
+                }
                 if selectedID == owner { reloadFiles() }
                 attachments[owner] = result
                 if selectedID == owner { pendingAttachments = result }
@@ -535,7 +543,10 @@ extension DesktopWorkspace {
 
     func removeAttachment(_ id: UUID) {
         pendingAttachments.removeAll { $0.id == id }
-        if let selectedID { attachments[selectedID] = pendingAttachments }
+        if let selectedID {
+            attachments[selectedID] = pendingAttachments
+            attachmentDraftAnchors[selectedID]?[id] = nil
+        }
     }
 
     @discardableResult
