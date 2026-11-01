@@ -17,22 +17,33 @@ struct DesktopMarkdown: View {
     var fontSize: Double = 15
     /// While true, newly arrived text fades in and growth glides instead of snapping.
     var streaming = false
+    var maxWidth: CGFloat = 520
     @State private var cache = DesktopMarkdownCache()
 
     var body: some View {
-        let blocks = cache.blocks(for: text)
-        DesktopMarkdownBlocks(blocks: blocks, fontFamily: fontFamily, fontSize: fontSize, streaming: streaming)
-            .font(fontFamily.swiftUIFont(size: fontSize))
-
+        let blocks = cache.blocks(for: text, streaming: streaming)
+        DesktopMarkdownBlocks(
+            blocks: blocks,
+            fontFamily: fontFamily,
+            fontSize: fontSize,
+            streaming: streaming,
+            maxWidth: maxWidth
+        )
+        .font(fontFamily.swiftUIFont(size: fontSize))
     }
 }
 
 /// Holds the last parse so unchanged text is not re-parsed; reference type so reads don't invalidate the view.
 private final class DesktopMarkdownCache {
     private var text: String?
+    private var streaming: Bool?
     private var value: [DesktopMarkdownBlock] = []
-    func blocks(for text: String) -> [DesktopMarkdownBlock] {
-        if text != self.text { value = DesktopMarkdownParser.parse(text); self.text = text }
+    func blocks(for text: String, streaming: Bool = false) -> [DesktopMarkdownBlock] {
+        if text != self.text || streaming != self.streaming {
+            value = DesktopMarkdownParser.parse(text, streaming: streaming)
+            self.text = text
+            self.streaming = streaming
+        }
         return value
     }
 }
@@ -42,15 +53,21 @@ private struct DesktopMarkdownBlocks: View {
     let fontFamily: DesktopMessageFontFamily
     let fontSize: Double
     var streaming = false
+    var maxWidth: CGFloat = 520
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 // Settled blocks compare equal and keep their rendering while the reply grows; only the tail changes.
-                DesktopMarkdownBlockView(block: block, fontFamily: fontFamily, fontSize: fontSize,
-                    tail: streaming && index == blocks.count - 1)
-                    .equatable()
+                DesktopMarkdownBlockView(
+                    block: block,
+                    fontFamily: fontFamily,
+                    fontSize: fontSize,
+                    tail: streaming && index == blocks.count - 1,
+                    maxWidth: maxWidth
+                )
+                .equatable()
             }
         }
     }
@@ -61,6 +78,7 @@ private struct DesktopMarkdownBlockView: View, Equatable {
     let fontFamily: DesktopMessageFontFamily
     let fontSize: Double
     let tail: Bool
+    var maxWidth: CGFloat = 520
 
     var body: some View {
         switch block {
@@ -92,7 +110,7 @@ private struct DesktopMarkdownBlockView: View, Equatable {
         case .list(let items):
             DesktopMarkdownList(items: items, fontFamily: fontFamily, fontSize: fontSize, streaming: tail)
         case .quote(let blocks):
-            DesktopMarkdownBlocks(blocks: blocks, fontFamily: .serif, fontSize: fontSize + 1)
+            DesktopMarkdownBlocks(blocks: blocks, fontFamily: .serif, fontSize: fontSize + 1, maxWidth: max(180, maxWidth - 24))
                 .foregroundStyle(DesktopTheme.inkSecondary)
                 .padding(.leading, 18)
                 .padding(.vertical, 2)
@@ -106,6 +124,19 @@ private struct DesktopMarkdownBlockView: View, Equatable {
                 Rectangle().fill(DesktopTheme.hairline).frame(height: 1)
             }
             .padding(.vertical, 8)
+        case .images(let images):
+            DesktopMessageImageGallery(
+                images: images,
+                maxWidth: maxWidth,
+                alignment: .leading
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .video(let video):
+            DesktopVideoCard(video: video, maxWidth: min(380, maxWidth))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .audio(let audio):
+            DesktopAudioCard(audio: audio, maxWidth: min(360, maxWidth))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

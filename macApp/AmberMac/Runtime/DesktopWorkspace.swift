@@ -212,6 +212,7 @@ final class DesktopWorkspace {
     @ObservationIgnored var queuedRequestTasks: [UUID: (token: UUID, task: Task<Void, Never>)] = [:]
     @ObservationIgnored var drafts: [UUID: String] = [:]
     @ObservationIgnored var attachments: [UUID: [DesktopImportedDocument]] = [:]
+    @ObservationIgnored var attachmentDraftAnchors: [UUID: [UUID: String]] = [:]
     @ObservationIgnored var loadingTask: Task<Void, Never>?
     @ObservationIgnored var attachmentTasks: [UUID: (owner: UUID, task: Task<Void, Never>)] = [:]
     @ObservationIgnored var conversationErrors: [UUID: String] = [:]
@@ -581,23 +582,31 @@ final class DesktopWorkspace {
         guard !isLoading, !isSelectedConversationGenerating, !isMutatingBranch,
               !isManagingBackup, !selectedConversationUnavailable else { return }
         guard !isReadingAttachments else { errorMessage = "附件正在读取，请稍候再发送。"; return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
+        let rawDraft = draft
+        let text = rawDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentAttachments = pendingAttachments
+        let currentAnchors = selectedID.flatMap { attachmentDraftAnchors[$0] } ?? [:]
+        guard !text.isEmpty || !currentAttachments.isEmpty else { return }
         do {
             let request = try requestConfiguration()
             if selectedID == nil { createConversation() }
             guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
-            let message = try provider.userMessage(id: UUID(), text: text,
-                attachments: pendingAttachments.map(DesktopMessageAttachment.init))
+            let submission = DesktopMessageAttachment.composeSubmission(
+                draft: rawDraft,
+                documents: currentAttachments,
+                anchors: currentAnchors
+            )
+            let message = try provider.userMessage(id: UUID(), text: submission.text, attachments: submission.attachments)
             conversations[index].messages.append(message)
             if conversations[index].messages.count == 1 {
-                conversations[index].title = String((text.isEmpty ? pendingAttachments.first?.name ?? "附件对话" : text).prefix(60))
+                conversations[index].title = String((text.isEmpty ? currentAttachments.first?.name ?? "附件对话" : text).prefix(60))
                 persistMetadata(conversations[index])
             }
             draft = ""
             pendingAttachments = []
             drafts[id] = nil
             attachments[id] = nil
+            attachmentDraftAnchors[id] = nil
             startGeneration(conversationID: id, configuration: request.0, apiKey: request.1)
         } catch { errorMessage = error.localizedDescription }
     }

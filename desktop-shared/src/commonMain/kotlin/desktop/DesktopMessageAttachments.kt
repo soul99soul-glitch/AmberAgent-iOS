@@ -23,27 +23,59 @@ internal data class DesktopMessageAttachment(
 internal fun desktopUserMessage(id: String, text: String, attachmentsJSON: String): DesktopMessage {
     val attachments = Json.decodeFromString<List<DesktopMessageAttachment>>(attachmentsJSON)
     require(text.isNotBlank() || attachments.isNotEmpty()) { "A message requires text or an attachment" }
+
+    fun DesktopMessageAttachment.toMessagePart(): UIMessagePart {
+        require(name.isNotBlank()) { "Attachment name is required" }
+        return when (kind) {
+            "image" -> {
+                val url = dataURL.orEmpty()
+                val prefix = "data:$mimeType;base64,"
+                require(mimeType.startsWith("image/") && url.startsWith(prefix) && url.length > prefix.length) {
+                    "Image attachment requires an inline image data URL"
+                }
+                UIMessagePart.Image(url, buildJsonObject {
+                    put("fileName", name)
+                    put("mimeType", mimeType)
+                })
+            }
+            "text" -> {
+                require(!this.text.isNullOrBlank()) { "Document attachment is empty" }
+                UIMessagePart.Text("\n\n--- $name ---\n${this.text}\n---\n")
+            }
+            "inline_text" -> {
+                require(!this.text.isNullOrBlank()) { "Inline text segment is empty" }
+                UIMessagePart.Text(this.text)
+            }
+            else -> error("Unsupported attachment type: $kind")
+        }
+    }
+
+    val markerRegex = Regex("""!\[([^\]]*)]\(attachment://([^)\s]+)\)""")
+    val matches = markerRegex.findAll(text).toList()
     val parts = buildList {
-        if (text.isNotEmpty()) add(UIMessagePart.Text(text))
-        for (attachment in attachments) {
-            require(attachment.name.isNotBlank()) { "Attachment name is required" }
-            when (attachment.kind) {
-                "image" -> {
-                    val url = attachment.dataURL.orEmpty()
-                    val prefix = "data:${attachment.mimeType};base64,"
-                    require(attachment.mimeType.startsWith("image/") && url.startsWith(prefix) && url.length > prefix.length) {
-                        "Image attachment requires an inline image data URL"
-                    }
-                    add(UIMessagePart.Image(url, buildJsonObject {
-                        put("fileName", attachment.name)
-                        put("mimeType", attachment.mimeType)
-                    }))
+        val consumedIndices = mutableSetOf<Int>()
+        if (matches.isNotEmpty()) {
+            var cursor = 0
+            for (match in matches) {
+                val target = match.groupValues[2]
+                val index = target.toIntOrNull()?.takeIf { it in attachments.indices }
+                    ?: attachments.indexOfFirst { it.name == target }.takeIf { it >= 0 }
+                if (index != null) {
+                    val prefixText = text.substring(cursor, match.range.first)
+                    if (prefixText.isNotEmpty()) add(UIMessagePart.Text(prefixText))
+                    consumedIndices += index
+                    add(attachments[index].toMessagePart())
+                    cursor = match.range.last + 1
                 }
-                "text" -> {
-                    require(!attachment.text.isNullOrBlank()) { "Document attachment is empty" }
-                    add(UIMessagePart.Text("\n\n--- ${attachment.name} ---\n${attachment.text}\n---\n"))
-                }
-                else -> error("Unsupported attachment type: ${attachment.kind}")
+            }
+            val tailText = text.substring(cursor)
+            if (tailText.isNotEmpty()) add(UIMessagePart.Text(tailText))
+        } else if (text.isNotEmpty()) {
+            add(UIMessagePart.Text(text))
+        }
+        for ((index, attachment) in attachments.withIndex()) {
+            if (index !in consumedIndices) {
+                add(attachment.toMessagePart())
             }
         }
     }

@@ -75,17 +75,42 @@ enum DesktopTheme {
 }
 
 /// Claude Desktop style understated warm-gray breathing dot for work in progress.
+/// Drawn inside a fixed 6×6 Canvas via TimelineView so streaming height changes in parent rows
+/// can never couple into a GeometryEffect / scaleEffect projection or shift the dot's vertical baseline.
 struct DesktopPulse: View {
-    @State private var dim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static func metrics(at time: TimeInterval, reduceMotion: Bool = false) -> (scale: CGFloat, opacity: Double) {
+        if reduceMotion { return (1.0, 0.72) }
+        let wave = 0.5 * (1.0 + cos(time * 2.0 * .pi / 2.2))
+        let scale = CGFloat(0.86 + 0.14 * wave)
+        let opacity = 0.36 + 0.48 * wave
+        return (scale, opacity)
+    }
+
     var body: some View {
-        Circle()
-            .fill(DesktopTheme.inkSecondary)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
+            let current = Self.metrics(
+                at: context.date.timeIntervalSinceReferenceDate,
+                reduceMotion: reduceMotion
+            )
+            Canvas { graphics, size in
+                let diameter = min(size.width, size.height) * current.scale
+                let rect = CGRect(
+                    x: (size.width - diameter) * 0.5,
+                    y: (size.height - diameter) * 0.5,
+                    width: diameter,
+                    height: diameter
+                )
+                graphics.opacity = current.opacity
+                graphics.fill(Path(ellipseIn: rect), with: .color(DesktopTheme.inkSecondary))
+            }
             .frame(width: 6, height: 6)
-            .scaleEffect(dim ? 0.86 : 1.0)
-            .opacity(dim ? 0.32 : 0.82)
-            .animation(.easeInOut(duration: 1.25).repeatForever(autoreverses: true), value: dim)
-            .onAppear { dim = true }
-            .accessibilityLabel("进行中")
+        }
+        .frame(width: 6, height: 6)
+        .fixedSize()
+        .accessibilityLabel("进行中")
+        .accessibilityIdentifier("amber.chat.streamingPulse")
     }
 }
 
