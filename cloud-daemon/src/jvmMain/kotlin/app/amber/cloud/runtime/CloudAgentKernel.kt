@@ -3,6 +3,7 @@ package app.amber.cloud.runtime
 import app.amber.ai.core.MessageRole
 import app.amber.ai.core.Tool
 import app.amber.ai.provider.Model
+import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
 import app.amber.ai.provider.claude.ClaudeKmpProvider
@@ -114,7 +115,7 @@ class KmpProviderModelClient(
 
     override suspend fun generateReply(messages: List<UIMessage>, tools: List<Tool>): UIMessage {
         val params = TextGenerationParams(
-            model = Model(modelId = modelId),
+            model = Model(modelId = modelId, abilities = if (tools.isEmpty()) emptyList() else listOf(ModelAbility.TOOL)),
             tools = tools,
         )
         val chunk = when (providerSetting) {
@@ -342,6 +343,7 @@ class CloudAgentKernel(
             }
         }
         orchestrationKernel.recoverAfterRestart()
+        conversationTagger.resumePending()
     }
 
     fun registerConnector(connector: ChannelConnector) {

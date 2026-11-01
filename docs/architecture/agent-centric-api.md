@@ -180,7 +180,13 @@ Router 的 `propose_agent` 只能保存候选，不能创建生效 agent。候�
 
 完成普通 Router 对话、同步兼容入口的纯文本回复、或受管 Worker 成功结束时，后台队列通过现有 CloudModelClient 提取标签。只送最近一轮 user/assistant 的 Text，不送 Tool、Reasoning 或原始输出；模型没有工具。Worker 标签写入所属 agent 作用域，Worker 汇总不再提取到 global。DISABLED/POLLUTED 会话不调用标签模型；写入前再次检查当前模式。已处理 assistant turn ID 持久去重，空提取也去重。
 
-云端当前没有标题/图标辅助调用，因此本期在完成后单独进行后台提取，会增加辅助模型调用；未实现调研稿的标题生成捎带方案。标签队列在内存中，进程停止前尚未处理的轮次不自动补跑。解析/模型失败只写不含原始响应的诊断事件，不影响已完成回复，也不自动重试。`Main.kt` 现有默认 echo 模型未在本期替换，真实运行需宿主注入能按协议输出 JSON 的 CloudModelClient；本次验证使用假模型。
+接受轮次时先在同一个 SQLite 文件的 `pending_tag_turns` 写入 `(turnId,scopeId)` 唯一记录，保存对话 ID、原作用域、脱敏后的本轮 Text 与接受时间，不保存整段历史、Tool 或 Reasoning。随后只用内存信号唤醒后台消费者。冷启动会恢复未完成项；标签、观察、`tagged_turns` 完成标记和待处理项删除在同一事务中结算，空提取也结算。处理中取消/退出保留待处理记录，完成的轮次不因重复回调或再次启动重新请求。重放按原接受时间参与 14/30 天统计，不把重启当成新观察。
+
+恢复时及落库前再次检查会话记忆模式；已删除或禁用记忆的对话丢弃待处理项。用户锁定与删除负反馈继续优先，合集升级确认同步转移其待处理项；旧作用域的在途返回不能写回旧中心。模型/解析失败保留记录，只写不含原始响应的诊断，本进程不反复请求，下一次重启可再次尝试。
+
+Main 通过现有 CloudConfigLoader、EnvelopeCredentialVault 和 KmpProviderModelClient 创建配置客户端：`model.provider / model.id / model.base_url / model.api_key` 对应 `AMBER_MODEL_PROVIDER / AMBER_MODEL_ID / AMBER_MODEL_BASE_URL / AMBER_MODEL_API_KEY`。支持 `openai`（含兼容协议）及 `claude`，Key 缺失或配置无效时在网关开放前报错；不会隐式回显。`model.provider=echo` 仅为显式开发选择，不生成智能标签。主密钥需通过既有主密钥变量/文件/systemd credential 明确配置，Main 拒绝隐式开发默认主密钥。同一生产适配器调用链用于 Router、默认 Worker、标签提取和同义模板整理；有工具的请求同时带 TOOL 能力标志，标签请求不声明工具。具体启动说明见 [cloud-daemon README](../../cloud-daemon/README.md#21-本地-jvm-启动)。
+
+云端当前没有标题/图标辅助调用，仍在完成后单独提取，会增加辅助模型调用；标题生成捎带先保留为后续优化。本地验证使用 loopback HTTP stub、假 Key 和临时库，覆盖两种生产 provider 协议、处理中取消/重建内核补跑及幂等；未调用真实 provider，未做操作系统强杀或生产磁盘故障验收。
 
 ### 模板与演化
 

@@ -6,7 +6,7 @@
 
 Supertag 与中心后端已接入 AgentProfile、SQLite 和现有 proactive 巡检循环。`/v2/hubs` 管理中心，`/v2/hub-focus` 在主时间线选择专注中心，`/v2/tags`、`/v2/tag-templates`、`/v2/collections`、`/v2/hub-promotions` 提供标签、演化模板和确认升级；完整请求和生命周期见 [Agent-centric API](../docs/architecture/agent-centric-api.md#supertag-与中心后端扩展)。新增数据位于 `$AMBER_DATA_DIR/supertags.db`，记忆继续使用已有按 agent 隔离的 CloudMemoryStore。
 
-打标通过注入的 CloudModelClient 在完成回复后后台调用，日演化与周同义合并跟随 `runProactiveCycle`。本期没有端侧 UI 或真实服务验收；命令行入口现有 echo 模型不是可用的标签 JSON 模型，未声称零额外调用或生产已接入。
+打标通过配置生成的 CloudModelClient 在完成回复后后台调用，日演化与周同义合并跟随 `runProactiveCycle`。Main 复用现有 OpenAI/Claude provider 和加密凭据库；未配置模型 Key 时启动失败并给出设置提示，echo 仅可显式选择。接受的打标轮次先写入 SQLite，重启恢复未完成项。当前仍有额外辅助调用，未实现捎带优化，也未做真实服务或端侧 UI 验收。
 
 ---
 
@@ -155,14 +155,35 @@ interface ChannelConnector {
 ### 2.1 本地 JVM 启动
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21
-export AMBER_MASTER_KEY="your-32-byte-master-passphrase"
 export AMBER_DATA_DIR="/tmp/amberd-data"
+# 主密钥文件须预先准备并安全保存，重启时必须使用同一主密钥。
+export AMBER_MASTER_KEY_FILE="/absolute/private/path/amber_master_key"
+export AMBER_MODEL_PROVIDER="openai"
+export AMBER_MODEL_ID="your-provider-model-id"
+export AMBER_MODEL_BASE_URL="https://provider.example/v1"
+# 首次启动通过 AMBER_MODEL_API_KEY 安全注入 Key；入库后可不再传此变量。
 
-# 启动 amberd 守护进程（默认监听 0.0.0.0:47821）
-./gradlew :cloud-daemon:run --args="daemon --port 47821"
+# 本地启动示例只监听 loopback；实际对外地址由部署者另行配置。
+HOME=/Users/arquiel ./gradlew :cloud-daemon:run --args="daemon --host 127.0.0.1 --port 47821"
 
 # 生成终端二维码与 amber://gateway/pair?p= 配对深链（兼容现有 iOS 客户端扫码）
-./gradlew :cloud-daemon:runCli --args="pair"
+HOME=/Users/arquiel ./gradlew :cloud-daemon:runCli --args="pair"
+```
+
+`--config` / `AMBER_CONFIG_FILE` 可指定现有 JSON、`.env` 或 properties 文件；环境变量优先。例如 JSON 中的 `model.provider / model.id / model.base_url` 与上述环境变量对应。provider 仅接受 `openai`（Chat Completions，包含兼容该协议的服务）、`claude`（Anthropic Messages）或显式开发选择 `echo`。base URL 是 API 根地址，通常含 `/v1`；适配器分别追加 `/chat/completions` 或 `/messages`。不要把 Key 放在 URL 中。
+
+同一配置客户端供主 Router、默认 Worker、Supertag JSON 提取和模板同义整理使用；请求声明工具时同时设置既有 TOOL 能力标志。模型须支持这些工具与结构化 JSON 指令。缺少 Key、未知 provider 或无效 base URL 会在网关开放前报错，不回退 echo。Main 也拒绝凭据库的隐式开发默认主密钥，开发 echo 同样需要明确的主密钥配置。管理用 `amber-cli status/devices/pair` 不要求配置模型。
+
+打标 `enqueue` 返回前把去重 ID、原作用域、脱敏后的本轮 Text 和接受时间写到 `supertags.db.pending_tag_turns`。`recoverColdStartConversations` 完成冷启动恢复后唤醒队列；标签、观察、完成标记和待处理项删除在同一 SQLite 事务中提交，空标签也会结算。处理中退出留下的记录可重启补跑，已提交轮次不重发。若会话已删除或禁用记忆则丢弃该项；模型/解析失败保留记录并写脱敏诊断，本进程不反复重试，下一次重启可再次尝试。合集确认升级会同步转移未完成项的作用域，旧作用域的在途结果不能落库。用户修正与删除屏蔽仍由现有写入门禁优先处理。
+
+本地验收使用 loopback HTTP stub、假 Key 和临时目录，覆盖真实 OpenAI/Claude 适配器请求、Router/Worker 完成后标签入库，以及处理中取消、重建内核后的补跑和幂等。没有调用真实 provider，也没有验证实际进程被强制终止或生产磁盘故障。
+
+```bash
+HOME=/Users/arquiel JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew :cloud-daemon:jvmTest \
+  --tests 'app.amber.cloud.supertags.ConfiguredDaemonRecoveryTest' \
+  --tests 'app.amber.cloud.supertags.HubBackendTest' \
+  --tests 'app.amber.cloud.supertags.SupertagRulesTest'
+HOME=/Users/arquiel JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew :cloud-daemon:fatJar
 ```
 
 ### 2.2 Docker 容器启动
@@ -171,6 +192,10 @@ docker build -t amberd:local -f cloud-daemon/Dockerfile .
 docker run --rm -it \
   -p 47821:47821 \
   -e AMBER_MASTER_KEY="your-master-key" \
+  -e AMBER_MODEL_PROVIDER \
+  -e AMBER_MODEL_ID \
+  -e AMBER_MODEL_BASE_URL \
+  -e AMBER_MODEL_API_KEY \
   -v amberd-data:/var/lib/amberd \
   amberd:local
 ```

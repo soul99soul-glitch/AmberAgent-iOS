@@ -1,19 +1,10 @@
 package app.amber.cloud
 
-import app.amber.ai.ui.UIMessage
-import app.amber.cloud.channels.OwnerBindingManager
 import app.amber.cloud.channels.RedactingChannelLogger
 import app.amber.cloud.config.CloudConfigLoader
 import app.amber.cloud.gateway.TlsIdentityManager
 import app.amber.cloud.gateway.configureCloudGateway
 import app.amber.cloud.gateway.AgentCentricApi
-import app.amber.cloud.proactive.L2NoteworthyScore
-import app.amber.cloud.proactive.NoteworthyJudgeProvider
-import app.amber.cloud.proactive.ProactiveEngine
-import app.amber.cloud.proactive.ProactiveRestraintGate
-import app.amber.cloud.runtime.CloudAgentKernel
-import app.amber.cloud.runtime.CloudModelClient
-import app.amber.cloud.security.EnvelopeCredentialVault
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import kotlinx.coroutines.runBlocking
@@ -46,45 +37,10 @@ fun main(args: Array<String>) {
         ?: System.getenv("AMBER_CONFIG_FILE")
     val configFile = configFilePath?.let(::File) ?: File(dataDir, "amberd.json")
 
-    // Ensure TLS identity exists so `amber-cli pair` can read SPKI fingerprint immediately
-    TlsIdentityManager.loadOrCreate(File(dataDir, "tls-identity.p12"))
-
     val logger = RedactingChannelLogger { println(it) }
-    val vault = EnvelopeCredentialVault(vaultFile = File(dataDir, "secrets.enc.json"))
-    val ownerBinding = OwnerBindingManager(persistenceFile = File(dataDir, "owner-bindings.json"))
-    val daemonConfig = CloudConfigLoader.loadAndIngest(
-        configFile = configFile,
-        vault = vault,
-        logger = logger,
-        ownerBinding = ownerBinding,
-    )
-
-    val defaultEchoModelClient = CloudModelClient { messages, _ ->
-        val lastUser = messages.lastOrNull()?.toText().orEmpty()
-        UIMessage.assistant("Amber Cloud Self 已收到: ${lastUser.lines().firstOrNull().orEmpty()}")
-    }
-
-    val proactiveEngine = ProactiveEngine(
-        l2Judge = NoteworthyJudgeProvider { req ->
-            L2NoteworthyScore(
-                noteworthy = true,
-                urgency = 4,
-                importance = 4,
-                summary = req.deltaSummary.lines().firstOrNull()?.take(80) ?: req.topicKey,
-            )
-        },
-        restraintGate = ProactiveRestraintGate(
-            quietHours = daemonConfig.toQuietHoursConfig(),
-            budgetConfig = daemonConfig.toInterruptionBudgetConfig(),
-        ),
-    )
-
-    val kernel = CloudAgentKernel(
-        dataDir = dataDir,
-        modelClient = defaultEchoModelClient,
-        ownerBinding = ownerBinding,
-        proactiveEngine = proactiveEngine,
-    )
+    val (daemonConfig, kernel) = loadConfiguredDaemon(dataDir, configFile, logger = logger)
+    // Validate model settings before creating the pairing identity or opening the gateway.
+    TlsIdentityManager.loadOrCreate(File(dataDir, "tls-identity.p12"))
 
     val telegramChannel = CloudConfigLoader.createTelegramChannelOrNull(
         config = daemonConfig,
@@ -116,7 +72,7 @@ fun main(args: Array<String>) {
         Thread {
             runBlocking {
                 kernel.stopProactiveLoop()
-                kernel.conversationTagger.close()
+                kernel.conversationTagger.closeAndJoin()
                 telegramChannel?.stop()
                 feishuChannel?.stop()
             }

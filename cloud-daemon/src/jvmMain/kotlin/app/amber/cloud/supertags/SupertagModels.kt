@@ -60,6 +60,16 @@ data class TagObservation(
     val observedAtMs: Long,
 )
 
+/** Only redacted Text from the completed turn is needed to resume extraction. */
+@Serializable
+data class PendingTaggingTurn(
+    val conversationId: String,
+    val scopeId: String,
+    val turnId: String,
+    val text: String,
+    val acceptedAtMs: Long,
+)
+
 @Serializable
 data class TagCollection(
     val id: String,

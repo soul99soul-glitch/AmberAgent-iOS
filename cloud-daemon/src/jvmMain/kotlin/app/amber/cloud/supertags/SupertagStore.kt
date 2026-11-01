@@ -23,6 +23,7 @@ class SupertagStore(dataDir: File, nowMs: Long = System.currentTimeMillis()) : C
         db.execSQL("CREATE TABLE IF NOT EXISTS conversation_tags (conversation_id TEXT, scope_id TEXT, name TEXT, body TEXT NOT NULL, PRIMARY KEY(conversation_id, scope_id, name))")
         db.execSQL("CREATE TABLE IF NOT EXISTS tag_feedback (conversation_id TEXT, scope_id TEXT, name TEXT, PRIMARY KEY(conversation_id, scope_id, name))")
         db.execSQL("CREATE TABLE IF NOT EXISTS tagged_turns (turn_id TEXT, scope_id TEXT, PRIMARY KEY(turn_id, scope_id))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS pending_tag_turns (turn_id TEXT, scope_id TEXT, body TEXT NOT NULL, PRIMARY KEY(turn_id, scope_id))")
         db.execSQL("CREATE TABLE IF NOT EXISTS tag_observations (turn_id TEXT, conversation_id TEXT, scope_id TEXT, name TEXT, observed_at INTEGER, body TEXT NOT NULL, PRIMARY KEY(turn_id, scope_id, name))")
         db.execSQL("CREATE INDEX IF NOT EXISTS tag_observation_window ON tag_observations(scope_id, observed_at)")
         db.execSQL("CREATE TABLE IF NOT EXISTS tag_templates (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
@@ -53,7 +54,11 @@ class SupertagStore(dataDir: File, nowMs: Long = System.currentTimeMillis()) : C
 
     @Synchronized
     fun applyTags(conversationId: String, scopeId: String, turnId: String, candidates: List<TagCandidate>, nowMs: Long): List<ConversationTag> = transaction {
-        if (isTagged(turnId, scopeId)) return@transaction tags(conversationId, scopeId)
+        applyTagsInTransaction(conversationId, scopeId, turnId, candidates, nowMs)
+    }
+
+    private fun applyTagsInTransaction(conversationId: String, scopeId: String, turnId: String, candidates: List<TagCandidate>, nowMs: Long): List<ConversationTag> {
+        if (isTagged(turnId, scopeId)) return tags(conversationId, scopeId)
         candidates.take(3).forEach { candidate ->
             val safe = sanitize(candidate)
             if (exists("SELECT 1 FROM tag_feedback WHERE conversation_id = ? AND scope_id = ? AND name = ?", conversationId, scopeId, safe.name)) return@forEach
@@ -73,11 +78,35 @@ class SupertagStore(dataDir: File, nowMs: Long = System.currentTimeMillis()) : C
         refreshPromotions(nowMs)
         execute("INSERT INTO tagged_turns VALUES (?, ?)", turnId, scopeId)
         event("conversation.tags_updated", conversationId, nowMs)
-        tags(conversationId, scopeId)
+        return tags(conversationId, scopeId)
     }
 
     @Synchronized
     fun isTagged(turnId: String, scopeId: String): Boolean = exists("SELECT 1 FROM tagged_turns WHERE turn_id = ? AND scope_id = ?", turnId, scopeId)
+
+    @Synchronized
+    fun acceptTaggingTurn(turn: PendingTaggingTurn): Boolean = transaction {
+        if (isTagged(turn.turnId, turn.scopeId)) return@transaction false
+        val safe = turn.copy(text = CredentialRedactor.redact(turn.text).take(12_000))
+        execute("INSERT OR IGNORE INTO pending_tag_turns VALUES (?, ?, ?)", safe.turnId, safe.scopeId, json.encodeToString(safe))
+        true
+    }
+
+    @Synchronized
+    fun pendingTaggingTurns(): List<PendingTaggingTurn> = read("SELECT body FROM pending_tag_turns ORDER BY rowid")
+
+    @Synchronized
+    fun discardTaggingTurn(turn: PendingTaggingTurn) = execute("DELETE FROM pending_tag_turns WHERE turn_id = ? AND scope_id = ?", turn.turnId, turn.scopeId)
+
+    /** Extraction output, completion marker and queue removal commit together, including empty results. */
+    @Synchronized
+    fun completeTaggingTurn(turn: PendingTaggingTurn, tags: List<TagCandidate>, nowMs: Long) = transaction {
+        // Owner promotion may have moved this turn into another scope while the model was running.
+        if (exists("SELECT 1 FROM pending_tag_turns WHERE turn_id = ? AND scope_id = ?", turn.turnId, turn.scopeId)) {
+            applyTagsInTransaction(turn.conversationId, turn.scopeId, turn.turnId, tags, nowMs)
+            discardTaggingTurn(turn)
+        }
+    }
 
     @Synchronized
     fun editTag(conversationId: String, scopeId: String, candidate: TagCandidate, nowMs: Long): ConversationTag = transaction {
@@ -162,6 +191,11 @@ class SupertagStore(dataDir: File, nowMs: Long = System.currentTimeMillis()) : C
         samples.forEach { sample ->
             val updated = sample.copy(tag = moved(sample.tag))
             execute("INSERT OR IGNORE INTO tag_observations VALUES (?, ?, ?, ?, ?, ?)", sample.turnId, conversationId, hubId, sample.tag.name, sample.observedAtMs, json.encodeToString(updated))
+        }
+        pendingTaggingTurns().filter { it.conversationId == conversationId && it.scopeId == fromScope }.forEach { pending ->
+            val moved = pending.copy(scopeId = hubId)
+            execute("INSERT OR IGNORE INTO pending_tag_turns VALUES (?, ?, ?)", moved.turnId, moved.scopeId, json.encodeToString(moved))
+            discardTaggingTurn(pending)
         }
         execute("INSERT OR IGNORE INTO tag_feedback SELECT conversation_id, ?, name FROM tag_feedback WHERE conversation_id = ? AND scope_id = ?", hubId, conversationId, fromScope)
         execute("DELETE FROM conversation_tags WHERE conversation_id = ? AND scope_id = ?", conversationId, fromScope)
