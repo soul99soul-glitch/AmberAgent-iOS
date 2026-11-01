@@ -136,7 +136,7 @@ struct ChatTopBarView: View {
                 .padding(.top, 10)
 
                 island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))
-                    .padding(.top, 2)
+                    .padding(.top, ChatTopBarLayout.islandTopOffset)
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.island = $0 }
 
                 if flightVisible, !reduceMotion {
@@ -326,7 +326,7 @@ struct ChatTopBarView: View {
                                capsuleScale: reduceMotion ? 1 : islandScale,
                                onAvatarTap: onAvatarTap,
                                onAvatarFrameChange: onAvatarFrameChange)
-            .frame(width: maxWidth, height: 73, alignment: .top)
+            .frame(width: maxWidth, height: ChatTopBarLayout.islandHeight, alignment: .top)
             .contentShape(Rectangle())
             .onTapGesture {
                 let held = pressedPresentation
@@ -352,11 +352,11 @@ struct ChatTopBarView: View {
                 if let onAvatarTap {
                     Button(action: onAvatarTap) {
                         Color.clear
-                            .frame(width: 58, height: 43)
+                            .frame(width: ChatTopBarLayout.avatarDiameter, height: ChatTopBarLayout.avatarDiameter)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .frame(width: maxWidth, height: 43, alignment: .top)
+                    .frame(width: maxWidth, height: ChatTopBarLayout.avatarDiameter, alignment: .top)
                     .transaction { $0.animation = nil }
                     .accessibilityIdentifier("chat.topBar.personaAvatarButton")
                     .accessibilityLabel("形象设定")

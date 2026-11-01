@@ -221,17 +221,33 @@ struct AmberMarkdownView: View {
     @Environment(\.chatArtifactPinAction) private var artifactPinAction
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.legibilityWeight) private var legibilityWeight
+    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
+    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
+
+    private var boundedScale: Double {
+        IOSChatFont.clampedScale(fontScale)
+    }
+
+    private var selectedFont: IOSChatFont {
+        IOSChatFont(rawValue: chatFont) ?? .default
+    }
+
+    private var bodyFontSize: CGFloat {
+        scaledBodyPointSize * boundedScale
+    }
 
     var body: some View {
         let resolved = AmberMarkdownAstCache.shared.result(for: markdown)
         Group {
             if resolved.failed || resolved.children.isEmpty {
                 Text(markdown)
-                    .font(.body)
             } else {
                 blockStack(resolved.children, source: markdown)
             }
         }
+        .font(selectedFont.font(size: bodyFontSize))
+        .lineSpacing(3.2 * boundedScale)
         // UIHostingConfiguration cell self-sizing 会以无约束提案询问理想尺寸,
         // 裸 Text 按"理想单行宽度"报高 → 多行段落被按一行计高,历史行高度系统性
         // 低估、内容被裁(与 ChatMessageListSupport.swift:90-94 修过的 user 气泡
@@ -259,8 +275,8 @@ struct AmberMarkdownView: View {
             let t = buildInlineText(node.children, source: source)
             if style == .magazine {
                 return AnyView(
-                    t.font(.system(size: 17, design: .serif))
-                        .lineSpacing(7)
+                    t.font(.system(size: 17 * boundedScale, design: .serif))
+                        .lineSpacing(7 * boundedScale)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 )
             }
@@ -304,7 +320,7 @@ struct AmberMarkdownView: View {
                 BlockMathView(
                     latex: latex,
                     color: .primary,
-                    pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize
+                    pointSize: bodyFontSize
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             )
@@ -317,7 +333,7 @@ struct AmberMarkdownView: View {
     private func renderDefaultBlock(_ node: PackedAstNode, source: String) -> AnyView {
         if node.children.isEmpty {
             let raw = sliceSource(source, start: node.startOffset, end: node.endOffset)
-            return AnyView(raw.isEmpty ? AnyView(EmptyView()) : AnyView(Text(raw).font(.body)))
+            return AnyView(raw.isEmpty ? AnyView(EmptyView()) : AnyView(Text(raw).font(selectedFont.font(size: bodyFontSize))))
         } else {
             return AnyView(buildInlineText(node.children, source: source))
         }
@@ -327,13 +343,16 @@ struct AmberMarkdownView: View {
 
     private func renderHeading(_ node: PackedAstNode, source: String) -> Text {
         let level = node.headingLevel() ?? 1
-        let sizes: [CGFloat] = style == .compact
-            ? [20, 18, 16, 15, 14, 13]
-            : (style == .magazine ? [30, 23, 19, 17, 16, 15] : [28, 24, 20, 18, 16, 14])
-        let size = sizes[max(0, min(5, level - 1))]
-        let design: Font.Design = style == .magazine ? .serif : .default
-        return buildInlineText(node.children, source: source)
-            .font(.system(size: size, weight: .bold, design: design))
+        let baseSizes: [CGFloat] = style == .compact
+            ? [19, 17.5, 16, 15, 14, 13.5]
+            : (style == .magazine ? [26, 21, 18.5, 17, 16, 15] : ChatStreamingMarkdownTypography.baseHeadingSizes)
+        let ratio = max(0.75, bodyFontSize / IOSChatFont.defaultBodyPointSize)
+        let size = baseSizes[max(0, min(5, level - 1))] * ratio
+        let inlineText = buildInlineText(node.children, source: source)
+        if style == .magazine {
+            return inlineText.font(.system(size: size, weight: .bold, design: .serif))
+        }
+        return inlineText.font(selectedFont.font(size: size).weight(.bold))
     }
 
     // MARK: - Code Block
@@ -445,6 +464,8 @@ struct AmberMarkdownView: View {
         hasher.combine(style)
         hasher.combine(dynamicTypeSize)
         hasher.combine(legibilityWeight)
+        hasher.combine(boundedScale)
+        hasher.combine(chatFont)
         let utf8 = source.utf8
         if let lower = utf8.index(utf8.startIndex, offsetBy: node.startOffset, limitedBy: utf8.endIndex),
            let upper = utf8.index(utf8.startIndex, offsetBy: node.endOffset, limitedBy: utf8.endIndex),
@@ -462,8 +483,12 @@ struct AmberMarkdownView: View {
         // No fixedSize / maxWidth here: AmberTableLayout measures each cell at the
         // resolved column width and proposes (columnWidth, rowHeight), so the Text
         // wraps naturally and never gets truncated or overlapped.
-        buildInlineText(cell?.children ?? [], source: source)
-            .font(isHeader ? .subheadline.weight(.semibold) : (style == .compact ? .subheadline : .body))
+        let cellPointSize = style == .compact ? bodyFontSize * 0.92 : bodyFontSize
+        let cellFont = isHeader
+            ? selectedFont.font(size: cellPointSize).weight(.semibold)
+            : selectedFont.font(size: cellPointSize)
+        return buildInlineText(cell?.children ?? [], source: source)
+            .font(cellFont)
             .multilineTextAlignment(.leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -508,17 +533,19 @@ struct AmberMarkdownView: View {
     // MARK: - Lists
 
     private func renderUnorderedList(_ node: PackedAstNode, source: String) -> some View {
-        VStack(alignment: .leading, spacing: 5.5) {
+        let bulletDiameter = max(4.5, round(bodyFontSize * 0.30 * 2) / 2)
+        let bulletTopPadding = max(5.5, round(bodyFontSize * 0.44 * 2) / 2)
+        return VStack(alignment: .leading, spacing: 5.5) {
             ForEach(Array(node.children.enumerated()), id: \.offset) { _, child in
-                HStack(alignment: .top, spacing: 7) {
+                HStack(alignment: .top, spacing: 8) {
                     Circle()
                         .fill(AmberTheme.accent)
-                        .frame(width: 4.5, height: 4.5)
-                        .padding(.top, 6)
+                        .frame(width: bulletDiameter, height: bulletDiameter)
+                        .padding(.top, bulletTopPadding)
                     renderListItemContent(child, source: source)
-                        .font(.system(size: 13))
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .lineSpacing(2.2)
+                        .font(selectedFont.font(size: bodyFontSize))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .lineSpacing(3.2 * boundedScale)
                 }
             }
         }
@@ -673,7 +700,7 @@ struct AmberMarkdownView: View {
             let raw = inlineCodeText(from: node, source: source)
             guard !raw.isEmpty else { return nil }
             var result = AttributedString(raw)
-            result.font = .system(.body, design: .monospaced)
+            result.font = .system(size: max(12, round(bodyFontSize * 0.90 * 10) / 10), design: .monospaced)
             return result
 
         case .link:

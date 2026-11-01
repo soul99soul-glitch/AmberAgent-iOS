@@ -359,11 +359,9 @@ extension ChatView {
                                         .frame(height: composerState.composerInputHeight)
 
                                         if viewModel.inputText.isEmpty {
-                                            Text(composerState.isBackgroundHandoffMode ? "描述要后台交办的目标…" : inputPlaceholder)
-                                                .font(.body)
-                                                .foregroundStyle(AmberTheme.muted2)
-                                                .lineLimit(1)
-                                                .allowsHitTesting(false)
+                                            ComposerPlaceholderText(
+                                                text: composerState.isBackgroundHandoffMode ? "描述要后台交办的目标…" : inputPlaceholder
+                                            )
                                         }
                                     }
                                     .frame(minHeight: 40)

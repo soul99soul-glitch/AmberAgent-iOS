@@ -121,13 +121,13 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.model.renderIdentity == rhs.model.renderIdentity,
               lhs.model.phoneToolGroup?.signature == rhs.model.phoneToolGroup?.signature,
               lhs.model.assistantTurn == rhs.model.assistantTurn,
+              lhs.displaySettingSignature == rhs.displaySettingSignature,
+              lhs.generativeUiSettingSignature == rhs.generativeUiSettingSignature,
               lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID
         else { return false }
 
         if lhs.usesLiveTail || rhs.usesLiveTail {
             return lhs.model.liveTailModel === rhs.model.liveTailModel &&
-                lhs.displaySettingSignature == rhs.displaySettingSignature &&
-                lhs.generativeUiSettingSignature == rhs.generativeUiSettingSignature &&
                 lhs.reasoningLevelLabel == rhs.reasoningLevelLabel
         }
 

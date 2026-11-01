@@ -908,6 +908,14 @@ enum IOSChatFont: String, CaseIterable, Identifiable {
     case serif
     case monospace
 
+    /// Canonical base body point size shared across Display Settings preview, user bubbles,
+    /// streaming/static assistant Markdown, and composer input.
+    static let defaultBodyPointSize: CGFloat = 16.0
+
+    static func clampedScale(_ raw: Double) -> Double {
+        min(max(raw, 0.88), 1.25)
+    }
+
     var id: String { rawValue }
 
     var title: String {
@@ -930,6 +938,10 @@ enum IOSChatFont: String, CaseIterable, Identifiable {
         guard let bundledFontName else { return .system(size: size) }
         // Callers already apply Dynamic Type through @ScaledMetric.
         return .custom(bundledFontName, fixedSize: size)
+    }
+
+    func uiFont(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+        applying(to: UIFont.systemFont(ofSize: size, weight: weight))
     }
 
     func applying(to font: UIFont) -> UIFont {

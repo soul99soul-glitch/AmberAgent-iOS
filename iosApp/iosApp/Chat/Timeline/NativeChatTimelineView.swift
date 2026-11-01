@@ -62,13 +62,16 @@ struct NativeChatTimelineView: View {
     @State private var laidOutHistoryFirstMessageID: String?
     @State private var expandedPhoneToolGroupIDs = ChatPhoneToolGroupExpansionStore.shared.expandedIDs
     @State private var phoneToolGroupToggleHandler = ChatPhoneToolGroupToggleHandler()
+    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
+    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    @AppStorage(IOSDisplayPreferenceKeys.agentName) private var agentName = true
 
     var body: some View {
         let _ = phoneToolGroupToggleHandler.action = togglePhoneToolGroup
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
-        let displaySettingSignature = String(describing: displaySetting)
+        let displaySettingSignature = "\(String(describing: displaySetting))|scale:\(IOSChatFont.clampedScale(fontScale))|font:\(chatFont)|agentName:\(agentName)"
         let generativeUiSettingSignature = String(describing: generativeUiSetting)
         let effectiveStreamedMessageIDs = effectiveStreamedMessageIDsForRender(
             event: signal.event,

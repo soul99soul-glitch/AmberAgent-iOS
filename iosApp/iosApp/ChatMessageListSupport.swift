@@ -61,10 +61,10 @@ struct ChatUserBubble: View {
     let text: String
     @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
     @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     private var boundedScale: Double {
-        min(max(fontScale, 0.88), 1.25)
+        IOSChatFont.clampedScale(fontScale)
     }
 
     private var selectedFont: IOSChatFont {
@@ -98,7 +98,7 @@ struct ChatUserBubble: View {
         Text(text)
             .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.accentInk)
-            .lineSpacing(2.5 * boundedScale)
+            .lineSpacing(3.2 * boundedScale)
             // cell self-sizing 测量会传入受限的垂直 proposal,普通 Text 会按 proposal
             // 截断——曾表现为用户消息只显示一行。fixedSize 让文本按理想高度完整布局;
             // 超长消息以 50 行为折叠上限,避免单条消息占掉数十屏。
@@ -121,14 +121,14 @@ struct ChatAssistantText<Content: View>: View {
     let content: Content
     @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
     @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 13.8
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
     private var boundedScale: Double {
-        min(max(fontScale, 0.88), 1.25)
+        IOSChatFont.clampedScale(fontScale)
     }
 
     private var selectedFont: IOSChatFont {
@@ -139,7 +139,7 @@ struct ChatAssistantText<Content: View>: View {
         content
             .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.foreground)
-            .lineSpacing(2.6 * boundedScale)
+            .lineSpacing(3.2 * boundedScale)
             .fixedSize(horizontal: false, vertical: true)
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

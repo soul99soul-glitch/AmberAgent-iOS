@@ -644,7 +644,7 @@ enum AmberAgentPersonaMood: Equatable, Sendable {
 
 struct AmberAgentPersonaMedallionView: View {
     let mood: AmberAgentPersonaMood
-    var diameter: CGFloat = 58
+    var diameter: CGFloat = ChatTopBarLayout.avatarDiameter
     var presetOverride: AmberPersonaPreset? = nil
     var accentOverride: Color? = nil
     var storeOverride: AmberPersonaStore? = nil
@@ -757,7 +757,7 @@ struct AmberAgentPersonaMedallionView: View {
         Image(uiImage: uiImage)
             .resizable()
             .scaledToFill()
-            .frame(width: diameter - 5, height: diameter - 5)
+            .frame(width: max(1, diameter - 2), height: max(1, diameter - 2))
             .clipShape(Circle())
     }
 
@@ -878,7 +878,9 @@ struct AmberAgentPersonaMedallionView: View {
                 with: .color(AmberTheme.foreground)
             )
         }
+        .scaleEffect(1.16)
         .frame(width: diameter, height: diameter)
+        .clipShape(Circle())
     }
 
     private var amberCrystalCanvas: some View {
@@ -908,7 +910,9 @@ struct AmberAgentPersonaMedallionView: View {
                 )
             }
         }
+        .scaleEffect(1.16)
         .frame(width: diameter, height: diameter)
+        .clipShape(Circle())
     }
 }
 

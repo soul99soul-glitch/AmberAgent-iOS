@@ -354,23 +354,12 @@ struct ChatActivityIslandView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Layer 0: Fixed Top Avatar Anchor — visual center and tap anchor are locked to top-center
-            // of the fixed `maxWidth` container and never move when the status capsule below changes width or height.
-            avatarMedallionView
-                .frame(width: 58, height: 58)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
-                    onAvatarFrameChange?(rect)
-                }
-                .frame(width: maxWidth, height: 58, alignment: .top)
-                .transaction { transaction in
-                    transaction.animation = nil
-                }
-                .zIndex(0)
-
-            // Layer 1: Independent Status Capsule — expands/contracts around its own center without moving the avatar.
+            // Layer 0 (Background): Independent Status Capsule — sits slightly behind the avatar's bottom edge
+            // so the avatar gently intrudes onto the top of the capsule without occluding the portrait.
             islandContent
-                .padding(.horizontal, 12)
-                .frame(height: state.kind == .title ? 26 : 30)
+                .padding(.horizontal, 13)
+                .padding(.top, 2)
+                .frame(height: state.kind == .title ? 30 : 32)
                 .fixedSize(horizontal: true, vertical: false)
                 .background { glowUnderlay }
                 .modifier(ChatActivityIslandGlass())
@@ -379,11 +368,25 @@ struct ChatActivityIslandView: View {
                     reduceMotion ? nil : .easeInOut(duration: 0.22),
                     value: state.visualKey
                 )
-                .frame(width: maxWidth, height: 30, alignment: .center)
-                .padding(.top, 43)
+                .frame(width: maxWidth, height: ChatTopBarLayout.islandCapsuleHeight, alignment: .center)
+                .padding(.top, ChatTopBarLayout.islandCapsuleTopOffset)
+                .zIndex(0)
+
+            // Layer 1 (Foreground): Fixed Top Avatar Anchor — rendered in front of the status capsule with
+            // an 8pt bottom intrusion, locked to top-center of `maxWidth` so it never shifts on width changes.
+            avatarMedallionView
+                .frame(width: ChatTopBarLayout.avatarDiameter, height: ChatTopBarLayout.avatarDiameter)
+                .shadow(color: .black.opacity(0.10), radius: 3.5, x: 0, y: 1.5)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
+                    onAvatarFrameChange?(rect)
+                }
+                .frame(width: maxWidth, height: ChatTopBarLayout.avatarDiameter, alignment: .top)
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
                 .zIndex(1)
         }
-        .frame(width: maxWidth, height: 73, alignment: .top)
+        .frame(width: maxWidth, height: ChatTopBarLayout.islandHeight, alignment: .top)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(accessibilitySummary))
@@ -393,14 +396,14 @@ struct ChatActivityIslandView: View {
     private var avatarMedallionView: some View {
         if let onAvatarTap {
             Button(action: onAvatarTap) {
-                AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
+                AmberAgentPersonaMedallionView(mood: personaMood, diameter: ChatTopBarLayout.avatarDiameter)
                     .contentShape(Circle())
             }
             .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
             .accessibilityIdentifier("chat.topBar.personaAvatarButton")
             .accessibilityLabel(Text(IOSAppLocalization.string("形象设定", defaultValue: "形象设定")))
         } else {
-            AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
+            AmberAgentPersonaMedallionView(mood: personaMood, diameter: ChatTopBarLayout.avatarDiameter)
                 .allowsHitTesting(false)
         }
     }

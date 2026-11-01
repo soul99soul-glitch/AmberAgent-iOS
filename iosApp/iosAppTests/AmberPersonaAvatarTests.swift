@@ -421,6 +421,14 @@ final class AmberPersonaAvatarTests: XCTestCase {
 
         let settings = SettingsStore(userDefaults: defaults)
         let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let provider = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "测试服务商", apiKey: "sk-test-fixture", baseUrl: "https://example.invalid/v1",
+            modelName: "Amber-4o", modelId: "gpt-4o"
+        )
+        let addedProvider = sharedSettings.addProvider(provider)
+        if let chatModel = addedProvider.models.first(where: { $0.type == ModelType.chat }) {
+            sharedSettings.setCurrentChatModelId(chatModel.id.toHexDashString())
+        }
         let viewModel = ChatViewModel(settingsStore: settings, sharedSettings: sharedSettings)
         viewModel.conversationStore = conversations
         await viewModel.startNewConversation()
@@ -647,13 +655,13 @@ final class AmberPersonaAvatarTests: XCTestCase {
         for (label, rect) in measuredAvatarFrames {
             XCTAssertEqual(rect.midX, baselineRect.midX, accuracy: 0.05, "Avatar center X must remain fixed for \(label)")
             XCTAssertEqual(rect.midY, baselineRect.midY, accuracy: 0.05, "Avatar center Y must remain fixed for \(label)")
-            XCTAssertEqual(rect.width, 58, accuracy: 0.05)
-            XCTAssertEqual(rect.height, 58, accuracy: 0.05)
+            XCTAssertEqual(rect.width, ChatTopBarLayout.avatarDiameter, accuracy: 0.05)
+            XCTAssertEqual(rect.height, ChatTopBarLayout.avatarDiameter, accuracy: 0.05)
         }
 
         // Capture visual comparison sheet proving fixed avatar center X/Y across short and long status capsules
         window.rootViewController = UIHostingController(
-            rootView: VStack(spacing: 22) {
+            rootView: VStack(spacing: 18) {
                 Text("顶部伪灵动岛宽度伸缩时：形象中心与点击锚点恒定不变")
                     .font(.headline)
                     .foregroundStyle(AmberTheme.foreground)
@@ -680,15 +688,292 @@ final class AmberPersonaAvatarTests: XCTestCase {
                             previewRevision: { _ in nil },
                             onAvatarTap: {}
                         )
-                        .frame(height: 82)
+                        .frame(height: ChatTopBarLayout.controlsHeight + 4)
                     }
                 }
             }
-            .padding(.top, 28)
+            .padding(.top, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(AmberTheme.background.ignoresSafeArea())
             .environment(\.locale, Locale(identifier: "zh_Hans"))
         )
         try await captureWindow("04-top-avatar-fixed-anchor-across-widths.png")
+    }
+
+    func testChatFontScaleWiringAndForegroundAvatarLayering() async throws {
+        // 1. Verify canonical typography constants and heading/code scaling
+        XCTAssertEqual(IOSChatFont.defaultBodyPointSize, 16.0, accuracy: 0.01)
+        let defaultHeading = ChatStreamingMarkdownTypography.applyingChatFont(
+            .default,
+            to: .init(
+                h1Font: ChatStreamingMarkdownTypography.bodyFonts(chatFont: .default, pointSize: 16),
+                h2Font: ChatStreamingMarkdownTypography.bodyFonts(chatFont: .default, pointSize: 16),
+                h3Font: ChatStreamingMarkdownTypography.bodyFonts(chatFont: .default, pointSize: 16),
+                h4Font: ChatStreamingMarkdownTypography.bodyFonts(chatFont: .default, pointSize: 16),
+                h5Font: ChatStreamingMarkdownTypography.bodyFonts(chatFont: .default, pointSize: 16),
+                h6Font: ChatStreamingMarkdownTypography.bodyFonts(chatFont: .default, pointSize: 16),
+                textColor: .label
+            ),
+            pointSize: 16.0
+        )
+        let scaledHeading = ChatStreamingMarkdownTypography.applyingChatFont(
+            .default,
+            to: defaultHeading,
+            pointSize: 16.0 * 1.22
+        )
+        XCTAssertGreaterThan(scaledHeading.h2Font.normal.pointSize, defaultHeading.h2Font.normal.pointSize + 2.5)
+        XCTAssertGreaterThan(
+            ChatStreamingMarkdownTypography.inlineCodeFont(pointSize: 16.0 * 1.22).pointSize,
+            ChatStreamingMarkdownTypography.inlineCodeFont(pointSize: 16.0).pointSize + 2.0
+        )
+
+        // 2. Verify top bar geometry and foreground avatar layering (avatar bottom overlaps capsule top without being occluded)
+        XCTAssertEqual(ChatTopBarLayout.avatarDiameter, 76)
+        XCTAssertEqual(ChatTopBarLayout.islandTopOffset, 8)
+        XCTAssertEqual(ChatTopBarLayout.avatarCapsuleOverlap, 8)
+        XCTAssertEqual(ChatTopBarLayout.islandCapsuleTopOffset, 68)
+        XCTAssertEqual(ChatTopBarLayout.controlsHeight, 108)
+
+        let archiveDir = URL(
+            fileURLWithPath: "/Users/arquiel/.synara/userdata/project-context/0f3f2134-3ef9-4137-8b75-6d1496ff94d1/library/snapshots/ios-font-scale-avatar-foreground",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: archiveDir, withIntermediateDirectories: true)
+
+        let suite = "AmberFontAndAvatarForeground.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let standardDefaults = UserDefaults.standard
+        let originalScale = standardDefaults.object(forKey: IOSDisplayPreferenceKeys.fontScale)
+        let originalFont = standardDefaults.object(forKey: IOSDisplayPreferenceKeys.chatFont)
+        defer {
+            if let originalScale {
+                standardDefaults.set(originalScale, forKey: IOSDisplayPreferenceKeys.fontScale)
+            } else {
+                standardDefaults.removeObject(forKey: IOSDisplayPreferenceKeys.fontScale)
+            }
+            if let originalFont {
+                standardDefaults.set(originalFont, forKey: IOSDisplayPreferenceKeys.chatFont)
+            } else {
+                standardDefaults.removeObject(forKey: IOSDisplayPreferenceKeys.chatFont)
+            }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        // Prepare a distinctive custom portrait with a bright crimson collar at the bottom edge
+        // so we can both visually and programmatically verify the bottom edge is in front of the capsule
+        let portraitImage = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 240)).image { ctx in
+            let rect = CGRect(x: 0, y: 0, width: 240, height: 240)
+            UIColor(red: 0.95, green: 0.89, blue: 0.80, alpha: 1.0).setFill()
+            ctx.fill(rect)
+            // Hat brim & warm portrait silhouette
+            UIColor(red: 0.58, green: 0.36, blue: 0.22, alpha: 1.0).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 28, y: 18, width: 184, height: 96)).fill()
+            // Face
+            UIColor(red: 0.98, green: 0.88, blue: 0.78, alpha: 1.0).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 68, y: 60, width: 104, height: 112)).fill()
+            // Eyes
+            UIColor(red: 0.22, green: 0.16, blue: 0.14, alpha: 1.0).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 92, y: 108, width: 12, height: 14)).fill()
+            UIBezierPath(ovalIn: CGRect(x: 136, y: 108, width: 12, height: 14)).fill()
+            // Crimson robe/collar at the bottom (y = 168..240) — matches Muse's red collar overlap zone
+            UIColor(red: 0.86, green: 0.18, blue: 0.16, alpha: 1.0).setFill()
+            UIBezierPath(roundedRect: CGRect(x: 42, y: 168, width: 156, height: 72), cornerRadius: 28).fill()
+        }
+        AmberPersonaStore.shared.saveCustomAvatar(portraitImage)
+        defer {
+            AmberPersonaStore.shared.resetToDefault()
+        }
+
+        let conversations = IOSConversationStore(baseDirectory: tempDir, subagentConversationIDsProvider: { [] })
+        await conversations.bootstrap()
+        _ = await conversations.newConversation()
+        if let cid = conversations.currentConversation?.id {
+            await conversations.renameConversation(id: cid, title: "清晨问候")
+        }
+
+        let settings = SettingsStore(userDefaults: defaults)
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let provider = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "测试服务商", apiKey: "sk-test-fixture", baseUrl: "https://example.invalid/v1",
+            modelName: "Amber-4o", modelId: "gpt-4o"
+        )
+        let addedProvider = sharedSettings.addProvider(provider)
+        if let chatModel = addedProvider.models.first(where: { $0.type == ModelType.chat }) {
+            sharedSettings.setCurrentChatModelId(chatModel.id.toHexDashString())
+        }
+        let viewModel = ChatViewModel(settingsStore: settings, sharedSettings: sharedSettings)
+        viewModel.conversationStore = conversations
+        await viewModel.startNewConversation()
+        if let cid = conversations.currentConversation?.id {
+            await conversations.renameConversation(id: cid, title: "清晨问候")
+        }
+
+        let userMsg1 = UIMessage.companion.user(prompt: "早")
+        let asstMsg1 = UIMessage.companion.assistant(
+            prompt: "早。昨晚睡得还行吗？今天上午准备先处理哪件事？"
+        )
+        let userMsg2 = UIMessage.companion.user(prompt: "买了盒马的大包子")
+        let asstMsg2 = UIMessage.companion.assistant(
+            prompt: """
+            这个点吃包子挺合适，热乎又顶饱。盒马有几款大包确实做得不错，像香菇菜包、酱肉包或者流沙包都挺受欢迎。
+
+            ### 早餐搭配建议
+            - **咸口大包**：配一杯温豆浆、纯牛奶或清爽的绿茶，解腻又舒服。
+            - **甜口流沙/豆沙包**：搭一杯美式咖啡或无糖乌龙茶，刚好中和甜度。
+            """
+        )
+
+        let dao = IosDatabaseFactory.shared.createDatabase(
+            atFilePath: tempDir.appendingPathComponent("runs.db").path
+        ).agentRuntimeDao()
+        let center = ConversationActivityCenter(conversationStore: conversations, dao: dao, startedAt: .distantPast)
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activityStore = IOSSubAgentActivityStore(
+            tasks: tasks,
+            defaults: defaults,
+            launchedAt: Date(),
+            loadRuns: { [] }
+        )
+        let router = RouterPath()
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKey = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        window.overrideUserInterfaceStyle = .light
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKey?.makeKey()
+        }
+
+        func capture(_ fileName: String) async throws -> UIImage {
+            try await Task.sleep(for: .milliseconds(520))
+            window.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let png = try XCTUnwrap(image.pngData())
+            try png.write(to: archiveDir.appendingPathComponent(fileName), options: .atomic)
+            return image
+        }
+
+        func measureViewHeight<V: View>(_ view: V, width: CGFloat = 340) -> CGFloat {
+            let hosting = UIHostingController(rootView: view.frame(width: width))
+            let size = hosting.sizeThatFits(in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
+            return size.height
+        }
+
+        // Measure user bubble & markdown heights at 100% (1.0) vs 122% (1.22)
+        standardDefaults.set(1.0, forKey: IOSDisplayPreferenceKeys.fontScale)
+        standardDefaults.set(IOSChatFont.default.rawValue, forKey: IOSDisplayPreferenceKeys.chatFont)
+        let userHeight100 = measureViewHeight(ChatUserBubble(text: "买了盒马的大包子，今天早上配一杯热豆浆刚刚好"))
+        let mdHeight100 = measureViewHeight(AmberMarkdownView(markdown: """
+        这个点吃包子挺合适，热乎又顶饱。
+
+        ### 早餐搭配建议
+        - **咸口大包**：配一杯温豆浆、纯牛奶或清爽的绿茶，解腻又舒服。
+        - **甜口流沙包**：搭一杯美式咖啡或无糖乌龙茶，刚好中和甜度。
+        """))
+
+        // Mount real ChatView at 100% default font scale
+        window.rootViewController = UIHostingController(
+            rootView: NavigationStack {
+                ChatView(
+                    settingsStore: settings,
+                    sharedSettings: sharedSettings,
+                    viewModel: viewModel,
+                    activityStore: activityStore
+                )
+            }
+            .environment(center)
+            .environment(conversations)
+            .environment(router)
+            .environment(\.locale, Locale(identifier: "zh_Hans"))
+        )
+        window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(220))
+        viewModel.messages = [userMsg1, asstMsg1, userMsg2, asstMsg2]
+        viewModel.bumpMessageRevision(reason: .conversationSwitch)
+        _ = try await capture("01-chat-font-scale-default-100.png")
+
+        // Switch fontScale to 1.22 (122%) while ChatView is mounted — must immediately update without recreating ChatView!
+        standardDefaults.set(1.22, forKey: IOSDisplayPreferenceKeys.fontScale)
+        let userHeight122 = measureViewHeight(ChatUserBubble(text: "买了盒马的大包子，今天早上配一杯热豆浆刚刚好"))
+        let mdHeight122 = measureViewHeight(AmberMarkdownView(markdown: """
+        这个点吃包子挺合适，热乎又顶饱。
+
+        ### 早餐搭配建议
+        - **咸口大包**：配一杯温豆浆、纯牛奶或清爽的绿茶，解腻又舒服。
+        - **甜口流沙包**：搭一杯美式咖啡或无糖乌龙茶，刚好中和甜度。
+        """))
+        XCTAssertGreaterThan(userHeight122, userHeight100 + 4.0, "User bubble must scale up with fontScale")
+        XCTAssertGreaterThan(mdHeight122, mdHeight100 + 18.0, "Assistant Markdown (paragraph + heading + bullet list) must scale up with fontScale")
+
+        _ = try await capture("02-chat-font-scale-large-122.png")
+
+        // Capture DisplayFontSettingsView at 122% showing matching preview card
+        window.rootViewController = UIHostingController(
+            rootView: NavigationStack {
+                DisplayFontSettingsView(sharedSettings: sharedSettings)
+            }
+            .environment(\.locale, Locale(identifier: "zh_Hans"))
+        )
+        _ = try await capture("03-display-font-settings-122.png")
+
+        // Capture close-up proof of foreground avatar overlapping the top of the status capsule across states
+        window.rootViewController = UIHostingController(
+            rootView: VStack(spacing: 28) {
+                Text("顶部形象放大下移 + 前景轻侵入标题岛（不遮挡帽檐与领口）")
+                    .font(.headline)
+                    .foregroundStyle(AmberTheme.foreground)
+
+                ChatTopBarView(
+                    presentation: .idle(.conversationTitle("清晨问候")),
+                    conversationID: "fg-1",
+                    hasMessages: true,
+                    isGenerating: false,
+                    notices: [],
+                    shelfHeight: 300,
+                    onBack: {},
+                    onIslandTap: { _ in },
+                    onCancel: {},
+                    onOpenConversation: { _ in true },
+                    onDismiss: { _ in },
+                    onNewConversation: {},
+                    loadPreview: { _ in nil },
+                    previewRevision: { _ in nil },
+                    onAvatarTap: {}
+                )
+                .frame(height: ChatTopBarLayout.controlsHeight + 6)
+
+                ChatTopBarView(
+                    presentation: .active(.activity(kind: .tool, title: "正在读取网页：早安营养搭配指南", systemImage: "globe", tint: .amber)),
+                    conversationID: "fg-2",
+                    hasMessages: true,
+                    isGenerating: true,
+                    notices: [],
+                    shelfHeight: 300,
+                    onBack: {},
+                    onIslandTap: { _ in },
+                    onCancel: {},
+                    onOpenConversation: { _ in true },
+                    onDismiss: { _ in },
+                    onNewConversation: {},
+                    loadPreview: { _ in nil },
+                    previewRevision: { _ in nil },
+                    onAvatarTap: {}
+                )
+                .frame(height: ChatTopBarLayout.controlsHeight + 6)
+            }
+            .padding(.top, 36)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(AmberTheme.background.ignoresSafeArea())
+            .environment(\.locale, Locale(identifier: "zh_Hans"))
+        )
+        _ = try await capture("04-top-avatar-foreground-overlap-comparison.png")
     }
 }

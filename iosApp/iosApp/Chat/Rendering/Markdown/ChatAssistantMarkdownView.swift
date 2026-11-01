@@ -66,7 +66,7 @@ struct ChatAssistantMarkdownView: View {
     // 不再暴露 microsoft/liyanan/streamingBlock/coalesced 开关给用户。
     @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
     @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
     /// per-view-instance 的「这个 bubble 用过 block 流式渲染」latch，覆盖 completion 瞬间；
     /// 回收后的完成态由 projection 层 hasEverStreamed + liveRenderingEnabled 驱动。
     @State private var hasUsedBlockMarkdownRenderer = false
@@ -401,11 +401,13 @@ struct ChatAssistantMarkdownView: View {
     /// 完成态的 view 实例可以继续使用 SwiftStreamingMarkdown 保持 renderer 连续性,但必须
     /// 退出文字动画路径,避免 UIKit 段落视图在完成/回收阶段继续走动态文字更新和尺寸缓存。
     private var boundedFontScale: Double {
-        min(max(fontScale, 0.88), 1.25)
+        IOSChatFont.clampedScale(fontScale)
     }
 
     private func streamingMarkdownConfig(liveStreaming: Bool) -> SwiftStreamingMarkdown.MarkdownRenderConfig {
         let scale = boundedFontScale
+        let effectivePointSize = scaledBodyPointSize * scale
+        let selectedChatFont = IOSChatFont(rawValue: chatFont) ?? .default
         let foreground = UIColor(AmberTheme.foreground)
         let foreground2 = UIColor(AmberTheme.foreground2)
         let muted = UIColor(AmberTheme.muted)
@@ -413,12 +415,13 @@ struct ChatAssistantMarkdownView: View {
         let border = UIColor(AmberTheme.border)
         let accent = UIColor(AmberTheme.accent)
         let bodyFonts = ChatStreamingMarkdownTypography.bodyFonts(
-            chatFont: IOSChatFont(rawValue: chatFont) ?? .default,
-            pointSize: scaledBodyPointSize * scale
+            chatFont: selectedChatFont,
+            pointSize: effectivePointSize
         )
         let headingFonts = ChatStreamingMarkdownTypography.applyingChatFont(
-            IOSChatFont(rawValue: chatFont) ?? .default,
-            to: SwiftStreamingMarkdown.MarkdownRenderConfig.defaultHeadingStyle
+            selectedChatFont,
+            to: SwiftStreamingMarkdown.MarkdownRenderConfig.defaultHeadingStyle,
+            pointSize: effectivePointSize
         )
         let paragraphStyle = SwiftStreamingMarkdown.MarkdownRenderConfig.MarkdownTextStyle(
             textFonts: bodyFonts,
@@ -453,7 +456,7 @@ struct ChatAssistantMarkdownView: View {
             boldTextColor: foreground,
             linkTextFont: bodyFonts.normal,
             linkTextColor: accent,
-            codeTextFont: SwiftStreamingMarkdown.MarkdownRenderConfig.defaultInlineStyle.codeTextFont,
+            codeTextFont: ChatStreamingMarkdownTypography.inlineCodeFont(pointSize: effectivePointSize),
             codeTextColor: foreground2,
             codeBackgroundColor: surface2,
             codeUnderlineColor: border
@@ -471,8 +474,8 @@ struct ChatAssistantMarkdownView: View {
             .withParagraphStyle(value: paragraphStyle)
             .withTableStyle(value: tableStyle)
             .withInlineStyle(value: inlineStyle)
-            .withParagraphLineSpacing(value: 4 * scale)
-            .withHeadingLineSpacing(value: 4 * scale)
+            .withParagraphLineSpacing(value: 3.2 * scale)
+            .withHeadingLineSpacing(value: 3.2 * scale)
             .withBlockSpacing(value: 8)
             .withListItemSpacing(value: 4)
             .withTableCellHorizontalPadding(value: 12)

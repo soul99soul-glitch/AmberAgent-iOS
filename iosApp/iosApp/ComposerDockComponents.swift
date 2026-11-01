@@ -196,6 +196,25 @@ final class ComposerInputController {
     }
 }
 
+struct ComposerPlaceholderText: View {
+    let text: String
+    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
+    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
+
+    private var selectedFont: IOSChatFont {
+        IOSChatFont(rawValue: chatFont) ?? .default
+    }
+
+    var body: some View {
+        Text(text)
+            .font(selectedFont.font(size: scaledBodyPointSize * IOSChatFont.clampedScale(fontScale)))
+            .foregroundStyle(AmberTheme.muted2)
+            .lineLimit(1)
+            .allowsHitTesting(false)
+    }
+}
+
 struct ComposerInputTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
@@ -205,15 +224,25 @@ struct ComposerInputTextView: UIViewRepresentable {
     var controller: ComposerInputController
     var onSubmit: () -> Void
 
+    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
+    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+
     private let minHeight: CGFloat = 40
     private let maxLines: CGFloat = 5
+
+    private var resolvedUIFont: UIFont {
+        let baseScaled = UIFontMetrics(forTextStyle: .body).scaledValue(for: IOSChatFont.defaultBodyPointSize)
+        let pointSize = baseScaled * IOSChatFont.clampedScale(fontScale)
+        let selectedFont = IOSChatFont(rawValue: chatFont) ?? .default
+        return selectedFont.uiFont(size: pointSize, weight: .regular)
+    }
 
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView()
         controller.textView = textView
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
-        textView.font = .preferredFont(forTextStyle: .body)
+        textView.font = resolvedUIFont
         textView.adjustsFontForContentSizeCategory = true
         textView.textColor = .label
         textView.tintColor = UIColor(AmberTheme.accent)
@@ -228,6 +257,10 @@ struct ComposerInputTextView: UIViewRepresentable {
     func updateUIView(_ textView: UITextView, context: Context) {
         context.coordinator.parent = self
         controller.textView = textView
+        let targetFont = resolvedUIFont
+        if textView.font != targetFont {
+            textView.font = targetFont
+        }
         if textView.markedTextRange == nil, textView.text != text {
             textView.text = text
         }

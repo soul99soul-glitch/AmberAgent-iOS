@@ -208,7 +208,11 @@ private struct DisplayDivider: View {
 private struct FontPreviewCard: View {
     let font: IOSChatFont
     let scale: Double
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
+
+    private var boundedScale: Double {
+        IOSChatFont.clampedScale(scale)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -216,9 +220,9 @@ private struct FontPreviewCard: View {
             Text(verbatim: "Aa Bb Cc · 0123456789")
                 .foregroundStyle(AmberTheme.muted)
         }
-            .font(font.font(size: scaledBodyPointSize * scale))
+            .font(font.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.foreground2)
-            .lineSpacing(3 * scale)
+            .lineSpacing(3.2 * boundedScale)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(15)
             .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))

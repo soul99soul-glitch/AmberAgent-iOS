@@ -1,7 +1,13 @@
 import CoreGraphics
 
 enum ChatTopBarLayout {
-    static let controlsHeight: CGFloat = 78
+    static let avatarDiameter: CGFloat = 76
+    static let islandTopOffset: CGFloat = 8
+    static let avatarCapsuleOverlap: CGFloat = 8
+    static let islandCapsuleTopOffset: CGFloat = avatarDiameter - avatarCapsuleOverlap // 68
+    static let islandCapsuleHeight: CGFloat = 32
+    static let islandHeight: CGFloat = islandCapsuleTopOffset + islandCapsuleHeight // 100
+    static let controlsHeight: CGFloat = islandTopOffset + islandHeight // 108
     static let toolbarButtonDiameter: CGFloat = 40
     /// 停靠位自绘面板与岛上回顾的系统 popover 圆角保持一致。
     static let dockPanelCornerRadius: CGFloat = 30
