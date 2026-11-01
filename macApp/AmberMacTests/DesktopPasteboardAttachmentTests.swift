@@ -10,6 +10,8 @@ import XCTest
     private final class RecordingProvider: DesktopTextProvider {
         var configurations: [DesktopProviderConfiguration] = []
         var requests: [[DesktopMessage]] = []
+        var runs: [DesktopGeneration] = []
+        var cancelledFlags: [Bool] = []
 
         func userMessage(id: UUID, text: String, attachments: [DesktopMessageAttachment]) throws -> DesktopMessage {
             let images = attachments.compactMap { item -> DesktopMessageImage? in
@@ -23,9 +25,16 @@ import XCTest
 
         func start(configuration: DesktopProviderConfiguration, apiKey: String,
                    messages: [DesktopMessage], responseID: UUID) throws -> DesktopGeneration {
+            let run = DesktopGeneration()
+            let index = runs.count
+            runs.append(run)
+            cancelledFlags.append(false)
+            run.installCancellation { [weak self] in
+                Task { @MainActor in self?.cancelledFlags[index] = true }
+            }
             configurations.append(configuration)
             requests.append(messages)
-            return DesktopGeneration()
+            return run
         }
     }
 
@@ -234,5 +243,90 @@ import XCTest
         XCTAssertFalse(DesktopPasteboardImport.isPasteShortcut(modifierFlags: [.control], charactersIgnoringModifiers: "v", keyCode: 9))
         XCTAssertFalse(DesktopPasteboardImport.isPasteShortcut(modifierFlags: [], charactersIgnoringModifiers: "v", keyCode: 9))
         XCTAssertFalse(DesktopPasteboardImport.isPasteShortcut(modifierFlags: [.command], charactersIgnoringModifiers: "c", keyCode: 8))
+    }
+
+    func testCrossSessionPasteAndConcurrentSendIsolation() async throws {
+        let (workspace, provider, tempRoot) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let firstID = try XCTUnwrap(workspace.selectedID)
+        workspace.createConversation()
+        let secondID = try XCTUnwrap(workspace.selectedID)
+        workspace.select(firstID)
+
+        // 1. 会话A发起流式生成
+        workspace.draft = "会话A的问题"
+        workspace.send()
+        XCTAssertTrue(workspace.isSelectedConversationGenerating)
+        XCTAssertEqual(provider.requests.count, 1)
+
+        // 2. 切换到会话B，验证粘贴图片、保留独立草稿与附件，并发起会话B的请求
+        workspace.select(secondID)
+        XCTAssertFalse(workspace.isSelectedConversationGenerating)
+        workspace.draft = "为什么这里这么乱，能改吗"
+
+        let pb = NSPasteboard(name: NSPasteboard.Name("amber.test.cross-session.\(UUID().uuidString)"))
+        pb.clearContents()
+        XCTAssertTrue(pb.setData(try makeImageData(type: .png, width: 20, height: 20), forType: .png))
+
+        XCTAssertTrue(workspace.pasteFromPasteboard(pb))
+        XCTAssertNil(workspace.errorMessage, "切换离开生成中的会话A后，会话B粘贴图片不应报『请等待当前回复结束或停止后再粘贴图片。』")
+        await waitForAttachments(workspace)
+        XCTAssertEqual(workspace.pendingAttachments.count, 1)
+        XCTAssertEqual(workspace.draft, "为什么这里这么乱，能改吗")
+
+        workspace.send()
+        XCTAssertEqual(provider.requests.count, 2, "会话B应在会话A生成期间独立发起请求")
+        XCTAssertTrue(workspace.isSelectedConversationGenerating)
+        XCTAssertTrue(workspace.isConversationGenerating(firstID))
+        XCTAssertTrue(workspace.isConversationGenerating(secondID))
+
+        // 3. 同一正在生成的会话B内继续粘贴图片，仍应按本会话规则提示等待；发送纯文本则进入B的排队队列
+        XCTAssertTrue(workspace.pasteFromPasteboard(pb))
+        XCTAssertEqual(workspace.errorMessage, "请等待当前回复结束或停止后再粘贴图片。")
+        workspace.draft = "会话B的排队追问"
+        workspace.send()
+        XCTAssertEqual(workspace.selectedQueuedMessages.map(\.text), ["会话B的排队追问"])
+
+        // 4. 会话A的流式输出与工具调用只落入会话A，不串入当前选中的会话B
+        let runA = try XCTUnwrap(provider.runs.first)
+        let runB = try XCTUnwrap(provider.runs.last)
+        let toolCall = DesktopToolCall(id: "call-a", name: "read_file", input: "{\"path\":\"a.txt\"}", output: "A-content", status: .complete)
+        runA.yield(.snapshot(text: "会话A的流式回答", reasoning: "A的思考", canonicalJSON: nil, unsupportedPartCount: 0, tools: [toolCall]))
+        workspace.apply(runA.drain(), for: firstID)
+
+        runB.yield(.snapshot(text: "会话B的流式回答", reasoning: "", canonicalJSON: nil, unsupportedPartCount: 0, tools: []))
+        workspace.apply(runB.drain(), for: secondID)
+
+        let messagesB = try XCTUnwrap(workspace.selectedConversation?.messages)
+        XCTAssertEqual(messagesB.last?.text, "会话B的流式回答")
+        XCTAssertTrue(messagesB.last?.tools.isEmpty ?? false)
+
+        // 5. 来回切换A与B，各自展示自身消息与运行状态
+        workspace.select(firstID)
+        XCTAssertTrue(workspace.isSelectedConversationGenerating)
+        XCTAssertTrue(workspace.selectedQueuedMessages.isEmpty, "会话B的排队消息不应出现在会话A")
+        let messagesA = try XCTUnwrap(workspace.selectedConversation?.messages)
+        XCTAssertEqual(messagesA.last?.text, "会话A的流式回答")
+        XCTAssertEqual(messagesA.last?.tools.map(\.id), ["call-a"])
+
+        // 6. 切回会话B并点击停止：仅取消会话B，会话A继续运行并正常完成
+        workspace.select(secondID)
+        workspace.stop()
+        await Task.yield()
+        XCTAssertTrue(provider.cancelledFlags[1], "停止当前会话B时应取消B的run")
+        XCTAssertFalse(provider.cancelledFlags[0], "停止会话B绝不能取消后台仍在生成的会话A")
+        XCTAssertFalse(workspace.isConversationGenerating(secondID))
+        XCTAssertTrue(workspace.isConversationGenerating(firstID))
+        XCTAssertEqual(workspace.selectedConversation?.messages.last?.state, .cancelled)
+
+        runA.yield(.complete)
+        workspace.apply(runA.drain(), for: firstID)
+        XCTAssertFalse(workspace.isConversationGenerating(firstID))
+        XCTAssertFalse(workspace.isGenerating)
+
+        workspace.select(firstID)
+        XCTAssertEqual(workspace.selectedConversation?.messages.last?.state, .complete)
+        XCTAssertEqual(workspace.selectedConversation?.messages.last?.text, "会话A的流式回答")
     }
 }

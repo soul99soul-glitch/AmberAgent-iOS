@@ -358,8 +358,10 @@ struct DesktopWorkspaceView: View {
                                             Button("取消生成标题", systemImage: "stop") { workspace.titles.cancel(conversation.id) }
                                         } else {
                                             Button("生成标题", systemImage: "character.cursor.ibeam") { generateTitle(for: conversation.id) }
-                                                .disabled(workspace.isManagingBackup || workspace.isMutatingBranch
-                                                    || workspace.generationConversationID == conversation.id || conversation.messageCount == 0)
+                                                .disabled(workspace.isManagingBackup
+                                                    || workspace.isConversationMutatingBranch(conversation.id)
+                                                    || workspace.isConversationGenerating(conversation.id)
+                                                    || conversation.messageCount == 0)
                                         }
                                         Divider()
                                         Button("删除会话", systemImage: "trash", role: .destructive) { deleteID = conversation.id }
@@ -598,7 +600,7 @@ struct DesktopWorkspaceView: View {
 
     private func conversationRow(_ conversation: DesktopConversationSearchResult) -> some View {
         let selected = workspace.activeSurface == .chat && workspace.selectedID == conversation.id
-        let generating = workspace.generationConversationID == conversation.id
+        let generating = workspace.isConversationGenerating(conversation.id)
         let searching = !workspace.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
@@ -821,7 +823,8 @@ struct DesktopWorkspaceView: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.circle").foregroundStyle(DesktopTheme.accent)
             Text(error).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            if !workspace.isGenerating, !workspace.isMutatingBranch, let last = workspace.selectedConversation?.messages.last,
+            if !workspace.isSelectedConversationGenerating, !workspace.isSelectedConversationMutatingBranch,
+               let last = workspace.selectedConversation?.messages.last,
                last.role == .assistant, last.state == .failed || last.state == .cancelled {
                 Button("重试") { workspace.retry() }.buttonStyle(.borderless)
             }

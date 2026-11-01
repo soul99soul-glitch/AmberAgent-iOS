@@ -21,7 +21,8 @@ struct DesktopTranscript: View {
     @State private var confirmation: MessageConfirmation?
 
     private var mutationsDisabled: Bool {
-        workspace.isLoading || workspace.isGenerating || workspace.isMutatingBranch
+        workspace.isLoading || workspace.isConversationGenerating(conversation.id)
+            || workspace.isConversationMutatingBranch(conversation.id)
     }
 
     private struct MessageEditDraft: Identifiable {

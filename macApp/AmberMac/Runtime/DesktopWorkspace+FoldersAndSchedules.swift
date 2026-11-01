@@ -165,8 +165,8 @@ extension DesktopWorkspace {
     @discardableResult
     func exportConversation(to url: URL) -> Task<Void, Never>? {
         guard let owner = selectedID, selectedConversation != nil else { errorMessage = "请先读取要导出的会话。"; return nil }
-        guard branchMutationOwner != owner else { recordError("正在保存消息更改，请稍候再导出。", owner: owner); return nil }
-        if generationConversationID == owner, let generation { apply(generation.drain()) }
+        guard !mutatingBranchConversationIDs.contains(owner) else { recordError("正在保存消息更改，请稍候再导出。", owner: owner); return nil }
+        if let active = activeGenerations[owner] { apply(active.run.drain(), for: owner, token: active.token) }
         if let conversation = conversations.first(where: { $0.id == owner }) { persist(conversation) }
         return performFileTask { [self] in
             do {
@@ -183,8 +183,8 @@ extension DesktopWorkspace {
     @discardableResult
     func exportReadableConversation(to url: URL, format: DesktopReadableExportFormat) -> Task<Void, Never>? {
         guard let owner = selectedID, selectedConversation != nil else { errorMessage = "请先读取要导出的会话。"; return nil }
-        guard branchMutationOwner != owner else { recordError("正在保存消息更改，请稍候再导出。", owner: owner); return nil }
-        if generationConversationID == owner, let generation { apply(generation.drain()) }
+        guard !mutatingBranchConversationIDs.contains(owner) else { recordError("正在保存消息更改，请稍候再导出。", owner: owner); return nil }
+        if let active = activeGenerations[owner] { apply(active.run.drain(), for: owner, token: active.token) }
         if let value = conversations.first(where: { $0.id == owner }) { persist(value) }
         return performFileTask { [self] in
             do {
@@ -264,18 +264,21 @@ extension DesktopWorkspace {
                 collaborationSaveErrors[runID] = "原会话已删除，无法保存协作结果。"; return
             }
             await loadConversation(owner)?.value
-            guard generationConversationID != owner, !isMutatingBranch, let conversation = conversations.first(where: { $0.id == owner }) else {
+            guard !generatingConversationIDs.contains(owner), !mutatingBranchConversationIDs.contains(owner),
+                  let conversation = conversations.first(where: { $0.id == owner }) else {
                 collaborationSaveErrors[runID] = "请先完成原会话的读取或生成，再保存协作结果。"; return
             }
             if conversation.messages.contains(where: { $0.id == runID }) { savedCollaborationRuns.insert(runID); return }
             let body = run.finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? run.outputs.filter { !$0.text.isEmpty }.map { "## \($0.name)\n\n\($0.text)" }.joined(separator: "\n\n") : run.finalText
             guard !body.isEmpty else { collaborationSaveErrors[runID] = "此任务没有可保存的结果。"; return }
-            isMutatingBranch = true
-            branchMutationOwner = owner
+            mutatingBranchConversationIDs.insert(owner)
             let previous = persistence
             let write = Task {
-                defer { isMutatingBranch = false; branchMutationOwner = nil }
+                defer {
+                    mutatingBranchConversationIDs.remove(owner)
+                    branchMutationTasks[owner] = nil
+                }
                 await previous?.value
                 do {
                     guard !unsavedConversationIDs.contains(owner), !unsavedMetadataIDs.contains(owner),
@@ -308,7 +311,7 @@ extension DesktopWorkspace {
                 }
             }
             persistence = write
-            branchMutationTask = write
+            branchMutationTasks[owner] = write
             await write.value
         }
         collaborationSaveTasks[runID] = task
@@ -505,7 +508,8 @@ extension DesktopWorkspace {
             guard summaries.contains(where: { $0.id == id }) else { return failed("结果会话已删除，请编辑任务重新选择。") }
             await loadConversation(id)?.value
             guard conversations.contains(where: { $0.id == id }) else { return failed("无法读取结果会话。") }
-            guard generationConversationID != id, branchMutationOwner != id, !scheduledRunConversationIDs.contains(id) else {
+            guard !generatingConversationIDs.contains(id), !mutatingBranchConversationIDs.contains(id),
+                  !scheduledRunConversationIDs.contains(id) else {
                 return failed("结果会话正在生成或保存，本次未运行。")
             }
             conversationID = id

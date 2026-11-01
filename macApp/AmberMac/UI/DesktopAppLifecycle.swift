@@ -66,7 +66,7 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
         workspace.agentTasks.cancelAll()
         for server in workspace.mcp.store.servers { workspace.mcp.disconnect(id: server.id) }
         workspace.insights.cancelAll()
-        workspace.stop()
+        workspace.stopAll()
         Task {
             await workspace.mcp.shutdown()
             await workspace.imageGeneration.shutdown()

@@ -64,7 +64,7 @@ struct DesktopComposer: View {
                     }
                     .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
-                        || workspace.isGenerating || workspace.isMutatingBranch || workspace.isReadingAttachments)
+                        || workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch || workspace.isReadingAttachments)
                     .help("添加图片、PDF、文档或代码文件，也可拖入文件或粘贴图片")
                     .accessibilityLabel("添加附件")
 
@@ -79,7 +79,7 @@ struct DesktopComposer: View {
                     ) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.toolsEnabled.toggle() }
                     }
-                    .disabled(workspace.isGenerating || workspace.isMutatingBranch)
+                    .disabled(workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch)
                     .help("允许模型使用已接入的工具；需要确认的操作会先显示审批。")
                     .accessibilityLabel("工具")
                     .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
@@ -92,7 +92,7 @@ struct DesktopComposer: View {
                         ) {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.subagentsEnabled.toggle() }
                         }
-                        .disabled(workspace.isGenerating || workspace.isMutatingBranch)
+                        .disabled(workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch)
                         .help("允许模型在对话中派发只读子代理（Explorer、Oracle 等）并行调研，结果回到本轮回答。")
                         .accessibilityLabel("子代理")
                         .accessibilityValue(workspace.agentTasks.subagentsEnabled ? "已开启" : "已关闭")
@@ -124,7 +124,7 @@ struct DesktopComposer: View {
                         }
                         inlineModelPicker
                     }
-                    if workspace.isMutatingBranch {
+                    if workspace.isSelectedConversationMutatingBranch {
                         ProgressView().controlSize(.small)
                         Text("正在保存…").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     } else if workspace.isSelectedConversationGenerating {
@@ -147,16 +147,6 @@ struct DesktopComposer: View {
                         .help("停止生成")
                         .accessibilityLabel("停止生成")
                         .keyboardShortcut(".", modifiers: .command)
-                    } else if workspace.isGenerating {
-                        Button {
-                            if let owner = workspace.generationConversationID { workspace.select(owner) }
-                        } label: {
-                            Label("查看生成中的会话", systemImage: "arrow.turn.up.left")
-                                .font(.system(size: 12))
-                                .padding(.horizontal, 10).frame(height: 28)
-                        }
-                        .buttonStyle(DesktopQuietButtonStyle())
-                        .help("另一个会话正在生成，返回该会话后可以停止")
                     } else {
                         Button { submit() } label: {
                             DesktopSendGlyph(enabled: !sendDisabled, glint: workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "琥珀")
@@ -356,7 +346,7 @@ struct DesktopComposer: View {
         .fixedSize()
         // Borderless menu labels take the tint, not foregroundStyle; chat mode stays neutral.
         .tint(workspace.composerMode == .chat ? DesktopTheme.inkSecondary : DesktopTheme.accentInk)
-        .disabled(workspace.isGenerating || workspace.isMutatingBranch || workspace.composerRunID != nil)
+        .disabled(workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch || workspace.composerRunID != nil)
         .help("选择发送方式：普通对话或模型议会")
         .accessibilityLabel("发送方式")
         .accessibilityValue(workspace.composerMode.title)
@@ -432,7 +422,7 @@ struct DesktopComposer: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .tint(active ? DesktopTheme.accentInk : DesktopTheme.inkTertiary)
-        .disabled(workspace.isGenerating || workspace.isMutatingBranch)
+        .disabled(workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch)
         .help(thinkingLevelHelpText)
         .accessibilityLabel("思考等级")
         .accessibilityValue(workspace.selectedThinkingLevel.rawValue)
@@ -449,7 +439,7 @@ struct DesktopComposer: View {
 
     private var sendDisabled: Bool {
         workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
-            || workspace.isMutatingBranch || workspace.isReadingAttachments
+            || workspace.isSelectedConversationMutatingBranch || workspace.isReadingAttachments
             || (workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && workspace.pendingAttachments.isEmpty)
     }
 
@@ -522,13 +512,13 @@ struct DesktopComposer: View {
                     }
                 }
             }
-            if !workspace.isGenerating && workspace.selectedQueuedMessages.contains(where: { $0.status == .pending }) {
+            if !workspace.isSelectedConversationGenerating && workspace.selectedQueuedMessages.contains(where: { $0.status == .pending }) {
                 HStack {
                     Text("队列已保留，可发送或撤回。")
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("发送队列") { workspace.sendQueuedInstructions() }
-                        .disabled(workspace.isMutatingBranch || workspace.isManagingBackup)
+                        .disabled(workspace.isSelectedConversationMutatingBranch || workspace.isManagingBackup)
                 }
             }
         }

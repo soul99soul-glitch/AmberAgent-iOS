@@ -12,7 +12,8 @@ struct DesktopConversationInsightsView: View {
         conversation.map { workspace.insights.activeOwners.contains($0.id) } ?? false
     }
     private var actionsDisabled: Bool {
-        workspace.isLoading || workspace.isGenerating || workspace.isMutatingBranch || active
+        workspace.isLoading || workspace.isSelectedConversationGenerating
+            || workspace.isSelectedConversationMutatingBranch || active
             || conversation?.messages.isEmpty != false
     }
 
