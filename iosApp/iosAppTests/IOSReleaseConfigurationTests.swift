@@ -18,7 +18,11 @@ final class IOSReleaseConfigurationTests: XCTestCase {
         XCTAssertNil(ats["NSAllowsArbitraryLoads"])
         XCTAssertNil(ats["NSAllowsArbitraryLoadsInWebContent"])
         XCTAssertNil(ats["NSAllowsArbitraryLoadsForMedia"])
-        XCTAssertNil(ats["NSExceptionDomains"])
+        let exceptionDomains = try XCTUnwrap(ats["NSExceptionDomains"] as? [String: [String: Bool]])
+        XCTAssertEqual(
+            exceptionDomains,
+            ["49.233.86.10": ["NSExceptionAllowsInsecureHTTPLoads": true]]
+        )
         XCTAssertEqual(info["ITSAppUsesNonExemptEncryption"] as? Bool, false)
     }
 

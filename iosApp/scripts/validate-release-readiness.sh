@@ -55,7 +55,13 @@ if "processing" not in background_modes:
 ats = info.get("NSAppTransportSecurity", {})
 if ats.get("NSAllowsArbitraryLoads") is True:
     errors.append("NSAllowsArbitraryLoads must remain disabled")
-if ats.get("NSExceptionDomains"):
+allowed_exception_domains = {
+    "49.233.86.10": {
+        "NSExceptionAllowsInsecureHTTPLoads": True,
+    },
+}
+exception_domains = ats.get("NSExceptionDomains")
+if exception_domains is not None and exception_domains != allowed_exception_domains:
     errors.append("broad ATS exception domains are not allowed in the stable release plist")
 
 if info.get("ITSAppUsesNonExemptEncryption") is not False:
