@@ -371,4 +371,39 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             XCTAssertEqual(medallion.mood, mood)
         }
     }
+
+    @MainActor
+    func testAmberPersonaStoreAndMuseReferenceImageBinding() throws {
+        let suite = "AmberPersonaStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        let store = AmberPersonaStore(defaults: defaults, storageDirectory: tempDir)
+        XCTAssertEqual(store.selectedPreset, .amberFox)
+        XCTAssertTrue(store.autoBindReferenceInImageGen)
+        XCTAssertNil(store.primaryReferenceDataURL())
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64))
+        let sampleImage = renderer.image { ctx in
+            UIColor(red: 0.78, green: 0.36, blue: 0.14, alpha: 1.0).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        }
+        let sampleData = try XCTUnwrap(sampleImage.pngData())
+        store.addReferenceImage(from: sampleData, label: "三视图设定")
+        XCTAssertEqual(store.references.count, 1)
+
+        let refDataURL = try XCTUnwrap(store.primaryReferenceDataURL())
+        XCTAssertTrue(refDataURL.hasPrefix("data:image/jpeg;base64,"))
+
+        let enriched = ChatImageGenerationReference.enrichToolInput(
+            #"{"prompt":"琥珀灵狐在京都鸭川散步"}"#,
+            messages: [],
+            personaReferenceURL: refDataURL
+        )
+        XCTAssertTrue(enriched.contains("source_image_url"), "Expected generate_image input to bind persona reference URL")
+    }
 }

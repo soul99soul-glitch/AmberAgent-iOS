@@ -27,8 +27,9 @@ enum ChatImageGenerationReference {
         guard let object = jsonObject(input) else { return false }
         if boolValue(object["use_attached_image"]) { return true }
         if boolValue(object["use_reference_image"]) { return true }
+        if boolValue(object["use_persona_reference"]) { return true }
         if let source = stringValue(object["source_image_url"])?.lowercased() {
-            return source == "attached" || source == "latest" || source == "latest_user_image"
+            return source == "attached" || source == "latest" || source == "latest_user_image" || source == "persona"
         }
         return false
     }
@@ -47,9 +48,11 @@ enum ChatImageGenerationReference {
         return nil
     }
 
+    @MainActor
     static func enrichToolInput(
         _ input: String,
-        messages: [UIMessage]
+        messages: [UIMessage],
+        personaReferenceURL: String? = nil
     ) -> Result<String, EnrichmentError> {
         guard let object = jsonObject(input) else {
             // Non-JSON prompt-only calls never request attached-image binding.
@@ -60,18 +63,24 @@ enum ChatImageGenerationReference {
         let hasConcreteSource: Bool = {
             guard let existingSource else { return false }
             let lower = existingSource.lowercased()
-            return !(lower == "attached" || lower == "latest" || lower == "latest_user_image")
+            return !(lower == "attached" || lower == "latest" || lower == "latest_user_image" || lower == "persona")
         }()
 
         if hasConcreteSource {
             return .success(input)
         }
 
+        let resolvedPersonaRef = personaReferenceURL ?? (
+            AmberPersonaStore.shared.autoBindReferenceInImageGen
+                ? AmberPersonaStore.shared.primaryReferenceDataURL()
+                : nil
+        )
+
         guard wantsAttachedImage(input) else {
             return .success(input)
         }
 
-        guard let attached = latestUserAttachedImageURL(in: messages) else {
+        guard let attached = latestUserAttachedImageURL(in: messages) ?? resolvedPersonaRef else {
             return .failure(.attachedImageRequestedButMissing)
         }
 

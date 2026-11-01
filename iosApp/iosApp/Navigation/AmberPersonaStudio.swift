@@ -1,0 +1,773 @@
+import PhotosUI
+import SwiftUI
+import UIKit
+@preconcurrency import Shared
+
+// MARK: - Amber Personal Agent Persona Model & Store (Muse-Style Generate / Upload / Reference Images)
+
+enum AmberPersonaPreset: String, CaseIterable, Codable, Identifiable, Sendable {
+    /// Amber's signature original mascot: Warm Amber Kitsune / Spirit Fox with expressive ears & eyes.
+    case amberFox = "amber_fox"
+    /// Luminous faceted amber gem spirit with warm inner core.
+    case amberCrystal = "amber_crystal"
+    /// User-uploaded or AI-generated Muse-style custom portrait.
+    case customPortrait = "custom_portrait"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .amberFox: "琥珀灵狐"
+        case .amberCrystal: "琥珀星晶"
+        case .customPortrait: "自定义 / AI 肖像"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .amberFox: "Amber 原生灵狐形象 · 随待命/思考/提醒切换神态"
+        case .amberCrystal: "温润琥珀几何晶核 · 极简克制"
+        case .customPortrait: "像 Muse 一样上传或 AI 生成专属个人 Agent 形象"
+        }
+    }
+}
+
+struct AmberPersonaReferenceItem: Identifiable, Codable, Equatable, Sendable {
+    let id: String
+    var label: String
+    var fileName: String
+    var createdAtMs: Int64
+}
+
+@MainActor
+@Observable
+final class AmberPersonaStore {
+    static let shared = AmberPersonaStore()
+
+    var preset: AmberPersonaPreset {
+        didSet { defaults.set(preset.rawValue, forKey: Keys.preset) }
+    }
+
+    var personaStylePrompt: String {
+        didSet { defaults.set(personaStylePrompt, forKey: Keys.stylePrompt) }
+    }
+
+    var autoBindReferenceInImageGen: Bool {
+        didSet { defaults.set(autoBindReferenceInImageGen, forKey: Keys.autoBindRef) }
+    }
+
+    private(set) var customAvatarImage: UIImage?
+    private(set) var referenceItems: [AmberPersonaReferenceItem] = []
+    private(set) var isGeneratingAvatar = false
+    private(set) var lastGenerationError: String?
+
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private let baseDirectory: URL
+
+    private enum Keys {
+        static let preset = "app.amber.ios.persona.preset"
+        static let stylePrompt = "app.amber.ios.persona.stylePrompt"
+        static let autoBindRef = "app.amber.ios.persona.autoBindRef"
+        static let references = "app.amber.ios.persona.references"
+    }
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        fileManager: FileManager = .default,
+        baseDirectory: URL? = nil
+    ) {
+        self.defaults = userDefaults
+        self.fileManager = fileManager
+        let resolvedDir = baseDirectory ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("amber-persona", isDirectory: true)
+        self.baseDirectory = resolvedDir
+        self.preset = AmberPersonaPreset(rawValue: userDefaults.string(forKey: Keys.preset) ?? "") ?? .amberFox
+        self.personaStylePrompt = userDefaults.string(forKey: Keys.stylePrompt)
+            ?? "温暖治愈的个人 AI 伙伴 Amber，琥珀色眼眸与暖米色围巾，柔和纸感插画风格，干净头像特写"
+        if userDefaults.object(forKey: Keys.autoBindRef) == nil {
+            self.autoBindReferenceInImageGen = true
+        } else {
+            self.autoBindReferenceInImageGen = userDefaults.bool(forKey: Keys.autoBindRef)
+        }
+        if let data = userDefaults.data(forKey: Keys.references),
+           let decoded = try? JSONDecoder().decode([AmberPersonaReferenceItem].self, from: data) {
+            self.referenceItems = decoded
+        }
+        reloadAvatarFromDisk()
+    }
+
+    func clearError() {
+        lastGenerationError = nil
+    }
+
+    func saveCustomAvatar(_ image: UIImage) {
+        try? fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        let downscaled = Self.downscale(image, maxDimension: 512)
+        guard let data = downscaled.pngData() else { return }
+        let url = baseDirectory.appendingPathComponent("avatar.png")
+        try? data.write(to: url, options: .atomic)
+        customAvatarImage = downscaled
+        preset = .customPortrait
+    }
+
+    @discardableResult
+    func addReferenceImage(_ image: UIImage, label: String? = nil) -> AmberPersonaReferenceItem? {
+        guard referenceItems.count < 4 else { return nil }
+        try? fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        let id = UUID().uuidString
+        let fileName = "ref_\(id).png"
+        let downscaled = Self.downscale(image, maxDimension: 768)
+        guard let data = downscaled.pngData() else { return nil }
+        let url = baseDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: url, options: .atomic)
+            let defaultLabel = label ?? "参考图 \(referenceItems.count + 1)"
+            let item = AmberPersonaReferenceItem(
+                id: id,
+                label: defaultLabel,
+                fileName: fileName,
+                createdAtMs: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+            referenceItems.append(item)
+            persistReferences()
+            return item
+        } catch {
+            return nil
+        }
+    }
+
+    func removeReference(id: String) {
+        guard let item = referenceItems.first(where: { $0.id == id }) else { return }
+        let url = baseDirectory.appendingPathComponent(item.fileName)
+        try? fileManager.removeItem(at: url)
+        referenceItems.removeAll { $0.id == id }
+        persistReferences()
+    }
+
+    func loadReferenceImage(for item: AmberPersonaReferenceItem) -> UIImage? {
+        let url = baseDirectory.appendingPathComponent(item.fileName)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return UIImage(data: data)
+    }
+
+    /// Returns a `data:image/png;base64,...` URL for the primary reference image (or custom avatar fallback)
+    /// so `ChatImageGenerationReference` can automatically pad it into `generate_image`.
+    func primaryReferenceDataURL() -> String? {
+        if let first = referenceItems.first {
+            let url = baseDirectory.appendingPathComponent(first.fileName)
+            if let data = try? Data(contentsOf: url), !data.isEmpty {
+                return "data:image/png;base64,\(data.base64EncodedString())"
+            }
+        }
+        if let customAvatarImage, let data = customAvatarImage.pngData(), !data.isEmpty {
+            return "data:image/png;base64,\(data.base64EncodedString())"
+        }
+        return nil
+    }
+
+    func generateAvatarWithAI(sharedSettings: IOSSharedSettingsStore) async {
+        let prompt = personaStylePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            lastGenerationError = "请先输入 Amber 的形象描述词"
+            return
+        }
+        isGeneratingAvatar = true
+        lastGenerationError = nil
+        defer { isGeneratingAvatar = false }
+
+        let fullPrompt = """
+        Personal AI agent avatar portrait for Amber: \(prompt). Centered circular-friendly bust composition, expressive eyes, warm editorial illustration quality, clean background.
+        """
+        let request = IOSImageGenerationRequest(
+            prompt: fullPrompt,
+            model: "gpt-image-1",
+            aspectRatio: .square,
+            count: 1,
+            style: "illustration",
+            source: "persona_studio",
+            sourceImageURL: autoBindReferenceInImageGen ? primaryReferenceDataURL() : nil
+        )
+
+        let snapshot = sharedSettings.snapshot
+        if let model = snapshot.findModelById(uuid: snapshot.imageGenerationModelId),
+           let provider = ChatProviderConfiguration.provider(for: model, providers: snapshot.providers),
+           provider.enabled,
+           let apiKey = (provider as? ProviderSetting.OpenAI)?.apiKey ?? (provider as? ProviderSetting.Google)?.apiKey,
+           !apiKey.isEmpty {
+            let baseURL = (provider as? ProviderSetting.OpenAI)?.baseUrl ?? "https://api.openai.com/v1"
+            do {
+                let record = try await IOSImageGenerationRepository.shared.generate(
+                    request: IOSImageGenerationRequest(
+                        prompt: fullPrompt,
+                        model: model.modelId,
+                        aspectRatio: .square,
+                        count: 1,
+                        style: "illustration",
+                        source: "persona_studio"
+                    ),
+                    apiKey: apiKey,
+                    baseURL: baseURL
+                )
+                if let firstPath = record.files.first?.path,
+                   let data = try? Data(contentsOf: URL(fileURLWithPath: firstPath)),
+                   let image = UIImage(data: data) {
+                    saveCustomAvatar(image)
+                    return
+                }
+            } catch {
+                lastGenerationError = error.localizedDescription
+                return
+            }
+        } else {
+            lastGenerationError = "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型，或直接从相册上传形象与参考图。"
+        }
+    }
+
+    private func reloadAvatarFromDisk() {
+        let url = baseDirectory.appendingPathComponent("avatar.png")
+        if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+            customAvatarImage = image
+        }
+    }
+
+    private func persistReferences() {
+        if let data = try? JSONEncoder().encode(referenceItems) {
+            defaults.set(data, forKey: Keys.references)
+        }
+    }
+
+    private static func downscale(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return image }
+        let ratio = min(maxDimension / max(size.width, size.height), 1.0)
+        if ratio >= 1.0 { return image }
+        let targetSize = CGSize(width: round(size.width * ratio), height: round(size.height * ratio))
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1.0
+        return UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
+}
+
+// MARK: - Amber Personal Agent Medallion View (Supports Amber Fox, Amber Crystal & Custom/Muse Portrait)
+
+enum AmberAgentPersonaMood: Equatable, Sendable {
+    case idle
+    case working
+    case alert
+}
+
+struct AmberAgentPersonaMedallionView: View {
+    let mood: AmberAgentPersonaMood
+    var diameter: CGFloat = 54
+    var presetOverride: AmberPersonaPreset? = nil
+    var accentOverride: Color? = nil
+
+    private var store: AmberPersonaStore { AmberPersonaStore.shared }
+
+    private var activePreset: AmberPersonaPreset {
+        presetOverride ?? store.preset
+    }
+
+    private var accentColor: Color {
+        if let accentOverride { return accentOverride }
+        return mood == .alert ? AmberTheme.accentRed : AmberTheme.accent
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(AmberTheme.elevatedPanel)
+                .overlay {
+                    RadialGradient(
+                        colors: [
+                            accentColor.opacity(mood == .working ? 0.18 : 0.10),
+                            Color.clear,
+                        ],
+                        center: .init(x: 0.5, y: 0.45),
+                        startRadius: 2,
+                        endRadius: diameter * 0.48
+                    )
+                    .clipShape(Circle())
+                }
+                .overlay {
+                    Circle()
+                        .strokeBorder(
+                            mood == .alert ? AmberTheme.accentRed.opacity(0.55) : AmberTheme.border,
+                            lineWidth: mood == .working ? 1.1 : 0.85
+                        )
+                }
+                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
+
+            switch activePreset {
+            case .customPortrait:
+                if let uiImage = store.customAvatarImage {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: diameter - 5, height: diameter - 5)
+                        .clipShape(Circle())
+                } else {
+                    amberFoxCanvas
+                }
+            case .amberCrystal:
+                amberCrystalCanvas
+            case .amberFox:
+                amberFoxCanvas
+            }
+        }
+        .frame(width: diameter, height: diameter)
+        .accessibilityHidden(true)
+    }
+
+    private var amberFoxCanvas: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+            let cx = w * 0.5
+            let cy = h * 0.49
+
+            // 1. Left & Right Kitsune Ears (Warm Amber Terracotta + Inner Cream)
+            let earLift: CGFloat = mood == .alert ? -2.0 : (mood == .working ? 0.5 : 0)
+            var leftEar = Path()
+            leftEar.move(to: CGPoint(x: cx - w * 0.23, y: cy - h * 0.04))
+            leftEar.addQuadCurve(
+                to: CGPoint(x: cx - w * 0.25, y: cy - h * 0.30 + earLift),
+                control: CGPoint(x: cx - w * 0.29, y: cy - h * 0.18)
+            )
+            leftEar.addQuadCurve(
+                to: CGPoint(x: cx - w * 0.06, y: cy - h * 0.14),
+                control: CGPoint(x: cx - w * 0.14, y: cy - h * 0.26)
+            )
+            leftEar.closeSubpath()
+            context.fill(leftEar, with: .color(accentColor))
+
+            var rightEar = Path()
+            rightEar.move(to: CGPoint(x: cx + w * 0.23, y: cy - h * 0.04))
+            rightEar.addQuadCurve(
+                to: CGPoint(x: cx + w * 0.25, y: cy - h * 0.30 + earLift),
+                control: CGPoint(x: cx + w * 0.29, y: cy - h * 0.18)
+            )
+            rightEar.addQuadCurve(
+                to: CGPoint(x: cx + w * 0.06, y: cy - h * 0.14),
+                control: CGPoint(x: cx + w * 0.14, y: cy - h * 0.26)
+            )
+            rightEar.closeSubpath()
+            context.fill(rightEar, with: .color(accentColor))
+
+            // 2. Fox Head Silhouette (Warm Amber Top + Soft Cream Cheeks)
+            let headW = w * 0.48
+            let headH = h * 0.38
+            let headRect = CGRect(x: cx - headW * 0.5, y: cy - headH * 0.48, width: headW, height: headH)
+            context.fill(
+                Path(roundedRect: headRect, cornerRadius: headH * 0.46, style: .continuous),
+                with: .color(accentColor)
+            )
+
+            let cheekW = w * 0.38
+            let cheekH = h * 0.20
+            let cheekRect = CGRect(x: cx - cheekW * 0.5, y: cy - cheekH * 0.10, width: cheekW, height: cheekH)
+            context.fill(
+                Path(roundedRect: cheekRect, cornerRadius: cheekH * 0.48, style: .continuous),
+                with: .color(AmberTheme.background)
+            )
+
+            // 3. Expressive Eyes & Craftsman Glasses (when working)
+            let eyeY = cy - h * 0.04
+            let eyeOffset = w * 0.095
+            let eyeR = max(1.8, w * (mood == .alert ? 0.042 : 0.036))
+
+            for sign in [-1.0, 1.0] {
+                let ex = cx + CGFloat(sign) * eyeOffset
+                let rect = CGRect(x: ex - eyeR, y: eyeY - eyeR, width: eyeR * 2, height: eyeR * 2)
+                context.fill(Path(ellipseIn: rect), with: .color(AmberTheme.foreground))
+                let specR = max(0.7, eyeR * 0.36)
+                context.fill(
+                    Path(ellipseIn: CGRect(x: ex - eyeR * 0.35, y: eyeY - eyeR * 0.45, width: specR * 2, height: specR * 2)),
+                    with: .color(.white.opacity(0.92))
+                )
+            }
+
+            if mood == .working {
+                // Round reading glasses in working state
+                let glassR = w * 0.072
+                for sign in [-1.0, 1.0] {
+                    let gx = cx + CGFloat(sign) * eyeOffset
+                    let gRect = CGRect(x: gx - glassR, y: eyeY - glassR, width: glassR * 2, height: glassR * 2)
+                    context.stroke(
+                        Path(ellipseIn: gRect),
+                        with: .color(AmberTheme.foreground.opacity(0.85)),
+                        lineWidth: max(1.1, w * 0.022)
+                    )
+                }
+                var bridge = Path()
+                bridge.move(to: CGPoint(x: cx - eyeOffset + glassR, y: eyeY))
+                bridge.addLine(to: CGPoint(x: cx + eyeOffset - glassR, y: eyeY))
+                context.stroke(bridge, with: .color(AmberTheme.foreground.opacity(0.85)), lineWidth: max(1.0, w * 0.02))
+            }
+
+            // Tiny nose dot
+            let noseR = max(1.2, w * 0.024)
+            context.fill(
+                Path(ellipseIn: CGRect(x: cx - noseR, y: cy + h * 0.03 - noseR, width: noseR * 2, height: noseR * 2)),
+                with: .color(AmberTheme.foreground)
+            )
+
+            // 4. Floating Amber Spark / State Cue
+            let sparkCenter = CGPoint(x: cx + w * 0.24, y: cy - h * 0.24)
+            let sr = max(2.2, w * 0.045)
+            var spark = Path()
+            spark.move(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y - sr))
+            spark.addLine(to: CGPoint(x: sparkCenter.x + sr * 0.85, y: sparkCenter.y))
+            spark.addLine(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y + sr))
+            spark.addLine(to: CGPoint(x: sparkCenter.x - sr * 0.85, y: sparkCenter.y))
+            spark.closeSubpath()
+            context.fill(spark, with: .color(mood == .alert ? AmberTheme.accentRed : accentColor))
+        }
+        .frame(width: diameter, height: diameter)
+    }
+
+    private var amberCrystalCanvas: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+            let cx = w * 0.5
+            let cy = h * 0.47
+            let r = w * 0.25
+
+            var gem = Path()
+            gem.move(to: CGPoint(x: cx, y: cy - r * 1.15))
+            gem.addLine(to: CGPoint(x: cx + r * 0.95, y: cy - r * 0.2))
+            gem.addLine(to: CGPoint(x: cx + r * 0.65, y: cy + r * 0.95))
+            gem.addLine(to: CGPoint(x: cx - r * 0.65, y: cy + r * 0.95))
+            gem.addLine(to: CGPoint(x: cx - r * 0.95, y: cy - r * 0.2))
+            gem.closeSubpath()
+            context.fill(gem, with: .color(accentColor))
+
+            for sign in [-1.0, 1.0] {
+                let ex = cx + CGFloat(sign) * w * 0.075
+                let ey = cy - h * 0.02
+                let er = max(1.7, w * 0.032)
+                context.fill(
+                    Path(ellipseIn: CGRect(x: ex - er, y: ey - er, width: er * 2, height: er * 2)),
+                    with: .color(.white)
+                )
+            }
+        }
+        .frame(width: diameter, height: diameter)
+    }
+}
+
+// MARK: - Muse-Style Persona Studio Sheet (Generate / Upload / Reference Images)
+
+struct AmberPersonaStudioSheet: View {
+    let sharedSettings: IOSSharedSettingsStore
+    @Bindable var store = AmberPersonaStore.shared
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var avatarPickerItem: PhotosPickerItem?
+    @State private var referencePickerItems: [PhotosPickerItem] = []
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    heroPreviewCard
+                    presetSelectorSection
+                    aiGenerationAndUploadSection
+                    referenceImagesSection
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+            }
+            .background(AmberTheme.background.ignoresSafeArea())
+            .navigationTitle(IOSAppLocalization.string("Amber 形象工坊", defaultValue: "Amber 形象工坊"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(IOSAppLocalization.string("完成", defaultValue: "完成")) {
+                        dismiss()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accent)
+                }
+            }
+            .onChange(of: avatarPickerItem) { _, item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        store.saveCustomAvatar(image)
+                    }
+                }
+            }
+            .onChange(of: referencePickerItems) { _, items in
+                guard !items.isEmpty else { return }
+                Task {
+                    for item in items {
+                        if let data = try? await item.loadTransferable(type: Data.self),
+                           let image = UIImage(data: data) {
+                            _ = store.addReferenceImage(image)
+                        }
+                    }
+                    referencePickerItems = []
+                }
+            }
+        }
+    }
+
+    private var heroPreviewCard: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 22) {
+                moodColumn(title: "待命 · Idle", mood: .idle)
+                moodColumn(title: "思考中 · Working", mood: .working)
+                moodColumn(title: "需确认 · Alert", mood: .alert)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
+
+            Text("顶部状态栏与对话空间会实时使用上方 Amber 专属形象，并随任务状态自动切换神态。")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .multilineTextAlignment(.center)
+        }
+        .padding(16)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
+        }
+    }
+
+    private func moodColumn(title: String, mood: AmberAgentPersonaMood) -> some View {
+        VStack(spacing: 8) {
+            AmberAgentPersonaMedallionView(mood: mood, diameter: 64)
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+        }
+    }
+
+    private var presetSelectorSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("专属形象风格")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(AmberTheme.muted)
+                .padding(.horizontal, 4)
+
+            VStack(spacing: 8) {
+                ForEach(AmberPersonaPreset.allCases) { option in
+                    let isSelected = store.preset == option
+                    Button {
+                        store.preset = option
+                    } label: {
+                        HStack(spacing: 12) {
+                            AmberAgentPersonaMedallionView(mood: .idle, diameter: 42, presetOverride: option)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(option.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(AmberTheme.foreground)
+                                Text(option.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(AmberTheme.muted)
+                            }
+                            Spacer()
+                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(isSelected ? AmberTheme.accent : AmberTheme.muted)
+                        }
+                        .padding(12)
+                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(isSelected ? AmberTheme.accent : AmberTheme.borderSoft, lineWidth: isSelected ? 1.2 : 0.7)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var aiGenerationAndUploadSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("生成或上传专属肖像 (Muse 模式)")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(AmberTheme.muted)
+                .padding(.horizontal, 4)
+
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("描述 Amber 的外貌、气质与画风…", text: $store.personaStylePrompt, axis: .vertical)
+                    .font(.subheadline)
+                    .lineLimit(2...4)
+                    .padding(10)
+                    .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                    }
+
+                HStack(spacing: 10) {
+                    Button {
+                        Task {
+                            await store.generateAvatarWithAI(sharedSettings: sharedSettings)
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if store.isGeneratingAvatar {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "sparkles")
+                            }
+                            Text(store.isGeneratingAvatar ? "正在生成形象…" : "AI 生成形象")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accentInk)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(AmberTheme.accent, in: Capsule(style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.isGeneratingAvatar)
+                    .accessibilityIdentifier("chat.persona.generateButton")
+
+                    PhotosPicker(selection: $avatarPickerItem, matching: .images) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "photo.badge.plus")
+                            Text("上传照片")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(AmberTheme.background, in: Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .stroke(AmberTheme.border, lineWidth: 0.8)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chat.persona.uploadButton")
+                }
+
+                if let error = store.lastGenerationError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.accentRed)
+                }
+            }
+            .padding(14)
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+            }
+        }
+    }
+
+    private var referenceImagesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("给 Agent 的形象参考图（最多 4 张）")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted)
+                Spacer()
+                Text("\(store.referenceItems.count)/4")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            .padding(.horizontal, 4)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("添加参考图后，Amber 在对话中生成自拍、表情包或场景插画时，会自动垫入参考图以保持角色特征一致。")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(store.referenceItems) { item in
+                            ZStack(alignment: .topTrailing) {
+                                VStack(spacing: 5) {
+                                    if let uiImage = store.loadReferenceImage(for: item) {
+                                        Image(uiImage: uiImage)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 78, height: 78)
+                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(AmberTheme.surface2)
+                                            .frame(width: 78, height: 78)
+                                    }
+                                    Text(item.label)
+                                        .font(.caption2)
+                                        .foregroundStyle(AmberTheme.foreground2)
+                                        .lineLimit(1)
+                                }
+
+                                Button {
+                                    store.removeReference(id: item.id)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 16))
+                                        .foregroundStyle(.white, Color.black.opacity(0.6))
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 4, y: -4)
+                            }
+                        }
+
+                        if store.referenceItems.count < 4 {
+                            PhotosPicker(
+                                selection: $referencePickerItems,
+                                maxSelectionCount: max(1, 4 - store.referenceItems.count),
+                                matching: .images
+                            ) {
+                                VStack(spacing: 6) {
+                                    Image(systemName: "plus.viewfinder")
+                                        .font(.system(size: 20, weight: .medium))
+                                        .foregroundStyle(AmberTheme.accent)
+                                    Text("添加参考图")
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(AmberTheme.accent)
+                                }
+                                .frame(width: 78, height: 78)
+                                .background(
+                                    AmberTheme.accent.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(AmberTheme.accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("chat.persona.addReferenceButton")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                Toggle(isOn: $store.autoBindReferenceInImageGen) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("生图时自动垫入 Agent 参考图")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(AmberTheme.foreground)
+                        Text("当模型调用 generate_image 描绘 Amber 或未附带用户图片时自动绑定")
+                            .font(.caption2)
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                }
+                .tint(AmberTheme.accent)
+            }
+            .padding(14)
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+            }
+        }
+    }
+}
