@@ -47,15 +47,20 @@ final class MacGatewayStore {
     private(set) var needsYouItems: [MacGatewayBoardItem] = []
     /// Why the board came from the gateway alone (Amber not running, or an older gateway).
     private(set) var boardError: String?
+    /// Cloud Self (/v2) agents and persisted native tasks.
+    var cloudAgents: [MacGatewayCloudAgent] = []
+    var cloudTasks: [MacGatewayCloudTaskRecord] = []
+    var busyCloudTaskIds: Set<String> = []
     var pendingPairing: MacGatewayPairingPayload?
     var notice: Notice?
 
-    @ObservationIgnored private var client: MacGatewayClient?
+    @ObservationIgnored var client: MacGatewayClient?
     @ObservationIgnored private var apnsToken: String?
+    @ObservationIgnored var cloudPollTask: Task<Void, Never>?
     /// Bumped per request so a slower, older response never overwrites a newer one (polls, pull to refresh and
     /// the refresh after a decision overlap).
-    @ObservationIgnored private var requestGeneration = (status: 0, schedules: 0, board: 0)
-    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
+    @ObservationIgnored let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -64,10 +69,18 @@ final class MacGatewayStore {
            let token = IOSCredentialSideTable.load(key: Self.tokenKey) {
             connection = saved
             client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: token)
+            loadPersistedCloudTasks()
         }
         #if DEBUG
         if ProcessInfo.processInfo.environment["AMBER_MAC_BOARD_FIXTURE"] == "1" { loadBoardFixture() }
         #endif
+    }
+
+    func configureForTesting(connection: MacGatewayConnection, client: MacGatewayClient) {
+        self.connection = connection
+        self.client = client
+        self.isReachable = true
+        loadPersistedCloudTasks()
     }
 
     #if DEBUG
@@ -173,6 +186,7 @@ final class MacGatewayStore {
             defaults.set(try? JSONEncoder().encode(saved), forKey: Self.connectionKey)
             connection = saved
             client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: response.token)
+            loadPersistedCloudTasks()
             pendingPairing = nil
             notice = nil
             await enablePush()
@@ -210,6 +224,9 @@ final class MacGatewayStore {
             guard self.client === client, generation == requestGeneration.status else { return }
             status = latest
             isReachable = true
+            await refreshCloudAgents()
+            await refreshActiveCloudTasks()
+            startCloudTaskPollingIfNeeded()
             await refreshSchedules()
             await refreshBoard()
             if latest.device.pushRegistered {
@@ -451,7 +468,7 @@ final class MacGatewayStore {
     }
 
     /// 401 means the Mac revoked this device: drop the pairing everywhere, with the same explanation.
-    private func forgetIfRevoked(_ error: Error) -> Bool {
+    func forgetIfRevoked(_ error: Error) -> Bool {
         guard case MacGatewayError.unauthorized = error else { return false }
         forget()
         notice = Notice(text: MacGatewayError.unauthorized.localizedDescription, isError: true)
@@ -459,8 +476,10 @@ final class MacGatewayStore {
     }
 
     private func forget() {
+        stopCloudTaskPolling()
         IOSCredentialSideTable.delete(key: Self.tokenKey)
         defaults.removeObject(forKey: Self.connectionKey)
+        defaults.removeObject(forKey: Self.cloudTasksKey)
         connection = nil
         client = nil
         status = nil
@@ -468,11 +487,14 @@ final class MacGatewayStore {
         schedulesError = nil
         board = nil
         boardError = nil
+        cloudAgents = []
+        cloudTasks = []
+        busyCloudTaskIds = []
         isReachable = nil
         pushError = nil
     }
 
-    private func localized(_ key: String) -> String {
+    func localized(_ key: String) -> String {
         IOSAppLocalization.string(key, defaultValue: key)
     }
 }

@@ -295,4 +295,206 @@ struct MacGatewayTests {
         }
         #expect(!session.hasPendingApproval)
     }
+
+    @Test func cloudTaskRequestEncodesStrictContractFieldsAndValidates() throws {
+        let req = MacGatewayCloudTaskRequest(
+            requestId: "550e8400-e29b-41d4-a716-446655440000",
+            text: "整理发布检查项\n附带详细说明",
+            agentId: "",
+            title: "   "
+        )
+        #expect(req.agentId == "main")
+        #expect(req.title == "整理发布检查项")
+        #expect(req.validationError == nil)
+
+        let data = try JSONEncoder().encode(req)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set(object.keys) == ["requestId", "agentId", "title", "text"], "unknown JSON fields would be rejected with HTTP 400")
+
+        let emptyText = MacGatewayCloudTaskRequest(requestId: "req-1", text: "   ")
+        #expect(emptyText.validationError != nil)
+        #expect(emptyText.title == "云端任务")
+
+        let badRequestId = MacGatewayCloudTaskRequest(requestId: "bad id with spaces", text: "ok")
+        #expect(badRequestId.validationError != nil)
+    }
+
+    @Test @MainActor func cloudTaskStorePersistsRequestRetriesSameIdPollsResultAndCancels() async throws {
+        let suiteName = "MacGatewayCloudTaskTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        actor MockServer {
+            var seenRequests: [(host: String, method: String, path: String, auth: String?, body: String?)] = []
+            var failSubmitOnce = true
+            var returnConflictOnNextSubmit = false
+            var isCompleted = false
+
+            func handle(_ request: URLRequest) throws -> (Data, URLResponse) {
+                let url = request.url!
+                let host = url.host ?? ""
+                let method = request.httpMethod ?? "GET"
+                let path = url.path
+                let auth = request.value(forHTTPHeaderField: "Authorization")
+                let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
+                seenRequests.append((host, method, path, auth, body))
+
+                if host == "unreachable.local" {
+                    throw URLError(.cannotConnectToHost)
+                }
+
+                func respond(_ status: Int, _ json: String) -> (Data, URLResponse) {
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: status,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (Data(json.utf8), response)
+                }
+
+                switch (method, path) {
+                case ("GET", "/v2/agents"):
+                    return respond(200, #"{"agents":[{"id":"main","name":"Amber","memoryPolicy":"SHARED","tags":[],"revision":1},{"id":"research","name":"研究助手","memoryPolicy":"HUB_ISOLATED","tags":["research"],"revision":2}]}"#)
+                case ("POST", "/v2/work-items"):
+                    if returnConflictOnNextSubmit {
+                        returnConflictOnNextSubmit = false
+                        return respond(409, #"{"error":"requestId 已用于不同任务"}"#)
+                    }
+                    if failSubmitOnce {
+                        failSubmitOnce = false
+                        return respond(500, #"{"error":"存储繁忙"}"#)
+                    }
+                    let count = seenRequests.filter { $0.path == "/v2/work-items" && $0.host == "cloud.example" }.count
+                    let replayed = count > 2
+                    let status = replayed ? 200 : 202
+                    return respond(status, """
+                    {"workItem":{"id":"work:opaque-1","agentId":"research","title":"整理发布检查项","state":"WORKING","progress":"正在检索资料","updatedAtMs":1793500000000},"replayed":\(replayed)}
+                    """)
+                case ("GET", "/v2/work-items/work:opaque-1"):
+                    if isCompleted {
+                        return respond(200, #"""
+                        {"workItem":{"id":"work:opaque-1","agentId":"research","title":"整理发布检查项","state":"COMPLETED","updatedAtMs":1793500005000},"brief":"根据以下资料列出三项发布检查","sessionArchived":true,"resultMarkdown":"# Settlement Report · work:opaque-1\n\n## Summary\n模型结果\n```json\n{\"answer\":42}\n```"}
+                        """#)
+                    }
+                    return respond(200, #"""
+                    {"workItem":{"id":"work:opaque-1","agentId":"research","title":"整理发布检查项","state":"WORKING","progress":"正在检索资料","updatedAtMs":1793500001000},"brief":"根据以下资料列出三项发布检查","sessionArchived":false}
+                    """#)
+                case ("POST", "/v2/work-items/work:opaque-1/cancel"):
+                    return respond(200, #"""
+                    {"workItem":{"id":"work:opaque-1","agentId":"research","title":"整理发布检查项","state":"CANCELLED","updatedAtMs":1793500006000},"brief":"根据以下资料列出三项发布检查","sessionArchived":true}
+                    """#)
+                default:
+                    return respond(404, #"{"error":"not found"}"#)
+                }
+            }
+
+            func markCompleted() {
+                isCompleted = true
+            }
+        }
+
+        let server = MockServer()
+        let client = MacGatewayClient(
+            addrs: ["unreachable.local", "cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            token: "paired-token-1",
+            transport: { request, _ in
+                try await server.handle(request)
+            }
+        )
+        let connection = MacGatewayConnection(
+            gatewayId: "gw-cloud",
+            name: "Amber Cloud",
+            addrs: ["unreachable.local", "cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            deviceId: "device-1"
+        )
+        let store = MacGatewayStore(defaults: defaults)
+        store.configureForTesting(connection: connection, client: client)
+
+        // 1. Load agents
+        await store.refreshCloudAgents()
+        #expect(store.cloudAgents.map(\.id) == ["main", "research"])
+        #expect(store.agentDisplayName(for: "research") == "研究助手")
+
+        // 2. First submit fails with HTTP 500; request is persisted before send with workItemId == nil
+        let taskRequest = MacGatewayCloudTaskRequest(
+            requestId: "req-fixed-1",
+            text: "根据以下资料列出三项发布检查",
+            agentId: "research",
+            title: "整理发布检查项"
+        )
+        let firstAttempt = await store.submitCloudTask(taskRequest)
+        if case .failure(let error) = firstAttempt {
+            #expect(error as? MacGatewayError == .server("存储繁忙"))
+        } else {
+            Issue.record("Expected failure on first attempt")
+        }
+        #expect(store.cloudTasks.count == 1)
+        #expect(store.cloudTasks[0].requestId == "req-fixed-1")
+        #expect(store.cloudTasks[0].needsSubmissionRetry)
+
+        // 3. Retry uses the exact same requestId and payload, succeeds with 202, and saves workItem.id
+        let retryAttempt = await store.retryCloudTask(requestId: "req-fixed-1")
+        let acceptedRecord = try retryAttempt.get()
+        store.stopCloudTaskPolling()
+        #expect(acceptedRecord.workItemId == "work:opaque-1")
+        #expect(acceptedRecord.state == .working)
+        #expect(acceptedRecord.effectiveWorkItem?.progress == "正在检索资料")
+
+        let seen = await server.seenRequests
+        let submitBodies = seen.filter { $0.path == "/v2/work-items" }.compactMap(\.body)
+        #expect(submitBodies.count >= 2)
+        #expect(Set(submitBodies).count == 1, "address fallback and retry must send identical requestId and JSON body")
+        #expect(seen.allSatisfy { $0.auth == "Bearer paired-token-1" })
+
+        // 4. Refresh transitions to COMPLETED and preserves Markdown/code/JSON in resultMarkdown
+        await server.markCompleted()
+        await store.refreshCloudTask(workItemId: "work:opaque-1")
+        let completedRecord = try #require(store.cloudTasks.first)
+        #expect(completedRecord.state == .completed)
+        #expect(completedRecord.isTerminal)
+        #expect(completedRecord.detail?.resultMarkdown?.contains("```json\n{\"answer\":42}\n```") == true)
+
+        // 5. Cancel endpoint decodes CANCELLED terminal state
+        await store.cancelCloudTask(workItemId: "work:opaque-1")
+        #expect(store.cloudTasks.first?.state == .cancelled)
+        #expect(store.cloudTasks.first?.isTerminal == true)
+
+        // 6. 409 conflict maps to MacGatewayError.conflict
+        await {
+            do {
+                // Trigger 409 directly on client
+                let conflictClient = MacGatewayClient(
+                    addrs: ["cloud.example"],
+                    port: 443,
+                    fingerprint: "fp",
+                    token: "paired-token-1",
+                    transport: { req, _ in
+                        let resp = HTTPURLResponse(url: req.url!, statusCode: 409, httpVersion: "HTTP/1.1", headerFields: nil)!
+                        return (Data(#"{"error":"requestId 已用于不同任务"}"#.utf8), resp)
+                    }
+                )
+                _ = try await conflictClient.submitTask(taskRequest)
+                Issue.record("Expected 409 conflict")
+            } catch {
+                #expect(error as? MacGatewayError == .conflict("requestId 已用于不同任务"))
+            }
+        }()
+
+        // 7. Re-pairing with a new deviceId clears old device's persisted tasks
+        let newConnection = MacGatewayConnection(
+            gatewayId: "gw-cloud",
+            name: "Amber Cloud",
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            deviceId: "device-2"
+        )
+        store.configureForTesting(connection: newConnection, client: client)
+        #expect(store.cloudTasks.isEmpty, "re-pairing produces a new deviceId and must not reuse old device records")
+    }
 }

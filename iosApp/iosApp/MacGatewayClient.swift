@@ -203,6 +203,7 @@ enum MacGatewayError: LocalizedError, Equatable {
     /// The Mac answered with a different certificate than the one pinned at pairing.
     case certificateMismatch
     case unauthorized
+    case conflict(String)
     case server(String)
     case invalidResponse
 
@@ -214,7 +215,7 @@ enum MacGatewayError: LocalizedError, Equatable {
             IOSAppLocalization.string("Mac 的证书与配对时不一致（可能重装过 amber-gateway），请取消配对后重新扫码", defaultValue: "Mac 的证书与配对时不一致（可能重装过 amber-gateway），请取消配对后重新扫码")
         case .unauthorized:
             IOSAppLocalization.string("此设备已在 Mac 上被吊销，请重新配对", defaultValue: "此设备已在 Mac 上被吊销，请重新配对")
-        case .server(let message):
+        case .conflict(let message), .server(let message):
             message
         case .invalidResponse:
             IOSAppLocalization.string("Mac Gateway 返回了无法识别的数据", defaultValue: "Mac Gateway 返回了无法识别的数据")
@@ -260,6 +261,8 @@ final class MacGatewayPinningDelegate: NSObject, URLSessionDelegate, Sendable {
 /// One HTTPS client per gateway. Candidate addresses are tried in order; the first that answers is
 /// remembered for the next call.
 actor MacGatewayClient {
+    typealias Transport = @Sendable (URLRequest, Bool) async throws -> (Data, URLResponse)
+
     private let addrs: [String]
     private let port: Int
     private let token: String?
@@ -267,12 +270,14 @@ actor MacGatewayClient {
     /// test-push waits on APNs inside the request; the Mac answers within 20 s, so a short timeout would
     /// retry the next address and send the push twice.
     private let slowSession: URLSession
+    private let transport: Transport?
     private var preferredAddress: String?
 
-    init(addrs: [String], port: Int, fingerprint: String, token: String?) {
+    init(addrs: [String], port: Int, fingerprint: String, token: String?, transport: Transport? = nil) {
         self.addrs = addrs
         self.port = port
         self.token = token
+        self.transport = transport
         func makeSession(timeout: TimeInterval) -> URLSession {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = timeout
@@ -352,7 +357,7 @@ actor MacGatewayClient {
         _ = try await send("POST", "/v1/unpair")
     }
 
-    private func decode<T: Decodable>(_ data: Data) throws -> T {
+    func decode<T: Decodable>(_ data: Data) throws -> T {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         do {
@@ -362,8 +367,12 @@ actor MacGatewayClient {
         }
     }
 
-    private func send(_ method: String, _ path: String, body: [String: Any]? = nil, slow: Bool = false) async throws -> Data {
+    func send(_ method: String, _ path: String, body: [String: Any]? = nil, slow: Bool = false) async throws -> Data {
         let bodyData = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+        return try await sendData(method, path, bodyData: bodyData, slow: slow)
+    }
+
+    func sendData(_ method: String, _ path: String, bodyData: Data? = nil, slow: Bool = false) async throws -> Data {
         let ordered = preferredAddress.map { [$0] + addrs.filter { $0 != preferredAddress } } ?? addrs
         var sawPinMismatch = false
         for address in ordered {
@@ -376,7 +385,11 @@ actor MacGatewayClient {
             let data: Data
             let response: URLResponse
             do {
-                (data, response) = try await (slow ? slowSession : session).data(for: request)
+                if let transport {
+                    (data, response) = try await transport(request, slow)
+                } else {
+                    (data, response) = try await (slow ? slowSession : session).data(for: request)
+                }
             } catch {
                 if Task.isCancelled { throw CancellationError() }
                 // The pinning delegate cancels the challenge on mismatch, which surfaces as `.cancelled`.
@@ -390,6 +403,9 @@ actor MacGatewayClient {
                 return data
             case 401:
                 throw MacGatewayError.unauthorized
+            case 409:
+                let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+                throw MacGatewayError.conflict(message ?? "HTTP \(status)")
             default:
                 let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
                 throw MacGatewayError.server(message ?? "HTTP \(status)")

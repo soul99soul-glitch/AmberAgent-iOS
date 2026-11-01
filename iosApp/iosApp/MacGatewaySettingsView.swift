@@ -5,6 +5,7 @@ struct MacGatewaySettingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(RouterPath.self) private var router
     @State private var confirmsUnpair = false
+    @State private var presentingCloudCompose = false
 
     private let store = MacGatewayStore.shared
     private static let refreshInterval: Duration = .seconds(10)
@@ -47,6 +48,11 @@ struct MacGatewaySettingsView: View {
             Button(L("保留"), role: .cancel) {}
         } message: {
             Text(verbatim: L("此设备将不再收到这台 Mac 的推送。"))
+        }
+        .sheet(isPresented: $presentingCloudCompose) {
+            MacGatewayCloudTaskComposeSheet(store: store) { _ in
+                router.navigate(to: .macTasks)
+            }
         }
     }
 
@@ -177,8 +183,14 @@ struct MacGatewaySettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "任务")
             AmberFormGroup {
+                MacGatewayRow(icon: "paperplane", title: L("交给云端执行"),
+                              detail: L("直接向云端 Agent 派发任务，持久执行并查看结果"),
+                              action: { presentingCloudCompose = true }) {
+                    MacGatewayChevron()
+                }
+                MacGatewayRowDivider()
                 MacGatewayRow(icon: "checklist", title: L("打开任务看板"),
-                              detail: L("定时任务、它们的运行，以及 Claude Code / Codex 会话"),
+                              detail: L("查看云端任务进度与结果、定时任务及 Claude Code / Codex 会话"),
                               action: { router.navigate(to: .macTasks) }) {
                     MacGatewayChevron()
                 }

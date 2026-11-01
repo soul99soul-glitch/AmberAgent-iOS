@@ -95,10 +95,11 @@ struct MacTasksBoardView: View {
         if store.isReachable == false {
             statusNote(icon: "wifi.slash", title: L("无法连接 Mac"),
                        detail: L("Mac 睡眠、合盖或断网时无法查看任务，下面是上次读取的内容。"))
-        } else if store.board == nil, let reason = store.boardError {
+        } else if store.board == nil, let reason = store.boardError, store.cloudAgents.isEmpty, store.cloudTasks.isEmpty {
             // The gateway's own reason, e.g. "Amber 未运行：在 Mac 上打开 Amber 后重试" (503) or an older gateway's 404.
             statusNote(icon: "exclamationmark.circle", title: L("只能看到 Claude Code / Codex 会话"), detail: reason)
         }
+        MacGatewayCloudTasksSection(store: store)
         if store.board == nil, store.boardError == nil, store.isReachable != false {
             // First load: the fallback would briefly show a board without schedules or approvals.
             VStack(spacing: 0) {
@@ -107,7 +108,7 @@ struct MacTasksBoardView: View {
                     MacGatewayRow(icon: "arrow.triangle.2.circlepath", title: L("正在读取…"), detail: "") { EmptyView() }
                 }
             }
-        } else if groups.isEmpty {
+        } else if groups.isEmpty, store.cloudTasks.isEmpty {
             VStack(spacing: 0) {
                 AmberSectionLabel(text: "任务")
                 AmberFormGroup {
