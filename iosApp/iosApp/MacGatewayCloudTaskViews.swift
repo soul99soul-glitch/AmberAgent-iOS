@@ -6,6 +6,7 @@ import UIKit
 struct MacGatewayCloudTasksSection: View {
     let store: MacGatewayStore
     @State private var presentingCompose = false
+    @State private var presentingCloudMainDialogue = false
     @State private var selectedTaskSelection: SelectedCloudTask?
 
     struct SelectedCloudTask: Identifiable, Equatable {
@@ -16,6 +17,21 @@ struct MacGatewayCloudTasksSection: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "云端任务")
             AmberFormGroup {
+                MacGatewayRow(
+                    icon: "bubble.left.and.bubble.right",
+                    title: macGatewayL("已配对云主对话"),
+                    detail: macGatewayL("直接向已配对云主对话发送消息、补充或停止运行中任务（独立于本机对话）"),
+                    action: {
+                        store.setCloudMainDialogueSelected(true)
+                        presentingCloudMainDialogue = true
+                    }
+                ) {
+                    MacGatewayCapsuleButton(title: macGatewayL("进入")) {
+                        store.setCloudMainDialogueSelected(true)
+                        presentingCloudMainDialogue = true
+                    }
+                }
+                MacGatewayRowDivider()
                 MacGatewayRow(
                     icon: "paperplane",
                     title: macGatewayL("交给云端执行"),
@@ -36,6 +52,11 @@ struct MacGatewayCloudTasksSection: View {
             if store.hasActiveCloudTasks {
                 store.startCloudTaskPollingIfNeeded()
             }
+        }
+        .sheet(isPresented: $presentingCloudMainDialogue, onDismiss: {
+            store.setCloudMainDialogueSelected(false)
+        }) {
+            MacGatewayCloudDialogueSheet(store: store)
         }
         .sheet(isPresented: $presentingCompose) {
             MacGatewayCloudTaskComposeSheet(store: store) { submittedRequestId in

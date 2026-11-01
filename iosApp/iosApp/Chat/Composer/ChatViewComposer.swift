@@ -997,6 +997,52 @@ extension ChatView {
                 }
             }
 
+        case .cloudMainDialogue:
+            let gateway = MacGatewayStore.shared
+            guard gateway.connection != nil else {
+                composerState.markHandoffSubmissionFailed(
+                    IOSAppLocalization.string(
+                        "云端未连接，草稿与请求标识已保留。请检查连接后点按「重试」，或切为本机执行。",
+                        defaultValue: "云端未连接，草稿与请求标识已保留。请检查连接后点按「重试」，或切为本机执行。"
+                    )
+                )
+                return
+            }
+
+            gateway.setCloudMainDialogueSelected(true)
+            composerState.isSubmittingHandoff = true
+            composerState.handoffErrorMessage = nil
+            let followupWorkItemId = composerState.handoffFollowupTask?.id
+
+            Task { @MainActor in
+                let result: Result<MacGatewayCloudDialogueReceipt, Error>
+                if let followupWorkItemId {
+                    result = await gateway.sendCloudWorkItemInput(
+                        workItemId: followupWorkItemId,
+                        text: trimmed,
+                        requestId: requestId
+                    )
+                } else {
+                    result = await gateway.sendCloudDialogueMessage(
+                        text: trimmed,
+                        requestId: requestId
+                    )
+                }
+                switch result {
+                case .success(let receipt):
+                    for workItemId in receipt.workItemIds {
+                        AmberHubStore.shared.assignTask(workItemId, toHub: activeHubId)
+                    }
+                    AmberHubStore.shared.assignTask(receipt.requestId, toHub: activeHubId)
+                    viewModel.inputText = ""
+                    composerState.completeHandoffSubmission()
+                    _ = await gateway.pollCloudDialogueEvents()
+                case .failure(let error):
+                    AmberHubStore.shared.assignTask(requestId, toHub: activeHubId)
+                    composerState.markHandoffSubmissionFailed(error.localizedDescription)
+                }
+            }
+
         case .localBackground:
             guard sendEnabled(for: composedPrompt) else {
                 composerState.markHandoffSubmissionFailed(

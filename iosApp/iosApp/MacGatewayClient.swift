@@ -404,14 +404,34 @@ actor MacGatewayClient {
             case 401:
                 throw MacGatewayError.unauthorized
             case 409:
-                let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+                let message = Self.extractErrorMessage(from: data)
                 throw MacGatewayError.conflict(message ?? "HTTP \(status)")
             default:
-                let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+                let message = Self.extractErrorMessage(from: data)
                 throw MacGatewayError.server(message ?? "HTTP \(status)")
             }
         }
         throw sawPinMismatch ? MacGatewayError.certificateMismatch : MacGatewayError.unreachable
+    }
+
+    private static func extractErrorMessage(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let errorString = object["error"] as? String, !errorString.isEmpty {
+            return errorString
+        }
+        if let nested = object["error"] as? [String: Any] {
+            if let code = nested["code"] as? String, !code.isEmpty { return code }
+            if let message = nested["message"] as? String, !message.isEmpty { return message }
+        }
+        if let code = object["code"] as? String, !code.isEmpty {
+            return code
+        }
+        if let message = object["message"] as? String, !message.isEmpty {
+            return message
+        }
+        return nil
     }
 
     private static func hostLiteral(_ address: String) -> String {

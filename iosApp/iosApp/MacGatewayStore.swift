@@ -52,12 +52,23 @@ final class MacGatewayStore {
     var cloudAgentActivities: [String: MacGatewayCloudAgentActivity] = [:]
     var cloudTasks: [MacGatewayCloudTaskRecord] = []
     var busyCloudTaskIds: Set<String> = []
+    /// Explicit Paired Cloud Main Dialogue (/v2/dialogue/* & /v2/work-items/{id}/inputs|stop) state.
+    var isCloudMainDialogueSelected = false
+    var cloudDialogueCursor: Int64 = 0
+    var cloudDialogueEvents: [MacGatewayCloudDialogueEvent] = []
+    var cloudDialogueReceipts: [String: MacGatewayCloudDialogueReceipt] = [:]
+    var cloudDialogueFollowups: [MacGatewayCloudDialogueFollowupRecord] = []
+    var cloudDialogueProgressByWorkItem: [String: MacGatewayCloudDialogueWorkItemProgress] = [:]
+    var cloudDialogueSubmissions: [MacGatewayCloudDialoguePersistedSubmission] = []
+    var selectedCloudDialogueWorkItemId: String?
+    var busyCloudDialogueRequestIds: Set<String> = []
     var pendingPairing: MacGatewayPairingPayload?
     var notice: Notice?
 
     @ObservationIgnored var client: MacGatewayClient?
     @ObservationIgnored private var apnsToken: String?
     @ObservationIgnored var cloudPollTask: Task<Void, Never>?
+    @ObservationIgnored var cloudDialoguePollTask: Task<Void, Never>?
     /// Bumped per request so a slower, older response never overwrites a newer one (polls, pull to refresh and
     /// the refresh after a decision overlap).
     @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
@@ -71,6 +82,7 @@ final class MacGatewayStore {
             connection = saved
             client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: token)
             loadPersistedCloudTasks()
+            loadPersistedCloudDialogueState()
         }
         #if DEBUG
         if ProcessInfo.processInfo.environment["AMBER_MAC_BOARD_FIXTURE"] == "1" { loadBoardFixture() }
@@ -82,6 +94,7 @@ final class MacGatewayStore {
         self.client = client
         self.isReachable = true
         loadPersistedCloudTasks()
+        loadPersistedCloudDialogueState()
     }
 
     #if DEBUG
@@ -188,6 +201,7 @@ final class MacGatewayStore {
             connection = saved
             client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: response.token)
             loadPersistedCloudTasks()
+            loadPersistedCloudDialogueState()
             pendingPairing = nil
             notice = nil
             await enablePush()
@@ -478,9 +492,11 @@ final class MacGatewayStore {
 
     private func forget() {
         stopCloudTaskPolling()
+        resetCloudDialogueMemoryState()
         IOSCredentialSideTable.delete(key: Self.tokenKey)
         defaults.removeObject(forKey: Self.connectionKey)
         defaults.removeObject(forKey: Self.cloudTasksKey)
+        defaults.removeObject(forKey: Self.cloudDialogueStateKey)
         connection = nil
         client = nil
         status = nil

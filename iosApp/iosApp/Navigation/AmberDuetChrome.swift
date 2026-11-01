@@ -26,6 +26,7 @@ enum AmberDuetModeTab: String, CaseIterable, Identifiable {
 
 enum AmberHandoffExecutionTarget: String, CaseIterable, Identifiable {
     case cloud
+    case cloudMainDialogue
     case localBackground
 
     var id: String { rawValue }
@@ -34,8 +35,21 @@ enum AmberHandoffExecutionTarget: String, CaseIterable, Identifiable {
         switch self {
         case .cloud:
             return IOSAppLocalization.string("云端", defaultValue: "云端")
+        case .cloudMainDialogue:
+            return IOSAppLocalization.string("已配对云主对话", defaultValue: "已配对云主对话")
         case .localBackground:
             return IOSAppLocalization.string("本机", defaultValue: "本机")
+        }
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .cloud:
+            return IOSAppLocalization.string("云端后台 (Amber Cloud)", defaultValue: "云端后台 (Amber Cloud)")
+        case .cloudMainDialogue:
+            return IOSAppLocalization.string("已配对云主对话 (Cloud Dialogue)", defaultValue: "已配对云主对话 (Cloud Dialogue)")
+        case .localBackground:
+            return IOSAppLocalization.string("本机后台子代理", defaultValue: "本机后台子代理")
         }
     }
 }
@@ -147,7 +161,7 @@ struct AmberDuetBottomSwitcher: View {
                         onSelectExecutionTarget?(target)
                     } label: {
                         HStack {
-                            Text(target == .cloud ? "云端后台 (Amber Cloud)" : "本机后台子代理")
+                            Text(target.menuTitle)
                             if handoffExecutionTarget == target {
                                 Image(systemName: "checkmark")
                             }
