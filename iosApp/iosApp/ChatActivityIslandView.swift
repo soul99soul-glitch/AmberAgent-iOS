@@ -304,19 +304,24 @@ struct ChatActivityIslandView: View {
     var conversationKey: String? = nil
     var announcement: ConversationActivityNotice? = nil
     var backgroundRunningCount: Int = 0
+    var capsuleScale: CGFloat = 1
     var onAvatarTap: (() -> Void)? = nil
+    var onAvatarFrameChange: ((CGRect) -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
 
     init(presentation: ChatIslandPresentation, maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth,
          conversationKey: String? = nil, announcement: ConversationActivityNotice? = nil,
-         backgroundRunningCount: Int = 0, onAvatarTap: (() -> Void)? = nil) {
+         backgroundRunningCount: Int = 0, capsuleScale: CGFloat = 1,
+         onAvatarTap: (() -> Void)? = nil, onAvatarFrameChange: ((CGRect) -> Void)? = nil) {
         self.presentation = presentation
         self.maxWidth = maxWidth
         self.conversationKey = conversationKey
         self.announcement = announcement
         self.backgroundRunningCount = backgroundRunningCount
+        self.capsuleScale = capsuleScale
         self.onAvatarTap = onAvatarTap
+        self.onAvatarFrameChange = onAvatarFrameChange
     }
 
     /// 兼容既有调用（wiring canary / 预览）：纯态直接包装，无停留行为。
@@ -348,37 +353,56 @@ struct ChatActivityIslandView: View {
     }
 
     var body: some View {
-        VStack(spacing: -11) {
-            if let onAvatarTap {
-                Button(action: onAvatarTap) {
-                    AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
-                        .contentShape(Circle())
+        ZStack(alignment: .top) {
+            // Layer 0: Fixed Top Avatar Anchor — visual center and tap anchor are locked to top-center
+            // of the fixed `maxWidth` container and never move when the status capsule below changes width or height.
+            avatarMedallionView
+                .frame(width: 58, height: 58)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
+                    onAvatarFrameChange?(rect)
                 }
-                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
-                .accessibilityIdentifier("chat.topBar.personaAvatarButton")
-                .accessibilityLabel(Text(IOSAppLocalization.string("形象设定", defaultValue: "形象设定")))
+                .frame(width: maxWidth, height: 58, alignment: .top)
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
                 .zIndex(0)
-            } else {
-                AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
-                    .allowsHitTesting(false)
-                    .zIndex(0)
-            }
 
+            // Layer 1: Independent Status Capsule — expands/contracts around its own center without moving the avatar.
             islandContent
                 .padding(.horizontal, 12)
                 .frame(height: state.kind == .title ? 26 : 30)
                 .fixedSize(horizontal: true, vertical: false)
                 .background { glowUnderlay }
                 .modifier(ChatActivityIslandGlass())
+                .scaleEffect(x: reduceMotion ? 1 : capsuleScale, y: 1)
+                .animation(
+                    reduceMotion ? nil : .easeInOut(duration: 0.22),
+                    value: state.visualKey
+                )
+                .frame(width: maxWidth, height: 30, alignment: .center)
+                .padding(.top, 43)
                 .zIndex(1)
         }
-        .contentShape(Capsule())
-        .animation(
-            reduceMotion ? nil : .easeInOut(duration: 0.22),
-            value: state.visualKey
-        )
+        .frame(width: maxWidth, height: 73, alignment: .top)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(accessibilitySummary))
+    }
+
+    @ViewBuilder
+    private var avatarMedallionView: some View {
+        if let onAvatarTap {
+            Button(action: onAvatarTap) {
+                AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+            .accessibilityIdentifier("chat.topBar.personaAvatarButton")
+            .accessibilityLabel(Text(IOSAppLocalization.string("形象设定", defaultValue: "形象设定")))
+        } else {
+            AmberAgentPersonaMedallionView(mood: personaMood, diameter: 58)
+                .allowsHitTesting(false)
+        }
     }
 
     private var accessibilitySummary: String {

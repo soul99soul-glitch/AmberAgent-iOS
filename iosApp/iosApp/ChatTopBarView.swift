@@ -59,6 +59,7 @@ struct ChatTopBarView: View {
     var onRecapNextStep: (String) -> Bool = { _ in false }
     var backgroundRunningCount: Int = 0
     var onAvatarTap: (() -> Void)? = nil
+    var onAvatarFrameChange: ((CGRect) -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressedPresentation: ChatIslandPresentation?
@@ -322,10 +323,11 @@ struct ChatTopBarView: View {
         ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,
                                conversationKey: conversationID, announcement: announcement,
                                backgroundRunningCount: backgroundRunningCount,
-                               onAvatarTap: onAvatarTap)
-            .frame(height: 73)
-            .contentShape(Capsule())
-            .scaleEffect(x: reduceMotion ? 1 : islandScale, y: 1)
+                               capsuleScale: reduceMotion ? 1 : islandScale,
+                               onAvatarTap: onAvatarTap,
+                               onAvatarFrameChange: onAvatarFrameChange)
+            .frame(width: maxWidth, height: 73, alignment: .top)
+            .contentShape(Rectangle())
             .onTapGesture {
                 let held = pressedPresentation
                 let announcedID = pressedAnnouncementID
@@ -350,10 +352,12 @@ struct ChatTopBarView: View {
                 if let onAvatarTap {
                     Button(action: onAvatarTap) {
                         Color.clear
-                            .frame(width: 58, height: 47)
+                            .frame(width: 58, height: 43)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .frame(width: maxWidth, height: 43, alignment: .top)
+                    .transaction { $0.animation = nil }
                     .accessibilityIdentifier("chat.topBar.personaAvatarButton")
                     .accessibilityLabel("形象设定")
                     .accessibilityHint("轻点上传形象图或生成多帧微动画")

@@ -7,6 +7,7 @@ struct ChatTaskInlineCardView: View {
     let segment: ChatTaskRunSegment
     var onTapToolDetail: (UIMessagePart.Tool) -> Void
     var onOpenSubagentConversation: ((String) -> Void)? = nil
+    var animationTimeOverride: TimeInterval? = nil
 
     @State private var isShowingGroupSheet = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -28,17 +29,48 @@ struct ChatTaskInlineCardView: View {
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                    // One quiet line: a status dot and what is happening now, replaced in place.
+                    // Single in-place progress row: 3 staggered varying-shade wave dots + shimmered text while live;
+                    // settles cleanly to a quiet static indicator when finished or paused.
                     HStack(alignment: .center, spacing: 8) {
-                        ChatTaskProgressDot(tint: dotColor, isLive: rollup.isLive && !reduceMotion)
+                        ChatTaskProgressDot(
+                            tint: dotColor,
+                            isLive: rollup.isLive,
+                            reduceMotion: reduceMotion,
+                            timeOverride: animationTimeOverride
+                        )
 
-                        Text(segment.headline)
-                            .font(.system(size: 14))
-                            .foregroundStyle(lineColor)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .contentTransition(.opacity)
-                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: segment.headline)
+                        ZStack(alignment: .leading) {
+                            Text(segment.headline)
+                                .font(.system(size: 14, weight: rollup.isLive ? .medium : .regular))
+                                .foregroundStyle(lineColor)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .modifier(
+                                    ChatTaskProgressTextShimmer(
+                                        isActive: rollup.isLive && !reduceMotion,
+                                        accentColor: dotColor,
+                                        timeOverride: animationTimeOverride
+                                    )
+                                )
+                                .id(segment.headline)
+                                .transition(
+                                    reduceMotion
+                                        ? .opacity
+                                        : .asymmetric(
+                                            insertion: .opacity
+                                                .combined(with: .offset(y: 5))
+                                                .combined(with: .scale(scale: 0.985, anchor: .leading)),
+                                            removal: .opacity
+                                                .combined(with: .offset(y: -5))
+                                        )
+                                )
+                        }
+                        .frame(height: 22, alignment: .leading)
+                        .clipped()
+                        .animation(
+                            reduceMotion ? nil : .snappy(duration: 0.26, extraBounce: 0),
+                            value: segment.headline
+                        )
 
                         if !rollup.isLive {
                             Image(systemName: "chevron.right")
@@ -107,25 +139,134 @@ struct ChatTaskInlineCardView: View {
     }
 
     private var lineColor: Color {
-        rollup.isLive ? AmberTheme.foreground2 : (rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted)
+        rollup.isLive ? AmberTheme.foreground : (rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted)
     }
 }
 
-/// Status dot; breathes only while the turn is really running.
+/// Live indicator: 3 monochrome-family dots of varying shade doing a staggered vertical wave loop while running;
+/// immediately settles to a single quiet dot when finished or paused, and degrades to static shaded dots on Reduce Motion.
 struct ChatTaskProgressDot: View {
     let tint: Color
     let isLive: Bool
+    var reduceMotion: Bool = false
+    var timeOverride: TimeInterval? = nil
+
+    static let baseShadeTiers: [Double] = [1.0, 0.72, 0.46]
+
+    static func waveMetrics(
+        at time: TimeInterval,
+        dotIndex: Int,
+        isLive: Bool,
+        reduceMotion: Bool
+    ) -> (offsetY: CGFloat, opacity: Double, scale: CGFloat) {
+        let clampedIndex = min(max(dotIndex, 0), baseShadeTiers.count - 1)
+        let tier = baseShadeTiers[clampedIndex]
+        guard isLive, !reduceMotion else {
+            return (offsetY: 0, opacity: tier, scale: 1.0)
+        }
+        let phase = time * 4.6 - Double(clampedIndex) * 0.92
+        let wave = sin(phase)
+        let normalized = (wave + 1.0) * 0.5
+        let offsetY = CGFloat(-2.3 * wave)
+        let opacity = min(1.0, max(0.28, (0.38 + 0.62 * normalized) * tier))
+        let scale = CGFloat(0.90 + 0.16 * normalized)
+        return (offsetY, opacity, scale)
+    }
 
     var body: some View {
-        Circle()
-            .fill(tint)
-            .frame(width: 6, height: 6)
-            .phaseAnimator(isLive ? [1.0, 0.3] : [1.0]) { dot, opacity in
-                dot.opacity(opacity)
-            } animation: { _ in
-                .easeInOut(duration: 0.7)
+        Group {
+            if isLive {
+                if reduceMotion {
+                    dotsRow(at: 0)
+                } else if let timeOverride {
+                    dotsRow(at: timeOverride)
+                } else {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                        dotsRow(at: context.date.timeIntervalSinceReferenceDate)
+                    }
+                }
+            } else {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 6, height: 6)
             }
-            .accessibilityHidden(true)
+        }
+        .frame(height: 16)
+        .accessibilityHidden(true)
+    }
+
+    private func dotsRow(at time: TimeInterval) -> some View {
+        HStack(spacing: 3.5) {
+            ForEach(0..<3, id: \.self) { index in
+                let metrics = Self.waveMetrics(
+                    at: time,
+                    dotIndex: index,
+                    isLive: isLive,
+                    reduceMotion: reduceMotion
+                )
+                Circle()
+                    .fill(tint.opacity(metrics.opacity))
+                    .frame(width: 5.2, height: 5.2)
+                    .scaleEffect(metrics.scale)
+                    .offset(y: metrics.offsetY)
+            }
+        }
+    }
+}
+
+/// Restrained sweeping shimmer over the live progress headline.
+struct ChatTaskProgressTextShimmer: ViewModifier {
+    let isActive: Bool
+    let accentColor: Color
+    var timeOverride: TimeInterval? = nil
+
+    static func shimmerNormalizedProgress(at time: TimeInterval, period: TimeInterval = 1.8) -> CGFloat {
+        let positive = max(0, time)
+        let remainder = positive.truncatingRemainder(dividingBy: max(0.4, period))
+        return CGFloat(remainder / max(0.4, period))
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isActive {
+            if let timeOverride {
+                shimmered(content: content, time: timeOverride)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                    shimmered(content: content, time: context.date.timeIntervalSinceReferenceDate)
+                }
+            }
+        } else {
+            content
+        }
+    }
+
+    private func shimmered(content: Content, time: TimeInterval) -> some View {
+        let progress = Self.shimmerNormalizedProgress(at: time)
+        return content
+            .opacity(0.84)
+            .overlay {
+                GeometryReader { proxy in
+                    let width = max(proxy.size.width, 1)
+                    let bandWidth = max(width * 0.42, 28)
+                    let startX = -bandWidth + (width + bandWidth * 2) * progress
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: accentColor.opacity(0.55), location: 0.35),
+                            .init(color: Color.white.opacity(0.82), location: 0.50),
+                            .init(color: accentColor.opacity(0.55), location: 0.65),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: bandWidth, height: proxy.size.height + 4)
+                    .offset(x: startX, y: -2)
+                }
+                .mask(content)
+                .allowsHitTesting(false)
+            }
     }
 }
 

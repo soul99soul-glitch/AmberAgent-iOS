@@ -377,4 +377,318 @@ final class AmberPersonaAvatarTests: XCTestCase {
             )
         }
     }
+
+    func testProgressRowWaveShimmerTransitionAndFixedAvatarAnchorOnRealChatMount() async throws {
+        // 1. Verify 3 varying-shade wave dots metrics & Reduce Motion degradation
+        let m0 = ChatTaskProgressDot.waveMetrics(at: 0.25, dotIndex: 0, isLive: true, reduceMotion: false)
+        let m1 = ChatTaskProgressDot.waveMetrics(at: 0.25, dotIndex: 1, isLive: true, reduceMotion: false)
+        let m2 = ChatTaskProgressDot.waveMetrics(at: 0.25, dotIndex: 2, isLive: true, reduceMotion: false)
+        XCTAssertNotEqual(m0.offsetY, m1.offsetY, "Wave dots must be phase-staggered")
+        XCTAssertNotEqual(m1.offsetY, m2.offsetY, "Wave dots must be phase-staggered")
+        XCTAssertNotEqual(m0.opacity, m2.opacity, "Wave dots must have distinct shade depths")
+
+        for idx in 0..<3 {
+            let reduced = ChatTaskProgressDot.waveMetrics(at: 0.65, dotIndex: idx, isLive: true, reduceMotion: true)
+            XCTAssertEqual(reduced.offsetY, 0, accuracy: 0.001, "Reduce Motion must keep dots vertically static")
+            XCTAssertEqual(reduced.opacity, ChatTaskProgressDot.baseShadeTiers[idx], accuracy: 0.001)
+        }
+
+        let s0 = ChatTaskProgressTextShimmer.shimmerNormalizedProgress(at: 0.30, period: 1.8)
+        let s1 = ChatTaskProgressTextShimmer.shimmerNormalizedProgress(at: 0.90, period: 1.8)
+        let s2 = ChatTaskProgressTextShimmer.shimmerNormalizedProgress(at: 1.50, period: 1.8)
+        XCTAssertLessThan(s0, s1)
+        XCTAssertLessThan(s1, s2)
+
+        // 2. Mount real ChatView + ChatTopBarView pipeline and verify fixed avatar anchor + progress motion frames
+        let suite = "AmberProgressMotionAndAnchor.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        let archiveDir = URL(
+            fileURLWithPath: "/Users/arquiel/.synara/userdata/project-context/0f3f2134-3ef9-4137-8b75-6d1496ff94d1/library/snapshots/ios-progress-motion-avatar-anchor",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: archiveDir, withIntermediateDirectories: true)
+
+        let conversations = IOSConversationStore(baseDirectory: tempDir, subagentConversationIDsProvider: { [] })
+        await conversations.bootstrap()
+        _ = await conversations.newConversation()
+
+        let settings = SettingsStore(userDefaults: defaults)
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let viewModel = ChatViewModel(settingsStore: settings, sharedSettings: sharedSettings)
+        viewModel.conversationStore = conversations
+        await viewModel.startNewConversation()
+
+        let dao = IosDatabaseFactory.shared.createDatabase(
+            atFilePath: tempDir.appendingPathComponent("runs.db").path
+        ).agentRuntimeDao()
+        let center = ConversationActivityCenter(conversationStore: conversations, dao: dao, startedAt: .distantPast)
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activityStore = IOSSubAgentActivityStore(
+            tasks: tasks,
+            defaults: defaults,
+            launchedAt: Date(),
+            loadRuns: { [] }
+        )
+        let router = RouterPath()
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKey = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        window.overrideUserInterfaceStyle = .light
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKey?.makeKey()
+        }
+
+        func captureWindow(_ fileName: String) async throws {
+            try await Task.sleep(for: .milliseconds(520))
+            window.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let png = try XCTUnwrap(image.pngData())
+            try png.write(to: archiveDir.appendingPathComponent(fileName), options: .atomic)
+        }
+
+        // Mount real ChatView and step through live tool progress (tool_search -> web_search -> fetch_url -> settled)
+        window.rootViewController = UIHostingController(
+            rootView: NavigationStack {
+                ChatView(
+                    settingsStore: settings,
+                    sharedSettings: sharedSettings,
+                    viewModel: viewModel,
+                    activityStore: activityStore
+                )
+            }
+            .environment(center)
+            .environment(conversations)
+            .environment(router)
+            .environment(\.locale, Locale(identifier: "zh_Hans"))
+        )
+        window.makeKeyAndVisible()
+
+        let userMsg = UIMessage.companion.user(prompt: "https://atlasum.net/blog/cve-2026-98432-linux-ipv4-tcp-uaf 这咋办")
+        let doneJSON = #"{"ok":true,"status":"completed"}"#
+        func makeTool(_ id: String, _ name: String, result: String? = nil) -> UIMessagePart.Tool {
+            UIMessagePart.Tool(
+                toolCallId: id,
+                toolName: name,
+                input: "{}",
+                output: result.map { [UIMessagePart.Text(text: $0, metadata: nil)] } ?? [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+        }
+        func makeAssistant(_ parts: [UIMessagePart], id: KotlinUuid = KotlinUuid.companion.random()) -> UIMessage {
+            UIMessage(
+                id: id,
+                role: MessageRole.assistant,
+                parts: parts,
+                annotations: [],
+                createdAt: chatNowLocalDateTime(),
+                finishedAt: nil,
+                modelId: nil,
+                usage: nil,
+                translation: nil
+            )
+        }
+
+        let pendingSearchTool = makeTool("tc-1", "tool_search")
+        let doneSearchTool = makeTool("tc-1", "tool_search", result: doneJSON)
+        let pendingFetchTool = makeTool("tc-2", "scrape_web")
+        let doneFetchTool = makeTool("tc-2", "scrape_web", result: doneJSON)
+        let headMsgID = KotlinUuid.companion.random()
+
+        // Allow ChatView collection view to complete initial mount before pushing live turn updates
+        try await Task.sleep(for: .milliseconds(220))
+        window.layoutIfNeeded()
+
+        // Frame 1: Live "正在查找工具…" with 3 varying-shade wave dots + text shimmer
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.runActivityRevision &+= 1
+        viewModel.isLoading = true
+        viewModel.messages = [userMsg, makeAssistant([pendingSearchTool], id: headMsgID)]
+        viewModel.bumpMessageRevision(reason: .toolResultAppended)
+        try await captureWindow("01-chat-progress-tool-search-wave.png")
+
+        // Frame 2: Smooth transition in-place to "正在读取网页…" on the exact same progress line
+        viewModel.messages = [userMsg, makeAssistant([doneSearchTool, pendingFetchTool], id: headMsgID)]
+        viewModel.bumpMessageRevision(reason: .toolResultAppended)
+        try await captureWindow("02-chat-progress-fetch-url-transition.png")
+
+        // Frame 3: Deterministic multi-phase wave + shimmer strip (showing t=0.18s, t=0.62s, t=1.08s, and settled state)
+        let activeSegment1 = ChatTaskStreamGrouping.turnSegment(
+            for: ChatAssistantTurnProgress(
+                id: "turn-demo",
+                headMessageID: "msg-demo",
+                messages: [makeAssistant([pendingSearchTool], id: headMsgID)],
+                tools: [pendingSearchTool],
+                anchorIDs: ["msg-demo:tc-1"],
+                isLive: true,
+                isComposingReply: false,
+                signature: 1
+            )
+        )
+        let activeSegment2 = ChatTaskStreamGrouping.turnSegment(
+            for: ChatAssistantTurnProgress(
+                id: "turn-demo",
+                headMessageID: "msg-demo",
+                messages: [makeAssistant([doneSearchTool, pendingFetchTool], id: headMsgID)],
+                tools: [doneSearchTool, pendingFetchTool],
+                anchorIDs: ["msg-demo:tc-1", "msg-demo:tc-2"],
+                isLive: true,
+                isComposingReply: false,
+                signature: 2
+            )
+        )
+        let settledSegment = ChatTaskStreamGrouping.turnSegment(
+            for: ChatAssistantTurnProgress(
+                id: "turn-demo",
+                headMessageID: "msg-demo",
+                messages: [makeAssistant([doneSearchTool, doneFetchTool], id: headMsgID)],
+                tools: [doneSearchTool, doneFetchTool],
+                anchorIDs: ["msg-demo:tc-1", "msg-demo:tc-2"],
+                isLive: false,
+                isComposingReply: false,
+                signature: 3
+            )
+        )
+
+        window.rootViewController = UIHostingController(
+            rootView: VStack(alignment: .leading, spacing: 20) {
+                Text("主对话单行进度：三点深浅波浪 + 文字扫光 + 文案衔接 + 结束收束")
+                    .font(.headline)
+                    .foregroundStyle(AmberTheme.foreground)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("相位 1 (t = 0.18s) · 正在查找工具…").font(.caption).foregroundStyle(AmberTheme.muted)
+                    ChatTaskInlineCardView(segment: activeSegment1, onTapToolDetail: { _ in }, animationTimeOverride: 0.18)
+
+                    Divider()
+                    Text("相位 2 (t = 0.62s) · 扫光推进与波浪错峰").font(.caption).foregroundStyle(AmberTheme.muted)
+                    ChatTaskInlineCardView(segment: activeSegment1, onTapToolDetail: { _ in }, animationTimeOverride: 0.62)
+
+                    Divider()
+                    Text("相位 3 (t = 1.08s) · 原位平滑衔接至「正在读取网页…」").font(.caption).foregroundStyle(AmberTheme.muted)
+                    ChatTaskInlineCardView(segment: activeSegment2, onTapToolDetail: { _ in }, animationTimeOverride: 1.08)
+
+                    Divider()
+                    Text("完成收束 · 动画立即停止并收敛为静态单点摘要").font(.caption).foregroundStyle(AmberTheme.muted)
+                    ChatTaskInlineCardView(segment: settledSegment, onTapToolDetail: { _ in })
+                }
+                .padding(18)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(AmberTheme.background.ignoresSafeArea())
+            .environment(\.locale, Locale(identifier: "zh_Hans"))
+        )
+        try await captureWindow("03-progress-wave-shimmer-phases.png")
+
+        // 3. Verify Top Avatar Visual Center & Tap Anchor Invariance across short/long text, states, and Dynamic Type
+        var measuredAvatarFrames: [String: CGRect] = [:]
+        var avatarTapCount = 0
+
+        let statesToVerify: [(label: String, presentation: ChatIslandPresentation, dynamicType: DynamicTypeSize)] = [
+            ("short_title", .idle(.conversationTitle("新对话")), .large),
+            ("long_tool", .active(.activity(kind: .tool, title: "正在搜索：Linux IPv4 TCP UAF 漏洞补丁与分析", systemImage: "magnifyingglass", tint: .amber)), .large),
+            ("generating", .active(.activity(kind: .generating, title: "正在生成回复", systemImage: "text.bubble", tint: .amber)), .large),
+            ("awaiting_user", .active(.activity(kind: .awaitingUser, title: "等待确认工具审批", systemImage: "checkmark.circle", tint: .amber)), .accessibility1)
+        ]
+
+        for item in statesToVerify {
+            var latestRect: CGRect = .null
+            let topBar = ChatTopBarView(
+                presentation: item.presentation,
+                conversationID: "anchor-test",
+                hasMessages: true,
+                isGenerating: item.presentation.displayedState.isActive,
+                notices: [],
+                shelfHeight: 360,
+                onBack: {},
+                onIslandTap: { _ in },
+                onCancel: {},
+                onOpenConversation: { _ in true },
+                onDismiss: { _ in },
+                onNewConversation: {},
+                loadPreview: { _ in nil },
+                previewRevision: { _ in nil },
+                onAvatarTap: { avatarTapCount += 1 },
+                onAvatarFrameChange: { rect in latestRect = rect }
+            )
+            window.rootViewController = UIHostingController(
+                rootView: ZStack(alignment: .top) {
+                    AmberTheme.background.ignoresSafeArea()
+                    topBar
+                }
+                .environment(\.locale, Locale(identifier: "zh_Hans"))
+                .environment(\.dynamicTypeSize, item.dynamicType)
+            )
+            try await Task.sleep(for: .milliseconds(160))
+            window.layoutIfNeeded()
+            XCTAssertFalse(latestRect.isNull, "Expected valid avatar frame for \(item.label)")
+            measuredAvatarFrames[item.label] = latestRect
+            topBar.onAvatarTap?()
+        }
+
+        XCTAssertEqual(avatarTapCount, statesToVerify.count)
+        let baselineRect = try XCTUnwrap(measuredAvatarFrames["short_title"])
+        for (label, rect) in measuredAvatarFrames {
+            XCTAssertEqual(rect.midX, baselineRect.midX, accuracy: 0.05, "Avatar center X must remain fixed for \(label)")
+            XCTAssertEqual(rect.midY, baselineRect.midY, accuracy: 0.05, "Avatar center Y must remain fixed for \(label)")
+            XCTAssertEqual(rect.width, 58, accuracy: 0.05)
+            XCTAssertEqual(rect.height, 58, accuracy: 0.05)
+        }
+
+        // Capture visual comparison sheet proving fixed avatar center X/Y across short and long status capsules
+        window.rootViewController = UIHostingController(
+            rootView: VStack(spacing: 22) {
+                Text("顶部伪灵动岛宽度伸缩时：形象中心与点击锚点恒定不变")
+                    .font(.headline)
+                    .foregroundStyle(AmberTheme.foreground)
+
+                ForEach(Array(statesToVerify.enumerated()), id: \.offset) { _, item in
+                    VStack(spacing: 4) {
+                        Text("\(item.label) · 形象中心 (\(Int(baselineRect.midX)), \(Int(baselineRect.midY)))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(AmberTheme.muted)
+                        ChatTopBarView(
+                            presentation: item.presentation,
+                            conversationID: "anchor-snap",
+                            hasMessages: true,
+                            isGenerating: item.presentation.displayedState.isActive,
+                            notices: [],
+                            shelfHeight: 300,
+                            onBack: {},
+                            onIslandTap: { _ in },
+                            onCancel: {},
+                            onOpenConversation: { _ in true },
+                            onDismiss: { _ in },
+                            onNewConversation: {},
+                            loadPreview: { _ in nil },
+                            previewRevision: { _ in nil },
+                            onAvatarTap: {}
+                        )
+                        .frame(height: 82)
+                    }
+                }
+            }
+            .padding(.top, 28)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(AmberTheme.background.ignoresSafeArea())
+            .environment(\.locale, Locale(identifier: "zh_Hans"))
+        )
+        try await captureWindow("04-top-avatar-fixed-anchor-across-widths.png")
+    }
 }
