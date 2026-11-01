@@ -25,10 +25,17 @@ struct DesktopToolActivity: Equatable {
         case "memory_tool":
             action = Self.memoryAction(string("action"))
             detail = string("query")
-        case "search_web":
+        case "search_web", "exa_search":
             action = ("正在搜索网页", "已搜索网页"); detail = string("query")
         case "scrape_web":
             action = ("正在读取网页", "已读取网页"); detail = string("url").map(Self.host)
+        case "exa_contents":
+            action = ("正在提取网页全文", "已提取网页全文")
+            detail = string("url").map(Self.host) ?? (arguments["urls"] as? [String])?.first.map(Self.host)
+        case "exa_answer":
+            action = ("正在检索问答", "已检索问答"); detail = string("query")
+        case "exa_find_similar":
+            action = ("正在查找相似网页", "已查找相似网页"); detail = string("url").map(Self.host)
         case "workspace_file_list":
             action = ("正在查看工作区文件", "已查看工作区文件")
         case "workspace_file_read":

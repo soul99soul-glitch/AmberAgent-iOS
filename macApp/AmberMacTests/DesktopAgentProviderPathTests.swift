@@ -1,4 +1,5 @@
 import XCTest
+@preconcurrency import Shared
 @testable import AmberMac
 
 /// P2 review B3 and the tool-mode overflow message. These need `DesktopAgentProvider`, which the SwiftPM runtime
@@ -83,5 +84,59 @@ import XCTest
             argumentsJSON: #"{"title":"倒序","start_at":"2026-11-02 15:00","end_at":"2026-11-02 14:00"}"#)
         XCTAssertFalse(invalidOutcome.succeeded)
         XCTAssertTrue(invalidOutcome.message.contains("结束晚于开始"), invalidOutcome.message)
+    }
+
+    func testSearchRuntimeExecuteToolAttachesMediaMetadataToUIMessagePartText() async throws {
+        let defaults = UserDefaults(suiteName: "amber.executor.search.\(UUID().uuidString)")!
+        let credentials = DesktopMemoryCredentials()
+        let searchSettings = DesktopSearchSettings(defaults: defaults, credentials: credentials)
+        try searchSettings.saveConfiguration(
+            enabledServices: [.exa],
+            executionMode: .sequentialFallback,
+            resultCount: 5,
+            apiKeys: [.exa: "exa-test-key"]
+        )
+
+        let parts = try await DesktopSearchRuntime.executeTool(
+            name: "search_web",
+            input: #"{"query":"Exa image extraction","include_images":true}"#,
+            settings: searchSettings,
+            transport: { request in
+                let payload: [String: Any] = [
+                    "results": [
+                        [
+                            "title": "Exa Visual Search",
+                            "url": "https://exa.ai/visual",
+                            "highlights": ["Visual search returns rich image links."],
+                            "image": "https://exa.ai/images/hero.png",
+                            "extras": [
+                                "richImageLinks": [
+                                    [
+                                        "url": "https://exa.ai/images/diagram.png",
+                                        "alt": "Architecture diagram of Exa neural index"
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+                let data = try JSONSerialization.data(withJSONObject: payload)
+                let http = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (data, http)
+            }
+        )
+
+        XCTAssertEqual(parts.count, 1)
+        let textPart = try XCTUnwrap(parts.first as? Shared.UIMessagePart.Text)
+        XCTAssertTrue(textPart.text.contains("https://exa.ai/images/diagram.png"))
+        let metaString = IosToolOutputJsonBridge().metadataString(part: textPart, key: "app.amber.media.images")
+        let originString = IosToolOutputJsonBridge().metadataString(part: textPart, key: "app.amber.media.origin")
+        XCTAssertEqual(originString, "search")
+        let decodedImages = try JSONDecoder().decode([DesktopSearchImage].self, from: Data(try XCTUnwrap(metaString).utf8))
+        XCTAssertEqual(decodedImages.count, 2)
+        XCTAssertEqual(decodedImages[0].url, "https://exa.ai/images/hero.png")
+        XCTAssertEqual(decodedImages[1].url, "https://exa.ai/images/diagram.png")
+        XCTAssertEqual(decodedImages[1].alt, "Architecture diagram of Exa neural index")
+        XCTAssertEqual(decodedImages[1].sourceURL, "https://exa.ai/visual")
     }
 }

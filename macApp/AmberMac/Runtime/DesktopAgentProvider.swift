@@ -123,6 +123,9 @@ import CryptoKit
         )
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
         let exposure = IosToolExposureBridge(tools: tools)
+        if context.toolsEnabled, searchSettings.enabledServices.contains(.exa) {
+            exposure.exposeToolNames(names: ["exa_contents", "exa_answer", "exa_find_similar"])
+        }
         let guidance = exposure.discoveryGuidance()
         if !guidance.isEmpty {
             input.insert(contentsOf: try bridge.messages(json: DesktopJSON.encode([DesktopMessage(role: .system, text: guidance)])), at: 0)
@@ -353,6 +356,8 @@ import CryptoKit
         }
         switch await executor.execute(tool: tool, isUserInitiated: true) {
         case .filled(let output): return (true, output)
+        case .filledParts(let parts):
+            return (true, parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n"))
         case .failed(let reason), .denied(let reason): return (false, reason)
         default: return (false, "unknown")
         }
@@ -620,8 +625,12 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                 output = try Self.json(["ok": result.exitCode == 0 && !result.cancelled && !result.timedOut,
                     "output": result.output, "exit_code": result.exitCode, "truncated": result.truncated,
                     "timed_out": result.timedOut, "cancelled": result.cancelled])
-            case "search_web", "scrape_web":
-                output = try await DesktopSearchRuntime.execute(name: tool.toolName, input: tool.input, settings: searchSettings)
+            case "search_web", "scrape_web", "exa_search", "exa_contents", "exa_answer", "exa_find_similar":
+                return .filledParts(try await DesktopSearchRuntime.executeTool(
+                    name: tool.toolName,
+                    input: tool.input,
+                    settings: searchSettings
+                ))
             case "history_search":
                 guard let snapshot = historySnapshot else { return .failed("当前会话没有可检索的历史记录。") }
                 let state = await snapshot()
