@@ -240,6 +240,7 @@ extension DesktopWorkspace {
                 self.fileReadFailures.remove(id)
                 self.insights.remove(id)
                 self.boost.forget(id)
+                self.intelligentUIHost.removeConversation(id)
                 var cleanupFailed = !self.artifactShelf.removeConversation(id)
                 do { try await self.files.removeConversation(id) }
                 catch { cleanupFailed = true }
@@ -394,6 +395,7 @@ extension DesktopWorkspace {
         let metadata = summaries.filter { unsavedMetadataIDs.contains($0.id) }
         for summary in metadata { persistMetadata(summary) }
         await persistence?.value
+        try? await intelligentUIStateStore.flush()
         return unsavedConversationIDs.isEmpty && unsavedMetadataIDs.isEmpty
     }
     func waitUntilLoaded() async { await loadingTask?.value }

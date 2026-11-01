@@ -36,7 +36,9 @@ import Foundation
                 amberRoot: directory, knowledgeDirectory: knowledge.directory),
             imageGeneration: imageGeneration, searchSettings: searchSettings,
             artifactShelf: DesktopArtifactShelf(fileURL: directory.appendingPathComponent("artifact-shelf.json")),
-            plugins: plugins)
+            plugins: plugins,
+            intelligentUIStateStore: IOSIntelligentUIStateStore(fileURL: directory.appendingPathComponent("intelligent-ui-state.json")),
+            intelligentUIReceiptsFileURL: directory.appendingPathComponent("intelligent-ui-receipts.json"))
         let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: directory.appendingPathComponent("schedules", isDirectory: true)),
             runner: { [weak self] task, slot in
                 guard let self else {

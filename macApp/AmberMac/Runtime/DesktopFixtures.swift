@@ -94,7 +94,78 @@ final class DesktopMemoryCredentials: DesktopCredentialStore {
                 ? String(repeating: "这是用于检查上下文整理的本地工作记录，保留原始历史可以回看全部决定。", count: 30)
                 : "这是最近的本地示例回答 \(index + 1)。")]
         })
-        let values = [conversation, interrupted, DesktopConversation(title: "这是一条很长很长的会话标题，用于检查侧栏截断与完整提示"), structured, reading, context]
+        let smartUI = DesktopConversation(title: "原生智能 UI · 交互示例", messages: [
+            DesktopMessage(role: .user, text: "帮我用智能 UI 规划 macOS 交付重点并支持交互调整。"),
+            DesktopMessage(role: .assistant, text: """
+            已为你生成可交互的任务决策与参数探索界面，点选或填写后会实时保存在当前会话本地：
+
+            ```task-ui
+            {
+              "version": 1,
+              "card_id": "macos-smart-ui-demo",
+              "kind": "decision",
+              "goal": "确认 macOS 原生智能 UI 验收方案",
+              "question": "请选择优先推进的交互策略并配置验证范围：",
+              "options": [
+                {
+                  "id": "dual-action",
+                  "title": "直接提交 + 填入输入框草稿双通道",
+                  "summary": "既支持一键作为新消息继续，也支持追加到输入框草稿与附件一同编辑。",
+                  "tradeoffs": ["兼顾快捷确认与二次编辑", "不覆盖已有输入框内容与附件"],
+                  "recommended": true
+                },
+                {
+                  "id": "submit-only",
+                  "title": "仅直接提交下一轮",
+                  "summary": "点击后立即发送固定格式的卡片回执。",
+                  "tradeoffs": ["流程最短"]
+                }
+              ],
+              "fields": [
+                { "id": "families", "label": "重点验证组件族", "required": true, "type": "multiChoice" },
+                { "id": "dark_mode", "label": "包含深色模式与流式预览验收", "required": true, "type": "bool" },
+                { "id": "note", "label": "补充备注", "placeholder": "可选说明…", "required": false, "type": "text" }
+              ],
+              "components": [
+                {
+                  "id": "config-card",
+                  "kind": "card",
+                  "title": "交互验证参数",
+                  "children": [
+                    {
+                      "id": "families-choice",
+                      "kind": "multiChoice",
+                      "field_id": "families",
+                      "title": "选择要重点核验的组件族",
+                      "options": [
+                        { "id": "form_input", "label": "表单与选择器", "detail": "singleChoice / multiChoice / toggle / slider" },
+                        { "id": "data_chart", "label": "数据指标与图表", "detail": "metricGrid / progress / barChart 动态联动" },
+                        { "id": "study_quiz", "label": "复习翻卡与抽考", "detail": "本地练习状态持久化" }
+                      ]
+                    },
+                    {
+                      "id": "dark-toggle",
+                      "kind": "toggle",
+                      "field_id": "dark_mode",
+                      "title": "同时导出浅色与深色模式截图"
+                    },
+                    {
+                      "id": "live-summary",
+                      "kind": "decisionSummary",
+                      "title": "实时输入摘要",
+                      "items": ["families", "dark_mode", "note"]
+                    }
+                  ]
+                }
+              ],
+              "submit": { "label": "按所选方案继续", "intent": "continue" }
+            }
+            ```
+
+            确认后可直接点击 **「按所选方案继续」**，或点击 **「填入输入框草稿」** 在发送前继续补充说明。
+            """)
+        ])
+        let values = [conversation, smartUI, interrupted, DesktopConversation(title: "这是一条很长很长的会话标题，用于检查侧栏截断与完整提示"), structured, reading, context]
         return DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage(values),
             provider: DesktopFixtureProvider(), initialConversations: values,
             agentTasks: DesktopAgentTasks(defaults: defaults))

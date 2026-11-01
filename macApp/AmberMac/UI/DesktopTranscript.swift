@@ -68,6 +68,7 @@ struct DesktopTranscript: View {
                         // (growth below the viewport is invisible), so history reading costs no per-chunk layout.
                         // Lazy stacks virtualize themselves; image rows reload (and change height) when remounted.
                         if windowed, message.images.isEmpty, message.videos.isEmpty, message.audios.isEmpty,
+                           !IOSIntelligentUIPayloadDetector.mayContainTaskUI(in: message.text),
                            !highlighted, !(liveRows?.contains(index) ?? true),
                            let height = message.state == .streaming ? rowHeights.anyHeight(message.rowIdentity)
                             : (rowHeights.height(message.rowIdentity, layout: layout) ?? rowHeights.anyHeight(message.rowIdentity)) {
@@ -119,6 +120,10 @@ struct DesktopTranscript: View {
                 .transaction(value: conversation.messages.last?.text) { $0.animation = nil }
                 .transaction(value: conversation.messages.last?.reasoning) { $0.animation = nil }
                 .transaction(value: conversation.messages.last?.tools.count) { $0.animation = nil }
+                .environment(\.desktopIntelligentUIHost, workspace.intelligentUIHost)
+                .environment(\.desktopIntelligentUIConversationID, conversation.id.uuidString)
+                .environment(\.desktopIntelligentUIBusy, workspace.isConversationGenerating(conversation.id) || workspace.isConversationMutatingBranch(conversation.id))
+                .environment(\.desktopIntelligentUIEnabled, workspace.settings.intelligentUIEnabled)
             }
             .scrollPosition($position)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -483,8 +488,8 @@ private struct DesktopMessageRow: View, Equatable {
                     }
                 }
             } else {
-                ForEach(Array(orderedBlocks.enumerated()), id: \.offset) { _, block in
-                    assistantBlockView(block)
+                ForEach(Array(orderedBlocks.enumerated()), id: \.offset) { blockIndex, block in
+                    assistantBlockView(block, blockIndex: blockIndex)
                 }
             }
             if message.text.isEmpty, message.state == .streaming, message.role != .user,
@@ -584,15 +589,21 @@ private struct DesktopMessageRow: View, Equatable {
     }
 
     @ViewBuilder
-    private func assistantBlockView(_ block: DesktopMessageDisplayBlock) -> some View {
+    private func assistantBlockView(_ block: DesktopMessageDisplayBlock, blockIndex: Int = 0) -> some View {
         switch block {
         case .text(let segment):
+            let textPartIndex = orderedBlocks.prefix(blockIndex).reduce(into: 0) { count, item in
+                if case .text = item { count += 1 }
+            }
             DesktopMarkdown(
                 text: segment,
                 fontFamily: settings.messageFontFamily,
                 fontSize: settings.messageFontSize,
                 streaming: message.state == .streaming,
-                maxWidth: max(280, layoutWidth)
+                maxWidth: max(280, layoutWidth),
+                messageID: message.id.uuidString,
+                textPartIndex: textPartIndex,
+                isMessageComplete: message.state == .complete
             )
             .environment(\.desktopCodePinning, codePinning)
         case .images(let images):

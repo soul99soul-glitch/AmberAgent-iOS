@@ -69,6 +69,14 @@ targets:
       - path: ../iosApp/iosApp/Search/IOSSearchHTTPProtocol.swift
       - path: ../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
       - path: ../iosApp/iosApp/IOSWebMountPublicDNS.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIProtocol.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIComponents.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStudy.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStateStore.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStreamingPreview.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIComponentView.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStudyView.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStreamingPreviewView.swift
       - path: ../iosApp/iosApp/IOSCredentialRedactor.swift
     settings:
       base:
@@ -171,6 +179,14 @@ targets:
       - path: ../iosApp/iosApp/IOSSyncBackupError.swift
       - path: ../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift
       - path: ../iosApp/iosApp/IOSWebMountPublicDNS.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIProtocol.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIComponents.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStudy.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStateStore.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStreamingPreview.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIComponentView.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStudyView.swift
+      - path: ../iosApp/iosApp/IOSIntelligentUIStreamingPreviewView.swift
     settings:
       base:
         PRODUCT_NAME: AmberPreview

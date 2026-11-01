@@ -117,6 +117,8 @@ final class DesktopSettings {
     var automaticallyFollowGeneration: Bool { didSet { persist() } }
     /// Tool calls stay in the conversation data either way; this only hides their cards in the transcript.
     var hidesToolCalls: Bool { didSet { persist() } }
+    /// Enables native interactive `task-ui` cards in assistant replies and injects the protocol capability prompt.
+    var intelligentUIEnabled: Bool { didSet { persist() } }
     var sendShortcut: DesktopSendShortcut { didSet { persist() } }
     /// 长程工具任务的轮数上限；默认值足够跑满一小时以上的多步任务，可在设置里下调或再调高。
     private var storedAgentToolRoundLimit: Int
@@ -173,6 +175,7 @@ final class DesktopSettings {
         var autoExpandThinking: Bool?
         var automaticallyFollowGeneration: Bool?
         var hidesToolCalls: Bool?
+        var intelligentUIEnabled: Bool?
         var sendShortcut: DesktopSendShortcut?
         var notificationsEnabled: Bool?
         var speechVoiceIdentifier: String?
@@ -209,6 +212,7 @@ final class DesktopSettings {
         autoExpandThinking = record?.autoExpandThinking ?? true
         automaticallyFollowGeneration = record?.automaticallyFollowGeneration ?? true
         hidesToolCalls = record?.hidesToolCalls ?? false
+        intelligentUIEnabled = record?.intelligentUIEnabled ?? true
         sendShortcut = record?.sendShortcut ?? .commandReturn
         storedAgentToolRoundLimit = DesktopAgentRunLimits.clampedRounds(record?.agentToolRoundLimit ?? DesktopAgentRunLimits.defaultRounds)
         storedAgentRunMinutes = DesktopAgentRunLimits.clampedMinutes(record?.agentRunMinutes ?? DesktopAgentRunLimits.defaultMinutes)
@@ -405,7 +409,8 @@ final class DesktopSettings {
             messageFontFamily: messageFontFamily, messageFontSize: messageFontSize,
             assistantName: assistantName, userNickname: userNickname,
             reasoningExpandedByDefault: reasoningExpandedByDefault, autoExpandThinking: autoExpandThinking,
-            automaticallyFollowGeneration: automaticallyFollowGeneration, hidesToolCalls: hidesToolCalls, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
+            automaticallyFollowGeneration: automaticallyFollowGeneration, hidesToolCalls: hidesToolCalls,
+            intelligentUIEnabled: intelligentUIEnabled, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
             speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate,
             agentToolRoundLimit: agentToolRoundLimit, agentRunMinutes: agentRunMinutes)
         if let data = try? JSONEncoder().encode(record) {

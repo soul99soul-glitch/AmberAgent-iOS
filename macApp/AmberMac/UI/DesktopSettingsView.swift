@@ -525,6 +525,9 @@ struct DesktopSettingsView: View {
                 Toggle("在对话中隐藏工具调用", isOn: $settings.hidesToolCalls)
                 Text("只影响显示；工具调用和结果仍保存在会话里，导出完整会话时会保留。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                Toggle("启用原生智能 UI 任务卡", isOn: $settings.intelligentUIEnabled)
+                Text("允许模型在回答中生成可交互的方案选择、表单填写、参数探索与练习卡片（task-ui）。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Picker("发送消息", selection: $settings.sendShortcut) {
                     ForEach(DesktopSendShortcut.allCases) { Text($0.title).tag($0) }
                 }

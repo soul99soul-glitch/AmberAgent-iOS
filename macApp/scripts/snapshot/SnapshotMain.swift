@@ -126,6 +126,7 @@ import ServiceManagement
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_GATEWAY"] != nil { try await gatewaySettings() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PHASE5"] != nil { try await phase5ChangedPages() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_COMPOSER"] != nil { try await composerThinkingSnapshots() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_SMART_UI"] != nil { try await smartUISnapshots() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
@@ -675,6 +676,124 @@ import ServiceManagement
                 .frame(width: 780, height: 420)
                 .background(DesktopTheme.paper),
                 780, 420, dark
+            )
+        }
+    }
+
+    @MainActor static func smartUISnapshots() async throws {
+        // Scenario 1: Decision + Form card interacted and inserted into composer draft alongside an existing attachment
+        let wsDecision = DesktopWorkspace.uiFixture()
+        await wsDecision.agentTasks.waitUntilLoaded()
+        if let smartConv = wsDecision.conversations.first(where: { $0.title.contains("原生智能 UI") }),
+           let assistantMsg = smartConv.messages.last(where: { $0.role == .assistant }) {
+            wsDecision.select(smartConv.id)
+            let cards = IOSIntelligentUIProtocol.parse(assistantMsg.text, isStreaming: false).compactMap { seg -> IOSIntelligentUICardDefinition? in
+                if case .card(let def) = seg { return def }
+                return nil
+            }
+            if let card = cards.first {
+                let source = IOSIntelligentUISource(
+                    conversationID: smartConv.id.uuidString,
+                    messageID: assistantMsg.id.uuidString,
+                    textPartIndex: 0,
+                    cardID: card.cardID
+                )
+                try wsDecision.intelligentUIStateStore.update(
+                    source: source,
+                    definition: card,
+                    selectedOptionID: "dual-action",
+                    values: [
+                        "families": #"["data_chart","form_input","study_quiz"]"#,
+                        "dark_mode": "true",
+                        "note": "保留输入框原有说明与附件，验证端到端回传"
+                    ]
+                )
+                wsDecision.draft = "附上本轮架构对照说明："
+                wsDecision.pendingAttachments = [
+                    DesktopImportedDocument(
+                        id: UUID(),
+                        name: "smart-ui-spec.md",
+                        sourceURL: nil,
+                        kind: .document,
+                        byteCount: 2048,
+                        text: "# Smart UI Spec",
+                        image: nil,
+                        pageCount: nil,
+                        note: nil
+                    )
+                ]
+                _ = wsDecision.intelligentUIHost.insertIntoDraft(source: source, definition: card)
+            }
+        }
+        for dark in [false, true] {
+            let suffix = dark ? "dark" : "light"
+            try await capture(
+                "smart-ui-decision-form-\(suffix)",
+                DesktopWorkspaceView(workspace: wsDecision, searchRequest: 0),
+                1280, 920, dark
+            )
+        }
+
+        // Scenario 2: Explore card (numeric value_field_id binding updating metricGrid, progress, barChart) + submitted receipt
+        let wsExplore = DesktopWorkspace.uiFixture()
+        await wsExplore.agentTasks.waitUntilLoaded()
+        let exploreAssistant = DesktopMessage(
+            role: .assistant,
+            text: """
+            ### 参数探索与流式降级验证
+
+            拖动下方天数步进器或滑块，顶部指标卡、进度条与柱状图会按 `value_field_id` 实时联动：
+
+            ```task-ui
+            \(IOSIntelligentUIProtocol.numericExploreExampleJSON)
+            ```
+            """,
+            state: .complete
+        )
+        let exploreCard = try IOSIntelligentUIProtocol.decode(IOSIntelligentUIProtocol.numericExploreExampleJSON)
+        let exploreConvID = UUID()
+        let exploreSource = IOSIntelligentUISource(
+            conversationID: exploreConvID.uuidString,
+            messageID: exploreAssistant.id.uuidString,
+            textPartIndex: 0,
+            cardID: exploreCard.cardID
+        )
+        try wsExplore.intelligentUIStateStore.update(
+            source: exploreSource,
+            definition: exploreCard,
+            selectedOptionID: nil,
+            values: ["chapters": "3"]
+        )
+        let exploreDraft = wsExplore.intelligentUIStateStore.draft(for: exploreSource, definition: exploreCard)
+        let exploreSub = try DesktopIntelligentUISubmission(source: exploreSource, definition: exploreCard, draft: exploreDraft)
+        let exploreUserReply = DesktopMessage(role: .user, text: exploreSub.prompt())
+        let exploreFollowup = DesktopMessage(
+            role: .assistant,
+            text: "已收到 **已完成 3 章** 阅读进度，已为你同步更新后续第 4 章复习计划。",
+            state: .complete
+        )
+        let exploreConv = DesktopConversation(
+            id: exploreConvID,
+            title: "参数联动与回执 · 智能 UI",
+            messages: [
+                DesktopMessage(role: .user, text: "帮我做一个可调节完成章节数的阅读进度探索卡片。"),
+                exploreAssistant,
+                exploreUserReply,
+                exploreFollowup
+            ],
+            isPinned: true
+        )
+        wsExplore.conversations.insert(exploreConv, at: 0)
+        wsExplore.updateSummary(exploreConv)
+        wsExplore.intelligentUIHost.recordReceipt(exploreSub, userMessageID: exploreUserReply.id)
+        wsExplore.select(exploreConvID)
+
+        for dark in [false, true] {
+            let suffix = dark ? "dark" : "light"
+            try await capture(
+                "smart-ui-explore-submitted-\(suffix)",
+                DesktopWorkspaceView(workspace: wsExplore, searchRequest: 0),
+                1280, 920, dark
             )
         }
     }

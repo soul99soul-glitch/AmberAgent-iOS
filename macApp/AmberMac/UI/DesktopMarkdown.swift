@@ -18,18 +18,87 @@ struct DesktopMarkdown: View {
     /// While true, newly arrived text fades in and growth glides instead of snapping.
     var streaming = false
     var maxWidth: CGFloat = 520
+    var messageID: String? = nil
+    var textPartIndex: Int = 0
+    var isMessageComplete: Bool = true
+    @Environment(\.desktopIntelligentUIEnabled) private var intelligentUIEnabled
     @State private var cache = DesktopMarkdownCache()
 
     var body: some View {
-        let blocks = cache.blocks(for: text, streaming: streaming)
-        DesktopMarkdownBlocks(
-            blocks: blocks,
-            fontFamily: fontFamily,
-            fontSize: fontSize,
-            streaming: streaming,
-            maxWidth: maxWidth
-        )
-        .font(fontFamily.swiftUIFont(size: fontSize))
+        let taskSegments = cache.taskSegments(for: text, streaming: streaming, enabled: intelligentUIEnabled)
+        if !taskSegments.isEmpty {
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(taskSegments.indices, id: \.self) { index in
+                    segmentView(index: index, segment: taskSegments[index], totalCount: taskSegments.count)
+                }
+            }
+        } else {
+            let blocks = cache.blocks(for: text, streaming: streaming)
+            DesktopMarkdownBlocks(
+                blocks: blocks,
+                fontFamily: fontFamily,
+                fontSize: fontSize,
+                streaming: streaming,
+                maxWidth: maxWidth
+            )
+            .font(fontFamily.swiftUIFont(size: fontSize))
+        }
+    }
+
+    @ViewBuilder
+    private func segmentView(index: Int, segment: IOSIntelligentUISegment, totalCount: Int) -> some View {
+        let isTail = streaming && index == totalCount - 1
+        switch segment {
+        case .text(let subtext):
+            DesktopMarkdownBlocks(
+                blocks: DesktopMarkdownParser.parse(subtext, streaming: isTail),
+                fontFamily: fontFamily,
+                fontSize: fontSize,
+                streaming: isTail,
+                maxWidth: maxWidth
+            )
+            .font(fontFamily.swiftUIFont(size: fontSize))
+        case .card(let definition):
+            if streaming {
+                IOSIntelligentUIStreamingPreviewView(
+                    preview: IOSIntelligentUIStreamingPreview.complete(definition),
+                    generationNamespace: "\(messageID ?? "message"):\(textPartIndex):\(definition.cardID)",
+                    isAnimating: streaming
+                )
+            } else {
+                DesktopIntelligentUIBlock(
+                    definition: definition,
+                    isMessageComplete: isMessageComplete,
+                    interactionEnabled: intelligentUIEnabled,
+                    messageID: messageID,
+                    textPartIndex: textPartIndex
+                )
+            }
+        case .loading:
+            if let preview = cache.streamingPreview(for: text) {
+                IOSIntelligentUIStreamingPreviewView(
+                    preview: preview,
+                    generationNamespace: "\(messageID ?? "message"):\(textPartIndex):preview:\(index)",
+                    isAnimating: streaming
+                )
+            } else {
+                HStack(spacing: 8) {
+                    IOSGenerationActivityIndicator(isActive: streaming)
+                    Text("正在组织任务界面…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DesktopTheme.inkSecondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesktopTheme.inset, in: RoundedRectangle(cornerRadius: DesktopTheme.radiusMedium))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesktopTheme.radiusMedium)
+                        .stroke(DesktopTheme.hairline, lineWidth: 1)
+                )
+            }
+        case .invalid(let raw, let reason):
+            DesktopIntelligentUIInvalidCard(raw: raw, reason: reason)
+        }
     }
 }
 
@@ -38,6 +107,13 @@ private final class DesktopMarkdownCache {
     private var text: String?
     private var streaming: Bool?
     private var value: [DesktopMarkdownBlock] = []
+    private var taskText: String?
+    private var taskStreaming: Bool?
+    private var taskEnabled: Bool?
+    private var cachedTaskSegments: [IOSIntelligentUISegment] = []
+    private var previewScanner = IOSIntelligentUIStreamingPreviewScanner()
+    private var previewText: String?
+
     func blocks(for text: String, streaming: Bool = false) -> [DesktopMarkdownBlock] {
         if text != self.text || streaming != self.streaming {
             value = DesktopMarkdownParser.parse(text, streaming: streaming)
@@ -45,6 +121,43 @@ private final class DesktopMarkdownCache {
             self.streaming = streaming
         }
         return value
+    }
+
+    func taskSegments(for text: String, streaming: Bool, enabled: Bool) -> [IOSIntelligentUISegment] {
+        guard enabled, IOSIntelligentUIPayloadDetector.mayContainTaskUI(in: text) else {
+            if !cachedTaskSegments.isEmpty { cachedTaskSegments = [] }
+            previewScanner.reset()
+            previewText = nil
+            return []
+        }
+        if text != taskText || streaming != taskStreaming || enabled != taskEnabled {
+            let parsed = IOSIntelligentUIProtocol.parse(text, isStreaming: streaming)
+            let hasTaskSegment = parsed.contains { segment in
+                if case .text = segment { return false }
+                return true
+            }
+            cachedTaskSegments = hasTaskSegment ? parsed : []
+            taskText = text
+            taskStreaming = streaming
+            taskEnabled = enabled
+            if !streaming {
+                previewScanner.reset()
+                previewText = nil
+            }
+        }
+        return cachedTaskSegments
+    }
+
+    func streamingPreview(for text: String) -> IOSIntelligentUIStreamingPreview? {
+        if previewText != text {
+            if let previous = previewText, text.hasPrefix(previous) {
+                previewScanner.update(with: text)
+            } else {
+                previewScanner.reconcile(text)
+            }
+            previewText = text
+        }
+        return previewScanner.preview
     }
 }
 

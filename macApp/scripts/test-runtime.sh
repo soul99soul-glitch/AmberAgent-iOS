@@ -25,6 +25,11 @@ cp "$project_dir/../iosApp/iosApp/IOSWebDAVClient.swift" "$test_dir/Sources/Ambe
 cp "$project_dir/../iosApp/iosApp/IOSSyncBackupError.swift" "$test_dir/Sources/AmberMac/"
 cp "$project_dir/../iosApp/iosApp/Infrastructure/Networking/IOSPublicURLPolicy.swift" "$test_dir/Sources/AmberMac/"
 cp "$project_dir/../iosApp/iosApp/IOSWebMountPublicDNS.swift" "$test_dir/Sources/AmberMac/"
+cp "$project_dir/../iosApp/iosApp/IOSIntelligentUIProtocol.swift" "$test_dir/Sources/AmberMac/"
+cp "$project_dir/../iosApp/iosApp/IOSIntelligentUIComponents.swift" "$test_dir/Sources/AmberMac/"
+cp "$project_dir/../iosApp/iosApp/IOSIntelligentUIStudy.swift" "$test_dir/Sources/AmberMac/"
+cp "$project_dir/../iosApp/iosApp/IOSIntelligentUIStateStore.swift" "$test_dir/Sources/AmberMac/"
+cp "$project_dir/../iosApp/iosApp/IOSIntelligentUIStreamingPreview.swift" "$test_dir/Sources/AmberMac/"
 for source in "$project_dir"/AmberMacTests/*.swift; do
   case "$(basename "$source")" in
     # Need the KMP Shared framework, the SwiftUI view tree or the full app wiring; they run in the Xcode test target.

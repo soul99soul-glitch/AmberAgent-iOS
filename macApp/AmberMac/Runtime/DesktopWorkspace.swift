@@ -88,6 +88,8 @@ final class DesktopWorkspace {
     let plugins: DesktopPluginStore
     /// DeepSeek 专属 `/boost` 的会话级开关。
     let boost: DesktopDeepSeekBoostStore
+    let intelligentUIStateStore: IOSIntelligentUIStateStore
+    private(set) var intelligentUIHost: DesktopIntelligentUIHost!
     let titles = DesktopTitleGeneration()
     /// Set by the live app; previews and tests run without one.
     var scheduler: DesktopScheduler?
@@ -249,13 +251,16 @@ final class DesktopWorkspace {
          storageUsageSources: [DesktopStorageUsage.Source]? = nil,
          imageGeneration: DesktopImageGeneration? = nil, speech: DesktopSpeechPlayer? = nil,
          searchSettings: DesktopSearchSettings? = nil, artifactShelf: DesktopArtifactShelf? = nil,
-         plugins: DesktopPluginStore? = nil, boost: DesktopDeepSeekBoostStore? = nil) {
+         plugins: DesktopPluginStore? = nil, boost: DesktopDeepSeekBoostStore? = nil,
+         intelligentUIStateStore: IOSIntelligentUIStateStore? = nil,
+         intelligentUIReceiptsFileURL: URL? = nil) {
         self.settings = settings
         self.insights = insights ?? DesktopConversationInsights()
         self.artifactShelf = artifactShelf ?? DesktopArtifactShelf()
         self.files = files
         self.agentTasks = agentTasks ?? DesktopAgentTasks()
         self.boost = boost ?? DesktopDeepSeekBoostStore()
+        self.intelligentUIStateStore = intelligentUIStateStore ?? IOSIntelligentUIStateStore()
         self.knowledge = knowledge ?? DesktopKnowledgeStore(directory: FileManager.default.temporaryDirectory
             .appendingPathComponent("amber-preview-knowledge-" + UUID().uuidString, isDirectory: true))
         self.mcp = mcp ?? DesktopMCPManager(store: DesktopMCPStore(
@@ -302,6 +307,18 @@ final class DesktopWorkspace {
         ]
         self.storage = storage
         self.provider = provider
+        self.intelligentUIHost = DesktopIntelligentUIHost(
+            stateStore: self.intelligentUIStateStore,
+            receiptsFileURL: intelligentUIReceiptsFileURL,
+            submitAction: { [weak self] submission in
+                guard let self else { return .failure("工作区已释放。") }
+                return await self.submitIntelligentUI(submission)
+            },
+            insertDraftAction: { [weak self] submission in
+                guard let self else { return .failure("工作区已释放。") }
+                return self.insertIntelligentUIDraft(submission)
+            }
+        )
         self.plugins.onStateChanged = { [weak self] in
             self?.reconcilePluginState()
         }
@@ -355,7 +372,11 @@ final class DesktopWorkspace {
             refreshSidebar()
             selectedID = initialConversations.first?.id
             isLoading = false
-            if let selectedID { self.insights.load(selectedID); reloadFiles() }
+            if let selectedID {
+                self.insights.load(selectedID)
+                self.refreshIntelligentUIReceipts(for: selectedID)
+                reloadFiles()
+            }
         } else { loadingTask = Task { await load() } }
     }
 
@@ -450,6 +471,7 @@ final class DesktopWorkspace {
                     if selectedID == id { errorMessage = nil }
                 }
                 insights.load(id)
+                refreshIntelligentUIReceipts(for: id)
                 if recovered { persist(value) }
             } catch {
                 guard summaries.contains(where: { $0.id == id }) else { return }
@@ -565,6 +587,7 @@ final class DesktopWorkspace {
             ])
         }
         insights.load(id)
+        refreshIntelligentUIReceipts(for: id)
         loadConversation(id)
     }
 
@@ -591,13 +614,18 @@ final class DesktopWorkspace {
             let request = try requestConfiguration()
             if selectedID == nil { createConversation() }
             guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+            let continuation = currentAttachments.isEmpty ? try resolveIntelligentUIContinuation(for: text, conversationID: id) : nil
+            let effectiveDraft = continuation?.prompt(request: text) ?? rawDraft
             let submission = DesktopMessageAttachment.composeSubmission(
-                draft: rawDraft,
+                draft: effectiveDraft,
                 documents: currentAttachments,
                 anchors: currentAnchors
             )
             let message = try provider.userMessage(id: UUID(), text: submission.text, attachments: submission.attachments)
             conversations[index].messages.append(message)
+            if let continuation {
+                intelligentUIHost.recordReceipt(continuation, userMessageID: message.id)
+            }
             if conversations[index].messages.count == 1 {
                 conversations[index].title = String((text.isEmpty ? currentAttachments.first?.name ?? "附件对话" : text).prefix(60))
                 persistMetadata(conversations[index])
@@ -785,6 +813,7 @@ final class DesktopWorkspace {
                 conversations[index].canonicalJSON = saved.canonicalJSON
                 conversations[index].updatedAt = saved.updatedAt
                 updateSummary(conversations[index])
+                refreshIntelligentUIReceipts(for: owner)
                 if !unsavedConversationIDs.contains(owner), !unsavedMetadataIDs.contains(owner) {
                     conversationErrors[owner] = nil
                     if selectedID == owner { errorMessage = nil }
@@ -964,6 +993,7 @@ final class DesktopWorkspace {
             : ""
         let stableSystem = [settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), stableContext,
                             workspaceContext(conversationID) ?? "",
+                            DesktopIntelligentUIRequestPolicy.systemPrompt(enabled: settings.intelligentUIEnabled),
                             DesktopDeepSeekBoost.systemSuffix(enabled: boost.isEnabled(conversationID), configuration: configuration)]
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
         // The budget has to measure the whole request, but trimming may only touch turns: fit the history first
