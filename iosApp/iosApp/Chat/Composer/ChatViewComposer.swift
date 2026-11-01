@@ -268,6 +268,18 @@ extension ChatView {
                                 .opacity(showsComposerMeta ? 1 : 0)
                                 .allowsHitTesting(showsComposerMeta)
                                 .accessibilityHidden(!showsComposerMeta)
+
+                                if !showsComposerMeta {
+                                    AmberDuetBottomSwitcher(
+                                        activeTaskCount: duetActiveTaskCount,
+                                        needsAttentionCount: duetNeedsAttentionCount,
+                                        onOpenTasks: { isPresentingDuetTasks = true },
+                                        onOpenWorkspace: { isPresentingDuetWorkspace = true },
+                                        onDelegateCloudTask: { isPresentingDuetTasks = true }
+                                    )
+                                    .padding(.top, 8)
+                                    .transition(.opacity)
+                                }
                         }
                 }
             }
@@ -285,6 +297,20 @@ extension ChatView {
         .padding(.horizontal, ChatLayout.contentHorizontalInset)
         .padding(.top, composerState.isSubAgentBarVisible ? 4 : 8)
         .padding(.bottom, 8)
+        .background(alignment: .bottom) {
+            LinearGradient(
+                colors: [
+                    AmberTheme.background.opacity(0),
+                    AmberTheme.background.opacity(0.92),
+                    AmberTheme.background
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .padding(.top, -18)
+            .ignoresSafeArea(edges: .bottom)
+            .allowsHitTesting(false)
+        }
         .animation(.spring(response: 0.26, dampingFraction: 0.86), value: showsComposerMeta)
         // 完成瞬间建议条插入会让 composer 长高一截：旧实现里转场动画只管建议条
         // 自己，时间轴可用高度一帧被吃掉 → 底部锚定内容跳一下。给建议条显隐加
@@ -347,6 +373,37 @@ extension ChatView {
 
     private var sendEnabled: Bool {
         sendEnabled(for: viewModel.inputText)
+    }
+
+    var duetActiveTaskCount: Int {
+        let localRunning = activityStore.items.filter { $0.status == .running }.count
+        let cloudRunning = MacGatewayStore.shared.cloudTasks.filter { $0.workItemId != nil && !$0.isTerminal }.count
+        let inChatActive = chatListSummary.activeToolStep != nil ? 1 : 0
+        return localRunning + cloudRunning + inChatActive
+    }
+
+    var duetNeedsAttentionCount: Int {
+        let inChatFailed = chatListSummary.failedToolStep != nil ? 1 : 0
+        let pendingGate = viewModel.hasPendingUserGate ? 1 : 0
+        let cloudFailed = MacGatewayStore.shared.cloudTasks.filter { $0.state == .failed || $0.needsSubmissionRetry }.count
+        let gatewayNeedsYou = MacGatewayStore.shared.needsYouItems.count
+        return inChatFailed + pendingGate + cloudFailed + gatewayNeedsYou
+    }
+
+    func currentConversationTaskSegments() -> [ChatTaskRunSegment] {
+        let messages = viewModel.messages
+        guard !messages.isEmpty else { return [] }
+        let lastID = messages.last.map(ChatMessageProjector.messageId(for:))
+        var collected: [ChatTaskRunSegment] = []
+        for message in messages where message.role == MessageRole.assistant {
+            let msgID = ChatMessageProjector.messageId(for: message)
+            let isTail = viewModel.isGenerationActive && (msgID == lastID)
+            let segs = ChatTaskStreamGrouping.segments(for: message, messageID: msgID, isGeneratingTail: isTail)
+            for case .taskGroup(let group) in segs where group.hasTools {
+                collected.append(group)
+            }
+        }
+        return collected.reversed()
     }
 
     private func sendEnabled(for text: String) -> Bool {

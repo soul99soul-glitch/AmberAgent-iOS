@@ -369,6 +369,8 @@ struct MessageBubbleView: View {
                             .transition(.opacity)
                     }
                 }
+            } else if !isUser {
+                assistantTaskGroupedRows
             } else {
                 messagePartRows
             }
@@ -382,6 +384,157 @@ struct MessageBubbleView: View {
                     : nil,
                 onOpenSubagentConversation: onOpenSubagentConversation
             )
+        }
+    }
+
+    @ViewBuilder
+    private var assistantTaskGroupedRows: some View {
+        let messageID = ChatMessageProjector.messageId(for: message)
+        let segments = ChatTaskStreamGrouping.segments(
+            for: message,
+            messageID: messageID,
+            isGeneratingTail: isGenerating && isLastMessage
+        )
+        ForEach(segments) { segment in
+            switch segment {
+            case .text(_, let partIndex, let textPart):
+                if Self.shouldRenderMiniAppStreamingCard(
+                    textPart.text,
+                    isLiveStream: isGenerating && isLastMessage
+                ) {
+                    ChatMiniAppStreamingCard(
+                        text: textPart.text,
+                        isGenerating: true
+                    )
+                    .transition(.opacity)
+                } else {
+                    ChatAssistantText {
+                        ChatAssistantMarkdownView(
+                            markdown: textPart.text,
+                            renderCacheNamespace: "\(message.id):text:\(partIndex)",
+                            displaySetting: displaySetting,
+                            generativeUiSetting: generativeUiSetting,
+                            isStreaming: isGenerating && isLastMessage,
+                            hasEverStreamed: hasEverStreamed,
+                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
+                            frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
+                            onGenerativeWidgetAction: onGenerativeWidgetAction,
+                            isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
+                            sourceMessageID: message.id.toHexDashString(),
+                            sourceTextPartIndex: partIndex
+                        )
+                    }
+                    .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
+                }
+            case .taskGroup(let taskSegment):
+                if taskSegment.hasTools {
+                    ChatTaskInlineCardView(
+                        segment: taskSegment,
+                        onTapToolDetail: { tool in toolDetailTarget = ToolDetailTarget(tool: tool) },
+                        onOpenSubagentConversation: onOpenSubagentConversation
+                    )
+                    .chatLiveEntrance(key: "task-group:\(taskSegment.id)", isLive: isLiveTail)
+
+                    ForEach(taskSegment.mediaBearingTools, id: \.toolCallId) { tool in
+                        toolMediaView(for: tool)
+                    }
+                } else if let reasoning = message.parts.compactMap({ $0 as? UIMessagePart.Reasoning }).last(where: Self.shouldRenderReasoningCard) {
+                    let expandPref = autoExpandThinking
+                    ChatReasoningCard(
+                        bodyText: reasoning.reasoning,
+                        isThinking: reasoning.finishedAt == nil && isGenerating && isLastMessage,
+                        startedAt: Self.instantToDate(reasoning.createdAt),
+                        finishedSeconds: Self.reasoningDurationSeconds(reasoning),
+                        levelLabel: reasoningLevelLabel,
+                        autoCloseThinking: displaySetting?.autoCloseThinking ?? true,
+                        autoExpandThinking: expandPref
+                    )
+                    .chatLiveEntrance(key: thinkingEntranceKey, isLive: isLiveTail)
+                }
+            case .imageGallery(_, let startIndex, let images):
+                ChatMediaGallery(items: images.enumerated().map { offset, image in
+                    .image(image, id: "\(message.id):image:\(startIndex + offset)")
+                }, compact: false)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .video(_, let partIndex, let video):
+                ChatVideoCard(video: ChatVideoDescriptor(part: video, id: "\(message.id):video:\(partIndex)"))
+            case .miniApp(_, _, let miniApp):
+                IOSMiniAppChatCard(
+                    part: miniApp,
+                    onRun: { onOpenMiniApp(miniApp.appId) },
+                    onOpenList: onOpenMiniApps,
+                    onModify: { prompt in
+                        guard messageEditingAllowed && !isChatGenerationActive else { return false }
+                        onGenerativeWidgetAction(prompt)
+                        return true
+                    }
+                )
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.parts.map(Self.partAnimationKey).joined(separator: "|"))
+    }
+
+    @ViewBuilder
+    private func toolMediaView(for tool: UIMessagePart.Tool) -> some View {
+        if tool.toolName != "generate_image" {
+            ChatToolMediaGallery(tool: tool).equatable()
+            ForEach(Array(tool.output.enumerated()), id: \.offset) { index, output in
+                if let video = output as? UIMessagePart.Video {
+                    ChatVideoCard(video: ChatVideoDescriptor(part: video, id: "\(tool.toolCallId):video:\(index)"))
+                }
+            }
+        } else {
+            let images = tool.output.compactMap { $0 as? UIMessagePart.Image }
+            if !images.isEmpty {
+                ChatGeneratedImageGrid(
+                    images: images,
+                    toolCallID: tool.toolCallId,
+                    toolInput: tool.input,
+                    onModify: onModifyGeneratedImage,
+                    allowsModify: !isChatGenerationActive
+                )
+                .id(ChatImageGenerationAnchorTarget.id(
+                    messageID: ChatMessageProjector.messageId(for: message),
+                    toolCallID: tool.toolCallId
+                ))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("图片已生成")
+                .accessibilityFocused($focusedGeneratedImageToolCallID, equals: tool.toolCallId)
+                .transition(.opacity)
+            } else if tool.output.isEmpty {
+                ChatGeneratedImageLoadingPlaceholder(
+                    toolInput: tool.input,
+                    isAnimating: isGenerating && isLastMessage,
+                    toolCallID: tool.toolCallId
+                )
+                .id(ChatImageGenerationAnchorTarget.id(
+                    messageID: ChatMessageProjector.messageId(for: message),
+                    toolCallID: tool.toolCallId
+                ))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("正在生成图片")
+                .accessibilityFocused($focusedGeneratedImageToolCallID, equals: tool.toolCallId)
+                .transition(.opacity)
+            } else {
+                ChatGeneratedImageFailureCard(
+                    reason: ChatToolOutputFormatter.imageFailureReason(from: tool.output)
+                        ?? "图片生成工具没有返回图片。",
+                    toolCallID: tool.toolCallId
+                )
+                .id(ChatImageGenerationAnchorTarget.id(
+                    messageID: ChatMessageProjector.messageId(for: message),
+                    toolCallID: tool.toolCallId
+                ))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "图片生成失败：" + (
+                        ChatToolOutputFormatter.imageFailureReason(from: tool.output)
+                            ?? "图片生成工具没有返回图片。"
+                    )
+                )
+                .accessibilityFocused($focusedGeneratedImageToolCallID, equals: tool.toolCallId)
+                .transition(.opacity)
+            }
         }
     }
 

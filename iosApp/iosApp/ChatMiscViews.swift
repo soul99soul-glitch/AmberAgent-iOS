@@ -919,34 +919,70 @@ struct ChatEmptyState: View {
     @State private var prompt = Self.randomPrompt()
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 20) {
             AmberEmptyStateMark()
-                .padding(.bottom, 2)
 
-            VStack(spacing: 7) {
-                Text("今天想聊点什么？")
-                    .font(.title3.weight(.semibold))
+            VStack(spacing: 8) {
+                Text("你好，我是 Amber")
+                    .font(.system(size: 22, weight: .semibold, design: .serif))
                     .foregroundStyle(AmberTheme.foreground)
 
                 Text(prompt)
                     .font(.subheadline)
                     .foregroundStyle(AmberTheme.muted)
                     .multilineTextAlignment(.center)
+                    .lineSpacing(2)
             }
+
+            HStack(spacing: 8) {
+                emptyPill(icon: "bubble.left.and.text.bubble.right.fill", text: "主对话常驻")
+                emptyPill(icon: "bolt.horizontal.circle.fill", text: "任务并行推进")
+                emptyPill(icon: "checkmark.shield.fill", text: "异常显式汇报")
+            }
+            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 34)
-        .padding(.top, 104)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 28)
+        .background(
+            AmberTheme.surface.opacity(0.65),
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 42)
+    }
+
+    private func emptyPill(icon: String, text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(AmberTheme.accent)
+            Text(IOSAppLocalization.string(text, defaultValue: text))
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(AmberTheme.foreground2)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(AmberTheme.background.opacity(0.85), in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.6)
+        }
     }
 
     private static func randomPrompt() -> String {
         [
-            "先随便说一句也可以。",
-            "有个念头的话，直接丢给我。",
-            "想写、想查、想整理，都可以从一句话开始。",
-            "要解决问题也行，只是聊聊也行。",
+            "直接交代目标即可；耗时任务会在后台推进，你可以随时继续对话。",
+            "有个念头的话，直接丢给我，复杂步骤会自动收拢为任务进度。",
+            "想写、想查、想交给云端执行，都可以从一句话开始。",
+            "要解决问题也行，边跑任务边聊也行。",
             "不知道从哪开始的话，先说现在卡在哪。"
-        ].randomElement() ?? "先随便说一句也可以。"
+        ].randomElement() ?? "直接交代目标即可；耗时任务会在后台推进，你可以随时继续对话。"
     }
 }
 

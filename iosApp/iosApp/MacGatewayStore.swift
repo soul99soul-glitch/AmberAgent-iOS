@@ -47,8 +47,9 @@ final class MacGatewayStore {
     private(set) var needsYouItems: [MacGatewayBoardItem] = []
     /// Why the board came from the gateway alone (Amber not running, or an older gateway).
     private(set) var boardError: String?
-    /// Cloud Self (/v2) agents and persisted native tasks.
+    /// Cloud Self (/v2) agents, per-agent activity snapshots, and persisted native tasks.
     var cloudAgents: [MacGatewayCloudAgent] = []
+    var cloudAgentActivities: [String: MacGatewayCloudAgentActivity] = [:]
     var cloudTasks: [MacGatewayCloudTaskRecord] = []
     var busyCloudTaskIds: Set<String> = []
     var pendingPairing: MacGatewayPairingPayload?

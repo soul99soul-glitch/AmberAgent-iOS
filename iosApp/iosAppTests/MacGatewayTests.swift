@@ -356,6 +356,10 @@ struct MacGatewayTests {
                 switch (method, path) {
                 case ("GET", "/v2/agents"):
                     return respond(200, #"{"agents":[{"id":"main","name":"Amber","memoryPolicy":"SHARED","tags":[],"revision":1},{"id":"research","name":"研究助手","memoryPolicy":"HUB_ISOLATED","tags":["research"],"revision":2}]}"#)
+                case ("GET", "/v2/agents/main/activity"):
+                    return respond(200, #"{"agentId":"main","activities":[{"taskId":"work:opaque-1","label":"正在检索资料","phase":"PROGRESS","updatedAtMs":1793500001000}],"workItems":[{"id":"work:opaque-1","agentId":"main","title":"整理发布检查项","state":"WORKING","progress":"正在检索资料","updatedAtMs":1793500001000}]}"#)
+                case ("GET", "/v2/timeline"):
+                    return respond(200, #"{"items":[{"id":"msg-1","role":"user","agentId":"main","text":"整理发布检查项"},{"id":"msg-2","role":"assistant","agentId":"main","text":"已为您启动后台任务。"}],"nextCursor":"msg-1"}"#)
                 case ("POST", "/v2/work-items"):
                     if returnConflictOnNextSubmit {
                         returnConflictOnNextSubmit = false
@@ -415,10 +419,15 @@ struct MacGatewayTests {
         let store = MacGatewayStore(defaults: defaults)
         store.configureForTesting(connection: connection, client: client)
 
-        // 1. Load agents
+        // 1. Load agents & main activity snapshot + timeline projection
         await store.refreshCloudAgents()
         #expect(store.cloudAgents.map(\.id) == ["main", "research"])
         #expect(store.agentDisplayName(for: "research") == "研究助手")
+        #expect(store.cloudAgentActivities["main"]?.activities.first?.label == "正在检索资料")
+        #expect(store.cloudAgentActivities["main"]?.activities.first?.phase == .progress)
+        let timelinePage = try await client.timeline(limit: 20)
+        #expect(timelinePage.items.count == 2)
+        #expect(timelinePage.nextCursor == "msg-1")
 
         // 2. First submit fails with HTTP 500; request is persisted before send with workItemId == nil
         let taskRequest = MacGatewayCloudTaskRequest(

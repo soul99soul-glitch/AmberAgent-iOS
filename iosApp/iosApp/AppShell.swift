@@ -368,6 +368,13 @@ struct AppShell: View {
         conversationActivityCenter.start()
         await openPendingAgentActivityIfReady()
         await openPendingAppDeepLinkIfReady()
+        if !usesSplitLayout, rootRouter.path.isEmpty {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                rootRouter.navigate(to: .chat)
+            }
+        }
         if scenePhase == .active {
             await IOSWakeScheduler.shared.applicationBecameActive()
         }

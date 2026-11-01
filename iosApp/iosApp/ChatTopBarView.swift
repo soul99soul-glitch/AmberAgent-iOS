@@ -92,6 +92,21 @@ struct ChatTopBarView: View {
         let activeArrival = arrivalState.arrival
         return GeometryReader { geometry in
             ZStack(alignment: .bottom) {
+                // Soft top scroll backdrop so scrolling chat text fades cleanly under floating top bar pills.
+                LinearGradient(
+                    colors: [
+                        AmberTheme.background,
+                        AmberTheme.background.opacity(0.88),
+                        AmberTheme.background.opacity(0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: ChatTopBarLayout.controlsHeight + 24)
+                .offset(y: 14)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
+
                 // 两侧玻璃与岛保持独立，避免系统合并玻璃后穿透正文。
                 HStack {
                     if showsBackButton {

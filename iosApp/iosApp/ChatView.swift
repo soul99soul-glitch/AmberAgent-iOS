@@ -43,6 +43,9 @@ struct ChatView: View {
     @State var artifactShelfStripHeight: CGFloat = 0
     @State private var messageEditDraft: ChatMessageEditDraft?
     @State private var pendingDeleteMessageId: String?
+    @State var isPresentingDuetTasks = false
+    @State var isPresentingDuetWorkspace = false
+    @State var duetSelectedToolTarget: ToolDetailTarget?
     @Environment(IOSConversationStore.self)  var conversationStore
     @Environment(ConversationActivityCenter.self) private var conversationActivityCenter
     @Environment(\.accessibilityReduceMotion)  var reduceMotion
@@ -303,6 +306,48 @@ struct ChatView: View {
                 attachmentPickerState.isCameraPresented = false
             }
             .ignoresSafeArea()
+        }
+        .sheet(isPresented: $isPresentingDuetTasks) {
+            AmberDuetTaskCenterSheet(
+                conversationSegments: currentConversationTaskSegments(),
+                gateway: MacGatewayStore.shared,
+                subAgentStore: activityStore,
+                onOpenFullTaskBoard: { router.navigate(to: .macTasks) },
+                onSelectTool: { tool in duetSelectedToolTarget = ToolDetailTarget(tool: tool) }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isPresentingDuetWorkspace) {
+            AmberDuetWorkspaceDrawerSheet(
+                conversationStore: conversationStore,
+                gateway: MacGatewayStore.shared,
+                onSelectConversation: { id in
+                    Task { _ = await openSubAgentSourceConversation(id.toHexDashString()) }
+                },
+                onNewConversation: {
+                    Task { await viewModel.startNewConversation() }
+                },
+                onOpenAllHistory: {
+                    router.goBack()
+                },
+                onNavigate: { destination in
+                    router.navigate(to: destination)
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $duetSelectedToolTarget) { target in
+            ChatToolDetailSheet(
+                tool: target.initialTool,
+                live: target.initialTool.toolName.contains("subagent_dispatch")
+                    ? SubAgentLiveRegistry.shared.model(forToolCallId: target.toolCallId)
+                    : nil,
+                onOpenSubagentConversation: { threadId in
+                    router.navigate(to: .subAgentConversation(id: threadId))
+                }
+            )
         }
     }
 
@@ -679,7 +724,13 @@ struct ChatView: View {
             isGenerating: viewModel.isGenerationActive,
             notices: conversationActivityCenter.notices,
             shelfHeight: chatSize.height * 0.55,
-            onBack: { router.goBack() },
+            onBack: {
+                if isSplitDetailRoot {
+                    router.goBack()
+                } else {
+                    isPresentingDuetWorkspace = true
+                }
+            },
             onIslandTap: handleIslandTap,
             onCancel: { viewModel.cancelGeneration() },
             onOpenConversation: openActivityConversation,
@@ -694,10 +745,10 @@ struct ChatView: View {
                     .map { String(describing: $0.updateAt) }
             },
             artifacts: artifactShelf.index,
-            backSystemImage: isSplitDetailRoot ? "sidebar.left" : "chevron.left",
+            backSystemImage: isSplitDetailRoot ? "sidebar.left" : "line.3.horizontal",
             backAccessibilityLabel: isSplitDetailRoot
                 ? (router.showsSidebar ? "隐藏会话列表" : "显示会话列表")
-                : "返回",
+                : "空间与历史",
             showsBackButton: !sideRailActive,
             snippets: currentConversationIdString.map {
                 ChatArtifactPinning.visibleSnippets(conversationStore.artifactStore.snippets(for: $0), messageIDs: chatListSummary.messageIDs)

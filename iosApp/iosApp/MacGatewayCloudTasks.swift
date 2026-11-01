@@ -166,6 +166,55 @@ struct MacGatewayCloudWorkDetail: Codable, Equatable, Sendable {
     var resultMarkdown: String?
 }
 
+enum MacGatewayCloudActivityPhase: String, Codable, Equatable, Sendable {
+    case started = "STARTED"
+    case progress = "PROGRESS"
+    case done = "DONE"
+    case failed = "FAILED"
+
+    var isTerminal: Bool {
+        switch self {
+        case .done, .failed:
+            true
+        case .started, .progress:
+            false
+        }
+    }
+}
+
+/// Sanitized outward activity entry returned by `GET /v2/agents/{id}/activity`.
+struct MacGatewayCloudActivityStatus: Codable, Equatable, Identifiable, Sendable {
+    var id: String { taskId }
+    var taskId: String
+    var label: String
+    var phase: MacGatewayCloudActivityPhase
+    var updatedAtMs: Int64
+
+    var updatedAtDate: Date {
+        Date(timeIntervalSince1970: TimeInterval(updatedAtMs) / 1_000.0)
+    }
+}
+
+/// Snapshot returned by `GET /v2/agents/{id}/activity` (up to 100 active-first items).
+struct MacGatewayCloudAgentActivity: Codable, Equatable, Sendable {
+    var agentId: String
+    var activities: [MacGatewayCloudActivityStatus]
+    var workItems: [MacGatewayCloudWorkItem]
+}
+
+/// Read-only main timeline entry returned by `GET /v2/timeline`.
+struct MacGatewayCloudTimelineEntry: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var role: String
+    var agentId: String?
+    var text: String
+}
+
+struct MacGatewayCloudTimelinePage: Codable, Equatable, Sendable {
+    var items: [MacGatewayCloudTimelineEntry]
+    var nextCursor: String?
+}
+
 /// Persisted per paired `deviceId` so `requestId` and the exact request payload survive timeouts and restarts,
 /// and `workItemId` resumes polling after relaunch.
 struct MacGatewayCloudTaskRecord: Codable, Equatable, Identifiable, Sendable {
@@ -278,6 +327,21 @@ extension MacGatewayClient {
         let encoded = Self.encodeWorkItemId(id)
         return try decode(await send("POST", "/v2/work-items/\(encoded)/cancel", slow: true))
     }
+
+    func agentActivity(agentId: String) async throws -> MacGatewayCloudAgentActivity {
+        let encoded = Self.encodeWorkItemId(agentId)
+        return try decode(await send("GET", "/v2/agents/\(encoded)/activity"))
+    }
+
+    func timeline(limit: Int = 50, before: String? = nil) async throws -> MacGatewayCloudTimelinePage {
+        let clampedLimit = min(max(limit, 1), 100)
+        var path = "/v2/timeline?limit=\(clampedLimit)"
+        if let before, !before.isEmpty,
+           let encodedCursor = before.addingPercentEncoding(withAllowedCharacters: Self.workItemPathAllowed) {
+            path += "&before=\(encodedCursor)"
+        }
+        return try decode(await send("GET", path))
+    }
 }
 
 // MARK: - Store Operations & Persistence
@@ -344,9 +408,23 @@ extension MacGatewayStore {
             let list = try await client.agents()
             guard self.client === client, generation == requestGeneration.cloudAgents else { return }
             cloudAgents = list
+            await refreshCloudAgentActivity(agentId: list.first?.id ?? "main")
         } catch is CancellationError {
         } catch {
             guard self.client === client, generation == requestGeneration.cloudAgents else { return }
+            _ = forgetIfRevoked(error)
+        }
+    }
+
+    func refreshCloudAgentActivity(agentId: String = "main") async {
+        guard let client else { return }
+        do {
+            let snapshot = try await client.agentActivity(agentId: agentId)
+            guard self.client === client else { return }
+            cloudAgentActivities[agentId] = snapshot
+        } catch is CancellationError {
+        } catch {
+            guard self.client === client else { return }
             _ = forgetIfRevoked(error)
         }
     }
