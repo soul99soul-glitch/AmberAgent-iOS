@@ -359,9 +359,7 @@ internal data class DesktopConversation(
         base.validateDesktopSelection()
         val originals = base.messageNodes.flatMap { it.messages }.associateBy { it.id }
         val incoming = messages.map { it.toMessage(originals[Uuid.parse(it.id)]) }
-        // The DTO contains the complete selected path. A shorter path explicitly removes its trailing nodes.
-        val selectedPath = if (incoming.size < base.messageNodes.size) base.copy(messageNodes = base.messageNodes.take(incoming.size)) else base
-        val updated = selectedPath.updateCurrentMessages(incoming)
+        val updated = base.reconcileDesktopMessages(messages, incoming)
         val timestamp = if (updatedAt == base.updateAt.toEpochMilliseconds().toDouble()) base.updateAt
             else Instant.fromEpochMilliseconds(updatedAt.toLong())
         return updated.copy(id = incomingID, updateAt = timestamp)
@@ -382,6 +380,71 @@ internal data class DesktopConversation(
 
 private fun Conversation.validateDesktopSelection() {
     require(messageNodes.all { it.selectIndex in it.messages.indices }) { "Conversation has an invalid selected message variant" }
+}
+
+private fun Conversation.reconcileDesktopMessages(
+    desktopMessages: List<DesktopMessage>,
+    incoming: List<UIMessage>,
+): Conversation {
+    if (messageNodes.isEmpty()) {
+        return updateCurrentMessages(incoming)
+    }
+    val claimedNodeByMsg = IntArray(incoming.size) { -1 }
+    val claimedNodes = BooleanArray(messageNodes.size)
+
+    // Pass 1: Match existing nodes by message ID, explicit nodeID, or variant IDs so in-place multi-turn
+    // insertion for an earlier task never shifts a later concurrent task's message into the wrong node.
+    for (msgIndex in incoming.indices) {
+        val message = incoming[msgIndex]
+        val dto = desktopMessages[msgIndex]
+        val variantSet = dto.variantIDs.toHashSet()
+        val matchedNodeIndex = messageNodes.indices.firstOrNull { nodeIndex ->
+            !claimedNodes[nodeIndex] && (
+                messageNodes[nodeIndex].messages.any { it.id == message.id } ||
+                    (dto.nodeID != null && messageNodes[nodeIndex].id.toString() == dto.nodeID) ||
+                    (variantSet.isNotEmpty() && messageNodes[nodeIndex].messages.any { it.id.toString() in variantSet })
+                )
+        }
+        if (matchedNodeIndex != null) {
+            claimedNodeByMsg[msgIndex] = matchedNodeIndex
+            claimedNodes[matchedNodeIndex] = true
+        }
+    }
+
+    // Pass 2: Positional fallback for unclaimed nodes at the same index when roles match.
+    for (msgIndex in incoming.indices) {
+        if (claimedNodeByMsg[msgIndex] >= 0) continue
+        if (msgIndex < messageNodes.size && !claimedNodes[msgIndex] && messageNodes[msgIndex].role == incoming[msgIndex].role) {
+            claimedNodeByMsg[msgIndex] = msgIndex
+            claimedNodes[msgIndex] = true
+        }
+    }
+
+    val newNodes = ArrayList<MessageNode>(incoming.size)
+    for (msgIndex in incoming.indices) {
+        val message = incoming[msgIndex]
+        val nodeIndex = claimedNodeByMsg[msgIndex]
+        if (nodeIndex < 0) {
+            newNodes.add(message.toMessageNode())
+            continue
+        }
+        val existingNode = messageNodes[nodeIndex]
+        val existingIdx = existingNode.messages.indexOfFirst { it.id == message.id }
+        if (existingIdx >= 0 && existingNode.messages[existingIdx] == message && existingNode.selectIndex == existingIdx) {
+            newNodes.add(existingNode)
+            continue
+        }
+        val updatedMessages = existingNode.messages.toMutableList()
+        val updatedSelectIndex = if (existingIdx >= 0) {
+            updatedMessages[existingIdx] = message
+            existingIdx
+        } else {
+            updatedMessages.add(message)
+            updatedMessages.lastIndex
+        }
+        newNodes.add(existingNode.copy(messages = updatedMessages, selectIndex = updatedSelectIndex))
+    }
+    return copy(messageNodes = newNodes)
 }
 
 /** Typed Swift entry points over the same providers and message types used by iOS. */

@@ -140,7 +140,7 @@ import XCTest
         let (workspace, provider, storage) = try setup(original)
         provider.asynchronousCancellation = true
         workspace.draft = "first tool request"; workspace.send()
-        workspace.draft = "accepted follow-up"; workspace.send()
+        workspace.draft = "accepted follow-up"; workspace.queueInstruction()
         let context = try XCTUnwrap(provider.contexts.first ?? nil)
         let leased = await context.drainSteer?()
         let queuedUser = try XCTUnwrap(leased?.first)
@@ -212,7 +212,7 @@ import XCTest
         workspace.send()
         XCTAssertLessThan(provider.messages[1].count, original.messages.count)
         // v2 handoffs travel as a user turn, so the Claude path cannot flatten them into the system prompt.
-        XCTAssertEqual(provider.messages[1].first?.role, .user)
+        XCTAssertEqual(provider.messages[1].first(where: { $0.role != .system })?.role, .user)
         let final = DesktopMessage(id: provider.responseIDs[1], role: .assistant, text: "new final")
         provider.runs[1].yield(.transcript([final]))
         provider.runs[1].yield(.complete)
@@ -220,5 +220,30 @@ import XCTest
         XCTAssertEqual(Array(workspace.selectedConversation!.messages.prefix(original.messages.count)), original.messages)
         XCTAssertEqual(workspace.selectedConversation?.messages.count, original.messages.count + 2)
         _ = await workspace.flush()
+    }
+
+    func testRelaunchMarksMultipleConcurrentStreamingTasksInSameConversationAsCancelled() async throws {
+        let streamingA = DesktopMessage(role: .assistant, text: "任务A未完成部分", state: .streaming)
+        let streamingB = DesktopMessage(role: .assistant, text: "任务B未完成部分", state: .streaming)
+        let stored = DesktopConversation(
+            title: "重启恢复",
+            messages: [
+                DesktopMessage(role: .user, text: "问题A"),
+                streamingA,
+                DesktopMessage(role: .user, text: "问题B"),
+                streamingB,
+            ]
+        )
+        let defaults = UserDefaults(suiteName: "amber.agent-relaunch.\(UUID().uuidString)")!
+        let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+        let storage = DesktopMemoryConversationStorage([stored])
+        let workspace = DesktopWorkspace(settings: settings, storage: storage, provider: Provider())
+        await workspace.waitUntilLoaded()
+        _ = await workspace.flush()
+
+        let recovered = try XCTUnwrap(workspace.selectedConversation)
+        XCTAssertEqual(recovered.messages.map(\.state), [.complete, .cancelled, .complete, .cancelled])
+        let persisted = try XCTUnwrap(storage.values.first)
+        XCTAssertEqual(persisted.messages.map(\.state), [.complete, .cancelled, .complete, .cancelled])
     }
 }

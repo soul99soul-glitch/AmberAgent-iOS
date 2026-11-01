@@ -161,7 +161,7 @@ import XCTest
         provider.runs[0].yield(.snapshot(text: "旧的部分回复", reasoning: "", canonicalJSON: Self.canonicalMessage(id: firstID)))
         workspace.stop()
         await workspace.retry()?.value
-        XCTAssertEqual(provider.requests[1].map(\.role), [.user])
+        XCTAssertEqual(provider.requests[1].filter { $0.role != .system }.map(\.role), [.user])
         XCTAssertFalse(provider.requests[1].contains(where: { $0.id == firstID }))
         XCTAssertNotEqual(provider.responseIDs[1], firstID)
         workspace.stop()

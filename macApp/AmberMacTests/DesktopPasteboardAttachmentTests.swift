@@ -271,9 +271,12 @@ import XCTest
         XCTAssertTrue(workspace.isConversationGenerating(firstID))
         XCTAssertTrue(workspace.isConversationGenerating(secondID))
 
-        // 3. 同一正在生成的会话B内继续粘贴图片，仍应按本会话规则提示等待；发送纯文本则进入B的排队队列
+        // 3. 同一正在生成的会话B内，只有明确选中当前任务作为「补充」时才拦截图片粘贴并排队文本；
+        //    默认未选中补充时，允许直接发送新问题或粘贴附件开启新任务。
+        let activeTaskB = try XCTUnwrap(workspace.selectedConversationActiveTasks.first)
+        workspace.selectSupplementTarget(activeTaskB.token)
         XCTAssertTrue(workspace.pasteFromPasteboard(pb))
-        XCTAssertEqual(workspace.errorMessage, "请等待当前回复结束或停止后再粘贴图片。")
+        XCTAssertEqual(workspace.errorMessage, "补充运行中任务仅支持纯文本，请取消选中补充目标后再粘贴图片。")
         workspace.draft = "会话B的排队追问"
         workspace.send()
         XCTAssertEqual(workspace.selectedQueuedMessages.map(\.text), ["会话B的排队追问"])

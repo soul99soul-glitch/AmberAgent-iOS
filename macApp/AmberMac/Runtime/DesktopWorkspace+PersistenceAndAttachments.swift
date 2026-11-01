@@ -4,100 +4,6 @@ import Observation
 @preconcurrency import GatewayCore
 
 extension DesktopWorkspace {
-    func apply(_ events: [DesktopProviderEvent], checkpoint: Bool = true) {
-        let target = selectedID.flatMap({ activeGenerations[$0] != nil ? $0 : nil }) ?? generationConversationID
-        guard let conversationID = target else { return }
-        apply(events, for: conversationID, checkpoint: checkpoint)
-    }
-
-    func apply(_ events: [DesktopProviderEvent], for conversationID: UUID, token: UUID? = nil, checkpoint: Bool = true) {
-        guard var active = activeGenerations[conversationID],
-              token == nil || active.token == token,
-              let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
-        var terminal: DesktopMessageState?
-        for event in events {
-            switch event {
-            case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount, let tools):
-                guard let messageID = active.assistantID,
-                      let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == messageID }) else { continue }
-                if conversations[index].messages[messageIndex].text != text { conversations[index].messages[messageIndex].text = text }
-                if conversations[index].messages[messageIndex].reasoning != reasoning { conversations[index].messages[messageIndex].reasoning = reasoning }
-                conversations[index].messages[messageIndex].canonicalJSON = canonicalJSON
-                conversations[index].messages[messageIndex].unsupportedPartCount = unsupportedPartCount
-                if conversations[index].messages[messageIndex].tools != tools { conversations[index].messages[messageIndex].tools = tools }
-            case .transcript(let turns):
-                guard !turns.isEmpty else { continue }
-                let prefix = Array(conversations[index].messages.prefix(active.prefixIDs.count))
-                guard prefix.map(\.id) == active.prefixIDs else { continue }
-                // Agent events contain only new turns; compacted request input never replaces stored history.
-                let previous = conversations[index].messages.dropFirst(prefix.count)
-                var incoming = turns
-                if let first = previous.first(where: { $0.role == .assistant }), !first.variantIDs.isEmpty,
-                   let reply = incoming.firstIndex(where: { $0.role == .assistant }), incoming[reply].variantIDs.isEmpty {
-                    incoming[reply].variantIDs = first.variantIDs.map { $0 == first.id ? incoming[reply].id : $0 }
-                }
-                conversations[index].messages = prefix + incoming
-                active.assistantID = turns.last?.role == .assistant ? turns.last?.id : nil
-            case .complete: terminal = .complete
-            case .cancelled: terminal = .cancelled
-            case .failed(let message): terminal = .failed; recordError(message, owner: conversationID)
-            }
-        }
-        activeGenerations[conversationID] = active
-        if let terminal {
-            if active.assistantID == nil, terminal != .complete, conversations[index].messages.last?.role == .user {
-                let reply = DesktopMessage(role: .assistant, text: "", state: terminal)
-                conversations[index].messages.append(reply)
-                active.assistantID = reply.id
-            }
-            if let messageID = active.assistantID,
-               let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == messageID }) {
-                conversations[index].messages[messageIndex].state = terminal
-            }
-            conversations[index].updatedAt = Date()
-            persist(conversations[index])
-            let writer = persistence
-            let completedToken = active.token
-            let notify = !active.usesTools && (terminal == .complete || terminal == .failed)
-            let canonicalIDs = Set(conversations[index].messages.map(\.id))
-            for queueIndex in instructionQueue.indices where instructionQueue[queueIndex].conversationID == conversationID
-                && instructionQueue[queueIndex].runID == completedToken && !canonicalIDs.contains(instructionQueue[queueIndex].id) {
-                instructionQueue[queueIndex].status = .pending
-            }
-            clearGeneration(for: conversationID)
-            if notify {
-                Task {
-                    await writer?.value
-                    guard !unsavedConversationIDs.contains(conversationID),
-                          conversations.contains(where: { $0.id == conversationID }) else { return }
-                    _ = await notifications.notify(runID: completedToken, conversationID: conversationID,
-                        outcome: terminal == .complete ? .completed : .failed)
-                }
-            }
-            if terminal == .complete,
-               instructionQueue.contains(where: { $0.conversationID == conversationID && $0.runID == completedToken && $0.status == .pending }) {
-                let followupToken = UUID()
-                let task = Task { [weak self] in
-                    await writer?.value
-                    guard let self, self.queuedRequestTasks[conversationID]?.token == followupToken else { return }
-                    self.queuedRequestTasks[conversationID] = nil
-                    guard !Task.isCancelled else { return }
-                    self.startQueuedRequest(owner: conversationID, runID: completedToken)
-                }
-                queuedRequestTasks[conversationID] = (followupToken, task)
-            }
-            if selectedID == conversationID { reloadFiles() }
-            // A finished turn is the only safe place to compact: tool round trips and pending approvals live
-            // inside a run, so compacting there would split one. A stopped or failed turn also leaves the
-            // history in a state the summary could bake in, so only a completed turn triggers a compaction.
-            if terminal == .complete { scheduleAutomaticCompaction(owner: conversationID) }
-        } else if checkpoint, Date().timeIntervalSince(active.lastCheckpoint) >= 1 {
-            active.lastCheckpoint = Date()
-            activeGenerations[conversationID] = active
-            persist(conversations[index])
-        }
-    }
-
     /// Produces a summary once an idle conversation approaches the model window, so the next turn starts
     /// from a compacted history instead of relying on the budget fit. The user's manual control
     /// (「压缩上下文」/「恢复完整上下文」) keeps working exactly as before.
@@ -140,57 +46,6 @@ extension DesktopWorkspace {
         }
     }
 
-    func persistAgentTurns(_ turns: [DesktopMessage], owner: UUID, token: UUID) async -> Bool {
-        guard let active = activeGenerations[owner], active.token == token,
-              let current = conversations.first(where: { $0.id == owner }),
-              current.messages.prefix(active.prefixIDs.count).map(\.id) == active.prefixIDs else { return false }
-        apply([.transcript(turns)], for: owner, token: token, checkpoint: false)
-        guard let value = conversations.first(where: { $0.id == owner }) else { return false }
-        persist(value)
-        let writer = persistence
-        await writer?.value
-        return activeGenerations[owner]?.token == token
-            && conversations.contains(where: { $0.id == owner }) && !unsavedConversationIDs.contains(owner)
-    }
-
-    func stop(_ conversationID: UUID? = nil) {
-        let target: UUID?
-        if let conversationID {
-            target = conversationID
-        } else if let selectedID,
-                  generatingConversationIDs.contains(selectedID) || mutatingBranchConversationIDs.contains(selectedID)
-                    || queuedRequestTasks[selectedID] != nil {
-            target = selectedID
-        } else {
-            target = generationConversationID ?? mutatingBranchConversationIDs.first ?? queuedRequestTasks.keys.first
-        }
-        guard let owner = target else { return }
-        queuedRequestTasks[owner]?.task.cancel()
-        queuedRequestTasks[owner] = nil
-        if mutatingBranchConversationIDs.contains(owner) { branchGenerationCancelled.insert(owner) }
-        guard let active = activeGenerations[owner], !stoppingConversationIDs.contains(owner) else { return }
-        stoppingConversationIDs.insert(owner)
-        active.run.cancel()
-        apply(active.run.drain(), for: owner, token: active.token)
-    }
-
-    func stopAll() {
-        for owner in Array(queuedRequestTasks.keys) {
-            queuedRequestTasks[owner]?.task.cancel()
-            queuedRequestTasks[owner] = nil
-        }
-        for owner in mutatingBranchConversationIDs { branchGenerationCancelled.insert(owner) }
-        for owner in Array(activeGenerations.keys) { stop(owner) }
-    }
-
-    func clearGeneration(for conversationID: UUID? = nil) {
-        guard let owner = conversationID ?? generationConversationID else { return }
-        activeGenerations[owner] = nil
-        generatingConversationIDs.remove(owner)
-        stoppingConversationIDs.remove(owner)
-        generationOrder.removeAll { $0 == owner }
-    }
-
     func delete(_ id: UUID) {
         guard !mutatingBranchConversationIDs.contains(id) else {
             recordError("正在保存消息更改，请稍候再删除会话。", owner: id); return
@@ -202,11 +57,9 @@ extension DesktopWorkspace {
         queuedRequestTasks[id] = nil
         if generatingConversationIDs.contains(id) {
             stop(id)
-            if let active = activeGenerations[id] {
-                active.task?.cancel()
-                clearGeneration(for: id)
-            }
+            clearGeneration(for: id)
         }
+        supplementTargets[id] = nil
         for item in attachmentTasks.values where item.owner == id { item.task.cancel() }
         titles.cancel(id)
         recipes.cancel(conversationID: id)
@@ -382,8 +235,13 @@ extension DesktopWorkspace {
     }
 
     func flushConversationWrites() async -> Bool {
+        for token in Array(stoppingTaskIDs) {
+            await activeTasks[token]?.task?.value
+        }
         for owner in Array(stoppingConversationIDs) {
-            await activeGenerations[owner]?.task?.value
+            for task in activeTasks(in: owner) {
+                await task.task?.value
+            }
         }
         for entry in Array(queuedRequestTasks.values) { await entry.task.value }
         for item in Array(attachmentTasks.values) { await item.task.value }
@@ -402,7 +260,7 @@ extension DesktopWorkspace {
 
     var canAcceptAttachments: Bool {
         !isLoading && !isLoadingSelectedConversation && !selectedConversationUnavailable
-            && !isSelectedConversationGenerating && !isSelectedConversationMutatingBranch && !isManagingBackup
+            && selectedSupplementTask == nil && !isSelectedConversationMutatingBranch && !isManagingBackup
     }
 
     /// Handles ⌘V / Paste from the given pasteboard when it carries file URLs or image data.
@@ -413,7 +271,9 @@ extension DesktopWorkspace {
         let urls = DesktopPasteboardImport.fileURLs(from: pasteboard)
         if !urls.isEmpty {
             guard canAcceptAttachments else {
-                if isSelectedConversationGenerating { recordError("请等待当前回复结束或停止后再粘贴文件。", owner: selectedID) }
+                if selectedSupplementTask != nil {
+                    recordError("补充运行中任务仅支持纯文本，请取消选中补充目标后再粘贴文件。", owner: selectedID)
+                }
                 return true
             }
             addAttachments(urls)
@@ -421,7 +281,9 @@ extension DesktopWorkspace {
         }
         if let image = DesktopPasteboardImport.imagePayload(from: pasteboard) {
             guard canAcceptAttachments else {
-                if isSelectedConversationGenerating { recordError("请等待当前回复结束或停止后再粘贴图片。", owner: selectedID) }
+                if selectedSupplementTask != nil {
+                    recordError("补充运行中任务仅支持纯文本，请取消选中补充目标后再粘贴图片。", owner: selectedID)
+                }
                 return true
             }
             addImageAttachment(data: image.data, name: image.name)

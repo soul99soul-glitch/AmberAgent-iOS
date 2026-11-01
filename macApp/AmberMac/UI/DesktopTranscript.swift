@@ -78,10 +78,19 @@ struct DesktopTranscript: View {
                                 }
                                 .id(message.rowIdentity)
                         } else {
+                        let matchedTask = workspace.activeTask(forMessageID: message.id)
+                        let taskToken = matchedTask?.token
+                        let isSupplementSelected = taskToken != nil && workspace.selectedSupplementRunID == taskToken
+                        let taskStopping = taskToken.map(workspace.isTaskStopping) ?? false
                         DesktopMessageRow(message: message, conversationID: conversation.id, settings: workspace.settings,
                             speech: workspace.speech, shelf: workspace.artifactShelf, reasoningExpansion: reasoningExpansion,
                             layoutWidth: CGFloat(max(240, layoutWidth)),
                             mutationsDisabled: mutationsDisabled, highlighted: highlighted, followingCount: following,
+                            activeTaskToken: taskToken,
+                            isSupplementTarget: isSupplementSelected,
+                            isTaskStopping: taskStopping,
+                            onToggleSupplement: { if let taskToken { workspace.toggleSupplementTarget(taskToken) } },
+                            onStopTask: { if let taskToken { workspace.stopTask(taskToken) } else { workspace.stop(message.id) } },
                             onExport: { DesktopFileActions.exportMessage(workspace, messageID: message.id) },
                             onEdit: { editingMessage = MessageEditDraft(id: message.id, ownerID: conversation.id,
                                 text: message.textForEditing, followingCount: following) },
@@ -297,12 +306,14 @@ struct DesktopTranscript: View {
             expandedTools: message.tools.filter { reasoningExpansion[tool: message.id, $0.id] }.map(\.id))
     }
 
-    /// Rows keep their index in `conversation.messages`; with tool calls hidden, a finished turn that only called
-    /// tools has nothing left to show and is skipped.
+    /// Rows keep their index in `conversation.messages`; multi-step assistant tool rounds coalesce into one row
+    /// so progress updates in-place instead of emitting a separate row or card per tool round.
     private var visibleRows: [(offset: Int, element: DesktopMessage)] {
-        let rows = Array(conversation.messages.enumerated())
-        guard workspace.settings.hidesToolCalls else { return rows }
-        return rows.filter { !$0.element.isToolOnly || $0.element.state == .streaming }
+        DesktopTranscriptTurnGrouping.projectRows(
+            messages: conversation.messages,
+            hidesToolCalls: workspace.settings.hidesToolCalls,
+            activeOwnedGroups: workspace.activeOwnedMessageGroups(in: conversation.id)
+        )
     }
 
     /// Re-picks the live rows only once the viewport nears the edge of the current window, so scrolling within it
@@ -310,13 +321,13 @@ struct DesktopTranscript: View {
     private func updateLiveRows(_ visible: CGRect) {
         guard windowed else { if liveRows != nil { liveRows = nil }; return }
         if let liveRows, liveRows.covers(visible) { return }
-        let next = DesktopLiveRows(visible: visible, rowIDs: conversation.messages.map(\.rowIdentity), heights: rowHeights)
+        let next = DesktopLiveRows(visible: visible, rowIDs: visibleRows.map(\.element.rowIdentity), heights: rowHeights)
         if next != liveRows { liveRows = next }
     }
 
     private func repickLiveRows() {
         guard windowed, visibleRect.height > 0 else { return }
-        let next = DesktopLiveRows(visible: visibleRect, rowIDs: conversation.messages.map(\.rowIdentity), heights: rowHeights)
+        let next = DesktopLiveRows(visible: visibleRect, rowIDs: visibleRows.map(\.element.rowIdentity), heights: rowHeights)
         if next != liveRows { liveRows = next }
     }
 
@@ -377,6 +388,11 @@ private struct DesktopMessageRow: View, Equatable {
     let mutationsDisabled: Bool
     let highlighted: Bool
     let followingCount: Int
+    let activeTaskToken: UUID?
+    let isSupplementTarget: Bool
+    let isTaskStopping: Bool
+    let onToggleSupplement: () -> Void
+    let onStopTask: () -> Void
     let onExport: () -> Void
     let onEdit: () -> Void
     let onRegenerate: () -> Void
@@ -392,14 +408,23 @@ private struct DesktopMessageRow: View, Equatable {
     init(message: DesktopMessage, conversationID: UUID, settings: DesktopSettings, speech: DesktopSpeechPlayer,
          shelf: DesktopArtifactShelf, reasoningExpansion: DesktopReasoningExpansion,
          layoutWidth: CGFloat = 680,
-         mutationsDisabled: Bool, highlighted: Bool, followingCount: Int, onExport: @escaping () -> Void,
+         mutationsDisabled: Bool, highlighted: Bool, followingCount: Int,
+         activeTaskToken: UUID? = nil, isSupplementTarget: Bool = false, isTaskStopping: Bool = false,
+         onToggleSupplement: @escaping () -> Void = {}, onStopTask: @escaping () -> Void = {},
+         onExport: @escaping () -> Void,
          onEdit: @escaping () -> Void, onRegenerate: @escaping () -> Void,
          onDelete: @escaping () -> Void, onSelectVariant: @escaping (Int) -> Void) {
         self.message = message; self.conversationID = conversationID; self.settings = settings; self.speech = speech
         self.shelf = shelf; self.reasoningExpansion = reasoningExpansion
         self.layoutWidth = layoutWidth
         self.mutationsDisabled = mutationsDisabled; self.highlighted = highlighted
-        self.followingCount = followingCount; self.onExport = onExport
+        self.followingCount = followingCount
+        self.activeTaskToken = activeTaskToken
+        self.isSupplementTarget = isSupplementTarget
+        self.isTaskStopping = isTaskStopping
+        self.onToggleSupplement = onToggleSupplement
+        self.onStopTask = onStopTask
+        self.onExport = onExport
         self.onEdit = onEdit; self.onRegenerate = onRegenerate; self.onDelete = onDelete
         self.onSelectVariant = onSelectVariant
     }
@@ -410,6 +435,9 @@ private struct DesktopMessageRow: View, Equatable {
                 && lhs.layoutWidth == rhs.layoutWidth
                 && lhs.mutationsDisabled == rhs.mutationsDisabled && lhs.highlighted == rhs.highlighted
                 && lhs.followingCount == rhs.followingCount
+                && lhs.activeTaskToken == rhs.activeTaskToken
+                && lhs.isSupplementTarget == rhs.isSupplementTarget
+                && lhs.isTaskStopping == rhs.isTaskStopping
                 && lhs.settings === rhs.settings && lhs.speech === rhs.speech && lhs.shelf === rhs.shelf
                 && lhs.reasoningExpansion === rhs.reasoningExpansion
         }
@@ -451,7 +479,7 @@ private struct DesktopMessageRow: View, Equatable {
                     if message.state == .streaming {
                         HStack(alignment: .center, spacing: 5) {
                             DesktopPulse()
-                            Text("正在生成")
+                            Text(isTaskStopping ? "正在停止" : "正在生成")
                                 .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(DesktopTheme.inkSecondary)
                                 .modifier(DesktopSoftShimmer(active: true))
@@ -460,6 +488,49 @@ private struct DesktopMessageRow: View, Equatable {
                         .padding(.vertical, 2)
                         .background(DesktopTheme.paperDeep, in: Capsule())
                         .geometryGroup()
+
+                        if activeTaskToken != nil && !isTaskStopping {
+                            Button(action: onToggleSupplement) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: isSupplementTarget ? "checkmark.circle.fill" : "plus.bubble")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                    Text(isSupplementTarget ? "已选补充" : "补充")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                }
+                                .foregroundStyle(isSupplementTarget ? DesktopTheme.accent : DesktopTheme.inkSecondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(
+                                    isSupplementTarget ? DesktopTheme.honeySoft : DesktopTheme.paperDeep.opacity(0.65),
+                                    in: Capsule()
+                                )
+                                .overlay(
+                                    Capsule().strokeBorder(
+                                        isSupplementTarget ? DesktopTheme.accent.opacity(0.45) : DesktopTheme.hairline,
+                                        lineWidth: 0.75
+                                    )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .help(isSupplementTarget ? "取消选中补充此任务（恢复为发送新问题）" : "选中此任务进行补充，将在下次推理边界消费")
+                            .accessibilityIdentifier("supplement-task-\(message.id.uuidString)")
+
+                            Button(action: onStopTask) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "stop.fill")
+                                        .font(.system(size: 9.5, weight: .bold))
+                                    Text("停止")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                }
+                                .foregroundStyle(DesktopTheme.danger)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(DesktopTheme.danger.opacity(0.1), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help("仅停止此任务")
+                            .accessibilityIdentifier("stop-task-\(message.id.uuidString)")
+                        }
                     }
                     Spacer()
                     actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
@@ -488,6 +559,20 @@ private struct DesktopMessageRow: View, Equatable {
                     }
                 }
             } else {
+                if !settings.hidesToolCalls,
+                   let progress = DesktopTurnToolProgress(
+                       tools: message.tools,
+                       isStreaming: message.state == .streaming,
+                       hasReplyText: !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                   ) {
+                    DesktopTurnToolProgressBar(
+                        progress: progress,
+                        expanded: Binding(
+                            get: { reasoningExpansion[tool: message.id, "__turn_progress__"] },
+                            set: { reasoningExpansion[tool: message.id, "__turn_progress__"] = $0 }
+                        )
+                    )
+                }
                 ForEach(Array(orderedBlocks.enumerated()), id: \.offset) { blockIndex, block in
                     assistantBlockView(block, blockIndex: blockIndex)
                 }
@@ -625,16 +710,8 @@ private struct DesktopMessageRow: View, Equatable {
             DesktopVideoCard(video: video, maxWidth: min(480, max(260, layoutWidth * 0.74)))
         case .audio(let audio):
             DesktopAudioCard(audio: audio, maxWidth: min(420, max(240, layoutWidth * 0.65)))
-        case .tool(let tool):
-            if !settings.hidesToolCalls {
-                DesktopToolCallCard(
-                    tool: tool,
-                    expanded: Binding(
-                        get: { reasoningExpansion[tool: message.id, tool.id] },
-                        set: { reasoningExpansion[tool: message.id, tool.id] = $0 }
-                    )
-                )
-            }
+        case .tool:
+            EmptyView()
         }
     }
 

@@ -44,9 +44,17 @@ final class DesktopWorkspace {
     var loadingConversationIDs: Set<UUID> = []
     var errorMessage: String?
     /// Active interactive chat generations by conversation ID (sorted by start order via `generationOrder`).
+    static let defaultMaxConcurrentTasks = 2
+    static let defaultMaxTotalConcurrentTasks = 4
+    var maxConcurrentTasks: Int = DesktopWorkspace.defaultMaxConcurrentTasks
+    var maxTotalConcurrentTasks: Int = DesktopWorkspace.defaultMaxTotalConcurrentTasks
     var generatingConversationIDs: Set<UUID> = []
     var stoppingConversationIDs: Set<UUID> = []
+    var generatingTaskIDs: Set<UUID> = []
+    var stoppingTaskIDs: Set<UUID> = []
+    var supplementTargets: [UUID: UUID] = [:]
     @ObservationIgnored var generationOrder: [UUID] = []
+    @ObservationIgnored var activeTaskOrder: [UUID] = []
     var isGenerating: Bool { !generatingConversationIDs.isEmpty }
     var isStopping: Bool {
         if let selectedID, stoppingConversationIDs.contains(selectedID) { return true }
@@ -199,9 +207,14 @@ final class DesktopWorkspace {
 
     struct ActiveGeneration {
         let token: UUID
+        let conversationID: UUID
+        let title: String
+        let userMessageID: UUID?
+        let initialAssistantID: UUID
         let run: DesktopGeneration
         var assistantID: UUID?
-        let prefixIDs: [UUID]
+        var prefixIDs: [UUID]
+        var ownedMessageIDs: [UUID]
         let usesTools: Bool
         var task: Task<Void, Never>?
         var lastCheckpoint: Date
@@ -210,7 +223,16 @@ final class DesktopWorkspace {
     @ObservationIgnored let storage: any DesktopConversationStorage
     @ObservationIgnored let provider: any DesktopTextProvider
     @ObservationIgnored var persistence: Task<Void, Never>?
-    @ObservationIgnored var activeGenerations: [UUID: ActiveGeneration] = [:]
+    @ObservationIgnored var activeTasks: [UUID: ActiveGeneration] = [:]
+    var activeGenerations: [UUID: ActiveGeneration] {
+        var result: [UUID: ActiveGeneration] = [:]
+        for token in activeTaskOrder {
+            if let task = activeTasks[token] {
+                result[task.conversationID] = task
+            }
+        }
+        return result
+    }
     @ObservationIgnored var queuedRequestTasks: [UUID: (token: UUID, task: Task<Void, Never>)] = [:]
     @ObservationIgnored var drafts: [UUID: String] = [:]
     @ObservationIgnored var attachments: [UUID: [DesktopImportedDocument]] = [:]
@@ -597,132 +619,6 @@ final class DesktopWorkspace {
         attachments[selectedID] = pendingAttachments
     }
 
-    func send() {
-        if let selectedID, scheduledRunConversationIDs.contains(selectedID) {
-            errorMessage = "定时任务正在这条会话中运行，请等它结束后再发送。"; return
-        }
-        if isSelectedConversationGenerating { queueInstruction(); return }
-        guard !isLoading, !isSelectedConversationGenerating, !isMutatingBranch,
-              !isManagingBackup, !selectedConversationUnavailable else { return }
-        guard !isReadingAttachments else { errorMessage = "附件正在读取，请稍候再发送。"; return }
-        let rawDraft = draft
-        let text = rawDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentAttachments = pendingAttachments
-        let currentAnchors = selectedID.flatMap { attachmentDraftAnchors[$0] } ?? [:]
-        guard !text.isEmpty || !currentAttachments.isEmpty else { return }
-        do {
-            let request = try requestConfiguration()
-            if selectedID == nil { createConversation() }
-            guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
-            let continuation = currentAttachments.isEmpty ? try resolveIntelligentUIContinuation(for: text, conversationID: id) : nil
-            let effectiveDraft = continuation?.prompt(request: text) ?? rawDraft
-            let submission = DesktopMessageAttachment.composeSubmission(
-                draft: effectiveDraft,
-                documents: currentAttachments,
-                anchors: currentAnchors
-            )
-            let message = try provider.userMessage(id: UUID(), text: submission.text, attachments: submission.attachments)
-            conversations[index].messages.append(message)
-            if let continuation {
-                intelligentUIHost.recordReceipt(continuation, userMessageID: message.id)
-            }
-            if conversations[index].messages.count == 1 {
-                conversations[index].title = String((text.isEmpty ? currentAttachments.first?.name ?? "附件对话" : text).prefix(60))
-                persistMetadata(conversations[index])
-            }
-            draft = ""
-            pendingAttachments = []
-            drafts[id] = nil
-            attachments[id] = nil
-            attachmentDraftAnchors[id] = nil
-            startGeneration(conversationID: id, configuration: request.0, apiKey: request.1)
-        } catch { errorMessage = error.localizedDescription }
-    }
-
-    @discardableResult
-    func queueInstruction() -> Bool {
-        guard let owner = selectedID, let active = activeGenerations[owner],
-              !stoppingConversationIDs.contains(owner), !selectedConversationUnavailable else { return false }
-        guard pendingAttachments.isEmpty, !isReadingAttachments else {
-            recordError("生成中仅支持排队文本。请保留附件，停止当前生成后再发送。", owner: owner)
-            return false
-        }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
-        instructionQueue.append(.init(id: UUID(), conversationID: owner, runID: active.token, text: text))
-        draft = ""
-        drafts[owner] = nil
-        return true
-    }
-
-    func withdrawQueuedInstruction(_ id: UUID) {
-        guard let item = instructionQueue.first(where: { $0.id == id }), item.status == .pending,
-              summaries.contains(where: { $0.id == item.conversationID }) else { return }
-        let existing = item.conversationID == selectedID ? draft : drafts[item.conversationID] ?? ""
-        let restored = [existing, item.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        if item.conversationID == selectedID { draft = restored }
-        drafts[item.conversationID] = restored
-        instructionQueue.removeAll { $0.id == id }
-    }
-
-    func sendQueuedInstructions() {
-        guard !isSelectedConversationGenerating, !isLoading, !isSelectedConversationMutatingBranch, !isManagingBackup,
-              let value = selectedConversation, queuedRequestTasks[value.id] == nil else { return }
-        let owner = value.id
-        guard unsavedConversationIDs.contains(owner) else { startQueuedRequest(owner: owner, runID: nil); return }
-        persist(value)
-        let writer = persistence
-        let token = UUID()
-        let task = Task { [weak self] in
-            await writer?.value
-            guard let self, self.queuedRequestTasks[owner]?.token == token else { return }
-            self.queuedRequestTasks[owner] = nil
-            guard !Task.isCancelled else { return }
-            self.startQueuedRequest(owner: owner, runID: nil)
-        }
-        queuedRequestTasks[owner] = (token, task)
-    }
-
-    func retryQueuedMessageSave() {
-        guard let value = selectedConversation,
-              selectedQueuedMessages.contains(where: { $0.status == .awaitingSave }) else { return }
-        persist(value)
-    }
-
-    func drainQueuedInstructions(owner: UUID, token: UUID) -> [DesktopMessage] {
-        guard let active = activeGenerations[owner], active.token == token,
-              active.usesTools, !stoppingConversationIDs.contains(owner) else { return [] }
-        let pending = instructionQueue.filter { $0.conversationID == owner && $0.runID == token && $0.status == .pending }
-        do {
-            let messages = try pending.map { try provider.userMessage(id: $0.id, text: $0.text, attachments: []) }
-            let ids = Set(pending.map(\.id))
-            for index in instructionQueue.indices where ids.contains(instructionQueue[index].id) {
-                instructionQueue[index].status = .delivering
-            }
-            return messages
-        } catch { recordError("排队指令尚未提交。\(error.localizedDescription)", owner: owner); return [] }
-    }
-
-    func startQueuedRequest(owner: UUID, runID: UUID?) {
-        guard !generatingConversationIDs.contains(owner), !mutatingBranchConversationIDs.contains(owner), !isManagingBackup,
-              let index = conversations.firstIndex(where: { $0.id == owner }),
-              !unsavedConversationIDs.contains(owner) else { return }
-        let pending = instructionQueue.filter {
-            $0.conversationID == owner && $0.status == .pending && (runID == nil || $0.runID == runID)
-        }
-        guard !pending.isEmpty else { return }
-        do {
-            let request = try requestConfiguration(conversationID: owner)
-            let messages = try pending.map { try provider.userMessage(id: $0.id, text: $0.text, attachments: []) }
-            let ids = Set(pending.map(\.id))
-            for queueIndex in instructionQueue.indices where ids.contains(instructionQueue[queueIndex].id) {
-                instructionQueue[queueIndex].status = .delivering
-            }
-            conversations[index].messages.append(contentsOf: messages)
-            startGeneration(conversationID: owner, configuration: request.0, apiKey: request.1)
-        } catch { recordError("排队指令尚未发送，已保留在队列中。\(error.localizedDescription)", owner: owner) }
-    }
-
     @discardableResult
     func retry() -> Task<Void, Never>? {
         guard let last = selectedConversation?.messages.last, last.role == .assistant,
@@ -907,78 +803,6 @@ final class DesktopWorkspace {
                     self?.conversations.first(where: { $0.id == owner })?.messages.map(\.id) == ids
                 })
         } catch { recordError(error.localizedDescription, owner: conversation.id) }
-    }
-
-    func startGeneration(conversationID: UUID, configuration: DesktopProviderConfiguration, apiKey: String,
-        preparedResponseID: UUID? = nil) {
-        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
-        var messages = conversations[index].messages
-        let replyID: UUID
-        if let preparedResponseID {
-            guard let reply = messages.last, reply.id == preparedResponseID, reply.role == .assistant else { return }
-            replyID = preparedResponseID
-            messages.removeLast()
-        } else {
-            let reply = DesktopMessage(role: .assistant, text: "", state: .streaming)
-            replyID = reply.id
-            conversations[index].messages.append(reply)
-            conversations[index].updatedAt = Date()
-            persist(conversations[index])
-        }
-        let prefixIDs = messages.map(\.id)
-        do { messages = try requestMessages(messages, conversationID: conversationID,
-            configuration: configuration) }
-        catch {
-            conversations[index].messages[conversations[index].messages.count - 1].state = .failed
-            persist(conversations[index])
-            recordError("读取本地知识上下文失败。\(error.localizedDescription)", owner: conversationID)
-            return
-        }
-        if !unsavedConversationIDs.contains(conversationID), !unsavedMetadataIDs.contains(conversationID) {
-            if selectedID == conversationID { errorMessage = nil }
-            conversationErrors[conversationID] = nil
-        }
-        let token = UUID()
-        let usesTools = agentTasks.toolsEnabled || agentTasks.subagentsEnabled
-        generatingConversationIDs.insert(conversationID)
-        stoppingConversationIDs.remove(conversationID)
-        if !generationOrder.contains(conversationID) { generationOrder.append(conversationID) }
-        do {
-            let run = try provider.start(configuration: configuration, apiKey: apiKey,
-                messages: messages, responseID: replyID, context: DesktopRunContext(
-                    conversationID: conversationID, toolsEnabled: agentTasks.toolsEnabled, subagentsEnabled: agentTasks.subagentsEnabled,
-                    toolRounds: settings.agentToolRoundLimit, runMinutes: settings.agentRunMinutes,
-                    persistTurns: { [weak self] turns in
-                        guard let self else { return false }
-                        return await self.persistAgentTurns(turns, owner: conversationID, token: token)
-                    }, drainSteer: { [weak self] in
-                        self?.drainQueuedInstructions(owner: conversationID, token: token) ?? []
-                    }, historySnapshot: { [weak self] in
-                        guard let self, let conversation = self.conversations.first(where: { $0.id == conversationID }) else {
-                            return ([], [])
-                        }
-                        let covered = self.insights.checkpoint(for: conversation)?.coveredMessageIDs ?? []
-                        return (conversation.messages, Set(covered))
-                    }))
-            var state = ActiveGeneration(
-                token: token, run: run, assistantID: replyID, prefixIDs: prefixIDs,
-                usesTools: usesTools, task: nil, lastCheckpoint: Date()
-            )
-            state.task = Task { [weak self] in
-                for await _ in run.signals {
-                    guard let self, self.activeGenerations[conversationID]?.token == token else { return }
-                    self.apply(run.drain(), for: conversationID, token: token)
-                    // Coalesce token bursts into ~30 layout passes a second; drain() returns everything that arrived.
-                    try? await Task.sleep(for: .milliseconds(self.transcriptIsUserScrolling ? 250 : 33))
-                }
-            }
-            activeGenerations[conversationID] = state
-        } catch {
-            clearGeneration(for: conversationID)
-            conversations[index].messages[conversations[index].messages.count - 1].state = .failed
-            persist(conversations[index])
-            recordError("无法开始生成，请检查服务商设置后重试。", owner: conversationID)
-        }
     }
 
     /// History as the model sees it: compaction applied, a turn-invariant system prefix, memories recalled

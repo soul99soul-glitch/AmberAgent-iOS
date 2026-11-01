@@ -47,8 +47,11 @@ import XCTest
 
     func testTextQueueStartsNewRequestAfterCompletionForOriginalOwner() async throws {
         let (workspace, provider, storage, owner, other) = try setup()
+        let tokenA = try XCTUnwrap(workspace.selectedConversationActiveTasks.first?.token)
+        workspace.selectSupplementTarget(tokenA)
         workspace.draft = "follow up"; workspace.send()
         XCTAssertEqual(workspace.selectedQueuedMessages.map(\.text), ["follow up"])
+        XCTAssertEqual(workspace.selectedQueuedMessages.map(\.kind), [.supplement])
         XCTAssertEqual(provider.runs.count, 1)
         let drained = await provider.contexts[0].drainSteer?()
         XCTAssertTrue(drained?.isEmpty == true)
@@ -69,6 +72,8 @@ import XCTest
 
     func testToolBoundaryLeasesOnceAndOnlyDurableCanonicalAckRemovesQueue() async throws {
         let (workspace, provider, storage, owner, _) = try setup(tools: true)
+        let tokenA = try XCTUnwrap(workspace.selectedConversationActiveTasks.first?.token)
+        workspace.selectSupplementTarget(tokenA)
         workspace.draft = "steer"; workspace.send()
         let drain = try XCTUnwrap(provider.contexts[0].drainSteer)
         let queued = await drain()
@@ -93,7 +98,7 @@ import XCTest
 
     func testStopPreservesPendingQueueAndWithdrawalAppendsToDraft() async throws {
         let (workspace, provider, _, _, _) = try setup(tools: true)
-        workspace.draft = "keep this"; workspace.send()
+        workspace.draft = "keep this"; workspace.queueInstruction()
         let id = try XCTUnwrap(workspace.selectedQueuedMessages.first?.id)
         let drain = try XCTUnwrap(provider.contexts[0].drainSteer)
         workspace.stop()
@@ -109,7 +114,7 @@ import XCTest
 
     func testFailedRunRetainsQueueForExplicitSendAndStaleRunCannotDrain() async throws {
         let (workspace, provider, _, _, _) = try setup(tools: true)
-        workspace.draft = "retry separately"; workspace.send()
+        workspace.draft = "retry separately"; workspace.queueInstruction()
         let oldDrain = try XCTUnwrap(provider.contexts[0].drainSteer)
         provider.runs[0].yield(.failed("offline"))
         for _ in 0..<100 where workspace.isGenerating { await Task.yield() }
@@ -126,7 +131,7 @@ import XCTest
 
     func testSubmittedInstructionWriteFailureShowsAwaitingSaveWithoutResending() async throws {
         let (workspace, provider, storage, owner, _) = try setup(tools: true)
-        workspace.draft = "already submitted"; workspace.send()
+        workspace.draft = "already submitted"; workspace.queueInstruction()
         let drain = try XCTUnwrap(provider.contexts[0].drainSteer)
         let queued = await drain()
         let call = DesktopMessage(id: provider.responseIDs[0], role: .assistant, text: "tool result")
@@ -146,7 +151,7 @@ import XCTest
 
     func testExplicitSendRetriesOriginalResponseSaveBeforeSendingPendingQueueOnce() async throws {
         let (workspace, provider, storage, owner, _) = try setup()
-        workspace.draft = "next request"; workspace.send()
+        workspace.draft = "next request"; workspace.queueInstruction()
         storage.failSave = true
         provider.runs[0].yield(.snapshot(text: "completed but not saved", reasoning: "")); provider.runs[0].yield(.complete)
         for _ in 0..<200 { await Task.yield() }
@@ -166,9 +171,11 @@ import XCTest
 
     func testDeleteFailureRestoresQueueAndAttachmentQueueRejectionKeepsDraft() async throws {
         let (workspace, provider, storage, owner, _) = try setup()
+        let tokenA = try XCTUnwrap(workspace.selectedConversationActiveTasks.first?.token)
         let document = DesktopImportedDocument(id: UUID(), name: "note.txt", sourceURL: nil, kind: .text,
             byteCount: 4, text: "note", image: nil, pageCount: nil, note: nil)
         try workspace.addGeneratedImageAttachments([document], to: owner)
+        workspace.selectSupplementTarget(tokenA)
         workspace.draft = "attachment draft"
         workspace.send()
         XCTAssertEqual(workspace.draft, "attachment draft")
@@ -183,5 +190,135 @@ import XCTest
         XCTAssertEqual(workspace.selectedQueuedMessages.map(\.text), ["attachment draft"])
         let drained = await provider.contexts[0].drainSteer?()
         XCTAssertTrue(drained?.isEmpty == true)
+    }
+
+    func testSameConversationConcurrentSendAnswersImmediatelyAndKeepsEachTaskInItsOwnSlot() async throws {
+        let (workspace, provider, storage, owner, _) = try setup(tools: true)
+        let tasksAfterA = workspace.selectedConversationActiveTasks
+        XCTAssertEqual(tasksAfterA.count, 1)
+        let tokenA = tasksAfterA[0].token
+        let replyAID = provider.responseIDs[0]
+
+        // 1. While Task A is still running, sending a normal message B starts Task B immediately without waiting for A.
+        workspace.draft = "second independent question B"
+        workspace.send()
+        XCTAssertEqual(provider.runs.count, 2, "Normal message B must start immediately while A is running")
+        XCTAssertTrue(workspace.selectedQueuedMessages.isEmpty, "Normal message B must not be trapped in supplement queue")
+        XCTAssertEqual(workspace.selectedConversationActiveTasks.count, 2)
+        let replyBID = provider.responseIDs[1]
+        XCTAssertEqual(provider.inputs[1].filter { $0.role == .user }.map(\.text), ["initial", "second independent question B"])
+        XCTAssertFalse(provider.inputs[1].contains(where: { $0.id == replyAID }),
+            "Task B request history must exclude Task A's uncommitted in-flight assistant placeholder")
+
+        // 2. Task B finishes first while Task A is still running tools.
+        provider.runs[1].yield(.snapshot(text: "Answer B ready first", reasoning: ""))
+        provider.runs[1].yield(.complete)
+        workspace.apply(provider.runs[1].drain(), for: owner, token: workspace.selectedConversationActiveTasks[1].token)
+        XCTAssertEqual(workspace.selectedConversationActiveTasks.map(\.token), [tokenA])
+        XCTAssertTrue(workspace.isSelectedConversationGenerating, "Conversation remains generating while Task A is still active")
+
+        // 3. User explicitly selects Task A to supplement; Task A consumes it at its next reasoning boundary.
+        workspace.selectSupplementTarget(tokenA)
+        workspace.draft = "extra constraint for A"
+        workspace.send()
+        XCTAssertNil(workspace.selectedSupplementRunID, "Supplement selection resets after submitting supplement")
+        XCTAssertEqual(workspace.selectedQueuedMessages.count, 1)
+        XCTAssertEqual(workspace.selectedQueuedMessages.first?.kind, .supplement)
+        XCTAssertEqual(workspace.selectedQueuedMessages.first?.runID, tokenA)
+
+        let drainedByB = await provider.contexts[1].drainSteer?() ?? []
+        XCTAssertTrue(drainedByB.isEmpty, "Task B must never consume Task A's supplement")
+        let drainedByA = await provider.contexts[0].drainSteer?() ?? []
+        XCTAssertEqual(drainedByA.map(\.text), ["extra constraint for A"])
+
+        // 4. Task A emits multi-turn transcript (tool call + steered user + final answer A) and completes.
+        //    Task A's turns must stay in Task A's position BEFORE Task B's user and assistant messages!
+        let toolTurnA = DesktopMessage(
+            id: replyAID,
+            role: .assistant,
+            text: "",
+            tools: [DesktopToolCall(id: "call-1", name: "search_web", input: #"{"query":"swift"}"#, output: "ok", status: .complete)]
+        )
+        let finalA = DesktopMessage(role: .assistant, text: "Answer A with supplement", state: .streaming)
+        provider.runs[0].yield(.transcript([toolTurnA] + drainedByA + [finalA]))
+        provider.runs[0].yield(.complete)
+        workspace.apply(provider.runs[0].drain(), for: owner, token: tokenA)
+        _ = await workspace.flush()
+
+        XCTAssertFalse(workspace.isGenerating)
+        let finalMessages = try XCTUnwrap(workspace.selectedConversation?.messages)
+        XCTAssertEqual(
+            finalMessages.map(\.text),
+            ["initial", "", "extra constraint for A", "Answer A with supplement", "second independent question B", "Answer B ready first"]
+        )
+        XCTAssertEqual(finalMessages.first(where: { $0.id == finalA.id })?.state, .complete)
+        XCTAssertEqual(finalMessages.first(where: { $0.id == replyBID })?.state, .complete)
+        let savedMessages = try XCTUnwrap(storage.values.first(where: { $0.id == owner })?.messages)
+        XCTAssertEqual(savedMessages.map(\.id), finalMessages.map(\.id))
+    }
+
+    func testStoppingTaskAOnlyStopsTaskBContinuesAndConcurrencyLimitQueuesTaskC() async throws {
+        let (workspace, provider, storage, owner, _) = try setup(tools: true)
+        workspace.maxConcurrentTasks = 2
+        let tokenA = try XCTUnwrap(workspace.selectedConversationActiveTasks.first?.token)
+        let replyAID = provider.responseIDs[0]
+
+        // Start Task B concurrently (reaches maxConcurrentTasks = 2).
+        workspace.draft = "task B"
+        workspace.send()
+        XCTAssertEqual(provider.runs.count, 2)
+        let tokenB = try XCTUnwrap(workspace.selectedConversationActiveTasks.last?.token)
+        let replyBID = provider.responseIDs[1]
+        XCTAssertTrue(workspace.isSelectedConversationAtConcurrencyLimit)
+
+        // Sending Task C while A and B are both running queues C as .newTask with pending status.
+        workspace.draft = "task C queued by concurrency cap"
+        workspace.send()
+        XCTAssertEqual(provider.runs.count, 2, "Task C must wait in queue when concurrency limit is reached")
+        XCTAssertEqual(workspace.selectedQueuedMessages.count, 1)
+        XCTAssertEqual(workspace.selectedQueuedMessages.first?.kind, .newTask)
+        XCTAssertEqual(workspace.selectedQueuedMessages.first?.status, .pending)
+        XCTAssertEqual(workspace.selectedQueuedMessages.first?.text, "task C queued by concurrency cap")
+
+        // Stopping Task A ONLY stops Task A; Task B keeps running, and freed slot auto-starts Task C!
+        provider.runs[0].yield(.snapshot(text: "partial A", reasoning: ""))
+        workspace.stop(tokenA)
+        _ = await workspace.flush()
+
+        for _ in 0..<200 where provider.runs.count < 3 { await Task.yield() }
+        XCTAssertEqual(provider.runs.count, 3, "Freeing Task A's slot must automatically dequeue and start Task C")
+        let tokenC = try XCTUnwrap(workspace.selectedConversationActiveTasks.last?.token)
+        XCTAssertEqual(Set(workspace.selectedConversationActiveTasks.map(\.token)), Set([tokenB, tokenC]))
+
+        let msgA = try XCTUnwrap(workspace.selectedConversation?.messages.first(where: { $0.id == replyAID }))
+        XCTAssertEqual(msgA.state, .cancelled)
+        XCTAssertEqual(msgA.text, "partial A")
+
+        let msgBWhileRunning = try XCTUnwrap(workspace.selectedConversation?.messages.first(where: { $0.id == replyBID }))
+        XCTAssertEqual(msgBWhileRunning.state, .streaming, "Stopping A must not cancel B")
+
+        provider.runs[1].yield(.snapshot(text: "completed B", reasoning: ""))
+        provider.runs[1].yield(.complete)
+        workspace.apply(provider.runs[1].drain(), for: owner, token: tokenB)
+
+        provider.runs[2].yield(.snapshot(text: "completed C", reasoning: ""))
+        provider.runs[2].yield(.complete)
+        workspace.apply(provider.runs[2].drain(), for: owner, token: tokenC)
+        _ = await workspace.flush()
+
+        XCTAssertFalse(workspace.isGenerating)
+        XCTAssertTrue(workspace.selectedQueuedMessages.isEmpty)
+        let saved = try XCTUnwrap(storage.values.first(where: { $0.id == owner }))
+        XCTAssertEqual(
+            saved.messages.map { "\($0.role.rawValue):\($0.text):\($0.state.rawValue)" },
+            [
+                "user:initial:complete",
+                "assistant:partial A:cancelled",
+                "user:task B:complete",
+                "assistant:completed B:complete",
+                "user:task C queued by concurrency cap:complete",
+                "assistant:completed C:complete",
+            ]
+        )
     }
 }

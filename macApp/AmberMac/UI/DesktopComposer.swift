@@ -16,6 +16,9 @@ struct DesktopComposer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 10) {
+                if !workspace.selectedConversationActiveTasks.isEmpty {
+                    activeTasksBar
+                }
                 if !workspace.selectedQueuedMessages.isEmpty {
                     queuedInstructions
                 }
@@ -48,8 +51,7 @@ struct DesktopComposer: View {
                         }
                         if sends {
                             if workspace.toggleBoostFromDraft() { inputFocused = true; return .handled }
-                            if workspace.isSelectedConversationGenerating { if workspace.canQueueInstruction { _ = workspace.queueInstruction() } }
-                            else if !sendDisabled { submit() }
+                            if !sendDisabled { submit() }
                             return .handled
                         }
                         editor.insertText("\n", replacementRange: editor.selectedRange())
@@ -63,9 +65,8 @@ struct DesktopComposer: View {
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(DesktopQuietButtonStyle())
-                    .disabled(workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
-                        || workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch || workspace.isReadingAttachments)
-                    .help("添加图片、PDF、文档或代码文件，也可拖入文件或粘贴图片")
+                    .disabled(!workspace.canAcceptAttachments || workspace.isReadingAttachments)
+                    .help(workspace.selectedSupplementTask != nil ? "补充运行中任务仅支持纯文本；取消选中补充后可添加附件" : "添加图片、PDF、文档或代码文件，也可拖入文件或粘贴图片")
                     .accessibilityLabel("添加附件")
 
                     DesktopToggleChip(
@@ -79,7 +80,7 @@ struct DesktopComposer: View {
                     ) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.toolsEnabled.toggle() }
                     }
-                    .disabled(workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch)
+                    .disabled(workspace.isSelectedConversationMutatingBranch)
                     .help("允许模型使用已接入的工具；需要确认的操作会先显示审批。")
                     .accessibilityLabel("工具")
                     .accessibilityValue(workspace.agentTasks.toolsEnabled ? "已开启" : "已关闭")
@@ -92,7 +93,7 @@ struct DesktopComposer: View {
                         ) {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { workspace.agentTasks.subagentsEnabled.toggle() }
                         }
-                        .disabled(workspace.isSelectedConversationGenerating || workspace.isSelectedConversationMutatingBranch)
+                        .disabled(workspace.isSelectedConversationMutatingBranch)
                         .help("允许模型在对话中派发只读子代理（Explorer、Oracle 等）并行调研，结果回到本轮回答。")
                         .accessibilityLabel("子代理")
                         .accessibilityValue(workspace.agentTasks.subagentsEnabled ? "已开启" : "已关闭")
@@ -127,35 +128,27 @@ struct DesktopComposer: View {
                     if workspace.isSelectedConversationMutatingBranch {
                         ProgressView().controlSize(.small)
                         Text("正在保存…").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-                    } else if workspace.isSelectedConversationGenerating {
-                        Button { workspace.queueInstruction() } label: {
-                            Image(systemName: "text.badge.plus").font(.system(size: 14))
-                                .frame(width: 32, height: 32)
-                        }
-                        .buttonStyle(DesktopQuietButtonStyle())
-                        .disabled(!workspace.canQueueInstruction)
-                        .help(workspace.pendingAttachments.isEmpty ? "\(shortcut.sendLabel) 加入队列 · 当前轮次结束后继续" : "生成中仅支持文本排队，请停止后发送附件")
-                        .accessibilityLabel("加入队列")
-                        .keyboardShortcut(.return, modifiers: .command)
-                        Button { workspace.stop() } label: {
-                            RoundedRectangle(cornerRadius: 2).fill(DesktopTheme.inkSecondary).frame(width: 10, height: 10)
-                                .frame(width: 32, height: 32)
-                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
-                        }
-                        .buttonStyle(DesktopPressButtonStyle())
-                        .transition(.scale(scale: 0.6).combined(with: .opacity))
-                        .help("停止生成")
-                        .accessibilityLabel("停止生成")
-                        .keyboardShortcut(".", modifiers: .command)
                     } else {
+                        if workspace.isSelectedConversationGenerating {
+                            Button { workspace.stop() } label: {
+                                RoundedRectangle(cornerRadius: 2).fill(DesktopTheme.inkSecondary).frame(width: 10, height: 10)
+                                    .frame(width: 32, height: 32)
+                                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairlineStrong))
+                            }
+                            .buttonStyle(DesktopPressButtonStyle())
+                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                            .help(workspace.selectedSupplementTask.map { "停止任务「\($0.title)」" } ?? "停止当前生成")
+                            .accessibilityLabel("停止生成")
+                            .keyboardShortcut(".", modifiers: .command)
+                        }
                         Button { submit() } label: {
                             DesktopSendGlyph(enabled: !sendDisabled, glint: workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "琥珀")
                         }
                         .buttonStyle(DesktopPressButtonStyle())
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                         .disabled(sendDisabled)
-                        .help(workspace.composerMode == .chat ? "发送消息 \(shortcut.sendLabel)" : "发起\(workspace.composerMode.title) \(shortcut.sendLabel)")
-                        .accessibilityLabel(workspace.composerMode == .chat ? "发送消息" : "发起\(workspace.composerMode.title)")
+                        .help(sendHelpText)
+                        .accessibilityLabel(workspace.selectedSupplementTask != nil ? "发送任务补充" : (workspace.composerMode == .chat ? "发送消息" : "发起\(workspace.composerMode.title)"))
                         .keyboardShortcut(.return, modifiers: .command)
                     }
                 }
@@ -175,9 +168,7 @@ struct DesktopComposer: View {
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                Text(workspace.isSelectedConversationGenerating
-                     ? (workspace.pendingAttachments.isEmpty ? "\(shortcut.sendLabel) 加入队列 · \(shortcut.newlineLabel) 换行" : "生成中仅支持文本排队 · 停止后可发送附件")
-                     : "\(shortcut.sendLabel) 发送 · \(shortcut.newlineLabel) 换行")
+                Text(footerHintText)
                     .font(.system(size: 11.5).monospacedDigit())
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .lineLimit(1)
@@ -302,9 +293,127 @@ struct DesktopComposer: View {
     }
 
     private var placeholder: String {
+        if let supplement = workspace.selectedSupplementTask {
+            return "向任务「\(supplement.title)」补充说明（下次推理边界消费）…"
+        }
         switch workspace.composerMode {
-        case .chat: "向 Amber 发送消息…"
-        case .council: "写下要议会讨论的问题，主持人会安排席位…"
+        case .chat:
+            return workspace.isSelectedConversationAtConcurrencyLimit
+                ? "向 Amber 发送新问题（超出并发上限时自动排队）…"
+                : "向 Amber 发送消息…"
+        case .council:
+            return "写下要议会讨论的问题，主持人会安排席位…"
+        }
+    }
+
+    private var sendHelpText: String {
+        if let supplement = workspace.selectedSupplementTask {
+            return "补充任务「\(supplement.title)」 \(shortcut.sendLabel) · 下次推理边界消费"
+        }
+        if workspace.composerMode == .chat {
+            return workspace.isSelectedConversationAtConcurrencyLimit
+                ? "加入并发排队 \(shortcut.sendLabel) · 空出槽位后自动执行"
+                : "发送消息 \(shortcut.sendLabel)"
+        }
+        return "发起\(workspace.composerMode.title) \(shortcut.sendLabel)"
+    }
+
+    private var footerHintText: String {
+        if let supplement = workspace.selectedSupplementTask {
+            return "已选补充「\(supplement.title)」 · \(shortcut.sendLabel) 提交补充 · 点击取消恢复新问题"
+        }
+        if workspace.isSelectedConversationAtConcurrencyLimit {
+            return "并发已达上限（\(workspace.maxConcurrentTasks)） · \(shortcut.sendLabel) 排队新任务"
+        }
+        if workspace.isSelectedConversationGenerating {
+            return "\(shortcut.sendLabel) 发送新问题（点击任务「补充」可追加说明） · \(shortcut.newlineLabel) 换行"
+        }
+        return "\(shortcut.sendLabel) 发送 · \(shortcut.newlineLabel) 换行"
+    }
+
+    private var activeTasksBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(workspace.selectedConversationActiveTasks, id: \.token) { task in
+                let isSelected = workspace.selectedSupplementRunID == task.token
+                let isStopping = workspace.isTaskStopping(task.token)
+                let taskMessage = workspace.selectedConversation?.messages.first { $0.id == task.assistantID || $0.id == task.initialAssistantID }
+                let toolProgress = taskMessage.flatMap { msg in
+                    DesktopTurnToolProgress(
+                        tools: msg.tools,
+                        isStreaming: msg.state == .streaming,
+                        hasReplyText: !msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+                }
+                HStack(spacing: 8) {
+                    DesktopPulse()
+                    Text(task.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .lineLimit(1)
+                    if let toolProgress {
+                        Text("· \(toolProgress.headline)")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(DesktopTheme.inkSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    } else {
+                        Text(isStopping ? "· 正在停止…" : "· 正在处理…")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    if !isStopping {
+                        Button {
+                            workspace.toggleSupplementTarget(task.token)
+                            inputFocused = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "plus.bubble")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                Text(isSelected ? "已选补充" : "补充")
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .foregroundStyle(isSelected ? DesktopTheme.accent : DesktopTheme.inkSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                isSelected ? DesktopTheme.honeySoft : DesktopTheme.paper.opacity(0.75),
+                                in: Capsule()
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help(isSelected ? "取消选中补充此任务（恢复为发送新问题）" : "选中此任务进行补充，将在下次推理边界消费")
+
+                        Button {
+                            workspace.stopTask(task.token)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text("停止")
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .foregroundStyle(DesktopTheme.danger)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(DesktopTheme.danger.opacity(0.1), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("仅停止任务「\(task.title)」")
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(
+                    isSelected ? DesktopTheme.honeySoft.opacity(0.6) : DesktopTheme.paperDeep,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(isSelected ? DesktopTheme.accent.opacity(0.45) : DesktopTheme.hairline, lineWidth: 0.75)
+                )
+            }
         }
     }
 
@@ -440,6 +549,7 @@ struct DesktopComposer: View {
     private var sendDisabled: Bool {
         workspace.isLoading || workspace.isLoadingSelectedConversation || workspace.selectedConversationUnavailable
             || workspace.isSelectedConversationMutatingBranch || workspace.isReadingAttachments
+            || (workspace.selectedSupplementTask != nil && (!workspace.pendingAttachments.isEmpty || workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             || (workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && workspace.pendingAttachments.isEmpty)
     }
 
@@ -458,15 +568,26 @@ struct DesktopComposer: View {
     }
 
     private var queuedInstructions: some View {
-        HStack(spacing: 8) {
+        let newTaskCount = workspace.selectedQueuedMessages.filter { $0.kind == .newTask }.count
+        let supplementCount = workspace.selectedQueuedMessages.filter { $0.kind == .supplement }.count
+        let summaryLabel: String = {
+            if newTaskCount > 0 && supplementCount > 0 {
+                return "排队任务 \(newTaskCount) · 待补充 \(supplementCount)"
+            } else if newTaskCount > 0 {
+                return "排队等待执行 · \(newTaskCount)（并发上限 \(workspace.maxConcurrentTasks)）"
+            } else {
+                return "待补充指令 · \(supplementCount)（下次推理消费）"
+            }
+        }()
+        return HStack(spacing: 8) {
             Button { queuePresented.toggle() } label: {
                 HStack(spacing: 6) {
-                    Label("排队消息 · \(workspace.selectedQueuedMessages.count)", systemImage: "text.line.first.and.arrowtriangle.forward")
+                    Label(summaryLabel, systemImage: "text.line.first.and.arrowtriangle.forward")
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                 }
             }
             .buttonStyle(DesktopQuietButtonStyle())
-            .help("查看队列、撤回消息或重试保存")
+            .help("查看排队任务或待补充指令、撤回或重试保存")
             Spacer()
             if workspace.selectedQueuedMessages.contains(where: { $0.status == .awaitingSave }) {
                 Text("已提交，待保存").foregroundStyle(DesktopTheme.accent)
@@ -482,29 +603,37 @@ struct DesktopComposer: View {
     private var queueDetails: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Text("排队消息 · \(workspace.selectedQueuedMessages.count)").font(.headline)
+                Text("排队与补充 · \(workspace.selectedQueuedMessages.count)").font(.headline)
                 Spacer()
                 Button("完成") { queuePresented = false }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(workspace.selectedQueuedMessages) { item in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(item.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            switch item.status {
-                            case .delivering:
-                                Text("提交中").foregroundStyle(.secondary)
-                            case .awaitingSave:
-                                VStack(alignment: .trailing, spacing: 3) {
-                                    Text("已提交，待保存").foregroundStyle(.secondary)
-                                    Button("重试保存") { workspace.retryQueuedMessageSave() }
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(item.kind == .newTask ? "新任务排队（超出并发上限）" : "补充任务\(item.targetTitle.map { " · \($0)" } ?? "")")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(item.kind == .newTask ? DesktopTheme.inkSecondary : DesktopTheme.accentInk)
+                                Spacer()
+                            }
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(item.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                switch item.status {
+                                case .delivering:
+                                    Text("提交中").foregroundStyle(.secondary)
+                                case .awaitingSave:
+                                    VStack(alignment: .trailing, spacing: 3) {
+                                        Text("已提交，待保存").foregroundStyle(.secondary)
+                                        Button("重试保存") { workspace.retryQueuedMessageSave() }
+                                            .buttonStyle(.borderless)
+                                    }
+                                case .pending:
+                                    Button("撤回") { workspace.withdrawQueuedInstruction(item.id) }
                                         .buttonStyle(.borderless)
+                                        .help("将这条消息恢复到草稿")
                                 }
-                            case .pending:
-                                Button("撤回") { workspace.withdrawQueuedInstruction(item.id) }
-                                    .buttonStyle(.borderless)
-                                    .help("将这条消息恢复到草稿")
                             }
                         }
                         .padding(9)
@@ -512,7 +641,8 @@ struct DesktopComposer: View {
                     }
                 }
             }
-            if !workspace.isSelectedConversationGenerating && workspace.selectedQueuedMessages.contains(where: { $0.status == .pending }) {
+            if workspace.canStartNewTaskImmediately(in: workspace.selectedID ?? UUID())
+                && workspace.selectedQueuedMessages.contains(where: { $0.status == .pending }) {
                 HStack {
                     Text("队列已保留，可发送或撤回。")
                         .foregroundStyle(.secondary)

@@ -166,7 +166,7 @@ extension DesktopWorkspace {
     func exportConversation(to url: URL) -> Task<Void, Never>? {
         guard let owner = selectedID, selectedConversation != nil else { errorMessage = "请先读取要导出的会话。"; return nil }
         guard !mutatingBranchConversationIDs.contains(owner) else { recordError("正在保存消息更改，请稍候再导出。", owner: owner); return nil }
-        if let active = activeGenerations[owner] { apply(active.run.drain(), for: owner, token: active.token) }
+        for active in activeTasks(in: owner) { apply(active.run.drain(), for: owner, token: active.token) }
         if let conversation = conversations.first(where: { $0.id == owner }) { persist(conversation) }
         return performFileTask { [self] in
             do {
@@ -184,7 +184,7 @@ extension DesktopWorkspace {
     func exportReadableConversation(to url: URL, format: DesktopReadableExportFormat) -> Task<Void, Never>? {
         guard let owner = selectedID, selectedConversation != nil else { errorMessage = "请先读取要导出的会话。"; return nil }
         guard !mutatingBranchConversationIDs.contains(owner) else { recordError("正在保存消息更改，请稍候再导出。", owner: owner); return nil }
-        if let active = activeGenerations[owner] { apply(active.run.drain(), for: owner, token: active.token) }
+        for active in activeTasks(in: owner) { apply(active.run.drain(), for: owner, token: active.token) }
         if let value = conversations.first(where: { $0.id == owner }) { persist(value) }
         return performFileTask { [self] in
             do {
