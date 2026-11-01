@@ -101,14 +101,17 @@ data class RouterTurnInput(
     val batchPrompt: String,
 )
 
+@kotlinx.serialization.Serializable
 data class RouterSteer(val workItemId: String, val instruction: String)
 
 /** Router 单轮决策（模型或 Mock 产出；Router 只能回复、派单、引导，不能直接执行工具）。 */
+@kotlinx.serialization.Serializable
 data class RouterDecision(
     val reply: String? = null,
     val dispatch: List<WorkItemSubmissionSpec> = emptyList(),
     val steer: List<RouterSteer> = emptyList(),
     val proposeAgent: AgentProfile? = null,
+    val cancel: List<String> = emptyList(),
 )
 
 fun interface RouterBrain {
@@ -179,11 +182,12 @@ class CloudRouter(
     private val onReply: suspend (conversationId: String, text: String) -> Unit = { _, _ -> },
     private val agentCoordinator: AgentRouterCoordinator? = null,
     private val onTurnCompleted: suspend (RouterTurnInput) -> Unit = {},
+    private val onEventsHandled: suspend (List<RouterTriggerEvent>, List<String>) -> Unit = { _, _ -> },
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = false }
 
     /** Router 专属工具表：只含派单/引导/读取/诊断/召回，不含任何执行类工具。 */
-    val routerTools: CloudToolRegistry = CloudToolRegistry().also { registerRouterTools(it) }
+    val routerTools: CloudToolRegistry = CloudToolRegistry().also { registerRouterTools(it);RouterControlSchemas.apply(it) }
 
     val forbiddenToolNames: Set<String>
         get() = executionToolNames + kernel.toolRegistry.registeredToolNames() + routerTools.registeredToolNames()
@@ -280,7 +284,9 @@ class CloudRouter(
                     kernel.isRouterTurnBusy = true
                     try {
                         for (conversationEvents in events.groupBy { it.conversationId }.values) {
-                            val turns = agentCoordinator?.splitTurns(conversationEvents) ?: listOf(conversationEvents)
+                            // A native message is a durable operation; its plan/replay boundary stays stable across restarts.
+                            val turns = if (conversationEvents.any { it.sourceMessageId?.startsWith("native:")==true }) conversationEvents.map(::listOf)
+                                else agentCoordinator?.splitTurns(conversationEvents) ?: listOf(conversationEvents)
                             for (turn in turns) runCatching { processTurn(turn) }
                         }
                     } finally {
@@ -313,8 +319,11 @@ class CloudRouter(
             ownerAuthorizedMessageIds = ownerIds,
             batchPrompt = kernel.formatRouterBatchPrompt(events),
         )
-        val decision = runCatching { agentCoordinator?.plan(events, ownerIds) ?: brain.decide(input) }
+        val native = events.all { it.sourceMessageId?.startsWith("native:")==true }
+        val planId = "dialogue-plan:"+events.joinToString("|") {it.eventId}
+        val decision = (if(native) kernel.store.dialogue.plan(planId) else null) ?: runCatching { agentCoordinator?.plan(events, ownerIds) ?: brain.decide(input) }
             .getOrElse { RouterDecision(reply = "这次没处理好，我稍后再试。") }
+            .also { if(native) kernel.store.dialogue.savePlan(planId,it) }
 
         val replies = mutableListOf<String>()
         decision.proposeAgent?.let { profile ->
@@ -340,7 +349,9 @@ class CloudRouter(
                         ),
                         requestId = requestId,
                         contextMessageIds = ownerIds,
-                        items = decision.dispatch,
+                        items = decision.dispatch.map { spec ->
+                            if(native) spec.copy(subscribedThreadKeys=(spec.subscribedThreadKeys+events.mapNotNull {it.threadId}).distinct()) else spec
+                        },
                         nowEpochMs = clockMs(),
                     )
                     if (address != null) {
@@ -366,22 +377,26 @@ class CloudRouter(
             }
         }
         for (steer in decision.steer) {
+            if(ownerIds.isEmpty())continue
             runCatching {
                 kernel.steerWorker(
-                    principal = CloudPrincipal.CloudCoordinator(activeSessionId = events.first().conversationId, activeTurnId = "steer"),
+                    principal = CloudPrincipal.CloudCoordinator(activeSessionId = events.first().conversationId, activeTurnId = "steer:"+events.joinToString {it.eventId}),
                     workItemId = steer.workItemId,
                     followupInstruction = steer.instruction,
                     nowEpochMs = clockMs(),
                 )
             }
         }
+        if(ownerIds.isNotEmpty())for(id in decision.cancel)kernel.cancelWorkItem(
+            CloudPrincipal.CloudCoordinator(activeSessionId=events.first().conversationId,activeTurnId="cancel"),id)
         decision.reply?.takeIf { it.isNotBlank() }?.let { replies += it }
         if (replies.isEmpty() && events.any { it.kind == "batch_rollup" }) {
             replies += events.filter { it.kind == "batch_rollup" }.joinToString("\n") { it.summaryText }
         }
         if (address != null) {
-            for (reply in replies) emit(address, reply, events.first().conversationId)
+            for (reply in replies) emit(address, reply, if(native)null else events.first().conversationId)
         }
+        onEventsHandled(events,replies.map { OutwardTextSanitizer.sanitize(it,forbiddenToolNames) })
         if (replies.isNotEmpty() && decision.dispatch.isEmpty() && events.any { it.kind == "user_message" }) onTurnCompleted(input)
     }
 
@@ -497,6 +512,9 @@ class CloudRouter(
     // ------------------------------------------------------------------------
 
     private fun registerRouterTools(registry: CloudToolRegistry) {
+        registry.register(CloudToolDefinition("cancel_work_item","显式取消指定任务并停止其实际进程",false,ToolEffect.PURE) {
+            buildJsonObject {put("ok",true);put("status","Accepted")}
+        })
         registry.register(CloudToolDefinition(
             name = "propose_agent", description = "向主人提议创建细分 agent，需要后续独立确认。参数 profile: {id,name,instructions,memoryPolicy,toolScope,modelPreference,routingKeywords,tags}。toolScope 必须来自主人已授权工具。",
             highRisk = false, effect = ToolEffect.PURE,
@@ -607,6 +625,7 @@ class CloudRouter(
             "diagnose_worker_session",
             "recall_object",
             "async_tool_stop",
+            "cancel_work_item",
         )
 
         fun parseDispatchSpecs(args: JsonObject): List<WorkItemSubmissionSpec> {

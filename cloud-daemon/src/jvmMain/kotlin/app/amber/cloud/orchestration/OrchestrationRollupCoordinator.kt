@@ -96,6 +96,7 @@ internal class OrchestrationRollupCoordinator(
         if (existing.state.isTerminal) {
             return existing
         }
+        if(report.outcome!="cancelled" && (kernel.workerEvents.isStopping(existing.workItemId)||kernel.workerEvents.pending(existing.workItemId).isNotEmpty()))return existing
 
         val reportDocPath = "inbox/${existing.workItemId}/report.md"
         val reportMarkdown = formatTimestampFreeSettlementMarkdown(existing, report)
@@ -123,14 +124,6 @@ internal class OrchestrationRollupCoordinator(
             nowMs = nowEpochMs,
         )
 
-        existing.workerSessionId?.let { sessionId ->
-            kernel.appendMessageToSessionInternal(
-                sessionId = sessionId,
-                message = UIMessage.assistant("【任务结算 · ${report.outcome}】\n${CredentialRedactor.redact(report.summary)}"),
-                nowEpochMs = nowEpochMs,
-            )
-        }
-
         val targetState = when (report.outcome.trim().lowercase()) {
             "completed", "success", "ok" -> WorkItemState.COMPLETED
             "cancelled", "canceled" -> WorkItemState.CANCELLED
@@ -150,7 +143,15 @@ internal class OrchestrationRollupCoordinator(
             lastActivityAtMs = nowEpochMs,
             updatedAtMs = nowEpochMs,
         )
-        kernel.store.upsertWorkItem(settled)
+        synchronized(kernel.store) {
+            // Acceptance and terminal admission share the store monitor: an ACKed input cannot slip past settlement.
+            if(report.outcome!="cancelled" && (kernel.workerEvents.isStopping(existing.workItemId)||kernel.workerEvents.pending(existing.workItemId).isNotEmpty()))return existing
+            kernel.store.upsertWorkItem(settled)
+            kernel.settlementListener(settled,report)
+        }
+        existing.workerSessionId?.let { sessionId ->
+            kernel.appendMessageToSessionInternal(sessionId,UIMessage.assistant("【任务结算 · ${report.outcome}】\n${CredentialRedactor.redact(report.summary)}"),nowEpochMs)
+        }
         kernel.store.unsubscribeAllForWorkItem(settled.workItemId)
         kernel.store.appendDiagnosticEvent(
             sessionId = settled.workerSessionId ?: settled.workItemId,

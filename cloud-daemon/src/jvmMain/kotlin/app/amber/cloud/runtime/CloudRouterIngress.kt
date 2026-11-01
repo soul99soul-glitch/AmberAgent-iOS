@@ -40,8 +40,11 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
             if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
                 kernel.ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
             }
+            val userMessage = UIMessage.user(CredentialRedactor.redact(message.text)).let {
+                message.metadata["native_event_id"]?.let { id -> it.copy(id=Uuid.parse(id)) } ?: it
+            }
             kernel.conversationStorage.saveConversation(conversation.copy(
-                messageNodes = conversation.messageNodes + UIMessage.user(CredentialRedactor.redact(message.text)).toMessageNode(),
+                messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==userMessage.id}) conversation.messageNodes else conversation.messageNodes + userMessage.toMessageNode(),
                 updateAt = Clock.System.now(),
             ))
         }
@@ -65,11 +68,12 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
         )
     }
 
-    suspend fun recordReply(conversationId: String, text: String) = conversationMutex.withLock {
+    suspend fun recordReply(conversationId: String, text: String, messageId:Uuid?=null) = conversationMutex.withLock {
         val id = Uuid.parse(conversationId)
         val conversation = kernel.conversationStorage.loadConversation(id) ?: return@withLock
+        val reply=UIMessage.assistant(text).let {if(messageId==null)it else it.copy(id=messageId)}
         kernel.conversationStorage.saveConversation(conversation.copy(
-            messageNodes = conversation.messageNodes + UIMessage.assistant(text).toMessageNode(),
+            messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==reply.id})conversation.messageNodes else conversation.messageNodes + reply.toMessageNode(),
             updateAt = Clock.System.now(),
         ))
     }

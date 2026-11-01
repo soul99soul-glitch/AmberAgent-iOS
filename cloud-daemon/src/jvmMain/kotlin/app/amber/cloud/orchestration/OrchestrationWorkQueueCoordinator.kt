@@ -394,54 +394,26 @@ internal class OrchestrationWorkQueueCoordinator(
         followupInstruction: String,
         nowEpochMs: Long,
     ): CloudWorkItemRecord {
-        requireCoordinatorAuthority(principal, "steerWorker")
-        val snapshot = kernel.store.getWorkItem(workItemId)
-            ?: throw IllegalArgumentException("找不到 WorkItem: $workItemId")
-        require(!snapshot.state.isTerminal) { "终态任务请由 Router 创建新的 WorkItem；同 agent 与话题可复用会话" }
-
-        val needsSlot = !snapshot.slotHeld
-        if (needsSlot && kernel.store.countHeldSlots() >= kernel.config.maxConcurrentWorkers) {
-            val queuedFollowup = snapshot.copy(
-                state = WorkItemState.QUEUED,
-                slotHeld = false,
-                brief = "${snapshot.brief}\n[Follow-up]: ${CredentialRedactor.redact(followupInstruction)}",
-                lastActivityAtMs = nowEpochMs,
-                updatedAtMs = nowEpochMs,
-            )
-            val sessionId = snapshot.workerSessionId ?: error("Worker 缺少 workerSessionId")
-            kernel.appendMessageToSessionInternal(sessionId, UIMessage.user("【Coordinator 追加指令】\n${CredentialRedactor.redact(followupInstruction)}"), nowEpochMs)
-            kernel.store.upsertWorkItem(queuedFollowup)
-            return queuedFollowup
+        val coordinator=requireCoordinatorAuthority(principal, "steerWorker")
+        require(followupInstruction.isNotBlank())
+        val admitted=synchronized(kernel.store) {
+            val snapshot=kernel.store.getWorkItem(workItemId)?:error("找不到 WorkItem")
+            require(!snapshot.state.isTerminal&&!kernel.workerEvents.isStopping(workItemId)) {"终态或停止中的任务不能追加指令"}
+            val key=OrchestrationHash.sha256Hex("${coordinator.activeTurnId}|$workItemId|$followupInstruction")
+            val id=UUID.nameUUIDFromBytes(key.toByteArray()).toString()
+            val topic=snapshot.subscribedThreadKeys.firstOrNull {it.startsWith("native:")}?.removePrefix("native:")?:workItemId
+            val (_,replayed)=kernel.store.dialogue.accept(DialogueInput(id,coordinator.principalId,key,"followup",
+                CredentialRedactor.redact(followupInstruction),topic,workItemId),key) {}
+            if(replayed)snapshot else snapshot.copy(
+                state=if(snapshot.slotHeld)snapshot.state else WorkItemState.QUEUED,
+                brief="${snapshot.brief}\n[Follow-up]: ${CredentialRedactor.redact(followupInstruction)}",
+                lastActivityAtMs=nowEpochMs,updatedAtMs=nowEpochMs,
+            ).also {kernel.store.upsertWorkItem(it)}
         }
-
-        val admitted = snapshot.copy(
-            state = WorkItemState.WORKING,
-            slotHeld = true,
-            brief = "${snapshot.brief}\n[Follow-up]: ${CredentialRedactor.redact(followupInstruction)}",
-            lastActivityAtMs = nowEpochMs,
-            updatedAtMs = nowEpochMs,
-        )
-        kernel.store.upsertWorkItem(admitted)
-        return try {
-            val sessionId = admitted.workerSessionId ?: throw IllegalStateException("Worker 缺少 workerSessionId")
-            kernel.appendMessageToSessionInternal(
-                sessionId = sessionId,
-                message = UIMessage.user("【Coordinator 追加指令】\n${CredentialRedactor.redact(followupInstruction)}"),
-                nowEpochMs = nowEpochMs,
-            )
-            kernel.store.appendDiagnosticEvent(
-                sessionId = sessionId,
-                workItemId = workItemId,
-                kind = "worker_steered",
-                detail = CredentialRedactor.redact(followupInstruction),
-                nowMs = nowEpochMs,
-            )
-            if (kernel.autoExecuteWorkersInBackground) kernel.launchWorkerRunnerInternal(admitted)
-            admitted
-        } catch (t: Throwable) {
-            kernel.store.upsertWorkItem(snapshot)
-            throw t
-        }
+        kernel.signalWorker(workItemId)
+        pumpWorkQueue(nowEpochMs)
+        if(kernel.autoExecuteWorkersInBackground&&admitted.slotHeld)kernel.launchWorkerRunnerInternal(admitted)
+        return kernel.store.getWorkItem(workItemId)!!
     }
 
     fun startAsyncTool(

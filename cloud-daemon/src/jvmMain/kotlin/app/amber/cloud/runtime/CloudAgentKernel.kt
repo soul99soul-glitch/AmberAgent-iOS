@@ -226,6 +226,9 @@ class CloudAgentKernel(
     )
     val router: CloudRouter
     private val routerIngress by lazy { CloudRouterIngress(this) }
+    val nativeDialogue by lazy { NativeDialogueService(this,{routerIngress.handleInbound(it)}) {id,text->
+        routerIngress.recordReply(PRIMARY_CONVERSATION_ID.toString(),text,Uuid.parse(java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString()))
+    } }
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -251,6 +254,17 @@ class CloudAgentKernel(
                 ?: configurationManager?.snapshot()?.search ?: search
         }
         taskToolchain.register(toolRegistry)
+        orchestrationKernel.stopTaskProcesses = {taskProcesses.cancelTask(it)}
+        orchestrationKernel.hasBackgroundProcesses = taskProcesses::active
+        orchestrationKernel.settlementListener = {item,report->nativeDialogue.settlement(item,report)}
+        taskProcesses.inputPending = {orchestrationKernel.workerEvents.pending(it).isNotEmpty()}
+        taskProcesses.onBackgroundStarted = {owner,id,pid,started->orchestrationStore.dialogue.processStarted(id,owner,pid,started)}
+        taskProcesses.onBackgroundFinished = {owner,result->
+            val item=orchestrationStore.getWorkItem(owner)
+            orchestrationStore.dialogue.processFinished(result.id,owner,item?.let(nativeDialogue::topic)?:owner,kotlinx.serialization.json.Json.encodeToString(result))
+            if(item?.state?.isTerminal==true)orchestrationStore.dialogue.abandonPending(owner)
+            orchestrationKernel.signalWorker(owner)
+        }
         orchestrationKernel.workerTurnRunner = { item, principal ->
             val report = try {
                 val snapshot = configurationManager?.snapshot()
@@ -290,6 +304,7 @@ class CloudAgentKernel(
             brain = RouterBrain { RouterDecision() },
             executionToolNames = toolRegistry.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }.toSet(),
             onReply = { conversationId, text -> routerIngress.recordReply(conversationId, text) },
+            onEventsHandled = {events,replies->nativeDialogue.handled(events,replies)},
             agentCoordinator = AgentRouterCoordinator(orchestrationKernel, agentRegistry, agentRouting) { text, conversationId, agentId ->
                 if (conversationStorage.loadConversation(Uuid.parse(conversationId))?.memoryMode == ConversationMemoryMode.ENABLED) {
                     extractExplicitMemoryIfPresent(text, conversationId, if (agentId == MAIN_AGENT_ID) GLOBAL_MEMORY_AGENT_ID else agentId)
@@ -364,6 +379,7 @@ class CloudAgentKernel(
                 conversationStorage.saveConversation(conv.copy(messageNodes = repairedNodes))
             }
         }
+        nativeDialogue.recover()
         orchestrationKernel.recoverAfterRestart()
         conversationTagger.resumePending()
     }

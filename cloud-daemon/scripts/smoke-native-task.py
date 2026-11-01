@@ -70,7 +70,7 @@ def main():
                     ("host_info", {}),
                     ("workspace_file_write", {"path": "data.csv", "content": "name,value\na,2\nb,3\n"}),
                     ("workspace_file_write", {"path": "run.py", "content": script}),
-                    ("process_run", {"argv": [python, "run.py"]}),
+                    ("process_run", {"argv": [python, "run.py"], "background": False}),
                     ("workspace_file_read", {"path": "result.json"}),
                     ("task_finish", {"outcome": "completed", "summary": output, "artifacts": ["result.json"]}),
                 ]

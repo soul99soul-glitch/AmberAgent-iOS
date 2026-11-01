@@ -29,6 +29,7 @@ internal fun Application.configureAgentCentricRoutes(state: CloudGatewayState, a
     configureSupertagRoutes(state, api.kernel)
     configureTaskArtifactRoutes(state, api)
     configureConfigurationRoutes(state, api.kernel)
+    configureDialogueRoutes(state, api.kernel)
     val json = Json { encodeDefaults = true; explicitNulls = false }
     suspend fun ApplicationCall.error(status: Int, message: String) = respondText(
         json.encodeToString(buildJsonObject { put("error", message) }), ContentType.Application.Json, HttpStatusCode.fromValue(status),

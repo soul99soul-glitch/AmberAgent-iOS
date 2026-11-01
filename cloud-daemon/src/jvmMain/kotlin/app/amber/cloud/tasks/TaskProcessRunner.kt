@@ -16,6 +16,11 @@ class TaskProcessRunner(val toolsRoot: File, val python: String = if (System.get
     private data class Running(val owner: String, val process: Process, val result: Deferred<TaskProcessResult>, var stopped: Boolean = false)
     private val jobs = ConcurrentHashMap<String, Running>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lifecycle=Any()
+    private val closedTasks=ConcurrentHashMap.newKeySet<String>()
+    var inputPending:(String)->Boolean={false}
+    var onBackgroundStarted:(String,String,Long,Long)->Unit={_,_,_,_->}
+    var onBackgroundFinished:suspend (String,TaskProcessResult)->Unit={_,_->}
     private val mac = System.getProperty("os.name").contains("Mac", true)
     private val bwrap = listOf("/usr/bin/bwrap", "/bin/bwrap").firstOrNull { File(it).canExecute() }
     val isolation get() = if (mac && File("/usr/bin/sandbox-exec").canExecute()) "macOS Seatbelt" else if (bwrap != null) "Linux bubblewrap" else "unavailable"
@@ -42,7 +47,8 @@ class TaskProcessRunner(val toolsRoot: File, val python: String = if (System.get
         return cmd
     }
 
-    suspend fun start(owner: String, dir: File, args: List<String>, timeoutSeconds: Int = 60, stdin: ByteArray = byteArrayOf(), outputLimit: Int = 256_000): String {
+    suspend fun start(owner: String, dir: File, args: List<String>, timeoutSeconds: Int = 60, stdin: ByteArray = byteArrayOf(), outputLimit: Int = 256_000, notify: Boolean = false, allowClosed:Boolean=false): String = synchronized(lifecycle) {
+        require(allowClosed||owner !in closedTasks) {"任务已停止，不能再启动进程"}
         require(timeoutSeconds in 1..600)
         require(jobs.values.count { it.owner == owner && !it.result.isCompleted } < 2) { "每任务最多两个进程" }
         if (jobs.size > 128) jobs.entries.filter { it.value.result.isCompleted }.take(jobs.size - 64).forEach { jobs.remove(it.key) }
@@ -53,7 +59,9 @@ class TaskProcessRunner(val toolsRoot: File, val python: String = if (System.get
             environment().clear(); environment().putAll(mapOf("PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "HOME" to File(dir,".home").absolutePath,
                 "TMPDIR" to if (mac) dir.canonicalPath else "/tmp", "PYTHONNOUSERSITE" to "1", "PYTHONDONTWRITEBYTECODE" to "1", "LANG" to "C.UTF-8"))
         }.start()
-        val result = scope.async {
+        try {if(notify)onBackgroundStarted(owner,id,process.pid(),process.toHandle().info().startInstant().orElseThrow().toEpochMilli())}
+        catch(t:Throwable){kill(process);throw t}
+        val result = scope.async(start=CoroutineStart.LAZY) {
             var truncated = false
             suspend fun drain(input: java.io.InputStream): Deferred<String> = async {
                 val out = ByteArrayOutputStream(); val buf = ByteArray(8192)
@@ -73,17 +81,27 @@ class TaskProcessRunner(val toolsRoot: File, val python: String = if (System.get
             finally { killChildren(process) }
         }
         jobs[id] = Running(owner, process, result)
-        return id
+        result.start()
+        if(notify)scope.launch {
+            val output=try {result.await()}catch(_:CancellationException){TaskProcessResult(id,"cancelled")}
+            onBackgroundFinished(owner,output)
+        }
+        id
     }
 
     suspend fun wait(owner: String, id: String, seconds: Int = 30): TaskProcessResult {
         val job = jobs[id]?.takeIf { it.owner == owner } ?: throw IllegalArgumentException("进程不属于此任务")
         if (job.stopped) return TaskProcessResult(id,"cancelled")
-        return withTimeoutOrNull(seconds.coerceIn(1, 60) * 1000L) { job.result.await() } ?: TaskProcessResult(id, "running")
+        val deadline=System.nanoTime()+seconds.coerceIn(1,60)*1_000_000_000L
+        while(System.nanoTime()<deadline) {
+            if(inputPending(owner))return TaskProcessResult(id,"input_pending")
+            withTimeoutOrNull(100) {job.result.await()}?.let {return it}
+        }
+        return TaskProcessResult(id,"running")
     }
 
-    suspend fun run(owner: String, dir: File, args: List<String>, timeout: Int = 60, stdin: ByteArray = byteArrayOf(), outputLimit: Int = 256_000): TaskProcessResult {
-        val id = start(owner, dir, args, timeout, stdin, outputLimit)
+    suspend fun run(owner: String, dir: File, args: List<String>, timeout: Int = 60, stdin: ByteArray = byteArrayOf(), outputLimit: Int = 256_000, allowClosed:Boolean=false): TaskProcessResult {
+        val id = start(owner, dir, args, timeout, stdin, outputLimit,allowClosed=allowClosed)
         return try { jobs.getValue(id).result.await() } catch (e: CancellationException) { stop(owner,id); throw e } finally { jobs.remove(id) }
     }
 
@@ -94,6 +112,16 @@ class TaskProcessRunner(val toolsRoot: File, val python: String = if (System.get
         return TaskProcessResult(id,"cancelled")
     }
     suspend fun stopTask(owner: String) { jobs.filterValues { it.owner == owner && !it.result.isCompleted }.keys.forEach { stop(owner,it) } }
+    suspend fun cancelTask(owner:String) {synchronized(lifecycle){closedTasks.add(owner)};stopTask(owner)}
+    fun recoverProcess(pid:Long,startedAtMs:Long) {
+        val process=ProcessHandle.of(pid).orElse(null)?:return
+        // Never signal a recycled PID or an unrelated host process.
+        if(process.info().startInstant().orElse(null)?.toEpochMilli()!=startedAtMs)return
+        if(mac)runCatching {ProcessBuilder("/bin/kill","-KILL","--","-$pid").start().waitFor(2,TimeUnit.SECONDS)}
+        process.descendants().toList().reversed().forEach {it.destroyForcibly()}
+        process.destroyForcibly()
+        process.onExit().get(3,TimeUnit.SECONDS)
+    }
     fun active(owner: String) = jobs.values.any { it.owner == owner && !it.result.isCompleted }
     private fun killChildren(process: Process) {
         if (mac) runCatching { ProcessBuilder("/bin/kill", "-KILL", "--", "-${process.pid()}").start().waitFor(2,TimeUnit.SECONDS) }

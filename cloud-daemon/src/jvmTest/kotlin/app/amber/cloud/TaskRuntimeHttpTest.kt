@@ -22,7 +22,7 @@ class TaskRuntimeHttpTest {
                 "recipe_run" to """{"tool":"ssh_profile_create","args":{"host":"forbidden"}}""",
                 "workspace_file_write" to """{"path":"data.csv","content":"name,value\na,2\nb,3\n"}""",
                 "workspace_file_write" to buildJsonObject {put("path","run.py");put("content","import csv,json\nr=list(csv.DictReader(open('data.csv')))\njson.dump({'sum':sum(int(x['value']) for x in r)},open('result.json','w'))")}.toString(),
-                "process_run" to buildJsonObject {put("argv",buildJsonArray {add("/Library/Developer/CommandLineTools/usr/bin/python3");add("run.py")})}.toString(),
+                "process_run" to buildJsonObject {put("argv",buildJsonArray {add("/Library/Developer/CommandLineTools/usr/bin/python3");add("run.py")});put("background",false)}.toString(),
                 "workspace_file_read" to """{"path":"result.json"}""",
                 "task_finish" to """{"outcome":"completed","summary":"CSV已处理，sum=5","artifacts":["result.json"]}"""
             )

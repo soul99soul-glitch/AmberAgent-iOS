@@ -26,9 +26,9 @@ class TaskExecutionTools(val workspace: TaskWorkspace, val processes: TaskProces
         register("workspace_file_edit", "精确替换一次；old必须唯一匹配", schema("{$path,\"old\":{\"type\":\"string\"},\"replacement\":{\"type\":\"string\"}}", "path","old","replacement"), "workspace_files") { a,c -> workspace.operation(c.workItemId,"edit",a) }
         register("workspace_file_search", "搜索当前任务UTF-8文件内容", schema("{\"query\":{\"type\":\"string\"}}", "query"), "workspace_files") { a,c -> workspace.operation(c.workItemId,"search",a) }
         val command = schema("""{"argv":{"type":"array","items":{"type":"string"},"description":"直接argv，例如[\"/usr/bin/python3\",\"script.py\"]或[\"/bin/sh\",\"-c\",\"...\"]"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":600},"background":{"type":"boolean"}}""", "argv")
-        register("process_run", "在强制OS隔离内真实执行。仅当前任务目录可写、无网络/凭据。exitCode=0才成功，后台用process_wait/stop；宿主管理不在此权限内", command, "terminal") { a,c ->
+        register("process_run", "在强制OS隔离内真实执行，默认后台立即返回id；完成事件自动投回任务。仅当前任务目录可写、无网络/凭据。exitCode=0才成功，后台用process_wait/stop；宿主管理不在此权限内", command, "terminal") { a,c ->
             val argv = a.strings("argv"); val timeout=a.number("timeoutSeconds",60)
-            if (a["background"]?.jsonPrimitive?.booleanOrNull == true) buildJsonObject { put("id",processes.start(c.workItemId,workspace.directory(c.workItemId),argv,timeout));put("state","running") }
+            if (a["background"]?.jsonPrimitive?.booleanOrNull != false) buildJsonObject { put("id",processes.start(c.workItemId,workspace.directory(c.workItemId),argv,timeout,notify=true));put("state","running") }
             else json.encodeToJsonElement(processes.run(c.workItemId,workspace.directory(c.workItemId),argv,timeout))
         }
         register("process_wait", "查询当前任务后台进程及真实退出码/输出", schema("""{"id":{"type":"string"},"seconds":{"type":"integer","minimum":1,"maximum":60}}""", "id"), "terminal") { a,c -> json.encodeToJsonElement(processes.wait(c.workItemId,a.string("id"),a.number("seconds",30))) }

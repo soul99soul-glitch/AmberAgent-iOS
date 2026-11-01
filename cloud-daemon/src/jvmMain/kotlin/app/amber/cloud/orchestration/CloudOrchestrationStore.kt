@@ -44,6 +44,7 @@ class CloudOrchestrationStore(
 
     private val driver = BundledSQLiteDriver()
     private val connection: SQLiteConnection
+    val dialogue by lazy { DialogueEventStore(connection, this) }
 
     private val ringBuffer = ArrayDeque<DiagnosticEventEntry>(ringBufferCapacity)
 

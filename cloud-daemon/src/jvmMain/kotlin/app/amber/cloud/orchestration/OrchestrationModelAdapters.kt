@@ -57,13 +57,14 @@ class ModelRouterBrain(
         }
         val dispatch = mutableListOf<WorkItemSubmissionSpec>()
         val steer = mutableListOf<RouterSteer>()
+        val cancel = mutableListOf<String>()
         var reply: String? = null
         var proposal: AgentProfile? = null
         repeat(maxReadSteps + 1) {
             val answer = client.generateReply(messages, tools)
             val calls = answer.getTools()
             reply = answer.toText().takeIf { it.isNotBlank() } ?: reply
-            if (calls.isEmpty()) return RouterDecision(reply, dispatch, steer, proposal)
+            if (calls.isEmpty()) return RouterDecision(reply, dispatch, steer, proposal,cancel)
             var needsFollowup = false
             var finish: WorkerSettlementReport? = null
             val executed = calls.map { call ->
@@ -77,6 +78,7 @@ class ModelRouterBrain(
                         val instr = args["instruction"]?.jsonPrimitive?.contentOrNull
                         if (!id.isNullOrBlank() && !instr.isNullOrBlank()) steer += RouterSteer(id, instr)
                     }
+                    "cancel_work_item" -> args["work_item_id"]?.jsonPrimitive?.contentOrNull?.let {cancel+=it}
                     else -> needsFollowup = true
                 }
                 val out = if (call.toolName in CloudRouter.ROUTER_TOOL_NAMES) {
@@ -87,12 +89,12 @@ class ModelRouterBrain(
                 }
                 call.copy(output = listOf(UIMessagePart.Text(CredentialRedactor.redact(out))))
             }
-            if (!needsFollowup) return RouterDecision(reply, dispatch, steer, proposal)
+            if (!needsFollowup) return RouterDecision(reply, dispatch, steer, proposal,cancel)
             messages += answer.copy(parts = answer.parts.map { part ->
                 if (part is UIMessagePart.Tool) executed.firstOrNull { it.toolCallId == part.toolCallId } ?: part else part
             })
         }
-        return RouterDecision(reply, dispatch, steer, proposal)
+        return RouterDecision(reply, dispatch, steer, proposal,cancel)
     }
 
     companion object {
@@ -130,22 +132,32 @@ class ModelWorkerTurnRunner(
             append(if (profile != null) memoryStore?.loadSoulPrompt(profile.memoryPolicy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN)
             append("\n你是受管 Worker，只处理当前任务；不得创建 agent、派单或向其他 agent 发送消息。\n")
             append("任务文件以相对路径访问。脚本执行受OS隔离且不能联网，用HTTP/搜索工具联网。工具失败必须检查并修正或报告阻塞。写代码文本不等于执行。最终必须调用 task_finish，明确completed/blocked/failed并列出实际产物；没有工具调用的回答不会自动成功。\n")
+            append("耗时脚本用process_run后台启动（默认background=true），立刻继续处理补充；完成/失败/停止会作为任务事件送达。等待期间可不调用工具，系统会在新事件到达时继续；不要循环长时间process_wait。重启中断事件不表示旧命令已成功，先检查输出再决定下一步。\n")
             append(profile?.instructions.orEmpty())
             append('\n').append((item.targetNode as? ExecutionTargetNode.CloudSubagent)?.rolePrompt.orEmpty())
             if (memories.isNotEmpty()) append("\n<agent_memory>\n").append(memories.joinToString("\n") { it.content }).append("\n</agent_memory>")
         }
         var lastText = ""
         repeat(maxSteps) {
+            if(kernel.workerEvents.isStopping(item.workItemId)) throw CancellationException("任务停止")
             if (kernel.store.getWorkItem(item.workItemId)?.state?.isTerminal != false)
                 return WorkerSettlementReport(item.workItemId, "cancelled", "任务已结束")
+            val pending=kernel.workerEvents.prepare(item)
             val history = kernel.conversationStorage.loadConversation(uuid)?.messageNodes?.map { it.currentMessage }.orEmpty()
             val answer = client.generateReply(listOf(UIMessage.system(systemPrompt)) + history, tools)
+            kernel.store.dialogue.consume(pending)
+            if(kernel.workerEvents.isStopping(item.workItemId))throw CancellationException("任务停止")
+            if(kernel.workerEvents.pending(item.workItemId).isNotEmpty())return@repeat
             if (kernel.store.getWorkItem(item.workItemId)?.state?.isTerminal != false)
                 return WorkerSettlementReport(item.workItemId, "cancelled", "任务已结束")
             val calls = answer.getTools()
             lastText = answer.toText().ifBlank { lastText }
             if (calls.isEmpty()) {
                 kernel.appendWorkerMessage(sessionId, sanitize(answer))
+                if(kernel.hasBackgroundProcesses(item.workItemId)) {
+                    kernel.workerEvents.await(item.workItemId)
+                    return@repeat
+                }
                 return WorkerSettlementReport(item.workItemId, "blocked", CredentialRedactor.redact(lastText.ifBlank { "模型未显式结算，无法确认目标成功" }))
             }
             var finish: WorkerSettlementReport? = null
@@ -159,6 +171,8 @@ class ModelWorkerTurnRunner(
                     .getOrDefault(JsonObject(emptyMap()))
                 val out = try {
                     require(finish == null) { "结算后不能再执行工具" }
+                    if(kernel.workerEvents.isStopping(item.workItemId))throw CancellationException("任务停止")
+                    if(call.toolName=="task_finish")require(kernel.workerEvents.pending(item.workItemId).isEmpty()) {"有尚未消费的任务事件，请先读取下一轮输入"}
                     val result = kernel.executeWorkerTool(principal, call.toolName, args)
                     if (call.toolName == "task_finish" && result.jsonObject["ok"]?.jsonPrimitive?.booleanOrNull == true) {
                         finish = WorkerSettlementReport(item.workItemId, result.jsonObject.getValue("outcome").jsonPrimitive.content,

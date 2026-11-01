@@ -89,6 +89,11 @@ class DefaultCloudOrchestrationKernel(
     private val sessionInspector = OrchestrationSessionInspector(this)
     private val automationRunner = OrchestrationAutomationRunner(this)
     private val routerBridge = OrchestrationRouterBridge(this)
+    val workerEvents = WorkerEventInbox(this)
+    var stopTaskProcesses: suspend (String)->Unit = {}
+    var hasBackgroundProcesses: (String)->Boolean = {false}
+    var settlementListener: (CloudWorkItemRecord,WorkerSettlementReport)->Unit = {_,_->}
+    fun signalWorker(id:String)=workerEvents.signal(id)
 
     sealed class InboundRoutingDecision {
         data class DirectPassThroughToWorkers(
@@ -127,16 +132,15 @@ class DefaultCloudOrchestrationKernel(
         val workerPrincipal = workerPrincipalFor(item)
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val report = runCatching { runner(item, workerPrincipal) }.getOrElse { t ->
-                    if (t is CancellationException) throw t
-                    WorkerSettlementReport(
-                        workItemId = item.workItemId,
-                        outcome = "failed",
-                        summary = "执行异常: ${CredentialRedactor.redact(t.message.orEmpty())}",
-                    )
-                }
-                if (report != null) {
-                    runCatching { reportWorkerSettlement(workerPrincipal, report, clockMs()) }
+                while (store.getWorkItem(item.workItemId)?.state?.isTerminal==false) {
+                    val current = store.getWorkItem(item.workItemId) ?: break
+                    val report = try { runner(current, workerPrincipal) }
+                    catch (t: Exception) {
+                        if (t is CancellationException) throw t
+                        WorkerSettlementReport(item.workItemId,"failed","执行异常: ${CredentialRedactor.redact(t.message.orEmpty())}")
+                    } ?: break
+                    val settled=reportWorkerSettlement(workerPrincipal, report, clockMs())
+                    if(settled.state.isTerminal)break
                 }
             } finally {
                 activeWorkerJobs.remove(item.workItemId)
@@ -162,7 +166,7 @@ class DefaultCloudOrchestrationKernel(
         sessionInspector.recordMessageTimestamp(message.id.toString(), nowEpochMs)
         conversationStorage.saveConversation(
             existing.copy(
-                messageNodes = existing.messageNodes + message.toMessageNode(),
+                messageNodes = if(existing.messageNodes.any {it.currentMessage.id==message.id})existing.messageNodes else existing.messageNodes + message.toMessageNode(),
                 updateAt = Clock.System.now(),
             )
         )
@@ -198,10 +202,16 @@ class DefaultCloudOrchestrationKernel(
 
     suspend fun cancelWorkItem(principal: CloudPrincipal, workItemId: String): CloudWorkItemRecord {
         val coordinator = workQueueCoordinator.requireCoordinatorAuthority(principal, "cancelWorkItem")
+        val current=store.getWorkItem(workItemId)?:throw IllegalArgumentException("任务不存在")
+        if(current.state.isTerminal)return current
+        workerEvents.requestStop(workItemId)
+        val job=activeWorkerJobs[workItemId]
+        job?.cancel()
+        stopTaskProcesses(workItemId)
+        job?.join()
         val result = reportWorkerSettlement(coordinator, WorkerSettlementReport(
             workItemId, "cancelled", "主人已取消任务",
         ), clockMs())
-        if (result.state == WorkItemState.CANCELLED) activeWorkerJobs[workItemId]?.cancelAndJoin()
         return result
     }
 
@@ -233,7 +243,7 @@ class DefaultCloudOrchestrationKernel(
         }
         val item = store.getWorkItem(principal.workItemId)
             ?: throw PrincipalPermissionException("Worker 任务不存在")
-        if (principal != workerPrincipalFor(item) || item.state.isTerminal) throw PrincipalPermissionException("Worker 身份或状态无效")
+        if (principal != workerPrincipalFor(item) || item.state.isTerminal || workerEvents.isStopping(item.workItemId)) throw PrincipalPermissionException("Worker 身份或状态无效")
         val registry = agentRegistry
         val allowed = if (registry == null) {
             toolRegistry.availableDefinitions(ExecutionScope.SUBAGENT).map { it.name }.toSet()

@@ -22,7 +22,7 @@ class TaskWorkspace(private val root: File, private val processes: TaskProcessRu
     }
     suspend fun operation(id: String, op: String, args: JsonObject = JsonObject(emptyMap()), outputLimit: Int = 256_000): JsonElement {
         val request = JsonObject(args + ("op" to JsonPrimitive(op))).toString().toByteArray()
-        val result = processes.run(id, directory(id), listOf(processes.python,"-c",helper), 30, request, outputLimit)
+        val result = processes.run(id, directory(id), listOf(processes.python,"-c",helper), 30, request, outputLimit,allowClosed=op in setOf("list","read","search","artifact","bytes"))
         if (result.exitCode != 0) throw IllegalStateException("文件操作失败(state=${result.state},exit=${result.exitCode}): ${result.stdout.ifBlank { result.stderr }.take(1000)}")
         return json.parseToJsonElement(result.stdout).jsonObject.getValue("result")
     }
