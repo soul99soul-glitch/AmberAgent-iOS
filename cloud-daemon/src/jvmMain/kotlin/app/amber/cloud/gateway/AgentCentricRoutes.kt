@@ -63,6 +63,25 @@ internal fun Application.configureAgentCentricRoutes(state: CloudGatewayState, a
             val item = api.workItem(call.parameters["id"].orEmpty()) ?: return@get call.error(404, "work item 不存在")
             call.respondText(json.encodeToString(item), ContentType.Application.Json)
         }
+        post("/v2/work-items") {
+            val device = call.authenticate() ?: return@post
+            try {
+                val body = call.receiveText()
+                require(body.length <= 100_000) { "请求过长" }
+                val result = api.tasks.submit(device, json.decodeFromString<NativeTaskRequest>(body))
+                call.respondText(json.encodeToString(result), ContentType.Application.Json,
+                    if (result.replayed) HttpStatusCode.OK else HttpStatusCode.Accepted)
+            } catch (_: NativeTaskConflict) { call.error(409, "requestId 已用于不同任务") }
+            catch (_: NativeTaskAgentMissing) { call.error(404, "agent 不存在") }
+            catch (_: IllegalArgumentException) { call.error(400, "无效任务：需要 requestId、text 及有效的 agentId/title") }
+        }
+        post("/v2/work-items/{id}/cancel") {
+            val device = call.authenticate() ?: return@post
+            val id = call.parameters["id"].orEmpty()
+            if (api.kernel.orchestrationStore.getWorkItem(id) == null) return@post call.error(404, "work item 不存在")
+            api.kernel.orchestrationKernel.cancelWorkItem(CloudPrincipal.OwnerUser(device.id, "c3"), id)
+            call.respondText(json.encodeToString(api.workItem(id)!!), ContentType.Application.Json)
+        }
         post("/v2/agents") {
             val device = call.authenticate() ?: return@post
             try {

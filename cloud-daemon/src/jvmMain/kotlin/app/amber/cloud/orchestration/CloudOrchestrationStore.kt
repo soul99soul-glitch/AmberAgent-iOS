@@ -638,6 +638,18 @@ class CloudOrchestrationStore(
         if (CredentialRedactor.isPlaceholderCredential(content)) {
             throw PlaceholderCredentialException("拒绝将占位符凭据写入归档文档: $docPath")
         }
+        return writeArchivedDocumentInternal(principal, docPath, content, expectedRevision, deduplicateIfSameSha256, nowMs)
+    }
+
+    /** Settlement is output, not a credential update: an already-redacted result must remain archivable. */
+    @Synchronized
+    internal fun writeSettlementReport(principal: CloudPrincipal, workItemId: String, content: String, nowMs: Long): ArchivedDocumentRecord =
+        writeArchivedDocumentInternal(principal, "inbox/$workItemId/report.md", content, null, true, nowMs)
+
+    private fun writeArchivedDocumentInternal(
+        principal: CloudPrincipal, docPath: String, content: String,
+        expectedRevision: Int?, deduplicateIfSameSha256: Boolean, nowMs: Long,
+    ): ArchivedDocumentRecord {
         val cleanPath = docPath.trim().trimStart('/')
         require(cleanPath.isNotEmpty() && !cleanPath.contains("..")) { "非法归档文档路径: $docPath" }
         verifyDocumentWritePermission(principal, cleanPath)

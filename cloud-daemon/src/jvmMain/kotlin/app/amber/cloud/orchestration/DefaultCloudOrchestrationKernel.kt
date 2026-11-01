@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -193,6 +194,15 @@ class DefaultCloudOrchestrationKernel(
 
     fun isMacNodeOnline(deviceId: String): Boolean =
         workQueueCoordinator.isMacNodeOnline(deviceId)
+
+    suspend fun cancelWorkItem(principal: CloudPrincipal, workItemId: String): CloudWorkItemRecord {
+        val coordinator = workQueueCoordinator.requireCoordinatorAuthority(principal, "cancelWorkItem")
+        val result = reportWorkerSettlement(coordinator, WorkerSettlementReport(
+            workItemId, "cancelled", "主人已取消任务",
+        ), clockMs())
+        if (result.state == WorkItemState.CANCELLED) activeWorkerJobs[workItemId]?.cancelAndJoin()
+        return result
+    }
 
     suspend fun recoverAfterRestart(nowEpochMs: Long = clockMs()): List<CloudWorkItemRecord> =
         workQueueCoordinator.recoverAfterRestart(nowEpochMs)

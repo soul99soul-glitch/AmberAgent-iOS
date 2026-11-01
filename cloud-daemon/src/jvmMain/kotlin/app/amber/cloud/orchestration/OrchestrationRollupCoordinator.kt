@@ -4,6 +4,8 @@ import app.amber.ai.ui.UIMessage
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.security.CredentialRedactor
 import java.util.UUID
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 负责 Worker 增量进度上报、无时间戳 SHA-256 结算报告归档、并发槽位释放，
@@ -12,6 +14,7 @@ import java.util.UUID
 internal class OrchestrationRollupCoordinator(
     private val kernel: DefaultCloudOrchestrationKernel,
 ) {
+    private val settlementMutex = Mutex()
 
     suspend fun updateWorkerProgress(
         principal: CloudPrincipal,
@@ -31,6 +34,8 @@ internal class OrchestrationRollupCoordinator(
         }
 
         val updated = kernel.store.updateWorkItemCasRevision(workItemId, expectedRevision) { existing ->
+            // A late progress callback must not reclaim a slot after cancellation/settlement.
+            if (existing.state.isTerminal) return@updateWorkItemCasRevision existing
             val toolStart = when {
                 activeToolName.isNullOrBlank() -> null
                 activeToolName == existing.activeToolName && existing.activeToolStartedAtMs != null -> existing.activeToolStartedAtMs
@@ -68,6 +73,14 @@ internal class OrchestrationRollupCoordinator(
         principal: CloudPrincipal,
         report: WorkerSettlementReport,
         nowEpochMs: Long,
+    ): CloudWorkItemRecord = settlementMutex.withLock {
+        reportWorkerSettlementLocked(principal, report, nowEpochMs)
+    }
+
+    private suspend fun reportWorkerSettlementLocked(
+        principal: CloudPrincipal,
+        report: WorkerSettlementReport,
+        nowEpochMs: Long,
     ): CloudWorkItemRecord {
         if (principal is CloudPrincipal.Worker && principal.workItemId != report.workItemId) {
             throw PrincipalPermissionException(
@@ -86,12 +99,10 @@ internal class OrchestrationRollupCoordinator(
 
         val reportDocPath = "inbox/${existing.workItemId}/report.md"
         val reportMarkdown = formatTimestampFreeSettlementMarkdown(existing, report)
-        val archivedDoc = kernel.store.writeArchivedDocument(
+        val archivedDoc = kernel.store.writeSettlementReport(
             principal = principal,
-            docPath = reportDocPath,
+            workItemId = existing.workItemId,
             content = reportMarkdown,
-            expectedRevision = null,
-            deduplicateIfSameSha256 = true,
             nowMs = nowEpochMs,
         )
 

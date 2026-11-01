@@ -8,6 +8,8 @@ Supertag 与中心后端已接入 AgentProfile、SQLite 和现有 proactive 巡�
 
 打标通过配置生成的 CloudModelClient 在完成回复后后台调用，日演化与周同义合并跟随 `runProactiveCycle`。Main 复用现有 OpenAI/Claude provider 和加密凭据库；未配置模型 Key 时启动失败并给出设置提示，echo 仅可显式选择。接受的打标轮次先写入 SQLite，重启恢复未完成项。当前仍有额外辅助调用，未实现捎带优化，也未做真实服务或端侧 UI 验收。
 
+配对客户端可通过 `POST /v2/work-items` 提交模型任务，以 `GET /v2/work-items/{id}` 轮询状态和持久结果，用 `POST /v2/work-items/{id}/cancel` 取消。复用原配对 Bearer、agent/记忆作用域和受限 Worker，按设备 + requestId 去重。确切 JSON、iOS 最窄接入位置和旧 data/cert 的启动/回滚步骤见 [原生任务契约](../docs/architecture/cloud-native-tasks.md)。现有手机 C3 v1 页面需要接入这些接口后才能派任务。
+
 ---
 
 ## 1. 通道注入接口（Channel SPI）
@@ -15,7 +17,7 @@ Supertag 与中心后端已接入 AgentProfile、SQLite 和现有 proactive 巡�
 Telegram、飞书等外部消息连接器通过 `app.amber.cloud.channel` 包中的标准 SPI 与 `amberd` 交互。
 
 ### 1.1 会话路由规则
-- **私聊入口（`ConversationScope.DIRECT`）**：飞书私聊、Telegram 私聊、以及原生 App 默认对话**共用同一条持久主时间线**（固定主会话 ID `00000000-0000-4000-8000-000000000001`），跨渠道切换和进程重启后上下文与记忆完全连续。
+- **已接入 ChannelIngress 的私聊（`ConversationScope.DIRECT`）**：飞书、Telegram 等私聊共用持久主时间线（固定主会话 ID `00000000-0000-4000-8000-000000000001`）。原生 `/v2/work-items` 是独立任务提交，使用受管 Worker 会话和按 agent 的记忆召回，结果从任务详情查询。
 - **群聊与专项任务（`ConversationScope.GROUP` / `ConversationScope.TASK`）**：按 `(channel, chatId, threadId)` 确定性派生独立会话 UUID，与个人主时间线隔离。
 
 ### 1.2 核心数据结构与接口定义（`app.amber.cloud.channel`）

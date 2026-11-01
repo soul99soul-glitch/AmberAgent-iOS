@@ -131,8 +131,12 @@ class ModelWorkerTurnRunner(
         }
         var lastText = ""
         repeat(maxSteps) {
+            if (kernel.store.getWorkItem(item.workItemId)?.state?.isTerminal != false)
+                return WorkerSettlementReport(item.workItemId, "cancelled", "任务已结束")
             val history = kernel.conversationStorage.loadConversation(uuid)?.messageNodes?.map { it.currentMessage }.orEmpty()
             val answer = client.generateReply(listOf(UIMessage.system(systemPrompt)) + history, tools)
+            if (kernel.store.getWorkItem(item.workItemId)?.state?.isTerminal != false)
+                return WorkerSettlementReport(item.workItemId, "cancelled", "任务已结束")
             val calls = answer.getTools()
             lastText = answer.toText().ifBlank { lastText }
             if (calls.isEmpty()) {

@@ -6,7 +6,7 @@
 
 以下所有 `/v2` 接口复用 C3 配对 Bearer token：`Authorization: Bearer <paired-token>`。未认证返回 `401 {"error":"unauthorized"}`，认证存储损坏返回 500；不存在的 agent / WorkItem 返回 404。无新增权限或外部服务。既有 `/v1` 接口继续保留；其中 session、工具轨迹和审批对象用于诊断与审批下钻，不作为新主导航的数据源。
 
-这些是读取与管理接口。用户消息继续由已认证的 IM ingress 进入同一主时间线；App 的消息提交与增量订阅协议尚未在 P2.6 定义，客户端不能把本期 GET 接口当作发送或实时事件接口。
+原生客户端任务闭环现新增 `POST /v2/work-items`、`POST /v2/work-items/{id}/cancel`，并在任务详情中提供持久的 `resultMarkdown`；确切请求、幂等、agent 选择与轮询规则见 [配对客户端任务契约](cloud-native-tasks.md)。IM ingress 仍进入 Router 主时间线；原生任务入口直接复用 WorkItem 队列，GET timeline 不作为发送或单任务流式接口。
 
 ## GET /v2/agents
 
@@ -62,11 +62,12 @@
   "workItem":{"id":"work:abc","agentId":"coding","title":"编码处理请求","state":"COMPLETED","progress":"处理完成","updatedAtMs":1793460000000},
   "brief":"检查实现",
   "failure":null,
-  "sessionArchived":true
+  "sessionArchived":true,
+  "resultMarkdown":"# Settlement Report · work:abc\n…\n## Summary\n最终结果"
 }
 ```
 
-用于从活动下钻到脱敏的任务执行摘要。只暴露任务标题、简报、进度、失败说明与逻辑归档状态。省略 targetNode、workerSessionId、toolScope、activeToolName、原始工具轨迹、源消息溯源与文件路径。需要精确取证时由 Router 使用既有 session 诊断工具读取，前端不用这些内部 session API 组织日常交互。
+用于从活动下钻到脱敏的任务摘要及终态结算报告。`resultMarkdown` 为可选字段，保留最终结果中的 Markdown/代码/JSON，并做凭据脱敏；不采用 activity 的删代码规则。省略 targetNode、workerSessionId、toolScope、activeToolName、原始工具轨迹、源消息溯源与内部文件路径。需要精确取证时由 Router 使用既有 session 诊断工具读取，前端不用这些内部 session API 组织日常交互。提交/取消/重试与状态轮询见 [原生任务契约](cloud-native-tasks.md)。
 
 ## Agent 管理与确认
 
