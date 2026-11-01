@@ -39,14 +39,51 @@ enum DesktopToolRegistry {
         declaration("workspace_file_read", "读取当前会话工作区中的UTF8文本文件。", properties: ["path": "string"], required: ["path"]),
         declaration("workspace_file_write", "把UTF8成果写入当前会话工作区；需要用户批准，覆盖已有文件须overwrite=true。", properties: ["path": "string", "content": "string", "overwrite": "boolean"], required: ["path", "content"], approval: true),
         declaration("workspace_artifact_delete", "删除当前会话工作区的文件，需要用户批准。", properties: ["path": "string"], required: ["path"], approval: true),
-        declaration("search_web", "搜索公开网页，返回标题、网址和摘要。max_results 可选（1–50），默认使用设置里的结果数量。",
-            properties: ["query": "string", "max_results": "integer"], required: ["query"]),
-        declaration("scrape_web", "读取一个公开HTTP/HTTPS网页的正文。", properties: ["url": "string"], required: ["url"]),
+        searchWebDeclaration,
+        scrapeWebDeclaration,
+        exaContentsDeclaration,
+        exaAnswerDeclaration,
+        exaFindSimilarDeclaration,
         declaration("terminal_exec", "在当前会话工作区执行一条macOS shell命令；每次需要批准，返回真实退出码和输出。", properties: ["command": "string"], required: ["command"], approval: true),
         declaration("plugin_list", "列出已安装的插件、版本和启用状态；只读，免审批。", properties: [:]),
         declaration("plugin_install", "从当前会话工作区内的插件目录或 plugin.json 路径安装插件；高风险操作，需在 Mac 上批准，同名插件已存在时须设置 overwrite=true。",
             properties: ["path": "string", "overwrite": "boolean"], required: ["path"], approval: true),
     ]
+
+    static let searchWebDeclaration = DesktopToolDeclaration(
+        name: "search_web",
+        description: "搜索公开网页（支持多源顺序兜底/并发及 Exa 原生神经检索），返回标题、网址、摘要/高光/正文与图片。支持 Exa 原生参数：type（auto/lite/deep-lite/deep）、category（company/publication/news/personal site/financial report/people）、include_domains/exclude_domains、start_published_date/end_published_date、highlights/include_full_text/include_summary、max_age_hours、subpages、include_images/image_links，以及 execution_mode（sequential/parallel）和 sources。",
+        parametersJSON: #"{"type":"object","properties":{"query":{"type":"string","description":"搜索查询词"},"max_results":{"type":"integer","minimum":1,"maximum":50,"description":"返回结果数量（1–50），默认使用搜索设置"},"type":{"type":"string","enum":["auto","lite","deep-lite","deep","fast","instant","deep-reasoning"],"description":"Exa 检索模式：auto（默认）、lite（极速缓存）、deep-lite（轻量深度研究）、deep（多步深度研究）"},"category":{"type":"string","enum":["company","publication","news","personal site","financial report","people","research paper"],"description":"Exa 内容类别过滤"},"include_domains":{"type":"array","items":{"type":"string"},"description":"仅在这些域名内搜索"},"exclude_domains":{"type":"array","items":{"type":"string"},"description":"排除这些域名"},"start_published_date":{"type":"string","description":"起始发布时间（ISO 8601，如 2026-01-01T00:00:00.000Z）"},"end_published_date":{"type":"string","description":"截止发布时间（ISO 8601）"},"include_text":{"type":"array","items":{"type":"string"},"description":"网页正文必须包含的短语"},"exclude_text":{"type":"array","items":{"type":"string"},"description":"网页正文不能包含的短语"},"additional_queries":{"type":"array","items":{"type":"string"},"description":"Exa deep/deep-lite 模式的补充并行查询词"},"highlights":{"type":"boolean","description":"是否返回关键句高光摘录"},"highlights_query":{"type":"string","description":"高光摘录的定向问题或关键词"},"include_full_text":{"type":"boolean","description":"是否返回网页正文全文"},"text_max_characters":{"type":"integer","description":"单篇网页正文最大字符数"},"include_summary":{"type":"boolean","description":"是否返回 AI 生成的网页摘要"},"summary_query":{"type":"string","description":"网页摘要的定向关注点"},"max_age_hours":{"type":"integer","description":"内容新鲜度上限（小时）：0 为总是实时抓取，-1 为仅用缓存"},"subpages":{"type":"integer","minimum":0,"maximum":10,"description":"深入抓取的子页面数量"},"subpage_target":{"type":"array","items":{"type":"string"},"description":"子页面优先匹配的关键词"},"include_images":{"type":"boolean","description":"是否提取并返回网页图片链接与描述"},"image_links":{"type":"integer","minimum":0,"maximum":10,"description":"每条结果提取的附加图片链接数量"},"user_location":{"type":"string","description":"两位国家代码（如 US、CN）"},"moderation":{"type":"boolean","description":"是否开启内容安全过滤"},"execution_mode":{"type":"string","enum":["sequential","parallel"],"description":"多搜索源执行策略：sequential（顺序兜底）或 parallel（多源并发）"},"sources":{"type":"array","items":{"type":"string"},"description":"指定本次使用的已启用搜索源（如 [\"exa\",\"tavily\",\"free\"]）"},"exa_endpoint":{"type":"string","enum":["search","contents","answer","find_similar"],"description":"可选：直接指定 Exa 端点"}},"required":["query"],"additionalProperties":false}"#,
+        needsApproval: false
+    )
+
+    static let scrapeWebDeclaration = DesktopToolDeclaration(
+        name: "scrape_web",
+        description: "读取一个公开HTTP/HTTPS网页的正文与头图。",
+        parametersJSON: #"{"type":"object","properties":{"url":{"type":"string","description":"公开网页地址"},"max_chars":{"type":"integer","minimum":1000,"maximum":40000,"description":"返回正文最大字符数"}},"required":["url"],"additionalProperties":false}"#,
+        needsApproval: false
+    )
+
+    static let exaContentsDeclaration = DesktopToolDeclaration(
+        name: "exa_contents",
+        description: "使用 Exa /contents 批量提取一个或多个公开 URL 的清洁全文、关键高光、AI 摘要、子页面与图片链接；只读，免审批。",
+        parametersJSON: #"{"type":"object","properties":{"urls":{"type":"array","items":{"type":"string"},"description":"要提取内容的公开网页 URL 列表"},"url":{"type":"string","description":"单个公开网页 URL（与 urls 二选一）"},"highlights":{"type":"boolean","description":"是否返回高光摘录"},"highlights_query":{"type":"string","description":"高光摘录的定向查询词"},"include_full_text":{"type":"boolean","description":"是否返回网页全文（默认 true）"},"text_max_characters":{"type":"integer","description":"单篇全文最大字符数"},"include_summary":{"type":"boolean","description":"是否返回 AI 网页摘要"},"summary_query":{"type":"string","description":"摘要关注的问题"},"max_age_hours":{"type":"integer","description":"内容新鲜度上限（小时）：0 为实时抓取，-1 为仅用缓存"},"subpages":{"type":"integer","minimum":0,"maximum":10,"description":"抓取子页面数量"},"subpage_target":{"type":"array","items":{"type":"string"},"description":"子页面目标关键词"},"include_images":{"type":"boolean","description":"是否提取页面图片链接"},"image_links":{"type":"integer","minimum":0,"maximum":10,"description":"每个页面提取的图片数量"}},"required":["urls"],"additionalProperties":false}"#,
+        needsApproval: false
+    )
+
+    static let exaAnswerDeclaration = DesktopToolDeclaration(
+        name: "exa_answer",
+        description: "使用 Exa /answer 进行带网页引用的检索问答，返回综合回答、引用来源及关联图片；只读，免审批。",
+        parametersJSON: #"{"type":"object","properties":{"query":{"type":"string","description":"需要检索并回答的问题"},"model":{"type":"string","enum":["exa","exa-pro"],"description":"Exa Answer 模型"},"include_full_text":{"type":"boolean","description":"是否在引用中附带原文内容"},"system_prompt":{"type":"string","description":"回答风格或格式要求"},"user_location":{"type":"string","description":"两位国家代码（如 US、CN）"}},"required":["query"],"additionalProperties":false}"#,
+        needsApproval: false
+    )
+
+    static let exaFindSimilarDeclaration = DesktopToolDeclaration(
+        name: "exa_find_similar",
+        description: "使用 Exa /findSimilar 查找与指定 URL 语义相似的公开网页，支持域名/时间/分类过滤与正文提取；只读，免审批。",
+        parametersJSON: #"{"type":"object","properties":{"url":{"type":"string","description":"参考网页 URL"},"max_results":{"type":"integer","minimum":1,"maximum":50,"description":"返回结果数量（1–50）"},"category":{"type":"string","enum":["company","publication","news","personal site","financial report","people","research paper"],"description":"类别过滤"},"include_domains":{"type":"array","items":{"type":"string"},"description":"仅在这些域名内查找"},"exclude_domains":{"type":"array","items":{"type":"string"},"description":"排除这些域名"},"start_published_date":{"type":"string","description":"起始发布时间（ISO 8601）"},"end_published_date":{"type":"string","description":"截止发布时间（ISO 8601）"},"exclude_source_domain":{"type":"boolean","description":"是否排除参考 URL 自身所在域名"},"highlights":{"type":"boolean","description":"是否返回高光摘录"},"include_full_text":{"type":"boolean","description":"是否返回网页全文"},"include_summary":{"type":"boolean","description":"是否返回 AI 摘要"},"include_images":{"type":"boolean","description":"是否提取图片链接"}},"required":["url"],"additionalProperties":false}"#,
+        needsApproval: false
+    )
 
     /// High risk = can reach outside the conversation workspace or destroy data (iOS「含任意公网网站、远程命令等」).
     /// Only「高风险自动批准」auto-runs these; ordinary writes/memory/agents fall under「全局自动批准」.
@@ -90,7 +127,7 @@ enum DesktopToolRegistry {
         case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill",
              "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list", "history_search", "history_fetch",
              "plugin_list": return .pure
-        case "search_web", "scrape_web": return .networkRead
+        case "search_web", "scrape_web", "exa_search", "exa_contents", "exa_answer", "exa_find_similar": return .networkRead
         case "memory_tool": return memoryEffect(arguments)
         default: return .sideEffect
         }
