@@ -362,29 +362,30 @@ struct AmberDuetWorkspaceDrawerSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingPersonaStudio = false
+    @State private var showingMoreSpacesAndThemes = false
 
     private var currentId: KotlinUuid? {
         conversationStore.currentConversation?.id
     }
 
     private var recentSummaries: [ConversationSummary] {
-        Array(conversationStore.summaries.prefix(8))
+        Array(conversationStore.summaries.prefix(5))
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     agentPrimaryCard
-                    arquielPaletteStripSection
-                    capabilityGridSection
+                    primarySpacesListSection
                     recentHistorySection
+                    moreSpacesDisclosureSection
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
             }
             .background(AmberTheme.background.ignoresSafeArea())
-            .navigationTitle(IOSAppLocalization.string("Amber 空间与历史", defaultValue: "Amber 空间与历史"))
+            .navigationTitle(IOSAppLocalization.string("空间", defaultValue: "空间"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -481,78 +482,105 @@ struct AmberDuetWorkspaceDrawerSheet: View {
         }
     }
 
-    private var arquielPaletteStripSection: some View {
-        let runtime = AmberThemeRuntime.shared
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(IOSAppLocalization.string("主题配色 (Arquiel Design)", defaultValue: "主题配色 (Arquiel Design)"))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(AmberTheme.muted)
-                Spacer()
-            }
-            .padding(.horizontal, 4)
+    private var primarySpacesListSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(IOSAppLocalization.string("常用空间", defaultValue: "常用空间"))
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(AmberTheme.muted)
+                .padding(.horizontal, 4)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(AmberArquielThemePresets.all, id: \.id) { preset in
-                        let isSelected = preset.matches(runtime: runtime)
-                        let swatchHex = (try? AmberThemePackTransfer.parseHex(preset.accentHex)) ?? 0xC96442
-                        Button {
-                            try? runtime.apply(preset)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(Color(hex: swatchHex))
-                                    .frame(width: 10, height: 10)
-                                Text(preset.displayName)
-                                    .font(.caption.weight(isSelected ? .semibold : .medium))
-                                    .foregroundStyle(AmberTheme.foreground)
+            VStack(spacing: 0) {
+                spaceListRow(title: "小说创作", subtitle: "章节与角色设定", icon: "book.pages", destination: .novelCreation)
+                Divider().padding(.leading, 48)
+                spaceListRow(title: "长文深读", subtitle: "资料精读与批注", icon: "doc.text.magnifyingglass", destination: .board)
+                Divider().padding(.leading, 48)
+                spaceListRow(title: "任务看板", subtitle: "后台与云端任务", icon: "checklist", destination: .macTasks)
+                Divider().padding(.leading, 48)
+                spaceListRow(title: "设置", subtitle: "连接、模型与偏好", icon: "gearshape", destination: .settings)
+            }
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+            }
+        }
+    }
+
+    private var moreSpacesDisclosureSection: some View {
+        let runtime = AmberThemeRuntime.shared
+        return VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.snappy(duration: 0.22)) {
+                    showingMoreSpacesAndThemes.toggle()
+                }
+            } label: {
+                HStack {
+                    Text(IOSAppLocalization.string("更多工具与主题配色", defaultValue: "更多工具与主题配色"))
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(AmberTheme.muted)
+                    Spacer()
+                    Image(systemName: showingMoreSpacesAndThemes ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AmberTheme.muted)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showingMoreSpacesAndThemes {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(AmberArquielThemePresets.all, id: \.id) { preset in
+                            let isSelected = preset.matches(runtime: runtime)
+                            let swatchHex = (try? AmberThemePackTransfer.parseHex(preset.accentHex)) ?? 0xC96442
+                            Button {
+                                try? runtime.apply(preset)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(Color(hex: swatchHex))
+                                        .frame(width: 9, height: 9)
+                                    Text(preset.displayName)
+                                        .font(.caption.weight(isSelected ? .semibold : .regular))
+                                        .foregroundStyle(AmberTheme.foreground)
+                                }
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 7)
+                                .background(
+                                    isSelected ? AmberTheme.accent.opacity(0.12) : AmberTheme.surface,
+                                    in: Capsule(style: .continuous)
+                                )
+                                .overlay {
+                                    Capsule(style: .continuous)
+                                        .stroke(isSelected ? AmberTheme.accent : AmberTheme.borderSoft, lineWidth: 0.8)
+                                }
                             }
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 7)
-                            .background(
-                                isSelected ? AmberTheme.accent.opacity(0.14) : AmberTheme.surface,
-                                in: Capsule(style: .continuous)
-                            )
-                            .overlay {
-                                Capsule(style: .continuous)
-                                    .stroke(isSelected ? AmberTheme.accent : AmberTheme.borderSoft, lineWidth: isSelected ? 1.1 : 0.7)
-                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                }
+
+                VStack(spacing: 0) {
+                    spaceListRow(title: "议会讨论", subtitle: "多视角推演", icon: "person.2", destination: .council)
+                    Divider().padding(.leading, 48)
+                    spaceListRow(title: "小应用", subtitle: "生成式交互小工具", icon: "square.stack.3d.up", destination: .miniApps)
+                    Divider().padding(.leading, 48)
+                    spaceListRow(title: "网页浏览", subtitle: "网页自动化挂载", icon: "globe", destination: .webMount)
+                    Divider().padding(.leading, 48)
+                    spaceListRow(title: "账号", subtitle: "身份与额度", icon: "person.crop.circle", destination: .account)
+                }
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
                 }
             }
         }
     }
 
-    private var capabilityGridSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(IOSAppLocalization.string("创作与能力空间", defaultValue: "创作与能力空间"))
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(AmberTheme.muted)
-                .padding(.horizontal, 4)
-
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 10),
-                    GridItem(.flexible(), spacing: 10),
-                ],
-                spacing: 10
-            ) {
-                capabilityTile(title: "小说创作", subtitle: "章节推进与设定", icon: "book.pages.fill", destination: .novelCreation)
-                capabilityTile(title: "长文深读", subtitle: "精读批注与拆解", icon: "doc.text.magnifyingglass", destination: .board)
-                capabilityTile(title: "议会讨论", subtitle: "多视角交叉推演", icon: "person.3.fill", destination: .council)
-                capabilityTile(title: "小应用", subtitle: "可交互生成工具", icon: "sparkles.rectangle.stack.fill", destination: .miniApps)
-                capabilityTile(title: "Web 挂载", subtitle: "网页自动化浏览", icon: "globe", destination: .webMount)
-                capabilityTile(title: "任务看板", subtitle: "云端与 Mac 协同", icon: "checklist", destination: .macTasks)
-                capabilityTile(title: "设置", subtitle: "连接、模型与偏好", icon: "gearshape.fill", destination: .settings)
-                capabilityTile(title: "账号", subtitle: "身份与额度管理", icon: "person.crop.circle", destination: .account)
-            }
-        }
-    }
-
-    private func capabilityTile(
+    private func spaceListRow(
         title: String,
         subtitle: String,
         icon: String,
@@ -564,32 +592,29 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                 onNavigate(destination)
             }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(AmberTheme.accent)
-                    .frame(width: 30, height: 30)
-                    .background(AmberTheme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .frame(width: 24)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(IOSAppLocalization.string(title, defaultValue: title))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AmberTheme.foreground)
-                        .lineLimit(1)
-                    Text(IOSAppLocalization.string(subtitle, defaultValue: subtitle))
-                        .font(.caption2)
-                        .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(1)
-                }
+                Text(IOSAppLocalization.string(title, defaultValue: title))
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
 
-                Spacer(minLength: 0)
+                Spacer()
+
+                Text(IOSAppLocalization.string(subtitle, defaultValue: subtitle))
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.muted)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AmberTheme.muted2)
             }
-            .padding(11)
-            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.duet.capability.\(title)")

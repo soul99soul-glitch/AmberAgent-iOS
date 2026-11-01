@@ -469,21 +469,20 @@ struct AmberPersonaStudioSheet: View {
 
     @State private var avatarPickerItem: PhotosPickerItem?
     @State private var referencePickerItems: [PhotosPickerItem] = []
+    @State private var showingPromptEditor = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    heroPreviewCard
-                    presetSelectorSection
-                    aiGenerationAndUploadSection
+                VStack(alignment: .leading, spacing: 24) {
+                    heroAndPresetCard
                     referenceImagesSection
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
             }
             .background(AmberTheme.background.ignoresSafeArea())
-            .navigationTitle(IOSAppLocalization.string("Amber 形象工坊", defaultValue: "Amber 形象工坊"))
+            .navigationTitle(IOSAppLocalization.string("形象设定", defaultValue: "形象设定"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -518,127 +517,38 @@ struct AmberPersonaStudioSheet: View {
         }
     }
 
-    private var heroPreviewCard: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 22) {
-                moodColumn(title: "待命 · Idle", mood: .idle)
-                moodColumn(title: "思考中 · Working", mood: .working)
-                moodColumn(title: "需确认 · Alert", mood: .alert)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 4)
+    private var heroAndPresetCard: some View {
+        VStack(spacing: 18) {
+            AmberAgentPersonaMedallionView(mood: .idle, diameter: 88)
+                .padding(.top, 6)
 
-            Text("顶部状态栏与对话空间会实时使用上方 Amber 专属形象，并随任务状态自动切换神态。")
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted)
-                .multilineTextAlignment(.center)
-        }
-        .padding(16)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
-        }
-    }
-
-    private func moodColumn(title: String, mood: AmberAgentPersonaMood) -> some View {
-        VStack(spacing: 8) {
-            AmberAgentPersonaMedallionView(mood: mood, diameter: 64)
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(AmberTheme.foreground2)
-        }
-    }
-
-    private var presetSelectorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("专属形象风格")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(AmberTheme.muted)
-                .padding(.horizontal, 4)
-
-            VStack(spacing: 8) {
+            Picker("形象风格", selection: $store.preset) {
                 ForEach(AmberPersonaPreset.allCases) { option in
-                    let isSelected = store.preset == option
-                    Button {
-                        store.preset = option
-                    } label: {
-                        HStack(spacing: 12) {
-                            AmberAgentPersonaMedallionView(mood: .idle, diameter: 42, presetOverride: option)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(option.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(AmberTheme.foreground)
-                                Text(option.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(AmberTheme.muted)
-                            }
-                            Spacer()
-                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(isSelected ? AmberTheme.accent : AmberTheme.muted)
-                        }
-                        .padding(12)
-                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(isSelected ? AmberTheme.accent : AmberTheme.borderSoft, lineWidth: isSelected ? 1.2 : 0.7)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    Text(option.title).tag(option)
                 }
             }
-        }
-    }
+            .pickerStyle(.segmented)
 
-    private var aiGenerationAndUploadSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("生成或上传专属肖像 (Muse 模式)")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(AmberTheme.muted)
-                .padding(.horizontal, 4)
-
-            VStack(alignment: .leading, spacing: 12) {
-                TextField("描述 Amber 的外貌、气质与画风…", text: $store.personaStylePrompt, axis: .vertical)
-                    .font(.subheadline)
-                    .lineLimit(2...4)
-                    .padding(10)
-                    .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        await store.generateAvatarWithAI(sharedSettings: sharedSettings)
                     }
-
-                HStack(spacing: 10) {
-                    Button {
-                        Task {
-                            await store.generateAvatarWithAI(sharedSettings: sharedSettings)
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if store.isGeneratingAvatar {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: "sparkles")
-                            }
-                            Text(store.isGeneratingAvatar ? "正在生成形象…" : "AI 生成形象")
-                        }
+                } label: {
+                    Text(store.isGeneratingAvatar ? "正在生成…" : "AI 生成形象")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.accentInk)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
                         .background(AmberTheme.accent, in: Capsule(style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(store.isGeneratingAvatar)
-                    .accessibilityIdentifier("chat.persona.generateButton")
+                }
+                .buttonStyle(.plain)
+                .disabled(store.isGeneratingAvatar)
+                .accessibilityIdentifier("chat.persona.generateButton")
 
-                    PhotosPicker(selection: $avatarPickerItem, matching: .images) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "photo.badge.plus")
-                            Text("上传照片")
-                        }
-                        .font(.subheadline.weight(.semibold))
+                PhotosPicker(selection: $avatarPickerItem, matching: .images) {
+                    Text("从相册上传")
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
@@ -647,31 +557,53 @@ struct AmberPersonaStudioSheet: View {
                             Capsule(style: .continuous)
                                 .stroke(AmberTheme.border, lineWidth: 0.8)
                         }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("chat.persona.uploadButton")
                 }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.persona.uploadButton")
+            }
 
-                if let error = store.lastGenerationError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.accentRed)
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    showingPromptEditor.toggle()
                 }
+            } label: {
+                Text(showingPromptEditor ? "收起生成描述词" : "调整生成描述词")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
             }
-            .padding(14)
-            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+            .buttonStyle(.plain)
+
+            if showingPromptEditor {
+                TextField("描述外貌与画风…", text: $store.personaStylePrompt, axis: .vertical)
+                    .font(.subheadline)
+                    .lineLimit(2...3)
+                    .padding(10)
+                    .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                    }
             }
+
+            if let error = store.lastGenerationError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.accentRed)
+            }
+        }
+        .padding(18)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
         }
     }
 
     private var referenceImagesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("给 Agent 的形象参考图（最多 4 张）")
-                    .font(.footnote.weight(.semibold))
+                Text("形象参考图")
+                    .font(.footnote.weight(.medium))
                     .foregroundStyle(AmberTheme.muted)
                 Spacer()
                 Text("\(store.referenceItems.count)/4")
@@ -680,13 +612,9 @@ struct AmberPersonaStudioSheet: View {
             }
             .padding(.horizontal, 4)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("添加参考图后，Amber 在对话中生成自拍、表情包或场景插画时，会自动垫入参考图以保持角色特征一致。")
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-
+            VStack(alignment: .leading, spacing: 14) {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         ForEach(store.referenceItems) { item in
                             ZStack(alignment: .topTrailing) {
                                 VStack(spacing: 5) {
@@ -726,21 +654,21 @@ struct AmberPersonaStudioSheet: View {
                                 matching: .images
                             ) {
                                 VStack(spacing: 6) {
-                                    Image(systemName: "plus.viewfinder")
-                                        .font(.system(size: 20, weight: .medium))
-                                        .foregroundStyle(AmberTheme.accent)
-                                    Text("添加参考图")
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundStyle(AmberTheme.accent)
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 18, weight: .regular))
+                                        .foregroundStyle(AmberTheme.muted)
+                                    Text("添加")
+                                        .font(.caption2)
+                                        .foregroundStyle(AmberTheme.muted)
                                 }
                                 .frame(width: 78, height: 78)
                                 .background(
-                                    AmberTheme.accent.opacity(0.08),
+                                    AmberTheme.background,
                                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 )
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(AmberTheme.accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                        .stroke(AmberTheme.border, style: StrokeStyle(lineWidth: 0.9, dash: [4, 3]))
                                 }
                             }
                             .buttonStyle(.plain)
@@ -750,22 +678,19 @@ struct AmberPersonaStudioSheet: View {
                     .padding(.vertical, 2)
                 }
 
+                Divider()
+
                 Toggle(isOn: $store.autoBindReferenceInImageGen) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("生图时自动垫入 Agent 参考图")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(AmberTheme.foreground)
-                        Text("当模型调用 generate_image 描绘 Amber 或未附带用户图片时自动绑定")
-                            .font(.caption2)
-                            .foregroundStyle(AmberTheme.muted)
-                    }
+                    Text("生图时自动附带参考图")
+                        .font(.subheadline)
+                        .foregroundStyle(AmberTheme.foreground)
                 }
                 .tint(AmberTheme.accent)
             }
-            .padding(14)
-            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(16)
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
             }
         }
