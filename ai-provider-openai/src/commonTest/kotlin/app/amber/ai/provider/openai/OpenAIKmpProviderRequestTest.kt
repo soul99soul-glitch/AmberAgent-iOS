@@ -142,6 +142,26 @@ class OpenAIKmpProviderRequestTest {
     }
 
     @Test
+    fun deepSeekCurrentTurnToolCallEchoesEmptyReasoningContent() {
+        val call = UIMessagePart.Tool(
+            toolCallId = "call_1",
+            toolName = "process_run",
+            input = "{}",
+            output = listOf(UIMessagePart.Text("ok")),
+        )
+        val history = listOf(UIMessage.user("run"), UIMessage(role = MessageRole.ASSISTANT, parts = listOf(call)))
+        fun assistantReasoning(provider: ProviderSetting.OpenAI) = this.provider.buildChatCompletionRequest(
+            providerSetting = provider,
+            messages = history,
+            params = TextGenerationParams(model = toolModel(), tools = listOf(testTool())),
+        ).getValue("messages").jsonArray.map { it.jsonObject }
+            .first { it["role"]?.jsonPrimitive?.content == "assistant" }["reasoning_content"]
+
+        assertEquals("", assistantReasoning(setting.copy(baseUrl = "https://api.deepseek.com"))?.jsonPrimitive?.content)
+        assertEquals(null, assistantReasoning(setting))
+    }
+
+    @Test
     fun responsesToolsDisableParallelToolCalls() {
         val body = provider.buildResponsesRequestBody(
             providerSetting = setting,

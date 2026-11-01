@@ -322,6 +322,7 @@ class OpenAIKmpProvider internal constructor(
                 capabilities = capabilities,
                 toolPlan = toolPlan,
                 isMiMo = isMiMo,
+                echoEmptyToolReasoning = providerSetting.brand == OpenAIBrand.DEEPSEEK || host.endsWith("deepseek.com"),
             ),
         )
 
@@ -383,6 +384,7 @@ class OpenAIKmpProvider internal constructor(
         capabilities: PromptTranscriptCapabilities,
         toolPlan: PromptToolPlan,
         isMiMo: Boolean = false,
+        echoEmptyToolReasoning: Boolean = false,
     ): JsonArray = buildJsonArray {
         val uploadable = messages.filter {
             it.isValidToUpload() || (it.role == MessageRole.SYSTEM && PromptTranscript.event(it) != null)
@@ -394,7 +396,13 @@ class OpenAIKmpProvider internal constructor(
                 // 否则带思考 + tool_calls 的 assistant 消息被重发时,严格网关(DeepSeek 系)
                 // 会把请求体里不该出现的 reasoning_content 判为非法 → HTTP 500。对齐 Android 的 gating。
                 // MiMo 官方文档要求思考模式多轮工具调用保留全部历史 reasoning_content，故全量回传。
-                addAssistantMessages(message, includeReasoning = isMiMo || index > lastUserIndex)
+                val currentTurn = isMiMo || index > lastUserIndex
+                addAssistantMessages(
+                    message,
+                    includeReasoning = currentTurn,
+                    // DeepSeek 思考模式下，当前轮 tool_calls 必须带 reasoning_content；模型返回空思考时也要回传空串，否则 400。
+                    echoEmptyToolReasoning = currentTurn && echoEmptyToolReasoning,
+                )
             } else {
                 val event = PromptTranscript.event(message)
                 if (message.role == MessageRole.SYSTEM && transcript.hasTranscript &&
@@ -470,7 +478,11 @@ class OpenAIKmpProvider internal constructor(
         if (deferLoading) put("defer_loading", true)
     }
 
-    private fun JsonArrayBuilder.addAssistantMessages(message: UIMessage, includeReasoning: Boolean) {
+    private fun JsonArrayBuilder.addAssistantMessages(
+        message: UIMessage,
+        includeReasoning: Boolean,
+        echoEmptyToolReasoning: Boolean = false,
+    ) {
         val groups = groupPartsByToolBoundary(message.parts)
         val contentBuffer = mutableListOf<UIMessagePart>()
         var reasoningPart: UIMessagePart.Reasoning? = null
@@ -490,7 +502,7 @@ class OpenAIKmpProvider internal constructor(
                     val resolved = group.tools.mapIndexed { i, tool ->
                         tool to tool.toolCallId.ifBlank { "call_${tool.streamIndex ?: i}_$i" }
                     }
-                    buildAssistantMessageJson(contentBuffer, resolved, reasoningPart, includeReasoning)?.let { add(it) }
+                    buildAssistantMessageJson(contentBuffer, resolved, reasoningPart, includeReasoning, echoEmptyToolReasoning)?.let { add(it) }
                     contentBuffer.clear()
                     reasoningPart = null
                     resolved.forEach { (tool, id) ->
@@ -528,6 +540,7 @@ class OpenAIKmpProvider internal constructor(
         tools: List<Pair<UIMessagePart.Tool, String>>,
         reasoningPart: UIMessagePart.Reasoning?,
         includeReasoning: Boolean,
+        echoEmptyToolReasoning: Boolean = false,
     ): JsonObject? {
         val hasText = contentParts.any { it is UIMessagePart.Text && it.text.isNotBlank() }
         val hasReasoning = includeReasoning && !reasoningPart?.reasoning.isNullOrBlank()
@@ -538,6 +551,8 @@ class OpenAIKmpProvider internal constructor(
 
             if (hasReasoning) {
                 put("reasoning_content", reasoningPart?.reasoning.orEmpty())
+            } else if (echoEmptyToolReasoning && tools.isNotEmpty()) {
+                put("reasoning_content", "")
             }
 
             val texts = contentParts.filterIsInstance<UIMessagePart.Text>()
