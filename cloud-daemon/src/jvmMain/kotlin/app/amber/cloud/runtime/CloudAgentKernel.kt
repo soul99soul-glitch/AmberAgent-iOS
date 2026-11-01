@@ -142,6 +142,8 @@ class CloudAgentKernel(
     val contextWindowTokens: Int = 32_000,
     val autoApproveOrdinaryTools: Boolean = false,
     val modelClients: Map<String, CloudModelClient> = emptyMap(),
+    val configurationManager: app.amber.cloud.config.CloudConfigurationManager? = null,
+    vaultOverride: EnvelopeCredentialVault? = null,
     ownerToolScope: Set<String>? = null,
     searchSources: List<String> = listOf("bing","duckduckgo"),
     searchMode: String = "fallback",
@@ -172,7 +174,7 @@ class CloudAgentKernel(
     val workspaceDir = File(dataDir, "workspace").also { it.mkdirs() }
 
     val conversationStorage = JsonConversationStorage(ConversationFile(conversationsDir.absolutePath))
-    val vault = EnvelopeCredentialVault(
+    val vault = vaultOverride ?: EnvelopeCredentialVault(
         vaultFile = File(dataDir, "secrets.enc.json"),
         masterSecretOverride = masterSecretOverride,
     )
@@ -244,10 +246,17 @@ class CloudAgentKernel(
         registerBuiltinTools()
         app.amber.cloud.tasks.TaskExecutionTools(taskWorkspace, taskProcesses).register(toolRegistry)
         app.amber.cloud.tasks.TaskNetworkTools(publicHttp, taskWorkspace).register(toolRegistry)
-        search.register(toolRegistry)
+        search.register(toolRegistry) {
+            kotlinx.coroutines.currentCoroutineContext()[app.amber.cloud.config.RuntimeConfigurationSnapshot]?.search
+                ?: configurationManager?.snapshot()?.search ?: search
+        }
         taskToolchain.register(toolRegistry)
         orchestrationKernel.workerTurnRunner = { item, principal ->
-            val report = try { workerTurnRunner.run(item, principal) }
+            val report = try {
+                val snapshot = configurationManager?.snapshot()
+                if (snapshot == null) workerTurnRunner.run(item, principal)
+                else kotlinx.coroutines.withContext(snapshot) { workerTurnRunner.run(item, principal) }
+            }
                 finally { kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { taskProcesses.stopTask(item.workItemId) } }
             val disabledSource = item.sourceProvenance.map { it.sessionId }.distinct().any { id ->
                 val uuid = runCatching { Uuid.parse(id) }.getOrNull()
@@ -298,6 +307,7 @@ class CloudAgentKernel(
         ).also { r ->
             r.brain = ModelRouterBrain(
                 modelClient = modelClient,
+                modelSnapshot = { configurationManager?.snapshot()?.model ?: modelClient },
                 routerTools = { r.routerTools },
                 contextMessages = { input -> routerIngress.contextMessages(input) },
             )

@@ -170,9 +170,10 @@ object CloudConfigLoader {
             return fromFileByEnv
         }
 
+        val managed = CloudConfigurationManager.STATE_KEY in vault.listSecretKeys()
         // 1. Ingest all secret values into unified EnvelopeCredentialVault
         for ((configKey, envName) in SECRET_MAPPINGS) {
-            val rawSecret = resolveValue(configKey, envName)
+            val rawSecret = if (managed && configKey in CloudConfigurationManager.KEY_NAMES.values) null else resolveValue(configKey, envName)
             if (rawSecret != null) {
                 if (CredentialRedactor.isPlaceholderCredential(rawSecret)) {
                     throw PlaceholderCredentialException("配置项 $configKey / $envName 包含脱敏占位符，已拒绝写入凭据库")

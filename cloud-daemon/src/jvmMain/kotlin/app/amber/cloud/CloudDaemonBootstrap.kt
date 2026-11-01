@@ -4,7 +4,8 @@ import app.amber.cloud.channels.OwnerBindingManager
 import app.amber.cloud.channels.RedactingChannelLogger
 import app.amber.cloud.config.CloudConfigLoader
 import app.amber.cloud.config.CloudDaemonConfig
-import app.amber.cloud.config.configuredModelClient
+import app.amber.cloud.config.CloudConfigurationManager
+import app.amber.cloud.gateway.CloudGatewayState
 import app.amber.cloud.proactive.L2NoteworthyScore
 import app.amber.cloud.proactive.NoteworthyJudgeProvider
 import app.amber.cloud.proactive.ProactiveEngine
@@ -30,7 +31,7 @@ internal fun loadConfiguredDaemon(
     val vault = EnvelopeCredentialVault(File(dataDir, "secrets.enc.json"), masterSecretOverride = masterSecret)
     val ownerBinding = OwnerBindingManager(persistenceFile = File(dataDir, "owner-bindings.json"))
     val config = CloudConfigLoader.loadAndIngest(configFile, env, vault, logger, ownerBinding)
-    val modelClient = configuredModelClient(config, vault)
+    val manager = CloudConfigurationManager(vault, CloudGatewayState(dataDir).identity.id, config)
     val proactive = ProactiveEngine(
         l2Judge = NoteworthyJudgeProvider { req ->
             L2NoteworthyScore(
@@ -41,7 +42,8 @@ internal fun loadConfiguredDaemon(
         restraintGate = ProactiveRestraintGate(quietHours = config.toQuietHoursConfig(), budgetConfig = config.toInterruptionBudgetConfig()),
     )
     return ConfiguredCloudDaemon(config, CloudAgentKernel(
-        dataDir = dataDir, modelClient = modelClient, masterSecretOverride = masterSecret,
+        dataDir = dataDir, modelClient = manager.modelClient, masterSecretOverride = masterSecret,
+        configurationManager = manager, vaultOverride = vault,
         ownerBinding = ownerBinding, proactiveEngine = proactive,
         searchSources = config.searchSources.split(',').map { it.trim() }.filter { it.isNotEmpty() }, searchMode = config.searchMode,
     ))

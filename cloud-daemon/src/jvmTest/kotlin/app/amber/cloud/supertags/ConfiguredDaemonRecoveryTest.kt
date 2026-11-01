@@ -42,8 +42,11 @@ class ConfiguredDaemonRecoveryTest {
             assertContains(unsafeMaster.message.orEmpty(), "AMBER_MASTER_KEY")
             assertFalse(File(dir, "secrets.enc.json").exists(), "主密钥检查先于任何模型 Key 写入")
             val masterEnv = env - "AMBER_MODEL_API_KEY"
-            val missing = assertFailsWith<IllegalArgumentException> { loadConfiguredDaemon(dir, env = masterEnv) }
-            assertContains(missing.message.orEmpty(), "AMBER_MODEL_API_KEY")
+            val unconfigured = loadConfiguredDaemon(dir, env = masterEnv).kernel
+            try {
+                val missing = assertFailsWith<IllegalStateException> { unconfigured.modelClient.generateReply(listOf(UIMessage.user("执行任务")), emptyList()) }
+                assertContains(missing.message.orEmpty(), "AMBER_MODEL_API_KEY")
+            } finally { closeKernel(unconfigured) }
             val unsupported = assertFailsWith<IllegalArgumentException> {
                 loadConfiguredDaemon(dir, env = masterEnv + ("AMBER_MODEL_PROVIDER" to "unknown"))
             }

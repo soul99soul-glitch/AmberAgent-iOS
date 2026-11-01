@@ -40,9 +40,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jar", type=Path, required=True)
     parser.add_argument("--java", type=Path, required=True)
+    parser.add_argument("--configuration-client", type=Path, help="optional native JWE fixture executable")
     args = parser.parse_args()
     jar, java = args.jar.resolve(), args.java.resolve()
     worker_calls = []
+    expected_key = ["local-http-provider-key"]
 
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -51,7 +53,7 @@ def main():
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             assert self.path == "/v1/chat/completions"
-            assert self.headers["Authorization"] == "Bearer local-http-provider-key"
+            assert self.headers["Authorization"] == "Bearer " + expected_key[0]
             text = json.dumps(body, ensure_ascii=False)
             if "受管 Worker" in text:
                 worker_calls.append(1)
@@ -72,7 +74,7 @@ def main():
                     ("workspace_file_read", {"path": "result.json"}),
                     ("task_finish", {"outcome": "completed", "summary": output, "artifacts": ["result.json"]}),
                 ]
-                name, arguments = steps[len(worker_calls) - 1]
+                name, arguments = steps[len(worker_calls) - 1] if len(worker_calls) <= 6 else ("task_finish", {"outcome": "completed", "summary": "configuration reload verified"})
                 message["tool_calls"] = [{"id": "call-" + str(len(worker_calls)), "type": "function", "function": {
                     "name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}}]
             data = json.dumps({"id": "package-smoke", "object": "chat.completion", "choices": [
@@ -164,19 +166,63 @@ def main():
                 result_file = next(item for item in artifacts if item["path"] == "result.json")
                 status, csv_result = request(base_url + "/v2/work-items/" + work_id + "/artifacts/download?path=result.json", token=token)
                 assert status == 200 and csv_result == {"sum": 5}
+                config_envelope = None
+                config_kid = None
+                def finish_simple_task(request_id):
+                    status, submitted = request(base_url + "/v2/work-items", {"requestId": request_id, "text": "验证后续任务配置"}, token)
+                    assert status == 202
+                    simple_id = submitted["workItem"]["id"]
+                    until = time.monotonic() + 10
+                    while time.monotonic() < until:
+                        status, output = request(base_url + "/v2/work-items/" + simple_id, token=token)
+                        assert status == 200
+                        if output["workItem"]["state"] == "COMPLETED":
+                            return
+                        assert output["workItem"]["state"] not in ("FAILED", "CANCELLED")
+                        time.sleep(0.05)
+                    raise AssertionError("configuration follow-up task timed out")
+                if args.configuration_client:
+                    status, configuration = request(base_url + "/v2/configuration", token=token)
+                    assert status == 200 and configuration["revision"] == 0
+                    status, public_key = request(base_url + "/v2/configuration/import-key", token=token)
+                    assert status == 200 and public_key["gatewayId"] == pair["gatewayId"]
+                    config_kid = public_key["kid"]
+                    clear = {"version": 1, "gatewayId": public_key["gatewayId"], "deviceId": public_key["deviceId"],
+                        "requestId": "native-package-config", "expectedRevision": 0,
+                        "issuedAt": public_key["serverTime"], "expiresAt": public_key["serverTime"] + 300,
+                        "configuration": {"search": {"sources": ["bing", "duckduckgo", "exa"], "mode": "aggregate"}},
+                        "credentials": {"modelApiKey": {"action": "replace", "value": "local-updated-provider-key"},
+                            "exaApiKey": {"action": "replace", "value": "local-imported-exa-key"}}}
+                    encrypted = subprocess.run([str(args.configuration_client.resolve())], input=json.dumps({"importKey": public_key, "payload": clear}).encode(), capture_output=True, check=True)
+                    config_envelope = encrypted.stdout.decode().strip()
+                    assert "local-updated-provider-key" not in config_envelope
+                    status, changed = request(base_url + "/v2/configuration", {"jwe": config_envelope}, token)
+                    assert status == 200 and changed["revision"] == 1
+                    expected_key[0] = "local-updated-provider-key"
+                    finish_simple_task("after-import")
                 stop()
-                del env["AMBER_MODEL_API_KEY"]  # Restart must use the existing encrypted vault.
+                if not args.configuration_client:
+                    del env["AMBER_MODEL_API_KEY"]  # Original smoke uses only the encrypted vault on restart.
+                # Configuration mode deliberately retains the obsolete startup env key to prove managed precedence.
                 boot()
+                if args.configuration_client:
+                    status, config_recovered = request(base_url + "/v2/configuration", token=token)
+                    assert status == 200 and config_recovered["revision"] == 1
+                    status, repeated = request(base_url + "/v2/configuration", {"jwe": config_envelope}, token)
+                    assert status == 200 and repeated["replayed"]
+                    status, public_recovered = request(base_url + "/v2/configuration/import-key", token=token)
+                    assert status == 200 and public_recovered["kid"] == config_kid
+                    finish_simple_task("after-restart")
                 status, recovered = request(base_url + "/v2/work-items/" + work_id, token=token)
                 assert status == 200 and recovered["resultMarkdown"] == detail["resultMarkdown"]
                 status, replay = request(base_url + "/v2/work-items", body, token)
                 assert status == 200 and replay["replayed"] and replay["workItem"]["id"] == work_id
-                assert len(worker_calls) == 6
+                assert len(worker_calls) == (8 if args.configuration_client else 6)
                 assert all(hashlib.sha256((data_dir / name).read_bytes()).hexdigest() == sha for name, sha in original.items())
                 assert "local-http-provider-key" not in (data_dir / "secrets.enc.json").read_text()
                 print(json.dumps({"entrypoint": "packaged MainKt", "provider": "loopback OpenAI HTTP stub",
                     "state": "COMPLETED", "csvResult": csv_result, "artifactSha256": result_file["sha256"], "workerCalls": len(worker_calls), "restartResultAndTokenReused": True,
-                    "identityAndCertificateUnchanged": True, "realProviderCalled": False}, ensure_ascii=False))
+                    "identityAndCertificateUnchanged": True, "nativeEncryptedConfigurationApplied": bool(args.configuration_client), "credentialHotReloadAndStaleEnvPrecedence": bool(args.configuration_client), "realProviderCalled": False}, ensure_ascii=False))
             finally:
                 stop()
     finally:

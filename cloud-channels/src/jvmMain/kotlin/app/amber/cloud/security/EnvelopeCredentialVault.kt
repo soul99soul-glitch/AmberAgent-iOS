@@ -69,27 +69,30 @@ class EnvelopeCredentialVault(
         val updatedAtEpochSeconds: Long,
     )
 
+    fun putSecret(key: String, value: String) = updateSecrets(mapOf(key to value))
+
+    /** A configuration revision, its receipt and selected credentials must commit in one encrypted file replacement. */
     @Synchronized
-    fun putSecret(key: String, value: String) {
-        require(key.isNotBlank()) { "凭据键名不能为空" }
-        if (CredentialRedactor.isPlaceholderCredential(value)) {
-            throw PlaceholderCredentialException("拒绝写入占位符凭据: $key")
+    fun updateSecrets(changes: Map<String, String?>) {
+        changes.forEach { (key, value) ->
+            require(key.isNotBlank()) { "凭据键名不能为空" }
+            if (value != null && CredentialRedactor.isPlaceholderCredential(value)) {
+                throw PlaceholderCredentialException("拒绝写入占位符凭据: $key")
+            }
         }
         val (store, dek) = loadOrInitializeStoreWithDek()
         try {
-            val iv = randomBytes(12)
-            val ct = AmberNativeBridge.aesGcmEncrypt(value.encodeToByteArray(), dek, iv)
-                ?: error("AES-256-GCM 加密失败")
-            val updatedEntries = store.entries.toMutableMap()
-            updatedEntries[key] = EncryptedEntry(
-                ivBase64 = iv.toB64(),
-                ciphertextBase64 = ct.toB64(),
-                updatedAtEpochSeconds = System.currentTimeMillis() / 1000L,
-            )
-            persistStore(store.copy(entries = updatedEntries))
-        } finally {
-            dek.fill(0)
-        }
+            val entries = store.entries.toMutableMap()
+            for ((key, value) in changes) {
+                if (value == null) { entries.remove(key); continue }
+                val iv = randomBytes(12)
+                val plaintext = value.encodeToByteArray()
+                val ciphertext = try { AmberNativeBridge.aesGcmEncrypt(plaintext, dek, iv) ?: error("AES-256-GCM 加密失败") }
+                    finally { plaintext.fill(0) }
+                entries[key] = EncryptedEntry(iv.toB64(), ciphertext.toB64(), System.currentTimeMillis() / 1000L)
+            }
+            persistStore(store.copy(entries = entries))
+        } finally { dek.fill(0) }
     }
 
     @Synchronized
@@ -103,7 +106,7 @@ class EnvelopeCredentialVault(
                 key = dek,
                 iv = entry.ivBase64.fromB64(),
             ) ?: error("凭据解密或认证标签校验失败: $key")
-            return pt.decodeToString()
+            return try { pt.decodeToString() } finally { pt.fill(0) }
         } finally {
             dek.fill(0)
         }

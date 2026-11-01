@@ -20,14 +20,15 @@ class CloudSearch(
     private val enabled:List<String> = listOf("bing","duckduckgo"), private val defaultMode:String = "fallback",
     private val endpoints:Map<String,String> = emptyMap(),
     private val workspace:TaskWorkspace? = null,
+    private val credentialLookup: (String) -> String? = vault::getSecret,
 ) {
     private val json=Json { ignoreUnknownKeys=true;encodeDefaults=true }
     init {require(enabled.isNotEmpty() && enabled.all {it in setOf("bing","duckduckgo","exa","brave")});require(defaultMode in setOf("fallback","aggregate"))}
-    fun register(registry:CloudToolRegistry) {
+    fun register(registry:CloudToolRegistry, engine: suspend () -> CloudSearch = { this }) {
         registry.register(CloudToolDefinition("search_web","聚合免费搜索和已配置的Exa/Brave；mode=fallback按顺序兜底，aggregate并发。返回来源诊断/标题/URL/摘要/图片；无Key可免费检索。仅可选管理员启用源",false,ToolEffect.NETWORK_READ, requiredCapability="network_tools",
             parameters=schema("""{"query":{"type":"string"},"mode":{"type":"string","enum":["fallback","aggregate"]},"sources":{"type":"array","items":{"type":"string"}},"count":{"type":"integer","minimum":1,"maximum":20},"exa":{"type":"object","description":"原生type/category/includeDomains/excludeDomains/startPublishedDate/endPublishedDate/contents"},"brave":{"type":"object","description":"原生country/search_lang/ui_lang/freshness/safesearch/extra_snippets"}}""","query"),
             taskHandler={a,c ->
-                val result=json.encodeToJsonElement(search(a)).jsonObject
+                val result=json.encodeToJsonElement(engine().search(a)).jsonObject
                 if(workspace==null) result else try {
                     require(registry.capabilities.isEnabled("workspace_files")) {"任务文件能力未启用"}
                     val artifact=workspace.operation(c.workItemId,"write",buildJsonObject {put("path","search-results.json");put("content",result.toString())})
@@ -43,7 +44,7 @@ class CloudSearch(
         val requested=args.strings("sources").ifEmpty {enabled};require(requested.all {it in enabled}) {"搜索源未启用"}
         val mode=args.string("mode").ifBlank {defaultMode};require(mode in setOf("fallback","aggregate"))
         suspend fun source(id:String):Pair<List<SearchHit>,SearchSourceReport> {
-            val key=if(id in setOf("exa","brave")) vault.getSecret("search.${id}_key") else null
+            val key=if(id in setOf("exa","brave")) credentialLookup("search.${id}_key") else null
             if(id in setOf("exa","brave") && key.isNullOrBlank())return emptyList<SearchHit>() to SearchSourceReport(id,"missing_key")
             return try {
                 val (response,hits)=fetch(id,query,count,args,key)

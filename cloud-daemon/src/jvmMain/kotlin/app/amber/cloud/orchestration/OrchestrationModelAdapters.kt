@@ -26,6 +26,7 @@ import kotlin.uuid.Uuid
 class ModelRouterBrain(
     private val modelClient: CloudModelClient,
     private val routerTools: () -> CloudToolRegistry,
+    private val modelSnapshot: () -> CloudModelClient = { modelClient },
     private val systemPrompt: String = DEFAULT_ROUTER_SYSTEM_PROMPT,
     private val maxReadSteps: Int = 2,
     private val contextMessages: suspend (RouterTurnInput) -> List<UIMessage> = { emptyList() },
@@ -33,6 +34,7 @@ class ModelRouterBrain(
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun decide(input: RouterTurnInput): RouterDecision {
+        val client = modelSnapshot()
         val registry = routerTools()
         val tools = registry.declaredTools(ExecutionScope.MAIN_AGENT)
         val history = contextMessages(input)
@@ -58,7 +60,7 @@ class ModelRouterBrain(
         var reply: String? = null
         var proposal: AgentProfile? = null
         repeat(maxReadSteps + 1) {
-            val answer = modelClient.generateReply(messages, tools)
+            val answer = client.generateReply(messages, tools)
             val calls = answer.getTools()
             reply = answer.toText().takeIf { it.isNotBlank() } ?: reply
             if (calls.isEmpty()) return RouterDecision(reply, dispatch, steer, proposal)

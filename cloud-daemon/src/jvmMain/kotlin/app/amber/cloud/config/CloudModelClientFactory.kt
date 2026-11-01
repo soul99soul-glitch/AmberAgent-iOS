@@ -9,6 +9,10 @@ import java.net.URI
 
 /** Startup configuration selects the existing provider adapters; credentials stay in the existing vault. */
 internal fun configuredModelClient(config: CloudDaemonConfig, vault: EnvelopeCredentialVault): CloudModelClient {
+    return configuredModelClient(config, vault.getSecret(CloudConfigLoader.KEY_MODEL_API_KEY))
+}
+
+internal fun configuredModelClient(config: CloudDaemonConfig, apiKey: String?, allowUnconfigured: Boolean = false): CloudModelClient {
     val provider = config.modelProvider.trim().lowercase()
     if (provider == "echo") return CloudModelClient { messages, _ ->
         UIMessage.assistant("Amber Cloud Self 已收到: ${messages.lastOrNull()?.toText().orEmpty().lineSequence().firstOrNull().orEmpty()}")
@@ -25,7 +29,10 @@ internal fun configuredModelClient(config: CloudDaemonConfig, vault: EnvelopeCre
     require(uri != null && uri.scheme in setOf("https", "http") && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
         "AMBER_MODEL_BASE_URL / model.base_url 必须是无凭据、查询参数或 fragment 的 HTTP(S) API 根地址"
     }
-    val key = vault.getSecret(CloudConfigLoader.KEY_MODEL_API_KEY)?.trim()
+    val key = apiKey?.trim()
+    if (allowUnconfigured && key.isNullOrEmpty()) return CloudModelClient { _, _ ->
+        error("未配置模型 Key：请从可信客户端配置云端模型凭据（AMBER_MODEL_API_KEY / model.api_key）")
+    }
     require(!key.isNullOrEmpty()) {
         "未配置模型 Key：请设置 AMBER_MODEL_API_KEY / model.api_key（自动加密入库），并核对 AMBER_MODEL_PROVIDER、AMBER_MODEL_ID"
     }
