@@ -39,8 +39,15 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     var compactState: ChatContextCompactState? = nil
     /// Phone automation step group this message belongs to (L1 projection).
     var phoneToolGroup: ChatPhoneToolGroupRole? = nil
+    /// Assistant turn with non-phone tools this message belongs to (L1 projection).
+    var assistantTurn: ChatAssistantTurnRole? = nil
     /// Digest before the group role was folded in; lets regrouping stay idempotent.
     var baseRenderDigest: ChatRowDigest? = nil
+
+    /// Occupies no space; its group head stands in for it.
+    var isCollapsedGroupMember: Bool {
+        phoneToolGroup?.isCollapsedMember == true || assistantTurn?.isCollapsedMember == true
+    }
 
     var hasMultipleVariants: Bool {
         variantInfo?.hasMultipleVariants == true
@@ -307,7 +314,8 @@ enum NativeTimelineProjector {
         )
         if ChatPhoneToolGrouping.tailMayAffectGroups(
             tail: message,
-            previousRole: previous.entries[entryIndex].phoneToolGroup
+            previousRole: previous.entries[entryIndex].phoneToolGroup,
+            previousTurnRole: previous.entries[entryIndex].assistantTurn
         ) {
             ChatPhoneToolGrouping.annotate(
                 &entries,

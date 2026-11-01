@@ -125,7 +125,7 @@ struct NativeChatTimelineView: View {
                         let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
                         // Collapsed phone-step members occupy no space; the group head is the row.
                         let topSpacing: CGFloat = entry.id == projection.entries.first?.id ||
-                            entry.phoneToolGroup?.isCollapsedMember == true ? 0 : (
+                            entry.isCollapsedGroupMember ? 0 : (
                             entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
                         )
                         if isHistoryBoundary {
@@ -731,7 +731,7 @@ struct NativeChatTimelineView: View {
                 )
             }
         case .message:
-            if entry.phoneToolGroup?.isCollapsedMember == true, let messageId = entry.messageId {
+            if entry.isCollapsedGroupMember, let messageId = entry.messageId {
                 // Collapsed phone-step member: its head row renders the group. Keep the
                 // entry identity and tail-visibility bookkeeping, build no bubble.
                 Color.clear
@@ -873,7 +873,8 @@ struct NativeChatTimelineView: View {
             isGenerationActive: isGenerationActive,
             renderIdentity: ChatListSnapshotBuilder.renderIdentityForRow(row, renderState: renderState),
             liveTailModel: liveTailModel,
-            phoneToolGroup: entry.phoneToolGroup?.headSummary
+            phoneToolGroup: entry.phoneToolGroup?.headSummary,
+            assistantTurn: entry.assistantTurn
         )
     }
 

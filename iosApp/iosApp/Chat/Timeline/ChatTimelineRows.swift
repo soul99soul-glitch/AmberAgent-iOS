@@ -80,6 +80,7 @@ struct ChatListMessageRenderModel {
     let liveTailModel: ChatLiveTailModel?
     /// Set only on a phone-step group's head row.
     var phoneToolGroup: ChatPhoneToolGroupSummary? = nil
+    var assistantTurn: ChatAssistantTurnRole? = nil
 }
 
 struct NativeTimelineMessageBubble: View, @MainActor Equatable {
@@ -119,6 +120,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.model.renderState == rhs.model.renderState,
               lhs.model.renderIdentity == rhs.model.renderIdentity,
               lhs.model.phoneToolGroup?.signature == rhs.model.phoneToolGroup?.signature,
+              lhs.model.assistantTurn == rhs.model.assistantTurn,
               lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID
         else { return false }
 
@@ -203,7 +205,8 @@ private struct ChatMessageHostedBubble: View {
             frozenMarkdownSnapshot: renderState.frozenMarkdownSnapshot,
             reasoningLevelLabel: reasoningLevelLabel,
             imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
-            phoneToolGroup: model.phoneToolGroup
+            phoneToolGroup: model.phoneToolGroup,
+            assistantTurn: model.assistantTurn
         )
     }
 }

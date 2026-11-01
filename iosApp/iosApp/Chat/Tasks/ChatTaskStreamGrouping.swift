@@ -99,6 +99,8 @@ struct ChatTaskRunSegment: Identifiable {
     let reasonings: [ChatTaskReasoningEntry]
     let mediaBearingTools: [UIMessagePart.Tool]
     let hidesCompletedStandaloneReasoning: Bool
+    /// Scroll anchors for tools drawn by this row; empty means derive them from `messageID`.
+    var toolAnchorIDs: [String] = []
 
     var hasTools: Bool { !tools.isEmpty }
 
@@ -309,13 +311,7 @@ enum ChatTaskStreamGrouping {
             subAgentPresentation: subAgentStep?.subAgentPresentation
         )
 
-        let mediaTools = tools.filter { tool in
-            if tool.toolName == "generate_image" { return true }
-            if tool.output.contains(where: { $0 is UIMessagePart.Image || $0 is UIMessagePart.Video }) {
-                return true
-            }
-            return !ChatMediaItem.toolImages(tool.output).isEmpty
-        }
+        let mediaTools = tools.filter(isMediaBearing)
 
         return ChatTaskRunSegment(
             id: "\(messageID):task:\(runStart)",
@@ -332,6 +328,96 @@ enum ChatTaskStreamGrouping {
             mediaBearingTools: mediaTools,
             hidesCompletedStandaloneReasoning: false
         )
+    }
+
+    /// Tools that draw images/video in the conversation besides their task row.
+    static func isMediaBearing(_ tool: UIMessagePart.Tool) -> Bool {
+        if tool.toolName == "generate_image" { return true }
+        if tool.output.contains(where: { $0 is UIMessagePart.Image || $0 is UIMessagePart.Video }) {
+            return true
+        }
+        return !ChatMediaItem.toolImages(tool.output).isEmpty
+    }
+
+    /// The single row of a whole assistant turn. Its text follows real state only:
+    /// the current step while live, then how the turn actually settled.
+    @MainActor
+    static func turnSegment(for progress: ChatAssistantTurnProgress) -> ChatTaskRunSegment {
+        let tools = progress.tools
+        let steps = tools.map { ChatToolStepModel(tool: $0) }
+        var reasonings: [ChatTaskReasoningEntry] = []
+        for message in progress.messages {
+            let messageID = ChatMessageProjector.messageId(for: message)
+            for (index, part) in message.parts.enumerated() {
+                guard let reasoning = part as? UIMessagePart.Reasoning,
+                      MessageBubbleView.shouldRenderReasoningCard(reasoning) else { continue }
+                reasonings.append(ChatTaskReasoningEntry(
+                    id: "\(messageID):reasoning:\(index)",
+                    text: reasoning.reasoning,
+                    durationSeconds: reasoningDuration(reasoning),
+                    isThinking: false
+                ))
+            }
+        }
+
+        let currentStep = steps.last(where: { $0.state == .active }) ?? steps.last
+        let currentLine = progress.isComposingReply
+            ? IOSAppLocalization.string("正在整理回复…", defaultValue: "正在整理回复…")
+            : currentStep.flatMap { progressLine(for: $0) }
+                ?? IOSAppLocalization.string("正在处理…", defaultValue: "正在处理…")
+
+        var rollup = computeRollupState(tools: tools, steps: steps, reasonings: [], isGeneratingTail: false)
+        if progress.isLive {
+            // A failed attempt mid-run may be retried; only approvals interrupt the live line.
+            if case .approvalPending = rollup {} else { rollup = .working(currentStepTitle: currentLine) }
+        } else if case .working = rollup {
+            // The run ended with a step that never returned.
+            rollup = .cancelled
+        }
+
+        let headline: String
+        var subtitle: String?
+        switch rollup {
+        case .working(let line):
+            headline = line
+        case .approvalPending:
+            headline = IOSAppLocalization.string("等你确认后继续", defaultValue: "等你确认后继续")
+        case .needsAttention(_, _, let failedToolTitle, let reason):
+            headline = IOSAppLocalization.formatted("%@未成功", defaultValue: "%@未成功", arguments: [failedToolTitle])
+            subtitle = reason
+        case .completed(let count):
+            // Tools finishing is not the task succeeding, so the line never claims success.
+            headline = IOSAppLocalization.formatted("已执行 %ld 步", defaultValue: "已执行 %ld 步", arguments: [count])
+        case .cancelled:
+            headline = IOSAppLocalization.string("已停止", defaultValue: "已停止")
+        }
+
+        return ChatTaskRunSegment(
+            id: "turn:\(progress.id)",
+            messageID: progress.headMessageID,
+            taskId: progress.id,
+            agentDisplayName: "Amber",
+            subAgentIdentity: nil,
+            headline: headline,
+            subtitle: subtitle,
+            rollupState: rollup,
+            tools: tools,
+            steps: steps,
+            reasonings: reasonings,
+            mediaBearingTools: [],
+            hidesCompletedStandaloneReasoning: false,
+            toolAnchorIDs: progress.anchorIDs
+        )
+    }
+
+    /// Present-tense user-facing line for a step; never a raw internal tool name.
+    static func progressLine(for step: ChatToolStepModel) -> String? {
+        let title = step.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !title.contains("_"), !title.hasPrefix("调用 ") else { return nil }
+        let action = title.hasPrefix("已") ? String(title.dropFirst()) : title
+        if action.hasPrefix("正在") { return action.hasSuffix("…") ? action : action + "…" }
+        let joiner = action.first?.isASCII == true ? " " : ""
+        return "正在\(joiner)\(action)…"
     }
 
     static func computeRollupState(

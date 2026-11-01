@@ -63,6 +63,9 @@ struct MessageBubbleView: View {
     /// the group header renders first; the message's own parts render only when
     /// the group is expanded.
     var phoneToolGroup: ChatPhoneToolGroupSummary? = nil
+    /// Set when this message belongs to a turn drawn as one progress line: only the
+    /// head draws it, on its first task run; every other run keeps just its media.
+    var assistantTurn: ChatAssistantTurnRole? = nil
 
     @Environment(IOSWorkspaceStore.self) private var workspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -395,6 +398,10 @@ struct MessageBubbleView: View {
             messageID: messageID,
             isGeneratingTail: isGenerating && isLastMessage
         )
+        let turnProgressRunID = assistantTurn?.progress == nil ? nil : segments.lazy.compactMap { segment -> String? in
+            if case .taskGroup(let run) = segment, run.hasTools { return run.id }
+            return nil
+        }.first
         ForEach(segments) { segment in
             switch segment {
             case .text(_, let partIndex, let textPart):
@@ -427,7 +434,19 @@ struct MessageBubbleView: View {
                     .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
                 }
             case .taskGroup(let taskSegment):
-                if taskSegment.hasTools {
+                if assistantTurn != nil {
+                    if taskSegment.id == turnProgressRunID, let progress = assistantTurn?.progress {
+                        ChatTaskInlineCardView(
+                            segment: ChatTaskStreamGrouping.turnSegment(for: progress),
+                            onTapToolDetail: { tool in toolDetailTarget = ToolDetailTarget(tool: tool) },
+                            onOpenSubagentConversation: onOpenSubagentConversation
+                        )
+                        .chatLiveEntrance(key: "task-group:\(progress.id)", isLive: isLiveTail)
+                    }
+                    ForEach(taskSegment.mediaBearingTools, id: \.toolCallId) { tool in
+                        toolMediaView(for: tool)
+                    }
+                } else if taskSegment.hasTools {
                     ChatTaskInlineCardView(
                         segment: taskSegment,
                         onTapToolDetail: { tool in toolDetailTarget = ToolDetailTarget(tool: tool) },

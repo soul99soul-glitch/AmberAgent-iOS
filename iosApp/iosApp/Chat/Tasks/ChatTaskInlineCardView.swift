@@ -27,32 +27,27 @@ struct ChatTaskInlineCardView: View {
                     isShowingGroupSheet = true
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 5) {
-                    // Argon single-line task header: ╭─ Headline · [● Status] >
+                VStack(alignment: .leading, spacing: 3) {
+                    // One quiet line: a status dot and what is happening now, replaced in place.
                     HStack(alignment: .center, spacing: 8) {
-                        DuetBranchConnectorShape()
-                            .stroke(
-                                rollup.isFailureOrNeedsUser ? rollup.tintColor.opacity(0.65) : AmberTheme.accent.opacity(0.38),
-                                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
-                            )
-                            .frame(width: 11, height: 14)
+                        ChatTaskProgressDot(tint: dotColor, isLive: rollup.isLive && !reduceMotion)
 
                         Text(segment.headline)
-                            .font(.system(size: 13.2, weight: .semibold))
-                            .foregroundStyle(AmberTheme.foreground)
+                            .font(.system(size: 14))
+                            .foregroundStyle(lineColor)
                             .lineLimit(1)
                             .truncationMode(.tail)
+                            .contentTransition(.opacity)
+                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: segment.headline)
 
-                        Spacer(minLength: 6)
-
-                        statusPill
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(AmberTheme.muted2)
+                        if !rollup.isLive {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(AmberTheme.muted2)
+                        }
                     }
 
-                    // Second line is reserved exclusively for unrecovered failure or pending user approval
+                    // A second line only when the user has to know why.
                     if rollup.isFailureOrNeedsUser,
                        let subtitle = segment.subtitle,
                        !subtitle.isEmpty {
@@ -61,35 +56,24 @@ struct ChatTaskInlineCardView: View {
                             .foregroundStyle(rollup.tintColor)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
-                            .padding(.leading, 20)
+                            .padding(.leading, 14)
                     }
                 }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 10.5)
-                .background(cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(cardStroke, lineWidth: rollup.isFailureOrNeedsUser ? 1.0 : 0.8)
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(segment.agentDisplayName) 任务：\(segment.headline)，\(rollup.statusBadgeText)")
             .accessibilityValue(segment.subtitle ?? "")
             .accessibilityHint(IOSAppLocalization.string("轻点查看任务详情与诊断步骤", defaultValue: "轻点查看任务详情与诊断步骤"))
-            .accessibilityIdentifier("chat.duetTaskCard.\(segment.id)")
+            .accessibilityIdentifier("chat.taskProgressLine")
             .background {
                 // Preserve ScrollViewReader anchor targets for all tools inside this grouped task card
-                ForEach(segment.tools, id: \.toolCallId) { tool in
+                ForEach(toolAnchorIDs, id: \.self) { anchorID in
                     Color.clear
                         .frame(width: 0, height: 0)
-                        .id(
-                            ChatToolCallAnchorTarget.id(
-                                messageID: segment.messageID,
-                                toolCallID: tool.toolCallId
-                            )
-                        )
+                        .id(anchorID)
                 }
             }
         }
@@ -109,62 +93,39 @@ struct ChatTaskInlineCardView: View {
         }
     }
 
-    @ViewBuilder
-    private var statusPill: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(rollup.tintColor)
-                .frame(width: 5, height: 5)
-
-            Text(segment.inlineStatusBadgeText)
-                .font(.system(size: 11.2, weight: .medium))
-                .foregroundStyle(rollup.tintColor)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 8.5)
-        .padding(.vertical, 3.5)
-        .background(rollup.tintColor.opacity(0.09), in: Capsule(style: .continuous))
-    }
-
-    private var cardFill: Color {
-        switch rollup {
-        case .needsAttention:
-            return AmberTheme.accentRed.opacity(0.045)
-        case .approvalPending:
-            return AmberTheme.accentAmber.opacity(0.08)
-        case .working, .completed, .cancelled:
-            return AmberTheme.surfaceElevated
+    private var toolAnchorIDs: [String] {
+        guard segment.toolAnchorIDs.isEmpty else { return Array(Set(segment.toolAnchorIDs)) }
+        return segment.tools.map {
+            ChatToolCallAnchorTarget.id(messageID: segment.messageID, toolCallID: $0.toolCallId)
         }
     }
 
-    private var cardStroke: Color {
-        switch rollup {
-        case .needsAttention:
-            return AmberTheme.accentRed.opacity(0.28)
-        case .approvalPending:
-            return AmberTheme.accentAmber.opacity(0.36)
-        case .working, .completed, .cancelled:
-            return AmberTheme.border
-        }
+    /// Tools finishing is not the task succeeding, so a settled line stays neutral.
+    private var dotColor: Color {
+        if case .completed = rollup { return AmberTheme.muted2 }
+        return rollup.tintColor
+    }
+
+    private var lineColor: Color {
+        rollup.isLive ? AmberTheme.foreground2 : (rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted)
     }
 }
 
-/// Draws the Duet-style `╭─` elbow connector on the leading side of an inline task row.
-private struct DuetBranchConnectorShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let startX = rect.minX + 2
-        let bottomY = rect.maxY
-        let midY = rect.midY - 1
-        let radius: CGFloat = 5
-        path.move(to: CGPoint(x: startX, y: bottomY))
-        path.addLine(to: CGPoint(x: startX, y: midY + radius))
-        path.addQuadCurve(
-            to: CGPoint(x: startX + radius, y: midY),
-            control: CGPoint(x: startX, y: midY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX, y: midY))
-        return path
+/// Status dot; breathes only while the turn is really running.
+struct ChatTaskProgressDot: View {
+    let tint: Color
+    let isLive: Bool
+
+    var body: some View {
+        Circle()
+            .fill(tint)
+            .frame(width: 6, height: 6)
+            .phaseAnimator(isLive ? [1.0, 0.3] : [1.0]) { dot, opacity in
+                dot.opacity(opacity)
+            } animation: { _ in
+                .easeInOut(duration: 0.7)
+            }
+            .accessibilityHidden(true)
     }
 }
 
@@ -195,11 +156,12 @@ struct ChatTaskGroupDetailSheet: View {
                                 .foregroundStyle(AmberTheme.muted)
                                 .padding(.horizontal, 4)
 
-                            ForEach(Array(zip(segment.tools, segment.steps)), id: \.1.id) { tool, step in
+                            // Offset identity: provider toolCallIds repeat across a turn's messages.
+                            ForEach(Array(zip(segment.tools, segment.steps).enumerated()), id: \.offset) { _, row in
                                 Button {
-                                    onSelectTool(tool)
+                                    onSelectTool(row.0)
                                 } label: {
-                                    stepRow(step: step)
+                                    stepRow(step: row.1)
                                 }
                                 .buttonStyle(.plain)
                             }

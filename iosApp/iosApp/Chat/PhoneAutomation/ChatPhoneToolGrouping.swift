@@ -126,15 +126,25 @@ enum ChatPhoneToolGrouping {
 
     /// Whether a tail update can change any group: the tail joins/extends a run, or
     /// it previously belonged to one. Plain text streaming skips the regrouping pass.
-    static func tailMayAffectGroups(tail: UIMessage, previousRole: ChatPhoneToolGroupRole?) -> Bool {
-        previousRole != nil || membership(of: tail) != .breaking
+    static func tailMayAffectGroups(
+        tail: UIMessage,
+        previousRole: ChatPhoneToolGroupRole?,
+        previousTurnRole: ChatAssistantTurnRole? = nil
+    ) -> Bool {
+        previousRole != nil || membership(of: tail) != .breaking ||
+            ChatAssistantTurnToolGrouping.tailMayAffectTurns(tail: tail, previousRole: previousTurnRole)
     }
 
-    static func digest(base: ChatRowDigest?, role: ChatPhoneToolGroupRole?) -> ChatRowDigest? {
-        guard let base, let role else { return base }
+    static func digest(
+        base: ChatRowDigest?,
+        role: ChatPhoneToolGroupRole?,
+        turnRole: ChatAssistantTurnRole? = nil
+    ) -> ChatRowDigest? {
+        guard let base, role != nil || turnRole != nil else { return base }
         var hasher = Hasher()
         hasher.combine(base.layout)
-        hasher.combine(role.signature)
+        hasher.combine(role?.signature)
+        hasher.combine(turnRole?.signature)
         return ChatRowDigest(layout: String(hasher.finalize()), presentation: base.presentation)
     }
 
@@ -236,13 +246,23 @@ enum ChatPhoneToolGrouping {
             }
         }
 
+        // A turn with any non-phone tool draws one line for all of its tools, phone steps included.
+        let turnRoles = ChatAssistantTurnToolGrouping.roles(
+            entries: entries,
+            messages: messages,
+            isGenerationActive: isGenerationActive
+        )
         for index in entries.indices where entries[index].kind == .message {
-            let role = roles[index]
-            guard entries[index].phoneToolGroup != role || entries[index].baseRenderDigest == nil else { continue }
+            let turnRole = turnRoles[index]
+            let role = turnRole == nil ? roles[index] : nil
+            guard entries[index].phoneToolGroup != role ||
+                entries[index].assistantTurn != turnRole ||
+                entries[index].baseRenderDigest == nil else { continue }
             let base = entries[index].baseRenderDigest ?? entries[index].renderDigest
             entries[index].baseRenderDigest = base
             entries[index].phoneToolGroup = role
-            entries[index].renderDigest = digest(base: base, role: role)
+            entries[index].assistantTurn = turnRole
+            entries[index].renderDigest = digest(base: base, role: role, turnRole: turnRole)
         }
     }
 

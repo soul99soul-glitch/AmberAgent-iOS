@@ -70,8 +70,7 @@ final class ChatPhoneToolGroupingTests: XCTestCase {
             assistant([phone("call_2"), UIMessagePart.Text(text: "  \n", metadata: nil)]),
             assistant([UIMessagePart.Text(text: "已打开设置。", metadata: nil)]), // text breaks
             assistant([phone("call_0")]),                               // provider ids repeat
-            assistant([UIMessagePart.Tool(toolCallId: "web", toolName: "search_web", input: "{}", output: [],
-                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)]), // other tool breaks
+            UIMessage.companion.user(prompt: "再来一次"),               // a new turn breaks
             assistant([phone("call_0")]),
             UIMessage.companion.user(prompt: "继续"),                   // user breaks
             assistant([phone("d1"), UIMessagePart.Text(text: "顺便说明", metadata: nil)]) // phone + text: own row
