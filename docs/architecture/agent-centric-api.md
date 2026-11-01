@@ -21,7 +21,7 @@
 }
 ```
 
-`id` 是稳定身份，`revision` 是服务端乐观锁版本；显示名称不能作为主键。`tags` 仅预留人工数据，不做自动打标、模板演化或聚类。列表仅返回公开投影，省略 instructions、toolScope、模型配置及所有 session 身份。名称和标签经过凭据脱敏及工具名清洗。
+`id` 是稳定身份，`revision` 是服务端乐观锁版本；显示名称不能作为主键。这里的 `tags` 是中心的人工话题路由标签；对话自动 Supertag、模板与合集使用下文独立投影。列表仅返回公开投影，省略 instructions、toolScope、模型配置及所有 session 身份。名称和标签经过凭据脱敏及工具名清洗。
 
 ## GET /v2/agents/{id}/activity
 
@@ -124,4 +124,105 @@ Router 的 `propose_agent` 只能保存候选，不能创建生效 agent。候�
 | 8. 默认关闭能力不能旁路 | effectiveTools 与原有能力 gate 叠加；既有 JS/Recipe E2E |
 | 9. 声明和实际能力一致 | 注册工具交集 + SUBAGENT 声明 + executeWorkerTool 内层校验，模型偏好必须已配置；伪造调用定点回归 |
 
-验证命令：`JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew :cloud-daemon:jvmTest :cloud-daemon:fatJar`。测试使用临时目录、假凭据及确定性模型；不证明真实 provider、生产云服务器或四端 App 行为验收。
+验证命令：`HOME=/Users/arquiel JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew :cloud-daemon:jvmTest :cloud-daemon:fatJar`。测试使用临时目录、假凭据及确定性模型；不证明真实 provider、生产云服务器或四端 App 行为验收。
+
+## Supertag 与中心后端扩展
+
+中心仍以非 `main` 的 AgentProfile 为唯一身份，`hubId == agentId`；复用同一个 revision、instructions、toolScope 和 AgentMemoryPolicy。新增的 `hubTemplate` 默认 `GENERAL`，也可为 `CODING | NOVEL | RESEARCH`，在中心 API 中投影为 `template`。这里只提供类型，不读取工作区、不迁移小说文件，也不改变四端入口。
+
+本节所有接口继续要求 C3 配对 Bearer token。管理动作视为已配对主人的明确操作，Worker/模型没有对应写工具。缺对象返回 404，字段/类型无效返回 400，revision 或状态冲突返回 409。时间均为 Unix 毫秒。
+
+### 中心及专注状态
+
+| 方法与路径 | 请求/响应 |
+| --- | --- |
+| `GET /v2/hubs` | `{hubs:[{id,name,memoryPolicy,template,tags,revision}]}`；不含指令、模型和权限配置 |
+| `GET /v2/hubs/{id}` | 中心管理详情 `{id,name,instructions,memoryPolicy,template,tags,routingKeywords,revision}` |
+| `POST /v2/hubs` | `{expectedRevision,hub:{id,name,instructions,memoryPolicy,template,tags,routingKeywords}}`；创建 revision 0，更新须传当前 revision；返回新详情 |
+| `GET /v2/hub-focus` | `{hubId:null}` 或 `{hubId:"coding"}` |
+| `POST /v2/hub-focus` | `{hubId:"coding"}` 进入中心，`{hubId:null}` 返回自动路由；返回同结构 |
+
+中心管理接口保留已有 agent 的工具与模型配置；创建中心的默认 toolScope 为空，不能由一个中心模板获得额外执行权限。修改指令和隔离策略即更新同一 AgentProfile。`/v2/agents` 管理入口与本节互通，旧 JSON 没有 hubTemplate 时按 GENERAL 读取。
+
+专注状态持久保存在 SQLite，作用于跨通道共享的主时间线。路由优先级为：显式 @提及（多目标仍由主 Router 澄清）→ 当前专注中心 → 唯一 routingKeywords/中心 tags 子串命中 → 现有路由模型选择。自动模式只把候选名称与关键词交给路由模型，不提供其他中心记忆。选中中心后交给带 agentId 的现有受管 Worker，挂载该中心指令和记忆；外部回复仍从主 Router 发出。
+
+`SHARED_WITH_GLOBAL` 的召回结果先排本中心，再补 CORE/USER/pinned 全局偏好；`HUB_ISOLATED` 仅读取本中心记忆并使用固定安全身份说明。没有另建记忆库或隔离枚举。指令仅经主人管理接口修改，自动打标和模板整理不能写指令。
+
+### 对话标签
+
+| 方法与路径 | 请求/响应 |
+| --- | --- |
+| `GET /v2/tags?hubId=<id>&conversationId=<uuid>` | `{tags:[ConversationTag]}`；两个筛选都可省略；无 hubId 时只读 global 标签 |
+| `POST /v2/conversations/{id}/tags` | `{hubId:null,tag:{name,templateId:null,attributes:{...}}}`；人工添加/修正，返回锁定的 ConversationTag |
+| `DELETE /v2/conversations/{id}/tags` | JSON body `{hubId:null,name:"dev/amber"}`，返回 `{removed:true}`；用 body 支持包含 `/` 的标签名 |
+
+示例：
+
+```json
+{
+  "conversationId":"conversation-uuid",
+  "scopeId":"coding",
+  "name":"dev/amber",
+  "templateId":"bug",
+  "attributes":{
+    "repo":{"type":"TEXT","value":"amber"},
+    "status":{"type":"STATUS","value":"排查中"},
+    "link":{"type":"LINK","value":"https://example.org/issues/42"}
+  },
+  "userModified":false,
+  "updatedAtMs":1793460000000
+}
+```
+
+名称执行 NFKC、去首个 `#`、转小写、空白转 `-`，限 1..80 字符、最多两级，字符为 Unicode 字母/数字和 `._-`。每次自动提取最多 3 个标签，每个标签最多 12 个属性。属性类型为 `TEXT | DATE | STATUS | PERSON | LINK | NUMBER`：日期必须为 ISO 日期，链接仅 http(s) 且无 userInfo，数字必须是有限 JSON 数值。属性键和字符串值先经 CredentialRedactor；敏感键、已脱敏值、无效类型不会进入属性存储。存在模板时只保留模板中类型匹配的字段。
+
+主人修正以 `(conversationId,scopeId,name)` 锁定，后续模型不得覆盖。删除标签同时删除该对话的旧抽取证据并写负反馈屏蔽；模型不能加回同名标签。主人主动再次 POST 可解除这条删除屏蔽并重新锁定。人工属性修正也替换旧抽取证据，避免旧值继续参与模板统计。
+
+完成普通 Router 对话、同步兼容入口的纯文本回复、或受管 Worker 成功结束时，后台队列通过现有 CloudModelClient 提取标签。只送最近一轮 user/assistant 的 Text，不送 Tool、Reasoning 或原始输出；模型没有工具。Worker 标签写入所属 agent 作用域，Worker 汇总不再提取到 global。DISABLED/POLLUTED 会话不调用标签模型；写入前再次检查当前模式。已处理 assistant turn ID 持久去重，空提取也去重。
+
+云端当前没有标题/图标辅助调用，因此本期在完成后单独进行后台提取，会增加辅助模型调用；未实现调研稿的标题生成捎带方案。标签队列在内存中，进程停止前尚未处理的轮次不自动补跑。解析/模型失败只写不含原始响应的诊断事件，不影响已完成回复，也不自动重试。`Main.kt` 现有默认 echo 模型未在本期替换，真实运行需宿主注入能按协议输出 JSON 的 CloudModelClient；本次验证使用假模型。
+
+### 模板与演化
+
+| 方法与路径 | 请求/响应 |
+| --- | --- |
+| `GET /v2/tag-templates?hubId=<id>&includeInactive=true` | `{templates:[TagTemplate]}`；默认只返回活跃模板，中心读取本作用域与全局种子/模板 |
+| `POST /v2/tag-templates/{id}` | `{expectedRevision,name?,archived?}`；只改名/归档状态，无字段编辑器；返回新模板 |
+| `DELETE /v2/tag-templates/{id}` | `{expectedRevision}`；持久删除标记，保留负反馈及历史，返回新模板 |
+| `POST /v2/tag-templates/{id}/merge` | `{targetId,sourceRevision,targetRevision}`；主人合并同作用域模板；返回目标模板 |
+
+TagTemplate 字段为 `id,scopeId,name,fields:[{name,type}],aliases,aiSuggested,userModified,archived,deleted,mergedInto,revision,createdAtMs,lastUsedAtMs`。六个初始种子为 task/bug/decision/trip/reading/watch，使用与演化模板完全相同的存储和生命周期。`aiSuggested:true` 是客户端显示「AI 建议」的依据，不是待批准状态；生成后立即生效。
+
+现有 proactive 巡检周期检查持久调度时间：
+
+1. 每天归档 60 天未使用的活跃模板，再进行确定性演化。同一自由标签在同一作用域近 30 天至少有 5 次观察；自动提取按 completed turn 去重，人工修正替换该对话旧证据，重复回调不计数。字段名与类型在至少 60% 观察中一致才算稳定；至少 60% 观察同时具有两个这样的稳定字段时，直接建立带类型模板。现存自动标签会按字段类型重新分类，人工标签不改写。活跃模板总上限为 30（含种子和所有中心）。
+2. 每周调用现有模型抽象识别同义模板，各作用域分别请求。模型只能合并名称语义相同且字段集合完全一致的未被用户修改模板；实际落库再次检查 revision 和 userModified。主人合并可取兼容字段的并集，同名字段类型冲突返回 400。
+3. 主人改名保留旧名为别名；合并保留源别名与 tombstone；删除保留 tombstone。AI 不得把主人改名、合并或删除的模板再生成回来。主人编辑刷新 lastUsedAtMs；60 天归档只改变活跃状态，不改名或改字段，不自动复活。人工标签和模板编辑优先于并发模型快照。
+
+本期合集按同作用域的规范标签精确聚合，不引入 embedding、图数据库或混合语义聚类。
+
+### 合集、升级提示与事件
+
+| 方法与路径 | 请求/响应 |
+| --- | --- |
+| `GET /v2/collections?hubId=<id>` | `{collections:[{id,scopeId,tag,conversationIds,promotionId,promotedHubId}]}`；最近 14 天按标签聚合的视图 |
+| `GET /v2/hub-promotions?hubId=<id>` | `{promotions:[{id,collectionId,scopeId,tag,conversationIds,createdAtMs,hubId:null}]}`；仍满足阈值且未确认的提示 |
+| `POST /v2/hub-promotions/{id}/confirm` | 无 body；主人明确确认，返回带 hubId 的升级结果；重复调用返回同一结果 |
+| `GET /v2/supertag-events?after=0` | `{events:[{sequence,kind,subjectId,createdAtMs}],nextCursor}`；按序最多 100 条；下次以 nextCursor 作为 after，无长连接 |
+
+某合集近 14 天有至少 4 个不同 conversationId 时，落库一次 `hub.promotion_suggested`。主时间线始终只算一个对话，不能靠重复聊天凑满四个。不会因阈值满足自动建立中心。确认时重新检查当前窗口，不足四个返回 409；用当前成员建立确定性中心 ID，继承来源中心的隔离策略（global 来源默认 SHARED_WITH_GLOBAL）。
+
+确认后转移窗口内成员的标签、负反馈、关联记忆和对话归属，防止旧 agent 再复用已转移的 Worker session。跨存储步骤以确定性 ID 实现可重入，重复确认不建第二个中心。不会转移无关记忆，也不会给新中心增加工具授权。主时间线的对话身份和全局历史记忆始终保留；即使它出现在合集，也不把整个主时间线绑定到新中心。来源中心的专有模板不跨作用域复制，转移标签保留带类型属性并退为自由标签，后续按新作用域规则演化。
+
+事件还包括 `conversation.tags_updated`、`tag_template.created/updated/merged/archived` 和 `hub.promoted`。事件只给对象 ID 与时间，客户端经相应受认证接口读取详情；这是本期 SQLite 轮询事件，不宣称实现 P4 HLC 同步。
+
+本期不实现四端 UI、小说/工作区文件迁移、中心决策账本、embedding 聚类或真实云部署。定点验证：
+
+```bash
+HOME=/Users/arquiel JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew :cloud-daemon:jvmTest \
+  --tests 'app.amber.cloud.supertags.*' \
+  --tests 'app.amber.cloud.AgentRegistryAndMemoryTest' \
+  --tests 'app.amber.cloud.AgentCentricApiTest' \
+  --tests 'app.amber.cloud.CloudRouterIngressTest'
+HOME=/Users/arquiel JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew :cloud-daemon:fatJar
+```

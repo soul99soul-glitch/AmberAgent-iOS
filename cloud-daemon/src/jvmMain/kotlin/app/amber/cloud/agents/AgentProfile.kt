@@ -8,6 +8,9 @@ const val GLOBAL_MEMORY_AGENT_ID = "global"
 @Serializable
 enum class AgentMemoryPolicy { SHARED_WITH_GLOBAL, HUB_ISOLATED }
 
+@Serializable
+enum class HubTemplate { GENERAL, CODING, NOVEL, RESEARCH }
+
 /** The agent is also the topic hub and memory boundary; there is no parallel Hub identity. */
 @Serializable
 data class AgentProfile(
@@ -20,6 +23,7 @@ data class AgentProfile(
     val tags: List<String> = emptyList(),
     val routingKeywords: List<String> = emptyList(),
     val revision: Int = 0,
+    val hubTemplate: HubTemplate = HubTemplate.GENERAL,
 )
 
 @Serializable

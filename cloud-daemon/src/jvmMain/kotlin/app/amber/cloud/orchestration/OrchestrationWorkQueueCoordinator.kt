@@ -202,7 +202,7 @@ internal class OrchestrationWorkQueueCoordinator(
                 continue
             }
 
-            val reusedSessionId = WorkerSessionLifecycle.reusableSession(kernel.store, spec)
+            val reusedSessionId = WorkerSessionLifecycle.reusableSession(kernel.store, spec, kernel.conversationHub)
             val workerSessionUuid = reusedSessionId?.let(Uuid::parse) ?: Uuid.random()
             val workerSessionId = workerSessionUuid.toString()
 

@@ -137,6 +137,9 @@ class CloudDaemonE2ETest {
         val capturedTools = mutableListOf<List<Tool>>()
 
         override suspend fun generateReply(messages: List<UIMessage>, tools: List<Tool>): UIMessage {
+            val system = messages.firstOrNull()?.toText().orEmpty()
+            if (system.startsWith("你是对话标签提取器")) return UIMessage.assistant("""{"tags":[]}""")
+            if (system.startsWith("只找严格同义的标签模板")) return UIMessage.assistant("""{"merges":[]}""")
             capturedRequests.add(messages)
             capturedTools.add(tools)
             return responder(messages, tools)

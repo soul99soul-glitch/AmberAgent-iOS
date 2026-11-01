@@ -38,9 +38,14 @@ import app.amber.cloud.orchestration.RouterBrain
 import app.amber.cloud.orchestration.RouterDecision
 import app.amber.cloud.agents.AgentRegistry
 import app.amber.cloud.agents.AgentRouting
+import app.amber.cloud.agents.AgentMemoryPolicy
 import app.amber.cloud.agents.AgentRouterCoordinator
 import app.amber.cloud.agents.GLOBAL_MEMORY_AGENT_ID
 import app.amber.cloud.agents.MAIN_AGENT_ID
+import app.amber.cloud.supertags.ConversationTagger
+import app.amber.cloud.supertags.HubService
+import app.amber.cloud.supertags.SupertagMaintenance
+import app.amber.cloud.supertags.SupertagStore
 import app.amber.cloud.proactive.InterruptionBudgetConfig
 import app.amber.cloud.proactive.L2NoteworthyScore
 import app.amber.cloud.proactive.NoteworthyJudgeProvider
@@ -54,6 +59,7 @@ import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
 import app.amber.core.agent.runtime.AgentRunStatus
 import app.amber.core.model.Conversation
+import app.amber.core.model.ConversationMemoryMode
 import app.amber.core.model.DEFAULT_ASSISTANT_ID
 import app.amber.core.model.MemoryKind
 import app.amber.core.model.MemoryScope
@@ -179,6 +185,18 @@ class CloudAgentKernel(
         },
         modelPreferences = { modelClients.keys },
     )
+    val supertagStore = SupertagStore(dataDir)
+    val hubs = HubService(agentRegistry, supertagStore, memoryStore)
+    val agentRouting = AgentRouting(agentRegistry, modelClient, supertagStore::focusedHub)
+    val conversationTagger = ConversationTagger(supertagStore, modelClient,
+        reportFailure = { conversationId, kind ->
+            orchestrationStore.appendDiagnosticEvent(sessionId = conversationId, workItemId = null, kind = kind, detail = "后台标签提取未完成", nowMs = System.currentTimeMillis())
+        },
+        memoryEnabled = { id -> conversationStorage.loadConversation(Uuid.parse(id))?.memoryMode == ConversationMemoryMode.ENABLED },
+    )
+    val supertagMaintenance = SupertagMaintenance(supertagStore, modelClient) { kind ->
+        orchestrationStore.appendDiagnosticEvent(sessionId = "supertags", workItemId = null, kind = kind, detail = "模板同义整理未完成", nowMs = System.currentTimeMillis())
+    }
     val orchestrationKernel = DefaultCloudOrchestrationKernel(
         config = OrchestrationConfig(),
         store = orchestrationStore,
@@ -187,6 +205,7 @@ class CloudAgentKernel(
         proactiveEngine = proactiveEngine,
         autoExecuteWorkersInBackground = true,
         agentRegistry = agentRegistry,
+        conversationHub = supertagStore::conversationHub,
     )
     val workerTurnRunner = ModelWorkerTurnRunner(
         kernel = orchestrationKernel,
@@ -216,7 +235,17 @@ class CloudAgentKernel(
     init {
         registerBuiltinTools()
         orchestrationKernel.workerTurnRunner = { item, principal ->
-            workerTurnRunner.run(item, principal)
+            val report = workerTurnRunner.run(item, principal)
+            val disabledSource = item.sourceProvenance.map { it.sessionId }.distinct().any { id ->
+                val uuid = runCatching { Uuid.parse(id) }.getOrNull()
+                val mode = uuid?.let { conversationStorage.loadConversation(it)?.memoryMode }
+                mode != null && mode != ConversationMemoryMode.ENABLED
+            }
+            if (report.outcome == "completed" && !disabledSource) item.workerSessionId?.let { id ->
+                if (item.agentId != MAIN_AGENT_ID) supertagStore.bindConversation(id, item.agentId)
+                conversationStorage.loadConversation(Uuid.parse(id))?.let { conversationTagger.enqueue(it, if (item.agentId == MAIN_AGENT_ID) GLOBAL_MEMORY_AGENT_ID else item.agentId) }
+            }
+            report
         }
         orchestrationKernel.onOwnerNotificationCard = { card, key ->
             for ((kind, connector) in connectors) {
@@ -239,8 +268,19 @@ class CloudAgentKernel(
             brain = RouterBrain { RouterDecision() },
             executionToolNames = toolRegistry.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }.toSet(),
             onReply = { conversationId, text -> routerIngress.recordReply(conversationId, text) },
-            agentCoordinator = AgentRouterCoordinator(orchestrationKernel, agentRegistry, AgentRouting(agentRegistry, modelClient)) { text, conversationId, agentId ->
-                extractExplicitMemoryIfPresent(text, conversationId, if (agentId == MAIN_AGENT_ID) GLOBAL_MEMORY_AGENT_ID else agentId)
+            agentCoordinator = AgentRouterCoordinator(orchestrationKernel, agentRegistry, agentRouting) { text, conversationId, agentId ->
+                if (conversationStorage.loadConversation(Uuid.parse(conversationId))?.memoryMode == ConversationMemoryMode.ENABLED) {
+                    extractExplicitMemoryIfPresent(text, conversationId, if (agentId == MAIN_AGENT_ID) GLOBAL_MEMORY_AGENT_ID else agentId)
+                }
+            },
+            onTurnCompleted = { input ->
+                val conversation = conversationStorage.loadConversation(Uuid.parse(input.events.first().conversationId))
+                val reply = conversation?.messageNodes?.lastOrNull { it.role == MessageRole.ASSISTANT }
+                if (conversation != null && reply != null) {
+                    // A newer inbound message may already be on the timeline while this reply finishes.
+                    val prompt = input.events.filter { it.kind == "user_message" }.joinToString("\n") { it.summaryText }
+                    conversationTagger.enqueue(conversation.copy(messageNodes = listOf(UIMessage.user(prompt).toMessageNode(), reply)))
+                }
             },
         ).also { r ->
             r.brain = ModelRouterBrain(
@@ -344,6 +384,7 @@ class CloudAgentKernel(
      */
     suspend fun runProactiveCycle(nowOverrideMs: Long? = null): List<ProactiveRunResult> {
         val nowMs = nowOverrideMs ?: System.currentTimeMillis()
+        supertagMaintenance.runDue(nowMs)
         if (orchestrationStore.listAutomations().isNotEmpty()) {
             orchestrationKernel.runDueAutomations(nowMs) { envelope, _, sessionId ->
                 val convUuid = runCatching { Uuid.parse(sessionId) }.getOrNull()
@@ -458,10 +499,15 @@ class CloudAgentKernel(
                 messageNodes = emptyList(),
             )
 
+        val profile = if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
+            agentRegistry.get(agentRouting.select(message.text, convId.toString()).agentId)
+        } else null
+        val memoryAgentId = profile?.id?.takeUnless { it == MAIN_AGENT_ID } ?: GLOBAL_MEMORY_AGENT_ID
+
         // Auto-extract explicit memory directive in direct owner chat
         if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
             ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
-            extractExplicitMemoryIfPresent(message.text, convId.toString())
+            if (existing.memoryMode == ConversationMemoryMode.ENABLED) extractExplicitMemoryIfPresent(message.text, convId.toString(), memoryAgentId)
         }
 
         val redactedUserText = CredentialRedactor.redact(message.text)
@@ -483,8 +529,8 @@ class CloudAgentKernel(
             contextWindowTokens = contextWindowTokens,
         )
 
-        val recalledMemories = if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
-            memoryStore.recallForPrompt(message.text)
+        val recalledMemories = if (existing.memoryMode != ConversationMemoryMode.ENABLED) emptyList() else if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
+            memoryStore.recallForPrompt(message.text, agentId = memoryAgentId, memoryPolicy = profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL)
         } else {
             // In group chats, shield CORE personal memories from non-owner prompts
             memoryStore.recallForPrompt(message.text).filter { it.scope != MemoryScope.CORE }
@@ -492,30 +538,31 @@ class CloudAgentKernel(
 
         // Defect #7: Prepare request messages with pinned SYSTEM message and dynamic memory on tail
         val preparedMessages = contextManager.prepareRequestMessages(
-            systemPrompt = memoryStore.loadSoulPrompt(),
+            systemPrompt = memoryStore.loadSoulPrompt(profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL) + "\n" + profile?.instructions.orEmpty(),
             memories = recalledMemories,
             conversationId = convId.toString(),
             historyMessages = currentMessages,
             tokenBudget = contextWindowTokens,
         )
 
-        val executionScope = if (message.senderRole == SenderRole.OWNER) {
+        val executionScope = if (message.senderRole == SenderRole.OWNER && (profile == null || profile.id == MAIN_AGENT_ID)) {
             ExecutionScope.MAIN_AGENT
         } else {
             ExecutionScope.SUBAGENT
         }
-        val availableTools = toolRegistry.declaredTools(executionScope)
+        val availableTools = toolRegistry.declaredTools(executionScope).filter { profile == null || it.name in agentRegistry.effectiveTools(profile) }
         val assistantReply = modelClient.generateReply(preparedMessages, availableTools)
 
         val toolCalls = assistantReply.getTools()
         if (toolCalls.isEmpty()) {
             val safeAssistant = sanitizeAssistantMessage(assistantReply)
-            conversationStorage.saveConversation(
+            val completed = conversationStorage.saveConversation(
                 afterUserSave.copy(
                     messageNodes = afterUserSave.messageNodes + safeAssistant.toMessageNode(),
                     updateAt = Clock.System.now(),
                 )
             )
+            conversationTagger.enqueue(completed, memoryAgentId)
             return OutboundMessage(
                 channel = message.channel,
                 chatId = message.chatId,
@@ -528,6 +575,7 @@ class CloudAgentKernel(
 
         // Handle tool calls in the assistant response
         val toolCall = toolCalls.first()
+        require(availableTools.any { it.name == toolCall.toolName }) { "Agent 未获授该工具" }
         val highRisk = toolRegistry.isHighRisk(toolCall.toolName)
         val parsedArgs = runCatching {
             json.parseToJsonElement(toolCall.input.ifBlank { "{}" }).jsonObject

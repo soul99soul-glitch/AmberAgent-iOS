@@ -116,6 +116,7 @@ fun main(args: Array<String>) {
         Thread {
             runBlocking {
                 kernel.stopProactiveLoop()
+                kernel.conversationTagger.close()
                 telegramChannel?.stop()
                 feishuChannel?.stop()
             }

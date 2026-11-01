@@ -52,6 +52,7 @@ class DefaultCloudOrchestrationKernel(
     var proactiveEngine: ProactiveEngine? = null,
     var watchdogJudge: CloudWatchdogJudge? = null,
     val agentRegistry: AgentRegistry? = null,
+    val conversationHub: (String) -> String? = { null },
     var completionPolicyEvaluator: CompletionPolicyEvaluator = CompletionPolicyEvaluator { policy, runOutput, memoryText ->
         val clause = policy.stopWhenClause.trim().lowercase()
         val combined = "$runOutput\n$memoryText".lowercase()

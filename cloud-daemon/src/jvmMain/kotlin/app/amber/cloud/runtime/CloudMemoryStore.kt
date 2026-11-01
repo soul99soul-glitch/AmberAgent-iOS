@@ -139,6 +139,16 @@ class CloudMemoryStore(
         atomicWrite(scopedMemoriesFile, json.encodeToString(records))
     }
 
+    @Synchronized
+    fun moveConversationMemories(conversationIds: Set<String>, fromAgentId: String, toAgentId: String) {
+        if (conversationIds.isEmpty()) return
+        val current = loadAll()
+        val moved = current.map { entry ->
+            if (entry.agentId == fromAgentId && entry.record.sourceConversationId in conversationIds) entry.copy(agentId = toAgentId) else entry
+        }
+        if (moved != current) persistMemories(moved)
+    }
+
     private fun atomicWrite(target: File, content: String) {
         target.parentFile?.mkdirs()
         val tmp = File(target.parentFile, "${target.name}.tmp")

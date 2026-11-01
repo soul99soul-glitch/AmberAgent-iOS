@@ -109,8 +109,11 @@ class CloudRouterIngressTest {
         val dir = Files.createTempDirectory("amber-router-history").toFile()
         val requests = CopyOnWriteArrayList<List<UIMessage>>()
         val model = CloudModelClient { messages, _ ->
-            requests += messages
-            UIMessage.assistant("已经记下。")
+            if (messages.first().toText().startsWith("你是对话标签提取器")) UIMessage.assistant("""{"tags":[]}""")
+            else {
+                requests += messages
+                UIMessage.assistant("已经记下。")
+            }
         }
         try {
             val first = CloudAgentKernel(dir, model, masterSecretOverride = "history-test-key")

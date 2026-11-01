@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 internal fun Application.configureAgentCentricRoutes(state: CloudGatewayState, api: AgentCentricApi) {
+    configureSupertagRoutes(state, api.kernel)
     val json = Json { encodeDefaults = true; explicitNulls = false }
     suspend fun ApplicationCall.error(status: Int, message: String) = respondText(
         json.encodeToString(buildJsonObject { put("error", message) }), ContentType.Application.Json, HttpStatusCode.fromValue(status),

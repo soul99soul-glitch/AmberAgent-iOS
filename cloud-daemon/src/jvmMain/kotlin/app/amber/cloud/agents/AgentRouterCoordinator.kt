@@ -16,7 +16,7 @@ class AgentRouterCoordinator(
     private val kernel: DefaultCloudOrchestrationKernel,
     private val registry: AgentRegistry,
     private val routing: AgentRouting,
-    private val onOwnerMessage: (String, String, String) -> Unit,
+    private val onOwnerMessage: suspend (String, String, String) -> Unit,
 ) {
     fun splitTurns(events: List<RouterTriggerEvent>): List<List<RouterTriggerEvent>> =
         if (registry.list().size > 1 && events.count { it.kind == "user_message" } > 1) events.map(::listOf) else listOf(events)
@@ -33,7 +33,7 @@ class AgentRouterCoordinator(
             return RouterDecision(reply = "已创建「${saved.name}」。可以用 @${saved.name} 交给它处理。")
         }
         val prompt = humanEvents.joinToString("\n") { it.summaryText }
-        val route = routing.select(prompt)
+        val route = routing.select(prompt, events.first().conversationId)
         kernel.store.appendDiagnosticEvent(
             sessionId = events.first().conversationId, workItemId = null, kind = "agent_routed",
             detail = Json.encodeToString(route), messageId = humanEvents.last().sourceMessageId,

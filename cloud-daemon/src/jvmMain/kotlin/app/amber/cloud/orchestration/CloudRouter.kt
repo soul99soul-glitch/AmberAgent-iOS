@@ -178,6 +178,7 @@ class CloudRouter(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val onReply: suspend (conversationId: String, text: String) -> Unit = { _, _ -> },
     private val agentCoordinator: AgentRouterCoordinator? = null,
+    private val onTurnCompleted: suspend (RouterTurnInput) -> Unit = {},
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = false }
 
@@ -381,6 +382,7 @@ class CloudRouter(
         if (address != null) {
             for (reply in replies) emit(address, reply, events.first().conversationId)
         }
+        if (replies.isNotEmpty() && decision.dispatch.isEmpty() && events.any { it.kind == "user_message" }) onTurnCompleted(input)
     }
 
     private fun batchAddressForConversation(conversationId: String): ImAddress? =

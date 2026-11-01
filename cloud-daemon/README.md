@@ -4,6 +4,10 @@
 - **`amberd`**：常驻守护进程（主时间线与多会话持久化、KMP Agent 运行时编排、信封加密凭据库、通道注入路由、C3 v1/v2 Ktor 网关服务）。
 - **`amber-cli`**：云主机命令行管理工具（生成终端 ANSI 二维码与 `amber://gateway/pair?p=` 配对深链、查看状态、管理设备与审计日志）。
 
+Supertag 与中心后端已接入 AgentProfile、SQLite 和现有 proactive 巡检循环。`/v2/hubs` 管理中心，`/v2/hub-focus` 在主时间线选择专注中心，`/v2/tags`、`/v2/tag-templates`、`/v2/collections`、`/v2/hub-promotions` 提供标签、演化模板和确认升级；完整请求和生命周期见 [Agent-centric API](../docs/architecture/agent-centric-api.md#supertag-与中心后端扩展)。新增数据位于 `$AMBER_DATA_DIR/supertags.db`，记忆继续使用已有按 agent 隔离的 CloudMemoryStore。
+
+打标通过注入的 CloudModelClient 在完成回复后后台调用，日演化与周同义合并跟随 `runProactiveCycle`。本期没有端侧 UI 或真实服务验收；命令行入口现有 echo 模型不是可用的标签 JSON 模型，未声称零额外调用或生产已接入。
+
 ---
 
 ## 1. 通道注入接口（Channel SPI）
