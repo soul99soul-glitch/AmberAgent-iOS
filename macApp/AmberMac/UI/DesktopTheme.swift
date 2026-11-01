@@ -21,6 +21,7 @@ enum DesktopTheme {
     static let paperDeep = dynamic(0xEFECE3, 0x22201C)
     static let hover = dynamic(0xEAE6DB, 0x282520)
     static let card = dynamic(0xFFFFFF, 0x1E1C18)
+    static let canvasElevated = card
     static let field = dynamic(0xFFFFFF, 0x22201C)
     static let ink = dynamic(0x191815, 0xF0EDE6)
     static let inkSecondary = dynamic(0x45433D, 0xC6C2B8)

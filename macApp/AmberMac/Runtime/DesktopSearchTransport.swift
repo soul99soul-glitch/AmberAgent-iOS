@@ -12,15 +12,20 @@ import Foundation
         return output.text
     }
 
-    static func executeTool(
+    nonisolated static func executeTool(
         name: String,
         input: String,
         settings: DesktopSearchSettings,
         transport: DesktopSearchHTTPHandler? = nil
-    ) async throws -> [UIMessagePart] {
+    ) async throws -> sending [UIMessagePart] {
         let output = try await executeOutput(name: name, input: input, settings: settings, transport: transport)
         if let metadata = output.mediaMetadataEntries {
-            return [IosToolOutputJsonBridge().textPartWithMetadata(text: output.text, entries: metadata)]
+            return [
+                IosToolOutputJsonBridge.shared.mergeTextMetadata(
+                    part: UIMessagePart.Text(text: output.text, metadata: nil),
+                    updates: metadata
+                )
+            ]
         }
         return [UIMessagePart.Text(text: output.text, metadata: nil)]
     }
@@ -31,30 +36,13 @@ import Foundation
         settings: DesktopSearchSettings,
         transport: DesktopSearchHTTPHandler? = nil
     ) async throws -> DesktopSearchExecutionOutput {
-        let freeHandler: DesktopFreeSearchHandler? = transport == nil ? { query, maxResults, _ in
-            let results = try await IOSFreeSearchAggregator.search(
-                query: query,
-                maxResults: maxResults,
-                googleFallbackEnabled: false
-            )
-            return results.map { item in
-                DesktopSearchHit(
-                    title: item.title,
-                    url: item.url,
-                    snippet: item.snippet,
-                    images: item.images.map { imgURL in
-                        DesktopSearchImage(
-                            url: imgURL,
-                            title: item.title,
-                            alt: item.title,
-                            sourceURL: item.url,
-                            snippet: item.snippet
-                        )
-                    },
-                    sourceService: "免费聚合搜索"
-                )
+        let freeHandler: DesktopFreeSearchHandler? = if transport == nil {
+            { query, maxResults, t in
+                try await runFreeSearchAggregator(query: query, maxResults: maxResults, transport: t)
             }
-        } : nil
+        } else {
+            nil
+        }
 
         return try await DesktopSearchEngine.execute(
             name: name,
@@ -63,6 +51,37 @@ import Foundation
             transport: transport,
             freeSearch: freeHandler
         )
+    }
+
+    private static func runFreeSearchAggregator(
+        query: String,
+        maxResults: Int,
+        transport: DesktopSearchHTTPHandler?
+    ) async throws -> [DesktopSearchHit] {
+        let results = try await IOSFreeSearchAggregator.search(
+            query: query,
+            maxResults: maxResults,
+            googleFallbackEnabled: false,
+            transport: IOSURLSessionSearchHTTPTransport()
+        )
+        return results.map { item in
+            let images: [DesktopSearchImage] = item.images.map { imgURL in
+                DesktopSearchImage(
+                    url: imgURL,
+                    title: item.title,
+                    alt: item.title,
+                    sourceURL: item.url,
+                    snippet: item.snippet
+                )
+            }
+            return DesktopSearchHit(
+                title: item.title,
+                url: item.url,
+                snippet: item.snippet,
+                images: images,
+                sourceService: "免费聚合搜索"
+            )
+        }
     }
 }
 
