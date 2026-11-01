@@ -73,6 +73,7 @@ final class ChatViewModel {
         let run: ChatConversationRun
         let inputDigest: String
         let conversationId: KotlinUuid?
+        let anchorUserMessageId: String?
     }
 
     @ObservationIgnored var deferredGenerationStart: DeferredGenerationStart?
@@ -508,11 +509,13 @@ final class ChatViewModel {
 #if DEBUG
         if generationActiveOverrideForTesting?(currentConversationId) == true { return true }
 #endif
-        return kernelRunHost.isRunning
+        return currentRun.hasActiveOrQueuedTask
+            || kernelRunHost.isRunning
             || hasActiveBackgroundGenerationForCurrentConversation
     }
 
     var isForegroundGenerationActiveForCurrentConversation: Bool {
+        if currentRun.hasActiveOrQueuedTask { return true }
         guard kernelRunHost.isRunning else { return false }
         let activeConversationId = kernelRunHost.activeConversationId
         switch (currentConversationId, activeConversationId) {
@@ -527,6 +530,9 @@ final class ChatViewModel {
 
     var isGenerationActiveForCurrentConversation: Bool {
         guard let currentConversationId else { return false }
+        if currentRun.hasActiveOrQueuedTask {
+            return true
+        }
         if kernelRunHost.isRunning,
            let activeConversationId = kernelRunHost.activeConversationId,
            String(describing: currentConversationId) == String(describing: activeConversationId) {
@@ -546,6 +552,9 @@ final class ChatViewModel {
 #if DEBUG
         if generationActiveOverrideForTesting?(conversationId) == true { return true }
 #endif
+        if runRegistry.run(for: conversationId)?.hasActiveOrQueuedTask == true {
+            return true
+        }
         if host(for: conversationId)?.isRunning == true {
             return true
         }
@@ -558,7 +567,7 @@ final class ChatViewModel {
     /// the coordinator itself remains its existing source of truth.
     var hasActiveChatGeneration: Bool {
         _ = runActivityRevision
-        return runRegistry.allRuns.contains { $0.host?.isRunning == true }
+        return runRegistry.allRuns.contains { $0.hasActiveOrQueuedTask }
             || IOSChatBackgroundGenerationCoordinator.shared.hasPendingConversationWrites
     }
 
@@ -825,6 +834,13 @@ final class ChatViewModel {
         if let run = runRegistry.run(for: conversationId) {
             run.state.steerQueue = []
             run.state.inputText = ""
+            run.state.selectedFollowupRunId = nil
+            for slot in run.orderedSlots where slot.isActiveOrQueued {
+                _ = cancelGeneration(runId: slot.runId)
+            }
+            for host in run.allActiveHosts {
+                host.cancel()
+            }
         }
         host(for: conversationId)?.cancel()
         // P1-a: 删除会话时清掉其队列 sidecar，避免孤儿条目。

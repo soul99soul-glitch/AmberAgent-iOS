@@ -548,6 +548,9 @@ struct AppShell: View {
                         .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
                 }
             }
+            _ = chatViewModel.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(
+                hasValidKeepAliveLease: !BackgroundGenerationKeepAlive.shared.activeLeaseIds.isEmpty
+            )
             IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
             IOSChatBackgroundGenerationCoordinator.shared.resumeRecoverableJobsIfNeeded()
             finalizeStaleBackgroundJobsIfNeeded()

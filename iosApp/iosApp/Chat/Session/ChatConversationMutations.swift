@@ -48,18 +48,34 @@ extension ChatViewModel {
             }
             return false
         }
-        // 生成中：图/附件整包入队，OCR 在下一轮上传前统一补齐。
-        // 仅硬拦超张数，避免无模型时误杀入队。
+        // 生成中：仅当用户显式选中某个任务（selectedFollowupRunId）时才将输入作为该任务的追问（inputs），
+        // 在其下一轮推理边界消费；否则普通消息默认作为新问题立即开始（或进入并发排队）。
+        // 兼容测试缝（generationActiveOverrideForTesting）与后台任务沿用原 steerQueue。
         if isGenerationActive {
-            if hasImages, pendingImages.count > Self.maxImagesPerMessage {
-                selectedFileContextError = IOSAppLocalization.formatted(
-                    "一次最多发送 %lld 张图片",
-                    defaultValue: "一次最多发送 %lld 张图片",
-                    arguments: [Int64(Self.maxImagesPerMessage)]
-                )
-                return false
+            if let targetRunId = selectedFollowupRunId, isTaskActiveOrQueued(runId: targetRunId) {
+                return enqueueTaskFollowup(runId: targetRunId, text: text) != nil
             }
-            return enqueueSteerMessage(text: text)
+            var shouldUseLegacySteerQueue = false
+#if DEBUG
+            if generationActiveOverrideForTesting?(currentConversationId) == true {
+                shouldUseLegacySteerQueue = true
+            }
+#endif
+            if let currentConversationId,
+               IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: currentConversationId) {
+                shouldUseLegacySteerQueue = true
+            }
+            if shouldUseLegacySteerQueue {
+                if hasImages, pendingImages.count > Self.maxImagesPerMessage {
+                    selectedFileContextError = IOSAppLocalization.formatted(
+                        "一次最多发送 %lld 张图片",
+                        defaultValue: "一次最多发送 %lld 张图片",
+                        arguments: [Int64(Self.maxImagesPerMessage)]
+                    )
+                    return false
+                }
+                return enqueueSteerMessage(text: text)
+            }
         }
         // 空闲发送：按模型视觉能力判断（对齐安卓 ImageAttachmentValidator）：
         // ready→直接发；fallback→先用视觉模型识别成文字再发；blocked→拦下提示，绝不静默丢弃。
@@ -392,18 +408,24 @@ extension ChatViewModel {
         startsGenerationAfterInsertion: Bool = false
     ) {
         guard startsGenerationAfterInsertion, autoGenerateResponses else {
-            let (digest, conversationId, _) = appendUserMessage(text: text, images: images, metadata: metadata)
+            let (digest, conversationId, messageId) = appendUserMessage(text: text, images: images, metadata: metadata)
             guard autoGenerateResponses else { return }
-            generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
+            generateResponse(
+                inputDigest: digest,
+                conversationId: conversationId,
+                phoneControlUserInitiated: true,
+                anchorUserMessageId: messageId
+            )
             return
         }
         let token = UUID()
-        let (digest, conversationId, _) = appendUserMessage(text: text, images: images, metadata: metadata)
+        let (digest, conversationId, messageId) = appendUserMessage(text: text, images: images, metadata: metadata)
         deferredGenerationStart = DeferredGenerationStart(
             token: token,
             run: currentRun,
             inputDigest: digest,
-            conversationId: conversationId
+            conversationId: conversationId,
+            anchorUserMessageId: messageId
         )
         // 停止键与思考占位仍在发送当帧出现，只有启动工作后移。
         isLoading = true
@@ -427,11 +449,16 @@ extension ChatViewModel {
         deferredGenerationStart = nil
         guard currentRun === pending.run else {
             // 动画期间已离开该会话：当前消息与配置不再属于它，不能代为启动。
-            pending.run.state.isLoading = false
+            pending.run.state.isLoading = pending.run.hasActiveOrQueuedTask
             NSLog("[ChatViewModel] deferred generation dropped after conversation switch")
             return
         }
-        generateResponse(inputDigest: pending.inputDigest, conversationId: pending.conversationId, phoneControlUserInitiated: true)
+        generateResponse(
+            inputDigest: pending.inputDigest,
+            conversationId: pending.conversationId,
+            phoneControlUserInitiated: true,
+            anchorUserMessageId: pending.anchorUserMessageId
+        )
     }
 
     /// 需要 run 已存在的入口（再次发送、停止、新建会话、Watch 提问）先立即启动。
@@ -497,17 +524,17 @@ extension ChatViewModel {
     }
 
     func isShowingThemeTryOnApproval(_ approval: AmberThemeTryOnApproval) -> Bool {
-        currentRun.host?.currentRunId == approval.runId
+        currentRun.host(forRunId: approval.runId) != nil
             && pendingMcpApproval?.id == approval.requestId
             && pendingMcpApproval?.toolName == "theme_pack_import"
     }
 
     @discardableResult
     func resolveThemeTryOnApproval(_ approval: AmberThemeTryOnApproval, allow: Bool) -> Bool {
-        guard let run = runRegistry.allRuns.first(where: { $0.host?.currentRunId == approval.runId }),
+        guard let run = runRegistry.allRuns.first(where: { $0.host(forRunId: approval.runId) != nil }),
               run.state.pendingMcpApproval?.id == approval.requestId,
               run.state.pendingMcpApproval?.toolName == "theme_pack_import",
-              let host = run.host else { return false }
+              let host = run.host(forRunId: approval.runId) else { return false }
         return allow
             ? host.approvePendingMcpTool(requestId: approval.requestId)
             : host.denyPendingMcpTool(requestId: approval.requestId)
@@ -588,6 +615,10 @@ extension ChatViewModel {
     func cancelGeneration() {
         startDeferredGenerationNow()
         currentRun.state.clearChildResultWait()
+        if let activeSlot = currentRun.orderedSlots.last(where: \.isActiveOrQueued) {
+            _ = cancelGeneration(runId: activeSlot.runId)
+            return
+        }
         // cancel() itself publishes the cancelled watch snapshot; do not clear first.
         if kernelRunHost.isRunning {
             kernelRunHost.cancel()
@@ -601,7 +632,33 @@ extension ChatViewModel {
 
     @discardableResult
     func cancelGeneration(runId: String) -> Bool {
+        if let (run, slot) = runRegistry.findSlot(runId: runId) {
+            cancelUnconsumedFollowups(for: slot, state: run.state)
+            if slot.isQueuedForConcurrencySlot {
+                runRegistry.removePendingTask(slotId: slot.slotId)
+                slot.isQueuedForConcurrencySlot = false
+                if let placeholderId = slot.queuedPlaceholderMessageId {
+                    slot.queuedPlaceholderMessageId = nil
+                    run.state.messages.removeAll {
+                        ChatMessageProjector.messageId(for: $0) == placeholderId
+                    }
+                }
+                slot.isTerminal = true
+                refreshLiveTaskMessageIds(in: run)
+                if isCurrentConversation(run.state.conversationId) {
+                    bumpMessageRevision(reason: .generationCancelled)
+                }
+                runActivityRevision &+= 1
+                return true
+            }
+            if let host = slot.host,
+               host.cancel(runId: slot.runId) || host.cancel(runId: runId) {
+                markTaskSlotTerminal(slot, in: run)
+                return true
+            }
+        }
         if host(runId: runId)?.cancel(runId: runId) == true {
+            dequeueNextPendingTasksIfPossible()
             return true
         }
         return IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
@@ -609,7 +666,7 @@ extension ChatViewModel {
 
     @discardableResult
     func handoffGenerationToBackgroundIfNeeded(honorKeepAliveLease: Bool = false) -> Bool {
-        let hosts = runRegistry.allRuns.compactMap(\.host).filter(\.isRunning)
+        let hosts = runRegistry.allRuns.flatMap(\.allActiveHosts)
         var didHandoffAll = true
         for host in hosts {
             if !host.handoffCurrentGenerationToBackground(

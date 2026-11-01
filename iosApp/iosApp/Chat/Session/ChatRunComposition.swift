@@ -10,14 +10,17 @@ private let chatLedgerLogger = Logger(subsystem: "app.amber.ios", category: "cha
 extension ChatViewModel {
 
     /// Each conversation retains its existing Host until its run has finished.
-    func makeKernelRunHost(state: ChatConversationRunState) -> ChatKernelRunHost {
+    func makeKernelRunHost(
+        state: ChatConversationRunState,
+        taskSlot: ChatAsyncTaskSlot? = nil
+    ) -> ChatKernelRunHost {
         var textProviderOverride: (any IOSAgentTextProvider)?
 #if DEBUG
         textProviderOverride = kernelTextProviderOverrideForTesting
 #endif
         return ChatKernelRunHost(
             dependencies: makeGenerationDependencies(),
-            bindings: makeGenerationBindings(state: state),
+            bindings: makeGenerationBindings(state: state, taskSlot: taskSlot),
             toolLedger: chatRunLedger,
             textProvider: textProviderOverride,
             phoneControl: phoneControl,
@@ -40,13 +43,20 @@ extension ChatViewModel {
         )
     }
 
-    func makeGenerationBindings(state: ChatConversationRunState) -> ChatGenerationBindings {
+    func makeGenerationBindings(
+        state: ChatConversationRunState,
+        taskSlot: ChatAsyncTaskSlot? = nil
+    ) -> ChatGenerationBindings {
         ChatGenerationBindings(
                 getMessages: {
-                    state.messages
+                    taskSlot?.currentTranscript ?? state.messages
                 },
-                setMessages: { messages in
-                    state.messages = messages
+                setMessages: { [weak self] messages in
+                    if let taskSlot, let self {
+                        self.spliceTaskTranscript(messages, for: taskSlot, into: state)
+                    } else {
+                        state.messages = messages
+                    }
                 },
                 bumpMessageRevision: { [weak self] reason, lagAllowance in
                     guard let self else { return }
@@ -55,9 +65,18 @@ extension ChatViewModel {
                         self.bumpMessageRevision(reason: reason, lagAllowance: lagAllowance)
                     }
                 },
-                setIsLoading: { isLoading in
+                setIsLoading: { [weak self] isLoading in
                     if isLoading { state.clearChildResultWait() }
-                    state.isLoading = isLoading
+                    if let taskSlot, let self {
+                        let run = self.runRegistry.current(for: state.conversationId)
+                        if !isLoading, taskSlot.host?.isRunning != true {
+                            self.markTaskSlotTerminal(taskSlot, in: run)
+                        } else {
+                            self.refreshLiveTaskMessageIds(in: run)
+                        }
+                    } else {
+                        state.isLoading = isLoading
+                    }
                 },
                 setPendingMemoryApproval: { [weak self] request in
                     state.pendingMemoryApproval = request
@@ -181,12 +200,26 @@ extension ChatViewModel {
                 },
                 persistMessagesSnapshot: { [weak self] snapshot, conversationId, writeBaseline in
                     guard let self else { return false }
+                    let effectiveSnapshot: [UIMessage]
+                    let effectiveBaseline: IOSConversationWriteBaseline?
+                    if let taskSlot {
+                        self.spliceTaskTranscript(snapshot, for: taskSlot, into: state)
+                        effectiveSnapshot = state.messages
+                        let run = self.runRegistry.current(for: state.conversationId)
+                        let targetId = conversationId ?? state.conversationId
+                        effectiveBaseline = run.taskOrder.count > 1
+                            ? targetId.flatMap { self.conversationStore?.writeBaseline(for: $0) }
+                            : writeBaseline
+                    } else {
+                        effectiveSnapshot = snapshot
+                        effectiveBaseline = writeBaseline
+                    }
                     return await self.persistMessagesSnapshot(
-                        snapshot,
+                        effectiveSnapshot,
                         targetConversationId: conversationId,
                         pendingRegeneration: state.pendingAssistantRegeneration,
                         store: self.conversationStore,
-                        writeBaseline: writeBaseline,
+                        writeBaseline: effectiveBaseline,
                         state: state
                     )
                 },
@@ -267,7 +300,11 @@ extension ChatViewModel {
                     )
                 },
                 drainSteerQueue: { [weak self] conversationId in
-                    await self?.drainSteerQueue(state: state) ?? []
+                    guard let self else { return [] }
+                    if let taskSlot {
+                        return await self.drainTaskSteerQueue(slot: taskSlot, state: state)
+                    }
+                    return await self.drainSteerQueue(state: state)
                 },
                 drainMailbox: { [weak self] conversationId in
                     await self?.drainMailbox(state: state) ?? []
@@ -276,13 +313,20 @@ extension ChatViewModel {
                     self?.handleSteerQueueAtRunTerminal(state: state, autoContinue: autoContinue)
                 },
                 restoreSteerQueueLeftover: { [weak self] conversationId in
-                    self?.restoreSteerQueueLeftoverToComposer(state: state)
+                    guard let self else { return }
+                    if let taskSlot {
+                        self.cancelUnconsumedFollowups(for: taskSlot, state: state)
+                    }
+                    self.restoreSteerQueueLeftoverToComposer(state: state)
                 },
                 onForegroundYield: { runId in
                     state.waitingForChildRunId = runId
                 },
                 onRunTerminal: { [weak self] conversationId, runId, terminalStatus, finalMessages, displayBaseline in
                     guard let self else { return }
+                    if let taskSlot {
+                        self.markTaskSlotTerminal(taskSlot, in: self.runRegistry.current(for: state.conversationId))
+                    }
                     self.observeYieldedChildResults(state: state, runId: runId)
                     if let conversationId {
                         self.refreshIntelligentUIReceipts(messages: finalMessages, conversationID: conversationId.toHexDashString())

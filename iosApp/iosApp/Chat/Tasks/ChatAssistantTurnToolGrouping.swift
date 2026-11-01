@@ -68,13 +68,20 @@ enum ChatAssistantTurnToolGrouping {
     static func roles(
         entries: [NativeTimelineEntry],
         messages: [UIMessage],
-        isGenerationActive: Bool
+        isGenerationActive: Bool,
+        liveMessageIDs: Set<String> = []
     ) -> [ChatAssistantTurnRole?] {
         var roles = [ChatAssistantTurnRole?](repeating: nil, count: entries.count)
         var current: Turn?
         func close() {
             if let turn = current {
-                assign(turn, entries: entries, isGenerationActive: isGenerationActive, into: &roles)
+                assign(
+                    turn,
+                    entries: entries,
+                    isGenerationActive: isGenerationActive,
+                    liveMessageIDs: liveMessageIDs,
+                    into: &roles
+                )
             }
             current = nil
         }
@@ -118,6 +125,7 @@ enum ChatAssistantTurnToolGrouping {
         _ turn: Turn,
         entries: [NativeTimelineEntry],
         isGenerationActive: Bool,
+        liveMessageIDs: Set<String> = [],
         into roles: inout [ChatAssistantTurnRole?]
     ) {
         let loaded = turn.memberIndices.compactMap { index in entries[index].message.map { (index, $0) } }
@@ -130,7 +138,12 @@ enum ChatAssistantTurnToolGrouping {
               let headMessageID = entries[head.0].messageId else { return }
 
         let groupID = ChatMessageProjector.messageId(for: firstToolMessage)
-        let isLive = isGenerationActive && (loaded.last.map { entries[$0.0].isLastMessage } ?? false)
+        let isTailTurn = loaded.last.map { entries[$0.0].isLastMessage } ?? false
+        let hasPendingToolCall = tools.contains { $0.output.isEmpty }
+        let isSlotLive = !liveMessageIDs.isEmpty && turnMessages.contains {
+            liveMessageIDs.contains(ChatMessageProjector.messageId(for: $0))
+        }
+        let isLive = isGenerationActive && (isTailTurn || hasPendingToolCall || isSlotLive)
         let isComposingReply = isLive && endsWithReplyText(turnMessages)
         let anchorIDs = turnMessages.flatMap { message -> [String] in
             let messageID = ChatMessageProjector.messageId(for: message)

@@ -7,8 +7,12 @@ import SwiftUI
 
 extension ChatViewModel {
 
-    func generateResponse(inputDigest: String, conversationId: KotlinUuid?,
-                                  phoneControlUserInitiated: Bool = false) {
+    func generateResponse(
+        inputDigest: String,
+        conversationId: KotlinUuid?,
+        phoneControlUserInitiated: Bool = false,
+        anchorUserMessageId: String? = nil
+    ) {
         // generateResponse 本身完全同步（kernelRunHost.start 内部再起 Task），
         // 用 begin/defer-end 包住整个函数体即测到主线程被占用的时长。
         var kickoffInterval = ChatPerfTrace.begin("GenerationKickoff")
@@ -17,35 +21,56 @@ extension ChatViewModel {
             configurationError = "正在恢复会话，请等待完成后再生成。"
             return
         }
-        if let conversationId {
-            guard !isGenerationActive(conversationId: conversationId) else { return }
-        } else {
-            guard !isGenerationActive else { return }
+        let targetConversationId = conversationId ?? currentConversationId
+#if DEBUG
+        if generationActiveOverrideForTesting?(targetConversationId) == true {
+            return
         }
-        isLoading = true
+#endif
+        if let targetConversationId,
+           IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: targetConversationId) {
+            return
+        }
+        let targetRun = runRegistry.current(for: targetConversationId)
+        targetRun.state.isLoading = true
 
         let providerSetting = makeProviderSetting()
-        let params = makeTextGenerationParams(includePhoneControlTools: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild)
+        let allowPhoneControl = phoneControlUserInitiated && !targetRun.state.isOrchestratedChild
+        let params = makeTextGenerationParams(includePhoneControlTools: allowPhoneControl)
 
         guard let resolvedProvider = providerSetting else {
-            isLoading = false
+            targetRun.state.isLoading = targetRun.hasActiveOrQueuedTask
             configurationError = configurationIssue?.message ?? ChatConfigurationIssue.missingProvider.message
             return
         }
 
-        // P0-2:所有前台文本 run 都进入唯一 Kernel。CGC 只保留非 agent 的
-        // one-shot 能力与兼容终态入口，不再拥有第二套模型—工具循环。
-        currentRun.state.generationConfiguration = (resolvedProvider, params, lastAssembledDynamicToolSnapshot)
-        kernelRunHost.start(
+        // P0-2:所有前台文本 run 都进入唯一 Kernel。每个用户问题分配独立 ChatAsyncTaskSlot，
+        // 复用现有 ChatConversationRunState / ChatKernelRunHost，按任务锚点隔离消息与追问。
+        targetRun.state.generationConfiguration = (resolvedProvider, params, lastAssembledDynamicToolSnapshot)
+        let resolvedAnchorId: String?
+        if targetRun.state.pendingAssistantRegeneration != nil {
+            resolvedAnchorId = anchorUserMessageId
+        } else {
+            resolvedAnchorId = anchorUserMessageId ?? targetRun.state.messages
+                .last(where: { $0.role == MessageRole.user })
+                .map { ChatMessageProjector.messageId(for: $0) }
+        }
+        let baselineMessages = buildTaskBaselineMessages(
+            in: targetRun,
+            anchorUserMessageId: resolvedAnchorId
+        )
+        let slot = ChatAsyncTaskSlot(
+            conversationId: targetConversationId,
+            inputDigest: inputDigest,
+            anchorUserMessageId: resolvedAnchorId,
+            phoneControlUserInitiated: allowPhoneControl,
             providerSetting: resolvedProvider,
             params: params,
-            inputDigest: inputDigest,
-            conversationId: conversationId,
-            uploadMessages: messages,
             toolExposureBridge: lastAssembledToolExposureBridge,
             recipeCatalogSnapshot: lastAssembledDynamicToolSnapshot,
-            phoneControlUserInitiated: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild
+            baselineMessages: baselineMessages
         )
+        _ = startOrEnqueueTaskSlot(slot, in: targetRun)
     }
 
     /// P1 管线闭环：参与线程树的会话注入的 mailbox 语义说明（仅在
