@@ -97,6 +97,25 @@ final class AmberPersonaStore {
         reloadAvatarFromDisk()
     }
 
+    convenience init(defaults: UserDefaults, storageDirectory: URL) {
+        self.init(userDefaults: defaults, fileManager: .default, baseDirectory: storageDirectory)
+    }
+
+    var selectedPreset: AmberPersonaPreset {
+        get { preset }
+        set { preset = newValue }
+    }
+
+    var references: [AmberPersonaReferenceItem] {
+        referenceItems
+    }
+
+    @discardableResult
+    func addReferenceImage(from data: Data, label: String? = nil) -> AmberPersonaReferenceItem? {
+        guard let image = UIImage(data: data) else { return nil }
+        return addReferenceImage(image, label: label)
+    }
+
     func clearError() {
         lastGenerationError = nil
     }
@@ -151,17 +170,22 @@ final class AmberPersonaStore {
         return UIImage(data: data)
     }
 
-    /// Returns a `data:image/png;base64,...` URL for the primary reference image (or custom avatar fallback)
+    /// Returns a `data:image/jpeg;base64,...` URL for the primary reference image (or custom avatar fallback)
     /// so `ChatImageGenerationReference` can automatically pad it into `generate_image`.
     func primaryReferenceDataURL() -> String? {
         if let first = referenceItems.first {
             let url = baseDirectory.appendingPathComponent(first.fileName)
-            if let data = try? Data(contentsOf: url), !data.isEmpty {
-                return "data:image/png;base64,\(data.base64EncodedString())"
+            if let data = try? Data(contentsOf: url),
+               let image = UIImage(data: data),
+               let jpeg = image.jpegData(compressionQuality: 0.88),
+               !jpeg.isEmpty {
+                return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
             }
         }
-        if let customAvatarImage, let data = customAvatarImage.pngData(), !data.isEmpty {
-            return "data:image/png;base64,\(data.base64EncodedString())"
+        if let customAvatarImage,
+           let jpeg = customAvatarImage.jpegData(compressionQuality: 0.88),
+           !jpeg.isEmpty {
+            return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
         }
         return nil
     }
@@ -357,6 +381,21 @@ struct AmberAgentPersonaMedallionView: View {
             rightEar.closeSubpath()
             context.fill(rightEar, with: .color(accentColor))
 
+            // Inner ear triangles (Warm Paper / Cream)
+            var innerLeftEar = Path()
+            innerLeftEar.move(to: CGPoint(x: cx - w * 0.19, y: cy - h * 0.09))
+            innerLeftEar.addLine(to: CGPoint(x: cx - w * 0.21, y: cy - h * 0.24 + earLift))
+            innerLeftEar.addLine(to: CGPoint(x: cx - w * 0.10, y: cy - h * 0.14))
+            innerLeftEar.closeSubpath()
+            context.fill(innerLeftEar, with: .color(AmberTheme.background.opacity(0.92)))
+
+            var innerRightEar = Path()
+            innerRightEar.move(to: CGPoint(x: cx + w * 0.19, y: cy - h * 0.09))
+            innerRightEar.addLine(to: CGPoint(x: cx + w * 0.21, y: cy - h * 0.24 + earLift))
+            innerRightEar.addLine(to: CGPoint(x: cx + w * 0.10, y: cy - h * 0.14))
+            innerRightEar.closeSubpath()
+            context.fill(innerRightEar, with: .color(AmberTheme.background.opacity(0.92)))
+
             // 2. Fox Head Silhouette (Warm Amber Top + Soft Cream Cheeks)
             let headW = w * 0.48
             let headH = h * 0.38
@@ -374,7 +413,7 @@ struct AmberAgentPersonaMedallionView: View {
                 with: .color(AmberTheme.background)
             )
 
-            // 3. Expressive Eyes & Craftsman Glasses (when working)
+            // 3. Expressive Eyes (No decorative reading glasses or floating 4-point spark)
             let eyeY = cy - h * 0.04
             let eyeOffset = w * 0.095
             let eyeR = max(1.8, w * (mood == .alert ? 0.042 : 0.036))
@@ -390,41 +429,12 @@ struct AmberAgentPersonaMedallionView: View {
                 )
             }
 
-            if mood == .working {
-                // Round reading glasses in working state
-                let glassR = w * 0.072
-                for sign in [-1.0, 1.0] {
-                    let gx = cx + CGFloat(sign) * eyeOffset
-                    let gRect = CGRect(x: gx - glassR, y: eyeY - glassR, width: glassR * 2, height: glassR * 2)
-                    context.stroke(
-                        Path(ellipseIn: gRect),
-                        with: .color(AmberTheme.foreground.opacity(0.85)),
-                        lineWidth: max(1.1, w * 0.022)
-                    )
-                }
-                var bridge = Path()
-                bridge.move(to: CGPoint(x: cx - eyeOffset + glassR, y: eyeY))
-                bridge.addLine(to: CGPoint(x: cx + eyeOffset - glassR, y: eyeY))
-                context.stroke(bridge, with: .color(AmberTheme.foreground.opacity(0.85)), lineWidth: max(1.0, w * 0.02))
-            }
-
             // Tiny nose dot
             let noseR = max(1.2, w * 0.024)
             context.fill(
                 Path(ellipseIn: CGRect(x: cx - noseR, y: cy + h * 0.03 - noseR, width: noseR * 2, height: noseR * 2)),
                 with: .color(AmberTheme.foreground)
             )
-
-            // 4. Floating Amber Spark / State Cue
-            let sparkCenter = CGPoint(x: cx + w * 0.24, y: cy - h * 0.24)
-            let sr = max(2.2, w * 0.045)
-            var spark = Path()
-            spark.move(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y - sr))
-            spark.addLine(to: CGPoint(x: sparkCenter.x + sr * 0.85, y: sparkCenter.y))
-            spark.addLine(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y + sr))
-            spark.addLine(to: CGPoint(x: sparkCenter.x - sr * 0.85, y: sparkCenter.y))
-            spark.closeSubpath()
-            context.fill(spark, with: .color(mood == .alert ? AmberTheme.accentRed : accentColor))
         }
         .frame(width: diameter, height: diameter)
     }

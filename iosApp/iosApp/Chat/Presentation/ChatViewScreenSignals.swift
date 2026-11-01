@@ -49,8 +49,21 @@ extension ChatView {
 
     private func activeToolStepForIsland(messages: [UIMessage]) -> ChatToolStepModel? {
         for message in messages.suffix(3).reversed() {
+            let hasAssistantReplyText = message.parts.contains { part in
+                guard let text = part as? UIMessagePart.Text else { return false }
+                return text.text.contains { !$0.isWhitespace }
+            }
             let tools = message.parts.compactMap { $0 as? UIMessagePart.Tool }
-            if let active = tools.reversed().first(where: { $0.output.isEmpty }) {
+            if let active = tools.reversed().first(where: { tool in
+                guard tool.output.isEmpty else { return false }
+                if hasAssistantReplyText {
+                    let lower = tool.toolName.lowercased()
+                    if lower.contains("subagent") || lower.contains("cloud") || lower.contains("background") {
+                        return false
+                    }
+                }
+                return true
+            }) {
                 return ChatToolStepModel(tool: active)
             }
         }
@@ -115,6 +128,10 @@ extension ChatView {
         if let firstUserText = chatListSummary.firstUserTitleSeed,
            !firstUserText.isEmpty {
             return firstUserText.replacingOccurrences(of: "\n", with: " ")
+        }
+        if let activeHubTitle = AmberHubStore.shared.activeHub?.title,
+           !activeHubTitle.isEmpty {
+            return activeHubTitle
         }
         return "Amber"
     }

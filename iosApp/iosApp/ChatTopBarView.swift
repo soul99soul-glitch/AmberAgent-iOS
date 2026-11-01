@@ -57,6 +57,7 @@ struct ChatTopBarView: View {
     var onRefreshRecap: () -> Void = {}
     var onLocateRecapNode: (ConversationRecap.Node) -> Bool = { _ in false }
     var onRecapNextStep: (String) -> Bool = { _ in false }
+    var backgroundRunningCount: Int = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressedPresentation: ChatIslandPresentation?
@@ -313,7 +314,8 @@ struct ChatTopBarView: View {
 
     private func island(maxWidth: CGFloat) -> some View {
         ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,
-                               conversationKey: conversationID, announcement: announcement)
+                               conversationKey: conversationID, announcement: announcement,
+                               backgroundRunningCount: backgroundRunningCount)
             .frame(height: 44)
             .contentShape(Capsule())
             .scaleEffect(x: reduceMotion ? 1 : islandScale, y: 1)

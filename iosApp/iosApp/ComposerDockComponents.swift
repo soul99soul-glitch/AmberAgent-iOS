@@ -116,6 +116,57 @@ struct ComposerDockSendButton: View {
     }
 }
 
+/// Argon 04 后台交办原地变形胶囊按钮：`交办 ↗` / `提交中…` / `重试 ↻`
+struct ComposerDockHandoffButton: View {
+    var isSubmitting: Bool
+    var needsRetry: Bool
+    var isEnabled: Bool
+    var height: CGFloat = 50
+    let onSubmit: () -> Void
+
+    var body: some View {
+        Button {
+            guard !isSubmitting && isEnabled else { return }
+            onSubmit()
+        } label: {
+            HStack(spacing: 5) {
+                if isSubmitting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                    Text(IOSAppLocalization.string("提交中…", defaultValue: "提交中…"))
+                        .font(.subheadline.weight(.semibold))
+                } else if needsRetry {
+                    Text(IOSAppLocalization.string("重试", defaultValue: "重试"))
+                        .font(.subheadline.weight(.semibold))
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .bold))
+                } else {
+                    Text(IOSAppLocalization.string("交办", defaultValue: "交办"))
+                        .font(.subheadline.weight(.semibold))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .bold))
+                }
+            }
+            .foregroundStyle(isEnabled ? Color.white : AmberTheme.muted)
+            .padding(.horizontal, 16)
+            .frame(height: height)
+            .background(
+                isEnabled ? AmberTheme.accent : AmberTheme.surface,
+                in: Capsule(style: .continuous)
+            )
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(isEnabled ? AmberTheme.accent : AmberTheme.border, lineWidth: 0.8)
+            }
+            .shadow(color: isEnabled ? AmberTheme.accent.opacity(0.24) : .clear, radius: 8, y: 3)
+        }
+        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
+        .disabled(!isEnabled || isSubmitting)
+        .accessibilityIdentifier("chat.duet.handoffSubmitButton")
+    }
+}
+
 @MainActor
 final class ComposerInputController {
     weak var textView: UITextView?

@@ -129,6 +129,201 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         }
         XCTAssertTrue(group.rollupState.isLive)
         XCTAssertEqual(group.rollupState.statusBadgeText, "进行中")
+        XCTAssertEqual(group.inlineStatusBadgeText, "云端运行中")
+        XCTAssertEqual(group.headline, "训一个只看变化的视频小模型")
+        XCTAssertFalse(group.rollupState.isFailureOrNeedsUser, "Working inline card defaults to single-line without failure callout")
+    }
+
+    func testBackgroundHandoffPreservesRequestIdAndDraftAcrossUncertainRetries() {
+        var state = ChatComposerLocalState()
+        let failedTask = AmberUnifiedTaskItem(
+            id: "ssh-fail-1",
+            title: "配置 SSH 跳板机与目标机",
+            subtitle: "私钥校验未通过 · 本机",
+            category: .needsAttention,
+            statusBadgeText: "4 次失败",
+            actionTitle: "补充密钥",
+            hubId: "hub-amber-core",
+            underlyingSegment: nil,
+            cloudTaskId: nil
+        )
+
+        state.enterBackgroundHandoffMode(followupTask: failedTask)
+        XCTAssertTrue(state.isBackgroundHandoffMode)
+        XCTAssertEqual(state.handoffFollowupTask?.id, "ssh-fail-1")
+
+        let prompt = "帮忙并行核对岚山竹林路线，并把视频闪烁检测模型挂到云端跑"
+        let firstReqId = state.prepareHandoffRequestId(
+            for: prompt,
+            target: .cloud,
+            hubId: "hub-kyoto-trip",
+            followupTaskId: failedTask.id
+        )
+
+        state.markHandoffSubmissionFailed("云端网络抖动，结果未确认")
+        XCTAssertTrue(state.handoffNeedsRetry)
+        XCTAssertTrue(state.isBackgroundHandoffMode)
+
+        // Retrying the exact same prompt/target/hub/followup must reuse the same requestId
+        let retryReqId = state.prepareHandoffRequestId(
+            for: prompt,
+            target: .cloud,
+            hubId: "hub-kyoto-trip",
+            followupTaskId: failedTask.id
+        )
+        XCTAssertEqual(firstReqId, retryReqId, "Uncertain retry must preserve requestId to prevent duplicate jobs")
+
+        // Changing the prompt generates a new requestId
+        let changedReqId = state.prepareHandoffRequestId(
+            for: prompt + "（加上夜间样本）",
+            target: .cloud,
+            hubId: "hub-kyoto-trip",
+            followupTaskId: failedTask.id
+        )
+        XCTAssertNotEqual(firstReqId, changedReqId)
+
+        state.completeHandoffSubmission()
+        XCTAssertFalse(state.isBackgroundHandoffMode)
+        XCTAssertFalse(state.handoffNeedsRetry)
+        XCTAssertNil(state.activeHandoffRequestId)
+    }
+
+    private static func applyPreviewFixtures(to store: AmberHubStore) {
+        let previewHubs: [AmberHubItem] = [
+            AmberHubItem(
+                id: "hub-kyoto-trip",
+                title: "京都旅行",
+                thesis: "步行路线与伴手礼清单",
+                template: .general,
+                memoryPolicy: .sharedWithGlobal,
+                pinnedSupertags: ["#京都", "#步行路线"],
+                memoryCountHint: 12,
+                statusSummaryOverride: "12 条记忆 · 2 项任务"
+            ),
+            AmberHubItem(
+                id: "hub-amber-core",
+                title: "Amber 核心研发",
+                thesis: "四端架构与云端任务协同",
+                template: .coding,
+                memoryPolicy: .sharedWithGlobal,
+                pinnedSupertags: ["#Amber", "#iOS"],
+                documentCountHint: 5,
+                statusSummaryOverride: "5 份资料 · 1 项云端运行中"
+            ),
+            AmberHubItem(
+                id: "hub-novel-ash-city",
+                title: "长篇小说 · 灰烬之城",
+                thesis: "世界观设定与章节大纲",
+                template: .novel,
+                memoryPolicy: .hubIsolated,
+                pinnedSupertags: ["#小说", "#设定"],
+                documentCountHint: 18,
+                statusSummaryOverride: "独立记忆 · 18 份设定与草稿"
+            )
+        ]
+        let previewCollections: [AmberSmartCollectionItem] = [
+            AmberSmartCollectionItem(
+                id: "sc-ssh-ops",
+                title: "SSH 运维",
+                primaryTag: "#ops/ssh",
+                itemCount: 4,
+                conversationIds: [],
+                memoryCount: 6,
+                digest: "跳板机与私钥配置",
+                template: .coding,
+                promotionSuggested: true
+            ),
+            AmberSmartCollectionItem(
+                id: "sc-camera-compare",
+                title: "摄影器材对比",
+                primaryTag: "#gear/camera",
+                itemCount: 3,
+                conversationIds: [],
+                memoryCount: 4,
+                digest: "轻便定焦镜头选型",
+                template: .general,
+                promotionSuggested: false
+            )
+        ]
+        store.replaceForPreview(
+            hubs: previewHubs,
+            activeHubId: "hub-kyoto-trip",
+            collections: previewCollections
+        )
+    }
+
+    func testHubStoreSmartCollectionPromotionAndUnifiedTaskGrouping() throws {
+        let suite = "AmberHubStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+        }
+
+        // Production store starts empty with zero fabricated hubs or collections
+        let hubStore = AmberHubStore(defaults: defaults)
+        XCTAssertTrue(hubStore.hubs.isEmpty, "Production AmberHubStore must start empty without fake data")
+        XCTAssertTrue(hubStore.smartCollections.isEmpty, "Production AmberHubStore must start empty without fake collections")
+        XCTAssertNil(hubStore.activeHub)
+        XCTAssertNil(hubStore.smartCollectionsSummaryText)
+
+        // Apply preview fixtures explicitly for testing promotion & grouping
+        Self.applyPreviewFixtures(to: hubStore)
+        XCTAssertEqual(hubStore.hubs.count, 3)
+        XCTAssertEqual(hubStore.smartCollections.count, 2)
+        XCTAssertEqual(hubStore.activeHub?.title, "京都旅行")
+        XCTAssertEqual(hubStore.smartCollectionsSummaryText, "SSH 运维 (4) 等 2 项")
+
+        // Promote a Smart Collection to a formal Hub
+        let promoted = try XCTUnwrap(hubStore.promoteSmartCollectionToHub("sc-ssh-ops", memoryPolicy: .hubIsolated))
+        XCTAssertEqual(promoted.title, "SSH 运维")
+        XCTAssertEqual(promoted.memoryPolicy, .hubIsolated)
+        XCTAssertEqual(hubStore.hubs.count, 4)
+        XCTAssertEqual(hubStore.smartCollections.count, 1)
+
+        // Build unified tasks grouped by goal/status (needsAttention, running, recent)
+        let failOutput = #"{"ok":false,"status":"failed","error":"私钥校验未通过"}"#
+        let doneOutput = #"{"ok":true,"status":"completed","summary":"完成"}"#
+        let failMsg = makeAssistantMessage(parts: [
+            makeTool(id: "ssh-1", name: "ssh_profile_create", outputJSON: failOutput),
+            makeTool(id: "ssh-2", name: "ssh_profile_create", outputJSON: failOutput),
+            makeTool(id: "ssh-3", name: "ssh_profile_create", outputJSON: failOutput),
+            makeTool(id: "ssh-4", name: "ssh_profile_create", outputJSON: failOutput)
+        ])
+        let runningMsg = makeAssistantMessage(parts: [
+            makeTool(id: "train-1", name: "subagent_dispatch", input: #"{"prompt":"训练视频闪烁检测模型"}"#, outputJSON: nil)
+        ], finished: false)
+        let doneMsg = makeAssistantMessage(parts: [
+            makeTool(id: "check-1", name: "terminal_execute", input: #"{"command":"echo ok"}"#, outputJSON: doneOutput)
+        ])
+
+        let segs = [
+            ChatTaskStreamGrouping.segments(for: failMsg, messageID: "m1", isGeneratingTail: false),
+            ChatTaskStreamGrouping.segments(for: runningMsg, messageID: "m2", isGeneratingTail: true),
+            ChatTaskStreamGrouping.segments(for: doneMsg, messageID: "m3", isGeneratingTail: false)
+        ].flatMap { $0 }.compactMap { seg -> ChatTaskRunSegment? in
+            if case .taskGroup(let g) = seg { return g }
+            return nil
+        }
+
+        let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
+        let subAgentStore = IOSSubAgentActivityStore(
+            tasks: tasksStore,
+            defaults: defaults,
+            launchedAt: Date(),
+            loadRuns: { [] }
+        )
+        let grouped = AmberUnifiedTaskBuilder.buildTasks(
+            conversationSegments: segs,
+            gateway: MacGatewayStore.shared,
+            subAgentStore: subAgentStore,
+            hubStore: hubStore
+        )
+        XCTAssertEqual(grouped.needsAttention.count, 1)
+        XCTAssertEqual(grouped.needsAttention.first?.statusBadgeText, "4 次失败")
+        XCTAssertEqual(grouped.needsAttention.first?.actionTitle, "补充密钥")
+        XCTAssertEqual(grouped.running.count, 1)
+        XCTAssertEqual(grouped.running.first?.title, "训练视频闪烁检测模型")
+        XCTAssertEqual(grouped.recent.count, 1)
     }
 
     /// Renders and exports high-resolution PNG screenshots for the 3 required Duet states
@@ -148,6 +343,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         await conversations.bootstrap()
 
         let settings = SettingsStore(userDefaults: defaults)
+        settings.apiKey = "sk-duet-preview"
         let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
         let provider = IosSettingsMutations.shared.buildOpenAIProvider(
             name: "Amber Cloud", apiKey: "sk-duet-preview", baseUrl: "https://example.invalid/v1",
@@ -348,6 +544,128 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
                 ChatView(settingsStore: settings, sharedSettings: sharedSettings, viewModel: viewModel, activityStore: activityStore)
             }
         }
+
+        // 4. Canonical Argon 01–04 Screens + Theme Compatibility Captures
+        let failSSHMsg = makeAssistantMessage(parts: [
+            makeTool(id: "ssh-a1", name: "ssh_profile_create", input: #"{"name":"JumpHost"}"#, outputJSON: failOutput),
+            makeTool(id: "ssh-a2", name: "ssh_profile_create", input: #"{"name":"JumpHost"}"#, outputJSON: failOutput),
+            makeTool(id: "ssh-a3", name: "ssh_profile_create", input: #"{"name":"TargetProd"}"#, outputJSON: failOutput),
+            makeTool(id: "ssh-a4", name: "ssh_profile_create", input: #"{"name":"TargetProd"}"#, outputJSON: failOutput)
+        ])
+        let doneRouteMsg = makeAssistantMessage(parts: [
+            makeTool(id: "route-done-1", name: "web_search", input: #"{"query":"京都大德寺步行路线"}"#, outputJSON: doneOutput)
+        ])
+        let argonChatMessages: [UIMessage] = [
+            UIMessage.companion.user(prompt: "下周去京都四天，前两天在乌丸御池开会，后两天想找安静的步行路线。另外视频闪烁检测模型先在后台跑着。"),
+            makeAssistantMessage(parts: [
+                makeTool(
+                    id: "cloud-video-1",
+                    name: "subagent_dispatch",
+                    input: #"{"name":"CloudTrainer","prompt":"训练视频闪烁检测模型"}"#,
+                    outputJSON: nil
+                ),
+                UIMessagePart.Text(
+                    text: """
+                    视频闪烁检测模型已在云端启动。后两天想避开人潮，推荐两条安静步行线：
+
+                    1. **哲学之道北段 → 法然院 → 真如堂**：青苔庭院幽静，几乎无旅行团。
+                    2. **大德寺塔头群 → 今宫神社**：枯山水尺度克制，出东门可尝烤麻薯。
+
+                    伴手礼建议去寺町通的**一保堂茶铺**（玉露）与**鸠居堂**（线香与和纸）。
+                    """,
+                    metadata: nil
+                )
+            ], finished: false)
+        ]
+        await viewModel.startNewConversation()
+        let argonId = try XCTUnwrap(conversations.currentConversation?.id)
+        _ = await conversations.save(messages: argonChatMessages, to: argonId)
+        await conversations.renameConversation(id: argonId, title: "京都旅行")
+        Self.applyPreviewFixtures(to: AmberHubStore.shared)
+        defer {
+            AmberHubStore.shared.replaceForPreview(hubs: [], activeHubId: nil, collections: [])
+        }
+        AmberHubStore.shared.selectHub("hub-kyoto-trip")
+        viewModel.reloadFromStore(reason: .conversationSwitch)
+        viewModel.inputText = ""
+
+        // Screen 01: Main Chat (Single-line inline task + breathing whitespace)
+        try await capture("ios-argon-01-main-chat-sim") {
+            NavigationStack {
+                ChatView(settingsStore: settings, sharedSettings: sharedSettings, viewModel: viewModel, activityStore: activityStore)
+            }
+        }
+        try await capture("ios-argon-01-main-chat-dark-sim", style: .dark) {
+            NavigationStack {
+                ChatView(settingsStore: settings, sharedSettings: sharedSettings, viewModel: viewModel, activityStore: activityStore)
+            }
+        }
+
+        // Theme compatibility capture: Takram Moss
+        let runtime = AmberThemeRuntime.shared
+        let savedTheme = AmberThemePackTransfer.document(from: runtime)
+        if let mossPreset = AmberArquielThemePresets.all.first(where: { $0.id == "arquiel-takram-moss" }) {
+            try? runtime.apply(mossPreset)
+            try await capture("ios-argon-01-main-chat-takram-moss-sim") {
+                NavigationStack {
+                    ChatView(settingsStore: settings, sharedSettings: sharedSettings, viewModel: viewModel, activityStore: activityStore)
+                }
+            }
+            try? runtime.apply(savedTheme)
+        }
+
+        // Screen 02: Tasks Panel (Collapsed composer + Goal/Status grouped tasks + Collapsed history)
+        await viewModel.startNewConversation()
+        let tasksConvId = try XCTUnwrap(conversations.currentConversation?.id)
+        _ = await conversations.save(messages: [failSSHMsg, doneRouteMsg] + argonChatMessages, to: tasksConvId)
+        await conversations.renameConversation(id: tasksConvId, title: "京都旅行")
+        viewModel.reloadFromStore(reason: .conversationSwitch)
+        var tasksTabState = ChatComposerLocalState()
+        tasksTabState.activeDuetTab = .tasks
+        try await capture("ios-argon-02-tasks-sheet-sim") {
+            NavigationStack {
+                ChatView(
+                    settingsStore: settings,
+                    sharedSettings: sharedSettings,
+                    viewModel: viewModel,
+                    activityStore: activityStore,
+                    initialComposerState: tasksTabState
+                )
+            }
+        }
+
+        // Screen 03: Hubs Panel (Collapsed composer + Iconless typography + Smart Collections bar)
+        await conversations.selectConversation(id: argonId)
+        viewModel.reloadFromStore(reason: .conversationSwitch)
+        var hubsTabState = ChatComposerLocalState()
+        hubsTabState.activeDuetTab = .hubs
+        try await capture("ios-argon-03-hubs-sheet-sim") {
+            NavigationStack {
+                ChatView(
+                    settingsStore: settings,
+                    sharedSettings: sharedSettings,
+                    viewModel: viewModel,
+                    activityStore: activityStore,
+                    initialComposerState: hubsTabState
+                )
+            }
+        }
+
+        // Screen 04: Background Handoff (In-place morphed "交办 ↗" + "● 云端 · 京都旅行 ⌄")
+        viewModel.inputText = "帮忙并行核对岚山竹林路线，并把视频闪烁检测模型挂到云端跑"
+        var handoffState = ChatComposerLocalState()
+        handoffState.enterBackgroundHandoffMode()
+        try await capture("ios-argon-04-background-handoff-sim") {
+            NavigationStack {
+                ChatView(
+                    settingsStore: settings,
+                    sharedSettings: sharedSettings,
+                    viewModel: viewModel,
+                    activityStore: activityStore,
+                    initialComposerState: handoffState
+                )
+            }
+        }
     }
 
     @MainActor
@@ -399,11 +717,11 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         let refDataURL = try XCTUnwrap(store.primaryReferenceDataURL())
         XCTAssertTrue(refDataURL.hasPrefix("data:image/jpeg;base64,"))
 
-        let enriched = ChatImageGenerationReference.enrichToolInput(
+        let enriched = try ChatImageGenerationReference.enrichToolInput(
             #"{"prompt":"琥珀灵狐在京都鸭川散步"}"#,
             messages: [],
             personaReferenceURL: refDataURL
-        )
+        ).get()
         XCTAssertTrue(enriched.contains("source_image_url"), "Expected generate_image input to bind persona reference URL")
     }
 }

@@ -15,6 +15,71 @@ struct ChatComposerLocalState {
     var siteMemoryApprovalMinimumHeights: [String: CGFloat] = [:]
     var collapsedSiteMemoryComposerRequestId: String?
     var isSubAgentBarVisible = false
+
+    // Argon 3+1 Mode & In-Place Background Handoff State
+    var activeDuetTab: AmberDuetModeTab = .chat
+    var isBackgroundHandoffMode = false
+    var handoffExecutionTarget: AmberHandoffExecutionTarget = .cloud
+    var handoffSelectedCloudAgentId: String = "main"
+    var activeHandoffRequestId: String?
+    var activeHandoffCloudTaskId: UUID?
+    var lastHandoffFingerprint: String?
+    var isSubmittingHandoff = false
+    var handoffNeedsRetry = false
+    var handoffErrorMessage: String?
+    var handoffFollowupTask: AmberUnifiedTaskItem?
+
+    mutating func enterBackgroundHandoffMode(followupTask: AmberUnifiedTaskItem? = nil) {
+        activeDuetTab = .chat
+        isBackgroundHandoffMode = true
+        handoffErrorMessage = nil
+        if let followupTask {
+            handoffFollowupTask = followupTask
+        }
+    }
+
+    mutating func exitBackgroundHandoffModePreservingDraft() {
+        isBackgroundHandoffMode = false
+        isSubmittingHandoff = false
+        handoffNeedsRetry = false
+        handoffErrorMessage = nil
+        handoffFollowupTask = nil
+    }
+
+    mutating func prepareHandoffRequestId(
+        for prompt: String,
+        target: AmberHandoffExecutionTarget,
+        hubId: String?,
+        followupTaskId: String? = nil
+    ) -> String {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fingerprint = "\(target.rawValue)|\(hubId ?? "")|\(followupTaskId ?? "")|\(trimmed)"
+        if lastHandoffFingerprint == fingerprint, let existing = activeHandoffRequestId {
+            return existing
+        }
+        let fresh = UUID().uuidString.lowercased()
+        lastHandoffFingerprint = fingerprint
+        activeHandoffRequestId = fresh
+        activeHandoffCloudTaskId = nil
+        return fresh
+    }
+
+    mutating func markHandoffSubmissionFailed(_ message: String) {
+        isSubmittingHandoff = false
+        handoffNeedsRetry = true
+        handoffErrorMessage = message
+    }
+
+    mutating func completeHandoffSubmission() {
+        isSubmittingHandoff = false
+        handoffNeedsRetry = false
+        handoffErrorMessage = nil
+        activeHandoffRequestId = nil
+        activeHandoffCloudTaskId = nil
+        lastHandoffFingerprint = nil
+        handoffFollowupTask = nil
+        isBackgroundHandoffMode = false
+    }
 }
 
 /// Picker presentations and the in-flight media import task.

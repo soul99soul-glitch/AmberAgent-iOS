@@ -76,7 +76,7 @@ enum ChatImageGenerationReference {
                 : nil
         )
 
-        guard wantsAttachedImage(input) else {
+        guard wantsAttachedImage(input) || personaReferenceURL != nil else {
             return .success(input)
         }
 

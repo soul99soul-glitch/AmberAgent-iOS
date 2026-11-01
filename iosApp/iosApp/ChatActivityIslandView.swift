@@ -303,20 +303,24 @@ struct ChatActivityIslandView: View {
     var maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth
     var conversationKey: String? = nil
     var announcement: ConversationActivityNotice? = nil
+    var backgroundRunningCount: Int = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
 
     init(presentation: ChatIslandPresentation, maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth,
-         conversationKey: String? = nil, announcement: ConversationActivityNotice? = nil) {
+         conversationKey: String? = nil, announcement: ConversationActivityNotice? = nil,
+         backgroundRunningCount: Int = 0) {
         self.presentation = presentation
         self.maxWidth = maxWidth
         self.conversationKey = conversationKey
         self.announcement = announcement
+        self.backgroundRunningCount = backgroundRunningCount
     }
 
     /// 兼容既有调用（wiring canary / 预览）：纯态直接包装，无停留行为。
-    init(state: ChatActivityIslandState) {
+    init(state: ChatActivityIslandState, backgroundRunningCount: Int = 0) {
         self.presentation = state.isActive ? .active(state) : .idle(state)
+        self.backgroundRunningCount = backgroundRunningCount
     }
 
     private var state: ChatActivityIslandState {
@@ -414,7 +418,7 @@ struct ChatActivityIslandView: View {
     }
 
     private var regularIslandContent: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 7) {
             if let orb = ChatActivityIslandMapping.orbState(
                 kind: state.kind,
                 systemImage: state.systemImage
@@ -428,25 +432,39 @@ struct ChatActivityIslandView: View {
                 )
                 .frame(width: 24, height: 24)
                 .transition(.opacity)
+            } else if state.kind == .title {
+                Circle()
+                    .fill(AmberTheme.accentGreen)
+                    .frame(width: 6, height: 6)
             }
 
             ZStack {
-                Text(state.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    // Cap long titles only; short titles stay content-width (no min stretch).
-                    .frame(maxWidth: min(ChatTopBarLayout.islandTitleMaxWidth,
-                                         max(0, maxWidth - 26 - (state.kind == .title ? 0 : 33))),
-                           alignment: .leading)
-                    .contentTransition(.opacity)
-                    .modifier(IslandTitleGlint(isActive: glintActive))
-                    .id(conversationKey)
-                    .transition(reduceMotion ? .opacity : .asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    ))
+                HStack(spacing: 4) {
+                    Text(state.title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    if state.kind == .title && backgroundRunningCount > 0 {
+                        Text("· \(backgroundRunningCount) 项后台运行")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                // Cap long titles only; short titles stay content-width (no min stretch).
+                .frame(maxWidth: min(ChatTopBarLayout.islandTitleMaxWidth + (backgroundRunningCount > 0 ? 76 : 0),
+                                     max(0, maxWidth - 26 - (state.kind == .title ? 12 : 33))),
+                       alignment: .leading)
+                .contentTransition(.opacity)
+                .modifier(IslandTitleGlint(isActive: glintActive))
+                .id(conversationKey)
+                .transition(reduceMotion ? .opacity : .asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .leading).combined(with: .opacity)
+                ))
             }
             .clipped()
             .animation(reduceMotion ? .easeInOut(duration: 0.18) : .easeInOut(duration: 0.25), value: conversationKey)

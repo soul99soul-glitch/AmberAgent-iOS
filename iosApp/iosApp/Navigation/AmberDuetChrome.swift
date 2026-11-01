@@ -1,12 +1,14 @@
 import Shared
 import SwiftUI
 
-// MARK: - Duet Bottom Mode Switcher & Secondary Workspace / Task Sheets
+// MARK: - Argon 3+1 Bottom Mode Switcher & Inline Panels (Tasks / Hubs / Secondary Drawer)
 
 enum AmberDuetModeTab: String, CaseIterable, Identifiable {
     case chat
     case tasks
-    case workspace
+    case hubs
+
+    static var workspace: AmberDuetModeTab { .hubs }
 
     var id: String { rawValue }
 
@@ -16,60 +18,98 @@ enum AmberDuetModeTab: String, CaseIterable, Identifiable {
             return IOSAppLocalization.string("对话", defaultValue: "对话")
         case .tasks:
             return IOSAppLocalization.string("任务", defaultValue: "任务")
-        case .workspace:
-            return IOSAppLocalization.string("空间", defaultValue: "空间")
+        case .hubs:
+            return IOSAppLocalization.string("中心", defaultValue: "中心")
         }
     }
+}
 
-    var iconName: String {
+enum AmberHandoffExecutionTarget: String, CaseIterable, Identifiable {
+    case cloud
+    case localBackground
+
+    var id: String { rawValue }
+
+    var shortLabel: String {
         switch self {
-        case .chat:
-            return "bubble.left.and.text.bubble.right.fill"
-        case .tasks:
-            return "checklist"
-        case .workspace:
-            return "square.grid.2x2"
+        case .cloud:
+            return IOSAppLocalization.string("云端", defaultValue: "云端")
+        case .localBackground:
+            return IOSAppLocalization.string("本机", defaultValue: "本机")
         }
     }
 }
 
 struct AmberDuetBottomSwitcher: View {
+    var selectedTab: AmberDuetModeTab = .chat
     let activeTaskCount: Int
     let needsAttentionCount: Int
+    var isBackgroundHandoffMode: Bool = false
+    var handoffExecutionTarget: AmberHandoffExecutionTarget = .cloud
+    var activeHubTitle: String? = nil
+    var hubs: [AmberHubItem] = []
+    var cloudAgents: [MacGatewayCloudAgent] = []
+    var selectedCloudAgentId: String = "main"
+    var onSelectTab: ((AmberDuetModeTab) -> Void)? = nil
     let onOpenTasks: () -> Void
     let onOpenWorkspace: () -> Void
     var onDelegateCloudTask: (() -> Void)? = nil
+    var onSelectHub: ((String?) -> Void)? = nil
+    var onSelectExecutionTarget: ((AmberHandoffExecutionTarget) -> Void)? = nil
+    var onSelectCloudAgent: ((String) -> Void)? = nil
+    var onExitHandoffMode: (() -> Void)? = nil
+
+    private var badgeCount: Int {
+        needsAttentionCount > 0 ? needsAttentionCount : activeTaskCount
+    }
+
+    private var badgeColor: Color {
+        needsAttentionCount > 0 ? AmberTheme.accentRed : AmberTheme.accent
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            // Segmented Duet pill: Chat | Tasks | Workspace
-            HStack(spacing: 4) {
+            // Left: Pure-typography segmented pill (对话 | 任务 [N] | 中心)
+            HStack(spacing: 2) {
                 modeButton(
                     tab: .chat,
-                    isSelected: true,
+                    isSelected: selectedTab == .chat,
                     badgeCount: 0,
-                    badgeColor: AmberTheme.accent,
-                    action: {}
-                )
+                    badgeColor: AmberTheme.accent
+                ) {
+                    if let onSelectTab {
+                        onSelectTab(.chat)
+                    }
+                }
 
                 modeButton(
                     tab: .tasks,
-                    isSelected: false,
-                    badgeCount: needsAttentionCount > 0 ? needsAttentionCount : activeTaskCount,
-                    badgeColor: needsAttentionCount > 0 ? AmberTheme.accentRed : AmberTheme.accent,
-                    action: onOpenTasks
-                )
+                    isSelected: selectedTab == .tasks,
+                    badgeCount: badgeCount,
+                    badgeColor: badgeColor
+                ) {
+                    if let onSelectTab {
+                        onSelectTab(selectedTab == .tasks ? .chat : .tasks)
+                    } else {
+                        onOpenTasks()
+                    }
+                }
 
                 modeButton(
-                    tab: .workspace,
-                    isSelected: false,
+                    tab: .hubs,
+                    isSelected: selectedTab == .hubs,
                     badgeCount: 0,
-                    badgeColor: AmberTheme.accent,
-                    action: onOpenWorkspace
-                )
+                    badgeColor: AmberTheme.accent
+                ) {
+                    if let onSelectTab {
+                        onSelectTab(selectedTab == .hubs ? .chat : .hubs)
+                    } else {
+                        onOpenWorkspace()
+                    }
+                }
             }
             .padding(3.5)
-            .background(AmberTheme.surface.opacity(0.95), in: Capsule(style: .continuous))
+            .background(AmberTheme.surface.opacity(0.96), in: Capsule(style: .continuous))
             .overlay {
                 Capsule(style: .continuous)
                     .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
@@ -77,23 +117,24 @@ struct AmberDuetBottomSwitcher: View {
 
             Spacer(minLength: 4)
 
-            // Quick task delegation trigger (Cloud / Background task)
-            if let onDelegateCloudTask {
+            // Right (+1): In-place morphing between "后台交办 ↗" and "● 云端 · <当前中心> ⌄"
+            if isBackgroundHandoffMode {
+                handoffTargetMenuPill
+            } else if let onDelegateCloudTask {
                 Button(action: onDelegateCloudTask) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.up.right.circle.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accent)
-                        Text(IOSAppLocalization.string("交办任务", defaultValue: "交办任务"))
+                    HStack(spacing: 4) {
+                        Text(IOSAppLocalization.string("后台交办", defaultValue: "后台交办"))
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(AmberTheme.foreground2)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .bold))
                     }
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 7)
-                    .background(AmberTheme.surface.opacity(0.92), in: Capsule(style: .continuous))
+                    .foregroundStyle(AmberTheme.accent)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 8)
+                    .background(AmberTheme.surface.opacity(0.95), in: Capsule(style: .continuous))
                     .overlay {
                         Capsule(style: .continuous)
-                            .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
+                            .stroke(AmberTheme.accent.opacity(0.28), lineWidth: 0.85)
                     }
                 }
                 .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.97, haptic: .selection))
@@ -106,6 +147,90 @@ struct AmberDuetBottomSwitcher: View {
         .accessibilityIdentifier("chat.duet.bottomSwitcher")
     }
 
+    private var handoffTargetMenuPill: some View {
+        let hubName = (activeHubTitle?.isEmpty == false) ? activeHubTitle! : IOSAppLocalization.string("当前中心", defaultValue: "当前中心")
+        return Menu {
+            Section(IOSAppLocalization.string("执行位置", defaultValue: "执行位置")) {
+                ForEach(AmberHandoffExecutionTarget.allCases) { target in
+                    Button {
+                        onSelectExecutionTarget?(target)
+                    } label: {
+                        HStack {
+                            Text(target == .cloud ? "云端后台 (Amber Cloud)" : "本机后台子代理")
+                            if handoffExecutionTarget == target {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !hubs.isEmpty {
+                Section(IOSAppLocalization.string("归属中心", defaultValue: "归属中心")) {
+                    ForEach(hubs) { hub in
+                        Button {
+                            onSelectHub?(hub.id)
+                        } label: {
+                            HStack {
+                                Text(hub.title)
+                                if hub.title == activeHubTitle {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if handoffExecutionTarget == .cloud && !cloudAgents.isEmpty {
+                Section(IOSAppLocalization.string("云端 Agent", defaultValue: "云端 Agent")) {
+                    ForEach(cloudAgents) { agent in
+                        Button {
+                            onSelectCloudAgent?(agent.id)
+                        } label: {
+                            HStack {
+                                Text(agent.name)
+                                if agent.id == selectedCloudAgentId {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let onExitHandoffMode {
+                Divider()
+                Button(role: .destructive, action: onExitHandoffMode) {
+                    Label(IOSAppLocalization.string("退出后台交办模式", defaultValue: "退出后台交办模式"), systemImage: "xmark.circle")
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(handoffExecutionTarget == .cloud ? AmberTheme.accentGreen : AmberTheme.accent)
+                    .frame(width: 6, height: 6)
+
+                Text("\(handoffExecutionTarget.shortLabel) · \(hubName)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(AmberTheme.surface.opacity(0.96), in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(AmberTheme.border, lineWidth: 0.85)
+            }
+        }
+        .accessibilityIdentifier("chat.duet.handoffTargetMenu")
+    }
+
     private func modeButton(
         tab: AmberDuetModeTab,
         isSelected: Bool,
@@ -114,12 +239,10 @@ struct AmberDuetBottomSwitcher: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: tab.iconName)
-                    .font(.system(size: 11.5, weight: .semibold))
-
+            HStack(spacing: 4) {
                 Text(tab.title)
                     .font(.caption.weight(isSelected ? .semibold : .medium))
+                    .lineLimit(1)
 
                 if badgeCount > 0 {
                     Text("\(badgeCount)")
@@ -131,9 +254,10 @@ struct AmberDuetBottomSwitcher: View {
                         .background(badgeColor, in: Capsule(style: .continuous))
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(isSelected ? AmberTheme.foreground : AmberTheme.muted)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 5.5)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
             .background {
                 if isSelected {
                     Capsule(style: .continuous)
@@ -148,122 +272,378 @@ struct AmberDuetBottomSwitcher: View {
     }
 }
 
-// MARK: - Unified Agent Task Center Sheet (In-Chat + SubAgent + Cloud Self + Mac Gateway)
+// MARK: - 02 Argon Tasks Panel Card & Sheet (Goal/Status Grouped + Collapsed History)
+
+struct AmberDuetTaskCenterCard: View {
+    let conversationSegments: [ChatTaskRunSegment]
+    let gateway: MacGatewayStore
+    var subAgentStore: IOSSubAgentActivityStore = .shared
+    var hubStore: AmberHubStore = .shared
+    let onOpenFullTaskBoard: () -> Void
+    let onSelectTool: (UIMessagePart.Tool) -> Void
+    var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
+    var onDismissPanel: (() -> Void)? = nil
+
+    @State private var selectedHubFilterId: String? = nil
+    @State private var isRecentExpanded: Bool = false
+    @State private var selectedSegment: ChatTaskRunSegment? = nil
+
+    private var groupedTasks: (needsAttention: [AmberUnifiedTaskItem], running: [AmberUnifiedTaskItem], recent: [AmberUnifiedTaskItem]) {
+        AmberUnifiedTaskBuilder.buildTasks(
+            conversationSegments: conversationSegments,
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            hubStore: hubStore,
+            filterHubId: selectedHubFilterId
+        )
+    }
+
+    private var filterHubTitle: String {
+        if let filterId = selectedHubFilterId,
+           let hub = hubStore.hubs.first(where: { $0.id == filterId }) {
+            return hub.title
+        }
+        return IOSAppLocalization.string("全部中心", defaultValue: "全部中心")
+    }
+
+    var body: some View {
+        let groups = groupedTasks
+        VStack(alignment: .leading, spacing: 14) {
+            // Drag indicator
+            HStack {
+                Spacer()
+                Capsule()
+                    .fill(AmberTheme.border)
+                    .frame(width: 36, height: 4)
+                Spacer()
+            }
+            .padding(.top, 8)
+
+            // Header: 任务 + 全部中心 ⌄
+            HStack(alignment: .center) {
+                Text(IOSAppLocalization.string("任务", defaultValue: "任务"))
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(AmberTheme.foreground)
+
+                Spacer()
+
+                Menu {
+                    Button {
+                        selectedHubFilterId = nil
+                    } label: {
+                        HStack {
+                            Text(IOSAppLocalization.string("全部中心", defaultValue: "全部中心"))
+                            if selectedHubFilterId == nil {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    ForEach(hubStore.hubs) { hub in
+                        Button {
+                            selectedHubFilterId = hub.id
+                        } label: {
+                            HStack {
+                                Text(hub.title)
+                                if selectedHubFilterId == hub.id {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(filterHubTitle)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AmberTheme.foreground2)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5.5)
+                    .background(AmberTheme.background.opacity(0.85), in: Capsule(style: .continuous))
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
+                    }
+                }
+                .accessibilityIdentifier("chat.duet.tasks.hubFilter")
+            }
+            .padding(.horizontal, 18)
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    // 1. Needs-Attention / Failed Tasks (Top Priority, No Warning Icon)
+                    ForEach(groups.needsAttention) { item in
+                        needsAttentionCard(item)
+                    }
+
+                    // 2. Active / Running Tasks
+                    ForEach(groups.running) { item in
+                        runningTaskCard(item)
+                    }
+
+                    if groups.needsAttention.isEmpty && groups.running.isEmpty && groups.recent.isEmpty {
+                        Text(IOSAppLocalization.string("当前暂无运行中或待处理的任务", defaultValue: "当前暂无运行中或待处理的任务"))
+                            .font(.subheadline)
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+
+                    // 3. Collapsed Recent Terminal Results Summary Bar (No Clock Icon)
+                    if !groups.recent.isEmpty {
+                        recentResultsSection(groups.recent)
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 14)
+            }
+            .frame(maxHeight: 340)
+        }
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.85)
+        }
+        .shadow(color: Color.black.opacity(0.08), radius: 18, x: 0, y: -4)
+        .accessibilityIdentifier("chat.duet.tasksPanel")
+        .sheet(item: $selectedSegment) { segment in
+            ChatTaskGroupDetailSheet(
+                segment: segment,
+                onSelectTool: { tool in
+                    selectedSegment = nil
+                    onDismissPanel?()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                        onSelectTool(tool)
+                    }
+                }
+            )
+        }
+    }
+
+    private func needsAttentionCard(_ item: AmberUnifiedTaskItem) -> some View {
+        Button {
+            if let seg = item.underlyingSegment {
+                selectedSegment = seg
+            } else {
+                onFollowupTask?(item)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(item.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    Text(item.statusBadgeText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accentRed)
+                }
+
+                HStack(alignment: .center) {
+                    Text(item.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.accentRed.opacity(0.9))
+                        .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    if let actionTitle = item.actionTitle {
+                        Button {
+                            if let onFollowupTask {
+                                onFollowupTask(item)
+                            } else if let seg = item.underlyingSegment {
+                                selectedSegment = seg
+                            }
+                        } label: {
+                            Text(actionTitle)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4.5)
+                                .background(AmberTheme.accentRed, in: Capsule(style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(AmberTheme.accentRed.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AmberTheme.accentRed.opacity(0.28), lineWidth: 0.9)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func runningTaskCard(_ item: AmberUnifiedTaskItem) -> some View {
+        Button {
+            if let seg = item.underlyingSegment {
+                selectedSegment = seg
+            } else if let onFollowupTask {
+                onFollowupTask(item)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(item.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(AmberTheme.accent)
+                            .frame(width: 5, height: 5)
+                        Text(item.statusBadgeText)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AmberTheme.muted)
+                }
+
+                Text(item.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(AmberTheme.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func recentResultsSection(_ recentItems: [AmberUnifiedTaskItem]) -> some View {
+        let summaryText = AmberUnifiedTaskBuilder.recentSummaryText(recentItems)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    isRecentExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("最近结果 · \(recentItems.count) 项")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground2)
+
+                    Spacer(minLength: 6)
+
+                    Text(summaryText)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(1)
+
+                    Text(isRecentExpanded ? "收起" : "展开")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(AmberTheme.muted)
+
+                    Image(systemName: isRecentExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(AmberTheme.muted)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("chat.duet.tasks.recentSummaryBar")
+
+            if isRecentExpanded {
+                ForEach(recentItems.prefix(6)) { item in
+                    Button {
+                        if let seg = item.underlyingSegment {
+                            selectedSegment = seg
+                        }
+                    } label: {
+                        HStack {
+                            Text(item.title)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(item.statusBadgeText)
+                                .font(.caption2)
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(AmberTheme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    onDismissPanel?()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                        onOpenFullTaskBoard()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(IOSAppLocalization.string("打开完整任务与定时看板", defaultValue: "打开完整任务与定时看板"))
+                        Image(systemName: "arrow.up.right")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accent)
+                    .padding(.top, 2)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
 
 struct AmberDuetTaskCenterSheet: View {
     let conversationSegments: [ChatTaskRunSegment]
     let gateway: MacGatewayStore
     var subAgentStore: IOSSubAgentActivityStore = .shared
+    var hubStore: AmberHubStore = .shared
     let onOpenFullTaskBoard: () -> Void
     let onSelectTool: (UIMessagePart.Tool) -> Void
+    var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedSegment: ChatTaskRunSegment?
-
-    private var cloudActivities: [MacGatewayCloudActivityStatus] {
-        gateway.cloudAgentActivities.values
-            .flatMap(\.activities)
-            .sorted { $0.updatedAtMs > $1.updatedAtMs }
-    }
 
     var body: some View {
         NavigationStack {
-            List {
-                // 1. In-Conversation Tasks (grouped by taskId)
-                Section {
-                    if conversationSegments.isEmpty {
-                        Text(IOSAppLocalization.string("当前对话暂无工具或子任务记录。", defaultValue: "当前对话暂无工具或子任务记录。"))
-                            .font(.subheadline)
-                            .foregroundStyle(AmberTheme.muted)
-                    } else {
-                        ForEach(conversationSegments) { segment in
-                            Button {
-                                selectedSegment = segment
-                            } label: {
-                                inChatTaskRow(segment)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                } header: {
-                    Text(IOSAppLocalization.string("当前对话任务流", defaultValue: "当前对话任务流"))
-                } footer: {
-                    Text(IOSAppLocalization.string("逐步工具调用已按任务折叠；失败步骤会在此处与主对话中显式标出，点击可排查原因。", defaultValue: "逐步工具调用已按任务折叠；失败步骤会在此处与主对话中显式标出，点击可排查原因。"))
-                }
-
-                // 2. Local Background SubAgents
-                if !subAgentStore.items.isEmpty {
-                    Section(IOSAppLocalization.string("本地并行子代理", defaultValue: "本地并行子代理")) {
-                        ForEach(subAgentStore.items) { item in
-                            HStack(spacing: 10) {
-                                ChatSubAgentPixelAvatar(
-                                    identity: item.avatarIdentity,
-                                    size: 24,
-                                    isRunning: item.status == .running
-                                )
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.title)
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(AmberTheme.foreground)
-                                    Text(item.subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(AmberTheme.muted)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                statusTag(for: item.status)
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                }
-
-                // 3. Cloud Self Live Agent Activity (/v2/agents/{id}/activity)
-                if !cloudActivities.isEmpty {
-                    Section(IOSAppLocalization.string("云端 Agent 实时活动", defaultValue: "云端 Agent 实时活动")) {
-                        ForEach(cloudActivities.prefix(10)) { activity in
-                            HStack(spacing: 10) {
-                                Image(systemName: activity.phase.isTerminal ? "checkmark.circle" : "bolt.horizontal.circle.fill")
-                                    .foregroundStyle(activity.phase == .failed ? AmberTheme.accentRed : AmberTheme.accent)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(activity.label)
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(AmberTheme.foreground)
-                                    Text(activity.taskId)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(AmberTheme.muted)
-                                }
-                                Spacer()
-                                Text(activity.phase.rawValue)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(AmberTheme.muted)
-                            }
-                        }
-                    }
-                }
-
-                // 4. Cloud Native Tasks (/v2/work-items)
-                MacGatewayCloudTaskSection(gateway: gateway)
-
-                // 5. Full Mac / Cloud Task Board Link
-                Section {
-                    Button {
-                        dismiss()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            onOpenFullTaskBoard()
-                        }
-                    } label: {
-                        Label(
-                            IOSAppLocalization.string("打开完整任务与定时看板", defaultValue: "打开完整任务与定时看板"),
-                            systemImage: "rectangle.3.group"
-                        )
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(AmberTheme.accent)
-                    }
-                }
+            VStack(spacing: 0) {
+                AmberDuetTaskCenterCard(
+                    conversationSegments: conversationSegments,
+                    gateway: gateway,
+                    subAgentStore: subAgentStore,
+                    hubStore: hubStore,
+                    onOpenFullTaskBoard: onOpenFullTaskBoard,
+                    onSelectTool: onSelectTool,
+                    onFollowupTask: onFollowupTask,
+                    onDismissPanel: { dismiss() }
+                )
+                .padding(12)
+                Spacer()
             }
-            .navigationTitle(IOSAppLocalization.string("任务中心", defaultValue: "任务中心"))
-            .navigationBarTitleDisplayMode(.inline)
+            .background(AmberTheme.background.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(IOSAppLocalization.string("完成", defaultValue: "完成")) {
@@ -273,83 +653,326 @@ struct AmberDuetTaskCenterSheet: View {
                     .foregroundStyle(AmberTheme.accent)
                 }
             }
-            .task {
-                if gateway.connection != nil {
-                    await gateway.refreshCloudAgents()
-                    await gateway.refreshActiveCloudTasks()
-                }
-            }
-            .sheet(item: $selectedSegment) { segment in
-                ChatTaskGroupDetailSheet(
-                    segment: segment,
-                    onSelectTool: { tool in
-                        selectedSegment = nil
-                        dismiss()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                            onSelectTool(tool)
-                        }
-                    }
-                )
-            }
         }
-    }
-
-    private func inChatTaskRow(_ segment: ChatTaskRunSegment) -> some View {
-        let rollup = segment.rollupState
-        return HStack(spacing: 10) {
-            Image(systemName: rollup.iconSystemName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(rollup.tintColor)
-                .frame(width: 22)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(segment.headline)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AmberTheme.foreground)
-                        .lineLimit(1)
-
-                    Spacer()
-
-                    Text(rollup.statusBadgeText)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(rollup.tintColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(rollup.tintColor.opacity(0.12), in: Capsule())
-                }
-
-                if let subtitle = segment.subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted)
-                        .lineLimit(2)
-                }
-            }
-        }
-        .padding(.vertical, 3)
-    }
-
-    @ViewBuilder
-    private func statusTag(for status: IOSSubAgentActivityStatus) -> some View {
-        let (label, color): (String, Color) = {
-            switch status {
-            case .running: return ("运行中", AmberTheme.accent)
-            case .completed: return ("已完成", AmberTheme.accentGreen)
-            case .failed: return ("失败", AmberTheme.accentRed)
-            case .cancelled: return ("已取消", AmberTheme.muted)
-            }
-        }()
-        Text(label)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2.5)
-            .background(color.opacity(0.12), in: Capsule())
     }
 }
 
-// MARK: - Secondary Workspace & Session History Drawer Sheet
+// MARK: - 03 Argon Hubs Panel Card & Sheet (Iconless Typography + Collapsed Smart Collections)
+
+struct AmberDuetHubsCard: View {
+    var hubStore: AmberHubStore = .shared
+    let conversationStore: IOSConversationStore
+    let conversationSegments: [ChatTaskRunSegment]
+    let gateway: MacGatewayStore
+    var subAgentStore: IOSSubAgentActivityStore = .shared
+    var onSelectHub: ((AmberHubItem) -> Void)? = nil
+    var onDismissPanel: (() -> Void)? = nil
+
+    @State private var isSmartCollectionsExpanded: Bool = false
+    @State private var isShowingCreateHubForm: Bool = false
+    @State private var newHubTitle: String = ""
+    @State private var newHubMemoryPolicy: AmberHubMemoryPolicy = .sharedWithGlobal
+
+    private var allActiveTasks: [AmberUnifiedTaskItem] {
+        let grouped = AmberUnifiedTaskBuilder.buildTasks(
+            conversationSegments: conversationSegments,
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            hubStore: hubStore
+        )
+        return grouped.needsAttention + grouped.running
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Drag indicator
+            HStack {
+                Spacer()
+                Capsule()
+                    .fill(AmberTheme.border)
+                    .frame(width: 36, height: 4)
+                Spacer()
+            }
+            .padding(.top, 8)
+
+            // Header: 中心 + [1 个合集可升级 | +]
+            HStack(alignment: .center) {
+                Text(IOSAppLocalization.string("中心", defaultValue: "中心"))
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(AmberTheme.foreground)
+
+                Spacer()
+
+                headerActionCapsule
+            }
+            .padding(.horizontal, 18)
+
+            if isShowingCreateHubForm {
+                createHubInlineForm
+                    .padding(.horizontal, 18)
+            }
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if hubStore.hubs.isEmpty {
+                        Text(IOSAppLocalization.string("尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心", defaultValue: "尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心"))
+                            .font(.subheadline)
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else {
+                        // Pure-typography Hub cards (No left category icon boxes)
+                        ForEach(hubStore.hubs) { hub in
+                            hubRowCard(hub)
+                        }
+                    }
+
+                    // Collapsed single-line Smart Collections bar
+                    smartCollectionsSection
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 14)
+            }
+            .frame(maxHeight: 340)
+        }
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.85)
+        }
+        .shadow(color: Color.black.opacity(0.08), radius: 18, x: 0, y: -4)
+        .accessibilityIdentifier("chat.duet.hubsPanel")
+    }
+
+    private var headerActionCapsule: some View {
+        let upgradableCount = hubStore.upgradableCollectionCount
+        return HStack(spacing: 8) {
+            if upgradableCount > 0 {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        isSmartCollectionsExpanded = true
+                    }
+                } label: {
+                    Text("\(upgradableCount) 个合集可升级")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accent)
+                }
+                .buttonStyle(.plain)
+
+                Rectangle()
+                    .fill(AmberTheme.accent.opacity(0.28))
+                    .frame(width: 1, height: 11)
+            }
+
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    isShowingCreateHubForm.toggle()
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(AmberTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("chat.duet.hubs.createButton")
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 6)
+        .background(AmberTheme.accent.opacity(0.10), in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(AmberTheme.accent.opacity(0.24), lineWidth: 0.75)
+        }
+    }
+
+    private var createHubInlineForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(IOSAppLocalization.string("输入新中心名称（如：量子计算调研）", defaultValue: "输入新中心名称（如：量子计算调研）"), text: $newHubTitle)
+                .font(.subheadline)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            HStack {
+                Picker("", selection: $newHubMemoryPolicy) {
+                    ForEach(AmberHubMemoryPolicy.allCases, id: \.rawValue) { policy in
+                        Text(policy.displayTitle).tag(policy)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Button {
+                    let created = hubStore.createHub(title: newHubTitle, memoryPolicy: newHubMemoryPolicy)
+                    if let currentConvId = conversationStore.currentConversation?.id.description() {
+                        hubStore.assignConversation(currentConvId, toHub: created.id)
+                    }
+                    newHubTitle = ""
+                    isShowingCreateHubForm = false
+                    onSelectHub?(created)
+                } label: {
+                    Text(IOSAppLocalization.string("创建", defaultValue: "创建"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(AmberTheme.accent, in: Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(AmberTheme.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func hubRowCard(_ hub: AmberHubItem) -> some View {
+        let isCurrent = hubStore.activeHubId == hub.id
+        let subtitle = hubStore.subtitle(
+            for: hub,
+            conversations: conversationStore.summaries,
+            activeTasks: allActiveTasks
+        )
+        return Button {
+            hubStore.selectHub(hub.id)
+            if let currentConvId = conversationStore.currentConversation?.id.description() {
+                hubStore.assignConversation(currentConvId, toHub: hub.id)
+            }
+            onSelectHub?(hub)
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(hub.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(1)
+
+                        if isCurrent {
+                            Text(IOSAppLocalization.string("当前", defaultValue: "当前"))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AmberTheme.accentGreen)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(AmberTheme.accentGreen.opacity(0.14), in: Capsule(style: .continuous))
+                        }
+
+                        if hub.memoryPolicy == .hubIsolated {
+                            Text(IOSAppLocalization.string("独立记忆", defaultValue: "独立记忆"))
+                                .font(.caption2)
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                    }
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .background(AmberTheme.background.opacity(isCurrent ? 0.95 : 0.75), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(isCurrent ? AmberTheme.accent.opacity(0.55) : AmberTheme.borderSoft, lineWidth: isCurrent ? 1.15 : 0.75)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.duet.hubs.row.\(hub.id)")
+    }
+
+    private var smartCollectionsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                guard !hubStore.smartCollections.isEmpty else { return }
+                withAnimation(.snappy(duration: 0.2)) {
+                    isSmartCollectionsExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(IOSAppLocalization.string("智能合集", defaultValue: "智能合集"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground2)
+
+                    Spacer(minLength: 6)
+
+                    if let summary = hubStore.smartCollectionsSummaryText {
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .lineLimit(1)
+
+                        Text(isSmartCollectionsExpanded ? "收起" : "展开")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AmberTheme.muted)
+
+                        Image(systemName: isSmartCollectionsExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(AmberTheme.muted)
+                    } else {
+                        Text(IOSAppLocalization.string("暂无自动归拢项", defaultValue: "暂无自动归拢项"))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(AmberTheme.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("chat.duet.hubs.smartCollectionsBar")
+
+            if isSmartCollectionsExpanded {
+                ForEach(hubStore.smartCollections) { collection in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(collection.title) (\(collection.conversationCount))")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text(collection.sampleKeywords.joined(separator: " · "))
+                                .font(.caption2)
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+
+                        Spacer()
+
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                _ = hubStore.promoteSmartCollectionToHub(collection.id)
+                            }
+                        } label: {
+                            Text(IOSAppLocalization.string("升级为中心", defaultValue: "升级为中心"))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AmberTheme.accent)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4.5)
+                                .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.duet.hubs.promote.\(collection.id)")
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(AmberTheme.background.opacity(0.55), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Secondary Workspace & Session History Drawer Sheet (Top-Left Menu Entry)
 
 struct AmberDuetWorkspaceDrawerSheet: View {
     let conversationStore: IOSConversationStore
@@ -358,7 +981,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
     let onSelectConversation: (KotlinUuid) -> Void
     let onNewConversation: () -> Void
     let onOpenAllHistory: () -> Void
-    let onNavigate: (RouterDestination) -> Void
+    let onNavigate: (Route) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingPersonaStudio = false
@@ -385,14 +1008,14 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                 .padding(.vertical, 18)
             }
             .background(AmberTheme.background.ignoresSafeArea())
-            .navigationTitle(IOSAppLocalization.string("空间", defaultValue: "空间"))
+            .navigationTitle(IOSAppLocalization.string("导航与历史", defaultValue: "导航与历史"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         dismiss()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                            onNavigate(.search)
+                            onNavigate(.search(initialQuery: ""))
                         }
                     } label: {
                         Label(IOSAppLocalization.string("搜索", defaultValue: "搜索"), systemImage: "magnifyingglass")
@@ -484,7 +1107,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
 
     private var primarySpacesListSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(IOSAppLocalization.string("常用空间", defaultValue: "常用空间"))
+            Text(IOSAppLocalization.string("常用功能与设置", defaultValue: "常用功能与设置"))
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(AmberTheme.muted)
                 .padding(.horizontal, 4)
@@ -584,7 +1207,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
         title: String,
         subtitle: String,
         icon: String,
-        destination: RouterDestination
+        destination: Route
     ) -> some View {
         Button {
             dismiss()

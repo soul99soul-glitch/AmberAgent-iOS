@@ -60,7 +60,8 @@ struct ChatView: View {
         viewModel: ChatViewModel? = nil,
         initialMessageAnchor: ChatMessageAnchor? = nil,
         activityStore: IOSSubAgentActivityStore = .shared,
-        webMountController: IOSWebMountController = .shared
+        webMountController: IOSWebMountController = .shared,
+        initialComposerState: ChatComposerLocalState = ChatComposerLocalState()
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -77,6 +78,7 @@ struct ChatView: View {
         self._viewModel = State(
             initialValue: resolvedViewModel
         )
+        self._composerState = State(initialValue: initialComposerState)
     }
 
     private var chatContent: some View {
@@ -127,14 +129,20 @@ struct ChatView: View {
                 .zIndex(10)
             }
 
-            // Tap-outside scrim for the attachment glass panel.
-            if composerState.isAttachExpanded {
-                Color.black.opacity(0.06)
+            // Tap-outside scrim for the attachment glass panel or inline Argon panels (Tasks / Hubs).
+            if composerState.isAttachExpanded || composerState.activeDuetTab != .chat {
+                Color.black.opacity(composerState.activeDuetTab != .chat ? 0.14 : 0.06)
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        withAnimation(.bouncy(duration: 0.38, extraBounce: 0.1)) {
-                            composerState.isAttachExpanded = false
+                        if composerState.activeDuetTab != .chat {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                composerState.activeDuetTab = .chat
+                            }
+                        } else {
+                            withAnimation(.bouncy(duration: 0.38, extraBounce: 0.1)) {
+                                composerState.isAttachExpanded = false
+                            }
                         }
                     }
                     .transition(.opacity)
@@ -808,7 +816,8 @@ struct ChatView: View {
             },
             onRefreshRecap: requestRecap,
             onLocateRecapNode: locateRecapNode,
-            onRecapNextStep: fillRecapNextStep
+            onRecapNextStep: fillRecapNextStep,
+            backgroundRunningCount: duetActiveTaskCount
         )
         .onAppear { syncIslandPresentation() }
         .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }

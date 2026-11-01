@@ -27,18 +27,16 @@ struct ChatTaskInlineCardView: View {
                     isShowingGroupSheet = true
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    // Duet-style curved branch header: ╭─ [Agent Badge] Headline · Status >
+                VStack(alignment: .leading, spacing: 5) {
+                    // Argon single-line task header: ╭─ Headline · [● Status] >
                     HStack(alignment: .center, spacing: 8) {
                         DuetBranchConnectorShape()
                             .stroke(
                                 rollup.isFailureOrNeedsUser ? rollup.tintColor.opacity(0.65) : AmberTheme.border,
                                 style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
                             )
-                            .frame(width: 12, height: 16)
-                            .offset(y: 2)
-
-                        agentAvatarBadge
+                            .frame(width: 12, height: 14)
+                            .offset(y: 1)
 
                         Text(segment.headline)
                             .font(.footnote.weight(.semibold))
@@ -46,7 +44,7 @@ struct ChatTaskInlineCardView: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        Spacer(minLength: 4)
+                        Spacer(minLength: 6)
 
                         statusPill
 
@@ -55,37 +53,20 @@ struct ChatTaskInlineCardView: View {
                             .foregroundStyle(AmberTheme.muted)
                     }
 
-                    // Secondary human-readable progress or failure callout
-                    if let subtitle = segment.subtitle, !subtitle.isEmpty {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            if case .needsAttention = rollup {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(AmberTheme.accentRed)
-                            } else if case .approvalPending = rollup {
-                                Image(systemName: "hand.raised.fill")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(AmberTheme.accentAmber)
-                            } else if case .working = rollup {
-                                Circle()
-                                    .fill(AmberTheme.accent)
-                                    .frame(width: 5, height: 5)
-                                    .offset(y: -1)
-                            }
-
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(
-                                    rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted
-                                )
-                                .lineLimit(rollup.isFailureOrNeedsUser ? 2 : 1)
-                                .multilineTextAlignment(.leading)
-                        }
-                        .padding(.leading, 20)
+                    // Second line is reserved exclusively for unrecovered failure or pending user approval
+                    if rollup.isFailureOrNeedsUser,
+                       let subtitle = segment.subtitle,
+                       !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(rollup.tintColor)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .padding(.leading, 20)
                     }
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.vertical, 8)
                 .background(cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -130,42 +111,19 @@ struct ChatTaskInlineCardView: View {
     }
 
     @ViewBuilder
-    private var agentAvatarBadge: some View {
-        if let identity = segment.subAgentIdentity {
-            ChatSubAgentPixelAvatar(identity: identity, size: 18, isRunning: rollup.isLive)
-                .frame(width: 18, height: 18)
-        } else {
-            ZStack {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(AmberTheme.accent.opacity(0.16))
-                    .frame(width: 18, height: 18)
-                Text("A")
-                    .font(.system(size: 11, weight: .bold, design: .serif))
-                    .foregroundStyle(AmberTheme.accent)
-            }
-        }
-    }
-
-    @ViewBuilder
     private var statusPill: some View {
-        HStack(spacing: 4) {
-            if rollup.isLive {
-                IOSGenerationActivityIndicator()
-                    .scaleEffect(0.78)
-                    .frame(width: 12, height: 12)
-            } else {
-                Image(systemName: rollup.iconSystemName)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(rollup.tintColor)
-            }
+        HStack(spacing: 5) {
+            Circle()
+                .fill(rollup.tintColor)
+                .frame(width: 5, height: 5)
 
-            Text(rollup.statusBadgeText)
+            Text(segment.inlineStatusBadgeText)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(rollup.tintColor)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3.5)
         .background(rollup.tintColor.opacity(0.12), in: Capsule(style: .continuous))
     }
 

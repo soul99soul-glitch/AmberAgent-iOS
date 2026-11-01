@@ -90,7 +90,7 @@ struct ChatTaskRunSegment: Identifiable {
     let messageID: String
     let taskId: String
     let agentDisplayName: String
-    let subAgentIdentity: ChatSubAgentAvatarIdentity?
+    let subAgentIdentity: String?
     let headline: String
     let subtitle: String?
     let rollupState: ChatTaskRollupState
@@ -101,6 +101,19 @@ struct ChatTaskRunSegment: Identifiable {
     let hidesCompletedStandaloneReasoning: Bool
 
     var hasTools: Bool { !tools.isEmpty }
+
+    var inlineStatusBadgeText: String {
+        if case .working = rollupState {
+            let isCloudOrSubagent = tools.contains { tool in
+                let name = tool.toolName.lowercased()
+                return name.contains("subagent") || name.contains("cloud") || name.contains("background")
+            }
+            if isCloudOrSubagent {
+                return IOSAppLocalization.string("云端运行中", defaultValue: "云端运行中")
+            }
+        }
+        return rollupState.statusBadgeText
+    }
 }
 
 enum ChatTaskMessageSegment: Identifiable {
@@ -128,6 +141,7 @@ enum ChatTaskStreamGrouping {
     ///   surface as `.needsAttention` so tool errors are never silently masked as success.
     /// - Standalone finished `Reasoning` pills before a completed text reply are hidden from the main stream,
     ///   while live in-progress thinking stays visible.
+    @MainActor
     static func segments(
         for message: UIMessage,
         messageID: String,
@@ -229,6 +243,7 @@ enum ChatTaskStreamGrouping {
         return result
     }
 
+    @MainActor
     private static func buildTaskSegment(
         messageID: String,
         runStart: Int,
@@ -273,7 +288,7 @@ enum ChatTaskStreamGrouping {
         let steps = tools.map { ChatToolStepModel(tool: $0) }
         let subAgentStep = steps.first { $0.subAgentPresentation != nil }
         let agentName: String
-        let subAgentIdentity: ChatSubAgentAvatarIdentity?
+        let subAgentIdentity: String?
         if let presentation = subAgentStep?.subAgentPresentation {
             agentName = "@\(presentation.displayName)"
             subAgentIdentity = presentation.identity
@@ -299,7 +314,7 @@ enum ChatTaskStreamGrouping {
             if tool.output.contains(where: { $0 is UIMessagePart.Image || $0 is UIMessagePart.Video }) {
                 return true
             }
-            return !ChatToolMediaGallery.mediaURLs(in: tool).isEmpty
+            return !ChatMediaItem.toolImages(tool.output).isEmpty
         }
 
         return ChatTaskRunSegment(
@@ -349,7 +364,7 @@ enum ChatTaskStreamGrouping {
         for (tool, step) in zip(tools, steps) {
             let key = tool.toolName
             lastStateByToolName[key] = step.state
-            if step.state == .failed || ChatPhoneToolGrouping.StepInspect.hasUnknownOutcome(tool) {
+            if step.state == .failed || Self.hasUnknownOutcome(tool) {
                 failedCountByToolName[key, default: 0] += 1
                 if firstFailedStepByToolName[key] == nil {
                     firstFailedStepByToolName[key] = step
@@ -362,7 +377,7 @@ enum ChatTaskStreamGrouping {
         for (tool, step) in zip(tools, steps) {
             let key = tool.toolName
             let isUnrecovered = (lastStateByToolName[key] == .failed)
-                || ChatPhoneToolGrouping.StepInspect.hasUnknownOutcome(tool)
+                || Self.hasUnknownOutcome(tool)
             if isUnrecovered, let count = failedCountByToolName[key], count > 0 {
                 if primaryFailedStep == nil {
                     primaryFailedStep = firstFailedStepByToolName[key] ?? step
@@ -377,7 +392,7 @@ enum ChatTaskStreamGrouping {
         }
 
         if unrecoveredFailedCount == 0,
-           let unknownIndex = tools.firstIndex(where: { ChatPhoneToolGrouping.StepInspect.hasUnknownOutcome($0) }) {
+           let unknownIndex = tools.firstIndex(where: { Self.hasUnknownOutcome($0) }) {
             unrecoveredFailedCount = 1
             primaryFailedStep = steps[unknownIndex]
         }
@@ -407,6 +422,17 @@ enum ChatTaskStreamGrouping {
         rollup: ChatTaskRollupState,
         subAgentPresentation: ChatSubAgentCapsulePresentation?
     ) -> (headline: String, subtitle: String?) {
+        if let dispatchedGoalTitle = extractDispatchedGoalTitle(from: tools) {
+            switch rollup {
+            case .needsAttention(_, _, _, let reason):
+                return (dispatchedGoalTitle, reason)
+            case .working(let currentStepTitle):
+                return (dispatchedGoalTitle, currentStepTitle)
+            default:
+                return (dispatchedGoalTitle, nil)
+            }
+        }
+
         if let subAgentPresentation {
             let title = subAgentPresentation.workSummary ?? "@\(subAgentPresentation.displayName)"
             switch rollup {
@@ -462,6 +488,28 @@ enum ChatTaskStreamGrouping {
         }
     }
 
+    private static func extractDispatchedGoalTitle(from tools: [UIMessagePart.Tool]) -> String? {
+        for tool in tools {
+            let name = tool.toolName.lowercased()
+            guard name.contains("subagent") || name.contains("cloud") || name.contains("dispatch") else {
+                continue
+            }
+            guard let data = tool.input.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+            for key in ["title", "goal", "prompt", "task", "summary"] {
+                if let raw = json[key] as? String {
+                    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        return String(trimmed.prefix(44))
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
     private static func extractHumanReadableFailureReason(
         from failedStep: ChatToolStepModel,
         tools: [UIMessagePart.Tool],
@@ -512,6 +560,19 @@ enum ChatTaskStreamGrouping {
         return String(line.prefix(56))
     }
 
+    private static func hasUnknownOutcome(_ tool: UIMessagePart.Tool) -> Bool {
+        let rawText = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+        guard !rawText.isEmpty,
+              let data = rawText.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        let status = (json["status"] as? String)?.lowercased()
+        let outcome = (json["outcome"] as? String)?.lowercased()
+        return status == "unknown" || status == "outcome_unknown" || outcome == "unknown" || outcome == "outcome_unknown"
+    }
+
+    @MainActor
     private static func reasoningDuration(_ reasoning: UIMessagePart.Reasoning) -> Double? {
         guard let end = reasoning.finishedAt else { return nil }
         let start = MessageBubbleView.instantToDate(reasoning.createdAt)
