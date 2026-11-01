@@ -96,6 +96,8 @@ final class DesktopWorkspace {
     var gatewayReporter: DesktopGatewayReporter?
     var gatewayControl: DesktopGatewayControl?
     var boardWriter: DesktopBoardWriter?
+    /// Outbound pairing to a cloud amberd; a different slot from the local `gateway` server above.
+    var cloudSelf: DesktopCloudSelfStore?
 
     @ObservationIgnored var registryCache: (modified: Date, sessions: [SessionRecord])?
 

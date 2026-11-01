@@ -13,6 +13,7 @@ struct DesktopSettingsView: View {
     private let speech: DesktopSpeechPlayer?
     private let backgroundMode: DesktopBackgroundMode?
     private let gateway: DesktopGateway?
+    private let cloudSelf: DesktopCloudSelfStore?
     private let plugins: DesktopPluginStore?
     @State private var speechPreviewID = UUID()
     @State private var login: DesktopCodexLogin
@@ -63,7 +64,7 @@ struct DesktopSettingsView: View {
         onOpenBackup: (() -> Void)? = nil, mcp: DesktopMCPManager? = nil, syncWorkspace: DesktopWorkspace? = nil,
         notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil,
         backgroundMode: DesktopBackgroundMode? = nil, gateway: DesktopGateway? = nil,
-        plugins: DesktopPluginStore? = nil, initialTab: Int = 0) {
+        cloudSelf: DesktopCloudSelfStore? = nil, plugins: DesktopPluginStore? = nil, initialTab: Int = 0) {
         self.settings = settings
         self.catalog = catalog
         self.onOpenBackup = onOpenBackup
@@ -74,6 +75,7 @@ struct DesktopSettingsView: View {
         self.speech = speech
         self.backgroundMode = backgroundMode
         self.gateway = gateway
+        self.cloudSelf = cloudSelf
         self.plugins = plugins ?? syncWorkspace?.plugins
         _tab = State(initialValue: initialTab)
         _previousTab = State(initialValue: initialTab)
@@ -158,12 +160,22 @@ struct DesktopSettingsView: View {
         }
     }
 
+    private var tabOptions: [(value: Int, title: String)] {
+        var options: [(value: Int, title: String)] = [(0, "服务商"), (1, "通用")]
+        if mcp != nil { options.append((2, "MCP")) }
+        if plugins != nil { options.append((5, "插件")) }
+        if syncWorkspace != nil { options.append((3, "同步")) }
+        if gateway != nil { options.append((4, "Mac Gateway")) }
+        if cloudSelf != nil { options.append((6, "云端")) }
+        return options
+    }
+
     private var tabs: some View {
         VStack(spacing: 0) {
             HStack(spacing: 24) {
                 Text("设置").font(DesktopTheme.serif(size: 22, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
                 Spacer()
-                DesktopSegmented(options: [(0, "服务商"), (1, "通用")] + (mcp != nil ? [(2, "MCP")] : []) + (plugins != nil ? [(5, "插件")] : []) + (syncWorkspace != nil ? [(3, "同步")] : []) + (gateway != nil ? [(4, "Mac Gateway")] : []),
+                DesktopSegmented(options: tabOptions,
                     selection: Binding(get: { tab }, set: { request(.tab($0)) }))
                     .accessibilityLabel("设置分类")
             }
@@ -200,6 +212,7 @@ struct DesktopSettingsView: View {
                 case 3: if let syncWorkspace { DesktopWebDAVSettingsView(workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 case 4: if let gateway { DesktopGatewaySettingsView(gateway: gateway).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 case 5: if let plugins { DesktopPluginsSettingsView(plugins: plugins, workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
+                case 6: if let cloudSelf { DesktopCloudSelfSettingsView(store: cloudSelf).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 default: providers.modifier(DesktopTabTransition(forward: tab > previousTab))
                 }
             }

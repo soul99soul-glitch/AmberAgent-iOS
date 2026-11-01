@@ -81,7 +81,8 @@ struct AmberMacApp: App {
             DesktopSettingsView(settings: workspace.settings, catalog: DesktopKMPModelCatalog(),
                 oauth: DesktopMacCodexAuthorizer(), onOpenBackup: { backupPresented = true }, mcp: workspace.mcp,
                 syncWorkspace: workspace, notifications: workspace.notifications, onOpenStorage: { storagePresented = true }, speech: workspace.speech,
-                backgroundMode: workspace.scheduler == nil ? nil : backgroundMode, gateway: workspace.gateway)
+                backgroundMode: workspace.scheduler == nil ? nil : backgroundMode, gateway: workspace.gateway,
+                cloudSelf: workspace.cloudSelf)
                 .sheet(isPresented: $backupPresented) { DesktopBackupView(workspace: workspace) }
                 .sheet(isPresented: $storagePresented) {
                     DesktopStorageUsageView(sources: workspace.storageUsageSources, conversationCount: workspace.summaries.count)

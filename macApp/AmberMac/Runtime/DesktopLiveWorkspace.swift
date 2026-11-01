@@ -64,6 +64,8 @@ import Foundation
         boardWriter = DesktopBoardWriter(provider: text, available: { [weak self] in self?.settings.configuration(for: .title) != nil }) { [weak self] in
             self?.boardWriterRequest()
         }
+        // Outbound cloud pairing (Mac → cloud amberd). Independent of the local gateway above.
+        cloudSelf = DesktopCloudSelfStore(settings: settings, searchSettings: searchSettings)
         // Not as a test host: the title model's key is a Keychain read, which prompts an unsigned test build.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             Task { @MainActor [weak self] in
