@@ -1071,11 +1071,9 @@ struct ChatView: View {
                     systemImage: "wrench.and.screwdriver", tint: .amber
                 )
             default:
-                let title = task.generatedMessages.contains(where: { $0.role == .assistant })
-                    ? "正在思考" : "正在准备"
                 return ChatActivityIslandState.activity(
-                    kind: .waiting, title: title,
-                    systemImage: "sparkles", tint: .amber
+                    kind: .thinking, title: "正在思考",
+                    systemImage: "brain.head.profile", tint: .amber
                 )
             }
         }
@@ -1115,10 +1113,9 @@ struct ChatView: View {
 
         if chatListSummary.awaitingFirstAssistantChunk {
             return ChatActivityIslandState.activity(
-                kind: .waiting,
-                title: IOSAppLocalization.string("正在连接", defaultValue: "正在连接"),
-                detail: viewModel.islandModelDisplayName,
-                systemImage: "sparkles",
+                kind: .thinking,
+                title: IOSAppLocalization.string("正在思考", defaultValue: "正在思考"),
+                systemImage: "brain.head.profile",
                 tint: .amber
             )
         }
