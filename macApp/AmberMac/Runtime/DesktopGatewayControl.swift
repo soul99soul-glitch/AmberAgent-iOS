@@ -115,7 +115,7 @@ import Foundation
     }
 
     static func summary(_ task: DesktopScheduledTask, _ scheduler: DesktopScheduler) -> AmberControl.ScheduleSummary {
-        AmberControl.ScheduleSummary(id: task.id.uuidString, name: task.name, rule: DesktopScheduledTasksView.ruleText(task),
+        AmberControl.ScheduleSummary(id: task.id.uuidString, name: task.name, rule: DesktopScheduleText.rule(task),
             enabled: task.enabled, running: scheduler.running.contains(task.id), paused: scheduler.isPaused,
             nextRunAt: scheduler.isPaused ? nil : task.nextRunAt,
             lastStatus: task.lastRun?.status.rawValue, lastRunAt: task.lastRun?.finishedAt ?? task.lastRun?.startedAt,
@@ -136,17 +136,72 @@ import Foundation
     }
 
     private func decide(_ request: AmberControl.Request) async -> AmberControl.Response {
+        let audit = AuditLog(url: paths.audit)
+        let decisionText = request.allow == true ? "allow" : "deny"
         guard let key = request.sessionKey, let call = request.toolCallId, let allow = request.allow,
               let conversation = reporter.conversation(forSessionKey: key),
               let run = tasks.records.first(where: { $0.conversationID == conversation && $0.status == .waiting })
-        else { return .failure(409, "这次审批已经结束") }
-        guard let approval = run.approval, approval.id == call else { return .failure(409, "这次审批已经结束") }
+        else {
+            audit.record("amber-decision-result", [
+                "task": request.sessionKey ?? "",
+                "run": (request.sessionKey ?? "").replacingOccurrences(of: "amber:", with: ""),
+                "toolCallId": request.toolCallId ?? "",
+                "allow": String(request.allow == true),
+                "decision": decisionText,
+                "outcome": "stale",
+                "device": request.deviceName ?? ""
+            ])
+            return .failure(409, "这次审批已经结束")
+        }
+        guard let approval = run.approval, approval.id == call else {
+            audit.record("amber-decision-result", [
+                "task": key,
+                "run": run.id.uuidString.lowercased(),
+                "tool": run.approval?.name ?? "",
+                "toolCallId": call,
+                "allow": String(allow),
+                "decision": decisionText,
+                "outcome": "stale",
+                "device": request.deviceName ?? ""
+            ])
+            return .failure(409, "这次审批已经结束")
+        }
         if allow, DesktopToolRegistry.isHighRisk(approval.name) {
+            audit.record("amber-decision-result", [
+                "task": key,
+                "run": run.id.uuidString.lowercased(),
+                "tool": approval.name,
+                "toolCallId": call,
+                "allow": "true",
+                "decision": "allow",
+                "outcome": "rejected_high_risk",
+                "device": request.deviceName ?? ""
+            ])
             return .failure(403, "高风险操作只能在 Mac 上核对后批准")
         }
         guard await tasks.decideFromNotification(runID: run.id, toolID: call, allow: allow) else {
+            audit.record("amber-decision-result", [
+                "task": key,
+                "run": run.id.uuidString.lowercased(),
+                "tool": approval.name,
+                "toolCallId": call,
+                "allow": String(allow),
+                "decision": decisionText,
+                "outcome": "stale",
+                "device": request.deviceName ?? ""
+            ])
             return .failure(409, "这次审批已经结束")
         }
+        audit.record("amber-decision-result", [
+            "task": key,
+            "run": run.id.uuidString.lowercased(),
+            "tool": approval.name,
+            "toolCallId": call,
+            "allow": String(allow),
+            "decision": decisionText,
+            "outcome": allow ? "approved" : "denied",
+            "device": request.deviceName ?? ""
+        ])
         return AmberControl.Response(status: 200)
     }
 }

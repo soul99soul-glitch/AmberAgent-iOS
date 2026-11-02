@@ -74,7 +74,7 @@ import Foundation
     }
 
     private static func summary(_ task: DesktopScheduledTask, _ scheduler: DesktopScheduler) -> [String: Any] {
-        var value: [String: Any] = ["id": task.id.uuidString, "name": task.name, "rule": DesktopScheduledTasksView.ruleText(task),
+        var value: [String: Any] = ["id": task.id.uuidString, "name": task.name, "rule": DesktopScheduleText.rule(task),
             "enabled": task.enabled, "running": scheduler.running.contains(task.id)]
         if let next = task.nextRunAt { value["next_run"] = next.formatted(.iso8601) }
         if let last = task.lastRun { value["last_status"] = last.status.rawValue }

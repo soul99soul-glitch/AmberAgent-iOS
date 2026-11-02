@@ -21,7 +21,8 @@ struct DesktopTranscript: View {
     @State private var confirmation: MessageConfirmation?
 
     private var mutationsDisabled: Bool {
-        workspace.isLoading || workspace.isGenerating || workspace.isMutatingBranch
+        workspace.isLoading || workspace.isConversationGenerating(conversation.id)
+            || workspace.isConversationMutatingBranch(conversation.id)
     }
 
     private struct MessageEditDraft: Identifiable {
@@ -66,18 +67,30 @@ struct DesktopTranscript: View {
                         // A streaming reply out of the window keeps its last height until the reader comes back
                         // (growth below the viewport is invisible), so history reading costs no per-chunk layout.
                         // Lazy stacks virtualize themselves; image rows reload (and change height) when remounted.
-                        if windowed, message.images.isEmpty, !highlighted, !(liveRows?.contains(index) ?? true),
+                        if windowed, message.images.isEmpty, message.videos.isEmpty, message.audios.isEmpty,
+                           !IOSIntelligentUIPayloadDetector.mayContainTaskUI(in: message.text),
+                           !highlighted, !(liveRows?.contains(index) ?? true),
                            let height = message.state == .streaming ? rowHeights.anyHeight(message.rowIdentity)
-                            : rowHeights.height(message.rowIdentity, layout: layout) {
+                            : (rowHeights.height(message.rowIdentity, layout: layout) ?? rowHeights.anyHeight(message.rowIdentity)) {
                             Color.clear.frame(maxWidth: .infinity).frame(height: height)
                                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.contentSpace)) } action: {
                                     rowHeights.place(message.rowIdentity, $0)
                                 }
                                 .id(message.rowIdentity)
                         } else {
+                        let matchedTask = workspace.activeTask(forMessageID: message.id)
+                        let taskToken = matchedTask?.token
+                        let isSupplementSelected = taskToken != nil && workspace.selectedSupplementRunID == taskToken
+                        let taskStopping = taskToken.map(workspace.isTaskStopping) ?? false
                         DesktopMessageRow(message: message, conversationID: conversation.id, settings: workspace.settings,
                             speech: workspace.speech, shelf: workspace.artifactShelf, reasoningExpansion: reasoningExpansion,
+                            layoutWidth: CGFloat(max(240, layoutWidth)),
                             mutationsDisabled: mutationsDisabled, highlighted: highlighted, followingCount: following,
+                            activeTaskToken: taskToken,
+                            isSupplementTarget: isSupplementSelected,
+                            isTaskStopping: taskStopping,
+                            onToggleSupplement: { if let taskToken { workspace.toggleSupplementTarget(taskToken) } },
+                            onStopTask: { if let taskToken { workspace.stopTask(taskToken) } else { workspace.stop(message.id) } },
                             onExport: { DesktopFileActions.exportMessage(workspace, messageID: message.id) },
                             onEdit: { editingMessage = MessageEditDraft(id: message.id, ownerID: conversation.id,
                                 text: message.textForEditing, followingCount: following) },
@@ -114,6 +127,12 @@ struct DesktopTranscript: View {
                 .frame(maxWidth: .infinity)
                 // Streaming text growth is not an animatable event for the list; only explicit withAnimation moves rows.
                 .transaction(value: conversation.messages.last?.text) { $0.animation = nil }
+                .transaction(value: conversation.messages.last?.reasoning) { $0.animation = nil }
+                .transaction(value: conversation.messages.last?.tools.count) { $0.animation = nil }
+                .environment(\.desktopIntelligentUIHost, workspace.intelligentUIHost)
+                .environment(\.desktopIntelligentUIConversationID, conversation.id.uuidString)
+                .environment(\.desktopIntelligentUIBusy, workspace.isConversationGenerating(conversation.id) || workspace.isConversationMutatingBranch(conversation.id))
+                .environment(\.desktopIntelligentUIEnabled, workspace.settings.intelligentUIEnabled)
             }
             .scrollPosition($position)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -129,10 +148,16 @@ struct DesktopTranscript: View {
                     streaming: workspace.isSelectedConversationGenerating) { position.scrollTo(y: $0) }
             }
             .onScrollGeometryChange(for: DesktopLiveRows.Viewport.self) { geometry in
-                .init(visible: geometry.visibleRect, width: Int(geometry.containerSize.width.rounded()))
+                .init(visible: geometry.visibleRect,
+                      width: DesktopLiveRows.contentWidth(forContainerWidth: geometry.containerSize.width,
+                                                          maxWidth: DesktopTheme.contentWidth))
             } action: { _, viewport in
-                if layoutWidth != viewport.width { layoutWidth = viewport.width; liveRows = nil; return }
                 visibleRect = viewport.visible
+                if layoutWidth != viewport.width {
+                    layoutWidth = viewport.width
+                    repickLiveRows()
+                    return
+                }
                 updateLiveRows(viewport.visible)
             }
             .onScrollPhaseChange { _, phase in
@@ -281,12 +306,14 @@ struct DesktopTranscript: View {
             expandedTools: message.tools.filter { reasoningExpansion[tool: message.id, $0.id] }.map(\.id))
     }
 
-    /// Rows keep their index in `conversation.messages`; with tool calls hidden, a finished turn that only called
-    /// tools has nothing left to show and is skipped.
+    /// Rows keep their index in `conversation.messages`; multi-step assistant tool rounds coalesce into one row
+    /// so progress updates in-place instead of emitting a separate row or card per tool round.
     private var visibleRows: [(offset: Int, element: DesktopMessage)] {
-        let rows = Array(conversation.messages.enumerated())
-        guard workspace.settings.hidesToolCalls else { return rows }
-        return rows.filter { !$0.element.isToolOnly || $0.element.state == .streaming }
+        DesktopTranscriptTurnGrouping.projectRows(
+            messages: conversation.messages,
+            hidesToolCalls: workspace.settings.hidesToolCalls,
+            activeOwnedGroups: workspace.activeOwnedMessageGroups(in: conversation.id)
+        )
     }
 
     /// Re-picks the live rows only once the viewport nears the edge of the current window, so scrolling within it
@@ -294,19 +321,19 @@ struct DesktopTranscript: View {
     private func updateLiveRows(_ visible: CGRect) {
         guard windowed else { if liveRows != nil { liveRows = nil }; return }
         if let liveRows, liveRows.covers(visible) { return }
-        let next = DesktopLiveRows(visible: visible, rowIDs: conversation.messages.map(\.rowIdentity), heights: rowHeights)
+        let next = DesktopLiveRows(visible: visible, rowIDs: visibleRows.map(\.element.rowIdentity), heights: rowHeights)
         if next != liveRows { liveRows = next }
     }
 
     private func repickLiveRows() {
-        guard windowed, liveRows != nil else { return }
-        let next = DesktopLiveRows(visible: visibleRect, rowIDs: conversation.messages.map(\.rowIdentity), heights: rowHeights)
+        guard windowed, visibleRect.height > 0 else { return }
+        let next = DesktopLiveRows(visible: visibleRect, rowIDs: visibleRows.map(\.element.rowIdentity), heights: rowHeights)
         if next != liveRows { liveRows = next }
     }
 
     /// Normal conversations use the eager stack (exact heights, stable bottom) plus windowing; long ones stay lazy.
     private var windowed: Bool { conversation.messages.count <= 120 }
-    private static let contentSpace = "desktop-transcript-content"
+    nonisolated private static let contentSpace = "desktop-transcript-content"
 
     private func updateFind() { find.update(findQuery, messages: conversation.messages) }
 
@@ -357,9 +384,15 @@ private struct DesktopMessageRow: View, Equatable {
     let speech: DesktopSpeechPlayer
     let shelf: DesktopArtifactShelf
     let reasoningExpansion: DesktopReasoningExpansion
+    let layoutWidth: CGFloat
     let mutationsDisabled: Bool
     let highlighted: Bool
     let followingCount: Int
+    let activeTaskToken: UUID?
+    let isSupplementTarget: Bool
+    let isTaskStopping: Bool
+    let onToggleSupplement: () -> Void
+    let onStopTask: () -> Void
     let onExport: () -> Void
     let onEdit: () -> Void
     let onRegenerate: () -> Void
@@ -374,13 +407,24 @@ private struct DesktopMessageRow: View, Equatable {
 
     init(message: DesktopMessage, conversationID: UUID, settings: DesktopSettings, speech: DesktopSpeechPlayer,
          shelf: DesktopArtifactShelf, reasoningExpansion: DesktopReasoningExpansion,
-         mutationsDisabled: Bool, highlighted: Bool, followingCount: Int, onExport: @escaping () -> Void,
+         layoutWidth: CGFloat = 680,
+         mutationsDisabled: Bool, highlighted: Bool, followingCount: Int,
+         activeTaskToken: UUID? = nil, isSupplementTarget: Bool = false, isTaskStopping: Bool = false,
+         onToggleSupplement: @escaping () -> Void = {}, onStopTask: @escaping () -> Void = {},
+         onExport: @escaping () -> Void,
          onEdit: @escaping () -> Void, onRegenerate: @escaping () -> Void,
          onDelete: @escaping () -> Void, onSelectVariant: @escaping (Int) -> Void) {
         self.message = message; self.conversationID = conversationID; self.settings = settings; self.speech = speech
         self.shelf = shelf; self.reasoningExpansion = reasoningExpansion
+        self.layoutWidth = layoutWidth
         self.mutationsDisabled = mutationsDisabled; self.highlighted = highlighted
-        self.followingCount = followingCount; self.onExport = onExport
+        self.followingCount = followingCount
+        self.activeTaskToken = activeTaskToken
+        self.isSupplementTarget = isSupplementTarget
+        self.isTaskStopping = isTaskStopping
+        self.onToggleSupplement = onToggleSupplement
+        self.onStopTask = onStopTask
+        self.onExport = onExport
         self.onEdit = onEdit; self.onRegenerate = onRegenerate; self.onDelete = onDelete
         self.onSelectVariant = onSelectVariant
     }
@@ -388,8 +432,12 @@ private struct DesktopMessageRow: View, Equatable {
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         MainActor.assumeIsolated {
             lhs.message == rhs.message && lhs.conversationID == rhs.conversationID
+                && lhs.layoutWidth == rhs.layoutWidth
                 && lhs.mutationsDisabled == rhs.mutationsDisabled && lhs.highlighted == rhs.highlighted
                 && lhs.followingCount == rhs.followingCount
+                && lhs.activeTaskToken == rhs.activeTaskToken
+                && lhs.isSupplementTarget == rhs.isSupplementTarget
+                && lhs.isTaskStopping == rhs.isTaskStopping
                 && lhs.settings === rhs.settings && lhs.speech === rhs.speech && lhs.shelf === rhs.shelf
                 && lhs.reasoningExpansion === rhs.reasoningExpansion
         }
@@ -404,10 +452,14 @@ private struct DesktopMessageRow: View, Equatable {
         }
     }
 
+    private var orderedBlocks: [DesktopMessageDisplayBlock] {
+        message.orderedDisplayBlocks(streaming: message.state == .streaming)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 12) {
             if message.role != .user {
-                HStack(spacing: 7) {
+                HStack(alignment: .center, spacing: 7) {
                     Circle()
                         .fill(
                             RadialGradient(
@@ -425,9 +477,9 @@ private struct DesktopMessageRow: View, Equatable {
                         .lineLimit(1)
                         .help(roleTitle)
                     if message.state == .streaming {
-                        HStack(spacing: 5) {
+                        HStack(alignment: .center, spacing: 5) {
                             DesktopPulse()
-                            Text("正在生成")
+                            Text(isTaskStopping ? "正在停止" : "正在生成")
                                 .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(DesktopTheme.inkSecondary)
                                 .modifier(DesktopSoftShimmer(active: true))
@@ -435,6 +487,50 @@ private struct DesktopMessageRow: View, Equatable {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
                         .background(DesktopTheme.paperDeep, in: Capsule())
+                        .geometryGroup()
+
+                        if activeTaskToken != nil && !isTaskStopping {
+                            Button(action: onToggleSupplement) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: isSupplementTarget ? "checkmark.circle.fill" : "plus.bubble")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                    Text(isSupplementTarget ? "已选补充" : "补充")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                }
+                                .foregroundStyle(isSupplementTarget ? DesktopTheme.accent : DesktopTheme.inkSecondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(
+                                    isSupplementTarget ? DesktopTheme.honeySoft : DesktopTheme.paperDeep.opacity(0.65),
+                                    in: Capsule()
+                                )
+                                .overlay(
+                                    Capsule().strokeBorder(
+                                        isSupplementTarget ? DesktopTheme.accent.opacity(0.45) : DesktopTheme.hairline,
+                                        lineWidth: 0.75
+                                    )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .help(isSupplementTarget ? "取消选中补充此任务（恢复为发送新问题）" : "选中此任务进行补充，将在下次推理边界消费")
+                            .accessibilityIdentifier("supplement-task-\(message.id.uuidString)")
+
+                            Button(action: onStopTask) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "stop.fill")
+                                        .font(.system(size: 9.5, weight: .bold))
+                                    Text("停止")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                }
+                                .foregroundStyle(DesktopTheme.danger)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(DesktopTheme.danger.opacity(0.1), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help("仅停止此任务")
+                            .accessibilityIdentifier("stop-task-\(message.id.uuidString)")
+                        }
                     }
                     Spacer()
                     actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
@@ -449,46 +545,45 @@ private struct DesktopMessageRow: View, Equatable {
                     font: settings.messageFontFamily.swiftUIFont(size: max(12, settings.messageFontSize - 2)),
                     expanded: Binding(get: { reasoningExpansion[message.id] }, set: { reasoningExpansion[message.id] = $0 }))
             }
-            if message.role == .user, !message.text.isEmpty {
-                HStack(alignment: .bottom, spacing: 8) {
-                    Spacer(minLength: 100)
-                    actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
-                    Text(message.text)
-                        .font(settings.messageFontFamily.swiftUIFont(size: settings.messageFontSize + 0.5))
-                        .foregroundStyle(DesktopTheme.ink)
-                        .lineSpacing(5)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-                        .desktopGlass(cornerRadius: 18, tinted: true, highlighted: highlighted)
-                        .frame(maxWidth: 520, alignment: .trailing)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if !message.text.isEmpty {
-                DesktopMarkdown(text: message.text, fontFamily: settings.messageFontFamily, fontSize: settings.messageFontSize,
-                    streaming: message.state == .streaming)
-                    .environment(\.desktopCodePinning, codePinning)
-            }
-            if !message.tools.isEmpty, !settings.hidesToolCalls {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(message.tools) { tool in
-                        DesktopToolCallCard(tool: tool, expanded: Binding(
-                            get: { reasoningExpansion[tool: message.id, tool.id] },
-                            set: { reasoningExpansion[tool: message.id, tool.id] = $0 }))
+            if message.role == .user {
+                if !orderedBlocks.isEmpty {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        Spacer(minLength: 40)
+                        actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
+                        VStack(alignment: .trailing, spacing: 10) {
+                            ForEach(Array(orderedBlocks.enumerated()), id: \.offset) { _, block in
+                                userBlockView(block)
+                            }
+                        }
+                        .frame(maxWidth: min(560, max(320, layoutWidth * 0.78)), alignment: .trailing)
                     }
+                }
+            } else {
+                if !settings.hidesToolCalls,
+                   let progress = DesktopTurnToolProgress(
+                       tools: message.tools,
+                       isStreaming: message.state == .streaming,
+                       hasReplyText: !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                   ) {
+                    DesktopTurnToolProgressBar(
+                        progress: progress,
+                        expanded: Binding(
+                            get: { reasoningExpansion[tool: message.id, "__turn_progress__"] },
+                            set: { reasoningExpansion[tool: message.id, "__turn_progress__"] = $0 }
+                        )
+                    )
+                }
+                ForEach(Array(orderedBlocks.enumerated()), id: \.offset) { blockIndex, block in
+                    assistantBlockView(block, blockIndex: blockIndex)
                 }
             }
             if message.text.isEmpty, message.state == .streaming, message.role != .user,
+               message.images.isEmpty, message.videos.isEmpty, message.audios.isEmpty,
                message.tools.isEmpty || settings.hidesToolCalls {
                 Text(message.tools.isEmpty ? "正在等待回复…" : "正在使用工具…")
                     .font(.system(size: 14))
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .modifier(DesktopSoftShimmer(active: true))
-            }
-            if !message.images.isEmpty {
-                ForEach(Array(message.images.enumerated()), id: \.offset) { _, image in
-                    DesktopMessageImageView(source: image)
-                }
             }
             if message.unsupportedPartCount > 0 {
                 Label("另有 \(message.unsupportedPartCount) 项内容暂未显示，原始数据已保留。", systemImage: "tray.full")
@@ -519,7 +614,8 @@ private struct DesktopMessageRow: View, Equatable {
                 .frame(height: 28)
             }
             if message.state == .cancelled || message.state == .failed {
-                let hasContent = !message.text.isEmpty || !message.reasoning.isEmpty || !message.images.isEmpty || message.unsupportedPartCount > 0
+                let hasContent = !message.text.isEmpty || !message.reasoning.isEmpty || !message.images.isEmpty
+                    || !message.videos.isEmpty || !message.audios.isEmpty || message.unsupportedPartCount > 0
                     || !message.tools.isEmpty
                 Label(message.state == .cancelled ? (hasContent ? "已停止，已保留生成内容" : "已停止，可重新生成") : "生成未完成，可重试", systemImage: message.state == .cancelled ? "stop.circle" : "exclamationmark.circle")
                     .font(.system(size: 12))
@@ -539,21 +635,105 @@ private struct DesktopMessageRow: View, Equatable {
         } message: { Text(speechError ?? "") }
     }
 
+    @ViewBuilder
+    private func userBlockView(_ block: DesktopMessageDisplayBlock) -> some View {
+        switch block {
+        case .text(let segment):
+            Text(segment)
+                .font(settings.messageFontFamily.swiftUIFont(size: settings.messageFontSize + 0.5))
+                .foregroundStyle(DesktopTheme.ink)
+                .lineSpacing(5)
+                .textSelection(.enabled)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .desktopGlass(cornerRadius: 18, tinted: true, highlighted: highlighted)
+                .frame(maxWidth: 520, alignment: .trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        case .images(let images):
+            if images.count == 1, let first = images.first {
+                DesktopMessageImageView(
+                    source: first,
+                    maxWidth: min(360, max(220, layoutWidth * 0.56)),
+                    maxHeight: 260,
+                    alignment: .trailing
+                )
+            } else if !images.isEmpty {
+                DesktopMessageImageGallery(
+                    images: images,
+                    maxWidth: min(440, max(240, layoutWidth * 0.68)),
+                    alignment: .trailing
+                )
+            }
+        case .video(let video):
+            DesktopVideoCard(video: video, maxWidth: min(420, max(240, layoutWidth * 0.62)))
+        case .audio(let audio):
+            DesktopAudioCard(audio: audio, maxWidth: min(380, max(240, layoutWidth * 0.58)))
+        case .tool:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func assistantBlockView(_ block: DesktopMessageDisplayBlock, blockIndex: Int = 0) -> some View {
+        switch block {
+        case .text(let segment):
+            let textPartIndex = orderedBlocks.prefix(blockIndex).reduce(into: 0) { count, item in
+                if case .text = item { count += 1 }
+            }
+            DesktopMarkdown(
+                text: segment,
+                fontFamily: settings.messageFontFamily,
+                fontSize: settings.messageFontSize,
+                streaming: message.state == .streaming,
+                maxWidth: max(280, layoutWidth),
+                messageID: message.id.uuidString,
+                textPartIndex: textPartIndex,
+                isMessageComplete: message.state == .complete
+            )
+            .environment(\.desktopCodePinning, codePinning)
+        case .images(let images):
+            if images.count == 1, let first = images.first {
+                DesktopMessageImageView(
+                    source: first,
+                    maxWidth: min(420, max(240, layoutWidth * 0.68)),
+                    maxHeight: 280,
+                    alignment: .leading
+                )
+            } else if !images.isEmpty {
+                DesktopMessageImageGallery(
+                    images: images,
+                    maxWidth: min(520, max(260, layoutWidth * 0.82)),
+                    alignment: .leading
+                )
+            }
+        case .video(let video):
+            DesktopVideoCard(video: video, maxWidth: min(480, max(260, layoutWidth * 0.74)))
+        case .audio(let audio):
+            DesktopAudioCard(audio: audio, maxWidth: min(420, max(240, layoutWidth * 0.65)))
+        case .tool:
+            EmptyView()
+        }
+    }
+
     private var actionButtons: some View {
         HStack(spacing: 2) {
-            if !message.text.isEmpty {
+            if !message.text.isEmpty || !message.images.isEmpty {
                 Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.text, forType: .string)
-                    copied = true
+                    if !message.text.isEmpty {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.text, forType: .string)
+                        copied = true
+                    } else if let firstImage = message.images.first {
+                        copied = DesktopRemoteImageCache.shared.copyImageToPasteboard(from: firstImage.url)
+                    }
                 } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 12)).frame(width: 24, height: 24)
                         .contentTransition(.symbolEffect(.replace.downUp))
                         .foregroundStyle(copied ? DesktopTheme.accent : DesktopTheme.inkTertiary)
                 }
                 .buttonStyle(DesktopQuietButtonStyle())
-                .help(copied ? "已复制" : "复制消息")
-                .accessibilityLabel("复制消息")
+                .help(copied ? "已复制" : (message.text.isEmpty ? "复制图片" : "复制消息"))
+                .accessibilityLabel(message.text.isEmpty ? "复制图片" : "复制消息")
             }
             Menu {
                 messageActions
@@ -616,7 +796,7 @@ private struct DesktopTranscriptStack<Content: View>: View {
 extension DesktopMessage {
     /// Only tool calls: nothing else would render once tool cards are hidden.
     var isToolOnly: Bool {
-        !tools.isEmpty && text.isEmpty && reasoning.isEmpty && images.isEmpty && unsupportedPartCount == 0
+        !tools.isEmpty && text.isEmpty && reasoning.isEmpty && images.isEmpty && videos.isEmpty && audios.isEmpty && unsupportedPartCount == 0
     }
 
     /// A regenerated reply is a new message ID but the same slot (same variant group): keep its row, so the
@@ -693,6 +873,14 @@ struct DesktopLiveRows: Equatable {
     struct Viewport: Equatable {
         let visible: CGRect
         let width: Int
+    }
+
+    /// Clamps scroll-container width to the centered transcript column width so outer chrome changes (such as
+    /// toggling the sidebar or inspector when the column is already at `maxWidth`) do not invalidate row heights.
+    static func contentWidth(forContainerWidth containerWidth: CGFloat,
+                             maxWidth: CGFloat = DesktopTheme.contentWidth,
+                             horizontalPadding: CGFloat = 48) -> Int {
+        Int(min(max(0, containerWidth - horizontalPadding), maxWidth).rounded())
     }
 
     /// The scroll view's content starts with the transcript's 32pt top padding.

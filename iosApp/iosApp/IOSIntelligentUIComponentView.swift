@@ -306,7 +306,11 @@ struct IOSIntelligentUIComponentView: View {
             }
         case .numberField:
             labeledInput {
+                #if os(iOS)
                 TextField(component.text ?? "请输入数字", text: stringBinding).keyboardType(.decimalPad).textFieldStyle(.roundedBorder).frame(minHeight: 44)
+                #else
+                TextField(component.text ?? "请输入数字", text: stringBinding).textFieldStyle(.roundedBorder).frame(minHeight: 44)
+                #endif
                 numericInputStatus
                 numericDefaultConfirmation
             }

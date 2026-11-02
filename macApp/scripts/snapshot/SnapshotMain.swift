@@ -11,23 +11,122 @@ import ServiceManagement
         NSApp.setActivationPolicy(.prohibited)
         Task { @MainActor in
             do {
-                let chat = DesktopWorkspace.uiFixture()
-                await chat.agentTasks.waitUntilLoaded()
-                for (w, h) in [(1440.0, 900.0), (1180.0, 800.0), (860.0, 600.0), (1920.0, 1080.0)] {
+                // `AMBER_SNAPSHOT_ONLY` renders just the named extra views: the full transcript matrix crashes inside
+                // SwiftUI's sidebar grouping on this macOS build (reproduced on an unmodified HEAD checkout), and a
+                // settings-only capture does not need it.
+                let onlyExtras = ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_ONLY"] != nil
+                var chat: DesktopWorkspace?
+                if !onlyExtras {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    chat = workspace
+                    await workspace.agentTasks.waitUntilLoaded()
+                    for (w, h) in [(1440.0, 900.0), (1180.0, 800.0), (860.0, 600.0), (1920.0, 1080.0)] {
+                        for dark in [false, true] {
+                            try await capture("chat-\(Int(w))-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: workspace, searchRequest: 0), w, h, dark)
+                        }
+                    }
+                    let empty = DesktopWorkspace.uiFixture()
+                    empty.createConversation()
+                    try await capture("empty-1440-light", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, false)
+                    try await capture("empty-1440-dark", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, true)
+                }
+                if let chat, ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PANELS"] != nil { try await panels(chat) }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_CONTEXT_PANEL"] != nil { try await contextPanel() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PLUGIN_CAPABILITIES"] != nil {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    await workspace.agentTasks.waitUntilLoaded()
                     for dark in [false, true] {
-                        try await capture("chat-\(Int(w))-\(dark ? "dark" : "light")", DesktopWorkspaceView(workspace: chat, searchRequest: 0), w, h, dark)
+                        try await capture("plugin-capabilities-\(dark ? "dark" : "light")",
+                            DesktopPluginsSettingsView(plugins: workspace.plugins, workspace: workspace)
+                                .frame(width: 880, height: 1500), 880, 1500, dark)
                     }
                 }
-                let empty = DesktopWorkspace.uiFixture()
-                empty.createConversation()
-                try await capture("empty-1440-light", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, false)
-                try await capture("empty-1440-dark", DesktopWorkspaceView(workspace: empty, searchRequest: 0), 1440, 900, true)
-                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PANELS"] != nil { try await panels(chat) }
+                // P3 M3.4/M3.2: the host-native calendar plugin's capability matrix, in both appearances.
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_APPLE_SCHEDULE"] != nil {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    await workspace.agentTasks.waitUntilLoaded()
+                    for dark in [false, true] {
+                        try await capture("plugin-apple-schedule-\(dark ? "dark" : "light")",
+                            DesktopPluginsSettingsView(plugins: workspace.plugins, workspace: workspace,
+                                initialSelection: .ext("apple_schedule"),
+                                initialTechnicalDetailsExpanded: true)
+                                .frame(width: 880, height: 1180), 880, 1180, dark)
+                    }
+                }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PLUGIN_INSPECTOR"] != nil {
+                    let workspace = DesktopWorkspace.uiFixture()
+                    await workspace.agentTasks.waitUntilLoaded()
+                    let tempPkg = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("amber-snap-plugin-\(UUID().uuidString)", isDirectory: true)
+                        .appendingPathComponent("note_helper", isDirectory: true)
+                    try FileManager.default.createDirectory(at: tempPkg, withIntermediateDirectories: true)
+                    let manifest = """
+                    {
+                      "schema": "amber.plugin.v2",
+                      "id": "note_helper",
+                      "name": "会议纪要助手",
+                      "version": "1.0.0",
+                      "description": "统计纪要字数、附加统一前缀并归档到当前会话工作区。",
+                      "icon": "doc.text.magnifyingglass",
+                      "capabilities": { "networkDomains": [], "workspaceReadPrefixes": ["notes/"], "workspaceWritePrefixes": ["notes/"] },
+                      "settings_schema": [{ "key": "prefix", "title": "纪要标题前缀", "kind": "string", "defaultValue": "【项目纪要】" }],
+                      "tools": [{ "name": "format_note", "description": "格式化会议纪要文本", "effect": "pure", "entry": "formatNote", "input_schema": { "type": "object", "properties": { "text": { "type": "string" } } } }],
+                      "ui": {
+                        "inspectorCards": [{ "id": "note_summary", "title": "纪要助手状态", "symbol": "doc.text.magnifyingglass", "entry": "renderNoteInspector" }],
+                        "workspaceViews": [{ "id": "note_board", "title": "纪要工作台", "symbol": "doc.text", "subtitle": "查看已格式化的纪要统计与快捷整理命令。" }]
+                      }
+                    }
+                    """
+                    let script = """
+                    function formatNote(input) {
+                      const prefix = amber.settings.get("prefix") || "【纪要】";
+                      const rawText = String((input && input.text) || "").trim();
+                      const runs = Number(amber.storage.get("runs") || "0") + 1;
+                      const formatted = prefix + rawText;
+                      amber.storage.set("runs", String(runs));
+                      amber.storage.set("last_note", formatted);
+                      return { ok: true, formatted: formatted, run_count: runs };
+                    }
+                    function renderNoteInspector() {
+                      const runs = Number(amber.storage.get("runs") || "0");
+                      const lastNote = amber.storage.get("last_note");
+                      return {
+                        statusBadge: "已处理 " + runs + " 次",
+                        emptyMessage: "暂无纪要记录",
+                        items: [{
+                          id: "latest_note",
+                          badge: "最近纪要",
+                          title: lastNote || "【项目纪要】确认周五上线 macOS 插件 v2",
+                          subtitle: "累计执行 " + runs + " 次 · 工作区前缀 notes/",
+                          actionTitle: "继续润色",
+                          prompt: "请基于以下纪要继续提炼行动项"
+                        }]
+                      };
+                    }
+                    """
+                    try Data(manifest.utf8).write(to: tempPkg.appendingPathComponent("plugin.json"))
+                    try Data(script.utf8).write(to: tempPkg.appendingPathComponent("main.js"))
+                    _ = try workspace.plugins.importPlugin(from: tempPkg)
+                    _ = try await workspace.plugins.executeTool(
+                        qualifiedName: "plugin__note_helper__format_note",
+                        argumentsJSON: #"{"text":"确认周五上线 macOS 插件 v2 与内置开发技能"}"#
+                    )
+                    for dark in [false, true] {
+                        try await capture("plugin-inspector-\(dark ? "dark" : "light")",
+                            DesktopInspector(workspace: workspace, onLocate: { _ in }, onOpenFiles: {}, onOpenTasks: {})
+                                .frame(width: 340, height: 820)
+                                .background(DesktopTheme.paper),
+                            340, 820, dark)
+                    }
+                }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_RECOVERY"] != nil { try await reviewRecovery() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PHASE3_UI"] != nil { try await reviewPhase3UI() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REVIEW_PERF3_CACHE"] != nil { try await reviewPerf3Cache() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_SCHEDULES"] != nil { try await schedules() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_GATEWAY"] != nil { try await gatewaySettings() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_PHASE5"] != nil { try await phase5ChangedPages() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_COMPOSER"] != nil { try await composerThinkingSnapshots() }
+                if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_SMART_UI"] != nil { try await smartUISnapshots() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_STREAM"] != nil { try await streaming() }
                 if ProcessInfo.processInfo.environment["AMBER_SNAPSHOT_REPLAY"] != nil { try await replay() }
                 print("SNAPSHOT COMPLETE"); exit(0)
@@ -162,6 +261,37 @@ import ServiceManagement
         }
     }
 
+    /// Context panel: provider-reported cache usage, then the budget-fit notice after a turn is sent at a 6k
+    /// window. Captures both the standalone panel and the docked inspector inside the real workspace window.
+    @MainActor static func contextPanel() async throws {
+        // Dock the inspector beside the transcript (it needs a detail column of at least 1080pt).
+        UserDefaults.standard.set(true, forKey: "desktop.inspector.visible")
+        let idle = DesktopWorkspace.uiContextFixture()
+        await idle.agentTasks.waitUntilLoaded()
+        for dark in [false, true] {
+            let scheme = dark ? "dark" : "light"
+            try await capture("panel-insights-usage-\(scheme)",
+                DesktopConversationInsightsView(workspace: idle).background(DesktopTheme.paper), 440, 520, dark)
+            try await capture("workspace-inspector-\(scheme)", DesktopWorkspaceView(workspace: idle, searchRequest: 0), 1440, 900, dark)
+        }
+
+        let trimmed = DesktopWorkspace.uiContextFixture()
+        await trimmed.agentTasks.waitUntilLoaded()
+        trimmed.draft = "继续整理"
+        trimmed.send()
+        for dark in [false, true] {
+            let scheme = dark ? "dark" : "light"
+            try await capture("panel-insights-trimmed-\(scheme)",
+                DesktopConversationInsightsView(workspace: trimmed).background(DesktopTheme.paper), 440, 520, dark)
+            try await capture("workspace-inspector-trimmed-\(scheme)",
+                DesktopWorkspaceView(workspace: trimmed, searchRequest: 0), 1440, 900, dark)
+            try await capture("workspace-inspector-trimmed-1180-\(scheme)",
+                DesktopWorkspaceView(workspace: trimmed, searchRequest: 0), 1180, 800, dark)
+        }
+        trimmed.stop()
+        _ = await trimmed.flush()
+    }
+
     /// 定时任务 page with a few representative tasks (editing, high-risk badge, history, failures).
     @MainActor static func schedules() async throws {
         let workspace = DesktopWorkspace.uiFixture()
@@ -236,6 +366,74 @@ import ServiceManagement
         gateway.snapshotStatus(.off)
         try await capture("gateway-off-light", DesktopGatewaySettingsView(gateway: gateway).background(DesktopTheme.paper), 880, 640, false)
         try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// Phase 5: Light & dark pairs for the UI pages modified in P2–P4 not already covered by phase1/phase3 folders.
+    @MainActor static func phase5ChangedPages() async throws {
+        let workspace = DesktopWorkspace.uiFixture()
+        await workspace.agentTasks.waitUntilLoaded()
+
+        // 1. Provider settings showing Claude promptCaching toggle
+        let claudeModel = DesktopModelConfiguration(modelID: "claude-sonnet-4-5", contextWindowTokens: 200_000, maxOutputTokens: 8_192)
+        var claudeProvider = DesktopProviderConfiguration(
+            name: "Anthropic Claude",
+            kind: .claude,
+            baseURL: "https://api.anthropic.com/v1",
+            models: [claudeModel],
+            selectedModelID: claudeModel.id
+        )
+        claudeProvider.promptCaching = true
+        try? workspace.settings.saveProvider(claudeProvider, apiKey: "sk-ant-fixture")
+        workspace.settings.selectedProviderID = claudeProvider.id
+        for dark in [false, true] {
+            workspace.settings.appearance = dark ? "dark" : "light"
+            try await capture("settings-claude-caching-\(dark ? "dark" : "light")",
+                PreviewSettingsView(workspace: workspace).frame(width: 880, height: 760), 880, 760, dark)
+        }
+
+        // 2. Scheduled tasks view with unattended approval section & run history
+        let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: nil),
+            defaults: UserDefaults(suiteName: "amber.snapshot.phase5.schedules.\(UUID().uuidString)")!,
+            runner: { _, slot in DesktopScheduleRunRecord(scheduledFor: slot, startedAt: Date(), status: .completed) }, timerEnabled: false)
+        workspace.scheduler = scheduler
+        await scheduler.waitUntilLoaded()
+        var daily = DesktopScheduledTask(name: "每日晨间日程与待办汇总", prompt: "读取今日 Apple 日历与提醒事项，生成三行重点摘要。",
+            schedule: .daily(hour: 9, minute: 0))
+        daily.approval.autoApproveOrdinary = true
+        daily.approval.allowedTools = ["plugin__apple_schedule__list_events", "plugin__apple_schedule__list_reminders"]
+        _ = await scheduler.save(task: daily)
+        _ = scheduler.runNow(daily.id)
+        try await Task.sleep(for: .milliseconds(100))
+        for dark in [false, true] {
+            workspace.settings.appearance = dark ? "dark" : "light"
+            try await capture("scheduled-tasks-approval-\(dark ? "dark" : "light")",
+                DesktopScheduledTasksView(workspace: workspace, scheduler: scheduler, initialSelection: daily.id)
+                    .frame(width: 900, height: 980).background(DesktopTheme.paper), 900, 980, dark)
+        }
+
+        // 3. Feishu Calendar / Bot plugin workspace surface
+        for dark in [false, true] {
+            workspace.settings.appearance = dark ? "dark" : "light"
+            try await capture("plugin-feishu-workspace-\(dark ? "dark" : "light")",
+                DesktopPluginWorkspaceView(workspace: workspace, pluginID: "feishu_calendar", viewID: "calendar_board")
+                    .frame(width: 1080, height: 760).background(DesktopTheme.paper), 1080, 760, dark)
+        }
+
+        // 4. Expanded tool call card with apple_schedule summary badge
+        let sampleTool = DesktopToolCall(
+            id: "call_apple_1",
+            name: "plugin__apple_schedule__list_events",
+            input: #"{"start_at":"2026-10-31T09:00","end_at":"2026-10-31T18:00"}"#,
+            output: #"{"ok":true,"count":2,"events":[{"id":"evt_1","title":"产品周会","start_at":"2026-10-31T10:00"}]}"#,
+            status: .complete
+        )
+        for dark in [false, true] {
+            try await capture("tool-call-card-schedule-\(dark ? "dark" : "light")",
+                DesktopToolCallCard(tool: sampleTool, expanded: .constant(true))
+                    .padding(24)
+                    .frame(width: 640, height: 340, alignment: .topLeading)
+                    .background(DesktopTheme.paper), 640, 340, dark)
+        }
     }
 
     /// Phase 1 UI review states. This is opt-in so the normal snapshot set is unchanged.
@@ -398,6 +596,206 @@ import ServiceManagement
         try await Task.sleep(for: .milliseconds(200))
         try shot("review-perf3-cache-content-dark")
         window.orderOut(nil)
+    }
+
+    @MainActor static func composerThinkingSnapshots() async throws {
+        func makeWorkspace(kind: DesktopProviderKind, baseURL: String, modelID: String, level: DesktopReasoningLevel) -> DesktopWorkspace {
+            let suiteName = "amber.snap.composer.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defaults.removePersistentDomain(forName: suiteName)
+            let settings = DesktopSettings(defaults: defaults, credentials: DesktopMemoryCredentials())
+            if var provider = settings.selectedProvider {
+                provider.name = kind == .claude ? "Anthropic" : "OpenAI"
+                provider.kind = kind
+                provider.baseURL = baseURL
+                let model = DesktopModelConfiguration(modelID: modelID, reasoning: level)
+                provider.models = [model]
+                provider.selectedModelID = model.id
+                try? settings.saveProvider(provider, apiKey: "snap-key")
+            }
+            let conv = DesktopConversation(title: "思考等级验收", messages: [
+                DesktopMessage(role: .user, text: "帮我梳理架构演进方案并评估风险。")
+            ])
+            let ws = DesktopWorkspace(
+                settings: settings,
+                storage: DesktopMemoryConversationStorage([conv]),
+                provider: ReplayProvider(),
+                initialConversations: [conv],
+                agentTasks: DesktopAgentTasks(defaults: defaults)
+            )
+            ws.select(conv.id)
+            ws.setThinkingLevel(level)
+            return ws
+        }
+
+        let wsHigh = makeWorkspace(
+            kind: .claude,
+            baseURL: "https://api.anthropic.com",
+            modelID: "claude-sonnet-4-6",
+            level: .high
+        )
+        let wsOff = makeWorkspace(
+            kind: .claude,
+            baseURL: "https://api.anthropic.com",
+            modelID: "claude-sonnet-4-6",
+            level: .off
+        )
+        let wsUnsupported = makeWorkspace(
+            kind: .openAI,
+            baseURL: "https://api.openai.com/v1",
+            modelID: "gpt-4.1-mini",
+            level: .off
+        )
+        await wsHigh.agentTasks.waitUntilLoaded()
+        await wsOff.agentTasks.waitUntilLoaded()
+        await wsUnsupported.agentTasks.waitUntilLoaded()
+
+        for dark in [false, true] {
+            let suffix = dark ? "dark" : "light"
+            try await capture(
+                "composer-thinking-\(suffix)",
+                VStack(spacing: 0) {
+                    Spacer(minLength: 16)
+                    DesktopComposer(workspace: wsHigh)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 16)
+                }
+                .frame(width: 780, height: 168)
+                .background(DesktopTheme.paper),
+                780, 168, dark
+            )
+            try await capture(
+                "composer-thinking-states-\(suffix)",
+                VStack(alignment: .leading, spacing: 14) {
+                    DesktopComposer(workspace: wsHigh)
+                    DesktopComposer(workspace: wsOff)
+                    DesktopComposer(workspace: wsUnsupported)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+                .frame(width: 780, height: 420)
+                .background(DesktopTheme.paper),
+                780, 420, dark
+            )
+        }
+    }
+
+    @MainActor static func smartUISnapshots() async throws {
+        // Scenario 1: Decision + Form card interacted and inserted into composer draft alongside an existing attachment
+        let wsDecision = DesktopWorkspace.uiFixture()
+        await wsDecision.agentTasks.waitUntilLoaded()
+        if let smartConv = wsDecision.conversations.first(where: { $0.title.contains("原生智能 UI") }),
+           let assistantMsg = smartConv.messages.last(where: { $0.role == .assistant }) {
+            wsDecision.select(smartConv.id)
+            let cards = IOSIntelligentUIProtocol.parse(assistantMsg.text, isStreaming: false).compactMap { seg -> IOSIntelligentUICardDefinition? in
+                if case .card(let def) = seg { return def }
+                return nil
+            }
+            if let card = cards.first {
+                let source = IOSIntelligentUISource(
+                    conversationID: smartConv.id.uuidString,
+                    messageID: assistantMsg.id.uuidString,
+                    textPartIndex: 0,
+                    cardID: card.cardID
+                )
+                try wsDecision.intelligentUIStateStore.update(
+                    source: source,
+                    definition: card,
+                    selectedOptionID: "dual-action",
+                    values: [
+                        "families": #"["data_chart","form_input","study_quiz"]"#,
+                        "dark_mode": "true",
+                        "note": "保留输入框原有说明与附件，验证端到端回传"
+                    ]
+                )
+                wsDecision.draft = "附上本轮架构对照说明："
+                wsDecision.pendingAttachments = [
+                    DesktopImportedDocument(
+                        id: UUID(),
+                        name: "smart-ui-spec.md",
+                        sourceURL: nil,
+                        kind: .document,
+                        byteCount: 2048,
+                        text: "# Smart UI Spec",
+                        image: nil,
+                        pageCount: nil,
+                        note: nil
+                    )
+                ]
+                _ = wsDecision.intelligentUIHost.insertIntoDraft(source: source, definition: card)
+            }
+        }
+        for dark in [false, true] {
+            let suffix = dark ? "dark" : "light"
+            try await capture(
+                "smart-ui-decision-form-\(suffix)",
+                DesktopWorkspaceView(workspace: wsDecision, searchRequest: 0),
+                1280, 920, dark
+            )
+        }
+
+        // Scenario 2: Explore card (numeric value_field_id binding updating metricGrid, progress, barChart) + submitted receipt
+        let wsExplore = DesktopWorkspace.uiFixture()
+        await wsExplore.agentTasks.waitUntilLoaded()
+        let exploreAssistant = DesktopMessage(
+            role: .assistant,
+            text: """
+            ### 参数探索与流式降级验证
+
+            拖动下方天数步进器或滑块，顶部指标卡、进度条与柱状图会按 `value_field_id` 实时联动：
+
+            ```task-ui
+            \(IOSIntelligentUIProtocol.numericExploreExampleJSON)
+            ```
+            """,
+            state: .complete
+        )
+        let exploreCard = try IOSIntelligentUIProtocol.decode(IOSIntelligentUIProtocol.numericExploreExampleJSON)
+        let exploreConvID = UUID()
+        let exploreSource = IOSIntelligentUISource(
+            conversationID: exploreConvID.uuidString,
+            messageID: exploreAssistant.id.uuidString,
+            textPartIndex: 0,
+            cardID: exploreCard.cardID
+        )
+        try wsExplore.intelligentUIStateStore.update(
+            source: exploreSource,
+            definition: exploreCard,
+            selectedOptionID: nil,
+            values: ["chapters": "3"]
+        )
+        let exploreDraft = wsExplore.intelligentUIStateStore.draft(for: exploreSource, definition: exploreCard)
+        let exploreSub = try DesktopIntelligentUISubmission(source: exploreSource, definition: exploreCard, draft: exploreDraft)
+        let exploreUserReply = DesktopMessage(role: .user, text: exploreSub.prompt())
+        let exploreFollowup = DesktopMessage(
+            role: .assistant,
+            text: "已收到 **已完成 3 章** 阅读进度，已为你同步更新后续第 4 章复习计划。",
+            state: .complete
+        )
+        let exploreConv = DesktopConversation(
+            id: exploreConvID,
+            title: "参数联动与回执 · 智能 UI",
+            messages: [
+                DesktopMessage(role: .user, text: "帮我做一个可调节完成章节数的阅读进度探索卡片。"),
+                exploreAssistant,
+                exploreUserReply,
+                exploreFollowup
+            ],
+            isPinned: true
+        )
+        wsExplore.conversations.insert(exploreConv, at: 0)
+        wsExplore.updateSummary(exploreConv)
+        wsExplore.intelligentUIHost.recordReceipt(exploreSub, userMessageID: exploreUserReply.id)
+        wsExplore.select(exploreConvID)
+
+        for dark in [false, true] {
+            let suffix = dark ? "dark" : "light"
+            try await capture(
+                "smart-ui-explore-submitted-\(suffix)",
+                DesktopWorkspaceView(workspace: wsExplore, searchRequest: 0),
+                1280, 920, dark
+            )
+        }
     }
 
     @MainActor static func capture<V: View>(_ name: String, _ view: V, _ width: CGFloat, _ height: CGFloat, _ dark: Bool,

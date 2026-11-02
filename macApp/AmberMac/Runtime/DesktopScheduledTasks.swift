@@ -40,7 +40,7 @@ enum DesktopSchedule: Codable, Equatable, Sendable {
         guard validationError == nil else { return nil }
         switch self {
         case .once(let at):
-            return at > date ? at : nil
+            return at.timeIntervalSince(date) > 0 ? at : nil
         case .daily(let hour, let minute):
             return Self.next(after: date, calendar: calendar, components: DateComponents(hour: hour, minute: minute, second: 0))
         case .weekdays(let hour, let minute):
@@ -49,7 +49,8 @@ enum DesktopSchedule: Codable, Equatable, Sendable {
             return Self.nextWeekly(after: date, calendar: calendar, days: Set(days), hour: hour, minute: minute)
         case .interval(let minutes, let anchor):
             let step = TimeInterval(minutes) * 60
-            guard date >= anchor else { return anchor }
+            // Interval comparison: `Date.>=` traps on this Xcode 27 SDK/runtime pairing.
+            guard date.timeIntervalSince(anchor) >= 0 else { return anchor }
             let elapsed = (date.timeIntervalSince(anchor) / step).rounded(.down) + 1
             return anchor.addingTimeInterval(elapsed * step)
         }
@@ -58,7 +59,7 @@ enum DesktopSchedule: Codable, Equatable, Sendable {
     private static func nextWeekly(after date: Date, calendar: Calendar, days: Set<Int>, hour: Int, minute: Int) -> Date? {
         days.compactMap {
             next(after: date, calendar: calendar, components: DateComponents(hour: hour, minute: minute, second: 0, weekday: $0))
-        }.min()
+        }.min { $0.timeIntervalSince($1) < 0 }
     }
 
     /// Spring-forward: a nonexistent 2:30 fires at the next valid moment (3:00) that day.
@@ -209,7 +210,7 @@ enum DesktopSchedulePlanner {
     /// However many slots were missed, at most one run is produced and the next slot jumps past `now`.
     static func decide(_ task: DesktopScheduledTask, now: Date, calendar: Calendar) -> DesktopScheduleDecision {
         guard task.enabled, let due = task.nextRunAt else { return .wait(nil) }
-        guard due <= now else { return .wait(due) }
+        guard due.timeIntervalSince(now) <= 0 else { return .wait(due) }
         let following = task.schedule.nextFire(after: now, calendar: calendar)
         if now.timeIntervalSince(due) <= onTimeGrace || task.missedRun == .runOnceOnWake {
             return .run(scheduledFor: due, nextRunAt: following)
@@ -221,7 +222,7 @@ enum DesktopSchedulePlanner {
     /// stays due so the missed-run policy still applies to it.
     static func recompute(_ task: DesktopScheduledTask, now: Date, calendar: Calendar) -> Date? {
         guard task.enabled, task.trigger == nil else { return nil }
-        if let due = task.nextRunAt, due <= now { return due }
+        if let due = task.nextRunAt, due.timeIntervalSince(now) <= 0 { return due }
         return task.schedule.nextFire(after: now, calendar: calendar)
     }
 }
@@ -277,6 +278,6 @@ actor DesktopScheduleStore {
 
     func all() -> [DesktopScheduledTask] { sorted() }
 
-    private func sorted() -> [DesktopScheduledTask] { tasks.values.sorted { $0.createdAt < $1.createdAt } }
+    private func sorted() -> [DesktopScheduledTask] { tasks.values.sorted { $0.createdAt.timeIntervalSince($1.createdAt) < 0 } }
     private func fileURL(_ id: UUID, in directory: URL) -> URL { directory.appendingPathComponent(id.uuidString + ".json") }
 }

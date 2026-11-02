@@ -323,4 +323,33 @@ struct PushSenderTests {
         let health = PushMessage(PushIntent(kind: .health, subject: "disk", detail: "磁盘剩余 12 GB", createdAt: Date()), gatewayName: "MacBook")
         #expect(health.title == "MacBook 健康提醒" && health.body == "磁盘剩余 12 GB")
     }
+
+    @Test func apnsApprovalPayloadDistinguishesOrdinaryAndHighRiskContract() {
+        let ordinaryIntent = PushIntent(
+            kind: .task, sessionKey: "amber:run-1", agent: .amber, subject: "每日汇总",
+            state: .waiting, waitReason: .permission, toolCallId: "call-1", highRisk: false,
+            level: .timeSensitive, createdAt: Date()
+        )
+        let ordinaryPayload = APNsSender.payload(PushMessage(ordinaryIntent, gatewayName: "MacBook"))
+        let ordinaryAPS = ordinaryPayload["aps"] as? [String: Any]
+        #expect(ordinaryAPS?["category"] as? String == PushMessage.amberApprovalCategory)
+        #expect(ordinaryAPS?["interruption-level"] as? String == "time-sensitive")
+        #expect((ordinaryAPS?["alert"] as? [String: String])?["body"] == "等你确认")
+        #expect(ordinaryPayload["deepLink"] as? String == PushMessage.amberDeepLink)
+        #expect(ordinaryPayload["sessionKey"] as? String == "amber:run-1")
+        #expect(ordinaryPayload["toolCallId"] as? String == "call-1")
+
+        let highRiskIntent = PushIntent(
+            kind: .task, sessionKey: "amber:run-2", agent: .amber, subject: "系统巡检",
+            state: .waiting, waitReason: .permission, toolCallId: "call-2", highRisk: true,
+            level: .timeSensitive, createdAt: Date()
+        )
+        let highRiskPayload = APNsSender.payload(PushMessage(highRiskIntent, gatewayName: "MacBook"))
+        let highRiskAPS = highRiskPayload["aps"] as? [String: Any]
+        #expect(highRiskAPS?["category"] == nil, "high-risk approval push must never expose lock-screen approve category")
+        #expect((highRiskAPS?["alert"] as? [String: String])?["body"] == "等你确认（高风险，请在 Mac 上核对）")
+        #expect(highRiskPayload["deepLink"] as? String == PushMessage.amberDeepLink)
+        #expect(highRiskPayload["sessionKey"] as? String == "amber:run-2")
+        #expect(highRiskPayload["toolCallId"] == nil, "high-risk approval push must omit toolCallId")
+    }
 }

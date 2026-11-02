@@ -78,7 +78,7 @@ actor DesktopAgentJournal {
             }
             loaded = true
         }
-        return records.values.sorted { $0.updatedAt > $1.updatedAt }
+        return records.values.sorted { $0.updatedAt.timeIntervalSince($1.updatedAt) > 0 }
     }
 
     func value(_ id: UUID) throws -> DesktopAgentTask {
@@ -88,11 +88,24 @@ actor DesktopAgentJournal {
     }
 
     func save(_ value: DesktopAgentTask) throws {
+        var sanitized = value
+        if var approval = sanitized.approval {
+            approval.arguments = DesktopHistoryRedaction.redact(approval.arguments)
+            sanitized.approval = approval
+        }
+        for index in sanitized.transactions.indices {
+            if let payload = sanitized.transactions[index].resultPayload {
+                sanitized.transactions[index].resultPayload = DesktopHistoryRedaction.redact(payload)
+            }
+            if let canonical = sanitized.transactions[index].canonicalInvocation {
+                sanitized.transactions[index].canonicalInvocation = DesktopHistoryRedaction.redact(canonical)
+            }
+        }
         if let directory {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(value).write(to: directory.appendingPathComponent(value.id.uuidString + ".json"), options: .atomic)
+            try JSONEncoder().encode(sanitized).write(to: directory.appendingPathComponent(value.id.uuidString + ".json"), options: .atomic)
         }
-        records[value.id] = value
+        records[value.id] = sanitized
     }
 
     func change(_ id: UUID, _ update: @Sendable (inout DesktopAgentTask) throws -> Void) throws -> DesktopAgentTask {
@@ -224,7 +237,7 @@ final class DesktopAgentTasks {
     func publish(_ record: DesktopAgentTask) {
         var updated = records.filter { $0.id != record.id }
         updated.append(record)
-        records = updated.sorted { $0.updatedAt > $1.updatedAt }
+        records = updated.sorted { $0.updatedAt.timeIntervalSince($1.updatedAt) > 0 }
     }
 
     func requestApproval(runID: UUID, approval: DesktopToolApproval) async throws {

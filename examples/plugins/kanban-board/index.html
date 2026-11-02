@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Amber 任务看板</title>
+  <link rel="stylesheet" href="amber-plugin://kanban-board/styles.css">
+</head>
+<body>
+  <div class="kanban-app">
+    <header class="kanban-toolbar">
+      <div class="kanban-toolbar-left">
+        <h1 id="board-title" class="kanban-title">Amber 研发任务看板</h1>
+        <span id="board-stats" class="kanban-badge">0 张卡片</span>
+      </div>
+      <div class="kanban-toolbar-actions">
+        <button id="btn-new-card" class="btn btn-primary">+ 新建卡片</button>
+        <button id="btn-export-md" class="btn btn-secondary">导出 Markdown</button>
+        <button id="btn-ask-agent" class="btn btn-secondary">让 Amber 梳理看板</button>
+      </div>
+    </header>
+
+    <main id="columns-container" class="kanban-columns" aria-label="任务看板列"></main>
+
+    <!-- Card Create / Edit Dialog -->
+    <div id="card-dialog-backdrop" class="dialog-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="dialog-card">
+        <div class="dialog-header">
+          <h2 id="dialog-title">新建任务卡片</h2>
+          <button id="btn-dialog-close" class="icon-btn" aria-label="关闭">✕</button>
+        </div>
+        <form id="card-form" class="dialog-form">
+          <input type="hidden" id="field-card-id" value="">
+          <label class="form-field">
+            <span>标题 *</span>
+            <input type="text" id="field-title" required placeholder="输入任务标题">
+          </label>
+          <label class="form-field">
+            <span>详情描述</span>
+            <textarea id="field-description" rows="3" placeholder="补充验收标准、上下文或关联文件路径"></textarea>
+          </label>
+          <div class="form-row">
+            <label class="form-field">
+              <span>所属列</span>
+              <select id="field-column">
+                <option value="todo">待办 (To Do)</option>
+                <option value="in_progress">进行中 (In Progress)</option>
+                <option value="done">已完成 (Done)</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span>优先级</span>
+              <select id="field-priority">
+                <option value="high">高优 (High)</option>
+                <option value="medium" selected>普通 (Medium)</option>
+                <option value="low">低优 (Low)</option>
+              </select>
+            </label>
+          </div>
+          <label class="form-field">
+            <span>标签（逗号分隔）</span>
+            <input type="text" id="field-tags" placeholder="例如：v3, webview, urgent">
+          </label>
+          <div class="dialog-actions">
+            <button type="button" id="btn-delete-card" class="btn btn-danger hidden">删除卡片</button>
+            <div class="spacer"></div>
+            <button type="button" id="btn-cancel-card" class="btn btn-secondary">取消</button>
+            <button type="submit" class="btn btn-primary">保存并写入工作区</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script src="amber-plugin://kanban-board/board.js"></script>
+</body>
+</html>

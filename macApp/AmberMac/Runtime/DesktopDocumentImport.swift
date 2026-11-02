@@ -55,7 +55,9 @@ enum DesktopDocumentImport {
         defer { if granted { url.stopAccessingSecurityScopedResource() } }
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values.isRegularFile == true else { throw failure("请选择普通文件。") }
-        guard let size = values.fileSize, size <= maximumFileBytes else { throw failure("文件超过 32 MB 导入上限。") }
+        if let size = values.fileSize {
+            guard size <= maximumFileBytes else { throw failure("文件超过 32 MB 导入上限。") }
+        }
         let data = try Data(contentsOf: url)
         guard data.count <= maximumFileBytes else { throw failure("文件超过 32 MB 导入上限。") }
         try Task.checkCancellation()
@@ -206,6 +208,69 @@ enum DesktopDocumentImport {
     }
 
     fileprivate static func failure(_ message: String) -> DesktopRuntimeError { .message(message) }
+}
+
+/// Extracts file URLs or raw image payloads from `NSPasteboard` for ⌘V in the composer.
+/// File URLs always win over image types because Finder writes a file icon TIFF alongside `.fileURL`.
+enum DesktopPasteboardImport {
+    static func isPasteShortcut(modifierFlags: NSEvent.ModifierFlags, charactersIgnoringModifiers: String?, keyCode: UInt16) -> Bool {
+        let modifiers = modifierFlags.intersection([.command, .control, .option, .shift])
+        guard modifiers == [.command] else { return false }
+        if let chars = charactersIgnoringModifiers?.lowercased(), !chars.isEmpty {
+            return chars == "v"
+        }
+        return keyCode == 9
+    }
+
+    static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        var urls: [URL] = []
+        if let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [NSURL] {
+            urls.append(contentsOf: objects.map { $0 as URL }.filter(\.isFileURL))
+        }
+        if urls.isEmpty {
+            for item in pasteboard.pasteboardItems ?? [] {
+                if let data = item.data(forType: .fileURL),
+                   let url = URL(dataRepresentation: data, relativeTo: nil, isAbsolute: true),
+                   url.isFileURL {
+                    urls.append(url)
+                } else if let string = item.string(forType: .fileURL),
+                          let url = URL(string: string),
+                          url.isFileURL {
+                    urls.append(url)
+                }
+            }
+        }
+        var seen = Set<URL>()
+        return urls.filter { seen.insert($0.standardizedFileURL).inserted }
+    }
+
+    static func imagePayload(from pasteboard: NSPasteboard) -> (data: Data, name: String)? {
+        let preferredTypes: [(NSPasteboard.PasteboardType, String)] = [
+            (.png, "剪贴板图片.png"),
+            (NSPasteboard.PasteboardType(UTType.jpeg.identifier), "剪贴板图片.jpg"),
+            (NSPasteboard.PasteboardType(UTType.gif.identifier), "剪贴板图片.gif"),
+            (NSPasteboard.PasteboardType(UTType.webP.identifier), "剪贴板图片.webp"),
+            (.tiff, "剪贴板图片.tiff"),
+        ]
+        for (type, name) in preferredTypes {
+            if let data = pasteboard.data(forType: type), !data.isEmpty {
+                return (data, name)
+            }
+            if let data = pasteboard.pasteboardItems?.lazy.compactMap({ $0.data(forType: type) }).first(where: { !$0.isEmpty }) {
+                return (data, name)
+            }
+        }
+        let allTypes = (pasteboard.types ?? []) + (pasteboard.pasteboardItems?.flatMap(\.types) ?? [])
+        for type in allTypes {
+            guard let imageType = UTType(type.rawValue), imageType.conforms(to: .image) else { continue }
+            let data = pasteboard.data(forType: type)
+                ?? pasteboard.pasteboardItems?.lazy.compactMap({ $0.data(forType: type) }).first
+            if let data, !data.isEmpty {
+                return (data, "剪贴板图片." + (imageType.preferredFilenameExtension ?? "png"))
+            }
+        }
+        return nil
+    }
 }
 
 private final class DesktopOfficeXML: NSObject, XMLParserDelegate {

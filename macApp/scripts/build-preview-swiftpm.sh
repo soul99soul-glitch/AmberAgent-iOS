@@ -40,7 +40,10 @@ for folder in [project/'AmberMac'/'Runtime', project/'AmberMac'/'UI', project/'P
         if source.name not in excluded: shutil.copy2(source, sources/source.name)
 for name in ['IOSMcpClient.swift', 'IOSCredentialRedactor.swift', 'IOSWebDAVClient.swift', 'IOSSyncBackupError.swift',
     'IOSCodexOAuthClient.swift', 'IOSImageGenerationModels.swift', 'IOSImageGenerationRepository.swift',
-    'Chat/Media/ChatGeneratedImageURL.swift', 'Infrastructure/Networking/IOSPublicURLPolicy.swift']:
+    'Chat/Media/ChatGeneratedImageURL.swift', 'Infrastructure/Networking/IOSPublicURLPolicy.swift', 'IOSWebMountPublicDNS.swift',
+    'IOSIntelligentUIProtocol.swift', 'IOSIntelligentUIComponents.swift', 'IOSIntelligentUIStudy.swift',
+    'IOSIntelligentUIStateStore.swift', 'IOSIntelligentUIStreamingPreview.swift',
+    'IOSIntelligentUIComponentView.swift', 'IOSIntelligentUIStudyView.swift', 'IOSIntelligentUIStreamingPreviewView.swift']:
     shutil.copy2(repo/'iosApp'/'iosApp'/name, sources/pathlib.Path(name).name)
 (build/'Package.swift').write_text('''// swift-tools-version: 6.0
 import PackageDescription

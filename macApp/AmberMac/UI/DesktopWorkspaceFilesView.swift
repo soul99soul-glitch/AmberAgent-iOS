@@ -145,8 +145,8 @@ struct DesktopWorkspaceFilesView: View {
                 }
             } label: { Text("更换") }
                 .menuStyle(.borderlessButton).fixedSize()
-                .disabled(workspace.selectedID == nil || workspace.isGenerating)
-                .help(workspace.isGenerating ? "生成结束后再更换工作区" : "让这个会话使用你已有的文件夹")
+                .disabled(workspace.selectedID == nil || workspace.isSelectedConversationGenerating)
+                .help(workspace.isSelectedConversationGenerating ? "生成结束后再更换工作区" : "让这个会话使用你已有的文件夹")
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .background(DesktopTheme.raised(colorScheme), in: RoundedRectangle(cornerRadius: 10))

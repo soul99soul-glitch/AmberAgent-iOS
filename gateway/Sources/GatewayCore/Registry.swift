@@ -73,7 +73,7 @@ public struct Registry: Codable, Sendable, Equatable {
         }
         let old = sessions[key]
         if old == nil && config.isExcluded(cwd: event.cwd) { return [] }
-        if let old, event.timestamp < old.updatedAt, event.kind != .runExit { return [] }
+        if let old, event.timestamp.timeIntervalSince(old.updatedAt) < 0, event.kind != .runExit { return [] }
 
         var rec = old ?? SessionRecord(
             key: key,
@@ -111,7 +111,7 @@ public struct Registry: Codable, Sendable, Equatable {
         }
 
         SessionMachine.apply(event, to: &rec)
-        rec.updatedAt = max(rec.updatedAt, event.timestamp)
+        rec.updatedAt = rec.updatedAt.timeIntervalSince(event.timestamp) >= 0 ? rec.updatedAt : event.timestamp
         sessions[key] = rec
 
         effects += decidePush(key: key, old: old, config: config, now: now, presence: presence)
@@ -134,7 +134,7 @@ public struct Registry: Codable, Sendable, Equatable {
             guard var rec = sessions[key] else { continue }
             let old = rec
             SessionMachine.applyProcessExit(to: &rec)
-            rec.updatedAt = max(rec.updatedAt, now)
+            rec.updatedAt = rec.updatedAt.timeIntervalSince(now) >= 0 ? rec.updatedAt : now
             sessions[key] = rec
             if !isHost {
                 effects += decidePush(key: key, old: old, config: config, now: now, presence: { Presence(screenLocked: true, idleSeconds: .infinity) })

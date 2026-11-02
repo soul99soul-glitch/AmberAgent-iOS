@@ -13,6 +13,7 @@ struct DesktopSettingsView: View {
     private let speech: DesktopSpeechPlayer?
     private let backgroundMode: DesktopBackgroundMode?
     private let gateway: DesktopGateway?
+    private let cloudSelf: DesktopCloudSelfStore?
     private let plugins: DesktopPluginStore?
     @State private var speechPreviewID = UUID()
     @State private var login: DesktopCodexLogin
@@ -63,7 +64,7 @@ struct DesktopSettingsView: View {
         onOpenBackup: (() -> Void)? = nil, mcp: DesktopMCPManager? = nil, syncWorkspace: DesktopWorkspace? = nil,
         notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil,
         backgroundMode: DesktopBackgroundMode? = nil, gateway: DesktopGateway? = nil,
-        plugins: DesktopPluginStore? = nil, initialTab: Int = 0) {
+        cloudSelf: DesktopCloudSelfStore? = nil, plugins: DesktopPluginStore? = nil, initialTab: Int = 0) {
         self.settings = settings
         self.catalog = catalog
         self.onOpenBackup = onOpenBackup
@@ -74,6 +75,7 @@ struct DesktopSettingsView: View {
         self.speech = speech
         self.backgroundMode = backgroundMode
         self.gateway = gateway
+        self.cloudSelf = cloudSelf
         self.plugins = plugins ?? syncWorkspace?.plugins
         _tab = State(initialValue: initialTab)
         _previousTab = State(initialValue: initialTab)
@@ -158,12 +160,22 @@ struct DesktopSettingsView: View {
         }
     }
 
+    private var tabOptions: [(value: Int, title: String)] {
+        var options: [(value: Int, title: String)] = [(0, "服务商"), (1, "通用")]
+        if mcp != nil { options.append((2, "MCP")) }
+        if plugins != nil { options.append((5, "插件")) }
+        if syncWorkspace != nil { options.append((3, "同步")) }
+        if gateway != nil { options.append((4, "Mac Gateway")) }
+        if cloudSelf != nil { options.append((6, "云端")) }
+        return options
+    }
+
     private var tabs: some View {
         VStack(spacing: 0) {
             HStack(spacing: 24) {
                 Text("设置").font(DesktopTheme.serif(size: 22, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
                 Spacer()
-                DesktopSegmented(options: [(0, "服务商"), (1, "通用")] + (mcp != nil ? [(2, "MCP")] : []) + (plugins != nil ? [(5, "插件")] : []) + (syncWorkspace != nil ? [(3, "同步")] : []) + (gateway != nil ? [(4, "Mac Gateway")] : []),
+                DesktopSegmented(options: tabOptions,
                     selection: Binding(get: { tab }, set: { request(.tab($0)) }))
                     .accessibilityLabel("设置分类")
             }
@@ -200,6 +212,7 @@ struct DesktopSettingsView: View {
                 case 3: if let syncWorkspace { DesktopWebDAVSettingsView(workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 case 4: if let gateway { DesktopGatewaySettingsView(gateway: gateway).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 case 5: if let plugins { DesktopPluginsSettingsView(plugins: plugins, workspace: syncWorkspace).modifier(DesktopTabTransition(forward: tab > previousTab)) }
+                case 6: if let cloudSelf { DesktopCloudSelfSettingsView(store: cloudSelf).modifier(DesktopTabTransition(forward: tab > previousTab)) }
                 default: providers.modifier(DesktopTabTransition(forward: tab > previousTab))
                 }
             }
@@ -361,6 +374,15 @@ struct DesktopSettingsView: View {
         }
     }
 
+    @ViewBuilder private var claudeCaching: some View {
+        if draft.kind == .claude {
+            Toggle("复用稳定的提示前缀（Claude prompt caching）", isOn: Binding(
+                get: { draft.promptCaching },
+                set: { draft.promptCaching = $0 }))
+                .help("为系统提示、工具与历史插入 cache_control 断点；缓存写入按服务商价格计费，默认关闭。")
+        }
+    }
+
     private var models: some View {
         Section("模型") {
             if draft.models.isEmpty {
@@ -386,6 +408,7 @@ struct DesktopSettingsView: View {
                     .background(modelBeingEdited == model.id ? DesktopTheme.accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 6))
                 }
             }
+            claudeCaching
             Button("手动输入模型 ID", systemImage: "plus") {
                 let model = DesktopModelConfiguration(modelID: "")
                 draft.models.append(model); parameters[model.id] = ModelParameters(model)
@@ -405,7 +428,13 @@ struct DesktopSettingsView: View {
         TextField("Temperature", text: parameterBinding(id, \.temperature), prompt: Text(draft.kind == .claude ? "默认，或 0–1" : "默认，或 0–2"))
         TextField("最大输出", text: parameterBinding(id, \.output), prompt: Text("可留空，单位 token"))
         Picker("推理强度", selection: modelBinding(id, \.reasoning, fallback: .off)) {
-            ForEach(DesktopReasoningLevel.allCases) { Text($0.title).tag($0) }
+            ForEach(DesktopThinkingPolicy.editorLevels(
+                for: model,
+                kind: draft.kind,
+                providerName: draft.name,
+                baseURL: draft.baseURL,
+                authMode: draft.authMode
+            )) { Text($0.title).tag($0) }
         }
         Picker("图片理解", selection: modelBinding(id, \.supportsVision, fallback: nil)) {
             Text("自动识别能力").tag(nil as Bool?)
@@ -509,6 +538,9 @@ struct DesktopSettingsView: View {
                 Toggle("在对话中隐藏工具调用", isOn: $settings.hidesToolCalls)
                 Text("只影响显示；工具调用和结果仍保存在会话里，导出完整会话时会保留。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                Toggle("启用原生智能 UI 任务卡", isOn: $settings.intelligentUIEnabled)
+                Text("允许模型在回答中生成可交互的方案选择、表单填写、参数探索与练习卡片（task-ui）。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 Picker("发送消息", selection: $settings.sendShortcut) {
                     ForEach(DesktopSendShortcut.allCases) { Text($0.title).tag($0) }
                 }
@@ -518,6 +550,18 @@ struct DesktopSettingsView: View {
             }
             if let tasks = syncWorkspace?.agentTasks {
                 DesktopToolApprovalSettings(tasks: tasks)
+            }
+            Section("长程任务") {
+                Picker("工具轮数上限", selection: $settings.agentToolRoundLimit) {
+                    ForEach(DesktopAgentRunLimits.roundOptions, id: \.self) { Text("\($0) 轮").tag($0) }
+                }
+                Picker("运行时长上限", selection: $settings.agentRunMinutes) {
+                    ForEach(DesktopAgentRunLimits.minuteOptions, id: \.self) { minutes in
+                        Text(minutes % 60 == 0 ? "\(minutes / 60) 小时" : "\(minutes) 分钟").tag(minutes)
+                    }
+                }
+                Text("一轮 = 一次模型往返 + 一批工具调用（可并行多个工具）。长程任务按轮数与运行时长双重兜底，到任一条就停止，已收到的结果保留在会话里；中途审批也占用轮数，因此长任务建议保留较大值。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
             Section("辅助任务模型") {
                 ForEach(DesktopAuxiliaryModelTask.allCases) { task in

@@ -22,6 +22,10 @@ import Foundation
         let provider = DesktopAgentProvider(text: text, tasks: tasks, files: files, knowledge: knowledge, mcp: mcp,
             collaborations: collaborations, searchSettings: searchSettings, plugins: plugins)
         let names = plugins.activeRecipeRegisteredTools()
+        // The P3 workflows ship as Recipes the user can inspect and edit; without them the plugins exist but
+        // nothing ever runs them. Existing user edits are never overwritten.
+        DesktopBuiltInRecipes.install(into: directory,
+            hasFeishu: plugins.plugins.contains { $0.id == "feishu_calendar" && $0.enabled })
         let recipes = DesktopRecipeRuns(store: DesktopRecipeStore(directory: directory, registeredTools: names), tasks: tasks) {
             try await provider.performRecipeTool(runID: $0, owner: $1, name: $2, argumentsJSON: $3)
         }
@@ -32,7 +36,9 @@ import Foundation
                 amberRoot: directory, knowledgeDirectory: knowledge.directory),
             imageGeneration: imageGeneration, searchSettings: searchSettings,
             artifactShelf: DesktopArtifactShelf(fileURL: directory.appendingPathComponent("artifact-shelf.json")),
-            plugins: plugins)
+            plugins: plugins,
+            intelligentUIStateStore: IOSIntelligentUIStateStore(fileURL: directory.appendingPathComponent("intelligent-ui-state.json")),
+            intelligentUIReceiptsFileURL: directory.appendingPathComponent("intelligent-ui-receipts.json"))
         let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: directory.appendingPathComponent("schedules", isDirectory: true)),
             runner: { [weak self] task, slot in
                 guard let self else {
@@ -60,6 +66,8 @@ import Foundation
         boardWriter = DesktopBoardWriter(provider: text, available: { [weak self] in self?.settings.configuration(for: .title) != nil }) { [weak self] in
             self?.boardWriterRequest()
         }
+        // Outbound cloud pairing (Mac → cloud amberd). Independent of the local gateway above.
+        cloudSelf = DesktopCloudSelfStore(settings: settings, searchSettings: searchSettings)
         // Not as a test host: the title model's key is a Keychain read, which prompts an unsigned test build.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             Task { @MainActor [weak self] in

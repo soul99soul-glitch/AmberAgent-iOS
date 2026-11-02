@@ -105,7 +105,7 @@ struct DesktopScheduledTasksView: View {
                                 .overlay(Capsule().strokeBorder(DesktopTheme.danger.opacity(0.6)))
                         }
                     }
-                    Text(Self.ruleText(task)).font(.system(size: 12)).foregroundStyle(secondary).lineLimit(1)
+                    Text(DesktopScheduleText.rule(task)).font(.system(size: 12)).foregroundStyle(secondary).lineLimit(1)
                     Text(nextText(task)).font(.system(size: 12)).foregroundStyle(secondary).lineLimit(1)
                     if let last = task.lastRun { lastRunLabel(last).font(.system(size: 12)) }
                 }
@@ -325,28 +325,6 @@ struct DesktopScheduledTasksView: View {
         dismiss()
     }
 
-    static func ruleText(_ task: DesktopScheduledTask) -> String {
-        switch task.trigger {
-        case nil: return ruleText(task.schedule)
-        case .folder(let path): return "文件夹 \(URL(fileURLWithPath: path).lastPathComponent) 有新文件时"
-        case .agentSession(.ended): return "Claude Code / Codex 会话结束时"
-        case .agentSession(.needsYou): return "Claude Code / Codex 会话等你处理时"
-        }
-    }
-
-    static func ruleText(_ schedule: DesktopSchedule) -> String {
-        func clock(_ hour: Int, _ minute: Int) -> String { String(format: "%02d:%02d", hour, minute) }
-        switch schedule {
-        case .once(let date): return "仅一次 · " + DesktopScheduleMenu.format(date)
-        case .daily(let hour, let minute): return "每天 " + clock(hour, minute)
-        case .weekdays(let hour, let minute): return "工作日 " + clock(hour, minute)
-        case .weekly(let days, let hour, let minute):
-            let names = ["日", "一", "二", "三", "四", "五", "六"]
-            return "每周" + days.sorted().map { names[($0 - 1) % 7] }.joined(separator: "、") + " " + clock(hour, minute)
-        case .interval(let minutes, _):
-            return minutes % 60 == 0 ? "每 \(minutes / 60) 小时" : "每 \(minutes) 分钟"
-        }
-    }
 }
 
 /// Picks one of the five time rules, or an event (Mac only: the folder comes from a Finder panel).
@@ -524,7 +502,8 @@ struct DesktopScheduleRuleEditor: View {
         switch kind {
         case .once:
             let today = Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: Date()) ?? Date()
-            schedule = .once(today > Date() ? today : today.addingTimeInterval(86_400))
+            // Interval comparison: `Date.>` traps on this Xcode 27 SDK/runtime pairing.
+            schedule = .once(today.timeIntervalSince(Date()) > 0 ? today : today.addingTimeInterval(86_400))
         case .daily: schedule = .daily(hour: hour, minute: minute)
         case .weekdays: schedule = .weekdays(hour: hour, minute: minute)
         case .weekly: schedule = .weekly(days: [2], hour: hour, minute: minute)

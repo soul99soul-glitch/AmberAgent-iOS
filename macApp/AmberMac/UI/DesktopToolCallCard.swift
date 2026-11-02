@@ -7,14 +7,23 @@ struct DesktopToolCallCard: View {
 
     var body: some View {
         let activity = DesktopToolActivity(tool)
-        VStack(alignment: .leading, spacing: 0) {
+        let images = tool.resolvedImages
+        let videos = tool.resolvedVideos
+        let audios = tool.resolvedAudios
+        VStack(alignment: .leading, spacing: 8) {
             HeaderButton(tool: tool, activity: activity, expanded: $expanded)
+
+            if !images.isEmpty {
+                DesktopMessageImageGallery(images: images, maxWidth: 480, alignment: .leading)
+            }
+            forEachVideo(videos)
+            forEachAudio(audios)
 
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(tool.name).font(.system(size: 11, design: .monospaced)).foregroundStyle(DesktopTheme.inkTertiary)
                         .textSelection(.enabled)
-                    if let pluginSummary = Self.pluginPreviewSummary(tool: tool) {
+                    if let pluginSummary = DesktopToolCallPreview.pluginSummary(for: tool) {
                         HStack(spacing: 8) {
                             Image(systemName: pluginSummary.symbol)
                                 .font(.system(size: 11, weight: .semibold))
@@ -34,9 +43,23 @@ struct DesktopToolCallCard: View {
                 .padding(.leading, 12)
                 .padding(.vertical, 6)
                 .overlay(alignment: .leading) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1) }
-                .padding(.top, 4)
+                .padding(.top, 2)
                 .transition(.opacity)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func forEachVideo(_ videos: [DesktopVideoMedia]) -> some View {
+        ForEach(Array(videos.enumerated()), id: \.offset) { _, video in
+            DesktopVideoCard(video: video, maxWidth: 380)
+        }
+    }
+
+    @ViewBuilder
+    private func forEachAudio(_ audios: [DesktopAudioMedia]) -> some View {
+        ForEach(Array(audios.enumerated()), id: \.offset) { _, audio in
+            DesktopAudioCard(audio: audio, maxWidth: 360)
         }
     }
 
@@ -44,11 +67,13 @@ struct DesktopToolCallCard: View {
         let tool: DesktopToolCall
         let activity: DesktopToolActivity
         @Binding var expanded: Bool
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var hovering = false
 
         var body: some View {
             Button {
-                withAnimation(.smooth(duration: 0.24)) { expanded.toggle() }
+                if reduceMotion { expanded.toggle() }
+                else { withAnimation(.smooth(duration: 0.24)) { expanded.toggle() } }
             } label: {
                 HStack(spacing: 7) {
                     statusIcon
@@ -122,39 +147,126 @@ struct DesktopToolCallCard: View {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func pluginPreviewSummary(tool: DesktopToolCall) -> (symbol: String, text: String)? {
-        guard tool.name.hasPrefix("plugin__"),
-              tool.output.utf8.count <= 16_384,
-              let data = tool.output.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
+}
+
+/// Single-line in-place tool progress bar for an entire assistant turn.
+/// Replaces per-tool cards in the transcript so multi-step ReAct progress updates in a single line.
+struct DesktopTurnToolProgressBar: View {
+    let progress: DesktopTurnToolProgress
+    @Binding var expanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    private var allImages: [DesktopMessageImage] {
+        progress.tools.flatMap(\.resolvedImages)
+    }
+
+    private var allVideos: [DesktopVideoMedia] {
+        progress.tools.flatMap(\.resolvedVideos)
+    }
+
+    private var allAudios: [DesktopAudioMedia] {
+        progress.tools.flatMap(\.resolvedAudios)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if reduceMotion { expanded.toggle() }
+                else { withAnimation(.smooth(duration: 0.24)) { expanded.toggle() } }
+            } label: {
+                HStack(spacing: 7) {
+                    statusIcon
+                    Text(progress.headline)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(hovering || expanded ? DesktopTheme.ink : DesktopTheme.inkSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(1)
+                    if let badge = progress.stepBadge {
+                        Text(badge)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(DesktopTheme.paper.opacity(0.75), in: Capsule())
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(hovering || expanded ? DesktopTheme.hover : DesktopTheme.paperDeep.opacity(0.65))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(DesktopTheme.hairline, lineWidth: 0.75)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help(progress.headline)
+            .accessibilityLabel("\(expanded ? "收起" : "展开")进度：\(progress.headline)")
+
+            if !allImages.isEmpty {
+                DesktopMessageImageGallery(images: allImages, maxWidth: 480, alignment: .leading)
+            }
+            ForEach(Array(allVideos.enumerated()), id: \.offset) { _, video in
+                DesktopVideoCard(video: video, maxWidth: 380)
+            }
+            ForEach(Array(allAudios.enumerated()), id: \.offset) { _, audio in
+                DesktopAudioCard(audio: audio, maxWidth: 360)
+            }
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(progress.tools.enumerated()), id: \.element.id) { index, tool in
+                        let activity = DesktopToolActivity(tool)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text("\(index + 1).")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(DesktopTheme.inkTertiary)
+                                Text(activity.summary)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(DesktopTheme.ink)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(tool.name)
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(DesktopTheme.inkTertiary)
+                            }
+                            if !tool.output.isEmpty {
+                                Text(DesktopToolCallCard.prettyJSON(tool.output))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(DesktopTheme.inkSecondary)
+                                    .lineLimit(4)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+                .padding(.leading, 12)
+                .padding(.vertical, 6)
+                .overlay(alignment: .leading) { Rectangle().fill(DesktopTheme.hairlineStrong).frame(width: 1) }
+                .padding(.top, 2)
+                .transition(.opacity)
+            }
         }
-        if let event = obj["event"] as? [String: Any],
-           let summary = event["summary"] as? String {
-            let start = (event["start_time"] as? String) ?? (event["startTime"] as? String) ?? ""
-            let loc = (event["location"] as? String) ?? ""
-            let meta = [start, loc].filter { !$0.isEmpty }.joined(separator: " · ")
-            return ("calendar.badge.checkmark", meta.isEmpty ? summary : "\(summary)（\(meta)）")
+    }
+
+    @ViewBuilder private var statusIcon: some View {
+        switch progress.status {
+        case .running: DesktopPulse()
+        case .pending: Image(systemName: "hand.raised.fill").font(.system(size: 11)).foregroundStyle(DesktopTheme.accent)
+        case .denied: Image(systemName: "nosign").font(.system(size: 11)).foregroundStyle(DesktopTheme.danger)
+        case .complete: Image(systemName: "checkmark.circle.fill").font(.system(size: 11)).foregroundStyle(DesktopTheme.success)
         }
-        if let count = obj["count"] as? Int, obj["events"] != nil {
-            return ("calendar", "共读取 \(count) 项飞书日历日程")
-        }
-        if let freeSlots = obj["free_slots"] as? [[String: Any]] {
-            return ("clock.badge.checkmark", "发现 \(freeSlots.count) 个可约空闲时段")
-        }
-        if let msgID = obj["message_id"] as? String, !msgID.isEmpty,
-           let title = obj["title"] as? String {
-            let target = (obj["target"] as? String) ?? ""
-            return ("paperplane", target.isEmpty ? "已推送：\(title)" : "已推送至 \(target)：\(title)")
-        }
-        if let count = obj["count"] as? Int, obj["messages"] != nil {
-            let chatID = (obj["chat_id"] as? String) ?? "飞书群"
-            return ("bubble.left.and.bubble.right", "已拉取 \(chatID) 近 \(count) 条消息")
-        }
-        if let docID = obj["document_id"] as? String, !docID.isEmpty,
-           let title = obj["title"] as? String {
-            return ("doc.text", "\(title)（\(docID)）")
-        }
-        return nil
     }
 }

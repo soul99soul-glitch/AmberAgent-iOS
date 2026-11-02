@@ -85,6 +85,10 @@ final class DesktopMCPStore {
         guard !servers.contains(where: { $0.id != server.id && $0.name == server.name }) else {
             throw DesktopRuntimeError.message("已有同名 MCP 服务，请使用其他名称。")
         }
+        if server.headers.values.contains(where: DesktopHistoryRedaction.isPlaceholderCredential)
+            || server.environment.values.contains(where: DesktopHistoryRedaction.isPlaceholderCredential) {
+            throw DesktopRuntimeError.message("不能将脱敏占位符保存为凭据。")
+        }
         var next = servers
         if let index = next.firstIndex(where: { $0.id == server.id }) { next[index] = server }
         else { next.append(server) }

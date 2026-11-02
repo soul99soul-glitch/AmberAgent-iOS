@@ -4,11 +4,13 @@ import Foundation
 /// available in the card's details; unknown tools fall back to it.
 struct DesktopToolActivity: Equatable {
     let title: String
+    let englishTitle: String
     let detail: String?
 
     private static let detailLimit = 48
 
     var summary: String { detail.map { "\(title) · \($0)" } ?? title }
+    var englishSummary: String { detail.map { "\(englishTitle) · \($0)" } ?? englishTitle }
 
     init(_ tool: DesktopToolCall) {
         let arguments = Self.arguments(tool.input)
@@ -17,15 +19,23 @@ struct DesktopToolActivity: Equatable {
                 .first { !$0.isEmpty }
         }
         let action: (running: String, done: String)
+        var englishAction: (running: String, done: String)?
         var detail: String?
         switch tool.name {
         case "memory_tool":
             action = Self.memoryAction(string("action"))
             detail = string("query")
-        case "search_web":
+        case "search_web", "exa_search":
             action = ("正在搜索网页", "已搜索网页"); detail = string("query")
         case "scrape_web":
             action = ("正在读取网页", "已读取网页"); detail = string("url").map(Self.host)
+        case "exa_contents":
+            action = ("正在提取网页全文", "已提取网页全文")
+            detail = string("url").map(Self.host) ?? (arguments["urls"] as? [String])?.first.map(Self.host)
+        case "exa_answer":
+            action = ("正在检索问答", "已检索问答"); detail = string("query")
+        case "exa_find_similar":
+            action = ("正在查找相似网页", "已查找相似网页"); detail = string("url").map(Self.host)
         case "workspace_file_list":
             action = ("正在查看工作区文件", "已查看工作区文件")
         case "workspace_file_read":
@@ -46,6 +56,12 @@ struct DesktopToolActivity: Equatable {
             action = ("正在启用技能", "已启用技能"); detail = string("name")
         case "skill_disable":
             action = ("正在停用技能", "已停用技能"); detail = string("name")
+        case "plugin_list":
+            action = ("正在查看已安装插件", "已查看已安装插件")
+            englishAction = ("Listing installed plugins", "Listed installed plugins")
+        case "plugin_install":
+            action = ("正在安装插件", "已安装插件"); detail = string("path").map(Self.fileName)
+            englishAction = ("Installing plugin", "Installed plugin")
         case "mcp_list":
             action = ("正在查看 MCP 服务", "已查看 MCP 服务")
         case "mcp_describe_tool":
@@ -66,6 +82,18 @@ struct DesktopToolActivity: Equatable {
             action = ("正在创建定时任务", "已创建定时任务"); detail = string("name")
         case "schedule_update":
             action = ("正在修改定时任务", "已修改定时任务"); detail = string("name")
+        case "history_search":
+            action = ("正在搜索历史对话", "已搜索历史对话"); detail = string("query")
+        case "history_fetch":
+            action = ("正在读取历史对话", "已读取历史对话"); detail = string("conversation_id", "title")
+        case "plugin__apple_schedule__calendar_events":
+            action = ("正在查询日历事项", "已查询日历事项"); detail = string("date", "query")
+        case "plugin__apple_schedule__reminders":
+            action = ("正在查询提醒事项", "已查询提醒事项"); detail = string("list_name", "query")
+        case "plugin__watchtower__create_watch":
+            action = ("正在创建守望任务", "已创建守望任务"); detail = string("title", "query")
+        case "plugin__watchtower__list_watches":
+            action = ("正在查看守望任务", "已查看守望任务")
         case "plugin__feishu_calendar__list_events":
             action = ("正在查询飞书日历", "已查询飞书日历"); detail = string("date", "query")
         case "plugin__feishu_calendar__freebusy":
@@ -88,11 +116,20 @@ struct DesktopToolActivity: Equatable {
                 action = ("正在使用 \(tool.name)", "已使用 \(tool.name)")
             }
         }
+        let resolvedEnglish = englishAction ?? ("Running \(tool.name)", "Ran \(tool.name)")
         switch tool.status {
-        case .running: title = action.running
-        case .complete: title = action.done
-        case .pending: title = "等待确认：" + Self.stripRunning(action.running)
-        case .denied: title = "已拒绝：" + Self.stripRunning(action.running)
+        case .running:
+            title = action.running
+            englishTitle = resolvedEnglish.running
+        case .complete:
+            title = action.done
+            englishTitle = resolvedEnglish.done
+        case .pending:
+            title = "等待确认：" + Self.stripRunning(action.running)
+            englishTitle = "Awaiting approval: " + resolvedEnglish.running
+        case .denied:
+            title = "已拒绝：" + Self.stripRunning(action.running)
+            englishTitle = "Denied: " + resolvedEnglish.running
         }
         self.detail = detail.flatMap(Self.clipped)
     }
@@ -129,5 +166,212 @@ struct DesktopToolActivity: Equatable {
         let collapsed = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !collapsed.isEmpty else { return nil }
         return collapsed.count > detailLimit ? String(collapsed.prefix(detailLimit - 1)) + "…" : collapsed
+    }
+}
+
+/// Single-line in-place progress model for an assistant turn's tool execution.
+/// Updates in-place across multiple tool calls instead of stacking one card per tool.
+struct DesktopTurnToolProgress: Equatable {
+    let tools: [DesktopToolCall]
+    let isStreaming: Bool
+    let hasReplyText: Bool
+    let status: DesktopToolCall.Status
+    let headline: String
+    let englishHeadline: String
+    let stepBadge: String?
+    let stepCount: Int
+    let completedCount: Int
+
+    init?(tools: [DesktopToolCall], isStreaming: Bool, hasReplyText: Bool) {
+        guard !tools.isEmpty else { return nil }
+        self.tools = tools
+        self.isStreaming = isStreaming
+        self.hasReplyText = hasReplyText
+        self.stepCount = tools.count
+        self.completedCount = tools.filter { $0.status == .complete }.count
+
+        let activeTool = tools.last(where: { $0.status == .running || $0.status == .pending })
+        let deniedTool = tools.last(where: { $0.status == .denied })
+        let latestTool = activeTool ?? deniedTool ?? tools[tools.count - 1]
+        let latestActivity = DesktopToolActivity(latestTool)
+
+        if let activeTool {
+            self.status = activeTool.status
+            self.headline = latestActivity.summary
+            self.englishHeadline = latestActivity.englishSummary
+            let currentStep = min(completedCount + 1, stepCount)
+            self.stepBadge = stepCount > 1 ? "第 \(currentStep)/\(stepCount) 步" : nil
+        } else if let deniedTool {
+            self.status = deniedTool.status
+            self.headline = DesktopToolActivity(deniedTool).summary
+            self.englishHeadline = DesktopToolActivity(deniedTool).englishSummary
+            self.stepBadge = stepCount > 1 ? "\(completedCount)/\(stepCount) 步" : nil
+        } else if isStreaming && !hasReplyText {
+            self.status = .running
+            self.headline = "正在整理回复 · \(latestActivity.summary)"
+            self.englishHeadline = "Synthesizing reply · \(latestActivity.englishSummary)"
+            self.stepBadge = stepCount > 1 ? "已完成 \(stepCount) 步" : nil
+        } else {
+            self.status = .complete
+            if stepCount == 1 {
+                self.headline = latestActivity.summary
+                self.englishHeadline = latestActivity.englishSummary
+                self.stepBadge = nil
+            } else {
+                self.headline = "已完成 \(stepCount) 步操作 · \(latestActivity.summary)"
+                self.englishHeadline = "Completed \(stepCount) steps · \(latestActivity.englishSummary)"
+                self.stepBadge = "\(stepCount) 步"
+            }
+        }
+    }
+}
+
+enum DesktopTranscriptTurnGrouping {
+    /// Coalesces multi-round assistant messages within the same turn into a single display row
+    /// anchored at the turn's first assistant message ID so tool progress updates in-place.
+    static func projectRows(
+        messages: [DesktopMessage],
+        hidesToolCalls: Bool,
+        activeOwnedGroups: [[UUID]] = []
+    ) -> [(offset: Int, element: DesktopMessage)] {
+        var groupByMessageID: [UUID: Int] = [:]
+        for (groupIndex, group) in activeOwnedGroups.enumerated() {
+            for id in group {
+                groupByMessageID[id] = groupIndex
+            }
+        }
+
+        var result: [(offset: Int, element: DesktopMessage)] = []
+        var index = 0
+        while index < messages.count {
+            let current = messages[index]
+            guard current.role == .assistant else {
+                result.append((offset: index, element: current))
+                index += 1
+                continue
+            }
+
+            let startOffset = index
+            let startGroup = groupByMessageID[current.id]
+            var turnMessages: [DesktopMessage] = [current]
+            var lookahead = index + 1
+            while lookahead < messages.count {
+                let candidate = messages[lookahead]
+                guard candidate.role == .assistant else { break }
+                let candidateGroup = groupByMessageID[candidate.id]
+                if startGroup != candidateGroup {
+                    break
+                }
+                let previousHasTools = !turnMessages.last!.tools.isEmpty
+                let candidateHasTools = !candidate.tools.isEmpty
+                let previousEmptyText = turnMessages.last!.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if startGroup != nil || previousHasTools || candidateHasTools || previousEmptyText {
+                    turnMessages.append(candidate)
+                    lookahead += 1
+                } else {
+                    break
+                }
+            }
+
+            if let projected = mergeAssistantTurn(turnMessages, hidesToolCalls: hidesToolCalls) {
+                result.append((offset: startOffset, element: projected))
+            }
+            index = lookahead
+        }
+        return result
+    }
+
+    private static func mergeAssistantTurn(
+        _ messages: [DesktopMessage],
+        hidesToolCalls: Bool
+    ) -> DesktopMessage? {
+        guard let first = messages.first, let last = messages.last else { return nil }
+        if messages.count == 1 {
+            guard hidesToolCalls else { return first }
+            if !first.tools.isEmpty
+                && first.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && first.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && first.images.isEmpty && first.videos.isEmpty && first.audios.isEmpty
+                && first.unsupportedPartCount == 0
+                && first.state != .streaming {
+                return nil
+            }
+            var copy = first
+            copy.tools = []
+            copy.parts = first.parts.filter { $0.kind != .tool }
+            return copy
+        }
+
+        var mergedTools: [DesktopToolCall] = []
+        var mergedReasonings: [String] = []
+        var mergedTexts: [String] = []
+        var mergedImages: [DesktopMessageImage] = []
+        var mergedVideos: [DesktopVideoMedia] = []
+        var mergedAudios: [DesktopAudioMedia] = []
+        var mergedParts: [DesktopMessageContentPart] = []
+
+        for message in messages {
+            let trimmedReasoning = message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedReasoning.isEmpty, mergedReasonings.last != trimmedReasoning {
+                mergedReasonings.append(trimmedReasoning)
+            }
+            for tool in message.tools {
+                if let existingIndex = mergedTools.firstIndex(where: { $0.id == tool.id }) {
+                    mergedTools[existingIndex] = tool
+                } else {
+                    mergedTools.append(tool)
+                }
+            }
+            let trimmedText = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedText.isEmpty {
+                mergedTexts.append(message.text)
+            }
+            mergedImages.append(contentsOf: message.images)
+            mergedVideos.append(contentsOf: message.videos)
+            mergedAudios.append(contentsOf: message.audios)
+            for part in message.parts {
+                if part.kind == .tool && hidesToolCalls { continue }
+                mergedParts.append(part)
+            }
+        }
+
+        let combinedText = mergedTexts.joined(separator: "\n\n")
+        let combinedReasoning = mergedReasonings.joined(separator: "\n\n")
+        let isStreaming = messages.contains { $0.state == .streaming }
+        if hidesToolCalls
+            && combinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && combinedReasoning.isEmpty
+            && mergedImages.isEmpty && mergedVideos.isEmpty && mergedAudios.isEmpty
+            && !isStreaming {
+            return nil
+        }
+
+        let resolvedState: DesktopMessageState
+        if isStreaming {
+            resolvedState = .streaming
+        } else if let failed = messages.last(where: { $0.state == .failed || $0.state == .cancelled }) {
+            resolvedState = failed.state
+        } else {
+            resolvedState = last.state
+        }
+
+        return DesktopMessage(
+            id: first.id,
+            role: .assistant,
+            text: combinedText,
+            reasoning: combinedReasoning,
+            state: resolvedState,
+            canonicalJSON: last.canonicalJSON ?? first.canonicalJSON,
+            unsupportedPartCount: messages.reduce(0) { $0 + $1.unsupportedPartCount },
+            variantIDs: first.variantIDs.isEmpty ? last.variantIDs : first.variantIDs,
+            editableTextPartIndex: last.editableTextPartIndex,
+            editableText: last.editableText,
+            estimatedTokens: last.estimatedTokens ?? messages.compactMap(\.estimatedTokens).last,
+            images: mergedImages,
+            videos: mergedVideos,
+            audios: mergedAudios,
+            tools: hidesToolCalls ? [] : mergedTools,
+            parts: mergedParts
+        )
     }
 }

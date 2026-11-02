@@ -1,0 +1,244 @@
+{
+  "schema": "amber.plugin.v3",
+  "manifest_version": 3,
+  "id": "kanban-board",
+  "name": "看板工作台 (Kanban Board)",
+  "version": "3.0.0",
+  "description": "Obsidian 级交互式多列任务看板：支持跨列拖拽卡片、新建/编辑/删除卡片、工作区 JSON 与 Markdown 双写持久化，以及智能体看板工具协同。",
+  "icon": "rectangle.split.3x1",
+  "main": "main.js",
+  "dev_reload": true,
+  "permissions": [
+    "ui.views",
+    "storage",
+    "workspace.read",
+    "workspace.write",
+    "agent.tools",
+    "commands",
+    "events",
+    "settings"
+  ],
+  "capabilities": {
+    "networkDomains": [],
+    "workspaceReadPrefixes": [
+      "kanban"
+    ],
+    "workspaceWritePrefixes": [
+      "kanban"
+    ]
+  },
+  "settings_schema": [
+    {
+      "key": "board_title",
+      "title": "默认看板标题",
+      "kind": "string",
+      "default_value": "Amber 研发任务看板",
+      "placeholder": "输入看板标题",
+      "help": "展示在看板顶部与导出 Markdown 标题中的名称。"
+    },
+    {
+      "key": "auto_export_markdown",
+      "title": "自动同步 Markdown (kanban/BOARD.md)",
+      "kind": "boolean",
+      "default_value": "true",
+      "help": "每次新增、移动或编辑卡片后自动同步生成可读的 Markdown 看板文件。"
+    }
+  ],
+  "tools": [
+    {
+      "name": "kanban_list_cards",
+      "description": "读取当前会话工作区看板中的所有列与任务卡片。",
+      "effect": "pure",
+      "entry": "kanbanListCards",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "可选过滤列 ID（todo / in_progress / done）"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "kanban_add_card",
+      "description": "向看板指定列新增一张任务卡片，并持久化到工作区 JSON 与 Markdown。",
+      "effect": "sideEffect",
+      "entry": "kanbanAddCard",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "卡片标题"
+          },
+          "description": {
+            "type": "string",
+            "description": "卡片详情说明"
+          },
+          "column": {
+            "type": "string",
+            "description": "目标列 ID：todo（待办）、in_progress（进行中）、done（已完成）"
+          },
+          "priority": {
+            "type": "string",
+            "description": "优先级：low / medium / high"
+          },
+          "tags": {
+            "type": "array",
+            "description": "标签数组"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "kanban_move_card",
+      "description": "将指定 ID 的卡片移动到目标列（todo / in_progress / done）并调整排序位置。",
+      "effect": "sideEffect",
+      "entry": "kanbanMoveCard",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string",
+            "description": "要移动的卡片 ID"
+          },
+          "to_column": {
+            "type": "string",
+            "description": "目标列 ID（todo / in_progress / done）"
+          },
+          "target_column": {
+            "type": "string",
+            "description": "目标列 ID 别名（todo / in_progress / done）"
+          },
+          "index": {
+            "type": "integer",
+            "description": "可选的目标位置索引（从 0 开始）"
+          },
+          "position": {
+            "type": "integer",
+            "description": "可选的目标位置索引别名（从 0 开始）"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "kanban_update_card",
+      "description": "编辑看板中已有卡片的标题、描述、优先级或标签，并同步持久化。",
+      "effect": "sideEffect",
+      "entry": "kanbanUpdateCard",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string",
+            "description": "要更新的卡片 ID"
+          },
+          "title": {
+            "type": "string",
+            "description": "新的卡片标题"
+          },
+          "description": {
+            "type": "string",
+            "description": "新的卡片描述"
+          },
+          "priority": {
+            "type": "string",
+            "description": "新的优先级（low / medium / high）"
+          },
+          "tags": {
+            "type": "array",
+            "description": "更新后的标签列表"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "kanban_delete_card",
+      "description": "从看板中删除指定 ID 的任务卡片并更新工作区文件。",
+      "effect": "sideEffect",
+      "entry": "kanbanDeleteCard",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string",
+            "description": "要删除的卡片 ID"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "kanban_export_markdown",
+      "description": "将当前看板状态导出为工作区 Markdown 文件（kanban/BOARD.md）并返回全文。",
+      "effect": "sideEffect",
+      "entry": "kanbanExportMarkdown",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ],
+  "ui": {
+    "views": [
+      {
+        "id": "kanban_main",
+        "title": "任务看板",
+        "slot": "workspace",
+        "symbol": "rectangle.split.3x1",
+        "subtitle": "拖拽卡片、编辑任务并同步工作区 JSON / Markdown",
+        "entry": "index.html"
+      },
+      {
+        "id": "kanban_sidebar",
+        "title": "看板速览",
+        "slot": "right_sidebar",
+        "symbol": "list.bullet.rectangle.portrait",
+        "subtitle": "右侧边栏紧凑看板视图",
+        "entry": "index.html"
+      }
+    ],
+    "inspectorCards": [
+      {
+        "id": "kanban_summary",
+        "title": "看板进度摘要",
+        "symbol": "rectangle.split.3x1",
+        "entry": "renderInspector"
+      }
+    ],
+    "commands": [
+      {
+        "id": "kanban_overview",
+        "title": "梳理当前看板进展",
+        "slash": "/kanban",
+        "symbol": "rectangle.split.3x1",
+        "prompt_template": "请调用 kanban_list_cards 查看当前任务看板，并按待办、进行中、已完成总结重点事项与阻塞项。"
+      },
+      {
+        "id": "kanban_quick_add",
+        "title": "向看板拆解并添加任务",
+        "slash": "/kanban-add",
+        "symbol": "plus.rectangle.on.rectangle",
+        "prompt_template": "请根据我们刚才讨论的目标，拆解为 2–4 张看板卡片并调用 kanban_add_card 写入看板。"
+      }
+    ]
+  }
+}

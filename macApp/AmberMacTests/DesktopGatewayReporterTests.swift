@@ -16,7 +16,7 @@ import XCTest
     private func drained(_ spool: Spool, count: Int) async -> [GatewayEvent] {
         let deadline = Date().addingTimeInterval(3)
         var events: [GatewayEvent] = []
-        while Date() < deadline {
+        while deadline.timeIntervalSince(Date()) > 0 {
             let names = (try? FileManager.default.contentsOfDirectory(atPath: spool.dir.path))?.filter { $0.hasSuffix(".json") && !$0.hasPrefix(".") } ?? []
             if names.count >= count { break }
             try? await Task.sleep(for: .milliseconds(20))

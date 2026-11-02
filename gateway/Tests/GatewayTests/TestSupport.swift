@@ -60,7 +60,7 @@ enum TestSupport {
 
     static func eventually(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        while deadline.timeIntervalSince(Date()) > 0 {
             if condition() { return true }
             usleep(50_000)
         }

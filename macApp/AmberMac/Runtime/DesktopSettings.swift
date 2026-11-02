@@ -65,6 +65,9 @@ struct DesktopKeychain: DesktopCredentialStore {
 
     func save(_ value: String, id: UUID) throws {
         if value.isEmpty { try delete(id: id); return }
+        if DesktopHistoryRedaction.isPlaceholderCredential(value) {
+            throw DesktopRuntimeError.message("不能将脱敏占位符保存为凭据。")
+        }
         let attributes = [kSecValueData as String: Data(value.utf8)]
         var status = SecItemUpdate(query(id) as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
@@ -114,7 +117,31 @@ final class DesktopSettings {
     var automaticallyFollowGeneration: Bool { didSet { persist() } }
     /// Tool calls stay in the conversation data either way; this only hides their cards in the transcript.
     var hidesToolCalls: Bool { didSet { persist() } }
+    /// Enables native interactive `task-ui` cards in assistant replies and injects the protocol capability prompt.
+    var intelligentUIEnabled: Bool { didSet { persist() } }
     var sendShortcut: DesktopSendShortcut { didSet { persist() } }
+    /// 长程工具任务的轮数上限；默认值足够跑满一小时以上的多步任务，可在设置里下调或再调高。
+    private var storedAgentToolRoundLimit: Int
+    var agentToolRoundLimit: Int {
+        get { storedAgentToolRoundLimit }
+        set {
+            let value = DesktopAgentRunLimits.clampedRounds(newValue)
+            guard storedAgentToolRoundLimit != value else { return }
+            storedAgentToolRoundLimit = value
+            persist()
+        }
+    }
+    /// 单次工具任务的实际运行时长上限（分钟）；到点就停，不靠轮数估算。
+    private var storedAgentRunMinutes: Int
+    var agentRunMinutes: Int {
+        get { storedAgentRunMinutes }
+        set {
+            let value = DesktopAgentRunLimits.clampedMinutes(newValue)
+            guard storedAgentRunMinutes != value else { return }
+            storedAgentRunMinutes = value
+            persist()
+        }
+    }
     var notificationsEnabled: Bool { didSet { persist() } }
     var speechVoiceIdentifier: String { didSet { persist() } }
     private var storedSpeechRate: Double
@@ -148,10 +175,13 @@ final class DesktopSettings {
         var autoExpandThinking: Bool?
         var automaticallyFollowGeneration: Bool?
         var hidesToolCalls: Bool?
+        var intelligentUIEnabled: Bool?
         var sendShortcut: DesktopSendShortcut?
         var notificationsEnabled: Bool?
         var speechVoiceIdentifier: String?
         var speechRate: Double?
+        var agentToolRoundLimit: Int?
+        var agentRunMinutes: Int?
     }
 
     init(defaults: UserDefaults = .standard, credentials: any DesktopCredentialStore = DesktopKeychain()) {
@@ -182,7 +212,10 @@ final class DesktopSettings {
         autoExpandThinking = record?.autoExpandThinking ?? true
         automaticallyFollowGeneration = record?.automaticallyFollowGeneration ?? true
         hidesToolCalls = record?.hidesToolCalls ?? false
+        intelligentUIEnabled = record?.intelligentUIEnabled ?? true
         sendShortcut = record?.sendShortcut ?? .commandReturn
+        storedAgentToolRoundLimit = DesktopAgentRunLimits.clampedRounds(record?.agentToolRoundLimit ?? DesktopAgentRunLimits.defaultRounds)
+        storedAgentRunMinutes = DesktopAgentRunLimits.clampedMinutes(record?.agentRunMinutes ?? DesktopAgentRunLimits.defaultMinutes)
         notificationsEnabled = record?.notificationsEnabled ?? false
         speechVoiceIdentifier = record?.speechVoiceIdentifier ?? ""
         storedSpeechRate = min(0.6, max(0.2, record?.speechRate ?? 0.5))
@@ -205,6 +238,29 @@ final class DesktopSettings {
         guard let model = selectedProvider?.selectedModel,
               !model.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return model.id
+    }
+
+    var selectedModelSupportedReasoningLevels: [DesktopReasoningLevel] {
+        guard let provider = selectedProvider, let model = provider.selectedModel else { return [] }
+        return DesktopThinkingPolicy.supportedLevels(for: model, provider: provider)
+    }
+
+    var selectedModelReasoning: DesktopReasoningLevel {
+        guard let provider = selectedProvider, let model = provider.selectedModel else { return .off }
+        let supported = DesktopThinkingPolicy.supportedLevels(for: model, provider: provider)
+        return DesktopThinkingPolicy.coercedLevel(model.reasoning, supported: supported)
+    }
+
+    func setSelectedModelReasoning(_ level: DesktopReasoningLevel) {
+        guard let providerID = selectedProviderID,
+              let providerIndex = providers.firstIndex(where: { $0.id == providerID }),
+              let model = providers[providerIndex].selectedModel,
+              let modelIndex = providers[providerIndex].models.firstIndex(where: { $0.id == model.id }) else { return }
+        let supported = DesktopThinkingPolicy.supportedLevels(for: model, provider: providers[providerIndex])
+        let coerced = DesktopThinkingPolicy.coercedLevel(level, supported: supported)
+        guard providers[providerIndex].models[modelIndex].reasoning != coerced else { return }
+        providers[providerIndex].models[modelIndex].reasoning = coerced
+        persist()
     }
     var assistantDisplayName: String {
         let name = assistantName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -353,8 +409,10 @@ final class DesktopSettings {
             messageFontFamily: messageFontFamily, messageFontSize: messageFontSize,
             assistantName: assistantName, userNickname: userNickname,
             reasoningExpandedByDefault: reasoningExpandedByDefault, autoExpandThinking: autoExpandThinking,
-            automaticallyFollowGeneration: automaticallyFollowGeneration, hidesToolCalls: hidesToolCalls, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
-            speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate)
+            automaticallyFollowGeneration: automaticallyFollowGeneration, hidesToolCalls: hidesToolCalls,
+            intelligentUIEnabled: intelligentUIEnabled, sendShortcut: sendShortcut, notificationsEnabled: notificationsEnabled,
+            speechVoiceIdentifier: speechVoiceIdentifier, speechRate: speechRate,
+            agentToolRoundLimit: agentToolRoundLimit, agentRunMinutes: agentRunMinutes)
         if let data = try? JSONEncoder().encode(record) {
             defaults.set(data, forKey: Self.persistedSettingsKey)
             settingsRecoveryMessage = nil

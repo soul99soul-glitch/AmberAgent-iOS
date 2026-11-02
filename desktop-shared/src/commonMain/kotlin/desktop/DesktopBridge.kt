@@ -25,11 +25,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -40,7 +42,75 @@ import kotlin.uuid.Uuid
 private val desktopJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
 @Serializable
-internal data class DesktopMessageImage(val url: String, val name: String? = null)
+internal data class DesktopMessageImage(
+    val url: String,
+    val name: String? = null,
+    val title: String? = null,
+    val sourceURL: String? = null,
+)
+
+@Serializable
+internal data class DesktopVideoMedia(
+    val url: String,
+    val title: String? = null,
+    val posterURL: String? = null,
+    val sourceURL: String? = null,
+)
+
+@Serializable
+internal data class DesktopAudioMedia(
+    val url: String,
+    val fileName: String = "",
+    val title: String? = null,
+)
+
+@Serializable
+internal data class DesktopMessageContentPart(
+    val kind: String,
+    val text: String? = null,
+    val image: DesktopMessageImage? = null,
+    val video: DesktopVideoMedia? = null,
+    val audio: DesktopAudioMedia? = null,
+    val tool: DesktopToolCall? = null,
+)
+
+private fun JsonObject?.metadataString(key: String): String? =
+    this?.get(key)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+
+private fun JsonObject?.searchMetadataImages(): List<DesktopMessageImage> {
+    val raw = metadataString("app.amber.media.images") ?: return emptyList()
+    val array = runCatching { desktopJson.parseToJsonElement(raw) as? JsonArray }.getOrNull() ?: return emptyList()
+    return array.mapNotNull { item ->
+        val obj = item as? JsonObject ?: return@mapNotNull null
+        val url = obj.metadataString("url") ?: return@mapNotNull null
+        DesktopMessageImage(
+            url = url,
+            name = obj.metadataString("name") ?: obj.metadataString("alt"),
+            title = obj.metadataString("title") ?: obj.metadataString("alt"),
+            sourceURL = obj.metadataString("sourceURL"),
+        )
+    }
+}
+
+private fun UIMessagePart.Image.toDesktopImage(): DesktopMessageImage = DesktopMessageImage(
+    url = url,
+    name = metadata.metadataString("fileName"),
+    title = metadata.metadataString("app.amber.media.title"),
+    sourceURL = metadata.metadataString("app.amber.media.sourceURL"),
+)
+
+private fun UIMessagePart.Video.toDesktopVideo(): DesktopVideoMedia = DesktopVideoMedia(
+    url = url,
+    title = metadata.metadataString("app.amber.media.title") ?: metadata.metadataString("fileName"),
+    posterURL = metadata.metadataString("app.amber.media.posterURL"),
+    sourceURL = metadata.metadataString("app.amber.media.sourceURL"),
+)
+
+private fun UIMessagePart.Audio.toDesktopAudio(): DesktopAudioMedia = DesktopAudioMedia(
+    url = url,
+    fileName = fileName,
+    title = metadata.metadataString("app.amber.media.title") ?: fileName.takeIf { it.isNotBlank() },
+)
 
 /** Display-only view of a tool call; the canonical part stays in `canonicalJSON`. */
 @Serializable
@@ -50,6 +120,9 @@ internal data class DesktopToolCall(
     val input: String = "",
     val output: String = "",
     val status: String = "complete",
+    val images: List<DesktopMessageImage> = emptyList(),
+    val videos: List<DesktopVideoMedia> = emptyList(),
+    val audios: List<DesktopAudioMedia> = emptyList(),
 ) {
     companion object {
         private const val INPUT_LIMIT = 4_000
@@ -63,13 +136,33 @@ internal data class DesktopToolCall(
                     else -> "[附件]"
                 }
             }
+            val images = buildList {
+                for (result in part.output) {
+                    when (result) {
+                        is UIMessagePart.Image -> add(result.toDesktopImage())
+                        is UIMessagePart.Text -> addAll(result.metadata.searchMetadataImages())
+                        else -> Unit
+                    }
+                }
+            }
+            val videos = part.output.filterIsInstance<UIMessagePart.Video>().map(UIMessagePart.Video::toDesktopVideo)
+            val audios = part.output.filterIsInstance<UIMessagePart.Audio>().map(UIMessagePart.Audio::toDesktopAudio)
             val status = when {
                 part.approvalState is ToolApprovalState.Denied -> "denied"
                 part.isPending -> "pending"
                 part.isExecuted -> "complete"
                 else -> "running"
             }
-            return DesktopToolCall(part.toolCallId, part.toolName, part.input.clipped(INPUT_LIMIT), output.clipped(OUTPUT_LIMIT), status)
+            return DesktopToolCall(
+                id = part.toolCallId,
+                name = part.toolName,
+                input = part.input.clipped(INPUT_LIMIT),
+                output = output.clipped(OUTPUT_LIMIT),
+                status = status,
+                images = images,
+                videos = videos,
+                audios = audios,
+            )
         }
 
         private fun String.clipped(limit: Int): String = if (length <= limit) this else take(limit) + "\n…"
@@ -91,7 +184,10 @@ internal data class DesktopMessage(
     val editableText: String? = null,
     val estimatedTokens: Int? = null,
     val images: List<DesktopMessageImage> = emptyList(),
+    val videos: List<DesktopVideoMedia> = emptyList(),
+    val audios: List<DesktopAudioMedia> = emptyList(),
     val tools: List<DesktopToolCall> = emptyList(),
+    val parts: List<DesktopMessageContentPart> = emptyList(),
 ) {
     fun toMessage(existing: UIMessage? = null): UIMessage {
         require(state in setOf("complete", "streaming", "cancelled", "failed")) { "Unknown message state: $state" }
@@ -106,9 +202,49 @@ internal data class DesktopMessage(
         val message = if (source == null) {
             UIMessage(
                 id = Uuid.parse(id), role = messageRole,
-                parts = buildList {
-                    if (reasoning.isNotEmpty()) add(UIMessagePart.Reasoning(reasoning))
-                    add(UIMessagePart.Text(text))
+                parts = if (parts.isNotEmpty()) {
+                    parts.mapNotNull { part ->
+                        when (part.kind) {
+                            "reasoning" -> part.text?.takeIf { it.isNotEmpty() }?.let { UIMessagePart.Reasoning(it) }
+                            "text" -> part.text?.let { UIMessagePart.Text(it) }
+                            "image" -> part.image?.let { img ->
+                                UIMessagePart.Image(img.url, buildJsonObject {
+                                    img.name?.let { put("fileName", it) }
+                                    img.title?.let { put("app.amber.media.title", it) }
+                                    img.sourceURL?.let { put("app.amber.media.sourceURL", it) }
+                                }.takeIf { it.isNotEmpty() })
+                            }
+                            "video" -> part.video?.let { vid ->
+                                UIMessagePart.Video(vid.url, buildJsonObject {
+                                    vid.title?.let { put("app.amber.media.title", it) }
+                                    vid.posterURL?.let { put("app.amber.media.posterURL", it) }
+                                    vid.sourceURL?.let { put("app.amber.media.sourceURL", it) }
+                                }.takeIf { it.isNotEmpty() })
+                            }
+                            "audio" -> part.audio?.let { aud ->
+                                UIMessagePart.Audio(aud.url, aud.fileName, buildJsonObject {
+                                    aud.title?.let { put("app.amber.media.title", it) }
+                                }.takeIf { it.isNotEmpty() })
+                            }
+                            else -> null
+                        }
+                    }.ifEmpty { listOf(UIMessagePart.Text(text)) }
+                } else {
+                    buildList {
+                        if (reasoning.isNotEmpty()) add(UIMessagePart.Reasoning(reasoning))
+                        if (text.isNotEmpty() || (images.isEmpty() && videos.isEmpty() && audios.isEmpty())) {
+                            add(UIMessagePart.Text(text))
+                        }
+                        for (img in images) {
+                            add(UIMessagePart.Image(img.url, img.name?.let { buildJsonObject { put("fileName", it) } }))
+                        }
+                        for (vid in videos) {
+                            add(UIMessagePart.Video(vid.url, vid.title?.let { buildJsonObject { put("app.amber.media.title", it) } }))
+                        }
+                        for (aud in audios) {
+                            add(UIMessagePart.Audio(aud.url, aud.fileName))
+                        }
+                    }
                 },
             )
         } else {
@@ -127,16 +263,48 @@ internal data class DesktopMessage(
             reasoning = message.parts.filterIsInstance<UIMessagePart.Reasoning>().joinToString("") { it.reasoning },
             state = message.desktopState(),
             canonicalJSON = JsonInstant.encodeToString(message),
-            unsupportedPartCount = message.parts.count { it !is UIMessagePart.Text && it !is UIMessagePart.Reasoning && it !is UIMessagePart.Image && it !is UIMessagePart.Tool },
+            unsupportedPartCount = message.parts.count {
+                it !is UIMessagePart.Text && it !is UIMessagePart.Reasoning &&
+                    it !is UIMessagePart.Image && it !is UIMessagePart.Video &&
+                    it !is UIMessagePart.Audio && it !is UIMessagePart.Tool
+            },
             nodeID = node?.id?.toString(),
             variantIDs = node?.messages?.map { it.id.toString() }.orEmpty(),
             editableTextPartIndex = message.parts.indexOfFirst { it is UIMessagePart.Text }.takeIf { it >= 0 },
             editableText = message.parts.filterIsInstance<UIMessagePart.Text>().firstOrNull()?.text,
             estimatedTokens = estimateDesktopMessageTokens(message),
-            images = message.parts.filterIsInstance<UIMessagePart.Image>().map {
-                DesktopMessageImage(it.url, it.metadata?.get("fileName")?.jsonPrimitive?.contentOrNull)
+            images = buildList {
+                for (part in message.parts) {
+                    when (part) {
+                        is UIMessagePart.Image -> add(part.toDesktopImage())
+                        is UIMessagePart.Text -> addAll(part.metadata.searchMetadataImages())
+                        else -> Unit
+                    }
+                }
             },
+            videos = message.parts.filterIsInstance<UIMessagePart.Video>().map(UIMessagePart.Video::toDesktopVideo),
+            audios = message.parts.filterIsInstance<UIMessagePart.Audio>().map(UIMessagePart.Audio::toDesktopAudio),
             tools = message.parts.filterIsInstance<UIMessagePart.Tool>().map(DesktopToolCall::from),
+            parts = buildList {
+                for (part in message.parts) {
+                    when (part) {
+                        is UIMessagePart.Text -> {
+                            if (part.text.isNotEmpty()) add(DesktopMessageContentPart(kind = "text", text = part.text))
+                            for (img in part.metadata.searchMetadataImages()) {
+                                add(DesktopMessageContentPart(kind = "image", image = img))
+                            }
+                        }
+                        is UIMessagePart.Reasoning -> {
+                            if (part.reasoning.isNotEmpty()) add(DesktopMessageContentPart(kind = "reasoning", text = part.reasoning))
+                        }
+                        is UIMessagePart.Image -> add(DesktopMessageContentPart(kind = "image", image = part.toDesktopImage()))
+                        is UIMessagePart.Video -> add(DesktopMessageContentPart(kind = "video", video = part.toDesktopVideo()))
+                        is UIMessagePart.Audio -> add(DesktopMessageContentPart(kind = "audio", audio = part.toDesktopAudio()))
+                        is UIMessagePart.Tool -> add(DesktopMessageContentPart(kind = "tool", tool = DesktopToolCall.from(part)))
+                        else -> Unit
+                    }
+                }
+            },
         )
     }
 }
@@ -191,9 +359,7 @@ internal data class DesktopConversation(
         base.validateDesktopSelection()
         val originals = base.messageNodes.flatMap { it.messages }.associateBy { it.id }
         val incoming = messages.map { it.toMessage(originals[Uuid.parse(it.id)]) }
-        // The DTO contains the complete selected path. A shorter path explicitly removes its trailing nodes.
-        val selectedPath = if (incoming.size < base.messageNodes.size) base.copy(messageNodes = base.messageNodes.take(incoming.size)) else base
-        val updated = selectedPath.updateCurrentMessages(incoming)
+        val updated = base.reconcileDesktopMessages(messages, incoming)
         val timestamp = if (updatedAt == base.updateAt.toEpochMilliseconds().toDouble()) base.updateAt
             else Instant.fromEpochMilliseconds(updatedAt.toLong())
         return updated.copy(id = incomingID, updateAt = timestamp)
@@ -214,6 +380,71 @@ internal data class DesktopConversation(
 
 private fun Conversation.validateDesktopSelection() {
     require(messageNodes.all { it.selectIndex in it.messages.indices }) { "Conversation has an invalid selected message variant" }
+}
+
+private fun Conversation.reconcileDesktopMessages(
+    desktopMessages: List<DesktopMessage>,
+    incoming: List<UIMessage>,
+): Conversation {
+    if (messageNodes.isEmpty()) {
+        return updateCurrentMessages(incoming)
+    }
+    val claimedNodeByMsg = IntArray(incoming.size) { -1 }
+    val claimedNodes = BooleanArray(messageNodes.size)
+
+    // Pass 1: Match existing nodes by message ID, explicit nodeID, or variant IDs so in-place multi-turn
+    // insertion for an earlier task never shifts a later concurrent task's message into the wrong node.
+    for (msgIndex in incoming.indices) {
+        val message = incoming[msgIndex]
+        val dto = desktopMessages[msgIndex]
+        val variantSet = dto.variantIDs.toHashSet()
+        val matchedNodeIndex = messageNodes.indices.firstOrNull { nodeIndex ->
+            !claimedNodes[nodeIndex] && (
+                messageNodes[nodeIndex].messages.any { it.id == message.id } ||
+                    (dto.nodeID != null && messageNodes[nodeIndex].id.toString() == dto.nodeID) ||
+                    (variantSet.isNotEmpty() && messageNodes[nodeIndex].messages.any { it.id.toString() in variantSet })
+                )
+        }
+        if (matchedNodeIndex != null) {
+            claimedNodeByMsg[msgIndex] = matchedNodeIndex
+            claimedNodes[matchedNodeIndex] = true
+        }
+    }
+
+    // Pass 2: Positional fallback for unclaimed nodes at the same index when roles match.
+    for (msgIndex in incoming.indices) {
+        if (claimedNodeByMsg[msgIndex] >= 0) continue
+        if (msgIndex < messageNodes.size && !claimedNodes[msgIndex] && messageNodes[msgIndex].role == incoming[msgIndex].role) {
+            claimedNodeByMsg[msgIndex] = msgIndex
+            claimedNodes[msgIndex] = true
+        }
+    }
+
+    val newNodes = ArrayList<MessageNode>(incoming.size)
+    for (msgIndex in incoming.indices) {
+        val message = incoming[msgIndex]
+        val nodeIndex = claimedNodeByMsg[msgIndex]
+        if (nodeIndex < 0) {
+            newNodes.add(message.toMessageNode())
+            continue
+        }
+        val existingNode = messageNodes[nodeIndex]
+        val existingIdx = existingNode.messages.indexOfFirst { it.id == message.id }
+        if (existingIdx >= 0 && existingNode.messages[existingIdx] == message && existingNode.selectIndex == existingIdx) {
+            newNodes.add(existingNode)
+            continue
+        }
+        val updatedMessages = existingNode.messages.toMutableList()
+        val updatedSelectIndex = if (existingIdx >= 0) {
+            updatedMessages[existingIdx] = message
+            existingIdx
+        } else {
+            updatedMessages.add(message)
+            updatedMessages.lastIndex
+        }
+        newNodes.add(existingNode.copy(messages = updatedMessages, selectIndex = updatedSelectIndex))
+    }
+    return copy(messageNodes = newNodes)
 }
 
 /** Typed Swift entry points over the same providers and message types used by iOS. */

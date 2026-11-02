@@ -299,6 +299,89 @@ class DesktopProviderBridgeTest {
         assertEquals(original, DesktopProviderBridge.messages(DesktopProviderBridge.snapshot(listOf(original))).single())
     }
 
+    @Test
+    fun interleavedTextImageAndMultimodalPartsPreserveExactOrderAndMediaMetadata() {
+        val img1 = "data:image/png;base64,aW1nMQ=="
+        val img2 = "data:image/png;base64,aW1nMg=="
+        val img3 = "data:image/png;base64,aW1nMw=="
+        val searchImagesJson = """[{"id":"https://example.com/s1.png","url":"https://example.com/s1.png","title":"Search Hit","sourceURL":"https://example.com/article"}]"""
+        val message = app.amber.ai.ui.UIMessage(
+            id = Uuid.parse(id),
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                app.amber.ai.ui.UIMessagePart.Reasoning("先思考布局"),
+                app.amber.ai.ui.UIMessagePart.Text("第一段文字"),
+                app.amber.ai.ui.UIMessagePart.Image(img1, kotlinx.serialization.json.buildJsonObject {
+                    put("fileName", kotlinx.serialization.json.JsonPrimitive("first.png"))
+                }),
+                app.amber.ai.ui.UIMessagePart.Text("第二段文字"),
+                app.amber.ai.ui.UIMessagePart.Image(img2, kotlinx.serialization.json.buildJsonObject {
+                    put("fileName", kotlinx.serialization.json.JsonPrimitive("second.png"))
+                }),
+                app.amber.ai.ui.UIMessagePart.Image(img3, kotlinx.serialization.json.buildJsonObject {
+                    put("fileName", kotlinx.serialization.json.JsonPrimitive("third.png"))
+                }),
+                app.amber.ai.ui.UIMessagePart.Video("https://example.com/demo.mp4", kotlinx.serialization.json.buildJsonObject {
+                    put("app.amber.media.title", kotlinx.serialization.json.JsonPrimitive("Demo Video"))
+                    put("app.amber.media.posterURL", kotlinx.serialization.json.JsonPrimitive("https://example.com/poster.jpg"))
+                }),
+                app.amber.ai.ui.UIMessagePart.Audio("https://example.com/clip.mp3", "clip.mp3"),
+                app.amber.ai.ui.UIMessagePart.Tool(
+                    toolCallId = "search-1",
+                    toolName = "search_web",
+                    input = """{"query":"amber"}""",
+                    output = listOf(
+                        app.amber.ai.ui.UIMessagePart.Text("搜索结果", kotlinx.serialization.json.buildJsonObject {
+                            put("app.amber.media.origin", kotlinx.serialization.json.JsonPrimitive("search"))
+                            put("app.amber.media.images", kotlinx.serialization.json.JsonPrimitive(searchImagesJson))
+                        }),
+                        app.amber.ai.ui.UIMessagePart.Video("https://example.com/tool-video.mp4"),
+                    ),
+                ),
+            ),
+        )
+        val projected = Json.decodeFromString<List<DesktopMessage>>(DesktopProviderBridge.snapshot(listOf(message))).single()
+        assertEquals(0, projected.unsupportedPartCount)
+        assertEquals(
+            listOf("reasoning", "text", "image", "text", "image", "image", "video", "audio", "tool"),
+            projected.parts.map { it.kind },
+        )
+        assertEquals("第一段文字", projected.parts[1].text)
+        assertEquals("first.png", projected.parts[2].image?.name)
+        assertEquals("第二段文字", projected.parts[3].text)
+        assertEquals(listOf("second.png", "third.png"), listOf(projected.parts[4].image?.name, projected.parts[5].image?.name))
+        assertEquals("Demo Video", projected.parts[6].video?.title)
+        assertEquals("https://example.com/poster.jpg", projected.parts[6].video?.posterURL)
+        assertEquals("clip.mp3", projected.parts[7].audio?.fileName)
+        assertEquals("https://example.com/s1.png", projected.tools.single().images.single().url)
+        assertEquals("Search Hit", projected.tools.single().images.single().title)
+        assertEquals("https://example.com/article", projected.tools.single().images.single().sourceURL)
+        assertEquals("https://example.com/tool-video.mp4", projected.tools.single().videos.single().url)
+        assertEquals(message, DesktopProviderBridge.messages(Json.encodeToString(listOf(projected))).single())
+    }
+
+    @Test
+    fun userMessageSupportsInterleavedTextAndMultipleImagesViaMarkersAndInlineTextSegments() {
+        val img1 = "data:image/png;base64,aGVsbG8x"
+        val img2 = "data:image/png;base64,aGVsbG8y"
+        val img3 = "data:image/png;base64,aGVsbG8z"
+        val attachmentsJSON = """[
+            {"name":"one.png","mimeType":"image/png","kind":"image","dataURL":"$img1"},
+            {"name":"two.png","mimeType":"image/png","kind":"image","dataURL":"$img2"},
+            {"name":"three.png","mimeType":"image/png","kind":"image","dataURL":"$img3"}
+        ]"""
+        val text = "开场文字\n![one.png](attachment://0)\n中间文字\n![two.png](attachment://1)![three.png](attachment://2)"
+        val envelope = Json.decodeFromString<DesktopMessage>(DesktopProviderBridge.userMessage(id, text, attachmentsJSON))
+        assertEquals(
+            listOf("text", "image", "text", "image", "image"),
+            envelope.parts.map { it.kind },
+        )
+        assertEquals("开场文字\n", envelope.parts[0].text)
+        assertEquals("one.png", envelope.parts[1].image?.name)
+        assertEquals("\n中间文字\n", envelope.parts[2].text)
+        assertEquals(listOf("two.png", "three.png"), listOf(envelope.parts[3].image?.name, envelope.parts[4].image?.name))
+    }
+
 }
 
 class DesktopCodingPlanBridgeTest {

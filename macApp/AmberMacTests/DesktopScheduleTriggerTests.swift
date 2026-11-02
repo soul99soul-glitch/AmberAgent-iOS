@@ -77,8 +77,8 @@ import XCTest
         let error = await scheduler.save(task: task)
         XCTAssertNil(error, "a spent once-rule under an event trigger is not rejected")
         XCTAssertNil(scheduler.tasks.first?.nextRunAt)
-        XCTAssertEqual(DesktopScheduledTasksView.ruleText(task), "文件夹 Downloads 有新文件时")
-        XCTAssertEqual(DesktopScheduledTasksView.ruleText(eventTask("x", .agentSession(.ended))), "Claude Code / Codex 会话结束时")
+        XCTAssertEqual(DesktopScheduleText.rule(task), "文件夹 Downloads 有新文件时")
+        XCTAssertEqual(DesktopScheduleText.rule(eventTask("x", .agentSession(.ended))), "Claude Code / Codex 会话结束时")
 
         let items = DesktopBoard.build(tasks: scheduler.tasks, live: [], paused: false, sessions: [], now: now)
         XCTAssertEqual(items.map(\.column), [.scheduled])

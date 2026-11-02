@@ -161,7 +161,7 @@ import XCTest
         provider.runs[0].yield(.snapshot(text: "旧的部分回复", reasoning: "", canonicalJSON: Self.canonicalMessage(id: firstID)))
         workspace.stop()
         await workspace.retry()?.value
-        XCTAssertEqual(provider.requests[1].map(\.role), [.user])
+        XCTAssertEqual(provider.requests[1].filter { $0.role != .system }.map(\.role), [.user])
         XCTAssertFalse(provider.requests[1].contains(where: { $0.id == firstID }))
         XCTAssertNotEqual(provider.responseIDs[1], firstID)
         workspace.stop()
@@ -325,6 +325,40 @@ import XCTest
         XCTAssertTrue(provider.requests[0].last?.text.contains("第一份资料") == true)
         XCTAssertTrue(provider.requests[0].last?.text.contains("第二份资料") == true)
         workspace.stop()
+    }
+
+    func testConcurrentConversationsIsolateTranscriptEventsAndStopAllCancelsEveryRun() async throws {
+        let first = DesktopConversation(title: "会话一")
+        let second = DesktopConversation(title: "会话二")
+        let (workspace, provider, storage) = try setup([first, second])
+
+        workspace.select(first.id)
+        workspace.draft = "排查第一个仓库"
+        workspace.send()
+
+        workspace.select(second.id)
+        workspace.draft = "排查第二个仓库"
+        workspace.send()
+
+        XCTAssertEqual(provider.runs.count, 2)
+        XCTAssertTrue(workspace.isConversationGenerating(first.id))
+        XCTAssertTrue(workspace.isConversationGenerating(second.id))
+
+        let turnA = DesktopMessage(role: .assistant, text: "会话一的工具轮次结果", state: .streaming)
+        let turnB = DesktopMessage(role: .assistant, text: "会话二的工具轮次结果", state: .streaming)
+        provider.runs[0].yield(.transcript([turnA]))
+        provider.runs[1].yield(.transcript([turnB]))
+        workspace.apply(provider.runs[0].drain(), for: first.id)
+        workspace.apply(provider.runs[1].drain(), for: second.id)
+
+        XCTAssertEqual(workspace.conversations.first(where: { $0.id == first.id })?.messages.last?.text, "会话一的工具轮次结果")
+        XCTAssertEqual(workspace.conversations.first(where: { $0.id == second.id })?.messages.last?.text, "会话二的工具轮次结果")
+
+        workspace.stopAll()
+        _ = await workspace.flush()
+        XCTAssertFalse(workspace.isGenerating)
+        XCTAssertEqual(storage.values.first(where: { $0.id == first.id })?.messages.last?.state, .cancelled)
+        XCTAssertEqual(storage.values.first(where: { $0.id == second.id })?.messages.last?.state, .cancelled)
     }
 
     private final class SaveFailureDeleteSuccessStorage: DesktopConversationStorage {

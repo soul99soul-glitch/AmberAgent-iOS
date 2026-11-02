@@ -334,4 +334,101 @@ final class GatewayAPITests {
         let (code, _) = try await client.call("POST", URL(string: "https://127.0.0.1:\(payload.port)/v1/pair")!, body: ["secret": payload.s, "platform": "android"])
         #expect(code == 403)
     }
+
+    @Test func contractMultiClientReconnectErrorCodesAndLegacyCompatibility() async throws {
+        var waitingSession = SessionRecord(
+            key: "amber:run-42", agent: .amber, sessionId: "run-42", cwd: nil, title: "每日汇总",
+            origin: .headless, state: .waiting, waitReason: .permission, abnormal: false,
+            sawTurnEnd: false, sawFailure: false, process: nil, startedAt: Date(), updatedAt: Date(),
+            monitored: true, pendingPushSince: nil, lastPushAt: [:]
+        )
+        waitingSession.waitingTool = "workspace_file_write"
+        waitingSession.waitingToolCallId = "call-7"
+        waitingSession.waitingDetail = "{ \"path\": \"summary.md\" }"
+        waitingSession.waitingHighRisk = false
+        var registry = Registry()
+        registry.sessions[waitingSession.key] = waitingSession
+        try RegistryStore(url: paths.registry).save(registry)
+
+        try startDaemon()
+        let base = URL(string: "https://127.0.0.1:\(port)")!
+
+        // 1. Legacy client compatibility: omit optional deviceName on /v1/pair
+        let p1 = try pairingPayload()
+        let client1 = PinnedClient(fingerprint: p1.fp)
+        let (pairCode1, pairJSON1) = try await client1.call("POST", base.appendingPathComponent("v1/pair"),
+                                                            body: ["secret": p1.s, "platform": "ios"])
+        #expect(pairCode1 == 200)
+        let token1 = try #require(pairJSON1["token"] as? String)
+
+        // 2. Second client (HarmonyOS) pairs and registers push token without environment
+        let p2 = try pairingPayload()
+        let client2 = PinnedClient(fingerprint: p2.fp)
+        let (pairCode2, pairJSON2) = try await client2.call("POST", base.appendingPathComponent("v1/pair"),
+                                                            body: ["secret": p2.s, "platform": "harmony", "deviceName": "Mate 60"])
+        #expect(pairCode2 == 200)
+        let token2 = try #require(pairJSON2["token"] as? String)
+        let (pushCode2, _) = try await client2.call("POST", base.appendingPathComponent("v1/push-token"),
+                                                    token: token2, body: ["token": "hms-token-1"])
+        #expect(pushCode2 == 200)
+
+        // 3. Error codes matrix checks (400, 404, 409)
+        #expect(try await client1.call("POST", base.appendingPathComponent("v1/pair"), body: ["platform": "ios"]).0 == 400)
+        #expect(try await client1.call("POST", base.appendingPathComponent("v1/test-push"), token: token1).0 == 409)
+        #expect(try await client1.call("GET", base.appendingPathComponent("v1/unknown-route"), token: token1).0 == 404)
+        #expect(try await client1.call("POST", base.appendingPathComponent("v1/tasks/amber%3Anope/monitor"),
+                                       token: token1, body: ["monitored": true]).0 == 404)
+
+        // 4. Both clients see the waiting approval in /v1/status; legacy deviceName defaulted to "ios"
+        let (statusCode1, statusJSON1) = try await client1.call("GET", base.appendingPathComponent("v1/status"), token: token1)
+        #expect(statusCode1 == 200)
+        #expect((statusJSON1["device"] as? [String: Any])?["name"] as? String == "ios")
+        let sessionJSON = try #require((statusJSON1["sessions"] as? [[String: Any]])?.first { $0["key"] as? String == "amber:run-42" })
+        let pending = try #require(sessionJSON["pendingApproval"] as? [String: Any])
+        #expect(pending["tool"] as? String == "workspace_file_write")
+        #expect(pending["toolCallId"] as? String == "call-7")
+        #expect(pending["highRisk"] as? Bool == false)
+
+        // 5. Multi-client concurrent decision: first client wins (200), second client gets 409
+        let answered = Locked(false)
+        let app = UnixSocketServer(path: paths.amberSocket.path, queue: DispatchQueue(label: "contract-amber")) { data in
+            guard let req = try? GatewayJSON.decoder().decode(AmberControl.Request.self, from: data) else { return nil }
+            let resp: AmberControl.Response
+            if req.action == .decide, req.sessionKey == "amber:run-42", req.toolCallId == "call-7" {
+                var first = false
+                answered.mutate { val in
+                    if !val { val = true; first = true }
+                }
+                resp = first ? .init(status: 200) : .failure(409, "这次审批已经结束")
+            } else {
+                resp = .failure(409, "这次审批已经结束")
+            }
+            return try? GatewayJSON.encoder().encode(resp)
+        }
+        try app.start()
+        defer { app.stop() }
+
+        let decisionURL = base.appendingPathComponent("v1/amber/decision")
+        let decisionBody: [String: Any] = ["sessionKey": "amber:run-42", "toolCallId": "call-7", "allow": true]
+        let (dCode1, _) = try await client1.call("POST", decisionURL, token: token1, body: decisionBody)
+        #expect(dCode1 == 200)
+        let (dCode2, dJSON2) = try await client2.call("POST", decisionURL, token: token2, body: ["sessionKey": "amber:run-42", "toolCallId": "call-7", "allow": false])
+        #expect(dCode2 == 409)
+        #expect(dJSON2["error"] as? String == "这次审批已经结束")
+
+        // Audit log contains run, tool, toolCallId and decision
+        let auditText = try String(contentsOf: paths.audit, encoding: .utf8)
+        #expect(auditText.contains("\"run\":\"run-42\""))
+        #expect(auditText.contains("\"tool\":\"workspace_file_write\""))
+        #expect(auditText.contains("\"toolCallId\":\"call-7\""))
+        #expect(auditText.contains("\"decision\":\"allow\""))
+
+        // 6. Daemon restart & client reconnect: tokens and sessions survive across restart
+        daemon?.terminate()
+        _ = TestSupport.eventually { self.daemon?.isRunning == false }
+        try startDaemon()
+        let (reconnectedCode, reconnectedStatus) = try await client2.call("GET", base.appendingPathComponent("v1/status"), token: token2)
+        #expect(reconnectedCode == 200)
+        #expect((reconnectedStatus["device"] as? [String: Any])?["name"] as? String == "Mate 60")
+    }
 }

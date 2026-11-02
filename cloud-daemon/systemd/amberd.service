@@ -1,0 +1,28 @@
+[Unit]
+Description=Amber Cloud Self Daemon (amberd)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amberd
+Group=amberd
+WorkingDirectory=/var/lib/amberd
+StateDirectory=amberd
+StateDirectoryMode=0700
+Environment="AMBER_DATA_DIR=/var/lib/amberd"
+Environment="AMBER_PORT=47821"
+# Derive AES-256-GCM Master Key (KEK) from systemd encrypted credential:
+# systemd-creds encrypt --name=amber_master_key - /etc/credstore.encrypted/amber_master_key
+LoadCredentialEncrypted=amber_master_key:/etc/credstore.encrypted/amber_master_key
+ExecStart=/usr/local/bin/amberd daemon --port 47821 --data-dir /var/lib/amberd
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/amberd
+
+[Install]
+WantedBy=multi-user.target

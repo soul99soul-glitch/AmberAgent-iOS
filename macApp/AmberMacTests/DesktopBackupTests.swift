@@ -303,4 +303,132 @@ import XCTest
         XCTAssertEqual(storage.saves, 0)
         XCTAssertEqual(storage.memory.values, [original])
     }
+
+    func testCompactionNeverOverwritesOriginalTranscriptInStorageExportOrBackupAndStripsCredentials() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let original = DesktopConversation(title: "长对话保留验证", messages: [
+            DesktopMessage(role: .user, text: "第一轮原始问题：如何设计网关协议？"),
+            DesktopMessage(role: .assistant, text: "第一轮原始回答：使用 SPKI 指纹固定与一次性配对票据。"),
+            DesktopMessage(role: .user, text: "第二轮原始问题：高风险审批如何约束？"),
+            DesktopMessage(role: .assistant, text: "第二轮原始回答：手机端仅允许拒绝，返回 403 阻止批准。"),
+            DesktopMessage(role: .user, text: "第三轮原始问题：数据保留有什么要求？"),
+            DesktopMessage(role: .assistant, text: "第三轮原始回答：压缩摘要只作为请求投影，不覆盖原消息。")
+        ])
+        let storage = Storage([original])
+        let service = coordinator(storage, directory: directory)
+        let provider = Provider()
+        let config = DesktopProviderConfiguration(name: "OpenAI", kind: .openAI, baseURL: "https://api.openai.com/v1", modelID: "gpt-4.1")
+        try service.settings.saveProvider(config, apiKey: "sk-live-secret-do-not-backup-999")
+
+        // Generate compaction checkpoint covering earlier turns
+        service.insights.generate(.compact, conversation: original, configuration: config, apiKey: "sk-live-secret-do-not-backup-999", provider: provider, isCurrent: { _ in true })
+        while provider.run == nil { await Task.yield() }
+        provider.run?.yield(.snapshot(text: "【压缩摘要】已讨论网关配对与高风险审批。", reasoning: ""))
+        provider.run?.yield(.complete)
+        await service.insights.waitUntilIdle(original.id)
+
+        // 1. Request projection uses compaction summary, but original conversation messages remain intact
+        let projected = service.insights.prepare(messages: original.messages, conversationID: original.id)
+        XCTAssertTrue(projected.first?.text.contains("【压缩摘要】") == true)
+        XCTAssertLessThan(projected.count, original.messages.count)
+        XCTAssertEqual(original.messages.count, 6)
+        XCTAssertEqual(storage.memory.values.first?.messages.map(\.text), original.messages.map(\.text))
+
+        // 2. JSON, Markdown, and PDF exports all contain the full original messages
+        let exportedJSON = try await storage.exportDocument(original)
+        XCTAssertTrue(exportedJSON.contains("第一轮原始问题：如何设计网关协议？"))
+        XCTAssertTrue(exportedJSON.contains("第二轮原始回答：手机端仅允许拒绝，返回 403 阻止批准。"))
+        XCTAssertFalse(exportedJSON.contains("【压缩摘要】"))
+
+        let exportedMarkdown = DesktopConversationExport.markdown(original)
+        XCTAssertTrue(exportedMarkdown.contains("第一轮原始问题：如何设计网关协议？"))
+        XCTAssertTrue(exportedMarkdown.contains("第三轮原始回答：压缩摘要只作为请求投影，不覆盖原消息。"))
+
+        let pdfData = try DesktopConversationExport.pdfData(original)
+        XCTAssertGreaterThan(pdfData.count, 500)
+        XCTAssertEqual(String(decoding: pdfData.prefix(5), as: UTF8.self), "%PDF-")
+
+        // 3. Backup archive preserves full original transcript + compaction checkpoint, while stripping API keys
+        let snapshot = try await service.snapshot(current: [original])
+        let plainArchive = try DesktopBackup.encode(snapshot, password: nil)
+        let plainString = String(decoding: plainArchive, as: UTF8.self)
+        let payloadString = String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)
+        XCTAssertFalse(plainString.contains("sk-live-secret-do-not-backup-999"), "API key must never be serialized into backup envelope")
+        XCTAssertFalse(payloadString.contains("sk-live-secret-do-not-backup-999"), "API key must never be serialized into backup payload")
+        XCTAssertTrue(payloadString.contains("第一轮原始问题：如何设计网关协议？"))
+        let decodedPayload = try DesktopBackup.decode(plainArchive, password: nil)
+        XCTAssertTrue(decodedPayload.conversations.first?.document.contains("第一轮原始问题：如何设计网关协议？") == true)
+
+        let restoredResult = try await service.restore(snapshot)
+        let restored = try XCTUnwrap(restoredResult.conversations.first { $0.title == original.title })
+        XCTAssertEqual(restored.messages.map(\.text), original.messages.map(\.text))
+        XCTAssertEqual(service.insights.value(.compact, for: restored)?.text, "【压缩摘要】已讨论网关配对与高风险审批。")
+        XCTAssertTrue(restoredResult.message.contains("配置不含密钥"))
+    }
+
+    func testDeleteConversationCleansUpStorageInsightsPinsAndManagedFilesWhilePreservingExternalFolder() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let externalFolder = FileManager.default.temporaryDirectory.appendingPathComponent("amber-ext-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: externalFolder, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: externalFolder)
+        }
+        let externalFile = externalFolder.appendingPathComponent("user-important.txt")
+        try Data("do not delete user file".utf8).write(to: externalFile)
+
+        let managedConv = DesktopConversation(title: "受管会话", messages: [DesktopMessage(role: .assistant, text: "产物内容")])
+        let externalConv = DesktopConversation(title: "外部目录会话", messages: [DesktopMessage(role: .user, text: "读取外部项目")])
+        let storage = Storage([managedConv, externalConv])
+        let settings = DesktopSettings(defaults: UserDefaults(suiteName: "amber.delete.\(UUID().uuidString)")!, credentials: DesktopMemoryCredentials())
+        let files = DesktopWorkspaceFiles(
+            directory: directory.appendingPathComponent("workspaces", isDirectory: true),
+            locationsFile: directory.appendingPathComponent("locations.json")
+        )
+        let insights = DesktopConversationInsights(directory: directory.appendingPathComponent("insights", isDirectory: true))
+        let shelf = DesktopArtifactShelf(fileURL: directory.appendingPathComponent("shelf.json"))
+        let provider = Provider()
+
+        let workspace = DesktopWorkspace(
+            settings: settings, storage: storage, provider: provider,
+            initialConversations: [managedConv, externalConv],
+            insights: insights, files: files, artifactShelf: shelf
+        )
+
+        // Populate associated data for managedConv
+        _ = try await files.write(conversationID: managedConv.id, path: "notes/draft.md", data: Data("managed file".utf8))
+        shelf.pin(messageID: managedConv.messages[0].id, kind: .message, text: "产物内容", in: managedConv.id)
+        let config = DesktopProviderConfiguration(name: "test", kind: .openAI, baseURL: "http://localhost/v1", modelID: "test")
+        insights.generate(.recap, conversation: managedConv, configuration: config, apiKey: "", provider: provider, isCurrent: { _ in true })
+        while provider.run == nil { await Task.yield() }
+        provider.run?.yield(.snapshot(text: "recap text", reasoning: ""))
+        provider.run?.yield(.complete)
+        await insights.waitUntilIdle(managedConv.id)
+        XCTAssertNotNil(insights.value(.recap, for: managedConv))
+        XCTAssertEqual(shelf.pins(for: managedConv.id).count, 1)
+
+        // Bind externalFolder to externalConv
+        workspace.select(externalConv.id)
+        workspace.openWorkspaceFolder(externalFolder)
+        XCTAssertTrue(files.isExternal(externalConv.id))
+
+        // Delete managedConv and flush
+        workspace.delete(managedConv.id)
+        _ = await workspace.flush()
+        XCTAssertFalse(storage.memory.values.contains { $0.id == managedConv.id })
+        XCTAssertNil(insights.value(.recap, for: managedConv))
+        XCTAssertTrue(shelf.pins(for: managedConv.id).isEmpty)
+        do {
+            _ = try await files.list(conversationID: managedConv.id)
+            XCTFail("Deleted conversation workspace should no longer be accessible")
+        } catch {}
+
+        // Delete externalConv and verify external user folder is untouched
+        workspace.delete(externalConv.id)
+        _ = await workspace.flush()
+        XCTAssertFalse(storage.memory.values.contains { $0.id == externalConv.id })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: externalFile.path), "external user folder file must never be deleted")
+        XCTAssertEqual(try String(contentsOf: externalFile, encoding: .utf8), "do not delete user file")
+    }
 }

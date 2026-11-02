@@ -84,7 +84,7 @@ import Observation
 
     var enabledCount: Int { tasks.filter(\.enabled).count }
     var nextTask: DesktopScheduledTask? {
-        tasks.filter { $0.enabled && $0.nextRunAt != nil }.min { $0.nextRunAt! < $1.nextRunAt! }
+        tasks.filter { $0.enabled && $0.nextRunAt != nil }.min { $0.nextRunAt!.timeIntervalSince($1.nextRunAt!) < 0 }
     }
 
     private func load() async {
@@ -247,7 +247,7 @@ import Observation
     private func rescheduleTimer() {
         timer?.cancel()
         guard timerEnabled, isLoaded, !isPaused else { timer = nil; return }
-        let next = tasks.compactMap { $0.enabled ? $0.nextRunAt : nil }.min()
+        let next = tasks.compactMap { $0.enabled ? $0.nextRunAt : nil }.min { $0.timeIntervalSince($1) < 0 }
         let delay = min(max(0, (next ?? .distantFuture).timeIntervalSince(clock())), Self.maximumTimerInterval)
         timer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay + 0.05))

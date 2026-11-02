@@ -57,3 +57,8 @@ macApp/build/
 
 # desktop-shared build outputs
 desktop-shared/build/
+
+# cloud build outputs
+cloud-daemon/build/
+cloud-channels/build/
+cloud-proactive/build/

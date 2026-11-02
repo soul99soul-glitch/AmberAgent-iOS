@@ -21,6 +21,7 @@ enum DesktopTheme {
     static let paperDeep = dynamic(0xEFECE3, 0x22201C)
     static let hover = dynamic(0xEAE6DB, 0x282520)
     static let card = dynamic(0xFFFFFF, 0x1E1C18)
+    static let canvasElevated = card
     static let field = dynamic(0xFFFFFF, 0x22201C)
     static let ink = dynamic(0x191815, 0xF0EDE6)
     static let inkSecondary = dynamic(0x45433D, 0xC6C2B8)
@@ -75,17 +76,42 @@ enum DesktopTheme {
 }
 
 /// Claude Desktop style understated warm-gray breathing dot for work in progress.
+/// Drawn inside a fixed 6×6 Canvas via TimelineView so streaming height changes in parent rows
+/// can never couple into a GeometryEffect / scaleEffect projection or shift the dot's vertical baseline.
 struct DesktopPulse: View {
-    @State private var dim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static func metrics(at time: TimeInterval, reduceMotion: Bool = false) -> (scale: CGFloat, opacity: Double) {
+        if reduceMotion { return (1.0, 0.72) }
+        let wave = 0.5 * (1.0 + cos(time * 2.0 * .pi / 2.2))
+        let scale = CGFloat(0.86 + 0.14 * wave)
+        let opacity = 0.36 + 0.48 * wave
+        return (scale, opacity)
+    }
+
     var body: some View {
-        Circle()
-            .fill(DesktopTheme.inkSecondary)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
+            let current = Self.metrics(
+                at: context.date.timeIntervalSinceReferenceDate,
+                reduceMotion: reduceMotion
+            )
+            Canvas { graphics, size in
+                let diameter = min(size.width, size.height) * current.scale
+                let rect = CGRect(
+                    x: (size.width - diameter) * 0.5,
+                    y: (size.height - diameter) * 0.5,
+                    width: diameter,
+                    height: diameter
+                )
+                graphics.opacity = current.opacity
+                graphics.fill(Path(ellipseIn: rect), with: .color(DesktopTheme.inkSecondary))
+            }
             .frame(width: 6, height: 6)
-            .scaleEffect(dim ? 0.86 : 1.0)
-            .opacity(dim ? 0.32 : 0.82)
-            .animation(.easeInOut(duration: 1.25).repeatForever(autoreverses: true), value: dim)
-            .onAppear { dim = true }
-            .accessibilityLabel("进行中")
+        }
+        .frame(width: 6, height: 6)
+        .fixedSize()
+        .accessibilityLabel("进行中")
+        .accessibilityIdentifier("amber.chat.streamingPulse")
     }
 }
 
@@ -325,6 +351,39 @@ struct DesktopToggleChip: View {
                     .strokeBorder(isOn ? DesktopTheme.honeyEdge : (hovering && enabled ? DesktopTheme.hairline : .clear), lineWidth: 0.75)
             )
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.45)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: isOn)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+/// Icon-only twin of `DesktopToggleChip`: exactly one 28×28 slot, the same inline rhythm as the
+/// composer's paperclip. Quiet outline when off, flat amber tint when on; the words live in the tooltip.
+struct DesktopIconToggle: View {
+    let symbol: String
+    let isOn: Bool
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13.5, weight: isOn ? .medium : .regular))
+                .foregroundStyle(isOn ? DesktopTheme.accentInk : (hovering && enabled ? DesktopTheme.ink : DesktopTheme.inkTertiary))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isOn ? DesktopTheme.honeySoft : (hovering && enabled ? DesktopTheme.hover : .clear))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(isOn ? DesktopTheme.honeyEdge : (hovering && enabled ? DesktopTheme.hairline : .clear), lineWidth: 0.75)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.45)

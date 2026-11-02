@@ -282,4 +282,49 @@ class DesktopConversationRepositoryTest {
         } finally { directory.deleteRecursively() }
     }
 
+    @Test
+    fun inPlaceConcurrentTaskTurnInsertionPreservesLaterTaskNodeIdentityAndVariants(): Unit = runBlocking {
+        val directory = Files.createTempDirectory("amber-desktop-concurrent-slots").toFile()
+        try {
+            val repository = DesktopConversationRepository(directory.path)
+            val original = canonicalConversationFixture()
+            val taskBUserID = Uuid.random().toString()
+            val taskBReplyID = Uuid.random().toString()
+            val initialDto = DesktopConversation.from(original).let { base ->
+                base.copy(messages = base.messages + listOf(
+                    DesktopMessage(id = taskBUserID, role = "user", text = "Task B question"),
+                    DesktopMessage(id = taskBReplyID, role = "assistant", text = "Task B answer"),
+                ))
+            }
+            val savedInitial = Json.decodeFromString<DesktopConversation>(repository.save(Json.encodeToString(initialDto)))
+            val savedInitialConv = JsonInstant.decodeFromString<Conversation>(savedInitial.canonicalJSON!!)
+            val taskBUserNodeID = savedInitialConv.messageNodes[2].id
+            val taskBReplyNodeID = savedInitialConv.messageNodes[3].id
+
+            // Task A (at index 1) expands into [toolTurnA, finalReplyA] before Task B (at indices 2..3).
+            val toolTurnAID = savedInitial.messages[1].id
+            val finalReplyAID = Uuid.random().toString()
+            val expandedMessages = listOf(
+                savedInitial.messages[0],
+                savedInitial.messages[1].copy(id = toolTurnAID, text = "Task A tool step"),
+                DesktopMessage(id = finalReplyAID, role = "assistant", text = "Task A final answer"),
+                savedInitial.messages[2],
+                savedInitial.messages[3],
+            )
+            val afterExpand = Json.decodeFromString<DesktopConversation>(
+                repository.save(Json.encodeToString(savedInitial.copy(messages = expandedMessages)))
+            )
+            val reconciled = JsonInstant.decodeFromString<Conversation>(afterExpand.canonicalJSON!!)
+            assertEquals(5, reconciled.messageNodes.size)
+            assertEquals(original.messageNodes[0].id, reconciled.messageNodes[0].id)
+            assertEquals(original.messageNodes[1].id, reconciled.messageNodes[1].id)
+            // Task A's hidden variant on node 1 is preserved, and Task B's nodes shifted cleanly to indices 3..4
+            assertEquals(2, reconciled.messageNodes[1].messages.size)
+            assertEquals(taskBUserNodeID, reconciled.messageNodes[3].id)
+            assertEquals(taskBReplyNodeID, reconciled.messageNodes[4].id)
+            assertEquals(taskBUserID, reconciled.messageNodes[3].currentMessage.id.toString())
+            assertEquals(taskBReplyID, reconciled.messageNodes[4].currentMessage.id.toString())
+        } finally { directory.deleteRecursively() }
+    }
+
 }
