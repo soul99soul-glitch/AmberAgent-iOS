@@ -425,9 +425,8 @@ final class DesktopCloudSelfTests: XCTestCase {
         deletes.deletes = ["modelApiKey"]
         let readbackError = await store.applyRemoteConfig(deletes)
         XCTAssertNil(readbackError)
-        XCTAssertEqual(store.remoteConfig?.revision, 4, "回读失败也要按 receipt revision 推进")
-        XCTAssertEqual(store.remoteConfig?.configuredSecrets, [],
-                       "回读失败也要把提交的删除反映为本地预测状态")
+        XCTAssertNil(store.remoteConfig, "回读失败后不能用新 revision 授权旧配置快照")
+        XCTAssertNil(store.lastConfiguredSecrets, "未回读确认时不预测凭据状态")
         XCTAssertNotNil(store.remoteConfigError, "回读失败必须单独呈现而非当提交失败")
     }
 
@@ -459,6 +458,39 @@ final class DesktopCloudSelfTests: XCTestCase {
         XCTAssertEqual(merged.searchMode, "aggregate")
         XCTAssertEqual(merged.baseRevision, 4)
         XCTAssertEqual(Set(adopted), ["服务商", "接口地址", "搜索来源", "执行方式"])
+    }
+
+    func testConflictMergeKeepsTypedModelKeyBoundToItsDestination() {
+        let base = DesktopCloudRemoteConfig(
+            model: .init(provider: "openai", modelId: "original-model",
+                         baseURL: "https://original.example/v1", keyConfigured: true), revision: 1)
+        let draft = DesktopCloudConfigDraft(modelProvider: base.model.provider,
+            modelId: base.model.modelId, modelBaseURL: base.model.baseURL,
+            modelApiKey: "fake-key-for-original", baseRevision: 1)
+        let fresh = DesktopCloudRemoteConfig(
+            model: .init(provider: "claude", modelId: "other-model",
+                         baseURL: "https://other.example/v1", keyConfigured: true), revision: 2)
+        let result = draft.mergedPreservingEdits(base: base, into: fresh)
+        XCTAssertEqual(result.draft.modelProvider, draft.modelProvider)
+        XCTAssertEqual(result.draft.modelBaseURL, draft.modelBaseURL)
+        XCTAssertEqual(result.draft.modelId, draft.modelId)
+        XCTAssertEqual(result.draft.modelApiKey, draft.modelApiKey)
+        XCTAssertEqual(result.draft.baseRevision, 2)
+    }
+
+    @MainActor func testUnknownImportResultKeepsRequestIdAfterRevisionRefresh() async throws {
+        let sync = FakeSync()
+        sync.applyError = DesktopCloudError.unreachable
+        let (store, _, _) = makePairedStore(sync: sync)
+        await store.refreshRemoteConfig()
+        let plan = DesktopCloudImportPlan(searchServices: [.free])
+        _ = await store.import(plan, catalog: store.importCatalog())
+        sync.remote.revision += 1
+        await store.refreshRemoteConfig()
+        _ = await store.import(plan, catalog: store.importCatalog())
+        XCTAssertEqual(sync.received.count, 2)
+        XCTAssertEqual(sync.received[0].requestId, sync.received[1].requestId,
+                       "相同语义操作的未知结果重试不能因回读版本变化而换 ID")
     }
 
     // MARK: failure semantics — 401吊销 / 冲突与失败保留配对

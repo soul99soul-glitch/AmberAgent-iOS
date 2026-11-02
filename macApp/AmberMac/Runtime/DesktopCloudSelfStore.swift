@@ -68,13 +68,17 @@ struct DesktopCloudConfigDraft: Equatable, Sendable {
                                into fresh: DesktopCloudRemoteConfig) -> (draft: Self, adopted: [String]) {
         var merged = self
         var adopted: [String] = []
-        if modelProvider == base.model.provider, merged.modelProvider != fresh.model.provider {
+        // A typed key belongs to the destination shown when it was entered.
+        // Keep that model section intact; otherwise a merge can send it to a different host.
+        let hasModelCredentialAction = DesktopCloudSelfStore.realSecret(modelApiKey) != nil
+            || deletes.contains("modelApiKey")
+        if !hasModelCredentialAction, modelProvider == base.model.provider, merged.modelProvider != fresh.model.provider {
             merged.modelProvider = fresh.model.provider; adopted.append("服务商")
         }
-        if modelId == base.model.modelId, merged.modelId != fresh.model.modelId {
+        if !hasModelCredentialAction, modelId == base.model.modelId, merged.modelId != fresh.model.modelId {
             merged.modelId = fresh.model.modelId; adopted.append("模型标识")
         }
-        if modelBaseURL == base.model.baseURL, merged.modelBaseURL != fresh.model.baseURL {
+        if !hasModelCredentialAction, modelBaseURL == base.model.baseURL, merged.modelBaseURL != fresh.model.baseURL {
             merged.modelBaseURL = fresh.model.baseURL; adopted.append("接口地址")
         }
         if searchSources == base.search.sources, merged.searchSources != fresh.search.sources {
@@ -380,7 +384,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                 includesSearch: true, secrets: secrets)
             let outcome = try await sync.applyConfig(apply, requestId: requestId(for: apply))
             pendingRequest = nil
-            applyOutcome(outcome, apply: apply)
+            applyOutcome(outcome)
             return nil
         } catch let error as DesktopCloudError {
             if error == .unauthorized { forgetIfRevoked(error) }
@@ -516,7 +520,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                 secrets: secrets)
             let outcome = try await sync.applyConfig(apply, requestId: requestId(for: apply))
             pendingRequest = nil
-            applyOutcome(outcome, apply: apply)
+            applyOutcome(outcome)
             return nil
         } catch let error as DesktopCloudError {
             if error == .unauthorized { forgetIfRevoked(error) }
@@ -551,20 +555,16 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     @ObservationIgnored private var pendingRequest: (fingerprint: String, requestId: String)?
 
     /// Applies a confirmed outcome to local state. A fresh GET result wins; a failed read-back
-    /// still counts the write as done (receipt confirmed), so we predict key presence locally
-    /// and flag the read failure separately instead of treating the apply as failed.
-    private func applyOutcome(_ outcome: DesktopCloudApplyOutcome, apply: DesktopCloudConfigApply) {
+    /// still counts the write as done. Invalidate the old view rather than attaching a fresh
+    /// revision to stale fields that a later editor could unknowingly submit.
+    private func applyOutcome(_ outcome: DesktopCloudApplyOutcome) {
         if let fresh = outcome.config {
             remoteConfig = fresh
             remoteConfigError = nil
             lastConfiguredSecrets = fresh.configuredSecrets
         } else {
-            var configured = remoteConfig?.configuredSecrets ?? []
-            configured.formUnion(apply.secrets.keys)
-            configured.subtract(apply.config.deletes)
-            lastConfiguredSecrets = configured
-            remoteConfig?.configuredSecrets = configured
-            remoteConfig?.revision = outcome.revision
+            remoteConfig = nil
+            lastConfiguredSecrets = nil
             remoteConfigError = "已提交成功，但回读云端状态失败（稍后自动重新读取）"
         }
     }
@@ -586,15 +586,17 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
             secretHashes[key] = SHA256.hash(data: Data(value.utf8))
                 .compactMap { String(format: "%02x", $0) }.joined()
         }
+        var configuration: [String: Any] = [:]
+        if apply.includesModel {
+            configuration["model"] = ["provider": apply.config.modelProvider,
+                "modelId": apply.config.modelId, "baseURL": apply.config.modelBaseURL]
+        }
+        if apply.includesSearch {
+            configuration["search"] = ["sources": apply.config.searchSources, "mode": apply.config.searchMode]
+        }
+        // Like the backend operation hash, exclude the revision and omitted sections.
         let canonical: [String: Any] = [
-            "includesModel": apply.includesModel,
-            "includesSearch": apply.includesSearch,
-            "baseRevision": apply.config.baseRevision,
-            "modelProvider": apply.config.modelProvider,
-            "modelId": apply.config.modelId,
-            "modelBaseURL": apply.config.modelBaseURL,
-            "searchSources": apply.config.searchSources,
-            "searchMode": apply.config.searchMode,
+            "configuration": configuration,
             "deletes": apply.config.deletes.sorted(),
             "secrets": secretHashes,
         ]
