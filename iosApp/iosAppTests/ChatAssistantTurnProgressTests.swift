@@ -243,12 +243,6 @@ final class ChatAssistantTurnProgressTests: ChatNativeTimelineReplayTestCase {
     }
 
     func testRenderThinkingToToolToThinkingToReplyTimelineSnapshots() async throws {
-        let archiveDir = URL(
-            fileURLWithPath: "/Users/arquiel/.synara/userdata/project-context/0f3f2134-3ef9-4137-8b75-6d1496ff94d1/library/snapshots/ios-thinking-single-line-progress",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: archiveDir, withIntermediateDirectories: true)
-
         let priorUser = UIMessage.companion.user(prompt: "肉包上锅蒸怎么判断熟没熟？")
         let priorAssistant = assistant([
             text("肉包上锅蒸是对的，水开后再计时：\n• 冷藏的蒸 10–12 分钟，冷冻的直接 14–15 分钟\n• 蒸完关火焖 2 分钟再开盖，皮不会塌")
@@ -306,8 +300,10 @@ final class ChatAssistantTurnProgressTests: ChatNativeTimelineReplayTestCase {
             let image = UIGraphicsImageRenderer(bounds: fixture.window.bounds).image { _ in
                 fixture.window.drawHierarchy(in: fixture.window.bounds, afterScreenUpdates: true)
             }
-            let png = try XCTUnwrap(image.pngData())
-            try png.write(to: archiveDir.appendingPathComponent(name), options: .atomic)
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
         }
 
         // Snapshot 1: Only thinking ("正在思考" single line, no pink reasoning box or capsule)

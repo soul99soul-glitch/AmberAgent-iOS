@@ -37,6 +37,9 @@ extension ChatView {
         }.count
         next.lastMessageID = messages.last.map(ChatMessageProjector.messageId(for:))
         next.recapBranchID = conversationStore.currentRecapBranchID ?? ""
+        let taskCounts = taskCountCache.counts(messages: messages, isGenerationActive: viewModel.isGenerationActive)
+        next.inChatActiveTaskCount = taskCounts.active
+        next.inChatNeedsAttentionCount = taskCounts.needsAttention
         if resetTitleSeed || next.firstUserTitleSeed == nil {
             next.firstUserTitleSeed = messages.first(where: { $0.role == MessageRole.user })?
                 .toText()

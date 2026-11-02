@@ -634,16 +634,14 @@ extension ChatView {
     var duetActiveTaskCount: Int {
         let localRunning = activityStore.items.filter { $0.status == .running || $0.status == .queued }.count
         let cloudRunning = MacGatewayStore.shared.cloudTasks.filter { $0.workItemId != nil && !$0.isTerminal }.count
-        let inChatActive = currentConversationTaskSegments().filter { $0.rollupState.isLive }.count
-        return max(localRunning + cloudRunning, inChatActive)
+        return max(localRunning + cloudRunning, chatListSummary.inChatActiveTaskCount)
     }
 
     var duetNeedsAttentionCount: Int {
-        let inChatFailed = currentConversationTaskSegments().filter { $0.rollupState.isFailureOrNeedsUser }.count
         let pendingGate = viewModel.hasPendingUserGate ? 1 : 0
         let cloudFailed = MacGatewayStore.shared.cloudTasks.filter { $0.state == .failed || $0.needsSubmissionRetry }.count
         let gatewayNeedsYou = MacGatewayStore.shared.needsYouItems.count
-        return inChatFailed + pendingGate + cloudFailed + gatewayNeedsYou
+        return chatListSummary.inChatNeedsAttentionCount + pendingGate + cloudFailed + gatewayNeedsYou
     }
 
     func currentConversationTaskSegments() -> [ChatTaskRunSegment] {

@@ -48,6 +48,78 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         )
     }
 
+    func testTaskCountCacheMatchesFullProjectionAcrossStreamingAndBackfills() {
+        let cache = ChatTaskCountCache()
+        let failed = makeAssistantMessage(parts: [makeTool(
+            id: "failed", name: "search_web", outputJSON: #"{"ok":false,"error":"unavailable"}"#
+        )])
+        let running = makeAssistantMessage(parts: [makeTool(id: "running", name: "search_web")], finished: false)
+        var messages = [failed, UIMessage.companion.user(prompt: "继续"), running]
+
+        func fullCounts(_ messages: [UIMessage], generating: Bool) -> ChatTaskCountCache.Counts {
+            let lastID = messages.last.map(ChatMessageProjector.messageId(for:))
+            var counts = ChatTaskCountCache.Counts()
+            for message in messages where message.role == MessageRole.assistant {
+                let id = ChatMessageProjector.messageId(for: message)
+                let segments = ChatTaskStreamGrouping.segments(
+                    for: message, messageID: id, isGeneratingTail: generating && id == lastID
+                )
+                for case .taskGroup(let group) in segments where group.hasTools {
+                    if group.rollupState.isLive { counts.active += 1 }
+                    if group.rollupState.isFailureOrNeedsUser { counts.needsAttention += 1 }
+                }
+            }
+            return counts
+        }
+
+        func check(_ generating: Bool) {
+            XCTAssertEqual(cache.counts(messages: messages, isGenerationActive: generating),
+                           fullCounts(messages, generating: generating))
+        }
+
+        check(true)
+        XCTAssertEqual(cache.counts(messages: messages, isGenerationActive: true),
+                       ChatTaskCountCache.Counts(active: 1, needsAttention: 1))
+        check(false)
+        messages[0] = UIMessage(id: failed.id, role: failed.role, parts: [makeTool(
+            id: "failed", name: "search_web", outputJSON: #"{"ok":true,"status":"completed"}"#
+        )], annotations: [], createdAt: failed.createdAt, finishedAt: failed.finishedAt,
+            modelId: nil, usage: nil, translation: nil)
+        check(true)
+        XCTAssertEqual(cache.counts(messages: messages, isGenerationActive: true).needsAttention, 0)
+        messages.removeFirst()
+        check(true)
+        (running.parts[0] as? UIMessagePart.Tool)?.metadata = [:]
+        check(true)
+
+        let history = (0..<120).map { index in
+            makeAssistantMessage(parts: (0..<4).map { toolIndex in
+                makeTool(id: "\(index)-\(toolIndex)", name: "search_web",
+                         outputJSON: #"{"ok":true,"status":"completed"}"#)
+            })
+        }
+        let liveID = KotlinUuid.companion.random()
+        let liveTool = makeTool(id: "live", name: "search_web")
+        let createdAt = chatNowLocalDateTime()
+        func frame(_ index: Int) -> [UIMessage] {
+            history + [UIMessage(id: liveID, role: MessageRole.assistant,
+                parts: [liveTool, UIMessagePart.Text(text: "回复 \(index)", metadata: nil)],
+                annotations: [], createdAt: createdAt, finishedAt: nil, modelId: nil, usage: nil, translation: nil)]
+        }
+        let frames = (0..<20).map(frame)
+        _ = fullCounts(frames[0], generating: true)
+        let baselineStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        let expected = frames.map { fullCounts($0, generating: true) }
+        let baseline = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - baselineStart
+        let warmedCache = ChatTaskCountCache()
+        _ = warmedCache.counts(messages: frames[0], isGenerationActive: true)
+        let cachedStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        let actual = frames.map { warmedCache.counts(messages: $0, isGenerationActive: true) }
+        let cached = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cachedStart
+        XCTAssertEqual(actual, expected)
+        print("[PERF-TASK-COUNTS] history=120 tools=480 updates=20 full=\(Double(baseline) / 1_000_000)ms cached=\(Double(cached) / 1_000_000)ms")
+    }
+
     /// Regression test for `IMG_2604.PNG`:
     /// 4x `ssh_profile_create` failures interleaved with 4x `Reasoning` pills and followed by 1x `ssh_profile_list`
     /// success + assistant text must collapse into ONE `ChatTaskRunSegment` whose rollup is `.needsAttention`

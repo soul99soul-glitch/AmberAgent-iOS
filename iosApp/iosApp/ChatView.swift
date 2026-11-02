@@ -35,6 +35,7 @@ struct ChatView: View {
     @State var islandHoldToken = 0
     @State var composerInputController = ComposerInputController()
     @State var chatListSummary = ChatListSummarySnapshot()
+    @State var taskCountCache = ChatTaskCountCache()
     @State var artifactShelf = ChatArtifactShelfState()
     /// 产物架索引的正文图片与生成式 UI 解析缓存；引用类型，命中与淘汰不触发视图刷新。
     @State var artifactContentCache = ConversationArtifactContentCache()
@@ -453,6 +454,9 @@ struct ChatView: View {
         }
         .onChange(of: sharedSettings.revision) { _, _ in
             handleSharedSettingsRevisionChange()
+        }
+        .onChange(of: viewModel.isGenerationActive) { _, _ in
+            refreshChatListSummary()
         }
         .onChange(of: scenePhase) { _, _ in
             syncIslandPresentation()

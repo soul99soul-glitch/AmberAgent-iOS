@@ -37,6 +37,8 @@ struct ChatListSummarySnapshot: Equatable {
     /// 当前会话的回顾分支标识（依赖 `conversation.messageNodes` 的 variant 选择，
     /// 不依赖消息内容），随会话切换 / 分支变化刷新。
     var recapBranchID = ""
+    var inChatActiveTaskCount = 0
+    var inChatNeedsAttentionCount = 0
 
     // 手写 == 只比较 UI 使用的字段。activeToolStep 的流式 tool output 不参与比较，
     // 避免每个 chunk 刷新根视图；稳定 id 保留给活动岛终态匹配。WebMount 摘要仅在
@@ -52,6 +54,8 @@ struct ChatListSummarySnapshot: Equatable {
             lhs.userMessageCount == rhs.userMessageCount &&
             lhs.lastMessageID == rhs.lastMessageID &&
             lhs.recapBranchID == rhs.recapBranchID &&
+            lhs.inChatActiveTaskCount == rhs.inChatActiveTaskCount &&
+            lhs.inChatNeedsAttentionCount == rhs.inChatNeedsAttentionCount &&
             lhs.activeToolStep?.id == rhs.activeToolStep?.id &&
             lhs.activeToolStep?.title == rhs.activeToolStep?.title &&
             lhs.activeToolStep?.detail == rhs.activeToolStep?.detail &&
@@ -59,6 +63,59 @@ struct ChatListSummarySnapshot: Equatable {
             lhs.activeToolStep?.systemImage == rhs.activeToolStep?.systemImage &&
             lhs.activeToolStep?.visualKind == rhs.activeToolStep?.visualKind &&
             lhs.failedToolStep?.id == rhs.failedToolStep?.id
+    }
+}
+
+/// Keeps the counts used by the chat chrome independent of repeated body evaluations.
+@MainActor
+final class ChatTaskCountCache {
+    struct Counts: Equatable {
+        var active = 0
+        var needsAttention = 0
+    }
+
+    private struct Entry {
+        let identity: ChatMessageContentIdentity
+        let isGeneratingTail: Bool
+        let counts: Counts
+    }
+
+    private var entries: [String: Entry] = [:]
+
+    func counts(messages: [UIMessage], isGenerationActive: Bool) -> Counts {
+        let lastID = messages.last.map(ChatMessageProjector.messageId(for:))
+        var retainedIDs: Set<String> = []
+        var total = Counts()
+        for message in messages where message.role == MessageRole.assistant {
+            let id = ChatMessageProjector.messageId(for: message)
+            retainedIDs.insert(id)
+            let isTail = isGenerationActive && id == lastID
+            let counts: Counts
+            if let cached = entries[id], cached.isGeneratingTail == isTail,
+               cached.identity.matches(message) {
+                counts = cached.counts
+            } else {
+                var next = Counts()
+                if message.parts.contains(where: { $0 is UIMessagePart.Tool }) {
+                    let segments = ChatTaskStreamGrouping.segments(
+                        for: message, messageID: id, isGeneratingTail: isTail
+                    )
+                    for case .taskGroup(let group) in segments where group.hasTools {
+                        if group.rollupState.isLive { next.active += 1 }
+                        if group.rollupState.isFailureOrNeedsUser { next.needsAttention += 1 }
+                    }
+                }
+                counts = next
+                entries[id] = Entry(identity: ChatMessageContentIdentity(message),
+                                    isGeneratingTail: isTail, counts: counts)
+            }
+            total.active += counts.active
+            total.needsAttention += counts.needsAttention
+        }
+        if entries.count != retainedIDs.count {
+            entries = entries.filter { retainedIDs.contains($0.key) }
+        }
+        return total
     }
 }
 

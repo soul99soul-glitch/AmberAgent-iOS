@@ -25,7 +25,7 @@ extension ChatView {
     /// Agent rounds and retries update activity inside this window without
     /// creating another user message, so they do not consume a turn.
     static func webMountRecentUserTurnStartMillis(from messages: [UIMessage]) -> Int64? {
-        messages.reversed()
+        messages.reversed().lazy
             .filter { $0.role == MessageRole.user }
             // recentToolsForExposure scans assistant messages until it sees
             // the sixth user message. Use that same boundary so the session
