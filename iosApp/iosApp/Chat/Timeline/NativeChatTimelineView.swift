@@ -59,37 +59,27 @@ private struct ChatTimelineActivityRowView: View {
 
     var body: some View {
         let state = activity.resolvedPresentation(at: now)
+        let rollup: ChatTaskRollupState = state.kind == .awaitingUser ? .approvalPending(count: 1)
+            : (state.tint == .red ? .needsAttention(failedCount: 1, totalCount: 1,
+                                                    failedToolTitle: state.title, reason: nil)
+               : .working(currentStepTitle: state.title))
+        let segment = ChatTaskRunSegment(
+            id: "global-status-\(activity.anchorMessageID)", messageID: activity.anchorMessageID,
+            taskId: activity.anchorMessageID, agentDisplayName: "Amber", subAgentIdentity: nil,
+            headline: state.title, subtitle: nil, rollupState: rollup,
+            tools: activity.tool.map { [$0] } ?? [], steps: [], reasonings: [], mediaBearingTools: [],
+            hidesCompletedStandaloneReasoning: false, deferToolDetails: true
+        )
         Group {
-            if !activity.hasAssistant && state.kind != .awaitingUser && state.tint != .red {
-                ChatAssistantPendingResponseView { elapsed in
-                    if state.title == "正在准备" && elapsed >= 2 {
-                        return "正在等待模型响应 \(elapsed) 秒"
-                    }
-                    return state.title
-                }
-                .accessibilityIdentifier("chat.taskProgressLine")
-            } else {
-                let rollup: ChatTaskRollupState = state.kind == .awaitingUser ? .approvalPending(count: 1)
-                    : (state.tint == .red ? .needsAttention(failedCount: 1, totalCount: 1,
-                                                            failedToolTitle: state.title, reason: nil)
-                       : .working(currentStepTitle: state.title))
-                let segment = ChatTaskRunSegment(
-                    id: "global-status-\(activity.anchorMessageID)", messageID: activity.anchorMessageID,
-                    taskId: activity.anchorMessageID, agentDisplayName: "Amber", subAgentIdentity: nil,
-                    headline: state.title, subtitle: nil, rollupState: rollup,
-                    tools: activity.tool.map { [$0] } ?? [], steps: [], reasonings: [], mediaBearingTools: [],
-                    hidesCompletedStandaloneReasoning: false, deferToolDetails: true
-                )
-                if showAgentName {
-                    ChatAssistantStack {
-                        ChatAgentName()
-                        ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
-                                               onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
-                    }
-                } else {
+            if showAgentName {
+                ChatAssistantStack {
+                    ChatAgentName()
                     ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
                                            onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
                 }
+            } else {
+                ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
+                                       onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
             }
         }
         .task(id: activity.tracksTaskLiveness) {
@@ -285,8 +275,9 @@ struct NativeChatTimelineView: View {
                         }
                         .padding(.top, isHistoryBoundary ? 0 : topSpacing)
                         if let activity, activityHere, !statusReplacesEntry {
-                            ChatTimelineActivityRowView(activity: activity, showAgentName: false, onAction: onAction)
-                                .padding(.top, ChatLayout.assistantPartSpacing)
+                            let isAfterUserMessage = entry.role == MessageRole.user
+                            ChatTimelineActivityRowView(activity: activity, showAgentName: isAfterUserMessage, onAction: onAction)
+                                .padding(.top, isAfterUserMessage ? 14 : ChatLayout.assistantPartSpacing)
                         }
                     }
                 }
