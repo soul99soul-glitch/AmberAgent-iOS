@@ -20,7 +20,7 @@ enum AmberPersonaPreset: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .amberFox: "琥珀灵狐"
         case .amberCrystal: "琥珀星晶"
-        case .customPortrait: "自定义 / AI 肖像"
+        case .customPortrait: "自定义形象"
         }
     }
 
@@ -57,7 +57,12 @@ final class AmberPersonaStore {
     static let shared = AmberPersonaStore()
 
     var preset: AmberPersonaPreset {
-        didSet { defaults.set(preset.rawValue, forKey: Keys.preset) }
+        didSet {
+            defaults.set(preset.rawValue, forKey: Keys.preset)
+            if oldValue != preset {
+                lastGenerationError = nil
+            }
+        }
     }
 
     var personaStylePrompt: String {
@@ -425,7 +430,7 @@ final class AmberPersonaStore {
         }
 
         guard let credentials = resolveImageGenerationCredentials(sharedSettings: sharedSettings) else {
-            lastGenerationError = "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型，或直接从相册/文件上传形象图。"
+            lastGenerationError = "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型，或直接从相册/文件换图。"
             return
         }
 
@@ -504,7 +509,7 @@ final class AmberPersonaStore {
         }
 
         guard let credentials = resolveImageGenerationCredentials(sharedSettings: sharedSettings) else {
-            lastGenerationError = "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型后再生成多帧微动画；当前原有形象保持不变。"
+            lastGenerationError = "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型，或直接从相册/文件换图。"
             return
         }
 
@@ -960,12 +965,12 @@ struct AmberPersonaStudioSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 14) {
                     heroAndPresetCard
                     referenceImagesSection
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
             }
             .background(AmberTheme.background.ignoresSafeArea())
             .navigationTitle(IOSAppLocalization.string("形象设定", defaultValue: "形象设定"))
@@ -1037,24 +1042,49 @@ struct AmberPersonaStudioSheet: View {
     }
 
     private var heroAndPresetCard: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 8) {
+        VStack(spacing: 14) {
+            VStack(spacing: 10) {
                 AmberAgentPersonaMedallionView(
                     mood: .idle,
-                    diameter: 92,
+                    diameter: 112,
                     storeOverride: store,
                     showStagedPreview: true
                 )
-                .padding(.top, 4)
+                .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                 Text(activeStatusSummary)
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(store.hasPendingPreview ? AmberTheme.accent : AmberTheme.muted)
+                    .foregroundStyle(store.hasPendingPreview ? AmberTheme.accent : AmberTheme.foreground2)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4.5)
+                    .background(
+                        (store.hasPendingPreview ? AmberTheme.accent.opacity(0.12) : AmberTheme.surface),
+                        in: Capsule(style: .continuous)
+                    )
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(
+                                store.hasPendingPreview ? AmberTheme.accent.opacity(0.35) : AmberTheme.borderSoft,
+                                lineWidth: 0.7
+                            )
+                    }
                     .accessibilityIdentifier("chat.persona.statusSummary")
-            }
 
-            if store.hasPendingPreview {
-                pendingPreviewConfirmationCard
+                if store.hasPendingPreview {
+                    pendingPreviewConfirmationCard
+                        .padding(.top, 2)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .padding(.horizontal, 14)
+            .background(
+                AmberTheme.background.opacity(0.65),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
             }
 
             Picker("形象风格", selection: $store.preset) {
@@ -1064,19 +1094,15 @@ struct AmberPersonaStudioSheet: View {
             }
             .pickerStyle(.segmented)
 
-            // Row 1: Static Image Upload (Photo Library & Files -> Preview before Apply)
+            // Primary Row: Equal-width Photo Library & File Import actions
             HStack(spacing: 10) {
                 PhotosPicker(selection: $avatarPickerItem, matching: .images) {
                     Label("相册选图", systemImage: "photo")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(AmberTheme.foreground)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accentInk)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10.5)
-                        .background(AmberTheme.background, in: Capsule(style: .continuous))
-                        .overlay {
-                            Capsule(style: .continuous)
-                                .stroke(AmberTheme.border, lineWidth: 0.8)
-                        }
+                        .frame(height: 42)
+                        .background(AmberTheme.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("chat.persona.uploadButton")
@@ -1088,10 +1114,10 @@ struct AmberPersonaStudioSheet: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10.5)
-                        .background(AmberTheme.background, in: Capsule(style: .continuous))
+                        .frame(height: 42)
+                        .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay {
-                            Capsule(style: .continuous)
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .stroke(AmberTheme.border, lineWidth: 0.8)
                         }
                 }
@@ -1099,7 +1125,7 @@ struct AmberPersonaStudioSheet: View {
                 .accessibilityIdentifier("chat.persona.importFileButton")
             }
 
-            // Row 2: Multi-frame Animation & Single Portrait Generation
+            // Secondary Row: Equal-width AI Multi-frame & Single Portrait actions
             if store.isGeneratingAvatar {
                 HStack(spacing: 10) {
                     ProgressView()
@@ -1126,9 +1152,9 @@ struct AmberPersonaStudioSheet: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
                 }
             } else {
@@ -1137,11 +1163,15 @@ struct AmberPersonaStudioSheet: View {
                         _ = store.startGenerateAnimationFramesTask(sharedSettings: sharedSettings, frameCount: 3)
                     } label: {
                         Label("生成 3 帧微动画", systemImage: "sparkles.tv")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AmberTheme.accentInk)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(AmberTheme.accent)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 11)
-                            .background(AmberTheme.accent, in: Capsule(style: .continuous))
+                            .frame(height: 38)
+                            .background(AmberTheme.accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(AmberTheme.accent.opacity(0.28), lineWidth: 0.8)
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("chat.persona.generateAnimationButton")
@@ -1151,15 +1181,15 @@ struct AmberPersonaStudioSheet: View {
                             await store.generateAvatarWithAI(sharedSettings: sharedSettings)
                         }
                     } label: {
-                        Text("AI 生成单张")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(AmberTheme.foreground)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 11)
-                            .background(AmberTheme.background, in: Capsule(style: .continuous))
+                        Label("AI 生成单张", systemImage: "wand.and.stars")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 38)
+                            .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                             .overlay {
-                                Capsule(style: .continuous)
-                                    .stroke(AmberTheme.border, lineWidth: 0.8)
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
                             }
                     }
                     .buttonStyle(.plain)
@@ -1167,24 +1197,43 @@ struct AmberPersonaStudioSheet: View {
                 }
             }
 
-            if !hasImageGenConfigured {
-                Text("提示：当前未配置生图模型，可在「设置 → 默认模型 → 辅助任务」中指定生图模型后生成微动画；相册选图与文件导入可直接使用。")
-                    .font(.caption2)
-                    .foregroundStyle(AmberTheme.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("chat.persona.unconfiguredHint")
-            }
-
-            Button {
-                withAnimation(.snappy(duration: 0.2)) {
-                    showingPromptEditor.toggle()
+            // Single unified footer bar: deduplicated model notice/error on the left, prompt toggle on the right
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if let error = store.lastGenerationError {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("chat.persona.errorText")
+                } else if !hasImageGenConfigured {
+                    Text("未配置辅助生图模型时，可直接从相册或文件换图")
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("chat.persona.unconfiguredHint")
+                } else {
+                    Text("AI 生图将结合下方描述词与参考图")
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            } label: {
-                Text(showingPromptEditor ? "收起生成描述词" : "调整生成描述词")
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
+
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        showingPromptEditor.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(showingPromptEditor ? "收起描述词" : "生成描述词")
+                        Image(systemName: showingPromptEditor ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(AmberTheme.foreground2)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+            .padding(.top, 2)
 
             if showingPromptEditor {
                 TextField("描述外貌与画风…", text: $store.personaStylePrompt, axis: .vertical)
@@ -1197,16 +1246,8 @@ struct AmberPersonaStudioSheet: View {
                             .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
                     }
             }
-
-            if let error = store.lastGenerationError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.accentRed)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("chat.persona.errorText")
-            }
         }
-        .padding(18)
+        .padding(16)
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -1246,7 +1287,7 @@ struct AmberPersonaStudioSheet: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground2)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8.5)
+                        .padding(.vertical, 8)
                         .background(AmberTheme.surface, in: Capsule(style: .continuous))
                         .overlay {
                             Capsule(style: .continuous)
@@ -1263,117 +1304,114 @@ struct AmberPersonaStudioSheet: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.accentInk)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8.5)
+                        .padding(.vertical, 8)
                         .background(AmberTheme.accent, in: Capsule(style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("chat.persona.confirmPreviewButton")
             }
         }
-        .padding(12)
-        .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(10)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(AmberTheme.accent.opacity(0.45), lineWidth: 0.9)
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(AmberTheme.accent.opacity(0.40), lineWidth: 0.8)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.persona.previewConfirmationCard")
     }
 
     private var referenceImagesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
                 Text("形象参考图")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(AmberTheme.muted)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(AmberTheme.foreground)
                 Spacer()
                 Text("\(store.referenceItems.count)/4")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(AmberTheme.muted)
             }
-            .padding(.horizontal, 4)
 
-            VStack(alignment: .leading, spacing: 14) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(store.referenceItems) { item in
-                            ZStack(alignment: .topTrailing) {
-                                VStack(spacing: 5) {
-                                    if let uiImage = store.loadReferenceImage(for: item) {
-                                        Image(uiImage: uiImage)
-                                            .resizable()
-                                            .scaledToFill()
-                                            .frame(width: 78, height: 78)
-                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    } else {
-                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .fill(AmberTheme.surface2)
-                                            .frame(width: 78, height: 78)
-                                    }
-                                    Text(item.label)
-                                        .font(.caption2)
-                                        .foregroundStyle(AmberTheme.foreground2)
-                                        .lineLimit(1)
-                                }
-
-                                Button {
-                                    store.removeReference(id: item.id)
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 16))
-                                        .foregroundStyle(.white, Color.black.opacity(0.6))
-                                }
-                                .buttonStyle(.plain)
-                                .offset(x: 4, y: -4)
-                            }
-                        }
-
-                        if store.referenceItems.count < 4 {
-                            PhotosPicker(
-                                selection: $referencePickerItems,
-                                maxSelectionCount: max(1, 4 - store.referenceItems.count),
-                                matching: .images
-                            ) {
-                                VStack(spacing: 6) {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 18, weight: .regular))
-                                        .foregroundStyle(AmberTheme.muted)
-                                    Text("添加")
-                                        .font(.caption2)
-                                        .foregroundStyle(AmberTheme.muted)
-                                }
-                                .frame(width: 78, height: 78)
-                                .background(
-                                    AmberTheme.background,
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                )
-                                .overlay {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(store.referenceItems) { item in
+                        ZStack(alignment: .topTrailing) {
+                            VStack(spacing: 4) {
+                                if let uiImage = store.loadReferenceImage(for: item) {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 68, height: 68)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                } else {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(AmberTheme.border, style: StrokeStyle(lineWidth: 0.9, dash: [4, 3]))
+                                        .fill(AmberTheme.surface2)
+                                        .frame(width: 68, height: 68)
                                 }
+                                Text(item.label)
+                                    .font(.caption2)
+                                    .foregroundStyle(AmberTheme.foreground2)
+                                    .lineLimit(1)
+                            }
+
+                            Button {
+                                store.removeReference(id: item.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(.white, Color.black.opacity(0.6))
                             }
                             .buttonStyle(.plain)
-                            .accessibilityIdentifier("chat.persona.addReferenceButton")
+                            .offset(x: 4, y: -4)
                         }
                     }
-                    .padding(.vertical, 2)
-                }
 
-                Divider()
-
-                Toggle(isOn: $store.autoBindReferenceInImageGen) {
-                    Text("生图时自动附带参考图")
-                        .font(.subheadline)
-                        .foregroundStyle(AmberTheme.foreground)
+                    if store.referenceItems.count < 4 {
+                        PhotosPicker(
+                            selection: $referencePickerItems,
+                            maxSelectionCount: max(1, 4 - store.referenceItems.count),
+                            matching: .images
+                        ) {
+                            VStack(spacing: 5) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(AmberTheme.muted)
+                                Text("添加")
+                                    .font(.caption2)
+                                    .foregroundStyle(AmberTheme.muted)
+                            }
+                            .frame(width: 68, height: 68)
+                            .background(
+                                AmberTheme.background.opacity(0.65),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(AmberTheme.border, style: StrokeStyle(lineWidth: 0.9, dash: [4, 3]))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.persona.addReferenceButton")
+                    }
                 }
-                .tint(AmberTheme.accent)
+                .padding(.vertical, 2)
             }
-            .padding(16)
-            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+
+            Divider()
+
+            Toggle(isOn: $store.autoBindReferenceInImageGen) {
+                Text("生图时自动附带参考图")
+                    .font(.subheadline)
+                    .foregroundStyle(AmberTheme.foreground)
             }
+            .tint(AmberTheme.accent)
+        }
+        .padding(16)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
         }
     }
 }

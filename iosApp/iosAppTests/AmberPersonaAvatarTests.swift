@@ -321,6 +321,15 @@ final class AmberPersonaAvatarTests: XCTestCase {
             fileName: "02-persona-studio-static-preview.png"
         )
 
+        // Snapshot 2b: Confirmed custom static avatar + unconfigured generation tap (verifying single deduplicated notice)
+        _ = store.confirmPendingPreview()
+        await store.generateAnimationFramesWithAI(sharedSettings: sharedSettings, frameCount: 3)
+        try await snapshot(
+            AmberPersonaStudioSheet(sharedSettings: sharedSettings, store: store),
+            fileName: "05-persona-studio-refined-single-notice.png"
+        )
+        store.clearError()
+
         // Snapshot 3: Multi-frame animation staged in preview confirmation card
         _ = store.stageAnimationFramesForPreview([animF1, animF2, animF3])
         try await snapshot(
@@ -369,7 +378,8 @@ final class AmberPersonaAvatarTests: XCTestCase {
             "01-topbar-custom-avatar-entry.png",
             "02-persona-studio-static-preview.png",
             "03-persona-studio-multiframe-preview.png",
-            "04-medallion-multiframe-playback-frames.png"
+            "04-medallion-multiframe-playback-frames.png",
+            "05-persona-studio-refined-single-notice.png"
         ] {
             XCTAssertTrue(
                 FileManager.default.fileExists(atPath: archiveDir.appendingPathComponent(name).path),
