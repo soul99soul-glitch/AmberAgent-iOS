@@ -319,13 +319,6 @@ final class AmberPersonaStore {
         preset = .customPortrait
     }
 
-    /// Immediately persists a discrete multi-frame animation sequence (`anim_frame_0.png`...) for every state.
-    func saveCustomAnimationFrames(_ frames: [UIImage], frameIntervalMs: Int = 550) {
-        var uniform: [AmberAgentPersonaMood: [UIImage]] = [:]
-        for mood in AmberAgentPersonaMood.allCases { uniform[mood] = frames }
-        saveStateClips(uniform, frameIntervalMs: frameIntervalMs)
-    }
-
     /// Immediately persists per-state clips (`anim_<state>_<index>.png`) and activates multi-frame mode.
     func saveStateClips(_ clips: [AmberAgentPersonaMood: [UIImage]], frameIntervalMs: Int = 550) {
         let idle = (clips[.idle] ?? []).map { Self.downscale($0, maxDimension: 512) }
