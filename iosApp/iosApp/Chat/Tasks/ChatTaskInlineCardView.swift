@@ -20,6 +20,7 @@ struct ChatTaskInlineCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
+                guard !segment.tools.isEmpty else { return }
                 if segment.tools.count == 1 && segment.reasonings.isEmpty,
                    let onlyTool = segment.tools.first,
                    !rollup.isFailureOrNeedsUser {
@@ -72,7 +73,7 @@ struct ChatTaskInlineCardView: View {
                             value: segment.headline
                         )
 
-                        if !rollup.isLive {
+                        if !rollup.isLive && !segment.tools.isEmpty {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(AmberTheme.muted2)
@@ -307,10 +308,6 @@ struct ChatTaskGroupDetailSheet: View {
                                 .buttonStyle(.plain)
                             }
                         }
-                    }
-
-                    if !segment.reasonings.isEmpty {
-                        reasoningDisclosureSection
                     }
                 }
                 .padding(.horizontal, 18)

@@ -144,6 +144,26 @@ enum ChatTaskStreamGrouping {
     /// - Standalone finished `Reasoning` pills before a completed text reply are hidden from the main stream,
     ///   while live in-progress thinking stays visible.
     @MainActor
+    static func liveThinkingSegment(messageID: String) -> ChatTaskRunSegment {
+        let title = IOSAppLocalization.string("正在思考", defaultValue: "正在思考")
+        return ChatTaskRunSegment(
+            id: "\(messageID):task:0",
+            messageID: messageID,
+            taskId: "\(messageID)-thinking-0",
+            agentDisplayName: "Amber",
+            subAgentIdentity: nil,
+            headline: title,
+            subtitle: nil,
+            rollupState: .working(currentStepTitle: title),
+            tools: [],
+            steps: [],
+            reasonings: [],
+            mediaBearingTools: [],
+            hidesCompletedStandaloneReasoning: false
+        )
+    }
+
+    @MainActor
     static func segments(
         for message: UIMessage,
         messageID: String,
@@ -156,6 +176,7 @@ enum ChatTaskStreamGrouping {
             guard let text = part as? UIMessagePart.Text else { return false }
             return text.text.contains { !$0.isWhitespace }
         }
+        let hasToolsInMessage = parts.contains { $0 is UIMessagePart.Tool }
 
         var result: [ChatTaskMessageSegment] = []
         var index = 0
@@ -209,6 +230,7 @@ enum ChatTaskStreamGrouping {
                     tools: runTools,
                     reasonings: runReasonings,
                     hasNonEmptyTextInMessage: hasNonEmptyText,
+                    hasToolsInMessage: hasToolsInMessage,
                     isGeneratingTail: isGeneratingTail
                 ) {
                     result.append(.taskGroup(segment))
@@ -252,38 +274,36 @@ enum ChatTaskStreamGrouping {
         tools: [UIMessagePart.Tool],
         reasonings: [ChatTaskReasoningEntry],
         hasNonEmptyTextInMessage: Bool,
+        hasToolsInMessage: Bool,
         isGeneratingTail: Bool
     ) -> ChatTaskRunSegment? {
         // Standalone reasoning without any tools:
         if tools.isEmpty {
             guard !reasonings.isEmpty else { return nil }
-            let anyLiveThinking = reasonings.contains(where: \.isThinking)
-            // When the assistant has already produced its reply text (or finished thinking with text),
-            // hide the "思考了 N 秒 · 最高" pill from the main conversation stream.
-            if !anyLiveThinking && hasNonEmptyTextInMessage {
+            // When the assistant has already produced reply text or tools elsewhere in the message,
+            // standalone reasoning settles away completely so only the reply/tool line is shown.
+            if hasNonEmptyTextInMessage || hasToolsInMessage {
                 return nil
             }
-            let latestReasoning = reasonings.last!
-            let preview = Self.firstLinePreview(latestReasoning.text)
-            let rollup: ChatTaskRollupState = anyLiveThinking
-                ? .working(currentStepTitle: preview ?? IOSAppLocalization.string("正在思考…", defaultValue: "正在思考…"))
-                : .completed(stepCount: 1)
+            let thinkingTitle = IOSAppLocalization.string("正在思考", defaultValue: "正在思考")
+            let stoppedTitle = IOSAppLocalization.string("已停止", defaultValue: "已停止")
+            let rollup: ChatTaskRollupState = isGeneratingTail
+                ? .working(currentStepTitle: thinkingTitle)
+                : .cancelled
             return ChatTaskRunSegment(
                 id: "\(messageID):task:\(runStart)",
                 messageID: messageID,
                 taskId: "\(messageID)-thinking-\(runStart)",
                 agentDisplayName: "Amber",
                 subAgentIdentity: nil,
-                headline: anyLiveThinking
-                    ? IOSAppLocalization.string("正在整理思路…", defaultValue: "正在整理思路…")
-                    : IOSAppLocalization.string("已完成思考", defaultValue: "已完成思考"),
-                subtitle: preview,
+                headline: isGeneratingTail ? thinkingTitle : stoppedTitle,
+                subtitle: nil,
                 rollupState: rollup,
                 tools: [],
                 steps: [],
                 reasonings: reasonings,
                 mediaBearingTools: [],
-                hidesCompletedStandaloneReasoning: !anyLiveThinking
+                hidesCompletedStandaloneReasoning: !isGeneratingTail
             )
         }
 
@@ -361,18 +381,28 @@ enum ChatTaskStreamGrouping {
         }
 
         let currentStep = steps.last(where: { $0.state == .active }) ?? steps.last
-        let currentLine = progress.isComposingReply
-            ? IOSAppLocalization.string("正在整理回复…", defaultValue: "正在整理回复…")
-            : currentStep.flatMap { progressLine(for: $0) }
+        let currentLine: String
+        if progress.isComposingReply {
+            currentLine = IOSAppLocalization.string("正在整理回复…", defaultValue: "正在整理回复…")
+        } else if progress.isThinking {
+            currentLine = IOSAppLocalization.string("正在思考", defaultValue: "正在思考")
+        } else {
+            currentLine = currentStep.flatMap { progressLine(for: $0) }
                 ?? IOSAppLocalization.string("正在处理…", defaultValue: "正在处理…")
+        }
 
-        var rollup = computeRollupState(tools: tools, steps: steps, reasonings: [], isGeneratingTail: false)
-        if progress.isLive {
-            // A failed attempt mid-run may be retried; only approvals interrupt the live line.
-            if case .approvalPending = rollup {} else { rollup = .working(currentStepTitle: currentLine) }
-        } else if case .working = rollup {
-            // The run ended with a step that never returned.
-            rollup = .cancelled
+        var rollup: ChatTaskRollupState
+        if tools.isEmpty {
+            rollup = progress.isLive ? .working(currentStepTitle: currentLine) : .cancelled
+        } else {
+            rollup = computeRollupState(tools: tools, steps: steps, reasonings: [], isGeneratingTail: false)
+            if progress.isLive {
+                // A failed attempt mid-run may be retried; only approvals interrupt the live line.
+                if case .approvalPending = rollup {} else { rollup = .working(currentStepTitle: currentLine) }
+            } else if case .working = rollup {
+                // The run ended with a step that never returned.
+                rollup = .cancelled
+            }
         }
 
         let headline: String
@@ -437,7 +467,7 @@ enum ChatTaskStreamGrouping {
             return .working(currentStepTitle: activeStep.title)
         }
         if isGeneratingTail && reasonings.contains(where: \.isThinking) {
-            let latestTitle = steps.last?.title ?? IOSAppLocalization.string("正在执行…", defaultValue: "正在执行…")
+            let latestTitle = IOSAppLocalization.string("正在思考", defaultValue: "正在思考")
             return .working(currentStepTitle: latestTitle)
         }
 

@@ -6,7 +6,7 @@ import Shared
 /// Every tool of one assistant turn, whichever messages they arrived in. The
 /// head message renders this as the turn's single in-place progress line.
 struct ChatAssistantTurnProgress {
-    /// UUID of the turn's first tool message (even before the loaded window).
+    /// UUID of the turn's first tool/thinking message (even before the loaded window).
     let id: String
     let headMessageID: String
     /// All assistant messages of the turn, in order; tools and reasoning are read at render time.
@@ -15,6 +15,8 @@ struct ChatAssistantTurnProgress {
     let anchorIDs: [String]
     /// The turn is still being extended by the active generation.
     let isLive: Bool
+    /// Live, no tool is currently pending, and the turn is currently in a reasoning step.
+    var isThinking: Bool = false
     /// Live, every tool has been called, and reply text is arriving after the last one.
     let isComposingReply: Bool
     let signature: Int
@@ -131,10 +133,63 @@ enum ChatAssistantTurnToolGrouping {
         let loaded = turn.memberIndices.compactMap { index in entries[index].message.map { (index, $0) } }
         let turnMessages = turn.prefixMessages + loaded.map(\.1)
         let tools = turnMessages.flatMap(toolParts)
-        guard !tools.isEmpty,
-              !tools.allSatisfy({ ChatPhoneToolGrouping.isPhoneTool($0.toolName) }),
-              let firstToolMessage = turnMessages.first(where: { !toolParts($0).isEmpty }),
-              let head = loaded.first(where: { !toolParts($0.1).isEmpty }),
+
+        if tools.isEmpty {
+            let hasReasoning = turnMessages.contains(where: hasRenderableReasoning)
+            guard hasReasoning else { return }
+            let hasVisibleText = turnMessages.contains(where: containsVisibleText)
+            guard let firstReasoningMessage = turnMessages.first(where: hasRenderableReasoning) else { return }
+            let groupID = ChatMessageProjector.messageId(for: firstReasoningMessage)
+
+            if hasVisibleText {
+                for (index, message) in loaded {
+                    roles[index] = .member(
+                        groupID: groupID,
+                        isCollapsed: isCollapsible(message),
+                        hasVisibleText: containsVisibleText(message)
+                    )
+                }
+                return
+            }
+
+            guard let head = loaded.first(where: { hasRenderableReasoning($0.1) }),
+                  let headMessageID = entries[head.0].messageId else { return }
+            let isTailTurn = loaded.last.map { entries[$0.0].isLastMessage } ?? false
+            let isSlotLive = !liveMessageIDs.isEmpty && turnMessages.contains {
+                liveMessageIDs.contains(ChatMessageProjector.messageId(for: $0))
+            }
+            let isLive = isGenerationActive && (isTailTurn || isSlotLive)
+            var hasher = Hasher()
+            hasher.combine(groupID)
+            hasher.combine(headMessageID)
+            hasher.combine("thinking-only")
+            hasher.combine(isLive)
+            let progress = ChatAssistantTurnProgress(
+                id: groupID,
+                headMessageID: headMessageID,
+                messages: turnMessages,
+                tools: [],
+                anchorIDs: [],
+                isLive: isLive,
+                isThinking: isLive,
+                isComposingReply: false,
+                signature: hasher.finalize()
+            )
+            for (index, message) in loaded {
+                roles[index] = index == head.0
+                    ? .head(progress)
+                    : .member(
+                        groupID: groupID,
+                        isCollapsed: isCollapsible(message),
+                        hasVisibleText: containsVisibleText(message)
+                    )
+            }
+            return
+        }
+
+        guard !tools.allSatisfy({ ChatPhoneToolGrouping.isPhoneTool($0.toolName) }),
+              let firstToolMessage = turnMessages.first(where: canHostTurnProgress),
+              let head = loaded.first(where: { canHostTurnProgress($0.1) }),
               let headMessageID = entries[head.0].messageId else { return }
 
         let groupID = ChatMessageProjector.messageId(for: firstToolMessage)
@@ -144,7 +199,8 @@ enum ChatAssistantTurnToolGrouping {
             liveMessageIDs.contains(ChatMessageProjector.messageId(for: $0))
         }
         let isLive = isGenerationActive && (isTailTurn || hasPendingToolCall || isSlotLive)
-        let isComposingReply = isLive && endsWithReplyText(turnMessages)
+        let isThinking = isLive && !hasPendingToolCall && endsWithThinking(turnMessages)
+        let isComposingReply = isLive && !hasPendingToolCall && endsWithReplyText(turnMessages)
         let anchorIDs = turnMessages.flatMap { message -> [String] in
             let messageID = ChatMessageProjector.messageId(for: message)
             return toolParts(message).map {
@@ -165,6 +221,7 @@ enum ChatAssistantTurnToolGrouping {
             ChatPartSignature.combine(part, exactText: false, into: &hasher)
         }
         hasher.combine(isLive)
+        hasher.combine(isThinking)
         hasher.combine(isComposingReply)
 
         let progress = ChatAssistantTurnProgress(
@@ -174,6 +231,7 @@ enum ChatAssistantTurnToolGrouping {
             tools: tools,
             anchorIDs: anchorIDs,
             isLive: isLive,
+            isThinking: isThinking,
             isComposingReply: isComposingReply,
             signature: hasher.finalize()
         )
@@ -207,6 +265,18 @@ enum ChatAssistantTurnToolGrouping {
         message.parts.compactMap { $0 as? UIMessagePart.Tool }
     }
 
+    private static func hasRenderableReasoning(_ message: UIMessage) -> Bool {
+        message.parts.contains { part in
+            guard let reasoning = part as? UIMessagePart.Reasoning else { return false }
+            return !ReasoningMetadataKt.isEmptyProtocolReasoning(reasoning: reasoning)
+        }
+    }
+
+    private static func canHostTurnProgress(_ message: UIMessage) -> Bool {
+        if !toolParts(message).isEmpty { return true }
+        return hasRenderableReasoning(message) && !containsVisibleText(message)
+    }
+
     private static func containsVisibleText(_ message: UIMessage) -> Bool {
         message.parts.contains { part in
             (part as? UIMessagePart.Text)?.text.contains(where: { !$0.isWhitespace }) == true
@@ -228,10 +298,31 @@ enum ChatAssistantTurnToolGrouping {
         }
     }
 
+    private static func endsWithThinking(_ messages: [UIMessage]) -> Bool {
+        for message in messages.reversed() {
+            for part in message.parts.reversed() {
+                if part is UIMessagePart.Tool { return false }
+                if let text = part as? UIMessagePart.Text,
+                   text.text.contains(where: { !$0.isWhitespace }) {
+                    return false
+                }
+                if let reasoning = part as? UIMessagePart.Reasoning,
+                   !ReasoningMetadataKt.isEmptyProtocolReasoning(reasoning: reasoning) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     private static func endsWithReplyText(_ messages: [UIMessage]) -> Bool {
         for message in messages.reversed() {
             for part in message.parts.reversed() {
                 if part is UIMessagePart.Tool { return false }
+                if let reasoning = part as? UIMessagePart.Reasoning,
+                   !ReasoningMetadataKt.isEmptyProtocolReasoning(reasoning: reasoning) {
+                    return false
+                }
                 if let text = part as? UIMessagePart.Text,
                    text.text.contains(where: { !$0.isWhitespace }) {
                     return true

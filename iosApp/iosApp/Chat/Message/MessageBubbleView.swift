@@ -398,10 +398,19 @@ struct MessageBubbleView: View {
             messageID: messageID,
             isGeneratingTail: isGenerating && isLastMessage
         )
-        let turnProgressRunID = assistantTurn?.progress == nil ? nil : segments.lazy.compactMap { segment -> String? in
-            if case .taskGroup(let run) = segment, run.hasTools { return run.id }
-            return nil
-        }.first
+        let turnProgressRunID: String? = {
+            guard assistantTurn?.progress != nil else { return nil }
+            if let withTools = segments.lazy.compactMap({ segment -> String? in
+                if case .taskGroup(let run) = segment, run.hasTools { return run.id }
+                return nil
+            }).first {
+                return withTools
+            }
+            return segments.lazy.compactMap { segment -> String? in
+                if case .taskGroup(let run) = segment { return run.id }
+                return nil
+            }.first
+        }()
         ForEach(segments) { segment in
             switch segment {
             case .text(_, let partIndex, let textPart):
@@ -434,41 +443,25 @@ struct MessageBubbleView: View {
                     .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
                 }
             case .taskGroup(let taskSegment):
-                if assistantTurn != nil {
-                    if taskSegment.id == turnProgressRunID, let progress = assistantTurn?.progress {
-                        ChatTaskInlineCardView(
-                            segment: ChatTaskStreamGrouping.turnSegment(for: progress),
-                            onTapToolDetail: { tool in toolDetailTarget = ToolDetailTarget(tool: tool) },
-                            onOpenSubagentConversation: onOpenSubagentConversation
-                        )
-                        .chatLiveEntrance(key: "task-group:\(progress.id)", isLive: isLiveTail)
+                let effectiveSegment: ChatTaskRunSegment? = {
+                    if assistantTurn != nil {
+                        if taskSegment.id == turnProgressRunID, let progress = assistantTurn?.progress {
+                            return ChatTaskStreamGrouping.turnSegment(for: progress)
+                        }
+                        return nil
                     }
-                    ForEach(taskSegment.mediaBearingTools, id: \.toolCallId) { tool in
-                        toolMediaView(for: tool)
-                    }
-                } else if taskSegment.hasTools {
+                    return taskSegment
+                }()
+                if let effectiveSegment {
                     ChatTaskInlineCardView(
-                        segment: taskSegment,
+                        segment: effectiveSegment,
                         onTapToolDetail: { tool in toolDetailTarget = ToolDetailTarget(tool: tool) },
                         onOpenSubagentConversation: onOpenSubagentConversation
                     )
-                    .chatLiveEntrance(key: "task-group:\(taskSegment.id)", isLive: isLiveTail)
-
-                    ForEach(taskSegment.mediaBearingTools, id: \.toolCallId) { tool in
-                        toolMediaView(for: tool)
-                    }
-                } else if let reasoning = message.parts.compactMap({ $0 as? UIMessagePart.Reasoning }).last(where: Self.shouldRenderReasoningCard) {
-                    let expandPref = autoExpandThinking
-                    ChatReasoningCard(
-                        bodyText: reasoning.reasoning,
-                        isThinking: reasoning.finishedAt == nil && isGenerating && isLastMessage,
-                        startedAt: Self.instantToDate(reasoning.createdAt),
-                        finishedSeconds: Self.reasoningDurationSeconds(reasoning),
-                        levelLabel: reasoningLevelLabel,
-                        autoCloseThinking: displaySetting?.autoCloseThinking ?? true,
-                        autoExpandThinking: expandPref
-                    )
                     .chatLiveEntrance(key: thinkingEntranceKey, isLive: isLiveTail)
+                }
+                ForEach(taskSegment.mediaBearingTools, id: \.toolCallId) { tool in
+                    toolMediaView(for: tool)
                 }
             case .imageGallery(_, let startIndex, let images):
                 ChatMediaGallery(items: images.enumerated().map { offset, image in
@@ -604,19 +597,8 @@ struct MessageBubbleView: View {
                     }
                     .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
                 }
-            } else if let reasoning = part as? UIMessagePart.Reasoning {
-                if Self.shouldRenderReasoningCard(reasoning) {
-                    ChatReasoningCard(
-                        bodyText: reasoning.reasoning,
-                        isThinking: reasoning.finishedAt == nil && isGenerating && isLastMessage,
-                        startedAt: Self.instantToDate(reasoning.createdAt),
-                        finishedSeconds: Self.reasoningDurationSeconds(reasoning),
-                        levelLabel: reasoningLevelLabel,
-                        autoCloseThinking: displaySetting?.autoCloseThinking ?? true,
-                        autoExpandThinking: autoExpandThinking
-                    )
-                    .chatLiveEntrance(key: reasoningEntranceKey(partIndex: partIndex), isLive: isLiveTail)
-                }
+            } else if part is UIMessagePart.Reasoning {
+                EmptyView()
             } else if part is UIMessagePart.Image {
                 if partIndex == 0 || !(message.parts[partIndex - 1] is UIMessagePart.Image) {
                     let images = message.parts[partIndex...].prefix { $0 is UIMessagePart.Image }
@@ -747,13 +729,12 @@ struct MessageBubbleView: View {
 
     @ViewBuilder
     private var fallbackThinkingCard: some View {
-        if !isUser, isGenerating, isLastMessage, !hasVisibleAssistantContent {
-            ChatReasoningCard(
-                bodyText: "",
-                isThinking: true,
-                levelLabel: reasoningLevelLabel,
-                autoCloseThinking: displaySetting?.autoCloseThinking ?? true,
-                autoExpandThinking: autoExpandThinking
+        if !isUser, isGenerating, isLastMessage, !hasVisibleAssistantContent, assistantTurn == nil {
+            let messageID = ChatMessageProjector.messageId(for: message)
+            ChatTaskInlineCardView(
+                segment: ChatTaskStreamGrouping.liveThinkingSegment(messageID: messageID),
+                onTapToolDetail: { _ in },
+                onOpenSubagentConversation: onOpenSubagentConversation
             )
             .transition(.opacity)
             .chatLiveEntrance(key: thinkingEntranceKey, isLive: true)
