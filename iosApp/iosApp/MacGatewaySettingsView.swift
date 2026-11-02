@@ -22,6 +22,7 @@ struct MacGatewaySettingsView: View {
                         } else if let connection = store.connection {
                             macSection(connection)
                             if let health = store.status?.health { healthSection(health) }
+                            cloudConfigSection
                             boardSection
                             unpairSection
                         } else {
@@ -175,6 +176,19 @@ struct MacGatewaySettingsView: View {
                 valueRow(icon: "memorychip", title: L("内存压力"), value: Self.levelLabel(health.memoryPressure))
                 MacGatewayRowDivider()
                 valueRow(icon: "thermometer.medium", title: L("温度"), value: Self.levelLabel(health.thermal))
+            }
+        }
+    }
+
+    private var cloudConfigSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "云端配置")
+            AmberFormGroup {
+                MacGatewayRow(icon: "gearshape.2", title: L("模型与搜索"),
+                              detail: L("查看云端 provider/model，或从本机导入配置与 API Key"),
+                              action: { router.navigate(to: .cloudConfig) }) {
+                    MacGatewayChevron()
+                }
             }
         }
     }
