@@ -107,6 +107,8 @@ enum Route: Hashable {
     case macGateway
     /// Task board of the paired Mac (scheduled tasks, their runs, Claude Code / Codex sessions).
     case macTasks
+    /// Cloud configuration of the paired Mac (provider/model/search, local import).
+    case cloudConfig
     case subscription
     case capabilities
     case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)

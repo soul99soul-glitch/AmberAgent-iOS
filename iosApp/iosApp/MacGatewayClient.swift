@@ -372,7 +372,33 @@ actor MacGatewayClient {
         return try await sendData(method, path, bodyData: bodyData, slow: slow)
     }
 
+    /// Raw response for APIs that carry their own error contract (e.g. /v2/configuration's
+    /// `{"error": code, "currentRevision": n}`): the status and body come back untouched so the
+    /// caller maps them; only connectivity-level failures throw.
+    struct MacGatewayRawResponse: Sendable {
+        var status: Int
+        var data: Data
+        var errorCode: String? { (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String }
+        var currentRevision: Int? { (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["currentRevision"] as? Int }
+    }
+
     func sendData(_ method: String, _ path: String, bodyData: Data? = nil, slow: Bool = false) async throws -> Data {
+        let response = try await requestData(method, path, bodyData: bodyData, slow: slow)
+        switch response.status {
+        case 200..<300:
+            return response.data
+        case 401:
+            throw MacGatewayError.unauthorized
+        case 409:
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.conflict(message ?? "HTTP \(response.status)")
+        default:
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.server(message ?? "HTTP \(response.status)")
+        }
+    }
+
+    func requestData(_ method: String, _ path: String, bodyData: Data? = nil, slow: Bool = false) async throws -> MacGatewayRawResponse {
         let ordered = preferredAddress.map { [$0] + addrs.filter { $0 != preferredAddress } } ?? addrs
         var sawPinMismatch = false
         for address in ordered {
@@ -397,19 +423,7 @@ actor MacGatewayClient {
                 continue
             }
             preferredAddress = address
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            switch status {
-            case 200..<300:
-                return data
-            case 401:
-                throw MacGatewayError.unauthorized
-            case 409:
-                let message = Self.extractErrorMessage(from: data)
-                throw MacGatewayError.conflict(message ?? "HTTP \(status)")
-            default:
-                let message = Self.extractErrorMessage(from: data)
-                throw MacGatewayError.server(message ?? "HTTP \(status)")
-            }
+            return MacGatewayRawResponse(status: (response as? HTTPURLResponse)?.statusCode ?? 0, data: data)
         }
         throw sawPinMismatch ? MacGatewayError.certificateMismatch : MacGatewayError.unreachable
     }
