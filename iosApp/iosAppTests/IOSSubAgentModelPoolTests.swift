@@ -88,7 +88,7 @@ final class IOSSubAgentModelPoolTests: XCTestCase {
         XCTAssertEqual(third?.modelId, preview?.modelId, "counterfactual preview must not advance pool rotation")
     }
 
-    func testDefaultReasoningPrefersAutoThenMediumThenHighThenFirst() {
+    func testDefaultReasoningPrefersHighThenXhighThenMediumThenAuto() {
         let pool = IOSSubAgentModelPool()
         let providerValue = provider(id: KotlinUuid.companion.random(), name: "A")
         let modelValue = model(id: KotlinUuid.companion.random(), name: "model")
@@ -98,7 +98,7 @@ final class IOSSubAgentModelPoolTests: XCTestCase {
             configuredReasoning: nil,
             supportedReasoning: [.max, .auto_, .medium]
         )
-        XCTAssertEqual(pool.defaultReasoning(for: autoCandidate), .auto_)
+        XCTAssertEqual(pool.defaultReasoning(for: autoCandidate), .medium)
 
         let firstCandidate = IOSSubAgentModelPool.Candidate(
             model: modelValue,

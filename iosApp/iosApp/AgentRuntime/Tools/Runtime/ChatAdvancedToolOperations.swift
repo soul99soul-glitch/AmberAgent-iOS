@@ -197,7 +197,11 @@ extension ChatToolRuntime {
                     .flatMap { selectedPoolCandidate.supportedReasoning.contains($0) ? $0 : nil }
                     ?? subAgentModelPool.defaultReasoning(for: selectedPoolCandidate)
             } else {
+                let supported = sharedSettings.subAgentReasoningLevels(
+                    modelId: selectedModel?.id.toHexDashString() ?? params.model.id.toHexDashString()
+                )
                 effectiveReasoningOverride = roleOverride?.reasoningLevel
+                    ?? IOSSubAgentModelPool.preferredReasoning(in: supported, fallback: params.reasoningLevel)
             }
             let runParams: TextGenerationParams
             if let selectedModel, let selectedProvider,
@@ -215,7 +219,7 @@ extension ChatToolRuntime {
                     customBody: assistant.customBodies + selectedModel.customBodies
                 )
             } else {
-                runParams = params
+                runParams = effectiveReasoningOverride.map { params.replacingReasoningLevel($0) } ?? params
             }
             let modelReservation = selectedPoolCandidate.map { subAgentModelPool.reserve($0) }
             if let selectedPoolCandidate {

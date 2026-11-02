@@ -16,6 +16,7 @@ final class NativeTimelineProjectionCache {
     private var sourceMessages: [UIMessage] = []
     private var contentIdentities: [String: ChatMessageContentIdentity] = [:]
     private var compactBoundaries: [ChatContextCompactBoundary] = []
+    private var liveTaskTailIDs: Set<String> = []
 
     func projection(
         messages: [UIMessage],
@@ -34,6 +35,7 @@ final class NativeTimelineProjectionCache {
         renderStateRevision: UInt64,
         reasoningLevelLabel: String?,
         streamedMessageIDs: Set<String>,
+        liveTaskTailIDs: Set<String> = [],
         renderStateStore: ChatRenderStateStore,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo?,
         expandedPhoneToolGroupIDs: Set<String> = [],
@@ -55,13 +57,15 @@ final class NativeTimelineProjectionCache {
 
         let canReuseStructure = key == structuralKey &&
             messageCount == messages.count && lastMessageID == lastID &&
-            self.startIndex == startIndex && compactBoundaries == contextCompactBoundaries
+            self.startIndex == startIndex && compactBoundaries == contextCompactBoundaries &&
+            self.liveTaskTailIDs == liveTaskTailIDs
         defer {
             self.sourceRevision = sourceRevision
             self.renderRevision = renderStateRevision
             self.startIndex = startIndex
             self.sourceMessages = messages
             self.compactBoundaries = contextCompactBoundaries
+            self.liveTaskTailIDs = liveTaskTailIDs
         }
         if canReuseStructure,
            self.sourceRevision == sourceRevision,
@@ -88,7 +92,8 @@ final class NativeTimelineProjectionCache {
             renderStateStore: renderStateStore,
             variantInfoProvider: variantInfoProvider,
             contentHashProvider: contentHashProvider,
-            expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs
+            expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs,
+            liveTaskTailIDs: liveTaskTailIDs
            ) {
             self.cachedProjection = increment
             if let last = increment.entries.last(where: { $0.kind == .message }),
@@ -120,7 +125,8 @@ final class NativeTimelineProjectionCache {
                renderStateRevision: renderStateRevision, reasoningLevelLabel: reasoningLevelLabel,
                streamedMessageIDs: streamedMessageIDs, renderStateStore: renderStateStore,
                variantInfoProvider: variantInfoProvider, contentHashProvider: contentHashProvider,
-               expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs
+               expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs,
+               liveTaskTailIDs: liveTaskTailIDs
            ) {
             self.cachedProjection = increment
             rememberContentIdentities(in: increment)
@@ -142,6 +148,7 @@ final class NativeTimelineProjectionCache {
             renderStateRevision: renderStateRevision,
             reasoningLevelLabel: reasoningLevelLabel,
             streamedMessageIDs: streamedMessageIDs,
+            liveTaskTailIDs: liveTaskTailIDs,
             renderStateStore: renderStateStore,
             variantInfoProvider: variantInfoProvider,
             contentHashProvider: contentHashProvider,
@@ -174,11 +181,24 @@ final class NativeTimelineProjectionCache {
             ChatMessageProjector.isVisibleInTimeline(messages[$0])
         }
         guard visibleIndices == projection.entries.compactMap(\.index) else { return false }
-        return projection.entries.allSatisfy { entry in
-            guard let index = entry.index, let id = entry.messageId, index != messages.count - 1 else { return true }
-            return contentIdentities[id]?.matches(messages[index]) == true &&
-                entry.isAssistantContinuation == ChatMessageProjector.isAssistantContinuation(at: index, in: messages)
+        let prior = visibleIndices.first.flatMap { index in
+            index > 0 ? messages[..<index].reversed().first(where: ChatMessageProjector.isVisibleInTimeline) : nil
         }
+        var previousRole = prior?.role
+        var previousStatusOnly = prior.map(NativeTimelineProjector.isGlobalStatusOnly) ?? false
+        for entry in projection.entries {
+            guard let index = entry.index, let id = entry.messageId else { continue }
+            let message = messages[index]
+            if index != messages.count - 1 {
+                let continuation = message.role == MessageRole.assistant &&
+                    previousRole == MessageRole.assistant && !previousStatusOnly
+                guard contentIdentities[id]?.matches(message) == true,
+                      entry.isAssistantContinuation == continuation else { return false }
+            }
+            previousRole = message.role
+            previousStatusOnly = entry.isGlobalStatusOnly
+        }
+        return true
     }
 
     /// Tool-call anchors hidden inside collapsed phone-step groups, mapped to the
@@ -214,6 +234,7 @@ final class NativeTimelineProjectionCache {
         sourceMessages = []
         contentIdentities.removeAll()
         compactBoundaries = []
+        liveTaskTailIDs = []
     }
 
     private static func structuralKey(

@@ -527,6 +527,30 @@ struct ChatToolStepModel: Identifiable {
             )
     }
 
+    /// Built once when the real tool starts, never inferred from a planned stage.
+    static func activeProgressTitle(toolName: String, input: String) -> String? {
+        let raw: String?
+        let verb: String
+        switch toolName {
+        case "search_web":
+            raw = searchQuery(from: input)
+            verb = "正在查找"
+        case "scrape_web":
+            raw = scrapeURL(from: input)
+            verb = "正在读取"
+        case "spawn_agent", "subagent_dispatch":
+            raw = subAgentDetail(from: input)
+            verb = "正在安排"
+        default:
+            return nil
+        }
+        guard let raw else { return nil }
+        let redacted = IOSContextCompactionFidelity.redactCredentials(String(raw.prefix(512)))
+        let compact = redacted.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+        guard !compact.isEmpty else { return nil }
+        return "\(verb)「\(String(compact.prefix(22)))」"
+    }
+
     private static func scrapeURL(from input: String) -> String? {
         guard let args = subAgentArgs(from: input) else {
             let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -12,10 +12,20 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         /// surface `pendingApproval`. When false, an approval request is
         /// treated as a denial (engine does not block).
         public let honorApprovalPause: Bool
+        public let fastFirstReasoning: Bool
+        public let routerReasoningName: String?
+        public let workerReasoningName: String?
+        public let resumesWorker: Bool
 
-        public init(maxSteps: Int = 8, honorApprovalPause: Bool = true) {
+        public init(maxSteps: Int = 8, honorApprovalPause: Bool = true, fastFirstReasoning: Bool = false,
+                    routerReasoningName: String? = "OFF", workerReasoningName: String? = nil,
+                    resumesWorker: Bool = false) {
             self.maxSteps = maxSteps
             self.honorApprovalPause = honorApprovalPause
+            self.fastFirstReasoning = fastFirstReasoning
+            self.routerReasoningName = routerReasoningName
+            self.workerReasoningName = workerReasoningName
+            self.resumesWorker = resumesWorker
         }
     }
 
@@ -84,6 +94,19 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         #else
         return params
         #endif
+    }
+
+    private static func workerReasoning(named name: String?, fallback: ReasoningLevel) -> ReasoningLevel {
+        switch name?.lowercased() {
+        case "high": return .high
+        case "xhigh": return .xhigh
+        case "medium": return .medium
+        case "auto": return .auto_
+        case "low": return .low
+        case "off": return .off
+        case "max": return .max
+        default: return fallback
+        }
     }
 
     /// B2 前台内核投影:按节拍推送在途 assistant 的累加器快照。快照只在
@@ -166,6 +189,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)? = nil,
         onAssistantTurnStarted: (@MainActor @Sendable () async -> Void)? = nil,
         onAssistantTurnCompleted: (@Sendable ([UIMessage]) async -> Bool)? = nil,
+        onAssistantProgressPlan: (@MainActor @Sendable ([String]) async -> Void)? = nil,
         onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)? = nil,
         onAssistantStage: (@Sendable (AgentActivityStage) -> Void)? = nil,
         onAssistantText: (@Sendable (String) -> Void)? = nil,
@@ -188,6 +212,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             resolveUnexposedToolCall: resolveUnexposedToolCall,
             onAssistantTurnStarted: onAssistantTurnStarted,
             onAssistantTurnCompleted: onAssistantTurnCompleted,
+            onAssistantProgressPlan: onAssistantProgressPlan,
             onToolExecutionStarted: onToolExecutionStarted,
             onAssistantStage: onAssistantStage,
             onAssistantText: onAssistantText,
@@ -249,6 +274,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)?,
         onAssistantTurnStarted: (@MainActor @Sendable () async -> Void)?,
         onAssistantTurnCompleted: (@Sendable ([UIMessage]) async -> Bool)?,
+        onAssistantProgressPlan: (@MainActor @Sendable ([String]) async -> Void)?,
         onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?,
         onAssistantStage: (@Sendable (AgentActivityStage) -> Void)?,
         onAssistantText: (@Sendable (String) -> Void)?,
@@ -259,6 +285,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         var working = messages
         var effectiveParams = params
         var steps = 0
+        var continuationInstructionPending = false
         // I-5: one guard per `run()` invocation, never carried across runs.
         // The engine instance itself is long-lived/reused (SubAgent, chat
         // background handoff), so this must be a local — a guard stored on
@@ -339,6 +366,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         }
 
         while steps < configuration.maxSteps {
+            let isRouterRound = configuration.fastFirstReasoning && steps == 0 && !configuration.resumesWorker
             let chunk: MessageChunk
             let cancelledBeforeProvider: Bool
             var transcriptRequest: PromptTranscriptRequest?
@@ -375,7 +403,16 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 let plannedMessages = working
                 #endif
                 var requestMessages = try await prepareRequestMessages?(plannedMessages) ?? plannedMessages
-                let requestParams = await phoneRequestParams(effectiveParams, providerSetting: providerSetting)
+                let normalParams = await phoneRequestParams(effectiveParams, providerSetting: providerSetting)
+                let requestParams: TextGenerationParams
+                if configuration.fastFirstReasoning && params.reasoningLevel != .off {
+                    let level: ReasoningLevel = steps == 0 && !configuration.resumesWorker
+                        ? Self.workerReasoning(named: configuration.routerReasoningName, fallback: normalParams.reasoningLevel)
+                        : Self.workerReasoning(named: configuration.workerReasoningName, fallback: normalParams.reasoningLevel)
+                    requestParams = normalParams.replacingReasoningLevel(level)
+                } else {
+                    requestParams = normalParams
+                }
                 let preparedRequest = try await providerStep.prepareStepRequest(
                     providerSetting: providerSetting,
                     params: requestParams
@@ -393,6 +430,16 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     requestMessages = prepared.messages
                     transcriptRequest = prepared
                 }
+                if continuationInstructionPending {
+                    // Request-only steering: never append this synthetic message to working/history.
+                    requestMessages.append(UIMessage.companion.user(prompt:
+                        "[本轮续答指令] 请接上文的快速回应，直接展开完整、深入的详细解答，不要重复开场白。"))
+                    continuationInstructionPending = false
+                }
+                requestMessages = Self.ensuringToolCallReasoningForThinkingRequest(
+                    in: requestMessages,
+                    reasoningLevel: preparedRequest.params.reasoningLevel
+                )
                 if let ledger, let ledgerRunId {
                     let snapshot = IOSRunRequestSnapshot.make(
                         roundIndex: steps + 1,
@@ -411,18 +458,35 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                         )
                     }
                 }
+                let textCallback: (@Sendable (String) -> Void)?
+                let snapshotCallback: (@Sendable (UIMessage) -> Void)?
+                if configuration.fastFirstReasoning {
+                    if let onAssistantText {
+                        textCallback = { text in onAssistantText(IOSAssistantContinuationMarker.filteredText(text, final: false)) }
+                    } else { textCallback = nil }
+                    if let onAssistantMessageSnapshot {
+                        snapshotCallback = { message in
+                            onAssistantMessageSnapshot(IOSAssistantContinuationMarker.filteredMessage(message, final: false))
+                        }
+                    } else { snapshotCallback = nil }
+                } else {
+                    textCallback = onAssistantText
+                    snapshotCallback = onAssistantMessageSnapshot
+                }
                 chunk = try await providerStep.streamStep(
                     request: preparedRequest,
                     messages: requestMessages,
                     citationTracker: citationTracker,
                     onAssistantStage: onAssistantStage,
-                    onAssistantText: onAssistantText,
+                    onAssistantText: textCallback,
                     onAssistantReasoning: onAssistantReasoning,
-                    onAssistantMessageSnapshot: onAssistantMessageSnapshot
+                    onAssistantMessageSnapshot: snapshotCallback
                 )
             } catch let failure as StreamStepFailure {
                 let cancelled = failure.underlying is CancellationError || Task.isCancelled
                 if let assistant = failure.assistant {
+                    let assistant = configuration.fastFirstReasoning
+                        ? IOSAssistantContinuationMarker.filteredMessage(assistant, final: false) : assistant
                     let recorded = transcriptRequest.map {
                         PromptTranscript.shared.recordResponse(message: assistant, request: $0)
                     } ?? assistant
@@ -450,7 +514,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 return providerFailureResult(error, working: working, steps: steps, onMessagesUpdated: onMessagesUpdated)
             }
 
-            let rawAssistantMessage = assistantMessage(from: chunk)
+            let originalAssistantMessage = assistantMessage(from: chunk)
+            let requestsContinuation = isRouterRound && IOSAssistantContinuationMarker.contains(in: originalAssistantMessage)
+            let rawAssistantMessage = configuration.fastFirstReasoning
+                ? originalAssistantMessage.map { IOSAssistantContinuationMarker.filteredMessage($0, final: true) }
+                : originalAssistantMessage
             if Self.reachedOutputLimit(chunk) {
                 let recorded = rawAssistantMessage.map { message in
                     transcriptRequest.map { PromptTranscript.shared.recordResponse(message: message, request: $0) } ?? message
@@ -520,11 +588,26 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 )
             }
 
+            if isRouterRound {
+                let stages = IOSAssistantContinuationMarker.stages(in: originalAssistantMessage)
+                if !stages.isEmpty { await onAssistantProgressPlan?(stages) }
+            }
+
             // Only fresh pending tools remain in the retained assistant turn.
             // Completed echoes are removed without discarding concurrent text
             // or a different tool call emitted by the same provider response.
             let pendingTools = batchExecutor.pendingToolCalls(in: assistantMessage)
             if pendingTools.isEmpty {
+                if requestsContinuation, steps + 1 < configuration.maxSteps,
+                   let assistantMessage,
+                   assistantMessage.parts.contains(where: { part in
+                       guard let text = part as? UIMessagePart.Text else { return false }
+                       return !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                   }) {
+                    steps += 1
+                    continuationInstructionPending = true
+                    continue
+                }
                 let hasAssistantContent = assistantMessage?.parts.contains { part in
                     if let text = part as? UIMessagePart.Text {
                         return !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -811,6 +894,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 requestMessages = prepared.messages
                 transcriptRequest = prepared
             }
+            requestMessages = Self.ensuringToolCallReasoningForThinkingRequest(
+                in: requestMessages,
+                reasoningLevel: preparedRequest.params.reasoningLevel
+            )
             if let ledger, let ledgerRunId {
                 let snapshot = IOSRunRequestSnapshot.make(
                     roundIndex: stepsExecuted + 1,
@@ -1030,6 +1117,89 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     private static func reachedOutputLimit(_ chunk: MessageChunk) -> Bool {
         let reasons = Set(chunk.choices.compactMap { $0.finishReason?.lowercased() })
         return !reasons.isDisjoint(with: ["length", "max_tokens", "max_output_tokens"])
+    }
+
+    /// DeepSeek / Kimi / MiMo thinking mode (`reasoningLevel != .off`) requires every
+    /// assistant `tool_calls` message in the current turn to carry `reasoning_content`.
+    /// When Round 0 ran with `.off` for fast first-token response and emitted a tool call,
+    /// synthesize a request-only `UIMessagePart.Reasoning` before the tool group so
+    /// Round 1+ (`thinking: enabled`) never fails HTTP 400 while keeping `working` clean.
+    static func ensuringToolCallReasoningForThinkingRequest(
+        in messages: [UIMessage],
+        reasoningLevel: ReasoningLevel
+    ) -> [UIMessage] {
+        guard reasoningLevel != .off else { return messages }
+        var changed = false
+        var updated = messages
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(
+            epochMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+        for index in messages.indices {
+            let message = messages[index]
+            guard message.role == MessageRole.assistant,
+                  message.parts.contains(where: { $0 is UIMessagePart.Tool }) else { continue }
+            var newParts: [UIMessagePart] = []
+            newParts.reserveCapacity(message.parts.count + 1)
+            var segmentHasReasoning = false
+            var segmentTexts: [String] = []
+            var segmentStartIndex = 0
+            var messageModified = false
+            var inToolGroup = false
+            for part in message.parts {
+                if let tool = part as? UIMessagePart.Tool {
+                    if !inToolGroup {
+                        inToolGroup = true
+                        if !segmentHasReasoning {
+                            let fallbackText = segmentTexts
+                                .joined(separator: " ")
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            let reasoningText = fallbackText.isEmpty
+                                ? "调用工具：\(tool.toolName)"
+                                : fallbackText
+                            let synthetic = UIMessagePart.Reasoning(
+                                reasoning: reasoningText,
+                                createdAt: instant,
+                                finishedAt: instant,
+                                metadata: nil
+                            )
+                            newParts.insert(synthetic, at: segmentStartIndex)
+                            messageModified = true
+                        }
+                    }
+                    newParts.append(part)
+                } else {
+                    if inToolGroup {
+                        inToolGroup = false
+                        segmentHasReasoning = false
+                        segmentTexts.removeAll(keepingCapacity: true)
+                        segmentStartIndex = newParts.count
+                    }
+                    if let reasoning = part as? UIMessagePart.Reasoning,
+                       !reasoning.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        segmentHasReasoning = true
+                    } else if let text = part as? UIMessagePart.Text,
+                              !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        segmentTexts.append(text.text)
+                    }
+                    newParts.append(part)
+                }
+            }
+            if messageModified {
+                changed = true
+                updated[index] = UIMessage(
+                    id: message.id,
+                    role: message.role,
+                    parts: newParts,
+                    annotations: message.annotations,
+                    createdAt: message.createdAt,
+                    finishedAt: message.finishedAt,
+                    modelId: message.modelId,
+                    usage: message.usage,
+                    translation: message.translation
+                )
+            }
+        }
+        return changed ? updated : messages
     }
 
     /// Mirrors `ChatViewModel.nowLocalDateTime()` for KMP message construction.

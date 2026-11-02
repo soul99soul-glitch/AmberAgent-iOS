@@ -87,7 +87,8 @@ extension ChatView {
                             webMountController.sessionStore.hideCard(sessionId: record.id)
                             browserState.collapsedWebMountSessionId = nil
                             browserState.expandedWebMountSessionId = nil
-                        }
+                        },
+                        showsStatus: false
                     ) {
                         openWebMountSession(sessionId: record.id)
                     }
@@ -428,6 +429,8 @@ extension ChatView {
                             .allowsHitTesting(!collapsesComposerForDuetPanel)
                             .accessibilityHidden(collapsesComposerForDuetPanel)
 
+                            if !collapsesComposerForDuetPanel {
+                              ZStack(alignment: .center) {
                                 HStack {
                                     Button {
                                         openComposerModelSheet()
@@ -476,14 +479,11 @@ extension ChatView {
                                 }
                                 .padding(.horizontal, 2)
                                 .padding(.top, 10)
-                                // 常驻布局、只折叠高度：收键盘时整个 dock 随键盘下移，被移除的视图
-                                // 不跟随这段位移，会停在原地/往上飞。顶对齐折叠让它贴着输入行一起下沉并渐隐。
-                                .frame(height: (showsComposerMeta && !collapsesComposerForDuetPanel) ? nil : 0, alignment: .top)
-                                .opacity((showsComposerMeta && !collapsesComposerForDuetPanel) ? 1 : 0)
-                                .allowsHitTesting(showsComposerMeta && !collapsesComposerForDuetPanel)
-                                .accessibilityHidden(!(showsComposerMeta && !collapsesComposerForDuetPanel))
+                                .opacity(showsComposerMeta ? 1 : 0)
+                                .allowsHitTesting(showsComposerMeta)
+                                .accessibilityHidden(!showsComposerMeta)
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsComposerMeta)
 
-                                if !showsComposerMeta && !collapsesComposerForDuetPanel {
                                     AmberDuetBottomSwitcher(
                                         selectedTab: composerState.activeDuetTab,
                                         activeTaskCount: duetActiveTaskCount,
@@ -532,8 +532,12 @@ extension ChatView {
                                         }
                                     )
                                     .padding(.top, 8)
-                                    .transition(.opacity)
-                                }
+                                    .opacity(showsComposerMeta ? 0 : 1)
+                                    .allowsHitTesting(!showsComposerMeta)
+                                    .accessibilityHidden(showsComposerMeta)
+                                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsComposerMeta)
+                              }
+                            }
                         }
                 }
             }
@@ -567,7 +571,6 @@ extension ChatView {
                 .allowsHitTesting(false)
             }
         }
-        .animation(.spring(response: 0.26, dampingFraction: 0.86), value: showsComposerMeta)
         // 完成瞬间建议条插入会让 composer 长高一截：旧实现里转场动画只管建议条
         // 自己，时间轴可用高度一帧被吃掉 → 底部锚定内容跳一下。给建议条显隐加
         // 布局动画，高度连续变化，滚动层逐帧重锚，内容平滑上移。

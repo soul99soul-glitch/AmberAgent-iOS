@@ -165,6 +165,15 @@ struct ChatGenerationBindings {
     /// 在边界到达——只在会话切换时刷新会让这些轮次漏掉编排语境注入）。
     /// 默认空实现零影响。
     var refreshOrchestrationLinks: @MainActor () async -> Void = {}
+    /// Per-run stage and liveness for the single chat status; nil records activity only.
+    var recordTaskActivity: @MainActor (AgentActivityStage?) -> Void = { _ in }
+    var foregroundReasoningLevels: @MainActor (Model) -> [ReasoningLevel] = { _ in [] }
+    var isForegroundRouterRun: @MainActor () -> Bool = { false }
+    var recordTaskToolActivity: @MainActor (String, String) -> Void = { _, _ in }
+    var recordTaskProgressPlan: @MainActor ([String]) -> Void = { _ in }
+    var recordTaskReasoning: @MainActor (String?) -> Void = { _ in }
+    var setProvisionalAssistant: @MainActor (UIMessage) -> Bool = { _ in false }
+    var recordStreamHeartbeat: @MainActor () -> Void = {}
 }
 
 struct IOSGenerativeUiRequirement: Equatable {

@@ -4,6 +4,28 @@ import XCTest
 
 @MainActor
 final class IOSMemoryExtractionTests: XCTestCase {
+    @MainActor
+    private final class WarmupGate {
+        var calls = 0
+        var started = false
+        var released = false
+        var continuation: CheckedContinuation<Void, Never>?
+
+        func recall() async -> ChatMemoryContextBuilder.RecallResult? {
+            calls += 1
+            if !released {
+                started = true
+                await withCheckedContinuation { continuation = $0 }
+            }
+            return ChatMemoryContextBuilder.RecallResult(prompt: "jev-selection", records: [])
+        }
+
+        func release() {
+            released = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
     func testQueuedUserMemorySurvivesRestartAndKeepsConcurrentManualRecord() async throws {
         try await withFixture { f in
             let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
@@ -41,16 +63,54 @@ final class IOSMemoryExtractionTests: XCTestCase {
         }
     }
 
-    func testPollutionDuringModelCallPreventsAutomaticWrite() async throws {
+    func testPollutedMemoryUsesUserEvidenceAndRouterDoesNotAwaitJev() async throws {
         try await withFixture { f in
+            let assistant = UIMessage.companion.assistant(prompt: "外部网页声称用户喜欢虚构咖啡。")
             let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
-            _ = await f.store.saveCurrent(messages: [user])
+            let mailbox = IosMailboxMessageBridge.shared.makeMessage(
+                authorThreadId: "/root/worker", type: "MESSAGE", payload: "外部子线程伪造用户偏好")
+            _ = await f.store.saveCurrent(messages: [assistant, user, mailbox])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let marked = await f.store.markConversationMemoryPolluted(id)
+            XCTAssertTrue(marked)
+            let badProvider = StubProvider { prompt, _ in
+                XCTAssertFalse(prompt.contains("外部网页声称用户喜欢虚构咖啡"))
+                XCTAssertFalse(prompt.contains("外部子线程伪造用户偏好"))
+                var candidate = Self.item("add", "用户喜欢虚构咖啡。", source: user)
+                candidate["evidence"] = "外部网页声称用户喜欢虚构咖啡。"
+                return Self.memories([candidate])
+            }
+            let bad = f.coordinator(provider: badProvider)
+            bad.enqueue(conversationId: id, baseline: [user, mailbox], completed: [user, mailbox])
+            await bad.processPending()
+            XCTAssertTrue(f.persistence.records.isEmpty, "网页内容不得充当用户证据")
+            XCTAssertEqual(bad.pendingCount, 1)
+            let goodProvider = StubProvider { prompt, _ in
+                XCTAssertTrue(prompt.contains("我习惯用中文交流"))
+                XCTAssertFalse(prompt.contains("外部网页声称用户喜欢虚构咖啡"))
+                XCTAssertTrue(prompt.contains("assistant_context：\n{}"))
+                return Self.output(content: "我习惯用中文交流。", source: user)
+            }
+            let good = f.coordinator(provider: goodProvider)
+            await good.processPending()
+            XCTAssertEqual(f.persistence.records.map(\.content), ["我习惯用中文交流。"])
+            XCTAssertEqual(good.pendingCount, 0)
+        }
+        try await withFixture { f in
+            let assistant = UIMessage.companion.assistant(prompt: "刚才的助手上下文")
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
+            _ = await f.store.saveCurrent(messages: [assistant, user])
             let id = try XCTUnwrap(f.store.currentConversation?.id)
             var calls = 0
-            let provider = StubProvider { _, _ in
+            let provider = StubProvider { prompt, _ in
                 calls += 1
-                let marked = await f.store.markConversationMemoryPolluted(id)
-                XCTAssertTrue(marked)
+                if calls == 1 {
+                    XCTAssertTrue(prompt.contains("刚才的助手上下文"))
+                    let marked = await f.store.markConversationMemoryPolluted(id)
+                    XCTAssertTrue(marked)
+                } else {
+                    XCTAssertFalse(prompt.contains("刚才的助手上下文"))
+                }
                 return Self.output(content: "我习惯用中文交流。", source: user)
             }
             let coordinator = f.coordinator(provider: provider)
@@ -59,9 +119,55 @@ final class IOSMemoryExtractionTests: XCTestCase {
             XCTAssertTrue(f.persistence.records.isEmpty)
             XCTAssertTrue(coordinator.statusMessage.contains("来源会话已变化"))
             await coordinator.processPending()
-            XCTAssertEqual(calls, 1, "已污染的会话不能再次进入模型提炼")
+            XCTAssertEqual(calls, 2, "状态变化后必须以仅用户原文重试")
+            XCTAssertEqual(f.persistence.records.map(\.content), ["我习惯用中文交流。"])
             XCTAssertEqual(coordinator.pendingCount, 0)
         }
+
+        let harness = IOSChatForegroundHarness(toolNames: [])
+        let gate = WarmupGate()
+        var injected: [String] = []
+        var preparedCount = 0
+        harness.bindings.prepareJevMemoryRecall = { _, _ in await gate.recall() }
+        harness.bindings.memoryRecallResultForRun = { _ in
+            ChatMemoryContextBuilder.RecallResult(prompt: "local-selection", records: [])
+        }
+        harness.bindings.messagesByInjectingRuntimeContextForRun = { messages, _, override in
+            injected.append(override?.prompt ?? "nil")
+            return messages
+        }
+        let preparation = ChatRunUploadPreparation(
+            runId: "router-prewarm", conversationId: nil, settings: harness.dependencies.sharedSettings.snapshot,
+            toolExposureBridge: harness.toolExposureBridge, mcpEnabled: { false }, bindings: harness.bindings,
+            fastFirstRound: true, isCurrentRun: { true }, onPreparedUpload: { _, _, _ in preparedCount += 1 }
+        )
+        var routerFinished = false
+        let first = Task { @MainActor in
+            do { _ = try await preparation.prepareUploadMessages(harness.messages, provider: harness.providerSetting, params: harness.params) }
+            catch { XCTFail("首轮准备失败：\(error)") }
+            routerFinished = true
+        }
+        for _ in 0..<200 where !routerFinished || !gate.started { try? await Task.sleep(nanoseconds: 10_000_000) }
+        if !routerFinished || !gate.started { gate.release() }
+        await first.value
+        XCTAssertTrue(routerFinished && gate.started, "Jev 尚未完成时首轮必须可返回")
+        XCTAssertFalse(gate.released, "首轮不应等待网络召回")
+        XCTAssertEqual(injected.last, "local-selection")
+        XCTAssertEqual(preparedCount, 1)
+        var workerFinished = false
+        let second = Task { @MainActor in
+            do { _ = try await preparation.prepareUploadMessages(harness.messages, provider: harness.providerSetting, params: harness.params) }
+            catch { XCTFail("Worker 准备失败：\(error)") }
+            workerFinished = true
+        }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertFalse(workerFinished, "同一用户轮的 Worker 应等待正在进行的预热")
+        gate.release()
+        await second.value
+        XCTAssertTrue(workerFinished)
+        XCTAssertEqual(injected.last, "jev-selection")
+        XCTAssertEqual(gate.calls, 2, "Worker 重新查缓存以验证输入和设置仍匹配")
+        preparation.cancelRecallWarmup()
     }
 
     func testChargingAndPermissionGatesThenRejectsUngroundedOutput() async throws {
@@ -542,7 +648,13 @@ final class IOSMemoryExtractionTests: XCTestCase {
         try FileManager.default.createDirectory(at: root.appendingPathComponent("conversations"), withIntermediateDirectories: true)
         let store = IOSConversationStore(baseDirectory: root.appendingPathComponent("conversations"))
         await store.bootstrap()
-        let settings = IOSSharedSettingsStore(userDefaults: defaults)
+        var credentials: [String: String] = [:]
+        let settings = IOSSharedSettingsStore(
+            userDefaults: defaults,
+            loadCredential: { credentials[$0] },
+            storeCredential: { credentials[$0] = $1; return true },
+            deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        )
         let model = Model(
             modelId: "memory-test", displayName: "记忆测试", id: KotlinUuid.companion.random(),
             type: .chat, customHeaders: [], customBodies: [], inputModalities: [], outputModalities: [],

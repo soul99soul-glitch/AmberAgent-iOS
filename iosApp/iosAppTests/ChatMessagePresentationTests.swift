@@ -97,6 +97,16 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
         for _ in 0..<10 { coordinator.updateFocus(for: view) }
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(view.focusCalls, 1, "同一轮视图更新只需处理一次焦点")
+        let resignsBeforeFocusClear = view.resignCalls
+        focused = false
+        coordinator.updateFocus(for: view)
+        XCTAssertEqual(view.resignCalls, resignsBeforeFocusClear, "失焦应在 SwiftUI 更新栈之外执行")
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(view.resignCalls, resignsBeforeFocusClear + 1, "外部清除焦点必须释放第一响应者")
+        focused = true
+        coordinator.updateFocus(for: view)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(view.focusCalls, 2)
         coordinator.parent.isEnabled = false
         let previousResigns = view.resignCalls
         coordinator.updateFocus(for: view)
@@ -108,7 +118,7 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
         coordinator.updateFocus(for: view)
         controller.textView = nil
         try await Task.sleep(for: .milliseconds(30))
-        XCTAssertEqual(view.focusCalls, 1, "已拆除的输入框不能被排队操作重新聚焦")
+        XCTAssertEqual(view.focusCalls, 2, "已拆除的输入框不能被排队操作重新聚焦")
     }
 
     func testSuggestionStripReachesScreenEdgesAndDraftRemainsEditableAfterFilling() async throws {

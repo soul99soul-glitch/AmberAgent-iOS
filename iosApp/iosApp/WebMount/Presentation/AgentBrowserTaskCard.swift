@@ -7,6 +7,7 @@ struct AgentBrowserTaskCard: View {
     let record: IOSWebMountSessionRecord
     let onCollapse: (() -> Void)?
     let onHide: (() -> Void)?
+    let showsStatus: Bool
     let onOpen: () -> Void
 
     @GestureState private var dragTranslation: CGFloat = 0
@@ -16,11 +17,13 @@ struct AgentBrowserTaskCard: View {
         record: IOSWebMountSessionRecord,
         onCollapse: (() -> Void)? = nil,
         onHide: (() -> Void)? = nil,
+        showsStatus: Bool = true,
         onOpen: @escaping () -> Void
     ) {
         self.record = record
         self.onCollapse = onCollapse
         self.onHide = onHide
+        self.showsStatus = showsStatus
         self.onOpen = onOpen
     }
 
@@ -39,7 +42,7 @@ struct AgentBrowserTaskCard: View {
                 .padding(.leading, 54)
 
             HStack(spacing: 8) {
-                statusBadge
+                if showsStatus { statusBadge }
                 backendLabel
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -57,7 +60,7 @@ struct AgentBrowserTaskCard: View {
                 }
                 .buttonStyle(.plain)
                 .frame(minHeight: 44)
-                .accessibilityLabel("\(openLabel)，\(siteTitle)，\(status.label)")
+                .accessibilityLabel(showsStatus ? "\(openLabel)，\(siteTitle)，\(status.label)" : "\(openLabel)，\(siteTitle)")
             }
             .padding(.leading, 12)
             .padding(.trailing, 6)
@@ -219,6 +222,7 @@ struct AgentBrowserTaskCard: View {
 struct AgentBrowserTaskCompactBar: View {
     let record: IOSWebMountSessionRecord
     let runSummary: String?
+    var showsOnlyShortcut = false
     let onExpand: () -> Void
 
     @GestureState private var dragTranslation: CGFloat = 0
@@ -226,11 +230,11 @@ struct AgentBrowserTaskCompactBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: displayInfo.status.image)
+            Image(systemName: showsOnlyShortcut ? "globe" : displayInfo.status.image)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(displayInfo.status.tint)
+                .foregroundStyle(showsOnlyShortcut ? AmberTheme.muted : displayInfo.status.tint)
                 .frame(width: 22, height: 22)
-                .background(displayInfo.status.tint.opacity(0.12), in: Circle())
+                .background((showsOnlyShortcut ? AmberTheme.muted : displayInfo.status.tint).opacity(0.12), in: Circle())
 
             Text(summary)
                 .font(.footnote.weight(.medium))
@@ -281,7 +285,7 @@ struct AgentBrowserTaskCompactBar: View {
     }
 
     private var summary: String {
-        runSummary?.nilIfBlank ?? displayInfo.fallbackSummary
+        showsOnlyShortcut ? displayInfo.siteTitle : (runSummary?.nilIfBlank ?? displayInfo.fallbackSummary)
     }
 
     private var displayInfo: AgentBrowserTaskDisplayInfo {

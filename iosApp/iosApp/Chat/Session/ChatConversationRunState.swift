@@ -42,6 +42,7 @@ final class ChatConversationRunState {
     var steerQueueLoaded = true
     var selectedFollowupRunId: String?
     var liveTaskMessageIds: Set<String> = []
+    var liveTaskTailMessageIds: Set<String> = []
     var followupsByRunId: [String: [ChatLocalTaskFollowup]] = [:]
     @ObservationIgnored var isCommittingSteerQueue = false
     @ObservationIgnored var restoreSteerQueueAfterCommit = false

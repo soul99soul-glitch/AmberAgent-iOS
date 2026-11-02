@@ -91,6 +91,14 @@ extension ChatViewModel {
         // makeTextGenerationParams() before this runs — messages are only
         // injected inside a started run, after the bridge exists.
         var uploadableWithGuidance = uploadableMessages
+        if !state.isOrchestratedChild {
+        uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
+            name: "conversationalProgress",
+            text: """
+            对简单寒暄或一句话即可回答的问题，直接完整回答。对需要详述、深入分析或工具的请求，首轮只输出不超过 60 字的一两句，针对具体问题给出核心判断和下一步说明；要调用工具时在同轮调用，不要静默调用。若需要深入展开或分步处理，在首轮正文末尾附上 <amber-continue>阶段1|阶段2|阶段3</amber-continue>；写出 3 个与具体话题相关、各 6～14 字的思考方向，例如“梳理二人的交往|比较彼此的经历|分析他们的情谊”。这些只是思考方向，不要声称尚未发生的搜索或其他工具操作。无工具时随后结束本轮，有工具时仍须同轮调用。多轮有实质进展时可简短同步，最后单独给出结果。编排复杂后台子线程时，如目标模型支持，可为 spawn_agent 指定 reasoning_level: "high"。只陈述真实进展，不要声称尚未完成的操作已完成。仅在用户明确要求记住、修改、忘掉或查询记忆时调用 memory_tool；日常对话流露的信息由后台自动提炼，不必主动调用 memory_tool 打断对话。
+            """
+        )] + uploadableWithGuidance
+        }
         uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
             name: "scheduledWake", text: Self.scheduledWakeContextPrompt
         )] + uploadableWithGuidance

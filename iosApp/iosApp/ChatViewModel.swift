@@ -529,6 +529,7 @@ final class ChatViewModel {
     }
 
     var isGenerationActiveForCurrentConversation: Bool {
+        _ = runActivityRevision
         guard let currentConversationId else { return false }
         if currentRun.hasActiveOrQueuedTask {
             return true

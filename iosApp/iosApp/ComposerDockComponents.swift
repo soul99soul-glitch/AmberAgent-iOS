@@ -326,7 +326,7 @@ struct ComposerInputTextView: UIViewRepresentable {
 
         func updateFocus(for textView: UITextView) {
             let needsFocus = parent.isEnabled && parent.isFocused.wrappedValue && !textView.isFirstResponder
-            let needsResign = !parent.isEnabled && textView.isFirstResponder
+            let needsResign = (!parent.isEnabled || !parent.isFocused.wrappedValue) && textView.isFirstResponder
             guard needsFocus || needsResign, !focusUpdateScheduled else { return }
             focusUpdateScheduled = true
             // UIKit changes the responder chain synchronously. Doing that inside
@@ -336,7 +336,7 @@ struct ComposerInputTextView: UIViewRepresentable {
                 self.focusUpdateScheduled = false
                 guard let textView, self.controller.textView === textView,
                       textView.window != nil else { return }
-                if !self.parent.isEnabled, textView.isFirstResponder {
+                if (!self.parent.isEnabled || !self.parent.isFocused.wrappedValue), textView.isFirstResponder {
                     textView.resignFirstResponder()
                 } else if self.parent.isEnabled, self.parent.isFocused.wrappedValue,
                           !textView.isFirstResponder {

@@ -40,6 +40,9 @@ struct ChatView: View {
     /// 产物架索引的正文图片与生成式 UI 解析缓存；引用类型，命中与淘汰不触发视图刷新。
     @State var artifactContentCache = ConversationArtifactContentCache()
     @State private var artifactShelfDismissRevision = 0
+    @State private var failureNoticeToken = 0
+    @State private var showsTaskFailure = false
+    @State private var failureMessageID: String?
     @State private var dockTapRegions = ChatDockTapRegions()
     @State var artifactShelfStripHeight: CGFloat = 0
     @State private var messageEditDraft: ChatMessageEditDraft?
@@ -103,6 +106,7 @@ struct ChatView: View {
                         runSummary: viewModel.isGenerationActiveForCurrentConversation
                             ? chatListSummary.browserTaskTitleCandidate
                             : nil,
+                        showsOnlyShortcut: true,
                         onExpand: {
                             browserState.collapsedWebMountSessionId = nil
                             browserState.expandedWebMountSessionId = record.id
@@ -457,6 +461,15 @@ struct ChatView: View {
         }
         .onChange(of: viewModel.isGenerationActive) { _, _ in
             refreshChatListSummary()
+            syncIslandPresentation()
+        }
+        .onChange(of: viewModel.runActivityRevision) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
+        }
+        .onChange(of: viewModel.selectedFollowupRunId) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
         }
         .onChange(of: scenePhase) { _, _ in
             syncIslandPresentation()
@@ -574,18 +587,39 @@ struct ChatView: View {
     }
 
     private func handleMessageUpdateSignal(_ signal: ChatMessageUpdateSignal) {
-        refreshChatListSummary(
-            resetTitleSeed: signal.event == .conversationLoaded ||
-                signal.event == .conversationSwitched ||
-                signal.event == .branchChanged
-        )
+        if signal.event == .assistantStreamDelta {
+            refreshStreamingChatListSummary()
+        } else {
+            refreshChatListSummary(
+                resetTitleSeed: signal.event == .conversationLoaded ||
+                    signal.event == .conversationSwitched ||
+                    signal.event == .branchChanged
+            )
+        }
         // 后台内容若在本轮前台生成期间落盘,门控当时跳过且未消费;收尾时补查上屏。
         switch signal.event {
-        case .generationCompleted, .generationFailed, .generationCancelled:
+        case .generationFailed:
+            failureNoticeToken &+= 1
+            let token = failureNoticeToken
+            showsTaskFailure = true
+            failureMessageID = viewModel.messages.last(where: ChatViewModel.isLocalGenerationError)
+                .map(ChatMessageProjector.messageId(for:))
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, failureNoticeToken == token else { return }
+                showsTaskFailure = false
+            }
             handleBackgroundContentLanded()
+        case .generationCompleted, .generationCancelled:
+            handleBackgroundContentLanded()
+        case .conversationLoaded, .conversationSwitched, .branchChanged, .userMessageAppended:
+            failureNoticeToken &+= 1
+            showsTaskFailure = false
+            failureMessageID = nil
         default:
             break
         }
+        if signal.event != .assistantStreamDelta { syncIslandPresentation() }
     }
 
     private func handleComposerFocusStarted() {
@@ -737,12 +771,13 @@ struct ChatView: View {
 
     var topBar: some View {
         let generating = viewModel.isGenerationActive
+        let currentIslandState = topIslandState
         let recap = generating ? nil : currentRecap
         let recapLoading = !generating && (currentConversationIdString.map {
             conversationStore.recapGenerator.isLoading(for: $0)
         } ?? false)
         return ChatTopBarView(
-            presentation: islandPresentation ?? .idle(topIslandState),
+            presentation: islandPresentation ?? .idle(currentIslandState),
             conversationID: currentConversationIdString,
             hasMessages: chatListSummary.hasMessages,
             isGenerating: viewModel.isGenerationActive,
@@ -852,6 +887,15 @@ struct ChatView: View {
     }
 
     private func handleIslandTap(_ presentation: ChatIslandPresentation) {
+        if let record = displayedWebMountSession,
+           presentation.displayedState.toolID == "webmount:\(record.id)" {
+            openWebMountSession(sessionId: record.id)
+            return
+        }
+        if presentation.displayedState.kind == .tool {
+            isPresentingDuetTasks = true
+            return
+        }
         guard let conversationID = currentConversationIdString else { return }
         switch ChatIslandNavigation.target(
             for: presentation, conversationID: conversationID, messages: viewModel.messages,
@@ -884,6 +928,10 @@ struct ChatView: View {
     }
 
     var topIslandState: ChatActivityIslandState {
+        .conversationTitle(conversationTitleForIsland)
+    }
+
+    var timelineActivityState: ChatActivityIslandState {
         // 等待用户永远最先：审批/问答暂停时，岛同步停下来等。
         if viewModel.hasPendingUserGate {
             return ChatActivityIslandState.activity(
@@ -913,7 +961,109 @@ struct ChatView: View {
             )
         }
 
-        if let step = chatListSummary.activeToolStep {
+        if showsTaskFailure && viewModel.focusedActiveTask == nil {
+            return ChatActivityIslandState.activity(
+                kind: .waiting, title: IOSAppLocalization.string("任务未完成", defaultValue: "任务未完成"),
+                systemImage: "exclamationmark.circle", tint: .red
+            )
+        }
+
+        if let record = displayedWebMountSession {
+            let toolID = "webmount:\(record.id)"
+            if record.controlOwner == .user {
+                return .activity(kind: .awaitingUser,
+                                 title: IOSAppLocalization.string("浏览器等待你处理", defaultValue: "浏览器等待你处理"),
+                                 systemImage: "person.crop.circle.badge.exclamationmark", tint: .amber, toolID: toolID)
+            }
+            if viewModel.focusedActiveTask == nil && record.needsReopen {
+                return .activity(kind: .awaitingUser,
+                                 title: IOSAppLocalization.string("浏览器需要重新打开", defaultValue: "浏览器需要重新打开"),
+                                 systemImage: "arrow.clockwise", tint: .amber, toolID: toolID)
+            }
+            if viewModel.focusedActiveTask == nil && record.status == IOSWebMountRuntimeStatus.failed.rawValue {
+                return .activity(kind: .waiting,
+                                 title: IOSAppLocalization.string("浏览失败", defaultValue: "浏览失败"),
+                                 systemImage: "exclamationmark.triangle", tint: .red, toolID: toolID)
+            }
+        }
+
+        if viewModel.contextCompactState.isVisible && viewModel.contextCompactState.status != .completed {
+            let summary = viewModel.contextCompactState.summary
+            let title = summary.isEmpty ? "正在准备上下文" : compactIslandText(summary, limit: 18)
+            return ChatActivityIslandState.activity(
+                kind: .waiting,
+                title: title,
+                systemImage: "text.badge.checkmark", tint: .amber
+            )
+        }
+
+        if let task = viewModel.focusedActiveTask {
+            if task.isQueuedForConcurrencySlot {
+                return ChatActivityIslandState.activity(
+                    kind: .waiting, title: IOSAppLocalization.string("等待执行", defaultValue: "等待执行"),
+                    systemImage: "clock", tint: .amber
+                )
+            }
+            switch task.activityStage {
+            case .thinking:
+                return ChatActivityIslandState.activity(
+                    kind: .thinking, title: "正在思考",
+                    systemImage: "brain.head.profile", tint: .amber
+                )
+            case .generating:
+                return ChatActivityIslandState.activity(
+                    kind: .generating, title: IOSAppLocalization.string("正在整理回复", defaultValue: "正在整理回复"),
+                    systemImage: "text.bubble", tint: .accent
+                )
+            case .failed:
+                return ChatActivityIslandState.activity(
+                    kind: .waiting, title: IOSAppLocalization.string("任务未完成", defaultValue: "任务未完成"),
+                    systemImage: "exclamationmark.circle", tint: .red
+                )
+            case .runningTool:
+                if let title = task.activeToolTitle {
+                    return ChatActivityIslandState.activity(
+                        kind: .tool, title: title,
+                        systemImage: "wrench.and.screwdriver", tint: .amber
+                    )
+                }
+                if let step = chatListSummary.activeToolStep,
+                   task.activeToolName == nil || step.tool?.toolName == task.activeToolName {
+                    return ChatActivityIslandState.activity(
+                        kind: step.visualKind.isImageTool ? .image : .tool,
+                        title: compactIslandText(step.title, limit: 18),
+                        detail: step.detail.map { compactIslandText($0, limit: 20) },
+                        systemImage: step.systemImage, tint: islandTint(for: step), toolID: step.id
+                    )
+                }
+                if let name = task.activeToolName {
+                    return ChatActivityIslandState.activity(
+                        kind: .tool, title: ChatToolStepModel.friendlyToolTitle(name, executed: false),
+                        systemImage: "wrench.and.screwdriver", tint: .amber
+                    )
+                }
+                return ChatActivityIslandState.activity(
+                    kind: .waiting, title: IOSAppLocalization.string("正在执行工具", defaultValue: "正在执行工具"),
+                    systemImage: "wrench.and.screwdriver", tint: .amber
+                )
+            default:
+                let title = task.generatedMessages.contains(where: { $0.role == .assistant })
+                    ? "正在思考" : "正在准备"
+                return ChatActivityIslandState.activity(
+                    kind: .waiting, title: title,
+                    systemImage: "sparkles", tint: .amber
+                )
+            }
+        }
+
+        if let record = displayedWebMountSession,
+           record.controlOwner == .agent || record.status == IOSWebMountRuntimeStatus.loading.rawValue {
+            return .activity(kind: .tool,
+                             title: IOSAppLocalization.string("正在浏览网页", defaultValue: "正在浏览网页"), systemImage: "globe",
+                             tint: .amber, toolID: "webmount:\(record.id)")
+        }
+
+        if (viewModel.isGenerationActive || viewModel.isLoading), let step = chatListSummary.activeToolStep {
             return ChatActivityIslandState.activity(
                 kind: step.visualKind.isImageTool ? .image : .tool,
                 title: compactIslandText(step.title, limit: 18),
@@ -969,15 +1119,49 @@ struct ChatView: View {
         return .conversationTitle(conversationTitleForIsland)
     }
 
+    var currentTimelineActivity: ChatTimelineActivity? {
+        let presentation = timelineActivityState
+        guard presentation.isActive else { return nil }
+        let task = viewModel.focusedActiveTask
+        let assistant = task?.generatedMessages.last(where: { $0.role == .assistant })
+        guard let anchor = (showsTaskFailure && task == nil ? failureMessageID : nil)
+            ?? assistant.map(ChatMessageProjector.messageId(for:))
+            ?? task?.anchorUserMessageId ?? chatListSummary.lastMessageID else { return nil }
+        let tool: UIMessagePart.Tool?
+        if let step = chatListSummary.activeToolStep,
+           (presentation.kind == .tool || presentation.kind == .image),
+           task?.activeToolName == nil || task?.activeToolName == step.tool?.toolName {
+            tool = step.tool
+        } else {
+            tool = nil
+        }
+        let tracksTaskLiveness = task != nil && task?.isQueuedForConcurrencySlot == false &&
+            !viewModel.hasPendingUserGate && !viewModel.isBackgroundGenerationWaitingForForegroundResume &&
+            !(viewModel.contextCompactState.isVisible && viewModel.contextCompactState.status != .completed) &&
+            presentation.tint != .red
+        let showsThought = tracksTaskLiveness &&
+            (presentation.kind == .thinking || (presentation.kind == .waiting && presentation.title == "正在思考"))
+        return ChatTimelineActivity(anchorMessageID: anchor, hasAssistant: assistant != nil,
+                                    presentation: presentation, tool: tool, taskSlot: task,
+                                    plannedStages: task?.plannedActivityStages ?? [],
+                                    stagePlanStartedUptime: task?.stagePlanStartedUptime,
+                                    liveReasoningSummary: task?.liveReasoningSummary,
+                                    tracksTaskLiveness: tracksTaskLiveness, showsThought: showsThought)
+    }
+
     // MARK: - Message List
 
     private var messageList: some View {
         let _ = artifactPinHandler.action = pinArtifactSnippet
         return ChatTimelineSignalHost(viewModel: viewModel, onSignalChange: handleMessageUpdateSignal) { signal in
+            let timelineActivity = currentTimelineActivity
             NativeChatTimelineView(
                 signal: signal,
                 configurationIssue: configurationIssue,
                 isGenerationActive: viewModel.isGenerationActive,
+                liveTaskTailIDs: viewModel.currentRun.state.liveTaskTailMessageIds,
+                usesIndependentTasks: !viewModel.activeTaskRunIdsForCurrentConversation.isEmpty,
+                activity: timelineActivity,
                 isLoading: viewModel.isLoading,
                 isRecognizingImages: viewModel.isRecognizingImages,
                 contextCompactState: viewModel.contextCompactState,
@@ -1060,6 +1244,8 @@ struct ChatView: View {
             router.navigate(to: .miniApps)
         case let .openSubagentConversation(id):
             router.navigate(to: .subAgentConversation(id: id))
+        case let .openToolDetail(tool):
+            duetSelectedToolTarget = ToolDetailTarget(tool: tool)
         case .primaryConfiguration:
             openPrimaryConfigurationAction()
         case .modelDefaults:

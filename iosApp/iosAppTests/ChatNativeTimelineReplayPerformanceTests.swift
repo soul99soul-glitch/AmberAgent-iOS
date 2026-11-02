@@ -100,6 +100,8 @@ final class ChatNativeTimelineReplayPerformanceTests: ChatNativeTimelineReplayTe
         fixture.model.send(.toolCallStarted)
         XCTAssertTrue(pumpUntil(timeout: 5) { fixture.model.latestViewport.isAtBottom })
         pump(seconds: 0.3)
+        // Exclude the test host's own AppShell startup from the update measurement.
+        pump(seconds: 3)
         let probe = DisplayLinkGapProbe()
         probe.start()
         let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)

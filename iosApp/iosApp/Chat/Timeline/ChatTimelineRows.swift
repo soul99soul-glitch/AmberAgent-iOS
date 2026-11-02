@@ -81,6 +81,8 @@ struct ChatListMessageRenderModel {
     /// Set only on a phone-step group's head row.
     var phoneToolGroup: ChatPhoneToolGroupSummary? = nil
     var assistantTurn: ChatAssistantTurnRole? = nil
+    var isTaskLive = false
+    var usesIndependentTasks = false
 }
 
 struct NativeTimelineMessageBubble: View, @MainActor Equatable {
@@ -121,6 +123,8 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.model.renderIdentity == rhs.model.renderIdentity,
               lhs.model.phoneToolGroup?.signature == rhs.model.phoneToolGroup?.signature,
               lhs.model.assistantTurn == rhs.model.assistantTurn,
+              lhs.model.isTaskLive == rhs.model.isTaskLive,
+              lhs.model.usesIndependentTasks == rhs.model.usesIndependentTasks,
               lhs.displaySettingSignature == rhs.displaySettingSignature,
               lhs.generativeUiSettingSignature == rhs.generativeUiSettingSignature,
               lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID
@@ -136,7 +140,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
     }
 
     private var usesLiveTail: Bool {
-        model.liveTailModel != nil && model.renderState.liveRenderingEnabled
+        model.row.isLast && model.liveTailModel != nil && model.renderState.liveRenderingEnabled
     }
 }
 
@@ -197,9 +201,9 @@ private struct ChatMessageHostedBubble: View {
             onOpenMiniApp: { appId in onAction(.openMiniApp(appId: appId)) },
             onOpenMiniApps: { onAction(.openMiniApps) },
             onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) },
-            isGenerating: model.row.isLast && isGenerationActive,
+            isGenerating: (model.isTaskLive || (model.row.isLast && !model.usesIndependentTasks)) && isGenerationActive,
             isChatGenerationActive: isGenerationActive,
-            isLastMessage: model.row.isLast,
+            isLastMessage: model.row.isLast || model.isTaskLive,
             hasEverStreamed: renderState.hasEverStreamed,
             liveMarkdownRenderingEnabled: renderState.liveRenderingEnabled,
             frozenMarkdownSnapshot: renderState.frozenMarkdownSnapshot,

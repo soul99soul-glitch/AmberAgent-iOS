@@ -48,6 +48,16 @@ final class ChatAsyncTaskSlot {
     /// Assistant turns (and any consumed targeted follow-up user messages) produced by this task.
     var generatedMessages: [UIMessage] = []
     var generatedMessageIds: Set<String> = []
+    var lastSplicedTailIndex: Int?
+    var lastSplicedTailID: String?
+    var activityStage: AgentActivityStage = .preparing
+    var activeToolName: String?
+    var activeToolTitle: String?
+    var plannedActivityStages: [String] = []
+    var stagePlanStartedUptime: TimeInterval?
+    var liveReasoningSummary: String?
+    var reasoningSummaryUpdatedUptime: TimeInterval = 0
+    var lastActivityUptime = ProcessInfo.processInfo.systemUptime
 
     /// Placeholder message shown at this task's anchor position while waiting for a local concurrency slot.
     var queuedPlaceholderMessageId: String?
@@ -102,7 +112,7 @@ final class ChatAsyncTaskSlot {
 }
 
 extension ChatViewModel {
-    static let queuedTaskPlaceholderText = "排队中，等待前序任务完成后自动开始…"
+    nonisolated static let queuedTaskPlaceholderText = "排队中，等待前序任务完成后自动开始…"
 
     /// Explicit task selection for follow-up (`inputs`). When `nil`, plain composer messages start a new question.
     var selectedFollowupRunId: String? {
@@ -124,6 +134,16 @@ extension ChatViewModel {
         return currentRun.orderedSlots
             .filter(\.isActiveOrQueued)
             .map(\.runId)
+    }
+
+    var focusedActiveTask: ChatAsyncTaskSlot? {
+        _ = runActivityRevision
+        let slots = currentRun.orderedSlots.filter(\.isActiveOrQueued)
+        if let selected = selectedFollowupRunId,
+           let slot = slots.first(where: { $0.runId == selected || $0.slotId == selected }) {
+            return slot
+        }
+        return slots.last
     }
 
     func isTaskActiveOrQueued(runId: String) -> Bool {
@@ -276,8 +296,24 @@ extension ChatViewModel {
         } else {
             prefixSlice = allMessages[...]
         }
-        return prefixSlice.filter { msg in
-            !otherLiveIds.contains(ChatMessageProjector.messageId(for: msg))
+        return prefixSlice.compactMap { message -> UIMessage? in
+            guard !otherLiveIds.contains(ChatMessageProjector.messageId(for: message)) else { return nil }
+            guard message.role == MessageRole.assistant else { return message }
+            // This is a new task's upload snapshot. Keep the timeline and the
+            // current task's subsequent tool rounds untouched.
+            let visibleParts = message.parts.filter { part in
+                if let text = part as? UIMessagePart.Text {
+                    return !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                return part is UIMessagePart.Image || part is UIMessagePart.Video ||
+                    part is UIMessagePart.Audio || part is UIMessagePart.Document
+            }
+            guard !visibleParts.isEmpty else { return nil }
+            guard visibleParts.count != message.parts.count else { return message }
+            return UIMessage(id: message.id, role: message.role, parts: visibleParts,
+                             annotations: message.annotations, createdAt: message.createdAt,
+                             finishedAt: message.finishedAt, modelId: message.modelId,
+                             usage: message.usage, translation: message.translation)
         }
     }
 
@@ -331,16 +367,62 @@ extension ChatViewModel {
         slot.generatedMessageIds = Set(newGenerated.map { ChatMessageProjector.messageId(for: $0) })
         slot.currentTranscript = slot.baselineMessages + newGenerated
         state.messages = combined
+        slot.lastSplicedTailIndex = newGenerated.isEmpty ? nil : insertionIndex + newGenerated.count - 1
+        slot.lastSplicedTailID = newGenerated.last.map(ChatMessageProjector.messageId(for:))
         refreshLiveTaskMessageIds(in: runRegistry.current(for: state.conversationId))
+    }
+
+    /// Only provisional stream snapshots enter this path; authoritative snapshots
+    /// can change older messages and always use the full splice above.
+    func spliceTaskProvisionalAssistant(
+        _ message: UIMessage, for slot: ChatAsyncTaskSlot, into state: ChatConversationRunState
+    ) {
+        if let previous = slot.generatedMessages.last,
+           previous.id == message.id, previous.role == message.role,
+           slot.currentTranscript.last?.id == message.id {
+            let index: Int?
+            if let cached = slot.lastSplicedTailIndex, state.messages.indices.contains(cached),
+               state.messages[cached].id == message.id {
+                index = cached
+            } else {
+                index = state.messages.lastIndex(where: { $0.id == message.id })
+            }
+            if let index {
+                slot.currentTranscript[slot.currentTranscript.count - 1] = message
+                slot.generatedMessages[slot.generatedMessages.count - 1] = message
+                state.messages[index] = message
+                slot.lastSplicedTailIndex = index
+                if message.role == .assistant, slot.isActiveOrQueued, let id = slot.lastSplicedTailID,
+                   !state.liveTaskTailMessageIds.contains(id) {
+                    state.liveTaskTailMessageIds.insert(id)
+                }
+                return
+            }
+        }
+        var transcript = slot.currentTranscript
+        if transcript.last?.id == message.id {
+            transcript[transcript.count - 1] = message
+        } else if let index = transcript.firstIndex(where: { $0.id == message.id }) {
+            transcript[index] = message
+        } else {
+            transcript.append(message)
+        }
+        spliceTaskTranscript(transcript, for: slot, into: state)
     }
 
     func refreshLiveTaskMessageIds(in run: ChatConversationRun) {
         var liveIds = Set<String>()
+        var liveTailIds = Set<String>()
         for slot in run.orderedSlots where slot.isActiveOrQueued {
             liveIds.formUnion(slot.allOwnedMessageIds)
+            if let tail = slot.generatedMessages.last(where: { $0.role == MessageRole.assistant }) {
+                liveTailIds.insert(ChatMessageProjector.messageId(for: tail))
+            }
         }
-        run.state.liveTaskMessageIds = liveIds
-        run.state.isLoading = run.hasActiveOrQueuedTask
+        if run.state.liveTaskMessageIds != liveIds { run.state.liveTaskMessageIds = liveIds }
+        if run.state.liveTaskTailMessageIds != liveTailIds { run.state.liveTaskTailMessageIds = liveTailIds }
+        let loading = run.hasActiveOrQueuedTask
+        if run.state.isLoading != loading { run.state.isLoading = loading }
     }
 
     // MARK: - Local Concurrency Cap & Scheduling

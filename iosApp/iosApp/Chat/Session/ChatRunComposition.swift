@@ -359,6 +359,86 @@ extension ChatViewModel {
                 },
                 refreshOrchestrationLinks: { [weak self] in
                     await self?.refreshOrchestratedStatus(state: state)
+                },
+                recordTaskActivity: { [weak self, weak taskSlot] stage in
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    let wasStale = now - taskSlot.lastActivityUptime >= 30
+                    taskSlot.lastActivityUptime = now
+                    let stageChanged = stage.map { $0 != taskSlot.activityStage } ?? false
+                    let restartsPlan = stage == .preparing && !taskSlot.plannedActivityStages.isEmpty
+                    if let stage {
+                        if restartsPlan {
+                            taskSlot.stagePlanStartedUptime = now
+                        }
+                        taskSlot.activityStage = stage
+                        if stage != .runningTool {
+                            taskSlot.activeToolName = nil
+                            taskSlot.activeToolTitle = nil
+                        }
+                    }
+                    if (stageChanged || wasStale || restartsPlan), self.isCurrentConversation(state.conversationId) {
+                        self.runActivityRevision &+= 1
+                    }
+                },
+                foregroundReasoningLevels: { [weak self] model in
+                    guard let self, !state.isOrchestratedChild,
+                          self.sharedSettings.snapshot.findModelById(uuid: model.id) != nil else { return [] }
+                    return self.sharedSettings.subAgentReasoningLevels(modelId: model.id.toHexDashString())
+                },
+                isForegroundRouterRun: { !state.isOrchestratedChild },
+                recordTaskToolActivity: { [weak self, weak taskSlot] name, input in
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return }
+                    let title = ChatToolStepModel.activeProgressTitle(toolName: name, input: input)
+                    guard taskSlot.activeToolName != name || taskSlot.activeToolTitle != title else { return }
+                    taskSlot.activeToolName = name
+                    taskSlot.activeToolTitle = title
+                    if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
+                },
+                recordTaskProgressPlan: { [weak self, weak taskSlot] stages in
+                    guard let self, let taskSlot, !taskSlot.isTerminal, !stages.isEmpty,
+                          taskSlot.plannedActivityStages != stages else { return }
+                    taskSlot.plannedActivityStages = stages
+                    taskSlot.stagePlanStartedUptime = ProcessInfo.processInfo.systemUptime
+                    if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
+                },
+                recordTaskReasoning: { [weak self, weak taskSlot] reasoning in
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    var summary: String?
+                    if let reasoning, !reasoning.isEmpty {
+                        guard now - taskSlot.reasoningSummaryUpdatedUptime >= 1.8 else { return }
+                        let tail = String(reasoning.suffix(256))
+                        let sentence = tail.components(separatedBy: CharacterSet(charactersIn: "。！？!?\n，、：:;；"))
+                            .reversed().first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let isChinese = !sentence.isEmpty && sentence.unicodeScalars.allSatisfy {
+                            (0x3400...0x9FFF).contains($0.value) || CharacterSet.whitespaces.contains($0)
+                        }
+                        let sensitive = ["密码", "密碼", "口令", "密钥", "私钥", "令牌", "凭据", "秘密"]
+                            .contains(where: sentence.contains)
+                        if isChinese && !sensitive { summary = String(sentence.prefix(18)) }
+                        taskSlot.reasoningSummaryUpdatedUptime = now
+                    } else {
+                        taskSlot.reasoningSummaryUpdatedUptime = 0
+                    }
+                    if taskSlot.liveReasoningSummary != summary {
+                        taskSlot.liveReasoningSummary = summary
+                        if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
+                    }
+                },
+                setProvisionalAssistant: { [weak self, weak taskSlot] message in
+                    guard let self, let taskSlot else { return false }
+                    let structuralChange = taskSlot.generatedMessages.last?.id != message.id
+                    self.spliceTaskProvisionalAssistant(message, for: taskSlot, into: state)
+                    if structuralChange, self.isCurrentConversation(state.conversationId) {
+                        self.runActivityRevision &+= 1
+                    }
+                    return true
+                },
+                recordStreamHeartbeat: { [weak taskSlot] in
+                    guard let taskSlot, !taskSlot.isTerminal else { return }
+                    taskSlot.lastActivityUptime = ProcessInfo.processInfo.systemUptime
                 }
         )
     }

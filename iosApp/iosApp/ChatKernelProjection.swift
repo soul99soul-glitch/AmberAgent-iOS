@@ -26,6 +26,10 @@ final class ChatKernelProjection {
 
     func publishProvisionalAssistant(_ message: UIMessage) {
         provisionalAssistant = message
+        if bindings.setProvisionalAssistant(message) {
+            bindings.bumpMessageRevision(.streamDelta, 1)
+            return
+        }
         var messages = bindings.getMessages()
         if messages.last?.id == message.id {
             messages[messages.count - 1] = message

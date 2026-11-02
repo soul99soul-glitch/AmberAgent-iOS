@@ -4,6 +4,106 @@ import Shared
 import ChatLayout
 import Combine
 
+struct ChatTimelineActivity: Equatable {
+    let anchorMessageID: String
+    let hasAssistant: Bool
+    let presentation: ChatActivityIslandState
+    let tool: UIMessagePart.Tool?
+    let taskSlot: ChatAsyncTaskSlot?
+    let plannedStages: [String]
+    let stagePlanStartedUptime: TimeInterval?
+    let liveReasoningSummary: String?
+    let tracksTaskLiveness: Bool
+    let showsThought: Bool
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.anchorMessageID == rhs.anchorMessageID && lhs.hasAssistant == rhs.hasAssistant &&
+            lhs.presentation == rhs.presentation && lhs.tool === rhs.tool && lhs.taskSlot === rhs.taskSlot &&
+            lhs.plannedStages == rhs.plannedStages && lhs.stagePlanStartedUptime == rhs.stagePlanStartedUptime &&
+            lhs.liveReasoningSummary == rhs.liveReasoningSummary &&
+            lhs.tracksTaskLiveness == rhs.tracksTaskLiveness && lhs.showsThought == rhs.showsThought
+    }
+
+    static func thoughtTitle(stages: [String], start: TimeInterval?, summary: String?, at uptime: TimeInterval) -> String {
+        if !stages.isEmpty, let start {
+            let index = Int(max(0, uptime - start) / 1.8)
+            guard index > 0 else { return "正在思考" }
+            let stage = stages[min(index - 1, stages.count - 1)]
+            let direction = stage.hasPrefix("正在") ? String(stage.dropFirst(2)) : stage
+            return "正在思考 · \(direction)"
+        }
+        if let summary, !summary.isEmpty { return "正在思考 · \(summary)" }
+        return "正在思考"
+    }
+
+    @MainActor
+    func resolvedPresentation(at uptime: TimeInterval) -> ChatActivityIslandState {
+        if tracksTaskLiveness, let taskSlot, uptime - taskSlot.lastActivityUptime >= 30 {
+            return .activity(kind: .waiting, title: "等待响应", systemImage: "clock", tint: .amber)
+        }
+        guard showsThought else { return presentation }
+        return .activity(kind: presentation.kind,
+                         title: Self.thoughtTitle(stages: plannedStages, start: stagePlanStartedUptime,
+                                                  summary: liveReasoningSummary, at: uptime),
+                         detail: presentation.detail, systemImage: presentation.systemImage,
+                         tint: presentation.tint, toolID: presentation.toolID)
+    }
+}
+
+/// The clock belongs to the one visible status row, not the timeline or chat screen.
+private struct ChatTimelineActivityRowView: View {
+    let activity: ChatTimelineActivity
+    let showAgentName: Bool
+    let onAction: (ChatListAction) -> Void
+    @State private var now = ProcessInfo.processInfo.systemUptime
+
+    var body: some View {
+        let state = activity.resolvedPresentation(at: now)
+        Group {
+            if !activity.hasAssistant && state.kind != .awaitingUser && state.tint != .red {
+                ChatAssistantPendingResponseView { elapsed in
+                    if state.title == "正在准备" && elapsed >= 2 {
+                        return "正在等待模型响应 \(elapsed) 秒"
+                    }
+                    return state.title
+                }
+                .accessibilityIdentifier("chat.taskProgressLine")
+            } else {
+                let rollup: ChatTaskRollupState = state.kind == .awaitingUser ? .approvalPending(count: 1)
+                    : (state.tint == .red ? .needsAttention(failedCount: 1, totalCount: 1,
+                                                            failedToolTitle: state.title, reason: nil)
+                       : .working(currentStepTitle: state.title))
+                let segment = ChatTaskRunSegment(
+                    id: "global-status-\(activity.anchorMessageID)", messageID: activity.anchorMessageID,
+                    taskId: activity.anchorMessageID, agentDisplayName: "Amber", subAgentIdentity: nil,
+                    headline: state.title, subtitle: nil, rollupState: rollup,
+                    tools: activity.tool.map { [$0] } ?? [], steps: [], reasonings: [], mediaBearingTools: [],
+                    hidesCompletedStandaloneReasoning: false, deferToolDetails: true
+                )
+                if showAgentName {
+                    ChatAssistantStack {
+                        ChatAgentName()
+                        ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
+                                               onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
+                    }
+                } else {
+                    ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
+                                           onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
+                }
+            }
+        }
+        .task(id: activity.tracksTaskLiveness) {
+            guard activity.tracksTaskLiveness else { return }
+            now = ProcessInfo.processInfo.systemUptime
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1.8))
+                guard !Task.isCancelled else { return }
+                now = ProcessInfo.processInfo.systemUptime
+            }
+        }
+    }
+}
+
 /// Production Chat timeline. The native scroll driver owns normal bottom-follow;
 /// SwiftUI takes over only after an explicit driver fallback.
 struct NativeChatTimelineView: View {
@@ -11,6 +111,9 @@ struct NativeChatTimelineView: View {
     var signal: ChatMessageUpdateSignal
     var configurationIssue: ChatConfigurationIssue?
     var isGenerationActive: Bool
+    var liveTaskTailIDs: Set<String> = []
+    var usesIndependentTasks = false
+    var activity: ChatTimelineActivity? = nil
     var isLoading: Bool
     var isRecognizingImages: Bool
     var contextCompactState: ChatContextCompactState
@@ -101,6 +204,7 @@ struct NativeChatTimelineView: View {
             renderStateRevision: renderStateRevision,
             reasoningLevelLabel: reasoningLevelLabel,
             streamedMessageIDs: effectiveStreamedMessageIDs,
+            liveTaskTailIDs: liveTaskTailIDs,
             renderStateStore: renderStateStore,
             variantInfoProvider: variantInfoProvider,
             expandedPhoneToolGroupIDs: expandedPhoneToolGroupIDs
@@ -110,6 +214,9 @@ struct NativeChatTimelineView: View {
                 : contentHashCache.contentHash(for: row)
         }
         let firstHistoryEntryID = projection.entries.first(where: { $0.kind == .message })?.id
+        let hasActivityAnchor = activity.map { status in
+            projection.entries.contains { $0.messageId == status.anchorMessageID }
+        } ?? true
         ScrollViewReader { historyScrollProxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -126,9 +233,15 @@ struct NativeChatTimelineView: View {
                     // keeps the existing live-tail and bottom-follow geometry stable.
                     ForEach(projection.entries) { entry in
                         let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
-                        // Collapsed phone-step members occupy no space; the group head is the row.
+                        let activityHere = entry.messageId != nil && entry.messageId == activity?.anchorMessageID
+                        let statusReplacesEntry = activityHere && entry.isGlobalStatusOnly
+                        let isHiddenStatus = (entry.isGlobalStatusOnly && !statusReplacesEntry) || entry.kind == .pendingAssistant ||
+                            entry.kind == .visionRecognition ||
+                            (entry.kind == .contextMarker &&
+                             (entry.compactState ?? contextCompactState).status != .completed)
+                        // Hidden status-only entries must not leave per-task gaps in the timeline.
                         let topSpacing: CGFloat = entry.id == projection.entries.first?.id ||
-                            entry.isCollapsedGroupMember ? 0 : (
+                            isHiddenStatus ? 0 : (
                             entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
                         )
                         if isHistoryBoundary {
@@ -154,12 +267,27 @@ struct NativeChatTimelineView: View {
                                 }
                                 .padding(.top, topSpacing)
                         }
-                        entryView(
-                            entry,
-                            displaySettingSignature: displaySettingSignature,
-                            generativeUiSettingSignature: generativeUiSettingSignature
-                        )
+                        if entry.kind == .bottomAnchor, let activity, !hasActivityAnchor {
+                            ChatTimelineActivityRowView(activity: activity, showAgentName: true, onAction: onAction)
+                                .padding(.top, ChatLayout.assistantPartSpacing)
+                        }
+                        Group {
+                            if let activity, statusReplacesEntry {
+                                ChatTimelineActivityRowView(activity: activity, showAgentName: !entry.isAssistantContinuation, onAction: onAction)
+                                    .id(entry.id)
+                            } else {
+                                entryView(
+                                    entry,
+                                    displaySettingSignature: displaySettingSignature,
+                                    generativeUiSettingSignature: generativeUiSettingSignature
+                                )
+                            }
+                        }
                         .padding(.top, isHistoryBoundary ? 0 : topSpacing)
+                        if let activity, activityHere, !statusReplacesEntry {
+                            ChatTimelineActivityRowView(activity: activity, showAgentName: false, onAction: onAction)
+                                .padding(.top, ChatLayout.assistantPartSpacing)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -734,9 +862,8 @@ struct NativeChatTimelineView: View {
                 )
             }
         case .message:
-            if entry.isCollapsedGroupMember, let messageId = entry.messageId {
-                // Collapsed phone-step member: its head row renders the group. Keep the
-                // entry identity and tail-visibility bookkeeping, build no bubble.
+            if entry.isGlobalStatusOnly, let messageId = entry.messageId {
+                // Keep status-only entries as invisible anchors; media and text remain visible.
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: 0)
                     .frame(height: 0)
@@ -829,13 +956,14 @@ struct NativeChatTimelineView: View {
                 }
             }
         case .pendingAssistant:
-            ChatAssistantPendingResponseView()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .chatLiveEntrance(key: "pending:\(entry.id)", isLive: true)
+            EmptyView()
         case .visionRecognition:
-            VisionRecognitionIndicator()
+            EmptyView()
         case .contextMarker:
-            ContextCompactTimelineMarker(state: entry.compactState ?? contextCompactState)
+            let state = entry.compactState ?? contextCompactState
+            if state.status == .completed {
+                ContextCompactTimelineMarker(state: state)
+            }
         case .bottomAnchor:
             Color.clear
                 .frame(height: ChatLayout.bottomRestGap)
@@ -866,7 +994,8 @@ struct NativeChatTimelineView: View {
         )
         let renderState = entry.renderState ?? renderStateStore.stateForRow(
             row,
-            isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom
+            isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom,
+            isLiveTask: entry.isTaskLive
         )
         let liveTailModel = nativeLiveTailModelIfNeeded(row: row, renderState: renderState)
         return ChatListMessageRenderModel(
@@ -877,7 +1006,9 @@ struct NativeChatTimelineView: View {
             renderIdentity: ChatListSnapshotBuilder.renderIdentityForRow(row, renderState: renderState),
             liveTailModel: liveTailModel,
             phoneToolGroup: entry.phoneToolGroup?.headSummary,
-            assistantTurn: entry.assistantTurn
+            assistantTurn: entry.assistantTurn,
+            isTaskLive: entry.isTaskLive,
+            usesIndependentTasks: usesIndependentTasks
         )
     }
 
@@ -941,9 +1072,11 @@ struct NativeChatTimelineView: View {
             projectionCache.reset()
             nativeStreamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
         }
+        streamedMessageIDs.formUnion(liveTaskTailIDs)
         if event == .assistantStreamDelta,
            let last = messages.last(where: ChatMessageProjector.isConversationMessage),
-           last.role == MessageRole.assistant {
+           last.role == MessageRole.assistant,
+           (!usesIndependentTasks || liveTaskTailIDs.contains(ChatMessageProjector.messageId(for: last))) {
             streamedMessageIDs.insert(ChatMessageProjector.messageId(for: last))
         } else {
             let currentIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
@@ -961,8 +1094,9 @@ struct NativeChatTimelineView: View {
     private func effectiveStreamedMessageIDsForRender(event: ChatEvent, messages: [UIMessage]) -> Set<String> {
         if event == .assistantStreamDelta,
            let last = messages.last(where: ChatMessageProjector.isConversationMessage),
-           last.role == MessageRole.assistant {
-            var next = streamedMessageIDs
+           last.role == MessageRole.assistant,
+           (!usesIndependentTasks || liveTaskTailIDs.contains(ChatMessageProjector.messageId(for: last))) {
+            var next = streamedMessageIDs.union(liveTaskTailIDs)
             next.insert(ChatMessageProjector.messageId(for: last))
             return next
         }
@@ -970,7 +1104,7 @@ struct NativeChatTimelineView: View {
             previous: streamedMessageIDs,
             event: event,
             messages: messages
-        )
+        ).union(liveTaskTailIDs)
     }
 
     private func isNativeMeasuredNearBottom(_ geometry: ChatSwiftUIScrollGeometry) -> Bool {
@@ -1026,6 +1160,7 @@ struct NativeChatTimelineView: View {
         else { return }
         let message = indexedMessage.element
         let messageID = ChatMessageProjector.messageId(for: message)
+        guard !usesIndependentTasks || liveTaskTailIDs.contains(messageID) else { return }
         let isLast = indexedMessage.offset == messages.lastIndex(where: ChatMessageProjector.isVisibleInTimeline)
         let isStreaming = signal.event == .assistantStreamDelta && isLast
         let row = ChatMessageRowModel(

@@ -62,7 +62,8 @@ final class ChatRenderStateStore {
         liveTailModelsByMessageID[messageID]
     }
 
-    func stateForRow(_ row: ChatMessageRowModel, isLiveRenderingFarFromBottom: Bool) -> ChatRenderState {
+    func stateForRow(_ row: ChatMessageRowModel, isLiveRenderingFarFromBottom: Bool,
+                     isLiveTask: Bool = false) -> ChatRenderState {
         let renderer: ChatTimelineRendererKind = row.role == MessageRole.assistant && (row.hasEverStreamed || row.isStreaming)
             ? .streamingAssistantMarkdown
             : (row.role == MessageRole.user ? .user : .staticAssistantMarkdown)
@@ -81,11 +82,13 @@ final class ChatRenderStateStore {
                 renderToken: row.messageId,
                 isAssistantContinuation: row.isAssistantContinuation
             ),
-            isLiveRenderingFarFromBottom: isLiveRenderingFarFromBottom
+            isLiveRenderingFarFromBottom: isLiveRenderingFarFromBottom,
+            isLiveTask: isLiveTask
         )
     }
 
-    func stateForEntry(_ entry: ChatTimelineMessageEntry, isLiveRenderingFarFromBottom: Bool) -> ChatRenderState {
+    func stateForEntry(_ entry: ChatTimelineMessageEntry, isLiveRenderingFarFromBottom: Bool,
+                       isLiveTask: Bool = false) -> ChatRenderState {
         let row = entry.rowModel
         guard entry.renderer == .streamingAssistantMarkdown else {
             return ChatRenderState(
@@ -97,7 +100,7 @@ final class ChatRenderStateStore {
         }
 
         let frozen = frozenMessageIDs.contains(row.messageId)
-        let live = row.isLast &&
+        let live = (row.isLast || isLiveTask) &&
             row.role == MessageRole.assistant &&
             !isLiveRenderingFarFromBottom &&
             !frozen

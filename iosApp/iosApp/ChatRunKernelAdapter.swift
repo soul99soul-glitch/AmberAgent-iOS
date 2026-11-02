@@ -62,6 +62,7 @@ final class ChatRunKernelAdapter {
         /// B2 流式投影:引擎回调的 MainActor 转递(取消后一律忽略)。
         var onAssistantTurnStarted: () -> Void = {}
         var onAssistantTurnCompleted: ([UIMessage]) -> Bool = { _ in true }
+        var onAssistantProgressPlan: ([String]) -> Void = { _ in }
         var onToolExecutionStarted: (String, String) -> Void = { _, _ in }
         var onAssistantStage: (AgentActivityStage) -> Void = { _ in }
         /// Optional so a Host that only needs first-visible progress does not
@@ -99,6 +100,9 @@ final class ChatRunKernelAdapter {
         var executionPolicy: IOSExecutionPolicySnapshot? = nil
         var phoneAutomaticReasoning: Bool = false
         var phoneControl: IOSPhoneControlController? = nil
+        var fastFirstReasoning: Bool = false
+        var routerReasoningName: String? = "OFF"
+        var workerReasoningName: String? = nil
         /// CGC `maxToolResumeCount` 语义:每个工具轮消耗 1,耗尽拒执。
         let maxToolResumeCount: Int
         /// 首轮头 steer 消费(CG-C startStreaming :2141 同款位置)之后的轮边界
@@ -255,6 +259,7 @@ final class ChatRunKernelAdapter {
         let hasAssistantReasoningCallback = callbacks.onAssistantReasoning != nil
         let hasFirstVisibleDeltaCallback = callbacks.onAssistantFirstVisibleDelta != nil
 
+        var firstEngineRun = true
         while true {
             if isStoppedByHost { return working }
             // Approval finishers (notably recipe_import) complete outside the
@@ -286,7 +291,11 @@ final class ChatRunKernelAdapter {
                     // 预算由准入钩子精确承担;maxSteps 只是防失控兜底——
                     // 预算内工具轮 + 一次超额轮(准入拒执)必须都放得下。
                     maxSteps: request.maxToolResumeCount + 2,
-                    honorApprovalPause: true
+                    honorApprovalPause: true,
+                    fastFirstReasoning: request.fastFirstReasoning,
+                    routerReasoningName: request.routerReasoningName,
+                    workerReasoningName: request.workerReasoningName,
+                    resumesWorker: !firstEngineRun
                 ),
                 ledger: ledger,
                 ledgerRunId: request.runId,
@@ -315,6 +324,7 @@ final class ChatRunKernelAdapter {
                     return rebuilt
                 }
             )
+            firstEngineRun = false
 
             // 引擎段由驱动子任务承载:Host 取消只取消该子任务(协作式——
             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
@@ -413,6 +423,10 @@ final class ChatRunKernelAdapter {
                             }
                             return self.callbacks.onAssistantTurnCompleted(box.value)
                         }
+                    },
+                    onAssistantProgressPlan: { [weak self] stages in
+                        guard let self, !self.isStoppedByHost else { return }
+                        self.callbacks.onAssistantProgressPlan(stages)
                     },
                     onToolExecutionStarted: { [weak self] toolName, input in
                         guard let self, !self.isStoppedByHost else { return }

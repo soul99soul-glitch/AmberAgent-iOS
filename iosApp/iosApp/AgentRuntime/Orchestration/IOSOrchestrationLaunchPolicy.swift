@@ -253,6 +253,7 @@ final class IOSOrchestrationLaunchPolicy {
         } else if let selectedPoolCandidate {
             let configured = selectedPoolCandidate.configuredReasoning
             reasoning = configured.flatMap { supportedReasoning.contains($0) ? $0 : nil }
+                ?? savedOverride?.reasoningLevel
                 ?? modelPool.defaultReasoning(for: selectedPoolCandidate)
         } else if let inheritedReasoning = inheritedBase?.reasoningLevel,
                   let parsed = Self.reasoningLevel(named: inheritedReasoning) {
@@ -260,7 +261,7 @@ final class IOSOrchestrationLaunchPolicy {
         } else if let savedReasoning = savedOverride?.reasoningLevel {
             reasoning = savedReasoning
         } else {
-            reasoning = params.reasoningLevel
+            reasoning = IOSSubAgentModelPool.preferredReasoning(in: supportedReasoning, fallback: params.reasoningLevel)
         }
         if let selectedPoolCandidate {
             modelReservation = modelPool.reserve(selectedPoolCandidate)

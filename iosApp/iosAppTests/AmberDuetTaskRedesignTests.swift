@@ -48,6 +48,43 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         )
     }
 
+    func testUnknownToolOutcomeCacheTracksExactOutputSnapshot() {
+        func tool(_ texts: [String]) -> UIMessagePart.Tool {
+            UIMessagePart.Tool(toolCallId: "same-call", toolName: "search_web", input: "{}",
+                output: texts.map { UIMessagePart.Text(text: $0, metadata: nil) },
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        }
+        func state(_ tool: UIMessagePart.Tool) -> ChatTaskRollupState {
+            ChatTaskStreamGrouping.computeRollupState(tools: [tool], steps: [ChatToolStepModel(tool: tool)],
+                                                     reasonings: [], isGeneratingTail: false)
+        }
+        let unknown = tool([#"{"status": "#, #""UNKNOWN"}"#])
+        guard case .needsAttention = state(unknown) else { return XCTFail("split unknown output must stay visible") }
+        guard case .needsAttention = state(unknown) else { return XCTFail("cached unknown output must stay visible") }
+        XCTAssertEqual(state(tool([#"{"status":"completed"}"#])), .completed(stepCount: 1))
+        XCTAssertEqual(state(tool([#"{"status":"unknown"}"#, #"{"status":"completed"}"#])),
+                       .completed(stepCount: 1), "two separate JSON documents are not one joined JSON result")
+    }
+
+    func testToolStepCacheTracksSameCallStatusReplacements() {
+        let cache = ChatTaskToolStepCache()
+        let snapshots = [
+            makeTool(id: "same-call", name: "terminal_execute"),
+            makeTool(id: "same-call", name: "terminal_execute", outputJSON: #"{"ok":true,"status":"completed","stdout":"done"}"#),
+            makeTool(id: "same-call", name: "terminal_execute", outputJSON: #"{"ok":false,"status":"failed","error":"denied"}"#)
+        ]
+        for tool in snapshots {
+            cache.prepare(tools: [tool], languageKey: "test")
+            let expected = ChatToolStepModel(tool: tool)
+            for _ in 0..<2 {
+                let actual = cache.step(for: tool)
+                XCTAssertEqual(actual.state, expected.state)
+                XCTAssertEqual(actual.title, expected.title)
+                XCTAssertEqual(actual.detail, expected.detail)
+            }
+        }
+    }
+
     func testTaskCountCacheMatchesFullProjectionAcrossStreamingAndBackfills() {
         let cache = ChatTaskCountCache()
         let failed = makeAssistantMessage(parts: [makeTool(

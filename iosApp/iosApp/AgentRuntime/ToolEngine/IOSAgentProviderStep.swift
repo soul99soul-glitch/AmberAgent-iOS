@@ -14,7 +14,7 @@ private final class StreamStepState: @unchecked Sendable {
     }
 
     let accumulator: MessageStreamAccumulator
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private var assistantText = ""
     private var assistantReasoning = ""
     private var assistantStage: AgentActivityStage?
@@ -23,7 +23,9 @@ private final class StreamStepState: @unchecked Sendable {
     private var job: Kotlinx_coroutines_coreJob?
     private var cancellationRequested = false
     private var resumed = false
-    private var lastAssistantSnapshotAt: ContinuousClock.Instant?
+    private var lastAssistantSnapshotAt: UInt64?
+    private var pendingSnapshotVersion: UInt64 = 0
+    private var snapshotFlushScheduled = false
 
     init(accumulator: MessageStreamAccumulator) { self.accumulator = accumulator }
 
@@ -43,17 +45,46 @@ private final class StreamStepState: @unchecked Sendable {
         return last
     }
 
-    /// B2 provisional 快照的推送节流(前台内核路径专属;hook 为 nil 的后台/
-    /// 子代理流根本不调 snapshot——O(n²) 红线由
-    /// testStreamingAssistantTextDoesNotSnapshotOnEveryChunk 钉住)。
-    /// 认领即盖章:同一窗口内的后续 chunk 不再快照。
-    func claimAssistantSnapshotPublish(minimumInterval: Duration) -> Bool {
+    /// Coalesce rapid chunks, but publish the last chunk even when the stream pauses.
+    /// The lock also orders the trailing callback before completion or cancellation.
+    func publishAssistantSnapshot(hook: @escaping @Sendable (UIMessage) -> Void,
+                                  minimumInterval: UInt64) {
         lock.lock()
         defer { lock.unlock() }
-        let now = ContinuousClock.now
-        if let last = lastAssistantSnapshotAt, now < last + minimumInterval { return false }
-        lastAssistantSnapshotAt = now
-        return true
+        guard !resumed, !cancellationRequested else { return }
+        let now = DispatchTime.now().uptimeNanoseconds
+        let due = (lastAssistantSnapshotAt ?? 0) &+ minimumInterval
+        if lastAssistantSnapshotAt == nil || now >= due {
+            pendingSnapshotVersion &+= 1
+            snapshotFlushScheduled = false
+            lastAssistantSnapshotAt = now
+            if let last = accumulator.snapshot().last, last.role == MessageRole.assistant {
+                hook(last)
+            }
+        } else if !snapshotFlushScheduled {
+            snapshotFlushScheduled = true
+            pendingSnapshotVersion &+= 1
+            let version = pendingSnapshotVersion
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + .nanoseconds(Int(due - now))
+            ) { [self] in
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed, !cancellationRequested, snapshotFlushScheduled,
+                      version == pendingSnapshotVersion else { return }
+                snapshotFlushScheduled = false
+                lastAssistantSnapshotAt = DispatchTime.now().uptimeNanoseconds
+                if let last = accumulator.snapshot().last, last.role == MessageRole.assistant {
+                    hook(last)
+                }
+            }
+        }
+    }
+
+    func finishWithoutContinuation() {
+        lock.lock()
+        resumed = true
+        lock.unlock()
     }
 
     func appendAssistantDelta(
@@ -240,7 +271,7 @@ struct IOSAgentProviderStep: Sendable {
         self.provider = provider
     }
 
-    private static let assistantSnapshotPublishInterval: Duration = .milliseconds(48)
+    private static let assistantSnapshotPublishInterval: UInt64 = 48_000_000
 
     enum PreparedStepMode {
         #if os(iOS)
@@ -293,10 +324,8 @@ struct IOSAgentProviderStep: Sendable {
         state: StreamStepState,
         hook: (@Sendable (UIMessage) -> Void)?
     ) {
-        guard let hook,
-              state.claimAssistantSnapshotPublish(minimumInterval: assistantSnapshotPublishInterval),
-              let provisional = state.assistantSnapshot() else { return }
-        hook(provisional)
+        guard let hook else { return }
+        state.publishAssistantSnapshot(hook: hook, minimumInterval: assistantSnapshotPublishInterval)
     }
 
     /// Streams one model turn, accumulating chunks via the shared (500-fixed)
@@ -520,6 +549,7 @@ struct IOSAgentProviderStep: Sendable {
             state.cancel()
             throw StreamStepFailure(underlying: error, assistant: state.assistantSnapshot())
         }
+        state.finishWithoutContinuation()
         let last = state.assistantSnapshot()
         let finalMessage: UIMessage = last?.role == MessageRole.assistant
             ? last!
@@ -605,6 +635,7 @@ struct IOSAgentProviderStep: Sendable {
             state.cancel()
             throw StreamStepFailure(underlying: error, assistant: state.assistantSnapshot())
         }
+        state.finishWithoutContinuation()
         let last = state.assistantSnapshot()
         let finalMessage: UIMessage = (last?.role == MessageRole.assistant) ? last! : Self.emptyAssistant()
         return MessageChunk(

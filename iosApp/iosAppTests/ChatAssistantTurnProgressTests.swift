@@ -8,6 +8,37 @@ import Shared
 final class ChatAssistantTurnProgressTests: ChatNativeTimelineReplayTestCase {
     private let doneJSON = #"{"ok":true,"status":"completed"}"#
 
+    func testFirstVisibleAssistantAfterHiddenStatusKeepsHeader() throws {
+        let user = UIMessage.companion.user(prompt: "查资料")
+        let status = assistant([reasoning("分析")])
+        let answer = assistant([text("我先查资料。")])
+        let next = assistant([text("这是结果。")])
+        let messages = [user, status, answer, next]
+        let rows = entries(messages, generating: true)
+        let answerRow = try XCTUnwrap(rows.first { $0.messageId == ChatMessageProjector.messageId(for: answer) })
+        XCTAssertFalse(answerRow.isAssistantContinuation)
+        let nextRow = try XCTUnwrap(rows.first { $0.messageId == ChatMessageProjector.messageId(for: next) })
+        XCTAssertTrue(nextRow.isAssistantContinuation)
+    }
+
+    func testConcurrentStatusOnlyMessagesDoNotCreateTimelineStatusRows() throws {
+        let acknowledgement = assistant([text("我先搜索今天的新闻。")])
+        let a = assistant([reasoning("分析 A")])
+        let b = assistant([tool("b", "search_web")])
+        let reply = assistant([text("B 的结果")])
+        let messages = [UIMessage.companion.user(prompt: "A"), acknowledgement, a,
+                        UIMessage.companion.user(prompt: "B"), b, reply]
+        let rows = entries(messages, generating: true)
+        for message in [a, b] {
+            let row = try XCTUnwrap(rows.first { $0.messageId == ChatMessageProjector.messageId(for: message) })
+            XCTAssertTrue(row.isGlobalStatusOnly)
+        }
+        for message in [acknowledgement, reply] {
+            let row = try XCTUnwrap(rows.first { $0.messageId == ChatMessageProjector.messageId(for: message) })
+            XCTAssertFalse(row.isGlobalStatusOnly, "普通助手内容仍显示")
+        }
+    }
+
     private func tool(
         _ id: String, _ name: String, result: String? = nil,
         approval: ToolApprovalState = ToolApprovalState.Auto.shared
@@ -121,6 +152,83 @@ final class ChatAssistantTurnProgressTests: ChatNativeTimelineReplayTestCase {
 
         let interrupted = try line([user, done, assistant([tool("b", "scrape_web")])], generating: false)
         XCTAssertEqual(interrupted.rollupState, .cancelled)
+    }
+
+    func testEarlierToolBackfillAndMetadataInvalidateTurnHead() throws {
+        let cache = NativeTimelineProjectionCache()
+        let hashes = ChatRowContentHashCache()
+        let renderStore = ChatRenderStateStore()
+        let first = assistant([tool("first", "search_web", result: doneJSON)])
+        let second = assistant([tool("second", "scrape_web", result: doneJSON)])
+        let last = assistant([tool("last", "workspace_file_list", result: doneJSON)])
+        var messages = [UIMessage.companion.user(prompt: "go"), first, second, last]
+        var revision = 0
+        func project() -> NativeTimelineProjection {
+            revision += 1
+            return cache.projection(messages: messages, event: .toolResultAppended, sourceRevision: revision,
+                startIndex: 0, configurationIssue: nil, isGenerationActive: false, isLoading: false,
+                isRecognizingImages: false, contextCompactState: .idle, contextCompactBoundaries: [],
+                viewportState: ChatViewportState(), displaySettingSignature: "", generativeUiSettingSignature: "",
+                renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [],
+                renderStateStore: renderStore, variantInfoProvider: { _ in nil },
+                contentHashProvider: { row, streaming in
+                    streaming ? hashes.streamingTailLayoutToken(for: row) : hashes.contentHash(for: row)
+                })
+        }
+        let before = project()
+        let oldHead = try XCTUnwrap(before.entries.compactMap { $0.assistantTurn?.progress }.first)
+        let output = IosToolOutputJsonBridge.shared.mergeTextMetadata(
+            part: UIMessagePart.Text(text: #"{"ok":false,"status":"failed","error":"backfill failed"}"#, metadata: nil),
+            updates: ["test": "before"]
+        )
+        let backfilled = UIMessagePart.Tool(toolCallId: "second", toolName: "scrape_web", input: "{}",
+            output: [output], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        messages[2] = assistant([backfilled], id: second.id)
+        let after = project()
+        let updatedHead = try XCTUnwrap(after.entries.compactMap { $0.assistantTurn?.progress }.first)
+        XCTAssertNotEqual(updatedHead.signature, oldHead.signature)
+        guard case .needsAttention = ChatTaskStreamGrouping.turnSegment(for: updatedHead).rollupState else {
+            return XCTFail("a non-tail failure backfill must update the single progress line")
+        }
+        output.metadata = nil
+        let metadataUpdate = project()
+        let metadataHead = try XCTUnwrap(metadataUpdate.entries.compactMap { $0.assistantTurn?.progress }.first)
+        XCTAssertNotEqual(metadataHead.signature, updatedHead.signature)
+    }
+
+    func testDeferredTurnDetailsPreserveProgressAndToolDetails() throws {
+        let user = UIMessage.companion.user(prompt: "go")
+        let approval = [user, assistant([tool("a", "search_web", result: doneJSON),
+            tool("b", "scrape_web", approval: ToolApprovalState.Pending.shared)])]
+        let frames = newsRun() + [approval]
+        for messages in frames {
+            let progress = try XCTUnwrap(entries(messages, generating: true)
+                .compactMap { $0.assistantTurn?.progress }.first)
+            let full = ChatTaskStreamGrouping.turnSegment(for: progress)
+            let deferred = ChatTaskStreamGrouping.turnSegment(for: progress, deferToolDetails: true)
+            XCTAssertEqual(deferred.headline, full.headline)
+            XCTAssertEqual(deferred.subtitle, full.subtitle)
+            XCTAssertEqual(deferred.rollupState, full.rollupState)
+            XCTAssertEqual(deferred.reasonings, full.reasonings)
+            XCTAssertEqual(deferred.detailSteps.map(\.state), full.steps.map(\.state))
+            XCTAssertEqual(deferred.detailSteps.map(\.detail), full.steps.map(\.detail))
+        }
+    }
+
+    func testGroupedToolPlaceholderKeepsMediaAndStableRunID() {
+        let message = assistant([tool("a", "search_web"), tool("image", "generate_image")])
+        let messageID = message.id.toHexDashString()
+        let full = ChatTaskStreamGrouping.segments(for: message, messageID: messageID, isGeneratingTail: true)
+        let grouped = ChatTaskStreamGrouping.segments(for: message, messageID: messageID,
+                                                      isGeneratingTail: true, usesTurnProgress: true)
+        guard let fullFirst = full.first, let groupedFirst = grouped.first,
+              case let .taskGroup(original) = fullFirst,
+              case let .groupedTools(id, media) = groupedFirst else {
+            return XCTFail("expected one grouped tool run")
+        }
+        XCTAssertEqual(id, original.id)
+        XCTAssertEqual(media.map(\.toolCallId), original.mediaBearingTools.map(\.toolCallId))
+        XCTAssertEqual(media.map(\.toolCallId), ["image"])
     }
 
     func testMediaToolsAndPhoneOnlyTurnsAreNotSwallowed() throws {

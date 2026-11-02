@@ -101,8 +101,26 @@ struct ChatTaskRunSegment: Identifiable {
     let hidesCompletedStandaloneReasoning: Bool
     /// Scroll anchors for tools drawn by this row; empty means derive them from `messageID`.
     var toolAnchorIDs: [String] = []
+    /// Full step details are only needed after opening the group sheet.
+    var deferToolDetails = false
 
     var hasTools: Bool { !tools.isEmpty }
+
+    @MainActor
+    var detailSteps: [ChatToolStepModel] {
+        deferToolDetails ? tools.map { ChatToolStepModel(tool: $0) } : steps
+    }
+
+    var detailVersion: Int {
+        var hasher = Hasher()
+        for tool in tools {
+            hasher.combine(ObjectIdentifier(tool))
+            for metadata in ChatMessageContentIdentity.metadata(in: [tool]) {
+                ChatPartSignature.combineMetadata(metadata, into: &hasher)
+            }
+        }
+        return hasher.finalize()
+    }
 
     var inlineStatusBadgeText: String {
         if case .working = rollupState {
@@ -121,6 +139,7 @@ struct ChatTaskRunSegment: Identifiable {
 enum ChatTaskMessageSegment: Identifiable {
     case text(id: String, partIndex: Int, part: UIMessagePart.Text)
     case taskGroup(ChatTaskRunSegment)
+    case groupedTools(id: String, mediaBearingTools: [UIMessagePart.Tool])
     case imageGallery(id: String, startIndex: Int, images: [UIMessagePart.Image])
     case video(id: String, partIndex: Int, part: UIMessagePart.Video)
     case miniApp(id: String, partIndex: Int, part: UIMessagePart.MiniApp)
@@ -129,10 +148,46 @@ enum ChatTaskMessageSegment: Identifiable {
         switch self {
         case .text(let id, _, _): return id
         case .taskGroup(let group): return group.id
+        case .groupedTools(let id, _): return id
         case .imageGallery(let id, _, _): return id
         case .video(let id, _, _): return id
         case .miniApp(let id, _, _): return id
         }
+    }
+}
+
+/// Lives with one message bubble and only retains tools from its current turn.
+@MainActor
+final class ChatTaskToolStepCache {
+    private struct Entry {
+        let tool: UIMessagePart.Tool
+        let metadata: [ChatMessageContentIdentity.Metadata?]
+        let step: ChatToolStepModel
+    }
+    private var entries: [ObjectIdentifier: Entry] = [:]
+    private var languageKey = ""
+
+    func prepare(tools: [UIMessagePart.Tool], languageKey: String) {
+        if self.languageKey != languageKey {
+            entries.removeAll()
+            self.languageKey = languageKey
+        }
+        let current = Set(tools.map(ObjectIdentifier.init))
+        if entries.keys.contains(where: { !current.contains($0) }) {
+            entries = entries.filter { current.contains($0.key) }
+        }
+    }
+
+    func step(for tool: UIMessagePart.Tool) -> ChatToolStepModel {
+        let id = ObjectIdentifier(tool)
+        let metadata = ChatMessageContentIdentity.metadata(in: [tool])
+        if let cached = entries[id], cached.tool === tool,
+           ChatMessageContentIdentity.sameMetadata(cached.metadata, metadata) {
+            return cached.step
+        }
+        let step = ChatToolStepModel(tool: tool)
+        entries[id] = Entry(tool: tool, metadata: metadata, step: step)
+        return step
     }
 }
 
@@ -167,7 +222,9 @@ enum ChatTaskStreamGrouping {
     static func segments(
         for message: UIMessage,
         messageID: String,
-        isGeneratingTail: Bool
+        isGeneratingTail: Bool,
+        stepCache: ChatTaskToolStepCache? = nil,
+        usesTurnProgress: Bool = false
     ) -> [ChatTaskMessageSegment] {
         let parts = message.parts
         guard !parts.isEmpty else { return [] }
@@ -224,14 +281,18 @@ enum ChatTaskStreamGrouping {
                     }
                 }
 
-                if let segment = buildTaskSegment(
+                if usesTurnProgress && !runTools.isEmpty {
+                    result.append(.groupedTools(id: "\(messageID):task:\(runStart)",
+                                                mediaBearingTools: runTools.filter(isMediaBearing)))
+                } else if let segment = buildTaskSegment(
                     messageID: messageID,
                     runStart: runStart,
                     tools: runTools,
                     reasonings: runReasonings,
                     hasNonEmptyTextInMessage: hasNonEmptyText,
                     hasToolsInMessage: hasToolsInMessage,
-                    isGeneratingTail: isGeneratingTail
+                    isGeneratingTail: isGeneratingTail,
+                    stepCache: stepCache
                 ) {
                     result.append(.taskGroup(segment))
                 }
@@ -275,7 +336,8 @@ enum ChatTaskStreamGrouping {
         reasonings: [ChatTaskReasoningEntry],
         hasNonEmptyTextInMessage: Bool,
         hasToolsInMessage: Bool,
-        isGeneratingTail: Bool
+        isGeneratingTail: Bool,
+        stepCache: ChatTaskToolStepCache?
     ) -> ChatTaskRunSegment? {
         // Standalone reasoning without any tools:
         if tools.isEmpty {
@@ -307,7 +369,7 @@ enum ChatTaskStreamGrouping {
             )
         }
 
-        let steps = tools.map { ChatToolStepModel(tool: $0) }
+        let steps = tools.map { stepCache?.step(for: $0) ?? ChatToolStepModel(tool: $0) }
         let subAgentStep = steps.first { $0.subAgentPresentation != nil }
         let agentName: String
         let subAgentIdentity: String?
@@ -362,9 +424,12 @@ enum ChatTaskStreamGrouping {
     /// The single row of a whole assistant turn. Its text follows real state only:
     /// the current step while live, then how the turn actually settled.
     @MainActor
-    static func turnSegment(for progress: ChatAssistantTurnProgress) -> ChatTaskRunSegment {
+    static func turnSegment(for progress: ChatAssistantTurnProgress,
+                            stepCache: ChatTaskToolStepCache? = nil,
+                            deferToolDetails: Bool = false) -> ChatTaskRunSegment {
         let tools = progress.tools
-        let steps = tools.map { ChatToolStepModel(tool: $0) }
+        let deferred = deferToolDetails && progress.isLive
+        let steps = deferred ? [] : tools.map { stepCache?.step(for: $0) ?? ChatToolStepModel(tool: $0) }
         var reasonings: [ChatTaskReasoningEntry] = []
         for message in progress.messages {
             let messageID = ChatMessageProjector.messageId(for: message)
@@ -380,7 +445,19 @@ enum ChatTaskStreamGrouping {
             }
         }
 
-        let currentStep = steps.last(where: { $0.state == .active }) ?? steps.last
+        let currentStep: ChatToolStepModel?
+        if deferred && !progress.isComposingReply && !progress.isThinking {
+            var latest: ChatToolStepModel?
+            var active: ChatToolStepModel?
+            for tool in tools.reversed() {
+                let step = stepCache?.step(for: tool) ?? ChatToolStepModel(tool: tool)
+                if latest == nil { latest = step }
+                if step.state == .active { active = step; break }
+            }
+            currentStep = active ?? latest
+        } else {
+            currentStep = steps.last(where: { $0.state == .active }) ?? steps.last
+        }
         let currentLine: String
         if progress.isComposingReply {
             currentLine = IOSAppLocalization.string("正在整理回复…", defaultValue: "正在整理回复…")
@@ -394,12 +471,14 @@ enum ChatTaskStreamGrouping {
         var rollup: ChatTaskRollupState
         if tools.isEmpty {
             rollup = progress.isLive ? .working(currentStepTitle: currentLine) : .cancelled
+        } else if progress.isLive {
+            // A live line only surfaces pending approvals; completed failures are
+            // evaluated when the turn settles, just as in the full rollup.
+            let pending = tools.filter { $0.approvalState is ToolApprovalState.Pending }.count
+            rollup = pending > 0 ? .approvalPending(count: pending) : .working(currentStepTitle: currentLine)
         } else {
             rollup = computeRollupState(tools: tools, steps: steps, reasonings: [], isGeneratingTail: false)
-            if progress.isLive {
-                // A failed attempt mid-run may be retried; only approvals interrupt the live line.
-                if case .approvalPending = rollup {} else { rollup = .working(currentStepTitle: currentLine) }
-            } else if case .working = rollup {
+            if case .working = rollup {
                 // The run ended with a step that never returned.
                 rollup = .cancelled
             }
@@ -436,7 +515,8 @@ enum ChatTaskStreamGrouping {
             reasonings: reasonings,
             mediaBearingTools: [],
             hidesCompletedStandaloneReasoning: false,
-            toolAnchorIDs: progress.anchorIDs
+            toolAnchorIDs: progress.anchorIDs,
+            deferToolDetails: deferred
         )
     }
 
@@ -684,15 +764,18 @@ enum ChatTaskStreamGrouping {
     }
 
     private static func hasUnknownOutcome(_ tool: UIMessagePart.Tool) -> Bool {
-        let rawText = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
-        guard !rawText.isEmpty,
-              let data = rawText.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return false
+        let analysis = ChatToolOutputFormatter.analysis(for: tool)
+        return analysis.derivedValues.value(forKey: "task-unknown-outcome") {
+            let rawText = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+            guard !rawText.isEmpty,
+                  let data = rawText.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return false
+            }
+            let status = (json["status"] as? String)?.lowercased()
+            let outcome = (json["outcome"] as? String)?.lowercased()
+            return status == "unknown" || status == "outcome_unknown" || outcome == "unknown" || outcome == "outcome_unknown"
         }
-        let status = (json["status"] as? String)?.lowercased()
-        let outcome = (json["outcome"] as? String)?.lowercased()
-        return status == "unknown" || status == "outcome_unknown" || outcome == "unknown" || outcome == "outcome_unknown"
     }
 
     @MainActor

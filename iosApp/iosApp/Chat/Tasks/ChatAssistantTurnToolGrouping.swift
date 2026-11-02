@@ -212,10 +212,15 @@ enum ChatAssistantTurnToolGrouping {
         hasher.combine(groupID)
         hasher.combine(headMessageID)
         for tool in tools {
+            // A backfilled earlier step can change without changing its output count.
+            hasher.combine(ObjectIdentifier(tool))
             hasher.combine(tool.toolCallId)
             hasher.combine(tool.toolName)
             hasher.combine(tool.output.count)
             ChatPartSignature.combineApproval(tool.approvalState, into: &hasher)
+            for metadata in ChatMessageContentIdentity.metadata(in: [tool]) {
+                ChatPartSignature.combineMetadata(metadata, into: &hasher)
+            }
         }
         for part in tools.last?.output ?? [] {
             ChatPartSignature.combine(part, exactText: false, into: &hasher)

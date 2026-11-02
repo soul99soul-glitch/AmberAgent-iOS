@@ -26,7 +26,9 @@ extension ChatView {
         var next = chatListSummary
         next.hasMessages = !messages.isEmpty
         next.awaitingFirstAssistantChunk = isStreamingFollowActive && messages.last(where: ChatMessageProjector.isConversationMessage)?.role == MessageRole.user
-        next.activeToolStep = activeToolStepForIsland(messages: messages)
+        next.activeToolStep = activeToolStepForIsland(
+            messages: messages, focusedMessages: viewModel.focusedActiveTask.map { Array($0.generatedMessages.suffix(3)) }
+        )
         next.failedToolStep = failedToolStepForIsland(messages: messages)
         next.lastAssistantHasOpenReasoning = lastAssistantHasOpenReasoning(messages: messages)
         next.webMountRecentUserTurnStartMillis = Self.webMountRecentUserTurnStartMillis(from: messages)
@@ -50,27 +52,46 @@ extension ChatView {
         }
     }
 
-    private func activeToolStepForIsland(messages: [UIMessage]) -> ChatToolStepModel? {
-        for message in messages.suffix(3).reversed() {
-            let hasAssistantReplyText = message.parts.contains { part in
-                guard let text = part as? UIMessagePart.Text else { return false }
-                return text.text.contains { !$0.isWhitespace }
-            }
-            let tools = message.parts.compactMap { $0 as? UIMessagePart.Tool }
-            if let active = tools.reversed().first(where: { tool in
-                guard tool.output.isEmpty else { return false }
-                if hasAssistantReplyText {
-                    let lower = tool.toolName.lowercased()
-                    if lower.contains("subagent") || lower.contains("cloud") || lower.contains("background") {
-                        return false
-                    }
+    private func activeToolStepForIsland(messages: [UIMessage], focusedMessages: [UIMessage]?) -> ChatToolStepModel? {
+        func activeStep(in candidates: [UIMessage]) -> ChatToolStepModel? {
+            for message in candidates.reversed() {
+                let hasAssistantReplyText = message.parts.contains { part in
+                    guard let text = part as? UIMessagePart.Text else { return false }
+                    return text.text.contains { !$0.isWhitespace }
                 }
-                return true
-            }) {
-                return ChatToolStepModel(tool: active)
+                let tools = message.parts.compactMap { $0 as? UIMessagePart.Tool }
+                if let active = tools.reversed().first(where: { tool in
+                    guard tool.output.isEmpty else { return false }
+                    if hasAssistantReplyText {
+                        let lower = tool.toolName.lowercased()
+                        if lower.contains("subagent") || lower.contains("cloud") || lower.contains("background") {
+                            return false
+                        }
+                    }
+                    return true
+                }) {
+                    return ChatToolStepModel(tool: active)
+                }
             }
+            return nil
         }
-        return nil
+        if let focusedMessages, let active = activeStep(in: focusedMessages) {
+            return active
+        }
+        return activeStep(in: Array(messages.suffix(3)))
+    }
+
+    func refreshStreamingChatListSummary() {
+        let last = viewModel.focusedActiveTask?.generatedMessages.last ?? viewModel.messages.last
+        guard let last, last.role == .assistant else { return }
+        if chatListSummary.awaitingFirstAssistantChunk { chatListSummary.awaitingFirstAssistantChunk = false }
+        let hasOpenReasoning = last.parts.contains {
+            guard let reasoning = $0 as? UIMessagePart.Reasoning else { return false }
+            return reasoning.finishedAt == nil
+        }
+        if chatListSummary.lastAssistantHasOpenReasoning != hasOpenReasoning {
+            chatListSummary.lastAssistantHasOpenReasoning = hasOpenReasoning
+        }
     }
 
     /// 最近一个失败的工具（suffix(3) 窗口内）：输出含失败原因时才构造模型，

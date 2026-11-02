@@ -15,11 +15,14 @@ final class ChatRunUploadPreparation {
     let toolExposureBridge: IosToolExposureBridge
     let mcpEnabled: () -> Bool
     let bindings: ChatGenerationBindings
+    let fastFirstRound: Bool
     let isCurrentRun: () -> Bool
     let onPreparedUpload: (ProviderSetting, TextGenerationParams, [UIMessage]) throws -> Void
     var requirement: IOSGenerativeUiRequirement = .none
     var fallbackAttempted = false
     var retryIssue: String?
+    private var uploadRoundIndex = 0
+    private var recallWarmup: (userID: String?, task: Task<Void, Never>)?
 
     init(
         runId: String,
@@ -28,6 +31,7 @@ final class ChatRunUploadPreparation {
         toolExposureBridge: IosToolExposureBridge,
         mcpEnabled: @escaping () -> Bool,
         bindings: ChatGenerationBindings,
+        fastFirstRound: Bool = false,
         isCurrentRun: @escaping () -> Bool,
         onPreparedUpload: @escaping (ProviderSetting, TextGenerationParams, [UIMessage]) throws -> Void
     ) {
@@ -37,8 +41,14 @@ final class ChatRunUploadPreparation {
         self.toolExposureBridge = toolExposureBridge
         self.mcpEnabled = mcpEnabled
         self.bindings = bindings
+        self.fastFirstRound = fastFirstRound
         self.isCurrentRun = isCurrentRun
         self.onPreparedUpload = onPreparedUpload
+    }
+
+    func cancelRecallWarmup() {
+        recallWarmup?.task.cancel()
+        recallWarmup = nil
     }
 
     private func messagesByInjectingRuntimeContext(
@@ -61,6 +71,8 @@ final class ChatRunUploadPreparation {
         defer { ChatPerfTrace.end(&prepareInterval) }
         try Task.checkCancellation()
         guard isCurrentRun() else { return messages }
+        let isFastFirstUpload = fastFirstRound && uploadRoundIndex == 0
+        uploadRoundIndex += 1
         let effectiveParams = params.replacingTools(
             toolExposureBridge.visibleTools()
         )
@@ -87,11 +99,34 @@ final class ChatRunUploadPreparation {
         // 记忆候选只依赖本轮 canonical 用户输入；尽早启动，使网络等待与
         // 压缩、上下文投影、图片准备重叠。本轮选择仍只在注入前读取一次。
         let recallBox = JevRecallResultBox()
-        let memoryRecallTask = Task { @MainActor in
-            guard !Task.isCancelled else { return }
-            recallBox.value = await bindings.prepareJevMemoryRecall(requestMessages, runId)
+        let prepareRecall = bindings.prepareJevMemoryRecall
+        let recallRunID = runId
+        let userID = requestMessages.last(where: { $0.role == .user })?.id.toHexDashString()
+        let memoryRecallTask: Task<Void, Never>?
+        if isFastFirstUpload {
+            let task = Task { @MainActor in
+                guard !Task.isCancelled else { return }
+                _ = await prepareRecall(requestMessages, recallRunID)
+            }
+            recallWarmup = (userID, task)
+            memoryRecallTask = nil
+        } else {
+            if let warmup = recallWarmup, warmup.userID != userID { cancelRecallWarmup() }
+            let warmTask = recallWarmup?.task
+            memoryRecallTask = Task { @MainActor in
+                if let warmTask {
+                    await withTaskCancellationHandler { await warmTask.value } onCancel: { warmTask.cancel() }
+                }
+                guard !Task.isCancelled else { return }
+                // Re-enter the service so changed memory/settings invalidate its cached key.
+                recallBox.value = await prepareRecall(requestMessages, recallRunID)
+            }
         }
-        defer { memoryRecallTask.cancel() }
+        var completedFastFirstUpload = false
+        defer {
+            memoryRecallTask?.cancel()
+            if isFastFirstUpload && !completedFastFirstUpload { cancelRecallWarmup() }
+        }
 
         // 基线注入只用于压缩预算估算，先算一次召回结果给它；最终注入在下方
         // 按原时机（压缩与投影的 await 之后）现算，保证读到注入前最新的记忆。
@@ -169,13 +204,18 @@ final class ChatRunUploadPreparation {
         // canonical 原文（P0），且压缩的预算截断不会伤及省略 marker；同时投影
         // 只作用于请求副本，canonical 历史/持久化不受影响。off/shadow/失败
         // 返回原数组。
-        let projectedMessages = await IOSJevContextSelectionService.shared.projectedMessages(
-            promptedUploadMessages,
-            identity: IOSJevContextSelectionService.RunIdentity(
-                runId: runId,
-                conversationId: conversationId?.toHexDashString()
+        let projectedMessages: [UIMessage]
+        if isFastFirstUpload {
+            projectedMessages = promptedUploadMessages
+        } else {
+            projectedMessages = await IOSJevContextSelectionService.shared.projectedMessages(
+                promptedUploadMessages,
+                identity: IOSJevContextSelectionService.RunIdentity(
+                    runId: runId,
+                    conversationId: conversationId?.toHexDashString()
+                )
             )
-        )
+        }
         try Task.checkCancellation()
 
         // 每轮组装前刷新编排链接缓存(CG-C :2022-2024)。
@@ -185,15 +225,19 @@ final class ChatRunUploadPreparation {
         // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
         // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
         // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
-        await withTaskCancellationHandler {
-            await memoryRecallTask.value
-        } onCancel: {
-            memoryRecallTask.cancel()
+        if let memoryRecallTask {
+            await withTaskCancellationHandler {
+                await memoryRecallTask.value
+            } onCancel: {
+                memoryRecallTask.cancel()
+            }
+            recallWarmup = nil
         }
         try Task.checkCancellation()
         // Jev 未给出结果时在注入时刻现算（与原行为同一时机与输入），并复用给
         // usage marking，使标记的记忆与实际注入的一致。
-        let memoryRecallOverride = recallBox.value ?? bindings.memoryRecallResultForRun(projectedMessages)
+        let memoryRecallOverride = isFastFirstUpload
+            ? fallbackMemoryRecallResult : (recallBox.value ?? bindings.memoryRecallResultForRun(projectedMessages))
         let runtimePreparedMessages = try await bindings.prepareImageAttachments(
             messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride),
             effectiveParams.model,
@@ -258,6 +302,7 @@ final class ChatRunUploadPreparation {
         // 召回标记(P2-b):不 force,去抖生效(CG-C :2049-2050)。
         bindings.recordMemoryUsage(selectedMemoryIds, false)
         try onPreparedUpload(provider, effectiveParams, finalUploadMessages)
+        completedFastFirstUpload = true
         return finalUploadMessages
     }
 

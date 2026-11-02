@@ -35,6 +35,7 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     var renderDigest: ChatRowDigest?
 
     var isAssistantContinuation: Bool = false
+    var isGlobalStatusOnly: Bool = false
     var isCompactedHistory: Bool = false
     var compactState: ChatContextCompactState? = nil
     /// Phone automation step group this message belongs to (L1 projection).
@@ -43,6 +44,7 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     var assistantTurn: ChatAssistantTurnRole? = nil
     /// Digest before the group role was folded in; lets regrouping stay idempotent.
     var baseRenderDigest: ChatRowDigest? = nil
+    var isTaskLive: Bool = false
 
     /// Occupies no space; its group head stands in for it.
     var isCollapsedGroupMember: Bool {
@@ -100,6 +102,7 @@ enum NativeTimelineProjector {
         renderStateRevision: UInt64 = 0,
         reasoningLevelLabel: String? = nil,
         streamedMessageIDs: Set<String> = [],
+        liveTaskTailIDs: Set<String> = [],
         renderStateStore: ChatRenderStateStore? = nil,
         includePendingAssistant: Bool? = nil,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo? = { _ in nil },
@@ -111,9 +114,12 @@ enum NativeTimelineProjector {
         // Keep the timeline for real message content so completion never removes a
         // duplicate status row after the final text has settled.
         let shouldIncludePendingAssistant = includePendingAssistant ?? false
+        let lastMessageID = messages.last.map(ChatMessageProjector.messageId(for:))
+        let eventForRows: ChatEvent = event == .assistantStreamDelta && !liveTaskTailIDs.isEmpty &&
+            lastMessageID.map({ !liveTaskTailIDs.contains($0) }) == true ? .toolResultAppended : event
         let plan = ChatTimelinePlanner.build(
             messages: messages,
-            event: event,
+            event: eventForRows,
             streamedMessageIDs: streamedMessageIDs,
             includePendingAssistant: shouldIncludePendingAssistant,
             startIndex: startIndex
@@ -164,11 +170,24 @@ enum NativeTimelineProjector {
         }
         let compactedIds = Set(messages.prefix(compactedEnd.map { $0 + 1 } ?? 0).map(ChatMessageProjector.messageId(for:)))
         let boundariesByAnchor = Dictionary(grouping: boundaries, by: \.afterMessageId)
+        var previousStatusOnly: Bool?
         for entry in plan.entries {
             switch entry {
             case .message, .pendingAssistant:
+                var presentationEntry = entry
+                if case .message(var message) = entry {
+                    if previousStatusOnly == nil {
+                        let previous = message.index > 0
+                            ? messages[..<message.index].reversed().first(where: ChatMessageProjector.isVisibleInTimeline)
+                            : nil
+                        previousStatusOnly = previous.map(isGlobalStatusOnly) ?? false
+                    }
+                    if previousStatusOnly == true { message.isAssistantContinuation = false }
+                    previousStatusOnly = isGlobalStatusOnly(message.message)
+                    presentationEntry = .message(message)
+                }
                 var projected = nativeEntry(
-                        for: entry,
+                        for: presentationEntry,
                         isGenerationActive: isGenerationActive,
                         viewportState: viewportState,
                         displaySettingSignature: displaySettingSignature,
@@ -177,9 +196,11 @@ enum NativeTimelineProjector {
                         reasoningLevelLabel: reasoningLevelLabel,
                         renderStateStore: renderStateStore,
                         variantInfoProvider: variantInfoProvider,
-                        contentHashProvider: contentHashProvider
+                        contentHashProvider: contentHashProvider,
+                        liveTaskTailIDs: liveTaskTailIDs
                     )
                 projected.isCompactedHistory = projected.messageId.map(compactedIds.contains) ?? false
+                if let message = projected.message { projected.isGlobalStatusOnly = isGlobalStatusOnly(message) }
                 entries.append(projected)
                 if let messageId = projected.messageId {
                     for boundary in boundariesByAnchor[messageId] ?? [] {
@@ -241,13 +262,15 @@ enum NativeTimelineProjector {
         renderStateStore: ChatRenderStateStore? = nil,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo? = { _ in nil },
         contentHashProvider: (ChatMessageRowModel, Bool) -> Int = { _, _ in 0 },
-        expandedPhoneToolGroupIDs: Set<String> = []
+        expandedPhoneToolGroupIDs: Set<String> = [],
+        liveTaskTailIDs: Set<String> = []
     ) -> NativeTimelineProjection? {
         guard event == .assistantStreamDelta,
               let message = messages.last,
               message.role == MessageRole.assistant else { return nil }
 
         let messageID = ChatMessageProjector.messageId(for: message)
+        guard liveTaskTailIDs.isEmpty || liveTaskTailIDs.contains(messageID) else { return nil }
         guard let entryIndex = previous.entries.lastIndex(where: { $0.messageId == messageID }) else {
             return nil
         }
@@ -263,7 +286,7 @@ enum NativeTimelineProjector {
             isStreaming: true,
             hasEverStreamed: true,
             canAnimateInsertion: false,
-            isAssistantContinuation: ChatMessageProjector.isAssistantContinuation(at: messages.count - 1, in: messages)
+            isAssistantContinuation: previous.entries[entryIndex].isAssistantContinuation
         )
         let renderState = renderStateStore?.stateForRow(
             row,
@@ -312,6 +335,8 @@ enum NativeTimelineProjector {
             renderDigest: digest,
             isAssistantContinuation: row.isAssistantContinuation
         )
+        entries[entryIndex].isTaskLive = liveTaskTailIDs.contains(messageID)
+        entries[entryIndex].isGlobalStatusOnly = isGlobalStatusOnly(message)
         if ChatPhoneToolGrouping.tailMayAffectGroups(
             tail: message,
             previousRole: previous.entries[entryIndex].phoneToolGroup,
@@ -342,7 +367,8 @@ enum NativeTimelineProjector {
         streamedMessageIDs: Set<String>, renderStateStore: ChatRenderStateStore,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo?,
         contentHashProvider: (ChatMessageRowModel, Bool) -> Int,
-        expandedPhoneToolGroupIDs: Set<String> = []
+        expandedPhoneToolGroupIDs: Set<String> = [],
+        liveTaskTailIDs: Set<String> = []
     ) -> NativeTimelineProjection? {
         guard event == .toolCallStarted || event == .toolResultAppended || event == .assistantStreamClosed else {
             return nil
@@ -361,17 +387,21 @@ enum NativeTimelineProjector {
             guard messages.indices.contains(index), ChatMessageProjector.messageId(for: messages[index]) == id else {
                 return nil
             }
+            if !unchangedMessageIDs.contains(id),
+               old.isGlobalStatusOnly != isGlobalStatusOnly(messages[index]) {
+                return nil
+            }
             // The tail also owns renderer/terminal state even if its payload did
             // not change. Insertion flags and stream-close state must not linger.
             if unchangedMessageIDs.contains(id), !old.isLastMessage, !old.isStreaming,
-               !old.canAnimateInsertion, old.hasEverStreamed == streamedMessageIDs.contains(id),
-               old.isAssistantContinuation == ChatMessageProjector.isAssistantContinuation(at: index, in: messages) {
+               !old.canAnimateInsertion, old.hasEverStreamed == streamedMessageIDs.contains(id) {
                 continue
             }
-            guard let row = ChatMessageProjector.row(
+            guard var row = ChatMessageProjector.row(
                 at: index, in: messages, event: event, streamedMessageIDs: streamedMessageIDs,
                 lastVisibleIndex: lastVisibleIndex
             ) else { return nil }
+            row.isAssistantContinuation = old.isAssistantContinuation
             var entry = nativeEntry(
                 for: .message(ChatTimelinePlanner.messageEntry(for: row)),
                 isGenerationActive: isGenerationActive, viewportState: viewportState,
@@ -379,9 +409,11 @@ enum NativeTimelineProjector {
                 generativeUiSettingSignature: generativeUiSettingSignature,
                 renderStateRevision: renderStateRevision, reasoningLevelLabel: reasoningLevelLabel,
                 renderStateStore: renderStateStore, variantInfoProvider: variantInfoProvider,
-                contentHashProvider: contentHashProvider
+                contentHashProvider: contentHashProvider,
+                liveTaskTailIDs: liveTaskTailIDs
             )
             entry.isCompactedHistory = old.isCompactedHistory
+            entry.isGlobalStatusOnly = old.isGlobalStatusOnly
             entries[entryIndex] = entry
         }
         // A backfilled step anywhere in a run changes its head's header.
@@ -408,14 +440,16 @@ enum NativeTimelineProjector {
         reasoningLevelLabel: String? = nil,
         renderStateStore: ChatRenderStateStore? = nil,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo? = { _ in nil },
-        contentHashProvider: (ChatMessageRowModel, Bool) -> Int = { _, _ in 0 }
+        contentHashProvider: (ChatMessageRowModel, Bool) -> Int = { _, _ in 0 },
+        liveTaskTailIDs: Set<String> = []
     ) -> NativeTimelineEntry {
         switch entry {
         case let .message(message):
             let row = message.rowModel
             let renderState = renderStateStore?.stateForEntry(
                 message,
-                isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom
+                isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom,
+                isLiveTask: liveTaskTailIDs.contains(message.messageId)
             ) ?? renderState(for: message, viewportState: viewportState)
             let variantInfo = variantInfoProvider(message.index).map {
                 NativeTimelineVariantInfo(
@@ -453,7 +487,8 @@ enum NativeTimelineProjector {
                 variantInfo: variantInfo,
                 renderState: renderState,
                 renderDigest: digest,
-                isAssistantContinuation: row.isAssistantContinuation
+                isAssistantContinuation: row.isAssistantContinuation,
+                isTaskLive: liveTaskTailIDs.contains(message.messageId)
             )
         case let .pendingAssistant(id):
             return NativeTimelineEntry(
@@ -491,6 +526,20 @@ enum NativeTimelineProjector {
                 renderState: nil,
                 renderDigest: nil
             )
+        }
+    }
+
+    static func isGlobalStatusOnly(_ message: UIMessage) -> Bool {
+        guard message.role == MessageRole.assistant, message.annotations.isEmpty else { return false }
+        if message.parts.count == 1, let text = message.parts.first as? UIMessagePart.Text,
+           text.text == ChatViewModel.queuedTaskPlaceholderText { return true }
+        return message.parts.allSatisfy { part in
+            if let text = part as? UIMessagePart.Text {
+                return text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            if part is UIMessagePart.Reasoning { return true }
+            if let tool = part as? UIMessagePart.Tool { return !ChatTaskStreamGrouping.isMediaBearing(tool) }
+            return false
         }
     }
 

@@ -67,7 +67,7 @@ final class IOSMemoryExtractionCoordinator {
         // Include the initial user turn and user steer messages added during it,
         // without re-extracting the entire older conversation on every completion.
         let baselineIds = Set(baseline.map { $0.id.toHexDashString() })
-        let sources = baseline.last(where: { $0.role == .user }).map { [$0] } ?? []
+        let sources = baseline.last(where: { !Self.userText($0).isEmpty }).map { [$0] } ?? []
         let added = completed.filter { $0.role == .user && !baselineIds.contains($0.id.toHexDashString()) }
         let key = conversationId.toHexDashString()
         var ids = pending[key] ?? []
@@ -123,9 +123,9 @@ final class IOSMemoryExtractionCoordinator {
             let conversationId = KotlinUuid.companion.parse(uuidString: conversationKey)
             do {
                 guard let conversation = try await conversations.loadConversationForOrchestration(conversationId),
-                      conversation.memoryMode == .enabled else {
+                      conversation.memoryMode != .disabled else {
                     removePending(conversationKey, ids: sourceIds)
-                    report("会话已关闭记忆提炼或曾接触外部内容，本次跳过。")
+                    report("会话已关闭记忆提炼，本次跳过。")
                     continue
                 }
                 let sources = Self.sourceTexts(conversation, ids: sourceIds)
@@ -138,7 +138,8 @@ final class IOSMemoryExtractionCoordinator {
                 // captured updatedAt as the CAS token so a concurrent edit turns
                 // an update into a plain add instead of clobbering the change.
                 let related = Self.relatedRecords(sources: sources, runtime: snapshot.agentRuntime, now: now())
-                let assistantContext = Self.assistantContext(conversation, ids: Array(sources.keys))
+                let assistantContext = conversation.memoryMode == .polluted
+                    ? [:] : Self.assistantContext(conversation, ids: Array(sources.keys))
                 let request = try makeRequest(
                     settings: snapshot, sources: sources,
                     sourceDates: Self.sourceDates(conversation, ids: Array(sources.keys)),
@@ -152,7 +153,8 @@ final class IOSMemoryExtractionCoordinator {
                 // The model call suspends. Recheck the durable source and current
                 // switches, then take the latest memory snapshot before writing.
                 guard let current = try await conversations.loadConversationForOrchestration(conversationId),
-                      current.memoryMode == .enabled,
+                      current.memoryMode != .disabled,
+                      !(conversation.memoryMode == .enabled && current.memoryMode == .polluted),
                       Self.sourceTexts(current, ids: sourceIds) == sources else {
                     report("来源会话已变化，本次未写入；稍后重新提炼。")
                     return
@@ -194,7 +196,7 @@ final class IOSMemoryExtractionCoordinator {
     }
 
     private static func userText(_ message: UIMessage) -> String {
-        guard message.role == .user else { return "" }
+        guard message.role == .user, IosMailboxMessageBridge.shared.kind(message: message) == nil else { return "" }
         return message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }
             .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }

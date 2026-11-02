@@ -7,6 +7,45 @@ import XCTest
 final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
     // MARK: - Tests
 
+    @MainActor
+    func testRouterOffThenWorkerHighPreservesToolContextAndOff() async {
+        let provider = ParamsRecordingProvider([
+            toolCallMessage(toolCallId: "tier-test", toolName: "echo", input: "{}"), assistantText("done")
+        ])
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["echo": RecordingExecutor(.filled("done"))],
+                                        configuration: .init(fastFirstReasoning: true, workerReasoningName: "HIGH"))
+        _ = await engine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                             params: makeParams(tools: []).replacingReasoningLevel(.low))
+        XCTAssertEqual(provider.recordedParams.map(\.reasoningLevel), [.off, .high])
+        XCTAssertTrue(provider.recordedMessages.last?.flatMap(\.parts).contains { $0 is UIMessagePart.Tool } ?? false,
+                      "当前任务的后续工具轮必须保留自身工具上下文")
+
+        let disabledProvider = ParamsRecordingProvider([assistantText("done")])
+        let disabledEngine = IOSAgentToolEngine(provider: disabledProvider, executors: [:],
+                                                configuration: .init(fastFirstReasoning: true, workerReasoningName: "HIGH"))
+        _ = await disabledEngine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                                     params: makeParams(tools: []))
+        XCTAssertEqual(disabledProvider.recordedParams.map(\.reasoningLevel), [.off])
+        let resumedProvider = ParamsRecordingProvider([assistantText("done")])
+        let resumedEngine = IOSAgentToolEngine(provider: resumedProvider, executors: [:],
+            configuration: .init(fastFirstReasoning: true, workerReasoningName: "HIGH", resumesWorker: true))
+        _ = await resumedEngine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                                    params: makeParams(tools: []).replacingReasoningLevel(.medium))
+        XCTAssertEqual(resumedProvider.recordedParams.map(\.reasoningLevel), [.high], "审批恢复不应退回首轮 low")
+        let fallbackProvider = ParamsRecordingProvider([
+            toolCallMessage(toolCallId: "tier-fallback", toolName: "echo", input: "{}"), assistantText("done")
+        ])
+        let fallbackEngine = IOSAgentToolEngine(provider: fallbackProvider, executors: ["echo": RecordingExecutor(.filled("done"))],
+            configuration: .init(fastFirstReasoning: true, workerReasoningName: "MEDIUM"))
+        _ = await fallbackEngine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                                     params: makeParams(tools: []).replacingReasoningLevel(.low))
+        XCTAssertEqual(fallbackProvider.recordedParams.map(\.reasoningLevel), [.off, .medium])
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.auto_, .medium, .xhigh, .high]), .high)
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.auto_, .medium, .xhigh]), .xhigh)
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.auto_, .medium]), .medium)
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.low, .off]), .low)
+    }
+
     func testLastAllowedToolRoundLeavesSteerQueuedForTheNextRun() async {
         actor DrainCounter {
             var count = 0

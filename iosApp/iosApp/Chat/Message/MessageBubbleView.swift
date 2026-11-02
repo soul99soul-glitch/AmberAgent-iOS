@@ -75,7 +75,9 @@ struct MessageBubbleView: View {
     @Environment(\.chatMessageAnchorHighlighted) private var chatMessageAnchorHighlighted
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
+    @State private var taskStepCache = ChatTaskToolStepCache()
     @AppStorage(IOSDisplayPreferenceKeys.autoExpandThinking) private var autoExpandThinking = true
+    @AppStorage(IOSAppLanguagePreference.defaultsKey) private var appLanguage = IOSAppLanguage.system.rawValue
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
 
     private var isUser: Bool {
@@ -123,7 +125,6 @@ struct MessageBubbleView: View {
                         }
                     }
                     variantSwitcher
-                    fallbackThinkingCard
                     messagePartsWithAnchorHighlight
                     annotationsBlock
                 }
@@ -360,19 +361,7 @@ struct MessageBubbleView: View {
     @ViewBuilder
     private var messageParts: some View {
         Group {
-            if let group = phoneToolGroup {
-                // Phone-step group head: the header always comes first; the head's own
-                // steps (and reasoning) render only when expanded, nested under it.
-                VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
-                    ChatPhoneToolGroupHeader(summary: group)
-                        .id(group.anchorID)
-                    if group.isExpanded {
-                        messagePartRows
-                            .padding(.leading, ChatPhoneToolGroupHeader.expandedStepIndent)
-                            .transition(.opacity)
-                    }
-                }
-            } else if !isUser {
+            if !isUser {
                 assistantTaskGroupedRows
             } else {
                 messagePartRows
@@ -393,24 +382,19 @@ struct MessageBubbleView: View {
     @ViewBuilder
     private var assistantTaskGroupedRows: some View {
         let messageID = ChatMessageProjector.messageId(for: message)
+        let currentTools = message.parts.compactMap { $0 as? UIMessagePart.Tool } +
+            (assistantTurn?.progress?.tools ?? [])
+        let _ = taskStepCache.prepare(
+            tools: currentTools,
+            languageKey: "\(appLanguage)|\(locale.identifier)"
+        )
         let segments = ChatTaskStreamGrouping.segments(
             for: message,
             messageID: messageID,
-            isGeneratingTail: isGenerating && isLastMessage
+            isGeneratingTail: isGenerating && isLastMessage,
+            stepCache: taskStepCache,
+            usesTurnProgress: true
         )
-        let turnProgressRunID: String? = {
-            guard assistantTurn?.progress != nil else { return nil }
-            if let withTools = segments.lazy.compactMap({ segment -> String? in
-                if case .taskGroup(let run) = segment, run.hasTools { return run.id }
-                return nil
-            }).first {
-                return withTools
-            }
-            return segments.lazy.compactMap { segment -> String? in
-                if case .taskGroup(let run) = segment { return run.id }
-                return nil
-            }.first
-        }()
         ForEach(segments) { segment in
             switch segment {
             case .text(_, let partIndex, let textPart):
@@ -443,24 +427,11 @@ struct MessageBubbleView: View {
                     .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
                 }
             case .taskGroup(let taskSegment):
-                let effectiveSegment: ChatTaskRunSegment? = {
-                    if assistantTurn != nil {
-                        if taskSegment.id == turnProgressRunID, let progress = assistantTurn?.progress {
-                            return ChatTaskStreamGrouping.turnSegment(for: progress)
-                        }
-                        return nil
-                    }
-                    return taskSegment
-                }()
-                if let effectiveSegment {
-                    ChatTaskInlineCardView(
-                        segment: effectiveSegment,
-                        onTapToolDetail: { tool in toolDetailTarget = ToolDetailTarget(tool: tool) },
-                        onOpenSubagentConversation: onOpenSubagentConversation
-                    )
-                    .chatLiveEntrance(key: thinkingEntranceKey, isLive: isLiveTail)
-                }
                 ForEach(taskSegment.mediaBearingTools, id: \.toolCallId) { tool in
+                    toolMediaView(for: tool)
+                }
+            case .groupedTools(_, let mediaBearingTools):
+                ForEach(mediaBearingTools, id: \.toolCallId) { tool in
                     toolMediaView(for: tool)
                 }
             case .imageGallery(_, let startIndex, let images):
@@ -725,20 +696,6 @@ struct MessageBubbleView: View {
                 reduceMotion ? nil : .easeOut(duration: 0.18),
                 value: chatMessageAnchorHighlighted
             )
-    }
-
-    @ViewBuilder
-    private var fallbackThinkingCard: some View {
-        if !isUser, isGenerating, isLastMessage, !hasVisibleAssistantContent, assistantTurn == nil {
-            let messageID = ChatMessageProjector.messageId(for: message)
-            ChatTaskInlineCardView(
-                segment: ChatTaskStreamGrouping.liveThinkingSegment(messageID: messageID),
-                onTapToolDetail: { _ in },
-                onOpenSubagentConversation: onOpenSubagentConversation
-            )
-            .transition(.opacity)
-            .chatLiveEntrance(key: thinkingEntranceKey, isLive: true)
-        }
     }
 
     private var isLiveTail: Bool { isGenerating && isLastMessage }

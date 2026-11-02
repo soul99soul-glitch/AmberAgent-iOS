@@ -95,6 +95,7 @@ final class ChatKernelRunHost {
 #endif
     private var citationTracker: IOSMemoryCitationTracker?
     private var streamClock = ChatGenerationSpeedClock()
+    private var lastReasoningSampleUptime: TimeInterval = 0
     private var progressPresentation: ChatRunProgressPresentation?
     private var keepaliveHeld = false
     private var externallyManagedBackgroundExecution = false
@@ -246,6 +247,7 @@ final class ChatKernelRunHost {
             toolExposureBridge: bridge,
             mcpEnabled: { [weak self] in self?.mcpEnabledForRun ?? false },
             bindings: bindings,
+            fastFirstRound: bindings.isForegroundRouterRun(),
             isCurrentRun: { [weak self] in self?.currentRunId == runId },
             onPreparedUpload: { [weak self] provider, effectiveParams, messages in
                 try self?.refreshBackgroundHandoff(
@@ -472,6 +474,7 @@ final class ChatKernelRunHost {
         runSettings = nil
         runExecutionPolicy = nil
         displayBaseline = bindings.getMessages()
+        uploadPreparation?.cancelRecallWarmup()
         uploadPreparation = nil
         backgroundHandoff = nil
         pendingBackgroundConversationStore = nil
@@ -628,7 +631,7 @@ final class ChatKernelRunHost {
             terminalWireName = AgentRunStatus.failed.wireName
             return
         }
-        let request = makeRunRequest(
+        var request = makeRunRequest(
             adapterProvider: adapterProvider,
             providerSetting: provider,
             params: IOSGenerativeUiRequestPolicy.retryParams(params),
@@ -641,6 +644,7 @@ final class ChatKernelRunHost {
             recipeCatalogSnapshot: recipeCatalogSnapshot,
             citationTracker: tracker
         )
+        request.fastFirstReasoning = false
         _ = await repairAdapter.run(request)
         guard currentRunId == runId else { return }
         let hasUnresolvedToolCall = toolRuntime.hasUnresolvedToolCall(in: bindings.getMessages())
@@ -1142,6 +1146,7 @@ final class ChatKernelRunHost {
         callbacks.onProviderFailure = { [weak self] message in
             guard let self, self.currentRunId == runId else { return }
             self.lastFailureMessage = message
+            self.bindings.recordTaskActivity(.failed)
         }
         callbacks.onToolOutcomeUnknown = { [weak self] signal in
             guard let self, self.currentRunId == runId else { return }
@@ -1159,6 +1164,9 @@ final class ChatKernelRunHost {
         }
         callbacks.onAssistantTurnStarted = { [weak self] in
             guard let self, self.currentRunId == runId else { return }
+            self.lastReasoningSampleUptime = 0
+            self.bindings.recordTaskReasoning(nil)
+            self.bindings.recordTaskActivity(.preparing)
             self.progressPresentation?.recordModelStep()
             self.streamClock.resetRound()
             self.bindings.setMessages(
@@ -1212,14 +1220,21 @@ final class ChatKernelRunHost {
                 }
             }
         }
+        callbacks.onAssistantProgressPlan = { [weak self] stages in
+            guard let self, self.currentRunId == runId, self.cancelCause == nil else { return }
+            self.bindings.recordTaskProgressPlan(stages)
+        }
         callbacks.onToolExecutionStarted = { [weak self] toolName, input in
             guard let self, self.currentRunId == runId else { return }
+            self.bindings.recordTaskToolActivity(toolName, input)
+            self.bindings.recordTaskActivity(.runningTool)
             self.activeToolExecutionName = toolName
             self.activeToolEffectClass = IOSToolEffectClassMapping.forToolName(toolName, input: input)
             self.progressPresentation?.publishToolStarted(toolName: toolName, input: input)
         }
         callbacks.onAssistantStage = { [weak self] stage in
             guard let self, self.currentRunId == runId else { return }
+            self.bindings.recordTaskActivity(stage)
             self.progressPresentation?.publishAssistantStage(stage)
         }
         callbacks.onAssistantFirstVisibleDelta = { [weak self] in
@@ -1230,6 +1245,16 @@ final class ChatKernelRunHost {
         }
         callbacks.onAssistantMessageSnapshot = { [weak self] message in
             guard let self, self.currentRunId == runId else { return }
+            self.bindings.recordStreamHeartbeat()
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastReasoningSampleUptime >= 1.8,
+               let reasoning = message.parts.reversed().first(where: {
+                   guard let part = $0 as? UIMessagePart.Reasoning else { return false }
+                   return part.finishedAt == nil
+               }) as? UIMessagePart.Reasoning {
+                self.lastReasoningSampleUptime = now
+                self.bindings.recordTaskReasoning(reasoning.reasoning)
+            }
             if self.canReportPhoneWorkProgress(runId: runId) {
                 self.progressPresentation?.recordPhoneModelProgress(message)
             }

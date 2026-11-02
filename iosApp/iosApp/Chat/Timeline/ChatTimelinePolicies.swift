@@ -15,6 +15,7 @@ enum ChatListAction {
     case openMiniApp(appId: String)
     case openMiniApps
     case openSubagentConversation(id: String)
+    case openToolDetail(tool: UIMessagePart.Tool)
     case primaryConfiguration
     case modelDefaults
 }

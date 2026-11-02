@@ -248,7 +248,162 @@ struct UncheckedUIMessageBox: @unchecked Sendable {
 }
 
 
+/// A model-only first-round signal. Hold partial prefixes while streaming so
+/// neither the complete marker nor a split fragment flashes in chat.
+enum IOSAssistantContinuationMarker {
+    static let token = "<amber-continue/>"
+    private static let opening = "<amber-continue"
+    private static let closing = "</amber-continue>"
+    private static let stagesAttribute = try! NSRegularExpression(pattern: #"\bstages\s*=\s*([\"'])(.*?)\1"#)
+
+    private struct Parsed {
+        var ranges: [NSRange] = []
+        var stages: [String] = []
+        var hasCompleteMarker = false
+    }
+
+    private static func parse(_ text: String, final: Bool) -> Parsed {
+        let source = text as NSString
+        let prefixLength = (opening as NSString).length
+        var result = Parsed()
+        var cursor = 0
+        while cursor < source.length {
+            let found = source.range(of: opening, options: [],
+                                     range: NSRange(location: cursor, length: source.length - cursor))
+            guard found.location != NSNotFound else { break }
+            let afterName = NSMaxRange(found)
+            if afterName < source.length {
+                let character = source.character(at: afterName)
+                guard character == 0x3E || character == 0x2F || character == 0x20 ||
+                        character == 0x09 || character == 0x0A || character == 0x0D else {
+                    cursor = afterName
+                    continue
+                }
+            }
+            let end = source.range(of: ">", options: [],
+                                   range: NSRange(location: afterName, length: source.length - afterName))
+            guard end.location != NSNotFound else {
+                result.ranges.append(NSRange(location: found.location, length: source.length - found.location))
+                cursor = source.length
+                break
+            }
+            let header = source.substring(with: NSRange(location: found.location, length: NSMaxRange(end) - found.location))
+            let selfClosing = header.dropLast().trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("/")
+            let markerEnd: Int
+            var stageText: String?
+            if selfClosing {
+                markerEnd = NSMaxRange(end)
+                let headerRange = NSRange(location: 0, length: (header as NSString).length)
+                if let match = stagesAttribute.firstMatch(in: header, range: headerRange), match.numberOfRanges > 2 {
+                    stageText = (header as NSString).substring(with: match.range(at: 2))
+                }
+            } else {
+                let contentStart = NSMaxRange(end)
+                let close = source.range(of: closing, options: [],
+                                         range: NSRange(location: contentStart, length: source.length - contentStart))
+                guard close.location != NSNotFound else {
+                    result.ranges.append(NSRange(location: found.location, length: source.length - found.location))
+                    cursor = source.length
+                    break
+                }
+                markerEnd = NSMaxRange(close)
+                stageText = source.substring(with: NSRange(location: contentStart, length: close.location - contentStart))
+            }
+            result.hasCompleteMarker = true
+            result.ranges.append(NSRange(location: found.location, length: markerEnd - found.location))
+            if let stageText, result.stages.isEmpty {
+                result.stages = stageText.split(separator: "|", omittingEmptySubsequences: true).prefix(3).compactMap { item in
+                    let clean = item.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !clean.isEmpty, !clean.contains("<"), !clean.contains(">") else { return nil }
+                    let normalized = clean.hasPrefix("正在") ? clean : "正在" + clean
+                    return String(normalized.prefix(14))
+                }
+            }
+            cursor = markerEnd
+        }
+        // A prefix may span arbitrary streaming chunks or text parts.
+        if cursor < source.length {
+            let limit = min(prefixLength - 1, source.length - cursor)
+            if limit > 0 {
+                for length in stride(from: limit, through: 1, by: -1) {
+                    if text.hasSuffix(String(opening.prefix(length))) && (!final || length >= 6) {
+                        result.ranges.append(NSRange(location: source.length - length, length: length))
+                        break
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    static func contains(in message: UIMessage?) -> Bool {
+        guard let message else { return false }
+        return parse(message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(), final: true).hasCompleteMarker
+    }
+
+    static func stages(in message: UIMessage?) -> [String] {
+        guard let message else { return [] }
+        return parse(message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(), final: true).stages
+    }
+
+    private static func removalRanges(in text: String, final: Bool) -> [NSRange] {
+        parse(text, final: final).ranges
+    }
+
+    private static func mayContainMarker(_ text: String) -> Bool {
+        if text.contains(opening) { return true }
+        let tail = text.suffix(opening.count - 1)
+        guard let start = tail.lastIndex(of: "<") else { return false }
+        return opening.hasPrefix(tail[start...])
+    }
+
+    static func filteredText(_ text: String, final: Bool) -> String {
+        guard mayContainMarker(text) else { return text }
+        let ranges = removalRanges(in: text, final: final)
+        guard !ranges.isEmpty else { return text }
+        let result = NSMutableString(string: text)
+        for range in ranges.reversed() { result.deleteCharacters(in: range) }
+        return result as String
+    }
+
+    static func filteredMessage(_ message: UIMessage, final: Bool) -> UIMessage {
+        guard message.parts.contains(where: {
+            guard let text = $0 as? UIMessagePart.Text else { return false }
+            return mayContainMarker(text.text)
+        }) else { return message }
+        let joined = message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
+        let ranges = removalRanges(in: joined, final: final)
+        guard !ranges.isEmpty else { return message }
+        var offset = 0
+        let parts = message.parts.map { part -> UIMessagePart in
+            guard let text = part as? UIMessagePart.Text else { return part }
+            let length = (text.text as NSString).length
+            let partRange = NSRange(location: offset, length: length)
+            offset += length
+            let filtered = NSMutableString(string: text.text)
+            for range in ranges.reversed() {
+                let overlap = NSIntersectionRange(partRange, range)
+                if overlap.length > 0 {
+                    filtered.deleteCharacters(in: NSRange(location: overlap.location - partRange.location, length: overlap.length))
+                }
+            }
+            guard filtered as String != text.text else { return part }
+            return PromptTranscript.shared.doCopyText(part: text, text: filtered as String)
+        }
+        return UIMessage(id: message.id, role: message.role, parts: parts,
+                         annotations: message.annotations, createdAt: message.createdAt,
+                         finishedAt: message.finishedAt, modelId: message.modelId,
+                         usage: message.usage, translation: message.translation)
+    }
+}
+
 extension TextGenerationParams {
+    func replacingReasoningLevel(_ level: ReasoningLevel) -> TextGenerationParams {
+        TextGenerationParams(model: model, temperature: temperature, topP: topP, maxTokens: maxTokens,
+                             tools: tools, reasoningLevel: level, customHeaders: customHeaders, customBody: customBody)
+    }
+
     /// P0-a: a copy of these params carrying a different tool declaration list.
     /// Kotlin data-class default args don't bridge to Swift, so rebuild all
     /// fields explicitly (same shape makeTextGenerationParams uses).

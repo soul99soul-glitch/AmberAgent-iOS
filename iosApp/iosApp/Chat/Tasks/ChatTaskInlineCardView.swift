@@ -279,6 +279,10 @@ struct ChatTaskGroupDetailSheet: View {
     var onOpenSubagentConversation: ((String) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
+    @AppStorage(IOSAppLanguagePreference.defaultsKey) private var appLanguage = IOSAppLanguage.system.rawValue
+    @State private var detailSteps: [ChatToolStepModel] = []
+    @State private var resolvedDetailVersion: String?
     @State private var showsReasoningDetails = false
 
     private var rollup: ChatTaskRollupState {
@@ -286,12 +290,16 @@ struct ChatTaskGroupDetailSheet: View {
     }
 
     var body: some View {
+        let detailVersion = "\(segment.detailVersion)|\(segment.deferToolDetails)|\(appLanguage)|\(locale.identifier)"
+        let visibleSteps = segment.deferToolDetails ? detailSteps : segment.steps
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     summaryCard
 
-                    if !segment.steps.isEmpty {
+                    if segment.deferToolDetails && !segment.tools.isEmpty && resolvedDetailVersion != detailVersion {
+                        ProgressView()
+                    } else if !visibleSteps.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(IOSAppLocalization.string("任务进展与操作记录", defaultValue: "任务进展与操作记录"))
                                 .font(.footnote.weight(.semibold))
@@ -299,7 +307,7 @@ struct ChatTaskGroupDetailSheet: View {
                                 .padding(.horizontal, 4)
 
                             // Offset identity: provider toolCallIds repeat across a turn's messages.
-                            ForEach(Array(zip(segment.tools, segment.steps).enumerated()), id: \.offset) { _, row in
+                            ForEach(Array(zip(segment.tools, visibleSteps).enumerated()), id: \.offset) { _, row in
                                 Button {
                                     onSelectTool(row.0)
                                 } label: {
@@ -325,6 +333,27 @@ struct ChatTaskGroupDetailSheet: View {
                     .foregroundStyle(AmberTheme.accent)
                 }
             }
+        }
+        .task(id: detailVersion) {
+            guard segment.deferToolDetails else { return }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            // Tool outputs are immutable snapshots; metadata is not read by analysis.
+            nonisolated(unsafe) let tools = segment.tools
+            let prewarm = Task.detached(priority: .userInitiated) {
+                for tool in tools {
+                    guard !Task.isCancelled else { return }
+                    _ = ChatToolOutputFormatter.analysis(for: tool)
+                }
+            }
+            await withTaskCancellationHandler {
+                await prewarm.value
+            } onCancel: {
+                prewarm.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            detailSteps = segment.detailSteps
+            resolvedDetailVersion = detailVersion
         }
     }
 
