@@ -841,10 +841,13 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             XCTAssertTrue(preset.matches(runtime: runtime), "Preset \(preset.id) must match runtime after apply")
         }
 
-        for mood in [AmberAgentPersonaMood.idle, .working, .alert] {
+        for mood in [AmberAgentPersonaMood.idle, .running, .needsInput, .blocked, .working, .alert] {
             let medallion = AmberAgentPersonaMedallionView(mood: mood, diameter: 54)
             XCTAssertEqual(medallion.mood, mood)
         }
+        // Aliases must stay wired to the four core states for existing call sites.
+        XCTAssertEqual(AmberAgentPersonaMood.working, .running)
+        XCTAssertEqual(AmberAgentPersonaMood.alert, .blocked)
     }
 
     @MainActor

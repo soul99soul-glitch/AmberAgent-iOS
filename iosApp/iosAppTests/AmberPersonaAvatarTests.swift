@@ -132,6 +132,170 @@ final class AmberPersonaAvatarTests: XCTestCase {
         XCTAssertNil(afterResetStore.customAvatarImage)
     }
 
+    /// Builds a 4×4 sprite sheet whose cell (row, column) carries a deterministic solid colour,
+    /// so sliced frames can be identified exactly.
+    private func makeSpriteSheet(
+        cellSide: Int = 96,
+        columns: Int = 4,
+        rows: Int = 4,
+        color: (Int, Int) -> UIColor
+    ) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: cellSide * columns, height: cellSide * rows)
+        )
+        return renderer.image { context in
+            for row in 0..<rows {
+                for column in 0..<columns {
+                    color(row, column).setFill()
+                    context.fill(CGRect(
+                        x: column * cellSide,
+                        y: row * cellSide,
+                        width: cellSide,
+                        height: cellSide
+                    ))
+                }
+            }
+        }
+    }
+
+    func testSpriteSheetSlicingMapsFourStateRowsAndRejectsOrdinaryPortrait() throws {
+        // Distinct colour per (row, column): red channel encodes the column, green the row.
+        let sheet = makeSpriteSheet { row, column in
+            UIColor(
+                red: 0.25 + 0.15 * CGFloat(column),
+                green: 0.25 + 0.15 * CGFloat(row),
+                blue: 0.30,
+                alpha: 1.0
+            )
+        }
+        XCTAssertEqual(
+            AmberPersonaSpriteSheetSlicer.detectLayout(for: sheet, requireContentEvidence: false),
+            .quad4x4
+        )
+
+        let clips = AmberPersonaSpriteSheetSlicer.slices(from: sheet, layout: .quad4x4)
+        XCTAssertTrue(AmberPersonaSpriteSheetSlicer.isUsable(clips))
+        XCTAssertEqual(clips.count, 4)
+        for mood in AmberAgentPersonaMood.allCases {
+            XCTAssertEqual(clips[mood]?.count, 4, "\(mood) must slice into a 4-frame clip")
+        }
+        XCTAssertEqual(AmberAgentPersonaMood.allCases.map { $0.spriteSheetRow }, [0, 1, 2, 3])
+
+        // Row 0 belongs to idle, row 3 to blocked.
+        let idleFrame = try XCTUnwrap(clips[.idle]?.first)
+        let blockedFrame = try XCTUnwrap(clips[.blocked]?.first)
+        XCTAssertNotEqual(idleFrame.pngData(), blockedFrame.pngData())
+
+        // Codex Pets standard geometry: 8 columns × 9 rows (1536×1872-like); only the first 4 rows are states.
+        let pets = makeSpriteSheet(cellSide: 64, columns: 8, rows: 9) { row, _ in
+            UIColor(red: 0.3, green: 0.2 + 0.05 * CGFloat(row), blue: 0.4, alpha: 1.0)
+        }
+        XCTAssertEqual(
+            AmberPersonaSpriteSheetSlicer.detectLayout(for: pets, requireContentEvidence: false),
+            .codexPets8x9
+        )
+        let petsClips = AmberPersonaSpriteSheetSlicer.slices(from: pets, layout: .codexPets8x9)
+        XCTAssertTrue(AmberPersonaSpriteSheetSlicer.isUsable(petsClips))
+        XCTAssertEqual(petsClips[.idle]?.count, 8)
+        XCTAssertEqual(petsClips[.blocked]?.count, 8)
+
+        // An ordinary portrait must never be carved into tiles on file import.
+        let portrait = makeSolidPortrait(
+            color: UIColor(red: 0.78, green: 0.36, blue: 0.16, alpha: 1.0),
+            badgeText: "S",
+            size: CGSize(width: 512, height: 512)
+        )
+        XCTAssertNil(AmberPersonaSpriteSheetSlicer.detectLayout(for: portrait, requireContentEvidence: true))
+    }
+
+    func testSpriteSheetImportPreviewConfirmPersistsFourStateClipsAndLegacyManifestStillLoads() throws {
+        let suite = "AmberPersonaSpriteImport.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        let store = AmberPersonaStore(defaults: defaults, storageDirectory: tempDir)
+        let sheet = makeSpriteSheet { row, column in
+            UIColor(
+                red: 0.25 + 0.15 * CGFloat(column),
+                green: 0.25 + 0.15 * CGFloat(row),
+                blue: 0.30,
+                alpha: 1.0
+            )
+        }
+        let sheetData = try XCTUnwrap(sheet.pngData())
+
+        // 1. Import enters the four-clip preview without touching the active avatar
+        XCTAssertTrue(store.stageUploadedAvatarDataForPreview(sheetData))
+        XCTAssertEqual(store.preset, .amberFox)
+        XCTAssertTrue(store.stageImportedSpriteSheet(sheet))
+        XCTAssertEqual(store.pendingPreviewKind, .multiFrameAnimation)
+        XCTAssertEqual(store.pendingSpriteSheetLayout, .quad4x4)
+        XCTAssertEqual(store.pendingAnimatedClipCount, 4)
+        for mood in AmberAgentPersonaMood.allCases {
+            XCTAssertEqual(store.pendingFrames(for: mood).count, 4, "Pending \(mood) clip must hold 4 frames")
+        }
+
+        // 2. Confirming persists per-state clips and survives a restart
+        XCTAssertTrue(store.confirmPendingPreview())
+        XCTAssertTrue(store.hasActiveMultiFrameAnimation)
+        XCTAssertEqual(store.animatedClipCount, 4)
+        for mood in AmberAgentPersonaMood.allCases {
+            XCTAssertEqual(store.frames(for: mood).count, 4)
+        }
+
+        let reloaded = AmberPersonaStore(defaults: defaults, storageDirectory: tempDir)
+        XCTAssertTrue(reloaded.hasActiveMultiFrameAnimation)
+        XCTAssertEqual(reloaded.animatedClipCount, 4)
+        XCTAssertEqual(reloaded.frames(for: .needsInput).count, 4)
+        XCTAssertNotEqual(
+            reloaded.frames(for: .idle).first?.pngData(),
+            reloaded.frames(for: .blocked).first?.pngData(),
+            "Per-state clips must stay distinct after reload"
+        )
+
+        // 3. A legacy single-sequence manifest still loads and serves every state
+        let legacyDir = tempDir.appendingPathComponent("legacy", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+        var legacyNames: [String] = []
+        for index in 0..<3 {
+            let frame = makeSolidPortrait(
+                color: UIColor(red: 0.7, green: 0.3 + 0.05 * CGFloat(index), blue: 0.2, alpha: 1.0),
+                badgeText: "L\(index)"
+            )
+            let name = "anim_frame_\(index).png"
+            try XCTUnwrap(frame.pngData()).write(
+                to: legacyDir.appendingPathComponent(name),
+                options: .atomic
+            )
+            legacyNames.append(name)
+        }
+        let legacyManifest = """
+        {"frameFileNames":["\(legacyNames.joined(separator: "\",\""))"],"frameIntervalMs":550,"updatedAtMs":0}
+        """
+        try Data(legacyManifest.utf8).write(
+            to: legacyDir.appendingPathComponent("animation_manifest.json"),
+            options: .atomic
+        )
+        let legacyStore = AmberPersonaStore(defaults: defaults, storageDirectory: legacyDir)
+        XCTAssertTrue(legacyStore.hasActiveMultiFrameAnimation)
+        // Legacy single-sequence data fans out to every state, so all four clips animate with the same frames.
+        XCTAssertEqual(legacyStore.animatedClipCount, 4, "Legacy data serves every state")
+        XCTAssertFalse(
+            AmberPersonaAnimationManifest(
+                frameFileNames: ["a.png"],
+                frameIntervalMs: 550,
+                updatedAtMs: 0
+            ).hasDistinctClips
+        )
+        for mood in AmberAgentPersonaMood.allCases {
+            XCTAssertEqual(legacyStore.frames(for: mood).count, 3, "Legacy frames must serve every state")
+        }
+    }
+
     func testMultiFrameAnimationAsyncGenerationPreviewConfirmPlaybackReduceMotionAndFailureRecovery() async throws {
         let suite = "AmberPersonaAnimTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -153,25 +317,30 @@ final class AmberPersonaAvatarTests: XCTestCase {
         // 1. Honest unconfigured state when no provider is configured and no test override is set
         let unconfiguredSettings = IOSSharedSettingsStore(userDefaults: defaults)
         XCTAssertFalse(store.hasConfiguredImageGenerationProvider(sharedSettings: unconfiguredSettings))
-        await store.generateAnimationFramesWithAI(sharedSettings: unconfiguredSettings, frameCount: 3)
+        await store.generateAnimationFramesWithAI(sharedSettings: unconfiguredSettings)
         XCTAssertNotNil(store.lastGenerationError)
         XCTAssertFalse(store.hasPendingPreview)
         XCTAssertNotNil(store.customAvatarImage, "Existing static avatar must remain intact when unconfigured")
 
-        // 2. Controlled async multi-frame generation while user continues chatting
-        let frame1 = makeSolidPortrait(color: UIColor(red: 0.82, green: 0.38, blue: 0.16, alpha: 1.0), badgeText: "F1")
-        let frame2 = makeSolidPortrait(color: UIColor(red: 0.76, green: 0.45, blue: 0.18, alpha: 1.0), badgeText: "F2")
-        let frame3 = makeSolidPortrait(color: UIColor(red: 0.68, green: 0.32, blue: 0.22, alpha: 1.0), badgeText: "F3")
-
-        var capturedSourceURL: String?
-        store.frameGeneratorOverrideForTesting = { _, sourceURL, count in
-            capturedSourceURL = sourceURL
-            try await Task.sleep(for: .milliseconds(120))
-            XCTAssertEqual(count, 3)
-            return [frame1, frame2, frame3]
+        // 2. Controlled async sprite sheet generation while user continues chatting
+        let sheet = makeSpriteSheet { row, column in
+            UIColor(
+                red: 0.25 + 0.15 * CGFloat(column),
+                green: 0.25 + 0.15 * CGFloat(row),
+                blue: 0.30,
+                alpha: 1.0
+            )
         }
 
-        let genTask = store.startGenerateAnimationFramesTask(sharedSettings: unconfiguredSettings, frameCount: 3)
+        var capturedSourceURL: String?
+        store.spriteSheetGeneratorOverrideForTesting = { note, sourceURL in
+            capturedSourceURL = sourceURL
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertTrue(note.contains("4x4"), "Sprite sheet prompt must pin the 4×4 grid")
+            return sheet
+        }
+
+        let genTask = store.startGenerateAnimationFramesTask(sharedSettings: unconfiguredSettings)
         try await Task.sleep(for: .milliseconds(25))
         XCTAssertTrue(store.isGeneratingAvatar, "Multi-frame generation should be running asynchronously")
 
@@ -183,21 +352,24 @@ final class AmberPersonaAvatarTests: XCTestCase {
 
         await genTask.value
         XCTAssertFalse(store.isGeneratingAvatar)
-        XCTAssertNotNil(capturedSourceURL, "Multi-frame generator should receive the uploaded/current avatar data URL")
+        XCTAssertNotNil(capturedSourceURL, "Sprite sheet generator should receive the uploaded/current avatar data URL")
         XCTAssertEqual(store.pendingPreviewKind, .multiFrameAnimation)
-        XCTAssertEqual(store.pendingPreviewAnimationFrames.count, 3)
+        XCTAssertEqual(store.pendingAnimatedClipCount, 4)
+        XCTAssertEqual(store.pendingFrames(for: .running).count, 4)
         XCTAssertFalse(store.hasActiveMultiFrameAnimation, "Should wait in preview until user confirms")
 
-        // 3. Confirming multi-frame preview activates discrete frame playback and persists across restart
+        // 3. Confirming activates discrete per-state playback and persists across restart
         XCTAssertTrue(store.confirmPendingPreview())
         XCTAssertFalse(store.hasPendingPreview)
         XCTAssertTrue(store.hasActiveMultiFrameAnimation)
-        XCTAssertEqual(store.customAnimationFrames.count, 3)
+        XCTAssertEqual(store.animatedClipCount, 4)
+        XCTAssertEqual(store.frames(for: .blocked).count, 4)
 
         let reloaded = AmberPersonaStore(defaults: defaults, storageDirectory: tempDir)
         XCTAssertEqual(reloaded.preset, .customPortrait)
         XCTAssertTrue(reloaded.hasActiveMultiFrameAnimation)
-        XCTAssertEqual(reloaded.customAnimationFrames.count, 3)
+        XCTAssertEqual(reloaded.animatedClipCount, 4)
+        XCTAssertEqual(reloaded.frames(for: .needsInput).count, 4)
 
         // 4. Verify discrete frame cycling vs Reduce Motion static frame 0
         let t0 = Date(timeIntervalSinceReferenceDate: 0.0)
@@ -218,23 +390,23 @@ final class AmberPersonaAvatarTests: XCTestCase {
             )
         }
 
-        // 5. Failed or cancelled subsequent generation preserves the active 3-frame avatar
+        // 5. Failed or cancelled subsequent generation preserves the active clips
         struct SimulatedGenError: LocalizedError {
             var errorDescription: String? { "模拟生图网络超时，已保留当前形象" }
         }
-        store.frameGeneratorOverrideForTesting = { _, _, _ in
+        store.spriteSheetGeneratorOverrideForTesting = { _, _ in
             throw SimulatedGenError()
         }
-        await store.generateAnimationFramesWithAI(sharedSettings: unconfiguredSettings, frameCount: 3)
+        await store.generateAnimationFramesWithAI(sharedSettings: unconfiguredSettings)
         XCTAssertEqual(store.lastGenerationError, "模拟生图网络超时，已保留当前形象")
         XCTAssertTrue(store.hasActiveMultiFrameAnimation)
-        XCTAssertEqual(store.customAnimationFrames.count, 3)
+        XCTAssertEqual(store.animatedClipCount, 4)
 
         // 6. Switching back to a confirmed static image cleanly disables multi-frame animation (distinct states)
         XCTAssertTrue(store.stageUploadedAvatarForPreview(baseAvatar))
         XCTAssertTrue(store.confirmPendingPreview())
         XCTAssertFalse(store.hasActiveMultiFrameAnimation)
-        XCTAssertEqual(store.customAnimationFrames.count, 0)
+        XCTAssertEqual(store.animatedClipCount, 0)
         XCTAssertNotNil(store.customAvatarImage)
     }
 
@@ -323,7 +495,7 @@ final class AmberPersonaAvatarTests: XCTestCase {
 
         // Snapshot 2b: Confirmed custom static avatar + unconfigured generation tap (verifying single deduplicated notice)
         _ = store.confirmPendingPreview()
-        await store.generateAnimationFramesWithAI(sharedSettings: sharedSettings, frameCount: 3)
+        await store.generateAnimationFramesWithAI(sharedSettings: sharedSettings)
         try await snapshot(
             AmberPersonaStudioSheet(sharedSettings: sharedSettings, store: store),
             fileName: "05-persona-studio-refined-single-notice.png"
@@ -345,9 +517,9 @@ final class AmberPersonaAvatarTests: XCTestCase {
                     .font(.headline)
                     .foregroundStyle(AmberTheme.foreground)
                 HStack(spacing: 20) {
-                    ForEach(0..<store.customAnimationFrames.count, id: \.self) { idx in
+                    ForEach(Array(store.frames(for: .idle).enumerated()), id: \.offset) { idx, frame in
                         VStack(spacing: 8) {
-                            Image(uiImage: store.customAnimationFrames[idx])
+                            Image(uiImage: frame)
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: 76, height: 76)

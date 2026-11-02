@@ -28,7 +28,7 @@ enum AmberPersonaPreset: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .amberFox: "Amber 原生灵狐形象 · 随待命/思考/提醒切换神态"
         case .amberCrystal: "温润琥珀几何晶核 · 极简克制"
-        case .customPortrait: "上传静态形象图或生成 3–4 帧微表情短动画"
+        case .customPortrait: "上传静态形象图，或生成待机/忙碌/等待/异常四段动作"
         }
     }
 }
@@ -36,12 +36,6 @@ enum AmberPersonaPreset: String, CaseIterable, Codable, Identifiable, Sendable {
 enum AmberPersonaPendingPreviewKind: String, Equatable, Sendable {
     case staticImage
     case multiFrameAnimation
-}
-
-struct AmberPersonaAnimationManifest: Codable, Equatable, Sendable {
-    var frameFileNames: [String]
-    var frameIntervalMs: Int
-    var updatedAtMs: Int64
 }
 
 struct AmberPersonaReferenceItem: Identifiable, Codable, Equatable, Sendable {
@@ -74,7 +68,8 @@ final class AmberPersonaStore {
     }
 
     private(set) var customAvatarImage: UIImage?
-    private(set) var customAnimationFrames: [UIImage] = []
+    /// Per-state frame clips; legacy single-sequence data lands in every state via the manifest.
+    private(set) var customAnimationClips: [AmberAgentPersonaMood: [UIImage]] = [:]
     private(set) var isMultiFrameAnimationActive = false {
         didSet { defaults.set(isMultiFrameAnimationActive, forKey: Keys.multiFrameActive) }
     }
@@ -82,13 +77,15 @@ final class AmberPersonaStore {
     private(set) var pendingPreviewKind: AmberPersonaPendingPreviewKind?
     private(set) var pendingPreviewImage: UIImage?
     private(set) var pendingPreviewAnimationFrames: [UIImage] = []
+    private(set) var pendingPreviewClips: [AmberAgentPersonaMood: [UIImage]] = [:]
+    private(set) var pendingSpriteSheetLayout: AmberPersonaSpriteSheetLayout?
     private(set) var referenceItems: [AmberPersonaReferenceItem] = []
     private(set) var isGeneratingAvatar = false
     private(set) var generationProgressText: String?
     private(set) var lastGenerationError: String?
 
     @ObservationIgnored var staticGeneratorOverrideForTesting: ((_ prompt: String, _ sourceImageDataURL: String?) async throws -> UIImage)?
-    @ObservationIgnored var frameGeneratorOverrideForTesting: ((_ prompt: String, _ sourceImageDataURL: String?, _ frameCount: Int) async throws -> [UIImage])?
+    @ObservationIgnored var spriteSheetGeneratorOverrideForTesting: ((_ prompt: String, _ sourceImageDataURL: String?) async throws -> UIImage)?
     @ObservationIgnored private var activeGenerationTask: Task<Void, Never>?
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -147,11 +144,37 @@ final class AmberPersonaStore {
     }
 
     var hasActiveMultiFrameAnimation: Bool {
-        preset == .customPortrait && isMultiFrameAnimationActive && customAnimationFrames.count > 1
+        preset == .customPortrait && isMultiFrameAnimationActive && !customAnimationClips.isEmpty
     }
 
     var canResetToDefault: Bool {
-        preset != .amberFox || customAvatarImage != nil || !customAnimationFrames.isEmpty || hasPendingPreview
+        preset != .amberFox || customAvatarImage != nil || !customAnimationClips.isEmpty || hasPendingPreview
+    }
+
+    /// Frames for one state of the active (or staged) personality.
+    func frames(for mood: AmberAgentPersonaMood) -> [UIImage] {
+        guard let clip = customAnimationClips[mood], clip.count > 1 else { return [] }
+        return clip
+    }
+
+    /// Frames for one state of the staged preview; an empty clip falls back to the idle clip.
+    func pendingFrames(for mood: AmberAgentPersonaMood) -> [UIImage] {
+        guard pendingPreviewKind == .multiFrameAnimation else { return [] }
+        if let clip = pendingPreviewClips[mood], clip.count > 1 { return clip }
+        return pendingPreviewClips[.idle] ?? []
+    }
+
+    /// Number of states that carry their own animation (1 for legacy single-sequence data).
+    var animatedClipCount: Int {
+        AmberAgentPersonaMood.allCases.filter { (customAnimationClips[$0]?.count ?? 0) > 1 }.count
+    }
+
+    var pendingAnimatedClipCount: Int {
+        AmberAgentPersonaMood.allCases.filter { (pendingPreviewClips[$0]?.count ?? 0) > 1 }.count
+    }
+
+    var totalFrameCount: Int {
+        AmberAgentPersonaMood.allCases.reduce(0) { $0 + (customAnimationClips[$1]?.count ?? 0) }
     }
 
     @discardableResult
@@ -186,14 +209,59 @@ final class AmberPersonaStore {
     }
 
     /// Stages a generated multi-frame animation sequence in preview state for user confirmation.
+    /// A single sequence is persisted for every state (legacy shape).
     @discardableResult
     func stageAnimationFramesForPreview(_ frames: [UIImage]) -> Bool {
         let normalized = frames.map { Self.downscale($0, maxDimension: 512) }
         guard normalized.count >= 2 else { return false }
-        pendingPreviewAnimationFrames = normalized
-        pendingPreviewImage = normalized.first
+        var uniform: [AmberAgentPersonaMood: [UIImage]] = [:]
+        for mood in AmberAgentPersonaMood.allCases { uniform[mood] = normalized }
+        return stageStateClipsForPreview(uniform)
+    }
+
+    /// Stages four per-state animation clips in preview state for user confirmation.
+    /// Missing or single-frame states inherit the idle clip so every state still animates.
+    @discardableResult
+    func stageStateClipsForPreview(_ clips: [AmberAgentPersonaMood: [UIImage]]) -> Bool {
+        let idle = (clips[.idle] ?? []).map { Self.downscale($0, maxDimension: 512) }
+        let fallback = idle.count >= 2
+            ? idle
+            : clips.values.first(where: { $0.count >= 2 })?.map { Self.downscale($0, maxDimension: 512) }
+        guard let fallback, fallback.count >= 2 else { return false }
+
+        var normalized: [AmberAgentPersonaMood: [UIImage]] = [:]
+        for mood in AmberAgentPersonaMood.allCases {
+            let clip = (clips[mood] ?? []).map { Self.downscale($0, maxDimension: 512) }
+            normalized[mood] = clip.count >= 2 ? clip : fallback
+        }
+        pendingPreviewClips = normalized
+        pendingPreviewAnimationFrames = normalized[.idle] ?? fallback
+        pendingPreviewImage = pendingPreviewAnimationFrames.first
         pendingPreviewKind = .multiFrameAnimation
         lastGenerationError = nil
+        return true
+    }
+
+    /// Recognises a sprite sheet dropped in through "文件导入"; returns `false` for ordinary portraits.
+    @discardableResult
+    func stageImportedSpriteSheet(_ image: UIImage) -> Bool {
+        let layout: AmberPersonaSpriteSheetLayout
+        if let detected = AmberPersonaSpriteSheetSlicer.detectLayout(for: image, requireContentEvidence: true) {
+            layout = detected
+        } else if let trimmed = Self.trimTransparentGutter(image),
+                  let detected = AmberPersonaSpriteSheetSlicer.detectLayout(for: trimmed, requireContentEvidence: false),
+                  AmberPersonaSpriteSheetSlicer.isUsable(AmberPersonaSpriteSheetSlicer.slices(from: trimmed, layout: detected)) {
+            // Photos export sometimes pads the sheet with a transparent gutter; retry on the trimmed canvas.
+            let clips = AmberPersonaSpriteSheetSlicer.slices(from: trimmed, layout: detected)
+            guard stageStateClipsForPreview(clips) else { return false }
+            pendingSpriteSheetLayout = detected
+            return true
+        } else {
+            return false
+        }
+        let clips = AmberPersonaSpriteSheetSlicer.slices(from: image, layout: layout)
+        guard AmberPersonaSpriteSheetSlicer.isUsable(clips), stageStateClipsForPreview(clips) else { return false }
+        pendingSpriteSheetLayout = layout
         return true
     }
 
@@ -209,7 +277,7 @@ final class AmberPersonaStore {
             return true
         case .multiFrameAnimation:
             guard pendingPreviewAnimationFrames.count >= 2 else { return false }
-            saveCustomAnimationFrames(pendingPreviewAnimationFrames)
+            saveStateClips(pendingPreviewClips)
             discardPendingPreview()
             return true
         }
@@ -220,6 +288,8 @@ final class AmberPersonaStore {
         pendingPreviewKind = nil
         pendingPreviewImage = nil
         pendingPreviewAnimationFrames = []
+        pendingPreviewClips = [:]
+        pendingSpriteSheetLayout = nil
     }
 
     /// Resets the persona back to the default preset (`amberFox`) and clears custom static/animated portrait state.
@@ -230,7 +300,7 @@ final class AmberPersonaStore {
         removeSavedAnimationFiles()
         try? fileManager.removeItem(at: baseDirectory.appendingPathComponent("avatar.png"))
         customAvatarImage = nil
-        customAnimationFrames = []
+        customAnimationClips = [:]
         isMultiFrameAnimationActive = false
         preset = defaultPreset
     }
@@ -243,40 +313,62 @@ final class AmberPersonaStore {
         let url = baseDirectory.appendingPathComponent("avatar.png")
         try? data.write(to: url, options: .atomic)
         removeSavedAnimationFiles()
-        customAnimationFrames = []
+        customAnimationClips = [:]
         isMultiFrameAnimationActive = false
         customAvatarImage = downscaled
         preset = .customPortrait
     }
 
-    /// Immediately persists a discrete multi-frame animation sequence (`anim_frame_0.png`...) and activates multi-frame mode.
+    /// Immediately persists a discrete multi-frame animation sequence (`anim_frame_0.png`...) for every state.
     func saveCustomAnimationFrames(_ frames: [UIImage], frameIntervalMs: Int = 550) {
-        let normalized = frames.map { Self.downscale($0, maxDimension: 512) }
-        guard normalized.count >= 2 else { return }
+        var uniform: [AmberAgentPersonaMood: [UIImage]] = [:]
+        for mood in AmberAgentPersonaMood.allCases { uniform[mood] = frames }
+        saveStateClips(uniform, frameIntervalMs: frameIntervalMs)
+    }
+
+    /// Immediately persists per-state clips (`anim_<state>_<index>.png`) and activates multi-frame mode.
+    func saveStateClips(_ clips: [AmberAgentPersonaMood: [UIImage]], frameIntervalMs: Int = 550) {
+        let idle = (clips[.idle] ?? []).map { Self.downscale($0, maxDimension: 512) }
+        let fallback = idle.count >= 2
+            ? idle
+            : clips.values.first(where: { $0.count >= 2 })?.map { Self.downscale($0, maxDimension: 512) }
+        guard let fallback, fallback.count >= 2 else { return }
+
         try? fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
         removeSavedAnimationFiles()
 
-        var savedFileNames: [String] = []
-        var savedImages: [UIImage] = []
-        for (index, frame) in normalized.enumerated() {
-            let fileName = "anim_frame_\(index).png"
-            let url = baseDirectory.appendingPathComponent(fileName)
-            guard let data = frame.pngData() else { continue }
-            do {
-                try data.write(to: url, options: .atomic)
-                savedFileNames.append(fileName)
-                savedImages.append(frame)
-            } catch {
-                continue
+        var savedClips: [String: [String]] = [:]
+        var savedImages: [AmberAgentPersonaMood: [UIImage]] = [:]
+        for mood in AmberAgentPersonaMood.allCases {
+            let frames = (clips[mood] ?? []).map { Self.downscale($0, maxDimension: 512) }
+            let clip = frames.count >= 2 ? frames : fallback
+            var fileNames: [String] = []
+            var images: [UIImage] = []
+            for (index, frame) in clip.enumerated() {
+                let fileName = "anim_\(mood.clipKey)_\(index).png"
+                guard let data = frame.pngData() else { continue }
+                do {
+                    try data.write(to: baseDirectory.appendingPathComponent(fileName), options: .atomic)
+                    fileNames.append(fileName)
+                    images.append(frame)
+                } catch {
+                    continue
+                }
             }
+            guard images.count >= 2 else { continue }
+            savedClips[mood.clipKey] = fileNames
+            savedImages[mood] = images
         }
-        guard savedImages.count >= 2 else { return }
-
-        if let firstData = savedImages[0].pngData() {
+        guard let idleClip = savedImages[AmberAgentPersonaMood.idle],
+              let idleNames = savedClips[AmberAgentPersonaMood.idle.clipKey],
+              idleNames.count >= 2 else {
+            return
+        }
+        if let firstData = idleClip[0].pngData() {
             try? firstData.write(to: baseDirectory.appendingPathComponent("avatar.png"), options: .atomic)
         }
         let manifest = AmberPersonaAnimationManifest(
-            frameFileNames: savedFileNames,
+            clips: savedClips,
             frameIntervalMs: max(300, frameIntervalMs),
             updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000)
         )
@@ -286,8 +378,8 @@ final class AmberPersonaStore {
                 options: .atomic
             )
         }
-        customAvatarImage = savedImages[0]
-        customAnimationFrames = savedImages
+        customAvatarImage = idleClip[0]
+        customAnimationClips = savedImages
         animationFrameIntervalMs = manifest.frameIntervalMs
         isMultiFrameAnimationActive = true
         preset = .customPortrait
@@ -370,7 +462,7 @@ final class AmberPersonaStore {
     }
 
     func hasConfiguredImageGenerationProvider(sharedSettings: IOSSharedSettingsStore) -> Bool {
-        if staticGeneratorOverrideForTesting != nil || frameGeneratorOverrideForTesting != nil {
+        if staticGeneratorOverrideForTesting != nil || spriteSheetGeneratorOverrideForTesting != nil {
             return true
         }
         return resolveImageGenerationCredentials(sharedSettings: sharedSettings) != nil
@@ -384,14 +476,11 @@ final class AmberPersonaStore {
     }
 
     @discardableResult
-    func startGenerateAnimationFramesTask(
-        sharedSettings: IOSSharedSettingsStore,
-        frameCount: Int = 3
-    ) -> Task<Void, Never> {
+    func startGenerateAnimationFramesTask(sharedSettings: IOSSharedSettingsStore) -> Task<Void, Never> {
         activeGenerationTask?.cancel()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.generateAnimationFramesWithAI(sharedSettings: sharedSettings, frameCount: frameCount)
+            await self.generateAnimationFramesWithAI(sharedSettings: sharedSettings)
         }
         activeGenerationTask = task
         return task
@@ -463,12 +552,8 @@ final class AmberPersonaStore {
         }
     }
 
-    /// Generates a 3–4 frame subtle expression sequence from the current/uploaded image and prompt, staging it in preview.
-    func generateAnimationFramesWithAI(
-        sharedSettings: IOSSharedSettingsStore,
-        frameCount: Int = 3
-    ) async {
-        let clampedCount = min(max(frameCount, 3), 4)
+    /// One image request → 4×4 sprite sheet → four 4-frame state clips, staged in preview.
+    func generateAnimationFramesWithAI(sharedSettings: IOSSharedSettingsStore) async {
         let prompt = personaStylePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
             lastGenerationError = "请先输入 Amber 的形象描述词"
@@ -476,7 +561,7 @@ final class AmberPersonaStore {
         }
 
         isGeneratingAvatar = true
-        generationProgressText = "正在生成 \(clampedCount) 帧微动画（1/\(clampedCount)）…"
+        generationProgressText = "正在生成四段动作精灵图…"
         lastGenerationError = nil
         defer {
             isGeneratingAvatar = false
@@ -484,22 +569,13 @@ final class AmberPersonaStore {
         }
 
         let sourceURL = sourceImageDataURLForGeneration()
-        let frameDirectives = [
-            "Frame 1: calm attentive gaze, neutral warm expression, centered circular avatar portrait, identical character identity and lighting.",
-            "Frame 2: soft gentle blink with warm micro-smile, centered circular avatar portrait, identical character identity and lighting.",
-            "Frame 3: subtle curious head tilt with bright attentive eyes, centered circular avatar portrait, identical character identity and lighting.",
-            "Frame 4: relaxed warm expression returning to neutral posture, centered circular avatar portrait, identical character identity and lighting."
-        ]
+        let sheetPrompt = AmberPersonaSpriteSheetPrompt.make(stylePrompt: prompt)
 
-        if let override = frameGeneratorOverrideForTesting {
+        if let override = spriteSheetGeneratorOverrideForTesting {
             do {
-                let generated = try await override(prompt, sourceURL, clampedCount)
+                let sheet = try await override(sheetPrompt, sourceURL)
                 try Task.checkCancellation()
-                guard generated.count >= 2 else {
-                    lastGenerationError = "微动画至少需要 2 帧有效图像，原有形象已保留。"
-                    return
-                }
-                _ = stageAnimationFramesForPreview(Array(generated.prefix(clampedCount)))
+                applyGeneratedSpriteSheet(sheet)
             } catch is CancellationError {
                 return
             } catch {
@@ -513,51 +589,48 @@ final class AmberPersonaStore {
             return
         }
 
-        var generatedFrames: [UIImage] = []
-        var anchorSourceURL = sourceURL
-
         do {
-            for index in 0..<clampedCount {
-                try Task.checkCancellation()
-                generationProgressText = "正在生成 \(clampedCount) 帧微动画（\(index + 1)/\(clampedCount)）…"
-                let directive = frameDirectives[min(index, frameDirectives.count - 1)]
-                let framePrompt = """
-                Personal AI agent multi-frame avatar animation for Amber (\(index + 1)/\(clampedCount)): \(prompt). \(directive) Keep exact same character design, framing, and background across frames.
-                """
-                let record = try await IOSImageGenerationRepository.shared.generate(
-                    request: IOSImageGenerationRequest(
-                        prompt: framePrompt,
-                        model: credentials.modelId,
-                        aspectRatio: .square,
-                        count: 1,
-                        style: "illustration",
-                        source: "persona_studio_animation",
-                        sourceImageURL: anchorSourceURL
-                    ),
-                    apiKey: credentials.apiKey,
-                    baseURL: credentials.baseURL
-                )
-                try Task.checkCancellation()
-                guard let firstPath = record.files.first?.path,
-                      let data = try? Data(contentsOf: URL(fileURLWithPath: firstPath)),
-                      let image = UIImage(data: data) else {
-                    lastGenerationError = "第 \(index + 1) 帧生成未返回有效图像，原有形象已保留。"
-                    return
-                }
-                let downscaled = Self.downscale(image, maxDimension: 512)
-                generatedFrames.append(downscaled)
-                if anchorSourceURL == nil,
-                   let jpeg = downscaled.jpegData(compressionQuality: 0.88),
-                   !jpeg.isEmpty {
-                    anchorSourceURL = "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
-                }
+            let record = try await IOSImageGenerationRepository.shared.generate(
+                request: IOSImageGenerationRequest(
+                    prompt: sheetPrompt,
+                    model: credentials.modelId,
+                    aspectRatio: .square,
+                    count: 1,
+                    style: "illustration",
+                    source: "persona_studio_sprite_sheet",
+                    sourceImageURL: sourceURL
+                ),
+                apiKey: credentials.apiKey,
+                baseURL: credentials.baseURL
+            )
+            try Task.checkCancellation()
+            guard let firstPath = record.files.first?.path,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: firstPath)),
+                  let sheet = UIImage(data: data) else {
+                lastGenerationError = "生图未返回有效的精灵图，原有形象已保留。"
+                return
             }
-            _ = stageAnimationFramesForPreview(generatedFrames)
+            applyGeneratedSpriteSheet(sheet)
         } catch is CancellationError {
             return
         } catch {
             lastGenerationError = error.localizedDescription
         }
+    }
+
+    /// Slices our own generated sheet. The request pins the geometry, so no content evidence is required;
+    /// a sheet that lands on the wrong grid keeps the previous avatar and reports it honestly.
+    private func applyGeneratedSpriteSheet(_ sheet: UIImage) {
+        guard let layout = AmberPersonaSpriteSheetSlicer.detectLayout(for: sheet, requireContentEvidence: false) else {
+            lastGenerationError = "生成图未能按 4×4 网格切分，原有形象已保留，可重试或直接导入精灵图。"
+            return
+        }
+        let clips = AmberPersonaSpriteSheetSlicer.slices(from: sheet, layout: layout)
+        guard AmberPersonaSpriteSheetSlicer.isUsable(clips), stageStateClipsForPreview(clips) else {
+            lastGenerationError = "生成图未切出可用动作帧，原有形象已保留，可重试或直接导入精灵图。"
+            return
+        }
+        pendingSpriteSheetLayout = layout
     }
 
     private func resolveImageGenerationCredentials(
@@ -583,19 +656,26 @@ final class AmberPersonaStore {
         let manifestURL = baseDirectory.appendingPathComponent("animation_manifest.json")
         if let manifestData = try? Data(contentsOf: manifestURL),
            let manifest = try? JSONDecoder().decode(AmberPersonaAnimationManifest.self, from: manifestData) {
-            var loadedFrames: [UIImage] = []
-            for fileName in manifest.frameFileNames {
-                let frameURL = baseDirectory.appendingPathComponent(fileName)
-                if let frameData = try? Data(contentsOf: frameURL),
-                   let frameImage = UIImage(data: frameData) {
-                    loadedFrames.append(frameImage)
+            var loadedClips: [AmberAgentPersonaMood: [UIImage]] = [:]
+            for mood in AmberAgentPersonaMood.allCases {
+                var frames: [UIImage] = []
+                for fileName in manifest.clip(for: mood) {
+                    let frameURL = baseDirectory.appendingPathComponent(fileName)
+                    if let frameData = try? Data(contentsOf: frameURL),
+                       let frameImage = UIImage(data: frameData) {
+                        frames.append(frameImage)
+                    }
                 }
+                if frames.count >= 2 { loadedClips[mood] = frames }
             }
-            if loadedFrames.count >= 2 {
-                customAnimationFrames = loadedFrames
+            if let idleClip = loadedClips[.idle] ?? loadedClips.values.first {
+                for mood in AmberAgentPersonaMood.allCases where loadedClips[mood] == nil {
+                    loadedClips[mood] = idleClip
+                }
+                customAnimationClips = loadedClips
                 animationFrameIntervalMs = max(300, manifest.frameIntervalMs)
                 if customAvatarImage == nil {
-                    customAvatarImage = loadedFrames.first
+                    customAvatarImage = idleClip.first
                 }
             } else {
                 isMultiFrameAnimationActive = false
@@ -609,12 +689,18 @@ final class AmberPersonaStore {
         let manifestURL = baseDirectory.appendingPathComponent("animation_manifest.json")
         if let manifestData = try? Data(contentsOf: manifestURL),
            let manifest = try? JSONDecoder().decode(AmberPersonaAnimationManifest.self, from: manifestData) {
-            for fileName in manifest.frameFileNames {
+            for fileName in manifest.allFrameFileNames {
                 try? fileManager.removeItem(at: baseDirectory.appendingPathComponent(fileName))
             }
         }
+        // Legacy single-sequence files from builds that predate per-state clips.
         for index in 0..<8 {
             try? fileManager.removeItem(at: baseDirectory.appendingPathComponent("anim_frame_\(index).png"))
+        }
+        for mood in AmberAgentPersonaMood.allCases {
+            for index in 0..<8 {
+                try? fileManager.removeItem(at: baseDirectory.appendingPathComponent("anim_\(mood.clipKey)_\(index).png"))
+            }
         }
         try? fileManager.removeItem(at: manifestURL)
     }
@@ -623,6 +709,58 @@ final class AmberPersonaStore {
         if let data = try? JSONEncoder().encode(referenceItems) {
             defaults.set(data, forKey: Keys.references)
         }
+    }
+
+    /// Crops fully transparent gutters that photo exports add around a sprite sheet.
+    static func trimTransparentGutter(_ image: UIImage) -> UIImage? {
+        guard let cgImage = image.cgImage else { return nil }
+        let side = 96
+        guard let pixels = rasterPixels(cgImage, side: side) else { return nil }
+
+        func columnHasContent(_ x: Int) -> Bool {
+            for y in 0..<side where pixels[(y * side + x) * 4 + 3] >= 8 { return true }
+            return false
+        }
+        func rowHasContent(_ y: Int) -> Bool {
+            for x in 0..<side where pixels[(y * side + x) * 4 + 3] >= 8 { return true }
+            return false
+        }
+
+        let columns = (0..<side).filter(columnHasContent)
+        let rows = (0..<side).filter(rowHasContent)
+        guard let minX = columns.first, let maxX = columns.last,
+              let minY = rows.first, let maxY = rows.last else { return nil }
+        guard minX > 0 || minY > 0 || maxX < side - 1 || maxY < side - 1 else { return nil }
+
+        let scaleX = CGFloat(cgImage.width) / CGFloat(side)
+        let scaleY = CGFloat(cgImage.height) / CGFloat(side)
+        let rect = CGRect(
+            x: CGFloat(minX) * scaleX,
+            y: CGFloat(minY) * scaleY,
+            width: CGFloat(maxX - minX + 1) * scaleX,
+            height: CGFloat(maxY - minY + 1) * scaleY
+        ).integral
+        guard let cropped = cgImage.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+    }
+
+    private static func rasterPixels(_ cgImage: CGImage, side: Int) -> [UInt8]? {
+        var bytes = [UInt8](repeating: 0, count: side * side * 4)
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let context = bytes.withUnsafeMutableBytes({ buffer -> CGContext? in
+            CGContext(
+                data: buffer.baseAddress,
+                width: side,
+                height: side,
+                bitsPerComponent: 8,
+                bytesPerRow: side * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmapInfo
+            )
+        }) else { return nil }
+        context.interpolationQuality = .low
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return bytes
     }
 
     private static func downscale(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
@@ -639,288 +777,6 @@ final class AmberPersonaStore {
     }
 }
 
-// MARK: - Amber Personal Agent Medallion View (Supports Amber Fox, Amber Crystal, Static Portrait & Discrete Multi-Frame Animation)
-
-enum AmberAgentPersonaMood: Equatable, Sendable {
-    case idle
-    case working
-    case alert
-}
-
-struct AmberAgentPersonaMedallionView: View {
-    let mood: AmberAgentPersonaMood
-    var diameter: CGFloat = ChatTopBarLayout.avatarDiameter
-    var presetOverride: AmberPersonaPreset? = nil
-    var accentOverride: Color? = nil
-    var storeOverride: AmberPersonaStore? = nil
-    var showStagedPreview: Bool = false
-    var reduceMotionOverride: Bool? = nil
-
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-
-    private var store: AmberPersonaStore { storeOverride ?? AmberPersonaStore.shared }
-
-    private var effectiveReduceMotion: Bool {
-        reduceMotionOverride ?? systemReduceMotion
-    }
-
-    private var activePreset: AmberPersonaPreset {
-        if showStagedPreview, store.hasPendingPreview {
-            return .customPortrait
-        }
-        return presetOverride ?? store.preset
-    }
-
-    private var activeAnimationFrames: [UIImage] {
-        if showStagedPreview, store.pendingPreviewKind == .multiFrameAnimation, store.pendingPreviewAnimationFrames.count > 1 {
-            return store.pendingPreviewAnimationFrames
-        }
-        if showStagedPreview, store.pendingPreviewKind == .staticImage {
-            return []
-        }
-        if activePreset == .customPortrait, store.isMultiFrameAnimationActive, store.customAnimationFrames.count > 1 {
-            return store.customAnimationFrames
-        }
-        return []
-    }
-
-    private var activeStaticImage: UIImage? {
-        if showStagedPreview, store.pendingPreviewKind == .staticImage, let preview = store.pendingPreviewImage {
-            return preview
-        }
-        if showStagedPreview, store.pendingPreviewKind == .multiFrameAnimation, let first = store.pendingPreviewAnimationFrames.first {
-            return first
-        }
-        return store.customAvatarImage
-    }
-
-    private var accentColor: Color {
-        if let accentOverride { return accentOverride }
-        return mood == .alert ? AmberTheme.accentRed : AmberTheme.accent
-    }
-
-    /// Deterministic frame selector for discrete multi-frame animation.
-    /// Strictly returns frame `0` when `reduceMotion` is enabled or fewer than 2 frames exist.
-    static func activeFrameIndex(
-        at date: Date,
-        frameCount: Int,
-        frameIntervalMs: Int = 550,
-        reduceMotion: Bool
-    ) -> Int {
-        guard frameCount > 1, !reduceMotion else { return 0 }
-        let cycle: [Int]
-        if frameCount == 2 {
-            cycle = [0, 1]
-        } else {
-            let forward = Array(0..<frameCount)
-            let backward = Array((1..<(frameCount - 1)).reversed())
-            cycle = forward + backward
-        }
-        let intervalSeconds = Double(max(300, frameIntervalMs)) / 1000.0
-        let step = Int(floor(max(0, date.timeIntervalSinceReferenceDate) / intervalSeconds))
-        return cycle[step % cycle.count]
-    }
-
-    var body: some View {
-        ZStack {
-            personaBackdropGlass
-
-            switch activePreset {
-            case .customPortrait:
-                let frames = activeAnimationFrames
-                if frames.count > 1 {
-                    if effectiveReduceMotion {
-                        portraitImageCircle(frames[0])
-                    } else {
-                        let interval = Double(max(300, store.animationFrameIntervalMs)) / 1000.0
-                        TimelineView(.periodic(from: .now, by: interval)) { context in
-                            let index = Self.activeFrameIndex(
-                                at: context.date,
-                                frameCount: frames.count,
-                                frameIntervalMs: store.animationFrameIntervalMs,
-                                reduceMotion: false
-                            )
-                            portraitImageCircle(frames[index])
-                        }
-                    }
-                } else if let uiImage = activeStaticImage {
-                    portraitImageCircle(uiImage)
-                } else {
-                    amberFoxCanvas
-                }
-            case .amberCrystal:
-                amberCrystalCanvas
-            case .amberFox:
-                amberFoxCanvas
-            }
-        }
-        .frame(width: diameter, height: diameter)
-        .accessibilityHidden(true)
-    }
-
-    private func portraitImageCircle(_ uiImage: UIImage) -> some View {
-        Image(uiImage: uiImage)
-            .resizable()
-            .scaledToFill()
-            .frame(width: max(1, diameter - 2), height: max(1, diameter - 2))
-            .clipShape(Circle())
-    }
-
-    @ViewBuilder
-    private var personaBackdropGlass: some View {
-        let baseCircle = Circle()
-            .fill(AmberTheme.glass.opacity(0.18))
-            .overlay {
-                RadialGradient(
-                    colors: [
-                        accentColor.opacity(mood == .working ? 0.16 : 0.09),
-                        Color.clear,
-                    ],
-                    center: .init(x: 0.5, y: 0.45),
-                    startRadius: 2,
-                    endRadius: diameter * 0.46
-                )
-                .clipShape(Circle())
-            }
-            .overlay {
-                Circle()
-                    .strokeBorder(
-                        mood == .alert ? AmberTheme.accentRed.opacity(0.45) : AmberTheme.border.opacity(0.32),
-                        lineWidth: 0.75
-                    )
-            }
-        if #available(iOS 26.0, *) {
-            baseCircle.glassEffect(.regular, in: Circle())
-        } else {
-            baseCircle
-                .background(Circle().fill(.ultraThinMaterial))
-                .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
-        }
-    }
-
-    private var amberFoxCanvas: some View {
-        Canvas { context, size in
-            let w = size.width
-            let h = size.height
-            let cx = w * 0.5
-            let cy = h * 0.51
-
-            let earLift: CGFloat = mood == .alert ? -2.0 : (mood == .working ? 0.5 : 0)
-            var leftEar = Path()
-            leftEar.move(to: CGPoint(x: cx - w * 0.23, y: cy - h * 0.04))
-            leftEar.addQuadCurve(
-                to: CGPoint(x: cx - w * 0.25, y: cy - h * 0.30 + earLift),
-                control: CGPoint(x: cx - w * 0.29, y: cy - h * 0.18)
-            )
-            leftEar.addQuadCurve(
-                to: CGPoint(x: cx - w * 0.06, y: cy - h * 0.14),
-                control: CGPoint(x: cx - w * 0.14, y: cy - h * 0.26)
-            )
-            leftEar.closeSubpath()
-            context.fill(leftEar, with: .color(accentColor))
-
-            var rightEar = Path()
-            rightEar.move(to: CGPoint(x: cx + w * 0.23, y: cy - h * 0.04))
-            rightEar.addQuadCurve(
-                to: CGPoint(x: cx + w * 0.25, y: cy - h * 0.30 + earLift),
-                control: CGPoint(x: cx + w * 0.29, y: cy - h * 0.18)
-            )
-            rightEar.addQuadCurve(
-                to: CGPoint(x: cx + w * 0.06, y: cy - h * 0.14),
-                control: CGPoint(x: cx + w * 0.14, y: cy - h * 0.26)
-            )
-            rightEar.closeSubpath()
-            context.fill(rightEar, with: .color(accentColor))
-
-            var innerLeftEar = Path()
-            innerLeftEar.move(to: CGPoint(x: cx - w * 0.19, y: cy - h * 0.09))
-            innerLeftEar.addLine(to: CGPoint(x: cx - w * 0.21, y: cy - h * 0.24 + earLift))
-            innerLeftEar.addLine(to: CGPoint(x: cx - w * 0.10, y: cy - h * 0.14))
-            innerLeftEar.closeSubpath()
-            context.fill(innerLeftEar, with: .color(AmberTheme.background.opacity(0.92)))
-
-            var innerRightEar = Path()
-            innerRightEar.move(to: CGPoint(x: cx + w * 0.19, y: cy - h * 0.09))
-            innerRightEar.addLine(to: CGPoint(x: cx + w * 0.21, y: cy - h * 0.24 + earLift))
-            innerRightEar.addLine(to: CGPoint(x: cx + w * 0.10, y: cy - h * 0.14))
-            innerRightEar.closeSubpath()
-            context.fill(innerRightEar, with: .color(AmberTheme.background.opacity(0.92)))
-
-            let headW = w * 0.48
-            let headH = h * 0.38
-            let headRect = CGRect(x: cx - headW * 0.5, y: cy - headH * 0.48, width: headW, height: headH)
-            context.fill(
-                Path(roundedRect: headRect, cornerRadius: headH * 0.46, style: .continuous),
-                with: .color(accentColor)
-            )
-
-            let cheekW = w * 0.39
-            let cheekH = h * 0.20
-            let cheekRect = CGRect(x: cx - cheekW * 0.5, y: cy - cheekH * 0.10, width: cheekW, height: cheekH)
-            context.fill(
-                Path(roundedRect: cheekRect, cornerRadius: cheekH * 0.48, style: .continuous),
-                with: .color(AmberTheme.background)
-            )
-
-            let eyeY = cy - h * 0.04
-            let eyeOffset = w * 0.095
-            let eyeR = max(1.8, w * (mood == .alert ? 0.042 : 0.036))
-
-            for sign in [-1.0, 1.0] {
-                let ex = cx + CGFloat(sign) * eyeOffset
-                let rect = CGRect(x: ex - eyeR, y: eyeY - eyeR, width: eyeR * 2, height: eyeR * 2)
-                context.fill(Path(ellipseIn: rect), with: .color(AmberTheme.foreground))
-                let specR = max(0.7, eyeR * 0.36)
-                context.fill(
-                    Path(ellipseIn: CGRect(x: ex - eyeR * 0.35, y: eyeY - eyeR * 0.45, width: specR * 2, height: specR * 2)),
-                    with: .color(.white.opacity(0.92))
-                )
-            }
-
-            let noseR = max(1.4, w * 0.023)
-            context.fill(
-                Path(ellipseIn: CGRect(x: cx - noseR, y: cy + h * 0.03 - noseR, width: noseR * 2, height: noseR * 2)),
-                with: .color(AmberTheme.foreground)
-            )
-        }
-        .scaleEffect(1.16)
-        .frame(width: diameter, height: diameter)
-        .clipShape(Circle())
-    }
-
-    private var amberCrystalCanvas: some View {
-        Canvas { context, size in
-            let w = size.width
-            let h = size.height
-            let cx = w * 0.5
-            let cy = h * 0.47
-            let r = w * 0.25
-
-            var gem = Path()
-            gem.move(to: CGPoint(x: cx, y: cy - r * 1.15))
-            gem.addLine(to: CGPoint(x: cx + r * 0.95, y: cy - r * 0.2))
-            gem.addLine(to: CGPoint(x: cx + r * 0.65, y: cy + r * 0.95))
-            gem.addLine(to: CGPoint(x: cx - r * 0.65, y: cy + r * 0.95))
-            gem.addLine(to: CGPoint(x: cx - r * 0.95, y: cy - r * 0.2))
-            gem.closeSubpath()
-            context.fill(gem, with: .color(accentColor))
-
-            for sign in [-1.0, 1.0] {
-                let ex = cx + CGFloat(sign) * w * 0.075
-                let ey = cy - h * 0.02
-                let er = max(1.7, w * 0.032)
-                context.fill(
-                    Path(ellipseIn: CGRect(x: ex - er, y: ey - er, width: er * 2, height: er * 2)),
-                    with: .color(.white)
-                )
-            }
-        }
-        .scaleEffect(1.16)
-        .frame(width: diameter, height: diameter)
-        .clipShape(Circle())
-    }
-}
-
 // MARK: - Muse-Style Persona Studio Sheet (Preview / Confirm / Static Upload / Multi-Frame Animation)
 
 struct AmberPersonaStudioSheet: View {
@@ -932,6 +788,17 @@ struct AmberPersonaStudioSheet: View {
     @State private var isImportingAvatarFile = false
     @State private var referencePickerItems: [PhotosPickerItem] = []
     @State private var showingPromptEditor = false
+    @State private var previewMood: AmberAgentPersonaMood = .idle
+
+    /// File imports that are 4×4 / Codex-Pets 8×9 sprite sheets become four state clips;
+    /// any other image stays an ordinary static portrait.
+    private func stageImportedImageData(_ data: Data) {
+        if let image = UIImage(data: data), store.stageImportedSpriteSheet(image) {
+            previewMood = .idle
+            return
+        }
+        _ = store.stageUploadedAvatarDataForPreview(data)
+    }
 
     private var hasImageGenConfigured: Bool {
         store.hasConfiguredImageGenerationProvider(sharedSettings: sharedSettings)
@@ -943,7 +810,7 @@ struct AmberPersonaStudioSheet: View {
             case .staticImage:
                 return "预览中：新静态形象（确认后生效）"
             case .multiFrameAnimation:
-                return "预览中：\(store.pendingPreviewAnimationFrames.count) 帧微动画（确认后生效）"
+                return "预览中：四段动作动画（确认后生效）"
             }
         }
         switch store.preset {
@@ -953,7 +820,9 @@ struct AmberPersonaStudioSheet: View {
             return "当前：琥珀星晶"
         case .customPortrait:
             if store.hasActiveMultiFrameAnimation {
-                return "当前：自定义 \(store.customAnimationFrames.count) 帧微动画循环"
+                return store.animatedClipCount > 1
+                    ? "当前：自定义四段动作动画循环"
+                    : "当前：自定义 \(store.totalFrameCount) 帧动画循环"
             } else if store.customAvatarImage != nil {
                 return "当前：自定义静态形象"
             } else {
@@ -1017,9 +886,9 @@ struct AmberPersonaStudioSheet: View {
                         if accessed { url.stopAccessingSecurityScopedResource() }
                     }
                     if let data = try? Data(contentsOf: url) {
-                        _ = store.stageUploadedAvatarDataForPreview(data)
+                        stageImportedImageData(data)
                     } else {
-                        store.stageUploadedAvatarDataForPreview(Data())
+                        _ = store.stageUploadedAvatarDataForPreview(Data())
                     }
                 case .failure(let error):
                     store.clearError()
@@ -1045,7 +914,7 @@ struct AmberPersonaStudioSheet: View {
         VStack(spacing: 14) {
             VStack(spacing: 10) {
                 AmberAgentPersonaMedallionView(
-                    mood: .idle,
+                    mood: store.pendingPreviewKind == .multiFrameAnimation ? previewMood : .idle,
                     diameter: 112,
                     storeOverride: store,
                     showStagedPreview: true
@@ -1160,9 +1029,9 @@ struct AmberPersonaStudioSheet: View {
             } else {
                 HStack(spacing: 10) {
                     Button {
-                        _ = store.startGenerateAnimationFramesTask(sharedSettings: sharedSettings, frameCount: 3)
+                        _ = store.startGenerateAnimationFramesTask(sharedSettings: sharedSettings)
                     } label: {
-                        Label("生成 3 帧微动画", systemImage: "sparkles.tv")
+                        Label("生成多帧动画", systemImage: "sparkles.tv")
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(AmberTheme.accent)
                             .frame(maxWidth: .infinity)
@@ -1257,9 +1126,40 @@ struct AmberPersonaStudioSheet: View {
 
     private var pendingPreviewConfirmationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if store.pendingPreviewKind == .multiFrameAnimation, store.pendingPreviewAnimationFrames.count > 1 {
+            if store.pendingPreviewKind == .multiFrameAnimation, store.pendingAnimatedClipCount >= 1 {
+                // Lightweight state switcher: preview one of the four clips before applying.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(AmberAgentPersonaMood.allCases) { mood in
+                            let isSelected = previewMood == mood
+                            Button {
+                                previewMood = mood
+                            } label: {
+                                Text(mood.displayTitle)
+                                    .font(.caption2.weight(isSelected ? .semibold : .medium))
+                                    .foregroundStyle(isSelected ? AmberTheme.accentInk : AmberTheme.foreground2)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        isSelected ? AmberTheme.accent : AmberTheme.background.opacity(0.7),
+                                        in: Capsule(style: .continuous)
+                                    )
+                                    .overlay {
+                                        Capsule(style: .continuous)
+                                            .stroke(
+                                                isSelected ? Color.clear : AmberTheme.borderSoft,
+                                                lineWidth: 0.7
+                                            )
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("chat.persona.previewMood.\(mood.clipKey)")
+                        }
+                    }
+                }
+
                 HStack(spacing: 8) {
-                    ForEach(Array(store.pendingPreviewAnimationFrames.enumerated()), id: \.offset) { index, frame in
+                    ForEach(Array(store.pendingFrames(for: previewMood).enumerated()), id: \.offset) { index, frame in
                         VStack(spacing: 3) {
                             Image(uiImage: frame)
                                 .resizable()

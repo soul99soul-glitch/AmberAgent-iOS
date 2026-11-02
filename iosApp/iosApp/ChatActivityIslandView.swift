@@ -346,10 +346,13 @@ struct ChatActivityIslandView: View {
     }
 
     private var personaMood: AmberAgentPersonaMood {
-        if presentation.isTerminalHold || state.kind == .awaitingUser || state.tint == .red {
-            return .alert
+        if state.kind == .awaitingUser {
+            return .needsInput
         }
-        return (state.isActive || backgroundRunningCount > 0) ? .working : .idle
+        if presentation.isTerminalHold || state.tint == .red {
+            return .blocked
+        }
+        return (state.isActive || backgroundRunningCount > 0) ? .running : .idle
     }
 
     var body: some View {
