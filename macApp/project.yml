@@ -78,6 +78,7 @@ targets:
       - path: ../iosApp/iosApp/IOSIntelligentUIStudyView.swift
       - path: ../iosApp/iosApp/IOSIntelligentUIStreamingPreviewView.swift
       - path: ../iosApp/iosApp/IOSCredentialRedactor.swift
+      - path: ../iosApp/iosApp/IOSSecretArgumentRedaction.swift
     settings:
       base:
         PRODUCT_NAME: Amber
