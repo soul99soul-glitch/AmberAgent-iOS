@@ -7,6 +7,22 @@ import XCTest
 @MainActor
 final class IOSCloudConfigTests: XCTestCase {
 
+    func testReviewedVersionRequiresNewAcknowledgmentAfterRefreshOrPairingChange() {
+        let reviewed = makeRemote(revision: 1, provider: "openai", modelId: "m",
+            baseUrl: "https://fake.example/v1", modelKeyConfigured: true,
+            sources: ["bing"], mode: "fallback")
+        var refreshed = reviewed
+        refreshed.revision += 1
+        XCTAssertFalse(reviewed.hasSameVersion(as: refreshed))
+        XCTAssertEqual(reviewed.revision, refreshed.revision - 1,
+                       "刷新全局快照不得改变编辑弹窗持有的版本")
+        var anotherGateway = reviewed
+        anotherGateway.gatewayId = "another-gateway"
+        XCTAssertFalse(reviewed.hasSameVersion(as: anotherGateway))
+        XCTAssertFalse(reviewed.hasSameVersion(as: nil))
+        XCTAssertTrue(reviewed.hasSameVersion(as: reviewed))
+    }
+
     // ---- Draft defaults ----
 
     func testDraftDefaultsToActiveProviderAndSelectedSearchOnly() throws {

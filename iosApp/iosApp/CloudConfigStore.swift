@@ -72,7 +72,7 @@ extension MacGatewayStore {
     /// a successful receipt ends the operation so the next submit (even with
     /// identical content) is a new operation with a fresh id.
     @discardableResult
-    func applyCloudBundle(_ bundle: IOSCloudConfigBundle, expectedRevision: Int? = nil) async -> String? {
+    func applyCloudBundle(_ bundle: IOSCloudConfigBundle, expectedRevision: Int?) async -> String? {
         guard !cloudImporting else { return nil }
         guard let transport = cloudConfigTransport else {
             return localized("云端还不支持配置导入，请等待服务端更新")
@@ -80,8 +80,7 @@ extension MacGatewayStore {
         guard !bundle.isEmpty else {
             return localized("没有选择要导入的配置")
         }
-        let revision = expectedRevision ?? cloudConfig?.revision
-        guard let expected = revision else {
+        guard let expected = expectedRevision else {
             // The user never saw a snapshot — submitting now could overwrite an
             // unseen remote config. Refresh once so the UI shows the truth,
             // then make the user re-confirm rather than silently baseline.

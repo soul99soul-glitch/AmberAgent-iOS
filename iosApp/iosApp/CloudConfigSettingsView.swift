@@ -16,6 +16,8 @@ struct CloudConfigSettingsView: View {
     @State private var presentingPreview = false
     @State private var manualSheet: ManualSheet?
     @State private var importError: String?
+    @State private var previewSnapshot: IOSCloudConfigSnapshot?
+    @State private var manualSnapshot: IOSCloudConfigSnapshot?
 
     var body: some View {
         ZStack {
@@ -53,13 +55,16 @@ struct CloudConfigSettingsView: View {
             if let draft {
                 CloudImportPreviewSheet(
                     draft: draft,
-                    remote: store.cloudConfig,
+                    remote: previewSnapshot,
+                    latestRemote: store.cloudConfig,
+                    error: importError,
                     importing: store.cloudImporting,
+                    onReview: { previewSnapshot = store.cloudConfig; importError = nil },
                     onConfirm: {
                         Task {
                             let error = await store.applyCloudImport(
                                 draft: draft, sharedSettings: sharedSettings,
-                                expectedRevision: store.cloudConfig?.revision)
+                                expectedRevision: previewSnapshot?.revision)
                             if let error { importError = error } else { presentingPreview = false }
                         }
                     }
@@ -70,16 +75,22 @@ struct CloudConfigSettingsView: View {
             switch sheet {
             case .model:
                 CloudManualModelSheet(
-                    remote: store.cloudConfig,
+                    remote: manualSnapshot,
+                    latestRemote: store.cloudConfig,
+                    error: importError,
                     importing: store.cloudImporting,
+                    onReview: { manualSnapshot = store.cloudConfig; importError = nil },
                     onApply: { section, extras in
                         Task { await applyManual(bundle: .init(model: section, search: [], freeSources: [], extraCredentials: extras)) }
                     }
                 )
             case .searchKey:
                 CloudManualSearchSheet(
-                    remote: store.cloudConfig,
+                    remote: manualSnapshot,
+                    latestRemote: store.cloudConfig,
+                    error: importError,
                     importing: store.cloudImporting,
+                    onReview: { manualSnapshot = store.cloudConfig; importError = nil },
                     onApply: { entry, extras in
                         Task { await applyManual(bundle: .init(model: nil, search: entry.map { [$0] } ?? [], freeSources: [], extraCredentials: extras)) }
                     }
@@ -90,7 +101,7 @@ struct CloudConfigSettingsView: View {
 
     private func applyManual(bundle: IOSCloudConfigBundle) async {
         if let error = await store.applyCloudBundle(
-            bundle, expectedRevision: store.cloudConfig?.revision) {
+            bundle, expectedRevision: manualSnapshot?.revision) {
             importError = error
         } else {
             manualSheet = nil
@@ -370,7 +381,11 @@ struct CloudConfigSettingsView: View {
                       detail: draft.hasSelection
                         ? macGatewayL("查看将上传与替换的项目")
                         : macGatewayL("先在上方勾选服务商或搜索服务"),
-                      action: draft.hasSelection ? { presentingPreview = true } : nil) {
+                      action: draft.hasSelection ? {
+                          previewSnapshot = store.cloudConfig
+                          importError = nil
+                          presentingPreview = true
+                      } : nil) {
             if store.cloudImporting {
                 ProgressView()
             } else {
@@ -388,13 +403,13 @@ struct CloudConfigSettingsView: View {
             AmberFormGroup {
                 MacGatewayRow(icon: "slider.horizontal.3", title: macGatewayL("手动更新模型"),
                               detail: macGatewayL("直接设置云端的 provider、Base URL 与模型"),
-                              action: { manualSheet = .model }) {
+                              action: { openManualSheet(.model) }) {
                     MacGatewayChevron()
                 }
                 MacGatewayRowDivider()
                 MacGatewayRow(icon: "key.horizontal", title: macGatewayL("手动更新搜索 Key"),
                               detail: macGatewayL("为指定搜索服务设置或替换 API Key"),
-                              action: { manualSheet = .searchKey }) {
+                              action: { openManualSheet(.searchKey) }) {
                     MacGatewayChevron()
                 }
             }
@@ -403,6 +418,12 @@ struct CloudConfigSettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private func openManualSheet(_ sheet: ManualSheet) {
+        manualSnapshot = store.cloudConfig
+        importError = nil
+        manualSheet = sheet
+    }
 
     private var remoteHint: String {
         if store.cloudConfigLoading { return macGatewayL("正在读取云端配置…") }
@@ -475,7 +496,10 @@ struct CloudConfigSettingsView: View {
 private struct CloudImportPreviewSheet: View {
     let draft: IOSCloudImportDraft
     let remote: IOSCloudConfigSnapshot?
+    let latestRemote: IOSCloudConfigSnapshot?
+    let error: String?
     let importing: Bool
+    let onReview: () -> Void
     let onConfirm: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -496,6 +520,7 @@ private struct CloudImportPreviewSheet: View {
                             }
                         }
                         MacGatewaySectionFooter(text: macGatewayL("来源：本机 · 标记「替换」的项目会覆盖云端现有配置；Key 在内存中加密封装后经已配对连接上传，云端只保存状态不回显。"))
+                        CloudConfigRevisionNotice(reviewed: remote, latest: latestRemote, error: error, onReview: onReview)
                         confirmGroup
                     }
                     .padding(.bottom, 24)
@@ -559,7 +584,7 @@ private struct CloudImportPreviewSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(importing)
+            .disabled(importing || remote?.hasSameVersion(as: latestRemote) != true)
         }
         .padding(.top, 20)
     }
@@ -569,7 +594,10 @@ private struct CloudImportPreviewSheet: View {
 
 private struct CloudManualModelSheet: View {
     let remote: IOSCloudConfigSnapshot?
+    let latestRemote: IOSCloudConfigSnapshot?
+    let error: String?
     let importing: Bool
+    let onReview: () -> Void
     /// (model patch, standalone credential actions). A nil model patch means
     /// only the credentials change — e.g. the explicit key deletion.
     let onApply: (IOSCloudConfigBundle.ModelSection?, [String: IOSCloudConfigBundle.CredentialAction]) -> Void
@@ -584,9 +612,12 @@ private struct CloudManualModelSheet: View {
     @State private var apiKey = ""
     @State private var confirmingDelete = false
 
-    init(remote: IOSCloudConfigSnapshot?, importing: Bool, onApply: @escaping (IOSCloudConfigBundle.ModelSection?, [String: IOSCloudConfigBundle.CredentialAction]) -> Void) {
+    init(remote: IOSCloudConfigSnapshot?, latestRemote: IOSCloudConfigSnapshot?, error: String?, importing: Bool, onReview: @escaping () -> Void, onApply: @escaping (IOSCloudConfigBundle.ModelSection?, [String: IOSCloudConfigBundle.CredentialAction]) -> Void) {
         self.remote = remote
+        self.latestRemote = latestRemote
+        self.error = error
         self.importing = importing
+        self.onReview = onReview
         self.onApply = onApply
         _kind = State(initialValue: (remote?.model?.provider).flatMap(IOSCloudProviderKind.init(rawValue:)) ?? .openAI)
         _baseUrl = State(initialValue: remote?.model?.baseUrl ?? "")
@@ -613,6 +644,7 @@ private struct CloudManualModelSheet: View {
                                                 placeholder: macGatewayL("留空则保留云端现有 Key"), isSecure: true)
                         }
                         MacGatewaySectionFooter(text: macGatewayL("Key 在内存中加密封装后上传；留空不会改变云端已保存的 Key。切换服务商或地址时云端会要求同时提供新 Key 或删除旧 Key。"))
+                        CloudConfigRevisionNotice(reviewed: remote, latest: latestRemote, error: error, onReview: onReview)
                         applyGroup(disabled: modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if remote?.model?.keyConfigured == true {
                             deleteGroup
@@ -671,7 +703,7 @@ private struct CloudManualModelSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(disabled || importing)
+            .disabled(disabled || importing || remote?.hasSameVersion(as: latestRemote) != true)
         }
         .padding(.top, 20)
     }
@@ -688,7 +720,7 @@ private struct CloudManualModelSheet: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(importing)
+            .disabled(importing || remote?.hasSameVersion(as: latestRemote) != true)
             .confirmationDialog(macGatewayL("删除云端模型 Key？配置保持不变，后续任务会报告未配置。"),
                                 isPresented: $confirmingDelete, titleVisibility: .visible) {
                 Button(macGatewayL("删除 Key"), role: .destructive) {
@@ -702,7 +734,10 @@ private struct CloudManualModelSheet: View {
 
 private struct CloudManualSearchSheet: View {
     let remote: IOSCloudConfigSnapshot?
+    let latestRemote: IOSCloudConfigSnapshot?
+    let error: String?
     let importing: Bool
+    let onReview: () -> Void
     /// (search entry, standalone credential actions). The entry is key-only:
     /// `includeInConfiguration = false` keeps the cloud's source list as is.
     let onApply: (IOSCloudConfigBundle.SearchEntry?, [String: IOSCloudConfigBundle.CredentialAction]) -> Void
@@ -732,6 +767,7 @@ private struct CloudManualSearchSheet: View {
                                                 placeholder: macGatewayL("输入该服务的 API Key"), isSecure: true)
                         }
                         MacGatewaySectionFooter(text: remoteKeyState + macGatewayL(" · Key 在内存中加密封装后上传，云端只保存状态不回显。"))
+                        CloudConfigRevisionNotice(reviewed: remote, latest: latestRemote, error: error, onReview: onReview)
                         applyGroup(disabled: apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if remoteKeyConfigured {
                             deleteGroup
@@ -803,7 +839,7 @@ private struct CloudManualSearchSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(disabled || importing)
+            .disabled(disabled || importing || remote?.hasSameVersion(as: latestRemote) != true)
         }
         .padding(.top, 20)
     }
@@ -820,7 +856,7 @@ private struct CloudManualSearchSheet: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(importing)
+            .disabled(importing || remote?.hasSameVersion(as: latestRemote) != true)
             .confirmationDialog(macGatewayL("删除云端 \(name(for: type)) Key？该源将因缺少 Key 而不可用。"),
                                 isPresented: $confirmingDelete, titleVisibility: .visible) {
                 Button(macGatewayL("删除 Key"), role: .destructive) {
@@ -863,5 +899,59 @@ private struct CloudConfigFieldRow: View {
         .frame(minHeight: 58)
         .padding(.horizontal, 15)
         .padding(.vertical, 8)
+    }
+}
+
+/// A refresh may reveal a conflict, but only this explicit action accepts its revision.
+/// The editor's fields (including a typed Key and its destination) remain intact.
+private struct CloudConfigRevisionNotice: View {
+    let reviewed: IOSCloudConfigSnapshot?
+    let latest: IOSCloudConfigSnapshot?
+    let error: String?
+    let onReview: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let error {
+                Text(verbatim: error).font(.caption).foregroundStyle(.orange)
+            }
+            if reviewed?.hasSameVersion(as: latest) != true {
+                if let latest {
+                    Text(verbatim: macGatewayL("云端配置已变化，请核对后继续"))
+                        .font(.subheadline.weight(.semibold))
+                    if let reviewed, reviewed.gatewayId != latest.gatewayId {
+                        Text(verbatim: macGatewayL("云端连接已更换，请核对当前配对主机。"))
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                    if let reviewed {
+                        Text(verbatim: macGatewayL("之前：") + summary(reviewed))
+                            .font(.caption).foregroundStyle(AmberTheme.muted)
+                    }
+                    Text(verbatim: macGatewayL("当前：") + summary(latest)).font(.caption)
+                    Text(verbatim: macGatewayL("继续后仍提交本页编辑；模型 Key 发送到本页填写的地址。"))
+                        .font(.caption).foregroundStyle(AmberTheme.muted)
+                    Button(macGatewayL("确认此版本，保留编辑"), action: onReview)
+                        .font(.subheadline.weight(.semibold))
+                } else {
+                    Text(verbatim: macGatewayL("尚未读取云端状态，请返回配置页刷新后重试。"))
+                        .font(.caption).foregroundStyle(AmberTheme.muted)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, error != nil || reviewed?.hasSameVersion(as: latest) != true ? 12 : 0)
+    }
+
+    private func summary(_ snapshot: IOSCloudConfigSnapshot) -> String {
+        let model = snapshot.model.map {
+            [$0.provider, $0.modelId, $0.baseUrl.isEmpty ? macGatewayL("默认地址") : $0.baseUrl]
+                .joined(separator: " · ")
+        } ?? macGatewayL("未配置模型")
+        let keys = [("modelApiKey", "模型 Key"), ("exaApiKey", "Exa Key"), ("braveApiKey", "Brave Key")].map {
+            macGatewayL($0.1) + ": " + (snapshot.keyConfigured(forCredentialKey: $0.0) ? macGatewayL("已配置") : macGatewayL("未配置"))
+        }.joined(separator: " · ")
+        let mode = snapshot.searchMode == "aggregate" ? macGatewayL("聚合所有源") : macGatewayL("按顺序回退")
+        return model + "\n" + snapshot.searchSources.joined(separator: " → ") + " · " + mode + "\n" + keys
     }
 }

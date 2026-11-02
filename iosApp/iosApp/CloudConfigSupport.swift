@@ -44,6 +44,11 @@ struct IOSCloudConfigSnapshot: Equatable, Sendable {
     var supportedModelProviders: [String]
     var supportedSearchSources: [String]
 
+    func hasSameVersion(as other: Self?) -> Bool {
+        guard let other else { return false }
+        return gatewayId == other.gatewayId && revision == other.revision
+    }
+
     /// Free aggregate sources currently participating (subset of `searchSources`).
     var freeSources: [String] { searchSources.filter { IOSCloudConfigWire.requiresKey(for: $0) == false } }
 
