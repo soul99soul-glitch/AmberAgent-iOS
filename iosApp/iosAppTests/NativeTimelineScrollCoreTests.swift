@@ -723,7 +723,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(result.actions, [])
     }
 
-    func testStreamGrowthAtBottomStartsFollowingDriverFromIdle() {
+    func testStreamGrowthAtBottomPinsBottomInSameLayoutFrameFromIdle() {
         let result = NativeTimelineScrollCore.reduce(
             state: .idle,
             intent: .streamContentGrew(),
@@ -731,14 +731,15 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 2
         )
 
+        // 流式增长直接钉底：虚拟偏移与目标同为底部，不保留落后于内容的旧偏移。
         XCTAssertEqual(
             result.state,
             .followingBottom(virtualOffset: 520, target: 520, lastFollowRequestAt: 2)
         )
-        XCTAssertEqual(result.actions, [.startFrameDriver])
+        XCTAssertEqual(result.actions, [.requestBottomAnchor(animated: false, source: .streamGrowth)])
     }
 
-    func testStreamGrowthNearBottomStartsFollowingDriverFromIdle() {
+    func testStreamGrowthNearBottomPinsBottomInSameLayoutFrameFromIdle() {
         let result = NativeTimelineScrollCore.reduce(
             state: .idle,
             intent: .streamContentGrew(),
@@ -746,11 +747,12 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 2
         )
 
+        // 近底接管同样一步贴到底目标，不再用弹簧逐帧追一段。
         XCTAssertEqual(
             result.state,
-            .followingBottom(virtualOffset: 500, target: 520, lastFollowRequestAt: 2)
+            .followingBottom(virtualOffset: 520, target: 520, lastFollowRequestAt: 2)
         )
-        XCTAssertEqual(result.actions, [.startFrameDriver])
+        XCTAssertEqual(result.actions, [.requestBottomAnchor(animated: false, source: .streamGrowth)])
     }
 
     func testRepeatedStreamGrowthClampsTargetMonotonically() {
@@ -766,9 +768,10 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             geometry: geometry(offsetY: 500, contentHeight: 1_000),
             now: 2
         )
+        // 目标不允许回退（保持单调）；而虚拟偏移会就地贴上当前底目标。
         XCTAssertEqual(
             dipped.state,
-            .followingBottom(virtualOffset: 500, target: 700, lastFollowRequestAt: 2)
+            .followingBottom(virtualOffset: 700, target: 700, lastFollowRequestAt: 2)
         )
 
         let grown = NativeTimelineScrollCore.reduce(
@@ -779,7 +782,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         )
         XCTAssertEqual(
             grown.state,
-            .followingBottom(virtualOffset: 500, target: 920, lastFollowRequestAt: 3)
+            .followingBottom(virtualOffset: 920, target: 920, lastFollowRequestAt: 3)
         )
     }
 
@@ -999,7 +1002,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(result.actions, [.writeOffsetY(520), .stopFrameDriver])
     }
 
-    func testStreamGrowthRestartsFrameDriverAfterSettledFollowingStopped() {
+    func testStreamGrowthPinsBottomAfterSettledFollowingStopped() {
         let following = NativeTimelineScrollState.followingBottom(
             virtualOffset: 520,
             target: 520,
@@ -1013,16 +1016,17 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 3
         )
 
+        // 帧驱动已停后再次流式：直接钉到新的底部目标，不再重启弹簧追随。
         XCTAssertEqual(
             result.state,
-            .followingBottom(virtualOffset: 520, target: 680, lastFollowRequestAt: 3)
+            .followingBottom(virtualOffset: 680, target: 680, lastFollowRequestAt: 3)
         )
-        XCTAssertEqual(result.actions, [.startFrameDriver])
+        XCTAssertEqual(result.actions, [.requestBottomAnchor(animated: false, source: .streamGrowth)])
     }
 
     // MARK: - 终态排空滞后允许度（lagAllowance）
 
-    /// 流式拍携带的 allowance 进入跟随状态，供 tick 连续收紧时间常数。
+    /// 流式拍携带的 allowance 仍进入跟随状态，但偏移已与底目标对齐。
     func testStreamGrowthCarriesLagAllowanceIntoFollowingState() {
         let following = NativeTimelineScrollState.followingBottom(
             virtualOffset: 500,
@@ -1039,7 +1043,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
 
         XCTAssertEqual(
             result.state,
-            .followingBottom(virtualOffset: 500, target: 920, lastFollowRequestAt: 2, lagAllowance: 0.25)
+            .followingBottom(virtualOffset: 920, target: 920, lastFollowRequestAt: 2, lagAllowance: 0.25)
         )
     }
 

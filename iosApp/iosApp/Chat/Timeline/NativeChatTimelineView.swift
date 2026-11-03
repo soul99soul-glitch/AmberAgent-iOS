@@ -308,7 +308,10 @@ struct NativeChatTimelineView: View {
                 }
             }
             .modifier(ChatSizeChangesPinModifier(
-                enabled: followGeneration && !isNativeScrollDriverDesired
+                // 流式贴底时把底部锚点交给 SwiftUI 自身的 .sizeChanges：它在布局阶段
+                // 就完成「高度增量 ↔ 滚动偏移」的抵消，与出字同一帧生效，不经显示链路
+                // 事后追赶。native driver 仍负责用户拖拽、磁吸与终态收口。
+                enabled: followGeneration
             ))
             .nativeTimelineScrollPosition($scrollPosition)
             .scrollEdgeEffectStyle(.soft, for: .top)
