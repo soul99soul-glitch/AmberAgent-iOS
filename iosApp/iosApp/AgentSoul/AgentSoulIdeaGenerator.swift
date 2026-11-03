@@ -50,23 +50,24 @@ enum AgentSoulIdeaGenerator {
 
     private static func buildPrompt(context: String) -> String {
         """
-        你在帮用户想「现在可以聊什么」。根据下面这些背景，给出 3 到 4 个具体、
-        当下就能开聊的点子。
+        你在帮用户想「现在可以聊什么」。根据下面这些背景，以当前角色化身的口吻给出 3 个具体、
+        当下就能开聊或交办的点子。
 
         \(context.isEmpty ? "（暂无额外背景）" : context)
 
         要求：
         - 每个点子必须结合上面某个具体背景，不要泛泛而谈。
-        - title 是一句自然的话，像朋友开口那样，不超过 18 个字。
-        - reason 用半句说明为什么现在聊这个，不超过 20 个字。
+        - sourceBadge 用 4~10 个字说明来源（例如「结合日程 · 明早」「结合近期进展」「结合记忆与偏好」）。
+        - title 是一句自然的话，像熟人主动提议那样，不超过 22 个字。
+        - reason 用角色化身的温和口吻写一两句具体建议，不超过 48 个字。
         - prompt 是点进对话后要直接发送的第一句话，要能独立成立。
         - 只输出 JSON 数组，不要任何解释文字或代码围栏。
 
-        格式：[{"title":"...","reason":"...","prompt":"..."}]
+        格式：[{"sourceBadge":"...","title":"...","reason":"...","prompt":"..."}]
         """
     }
 
-    private static func parse(_ raw: String) -> [AgentSoulIdea]? {
+    static func parse(_ raw: String) -> [AgentSoulIdea]? {
         // 容忍模型偶尔包一层 ```json 或前后带解释。
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let start = text.firstIndex(of: "["), let end = text.lastIndex(of: "]"), start < end {
@@ -75,6 +76,7 @@ enum AgentSoulIdeaGenerator {
         guard let data = text.data(using: .utf8) else { return nil }
 
         struct Payload: Decodable {
+            let sourceBadge: String?
             let title: String
             let reason: String?
             let prompt: String
@@ -83,12 +85,13 @@ enum AgentSoulIdeaGenerator {
 
         let ideas = payloads
             .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .prefix(4)
+            .prefix(3)
             .map { payload in
                 AgentSoulIdea(
                     title: payload.title.trimmingCharacters(in: .whitespacesAndNewlines),
                     reason: payload.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-                    prompt: payload.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                    prompt: payload.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                    sourceBadge: payload.sourceBadge?.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
             }
         return ideas.isEmpty ? nil : Array(ideas)

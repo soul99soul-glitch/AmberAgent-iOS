@@ -8,14 +8,15 @@ struct AgentSoulIdea: Codable, Equatable, Identifiable {
     var reason: String
     /// 点进去时直接发进主对话的开场话术。
     var prompt: String
+    /// 可选来源短标（如「结合日程 · 明早 10:00」或「结合近期进展」），向后兼容旧缓存。
+    var sourceBadge: String? = nil
 }
 
 /// 「灵感」栏：汇总 Soul + 记忆 + 近期会话 + 已授权日程，生成 3–4 张可点的点子。
 ///
-/// 取舍：
-/// - 生成结果本地缓存，打开不重复调用模型；「换一批」才重算。
-/// - 日程未授权时优雅降级（直接不带日程上下文），绝不弹权限框或报错。
-/// - 生成失败保留上一批缓存，不把错误做成红字噪声。
+/// 对齐 `ios-agent-embodiment-v1` 屏 3 视觉规范：
+/// - 顶栏左副标「结合记忆、近期工作与日程按需生成」+ 右「↻ 换一批」胶囊
+/// - 点子卡片顶部带来源微胶囊（首张或日程类采用赤陶浅底微标）、加粗标题、温和引述体建议正文与右下「展开聊聊 ›」
 struct AgentSoulIdeasSection: View {
     var onPick: (AgentSoulIdea) -> Void
 
@@ -26,25 +27,45 @@ struct AgentSoulIdeasSection: View {
     private static let cacheKey = "app.amber.ios.agentSoul.ideas.v1"
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(IOSAppLocalization.string("现在可以聊聊", defaultValue: "现在可以聊聊"))
-                    .font(.footnote)
-                    .foregroundStyle(AmberTheme.muted)
+                Text(
+                    IOSAppLocalization.string(
+                        "结合记忆、近期工作与日程按需生成",
+                        defaultValue: "结合记忆、近期工作与日程按需生成"
+                    )
+                )
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AgentEmbodimentPalette.inkSecondary)
+
                 Spacer()
+
                 Button {
                     Task { await refresh() }
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         if isGenerating {
-                            ProgressView().controlSize(.mini)
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 11, weight: .semibold))
                         }
-                        Text(isGenerating
-                             ? IOSAppLocalization.string("生成中", defaultValue: "生成中")
-                             : IOSAppLocalization.string("换一批", defaultValue: "换一批"))
+                        Text(
+                            isGenerating
+                                ? IOSAppLocalization.string("生成中", defaultValue: "生成中")
+                                : IOSAppLocalization.string("换一批", defaultValue: "换一批")
+                        )
+                        .font(.system(size: 12.5, weight: .semibold))
                     }
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(AmberTheme.accent)
+                    .foregroundStyle(AgentEmbodimentPalette.ink)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.cardElevated))
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .strokeBorder(AgentEmbodimentPalette.hairline, lineWidth: 1)
+                    }
                 }
                 .buttonStyle(.plain)
                 .disabled(isGenerating)
@@ -57,14 +78,16 @@ struct AgentSoulIdeasSection: View {
             } else if ideas.isEmpty {
                 emptyState
             } else {
-                ForEach(ideas) { idea in
-                    Button {
-                        onPick(idea)
-                    } label: {
-                        ideaCard(idea)
+                VStack(spacing: 9) {
+                    ForEach(Array(ideas.enumerated()), id: \.element.id) { index, idea in
+                        Button {
+                            onPick(idea)
+                        } label: {
+                            ideaCard(idea, index: index)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("embodiment.ideas.card")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("embodiment.ideas.card")
                 }
             }
         }
@@ -80,15 +103,18 @@ struct AgentSoulIdeasSection: View {
         VStack(spacing: 6) {
             ProgressView().controlSize(.small)
             Text(IOSAppLocalization.string("正在结合你的近况想点子…", defaultValue: "正在结合你的近况想点子…"))
-                .font(.footnote)
-                .foregroundStyle(AmberTheme.muted)
+                .font(.system(size: 13))
+                .foregroundStyle(AgentEmbodimentPalette.inkSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(AgentEmbodimentPalette.cardBg)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                .strokeBorder(AgentEmbodimentPalette.cardStroke, lineWidth: 1)
         }
     }
 
@@ -96,46 +122,143 @@ struct AgentSoulIdeasSection: View {
         VStack(spacing: 6) {
             Image(systemName: "sparkles")
                 .font(.system(size: 22))
-                .foregroundStyle(AmberTheme.muted2)
+                .foregroundStyle(AgentEmbodimentPalette.inkMuted)
             Text(IOSAppLocalization.string(
                 "还没有点子。配好模型后点「换一批」，或直接在对话里问我在想什么。",
                 defaultValue: "还没有点子。配好模型后点「换一批」，或直接在对话里问我在想什么。"
             ))
-            .font(.footnote)
-            .foregroundStyle(AmberTheme.muted)
+            .font(.system(size: 13))
+            .foregroundStyle(AgentEmbodimentPalette.inkSecondary)
             .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
         .padding(.horizontal, 16)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(AgentEmbodimentPalette.cardBg)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                .strokeBorder(AgentEmbodimentPalette.cardStroke, lineWidth: 1)
         }
     }
 
-    private func ideaCard(_ idea: AgentSoulIdea) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func ideaCard(_ idea: AgentSoulIdea, index: Int) -> some View {
+        let badgeMeta = Self.resolveSourceBadge(for: idea, index: index)
+        let suggestionBody = Self.formattedQuoteText(for: idea)
+
+        return VStack(alignment: .leading, spacing: 5.5) {
+            HStack(spacing: 4) {
+                Image(systemName: badgeMeta.icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(badgeMeta.text)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(
+                badgeMeta.isAccent
+                    ? AgentEmbodimentPalette.accent
+                    : AgentEmbodimentPalette.inkSecondary
+            )
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2.5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(
+                        badgeMeta.isAccent
+                            ? AgentEmbodimentPalette.accentSoftBg
+                            : AgentEmbodimentPalette.cardElevated
+                    )
+            )
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        badgeMeta.isAccent
+                            ? Color.clear
+                            : AgentEmbodimentPalette.hairline,
+                        lineWidth: 1
+                    )
+            }
+
             Text(idea.title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(AmberTheme.foreground)
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundStyle(AgentEmbodimentPalette.ink)
                 .multilineTextAlignment(.leading)
-            if !idea.reason.isEmpty {
-                Text(idea.reason)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !suggestionBody.isEmpty {
+                Text(suggestionBody)
+                    .font(.system(size: 12))
+                    .foregroundStyle(AgentEmbodimentPalette.inkSecondary)
+                    .lineSpacing(1.8)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            HStack {
+                Text(
+                    index == 0
+                        ? IOSAppLocalization.string("可带回主对话或直接交办", defaultValue: "可带回主对话或直接交办")
+                        : IOSAppLocalization.string("点击带入主对话开聊", defaultValue: "点击带入主对话开聊")
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(AgentEmbodimentPalette.inkMuted)
+
+                Spacer()
+
+                HStack(spacing: 3) {
+                    Text(IOSAppLocalization.string("展开聊聊", defaultValue: "展开聊聊"))
+                        .font(.system(size: 12, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .foregroundStyle(AgentEmbodimentPalette.accent)
+            }
+            .padding(.top, 1)
         }
-        .padding(13)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10.5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(AgentEmbodimentPalette.cardBg)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(AgentEmbodimentPalette.cardStroke, lineWidth: 1)
         }
+    }
+
+    static func resolveSourceBadge(for idea: AgentSoulIdea, index: Int) -> (icon: String, text: String, isAccent: Bool) {
+        let combined = "\(idea.sourceBadge ?? "") \(idea.title) \(idea.reason)"
+        let customSource = idea.sourceBadge?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if combined.contains("日程") || combined.contains("日历") || combined.contains("会") || combined.contains("明早") {
+            return (
+                icon: "calendar",
+                text: customSource.isEmpty ? "结合日程与近期安排" : customSource,
+                isAccent: true
+            )
+        }
+        if combined.contains("提醒") || combined.contains("习惯") || combined.contains("偏好") || combined.contains("记忆") {
+            return (
+                icon: "checklist",
+                text: customSource.isEmpty ? "结合记忆与偏好" : customSource,
+                isAccent: index == 0
+            )
+        }
+        return (
+            icon: "sparkles.rectangle.stack",
+            text: customSource.isEmpty ? "结合近期进展" : customSource,
+            isAccent: index == 0
+        )
+    }
+
+    private static func formattedQuoteText(for idea: AgentSoulIdea) -> String {
+        let raw = idea.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? idea.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            : idea.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AgentSoulPresentation.formatQuoted(raw)
     }
 
     // MARK: - 缓存
@@ -160,14 +283,13 @@ struct AgentSoulIdeasSection: View {
 
         let context = await buildContext()
         guard let generated = await AgentSoulIdeaGenerator.generate(context: context), !generated.isEmpty else {
-            // 失败保留旧缓存，不打扰用户。
             return
         }
         ideas = generated
         saveCache()
     }
 
-    /// 汇总：Soul + 记忆 + 近期会话摘要 + 近期日程（未授权则跳过）。
+    /// 汇总：Soul + 记忆 + 近期日程（未授权则跳过）。
     private func buildContext() async -> String {
         var parts: [String] = []
 
@@ -179,7 +301,7 @@ struct AgentSoulIdeasSection: View {
             }
         }
 
-        let memories = IOSMemoryPersistence.shared.records
+        let memories = IOSMemoryPersistence.shared.records.filter { !$0.archived && $0.kind != .topic }
         if !memories.isEmpty {
             let digest = memories.prefix(8).map { "- \($0.content)" }.joined(separator: "\n")
             parts.append("我记住的事：\n\(digest)")
