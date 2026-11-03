@@ -285,6 +285,10 @@ extension ChatToolRuntime {
             )
         case let name where isMcpCallTool(name):
             return await dispatchMcpToolOutput(toolCall).text
+        case let name where AgentSoulToolCatalog.toolNames.contains(name):
+            // 化身读写都在本机直通：读只回当前设定，写把旧版压进快照栈可回退。
+            return AgentSoulToolService(store: AgentSoulStore.shared)
+                .execute(toolName: name, arguments: toolCall.input)
         case let name where IOSSkillToolCatalog.toolNames.contains(name)
             || IOSMcpManagementToolCatalog.toolNames.contains(name):
             return await skillMcpToolService.execute(

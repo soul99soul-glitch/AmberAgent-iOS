@@ -425,6 +425,8 @@ extension ChatViewModel {
             names: Array(IOSSkillToolCatalog.toolNames).sorted()
         ))
         toolDeclarations.append(ToolKt.createSoulImportToolDeclaration())
+        // Agent 化身（Soul）：读免审批；写按产品决定直通，旧版自动进快照栈可回退。
+        toolDeclarations.append(contentsOf: AgentSoulToolDeclarationsKt.createAgentSoulToolDeclarations())
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSRecipeToolCatalog.toolNames).sorted()
         ))
@@ -723,6 +725,8 @@ extension ChatViewModel {
             isCapabilityPolicyEnabled("ios.mcp.tool_call")
         case "mcp_list", "mcp_import_from_skill",
              "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable":
+            true
+        case let name where AgentSoulToolCatalog.toolNames.contains(name):
             true
         case let name where IOSRecipeToolCatalog.toolNames.contains(name):
             true

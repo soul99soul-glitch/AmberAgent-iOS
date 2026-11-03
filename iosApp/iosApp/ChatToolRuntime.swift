@@ -1072,6 +1072,8 @@ final class ChatToolRuntime {
             isMcpNetworkAllowed()
         case IOSSoulToolCatalog.toolName:
             true
+        case let name where AgentSoulToolCatalog.toolNames.contains(name):
+            true
         case "skills_list", "use_skill", "skill_validate", "skill_import", "skill_enable", "skill_disable":
             true
         case let name where IOSRecipeToolCatalog.toolNames.contains(name):

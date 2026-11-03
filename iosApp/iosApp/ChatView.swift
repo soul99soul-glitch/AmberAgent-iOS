@@ -50,6 +50,7 @@ struct ChatView: View {
     @State var isPresentingDuetTasks = false
     @State var isPresentingDuetWorkspace = false
     @State var isPresentingPersonaStudio = false
+    @State var isPresentingEmbodimentHome = false
     @State var duetSelectedToolTarget: ToolDetailTarget?
     @Environment(IOSConversationStore.self)  var conversationStore
     @Environment(ConversationActivityCenter.self) private var conversationActivityCenter
@@ -365,6 +366,18 @@ struct ChatView: View {
                 }
             )
             .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isPresentingEmbodimentHome) {
+            // 顶部形象点击 → 化身主页（人设/记忆/灵感）；「更换形象」二级进原有配置页。
+            AgentEmbodimentHomeSheet(
+                sharedSettings: sharedSettings,
+                onStartConversation: { prompt in
+                    viewModel.inputText = prompt
+                    Task { await viewModel.sendMessage() }
+                }
+            )
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $isPresentingPersonaStudio) {
@@ -894,7 +907,7 @@ struct ChatView: View {
             onRecapNextStep: fillRecapNextStep,
             backgroundRunningCount: duetActiveTaskCount,
             onAvatarTap: {
-                isPresentingPersonaStudio = true
+                isPresentingEmbodimentHome = true
             }
         )
         .onAppear { syncIslandPresentation() }
