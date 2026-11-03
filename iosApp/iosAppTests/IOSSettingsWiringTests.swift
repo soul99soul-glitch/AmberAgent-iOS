@@ -287,29 +287,14 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(activityIsland.contains("if activityIslandEdgeGlow,"))
     }
 
-    /// 生成完成触觉：设置页开关（默认开）→ iOS 本地偏好 key → ChatViewModel
-    /// 完成回调消费，三点齐备。刻意不复用 KMP enableMessageGenerationHapticEffect
-    /// （Android-only 接线且默认关），避免改变 Android 默认行为。
-    func testCompletionHapticToggleIsWiredWithDefaultOn() throws {
-        let keys = try source("iosApp/AmberDesignSystem.swift")
-        let settings = try source("iosApp/DisplayFontSettingsView.swift")
+    /// 生成完成不再自动震动：用户明确反馈该振动不可控且无法关闭，已移除。
+    /// 本测试保护新决定——完成回调里不得再出现生成完成触觉。
+    func testCompletionHapticIsNotTriggeredOnGenerationCompletion() throws {
         let viewModel = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
-        let storageDeclaration =
-            "@AppStorage(IOSDisplayPreferenceKeys.completionHaptic)" +
-            " private var completionHaptic = true"
-
-        XCTAssertTrue(
-            keys.contains(
-                "static let completionHaptic = \"app.amber.ios.display.completionHaptic\""
-            )
+        XCTAssertFalse(
+            viewModel.contains("AmberHaptics.trigger(.rigidImpact)"),
+            "生成完成不得再自动震动"
         )
-        XCTAssertTrue(keys.contains("case rigidImpact"))
-        XCTAssertTrue(keys.contains("UIImpactFeedbackGenerator(style: .rigid).impactOccurred()"))
-        XCTAssertTrue(settings.contains(storageDeclaration))
-        XCTAssertTrue(settings.contains("生成完成振动"))
-        XCTAssertTrue(settings.contains("completionHaptic.toggle()"))
-        XCTAssertTrue(viewModel.contains("IOSDisplayPreferenceKeys.completionHaptic"))
-        XCTAssertTrue(viewModel.contains("AmberHaptics.trigger(.rigidImpact)"))
     }
 
     func testBackgroundToolEnginePublishesLiveActivityStagesAtExecutionBoundaries() throws {

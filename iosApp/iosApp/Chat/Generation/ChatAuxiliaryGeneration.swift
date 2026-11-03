@@ -59,17 +59,8 @@ extension ChatViewModel {
         guard let last = state.messages.last, last.role == MessageRole.assistant,
               !last.toText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
-        // 完成触觉：单次刚性轻触。iOS 本地偏好（默认开）；不复用 KMP
-        // enableMessageGenerationHapticEffect——那是 Android-only 接线且默认关，
-        // 动它会改变 Android 默认行为。
-        let hapticKey = IOSDisplayPreferenceKeys.completionHaptic
-        let defaults = UserDefaults.standard
-        let hapticEnabled = defaults.object(forKey: hapticKey) == nil
-            ? true
-            : defaults.bool(forKey: hapticKey)
-        if hapticEnabled {
-            AmberHaptics.trigger(.rigidImpact)
-        }
+        // 生成完成不再自动震动：该振动对用户不可控（开关藏得深、且每次回复都触发），
+        // 已被明确要求移除。触感只在用户主动点击控件时触发。
 
         if isCurrentConversation(state.conversationId) { generateChatSuggestions() }
         let userMessageCount = state.messages.filter { $0.role == MessageRole.user }.count

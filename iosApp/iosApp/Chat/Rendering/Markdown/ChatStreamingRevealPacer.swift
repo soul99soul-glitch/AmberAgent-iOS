@@ -1,81 +1,115 @@
 import SwiftUI
 
-/// 流式正文的平滑吐字器。
+/// 流式正文的平滑吐字器 + 平滑高度。
 ///
-/// 上游 delta 是**成块**到达的（几个词到一整句），直接整块塞进布局会造成
-/// 「深色气泡框一次撑高 3 行，框里先是暗灰鬼影、过半秒才变亮」的观感，
-/// 也就是用户说的「像小说/历史版本的刷新节奏」。
+/// 三个问题一起解决：
 ///
-/// 这里把目标文本当作队列，按较高的固定节奏（约 50fps）小步推进已显示字数，
-/// 让文字以正常实色连续吐出：折行时气泡随着逐字满行自然向上推升一行，
-/// 而不是一次爆出多行。积压越多步长越大，流式结束时立即排空避免拖尾。
+/// 1. **文字逐字连续吐出**：上游 delta 成块到达，直接整块上屏会一次撑高多行。
+///    这里按帧小步推进已显示字数，文字以正常字色连续出现。
 ///
-/// 不改变任何布局高度语义：它只决定「这一帧渲染多长的文本」，
-/// 底部贴底仍由 `.sizeChanges` 在布局阶段完成。
+/// 2. **流式结束时绝不一次性刷出剩余文字**：网络流关闭后仍按节奏吐到追平全文
+///    再落到静态终态，避免尾部突然冒出一大段。
+///
+/// 3. **消除折行时的高度阶梯跳变**：文本换行会让布局高度单帧 +一整行（约 22pt），
+///    这是排版固有属性、无法靠逐字插值消除。所以给气泡占位高度加一层平滑：
+///    内容仍按自然高度排版（`fixedSize` 垂直方向不管提议），外层只显示
+///    `displayedHeight` 这么高（`alignment: .top` + `clipped`），并在内容长高时
+///    用短促线性动画把 `displayedHeight` 推上去。
+///
+///    每帧只长高一点点，配合底部锚点（`.sizeChanges` 或原生贴底）同帧上移同样的量：
+///    底边不动，已有文字与上方历史平滑上浮，新增的一行从底边缓缓露出，
+///    而不是整屏 0ms 瞬移一行。
 struct ChatStreamingRevealPacer<Content: View>: View {
-    /// 目标文本（上游已到达的全部内容）。
+    /// 上游已到达的全部文本。
     let text: String
-    /// 是否仍处于流式。非流式（历史消息/已完成）一次全量显示，不做任何延迟。
+    /// 是否仍在流式接收。
     let isStreaming: Bool
-    /// 无障碍「减弱动态效果」开启时不做逐字推进，直接全量。
+    /// 无障碍「减弱动态效果」：不做逐字推进，也不做高度过渡。
     let reduceMotion: Bool
     @ViewBuilder let content: (String) -> Content
 
-    @State private var revealedCount: Int = 0
+    @State private var revealedCount = 0
+    /// 内容自然高度（不含裁剪）。
+    @State private var contentHeight: CGFloat = 0
+    /// 当前实际占位高度：朝 `contentHeight` 平滑逼近。
+    @State private var displayedHeight: CGFloat = 0
 
-    /// 单位 1/50 秒。比 token 到达频率高一个量级，才能把块状增量摊平。
-    private static var tickNanos: UInt64 { 20_000_000 }
+    private var isPacing: Bool { isStreaming && !reduceMotion }
 
-    private var clampedRevealed: Int {
+    private var displayedCount: Int {
         min(max(0, revealedCount), text.count)
     }
 
     var body: some View {
-        content(displayText)
-            .onAppear { reconcile(animated: false) }
-            .onChange(of: text) { _, _ in reconcile(animated: true) }
-            .onChange(of: isStreaming) { _, streaming in
-                if !streaming { revealedCount = text.count }
+        content(String(text.prefix(displayedCount)))
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { height in
+                contentHeight = height
+                syncDisplayedHeight()
             }
-            .task(id: TaskKey(text: text, streaming: isStreaming && !reduceMotion)) {
-                guard isStreaming, !reduceMotion else {
+            .frame(height: isPacing ? displayedHeight : nil, alignment: .top)
+            .clipped()
+            .onAppear {
+                guard revealedCount == 0 else { return }
+                if isPacing {
+                    // 流式中途重进入：只补尾部，不要把已有正文整段重打。
+                    revealedCount = max(0, text.count - ChatStreamingRevealTiming.reentryTailBudget)
+                    displayedHeight = contentHeight
+                } else {
                     revealedCount = text.count
-                    return
                 }
+            }
+            .task(id: PacingKey(text: text, isStreaming: isStreaming, reduceMotion: reduceMotion)) {
                 await drain()
             }
     }
 
-    private var displayText: String {
-        let count = clampedRevealed
-        guard count < text.count else { return text }
-        return String(text.prefix(count))
+    /// 内容长高时把占位高度平滑推上去；缩短（收口）直接跟上，避免留白。
+    private func syncDisplayedHeight() {
+        guard isPacing else {
+            displayedHeight = contentHeight
+            return
+        }
+        guard contentHeight > displayedHeight else {
+            displayedHeight = contentHeight
+            return
+        }
+        withAnimation(.linear(duration: ChatStreamingRevealTiming.heightSettleSeconds)) {
+            displayedHeight = contentHeight
+        }
     }
 
-    /// 新文本到达时校正计数：只允许前进，避免重排/回退造成文字闪回。
-    private func reconcile(animated: Bool) {
-        guard isStreaming, !reduceMotion, animated else {
+    /// 小步推进直到追平全文。流式结束后不跳变，只是加快排空。
+    private func drain() async {
+        guard !reduceMotion else {
             revealedCount = text.count
             return
         }
-        if revealedCount > text.count { revealedCount = text.count }
-    }
-
-    /// 小步推进直到追平；积压越多步长越大，收尾自动加速排空。
-    private func drain() async {
-        while !Task.isCancelled {
+        while !Task.isCancelled, revealedCount < text.count {
             let remaining = text.count - revealedCount
-            guard remaining > 0 else { return }
-            // 1…4 字/拍：小积压时几乎逐字，块状大增量时按比例追赶。
-            let step = min(max(remaining / 6, 1), 4)
+            // 积压越多步长越大；流式结束后上限放宽，让尾段尽快追平又不跳变。
+            let ceiling = isStreaming ? 4 : 8
+            let step = min(max(remaining / 6, 1), ceiling)
             revealedCount = min(revealedCount + step, text.count)
-            try? await Task.sleep(nanoseconds: Self.tickNanos)
+            try? await Task.sleep(nanoseconds: ChatStreamingRevealTiming.tickNanos)
         }
     }
 
-    /// `.task(id:)` 的重启依据：文本内容或流式状态的组合。
-    private struct TaskKey: Equatable {
+    private struct PacingKey: Equatable {
         let text: String
-        let streaming: Bool
+        let isStreaming: Bool
+        let reduceMotion: Bool
     }
+}
+
+/// pacer 的调节参数。放在非泛型类型里：Swift 不允许泛型类型持有静态存储属性。
+enum ChatStreamingRevealTiming {
+    /// 约 60fps 一拍。
+    static let tickNanos: UInt64 = 16_000_000
+    /// 高度增长的过渡时长：短到不拖沓，长到足以盖住单帧一整行的台阶。
+    static let heightSettleSeconds: Double = 0.14
+    /// 中途重进入时只补齐尾部这么多个字，避免把已有正文整段重打。
+    static let reentryTailBudget = 40
 }
