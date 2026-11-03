@@ -42,20 +42,18 @@ final class ChatKernelRunHost {
 
     /// 与 CGC :832-851 同配方的 tool runtime(prepared 候选按 toolCallId
     /// 挂在其实例上,kernel run 独占一个实例,不与 CGC 共享)。
-    private lazy var toolRuntime: ChatToolRuntime = {
-        ChatToolRuntime(
-            settingsStore: dependencies.settingsStore,
-            sharedSettings: dependencies.sharedSettings,
-            localToolExecutor: dependencies.localToolExecutor,
-            searchTransport: dependencies.searchTransport,
-            mcpManager: dependencies.mcpManager,
-            orchestrationToolService: dependencies.orchestrationToolService,
-            memoryPollutionMarker: dependencies.memoryPollutionMarker,
-            conversationStoreProvider: dependencies.conversationStoreProvider,
-            ledger: toolLedger,
-            wakeScheduler: wakeScheduler
-        )
-    }()
+    private lazy var toolRuntime = ChatToolRuntime(
+        settingsStore: dependencies.settingsStore,
+        sharedSettings: dependencies.sharedSettings,
+        localToolExecutor: dependencies.localToolExecutor,
+        searchTransport: dependencies.searchTransport,
+        mcpManager: dependencies.mcpManager,
+        orchestrationToolService: dependencies.orchestrationToolService,
+        memoryPollutionMarker: dependencies.memoryPollutionMarker,
+        conversationStoreProvider: dependencies.conversationStoreProvider,
+        ledger: toolLedger,
+        wakeScheduler: wakeScheduler, agentSoulStore: dependencies.agentSoulStore
+    )
 #if DEBUG
     var toolRuntimeForTesting: ChatToolRuntime { toolRuntime }
     func installDurableResponseSessionForTesting() {

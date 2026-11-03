@@ -48,6 +48,13 @@ struct ChatTimelineActivity: Equatable {
                          detail: presentation.detail, systemImage: presentation.systemImage,
                          tint: presentation.tint, toolID: presentation.toolID)
     }
+
+    @MainActor
+    func shouldDisplayBelow(_ entry: NativeTimelineEntry, at uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        if entry.role == MessageRole.user || !entry.hasVisibleBodyText { return true }
+        guard resolvedPresentation(at: uptime).kind == .generating else { return true }
+        return taskSlot.map { $0.currentRoundAssistantMessageId != entry.messageId } ?? false
+    }
 }
 
 /// The clock belongs to the one visible status row, not the timeline or chat screen.
@@ -60,27 +67,20 @@ private struct ChatTimelineActivityRowView: View {
     var body: some View {
         let state = activity.resolvedPresentation(at: now)
         let rollup: ChatTaskRollupState = state.kind == .awaitingUser ? .approvalPending(count: 1)
-            : (state.tint == .red ? .needsAttention(failedCount: 1, totalCount: 1,
-                                                    failedToolTitle: state.title, reason: nil)
+            : (state.tint == .red ? .needsAttention(failedCount: 1, totalCount: 1, failedToolTitle: state.title, reason: nil)
                : .working(currentStepTitle: state.title))
+        let displayName = AgentSoulStore.shared.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let segment = ChatTaskRunSegment(
             id: "global-status-\(activity.anchorMessageID)", messageID: activity.anchorMessageID,
-            taskId: activity.anchorMessageID, agentDisplayName: "Amber", subAgentIdentity: nil,
+            taskId: activity.anchorMessageID, agentDisplayName: displayName.isEmpty ? AgentSoulStore.defaultDisplayName : displayName, subAgentIdentity: nil,
             headline: state.title, subtitle: nil, rollupState: rollup,
             tools: activity.tool.map { [$0] } ?? [], steps: [], reasonings: [], mediaBearingTools: [],
             hidesCompletedStandaloneReasoning: false, deferToolDetails: true
         )
+        let card = ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
+                                          onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
         Group {
-            if showAgentName {
-                ChatAssistantStack {
-                    ChatAgentName()
-                    ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
-                                           onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
-                }
-            } else {
-                ChatTaskInlineCardView(segment: segment, onTapToolDetail: { onAction(.openToolDetail(tool: $0)) },
-                                       onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) })
-            }
+            if showAgentName { ChatAssistantStack { ChatAgentName(); card } } else { card }
         }
         .task(id: activity.tracksTaskLiveness) {
             guard activity.tracksTaskLiveness else { return }
@@ -274,15 +274,11 @@ struct NativeChatTimelineView: View {
                             }
                         }
                         .padding(.top, isHistoryBoundary ? 0 : topSpacing)
-                        if let activity, activityHere, !statusReplacesEntry {
-                            // 正文已上屏就不能再在气泡下方垫一行「正在整理回复」：
-                            // 那行会把气泡顶高，流式结束时它消失→整个气泡单帧下坠。
-                            // 单行动态进度必须由正文原位接管，而不是并排堆在下面。
+                        if let activity, activityHere, !statusReplacesEntry, activity.shouldDisplayBelow(entry) {
+                            // 仅当当前轮气泡正在吐正文时收起进度行（防流式结束 28pt 下坠）；工具执行与次轮思考仍展示在首轮气泡下方。
                             let isAfterUserMessage = entry.role == MessageRole.user
-                            if isAfterUserMessage || !entry.hasVisibleBodyText {
-                                ChatTimelineActivityRowView(activity: activity, showAgentName: isAfterUserMessage, onAction: onAction)
-                                    .padding(.top, isAfterUserMessage ? 14 : ChatLayout.assistantPartSpacing)
-                            }
+                            ChatTimelineActivityRowView(activity: activity, showAgentName: isAfterUserMessage, onAction: onAction)
+                                .padding(.top, isAfterUserMessage ? 14 : ChatLayout.assistantPartSpacing)
                         }
                     }
                 }

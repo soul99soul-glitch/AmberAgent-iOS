@@ -156,4 +156,63 @@ final class AgentSoulStoreTests: XCTestCase {
             "旧的 soul_import 仍是独立的高风险导入工具，不应被混入"
         )
     }
+
+    func testRuntimeContextBuilderInjectsSoulEmbodimentAndPreservesLegacyMarkdown() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var credentials: [String: String] = [:]
+        let settings = IOSSharedSettingsStore(
+            userDefaults: defaults,
+            loadCredential: { credentials[$0] },
+            storeCredential: { credentials[$0] = $1; return true },
+            deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        )
+        let soulStore = AgentSoulStore(userDefaults: defaults, notePoster: { _ in })
+        let baseMessages = [UIMessage.companion.user(prompt: "你好")]
+
+        settings.setAgentSoulMarkdown("")
+        let emptyPrepared = ChatRuntimeContextBuilder(
+            sharedSettings: settings,
+            mcpTools: [],
+            miniAppRepository: .shared,
+            miniAppRuntimeEnabled: false,
+            soulStore: soulStore
+        ).injectingRuntimeContext(into: baseMessages, coalesceSystemMessages: false)
+        XCTAssertFalse(emptyPrepared.contains { $0.toText().contains("<agents_md>") })
+
+        settings.setAgentSoulMarkdown("# Legacy Soul Rule\nYou are Amber, a personal agent on the user's device.")
+        let legacyPrepared = ChatRuntimeContextBuilder(
+            sharedSettings: settings,
+            mcpTools: [],
+            miniAppRepository: .shared,
+            miniAppRuntimeEnabled: false,
+            soulStore: soulStore
+        ).injectingRuntimeContext(into: baseMessages, coalesceSystemMessages: false)
+        XCTAssertTrue(legacyPrepared.contains { $0.toText().contains("# Legacy Soul Rule") })
+
+        soulStore.update(
+            displayName: "赵大哥",
+            tagline: "燕云十六声热心老哥",
+            soulPrompt: "说话豪爽接地气，自称老哥。",
+            summary: "测试自塑"
+        )
+        let embodiedPrepared = ChatRuntimeContextBuilder(
+            sharedSettings: settings,
+            mcpTools: [],
+            miniAppRepository: .shared,
+            miniAppRuntimeEnabled: false,
+            soulStore: soulStore
+        ).injectingRuntimeContext(into: baseMessages, coalesceSystemMessages: false)
+        let soulSystemText = embodiedPrepared
+            .filter { $0.role == MessageRole.system }
+            .map { $0.toText() }
+            .joined(separator: "\n")
+        XCTAssertTrue(soulSystemText.contains("赵大哥"))
+        XCTAssertTrue(soulSystemText.contains("燕云十六声热心老哥"))
+        XCTAssertTrue(soulSystemText.contains("说话豪爽接地气，自称老哥。"))
+        XCTAssertTrue(soulSystemText.contains("# Legacy Soul Rule"))
+        XCTAssertTrue(soulSystemText.contains("You are 赵大哥, a personal agent on the user's device."))
+        XCTAssertFalse(soulSystemText.contains("You are Amber, a personal agent on the user's device."))
+    }
 }

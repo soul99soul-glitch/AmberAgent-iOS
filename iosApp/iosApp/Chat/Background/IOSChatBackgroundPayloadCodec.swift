@@ -229,6 +229,7 @@ extension IOSChatBackgroundGenerationCoordinator {
         let declarations = ToolKt.iosToolDeclarations(names: names)
             + IOSWakeToolCatalog.declarations.filter { names.contains($0.name) }
             + IOSShortcutAuthoringToolCatalog.declarations.filter { names.contains($0.name) }
+            + AgentSoulToolDeclarationsKt.createAgentSoulToolDeclarations().filter { names.contains($0.name) }
             + additionalDeclarations
         let byName = Dictionary(declarations.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         return names.compactMap { byName[$0] }

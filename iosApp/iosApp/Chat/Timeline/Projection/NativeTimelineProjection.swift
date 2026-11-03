@@ -179,20 +179,23 @@ enum NativeTimelineProjector {
         }
         let compactedIds = Set(messages.prefix(compactedEnd.map { $0 + 1 } ?? 0).map(ChatMessageProjector.messageId(for:)))
         let boundariesByAnchor = Dictionary(grouping: boundaries, by: \.afterMessageId)
-        var previousStatusOnly: Bool?
+        var hasVisibleAssistantInTurn: Bool?
         for entry in plan.entries {
             switch entry {
             case .message, .pendingAssistant:
                 var presentationEntry = entry
                 if case .message(var message) = entry {
-                    if previousStatusOnly == nil {
-                        let previous = message.index > 0
-                            ? messages[..<message.index].reversed().first(where: ChatMessageProjector.isVisibleInTimeline)
-                            : nil
-                        previousStatusOnly = previous.map(isGlobalStatusOnly) ?? false
+                    if hasVisibleAssistantInTurn == nil {
+                        hasVisibleAssistantInTurn = hasVisibleAssistantBefore(index: message.index, in: messages)
                     }
-                    if previousStatusOnly == true { message.isAssistantContinuation = false }
-                    previousStatusOnly = isGlobalStatusOnly(message.message)
+                    if message.role == MessageRole.assistant {
+                        message.isAssistantContinuation = hasVisibleAssistantInTurn == true
+                        if !isGlobalStatusOnly(message.message) {
+                            hasVisibleAssistantInTurn = true
+                        }
+                    } else {
+                        hasVisibleAssistantInTurn = false
+                    }
                     presentationEntry = .message(message)
                 }
                 var projected = nativeEntry(
@@ -536,6 +539,15 @@ enum NativeTimelineProjector {
                 renderDigest: nil
             )
         }
+    }
+
+    static func hasVisibleAssistantBefore(index: Int, in messages: [UIMessage]) -> Bool {
+        guard index > 0 else { return false }
+        for previous in messages[..<index].reversed() where ChatMessageProjector.isVisibleInTimeline(previous) {
+            guard previous.role == MessageRole.assistant else { return false }
+            if !isGlobalStatusOnly(previous) { return true }
+        }
+        return false
     }
 
     static func isGlobalStatusOnly(_ message: UIMessage) -> Bool {

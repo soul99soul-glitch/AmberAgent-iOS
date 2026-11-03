@@ -449,6 +449,8 @@ struct ChatToolStepModel: Identifiable {
         "skill_validate": "校验技能",
         "skill_import": "导入技能",
         "soul_import": "更新核心指令",
+        "agent_soul_get": "查看角色设定",
+        "agent_soul_update": "更新角色设定",
         "skill_enable": "启用技能",
         "skill_disable": "禁用技能",
         "mcp_list": "列出 MCP",
@@ -536,6 +538,10 @@ struct ChatToolStepModel: Identifiable {
         let raw: String?
         let verb: String
         switch toolName {
+        case "agent_soul_get":
+            return Self.localized("正在查看角色设定")
+        case "agent_soul_update":
+            return Self.localized("正在更新角色设定")
         case "search_web":
             raw = searchQuery(from: input)
             verb = "正在查找"
@@ -553,6 +559,22 @@ struct ChatToolStepModel: Identifiable {
         let compact = redacted.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
         guard !compact.isEmpty else { return nil }
         return "\(verb)「\(String(compact.prefix(22)))」"
+    }
+
+    static func runningActivityTitle(_ baseTitle: String) -> String {
+        let trimmed = baseTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Self.localized("正在执行工具") }
+        if trimmed.hasPrefix("正在") || trimmed.hasPrefix("等待") {
+            return trimmed
+        }
+        if trimmed.hasPrefix("调用 ") && trimmed.contains("_") {
+            return Self.localized("正在执行工具")
+        }
+        let nonVerbPrefixes = ["MCP ", "iSH ", "Remote ", "AmberShell ", "内置 "]
+        if nonVerbPrefixes.contains(where: { trimmed.hasPrefix($0) }) {
+            return trimmed
+        }
+        return "正在\(trimmed)"
     }
 
     private static func scrapeURL(from input: String) -> String? {

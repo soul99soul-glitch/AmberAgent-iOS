@@ -36,6 +36,7 @@ final class ChatToolRuntime {
     /// 未注入时两工具返回结构化「不可用」错误（照 orchestrationToolService 先例；
     /// 测试注入隔离 store）。
     let conversationStoreProvider: (() -> IOSConversationStore?)?
+    var agentSoulStore: AgentSoulStore? = nil
     /// P2-a: harness 拥有的记忆污染置位回调（conversationId, toolName）。由接线方
     /// 注入持久化（storage 写 + baseline 守卫）；nil = 不置位（零行为变化）。置位
     /// 判定（工具名 + 成功输出）在本 runtime 收口处完成，不经过模型。
@@ -222,7 +223,8 @@ final class ChatToolRuntime {
         soulPreviousStore: IOSSoulPreviousStore? = nil,
         mcpImportClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)? = nil,
         autoApprovalGate: IOSJevAutoApprovalGate? = nil,
-        wakeScheduler: IOSWakeScheduler? = nil
+        wakeScheduler: IOSWakeScheduler? = nil,
+        agentSoulStore: AgentSoulStore? = nil
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -236,6 +238,7 @@ final class ChatToolRuntime {
         self.memoryPollutionMarker = memoryPollutionMarker
         self.jsCellRegistry = jsCellRegistry ?? .shared
         self.conversationStoreProvider = conversationStoreProvider
+        self.agentSoulStore = agentSoulStore
         self.ledger = ledger
         self.wakeScheduler = wakeScheduler ?? .shared
         self.recipeStoreBaseDirectory = recipeStoreBaseDirectory
@@ -835,6 +838,7 @@ final class ChatToolRuntime {
             "send_message", "followup_task", "wait_agent",
         ])
         .union(IOSAppleAgentToolCatalog.toolNames)
+        .union(AgentSoulToolCatalog.toolNames)
         .union(IOSWakeToolCatalog.toolNames)
         .union(IOSShortcutAuthoringToolCatalog.toolNames)
         .union(IOSSkillToolCatalog.toolNames)

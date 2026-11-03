@@ -143,6 +143,7 @@ final class ChatViewModel {
     @ObservationIgnored private var retryingFailedRunIds: Set<String> = []
     @ObservationIgnored var retryMutationRunId: String?
     @ObservationIgnored var isStartingWatchQuestion = false
+    @ObservationIgnored var agentSoulStore: AgentSoulStore = .shared
     var pendingMemoryApproval: MemoryToolApprovalRequest? {
         get { currentRun.state.pendingMemoryApproval }
         set { currentRun.state.pendingMemoryApproval = newValue }
@@ -470,7 +471,10 @@ final class ChatViewModel {
 
     private var occupancySystemOverheadText: String {
         let systemPrompt = sharedSettings.snapshot.getCurrentAssistant().systemPrompt
-        let soul = sharedSettings.agentRuntime.agentSoulMarkdown
+        let soul = ChatRuntimeContextBuilder.resolvedSoulMarkdown(
+            sharedSettings: sharedSettings,
+            soulStore: agentSoulStore
+        )
         return [systemPrompt, soul]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -1066,7 +1070,11 @@ final class ChatViewModel {
                 return self.sharedSettings.snapshot.assistants.contains { $0.id == assistantId }
             },
             soulMarkdown: { [weak self] in
-                self?.sharedSettings.agentRuntime.agentSoulMarkdown ?? ""
+                guard let self else { return "" }
+                return ChatRuntimeContextBuilder.resolvedSoulMarkdown(
+                    sharedSettings: self.sharedSettings,
+                    soulStore: self.agentSoulStore
+                )
             },
             sharedSettingsProvider: {
                 sharedSettings

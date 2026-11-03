@@ -181,22 +181,22 @@ final class NativeTimelineProjectionCache {
             ChatMessageProjector.isVisibleInTimeline(messages[$0])
         }
         guard visibleIndices == projection.entries.compactMap(\.index) else { return false }
-        let prior = visibleIndices.first.flatMap { index in
-            index > 0 ? messages[..<index].reversed().first(where: ChatMessageProjector.isVisibleInTimeline) : nil
-        }
-        var previousRole = prior?.role
-        var previousStatusOnly = prior.map(NativeTimelineProjector.isGlobalStatusOnly) ?? false
+        var hasVisibleAssistantInTurn = visibleIndices.first.map {
+            NativeTimelineProjector.hasVisibleAssistantBefore(index: $0, in: messages)
+        } ?? false
         for entry in projection.entries {
             guard let index = entry.index, let id = entry.messageId else { continue }
             let message = messages[index]
             if index != messages.count - 1 {
-                let continuation = message.role == MessageRole.assistant &&
-                    previousRole == MessageRole.assistant && !previousStatusOnly
+                let continuation = message.role == MessageRole.assistant && hasVisibleAssistantInTurn
                 guard contentIdentities[id]?.matches(message) == true,
                       entry.isAssistantContinuation == continuation else { return false }
             }
-            previousRole = message.role
-            previousStatusOnly = entry.isGlobalStatusOnly
+            if message.role == MessageRole.assistant {
+                if !entry.isGlobalStatusOnly { hasVisibleAssistantInTurn = true }
+            } else {
+                hasVisibleAssistantInTurn = false
+            }
         }
         return true
     }

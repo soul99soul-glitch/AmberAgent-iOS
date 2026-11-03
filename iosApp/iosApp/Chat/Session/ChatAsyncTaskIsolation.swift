@@ -50,6 +50,8 @@ final class ChatAsyncTaskSlot {
     var generatedMessageIds: Set<String> = []
     var lastSplicedTailIndex: Int?
     var lastSplicedTailID: String?
+    /// Assistant message ID produced by the active model round (`nil` right after a new round begins).
+    var currentRoundAssistantMessageId: String?
     var activityStage: AgentActivityStage = .preparing
     var activeToolName: String?
     var activeToolTitle: String?
@@ -363,6 +365,12 @@ extension ChatViewModel {
             combined.insert(contentsOf: newGenerated, at: insertionIndex)
         }
 
+        if let tailAssistant = newGenerated.last(where: { $0.role == MessageRole.assistant }) {
+            let tailAssistantID = ChatMessageProjector.messageId(for: tailAssistant)
+            if !previousOwnedIds.contains(tailAssistantID) {
+                slot.currentRoundAssistantMessageId = tailAssistantID
+            }
+        }
         slot.generatedMessages = newGenerated
         slot.generatedMessageIds = Set(newGenerated.map { ChatMessageProjector.messageId(for: $0) })
         slot.currentTranscript = slot.baselineMessages + newGenerated

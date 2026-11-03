@@ -351,6 +351,7 @@ struct ChatRuntimeContextBuilder {
     let miniAppRepository: IOSMiniAppRepository
     let miniAppRuntimeEnabled: Bool
     var skillFileStore = IOSSkillFileStore()
+    var soulStore: AgentSoulStore? = nil
 
     @MainActor
     func injectingRuntimeContext(
@@ -381,8 +382,37 @@ struct ChatRuntimeContextBuilder {
         """)
     }
 
+    @MainActor
+    static func resolvedSoulMarkdown(
+        sharedSettings: IOSSharedSettingsStore,
+        soulStore: AgentSoulStore?
+    ) -> String {
+        let embodiment = (soulStore?.systemPromptSection ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacy = sharedSettings.agentRuntime.agentSoulMarkdown
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !embodiment.isEmpty else { return legacy }
+        let storePrompt = (soulStore?.soulPrompt ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !legacy.isEmpty, legacy != storePrompt else { return embodiment }
+        let customName = (soulStore?.displayName ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let adaptedLegacy: String
+        if !customName.isEmpty, customName != AgentSoulStore.defaultDisplayName {
+            adaptedLegacy = legacy.replacingOccurrences(
+                of: "You are Amber, a personal agent on the user's device.",
+                with: "You are \(customName), a personal agent on the user's device."
+            )
+        } else {
+            adaptedLegacy = legacy
+        }
+        return "\(adaptedLegacy)\n\n\(embodiment)"
+    }
+
+    @MainActor
     private func messagesByInjectingSoul(_ messages: [UIMessage]) -> [UIMessage] {
-        guard let soul = Self.soulSystemMessage(markdown: sharedSettings.agentRuntime.agentSoulMarkdown) else {
+        let markdown = Self.resolvedSoulMarkdown(sharedSettings: sharedSettings, soulStore: soulStore)
+        guard let soul = Self.soulSystemMessage(markdown: markdown) else {
             return messages
         }
         return [soul] + messages

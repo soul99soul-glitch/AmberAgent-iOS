@@ -50,7 +50,8 @@ struct ChatAgentName: View {
 
     var body: some View {
         if agentName {
-            Text("Amber")
+            let name = AgentSoulStore.shared.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            Text(name.isEmpty ? AgentSoulStore.defaultDisplayName : name)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(AmberTheme.muted)
                 .padding(.leading, 4)

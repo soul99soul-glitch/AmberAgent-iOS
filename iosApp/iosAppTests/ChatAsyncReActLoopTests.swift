@@ -20,9 +20,11 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         private var chunkHandler: (@Sendable (MessageChunk) -> Void)?
         private var completion: (@Sendable () -> Void)?
         private var starts = 0
+        private var recordedMessages: [[UIMessage]] = []
 
         var ready: Bool { lock.withLock { chunkHandler != nil } }
         var callCount: Int { lock.withLock { starts } }
+        var lastUploadedMessages: [UIMessage] { lock.withLock { recordedMessages.last ?? [] } }
         func generateText(providerSetting: ProviderSetting, messages: [UIMessage],
                           params: TextGenerationParams) async throws -> MessageChunk {
             IOSChatForegroundFixtures.chunk(with: nil)
@@ -31,7 +33,12 @@ final class ChatAsyncReActLoopTests: XCTestCase {
                         onChunk: @escaping @Sendable (MessageChunk) -> Void,
                         onComplete: @escaping @Sendable () -> Void,
                         onError: @escaping @Sendable (KotlinThrowable) -> Void) -> Kotlinx_coroutines_coreJob? {
-            lock.withLock { starts += 1; chunkHandler = onChunk; completion = onComplete }
+            lock.withLock {
+                starts += 1
+                recordedMessages.append(messages)
+                chunkHandler = onChunk
+                completion = onComplete
+            }
             return nil
         }
         func send(_ message: UIMessage) {
@@ -632,5 +639,171 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertEqual(interruptedIds.count, 2)
         let settled = await waitForCondition { !viewModel.isGenerationActive }
         XCTAssertTrue(settled)
+    }
+
+    func testUpfrontToolAcknowledgmentFormsSeparateBubblesAndKeepsProgressRowVisibleBetweenRounds() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+
+        let defaults = makeDefaults()
+        let sharedSettings = makeSharedSettings(defaults: defaults)
+        let soulStore = AgentSoulStore(userDefaults: defaults, notePoster: { _ in })
+        let provider = ControlledStreamingProvider()
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: sharedSettings, store: store)
+        viewModel.agentSoulStore = soulStore
+        viewModel.kernelTextProviderOverrideForTesting = provider
+        viewModel.reloadFromStore()
+
+        XCTAssertEqual(ChatToolStepModel.friendlyToolTitle("agent_soul_get", executed: true), "查看角色设定")
+        XCTAssertEqual(ChatToolStepModel.friendlyToolTitle("agent_soul_update", executed: true), "更新角色设定")
+        XCTAssertEqual(ChatToolStepModel.activeProgressTitle(toolName: "agent_soul_update", input: "{}"), "正在更新角色设定")
+        XCTAssertEqual(ChatToolStepModel.runningActivityTitle("查看日历事件"), "正在查看日历事件")
+
+        let upload = viewModel.preparedUploadMessagesForTesting([
+            UIMessage.companion.user(prompt: "把你自己改成燕云十六声里的赵大哥")
+        ])
+        let guidanceText = upload
+            .filter { $0.role == MessageRole.system }
+            .map { $0.toText() }
+            .joined(separator: "\n")
+        XCTAssertTrue(guidanceText.contains("首轮发出 tool_calls 的同时，必须先输出简短自然的一句口语回应"))
+        XCTAssertTrue(guidanceText.contains("严禁复读用户原话"))
+        XCTAssertTrue(guidanceText.contains("无需调用工具的闲聊"))
+
+        viewModel.inputText = "把你自己改成燕云十六声里的赵大哥"
+        XCTAssertTrue(viewModel.sendMessage())
+        let round1Ready = await waitForCondition { provider.callCount == 1 && provider.ready }
+        XCTAssertTrue(round1Ready)
+
+        // Round 1 streams Bubble 1 upfront colloquial acknowledgment.
+        provider.send(IOSChatForegroundFixtures.assistantText("得令，这就给你拾掇一身赵大哥的行头！"))
+        let ackStreaming = await waitForCondition {
+            viewModel.focusedActiveTask?.activityStage == .generating &&
+                viewModel.messages.contains { $0.role == .assistant && $0.toText().contains("拾掇一身赵大哥的行头") }
+        }
+        XCTAssertTrue(ackStreaming)
+
+        let view = ChatView(settingsStore: viewModel.settingsStore, sharedSettings: sharedSettings, viewModel: viewModel)
+        let streamingAckProj = NativeTimelineProjector.build(
+            messages: viewModel.messages,
+            event: .assistantStreamDelta,
+            isGenerationActive: true
+        )
+        let ackMessage = try XCTUnwrap(viewModel.messages.first { $0.role == .assistant })
+        let ackID = ChatMessageProjector.messageId(for: ackMessage)
+        let streamingAckEntry = try XCTUnwrap(streamingAckProj.messageEntry(for: ackID))
+        let streamingActivity = try XCTUnwrap(view.currentTimelineActivity)
+        XCTAssertEqual(streamingActivity.presentation.kind, .generating)
+        XCTAssertFalse(
+            streamingActivity.shouldDisplayBelow(streamingAckEntry),
+            "当前轮气泡正在吐字时不应在下方垫进度行"
+        )
+
+        // Emit agent_soul_update tool call in the same Round 1 turn.
+        let soulToolCall = UIMessagePart.Tool(
+            toolCallId: "call-soul-1",
+            toolName: "agent_soul_update",
+            input: #"{"displayName":"赵大哥","tagline":"燕云十六声热心老哥","soulPrompt":"豪爽重情义的北方老哥，开口亲切接地气。","summary":"赵大哥人设"}"#,
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        provider.send(IOSChatForegroundFixtures.assistantMessage(parts: [soulToolCall]))
+
+        // Verify that while a tool is running below Bubble 1, the progress row IS displayed beneath Bubble 1.
+        let toolRunningActivity = ChatTimelineActivity(
+            anchorMessageID: ackID,
+            hasAssistant: true,
+            presentation: .activity(kind: .tool, title: "正在更新角色设定", systemImage: "wrench.and.screwdriver", tint: .amber),
+            tool: soulToolCall,
+            taskSlot: viewModel.focusedActiveTask,
+            plannedStages: [],
+            stagePlanStartedUptime: nil,
+            liveReasoningSummary: nil,
+            tracksTaskLiveness: true,
+            showsThought: false
+        )
+        XCTAssertTrue(
+            toolRunningActivity.shouldDisplayBelow(streamingAckEntry),
+            "Bubble 1 正文落定后执行工具期间，下方必须继续显示单行动态进度条"
+        )
+
+        provider.finish()
+
+        // Tool executes on isolated soulStore and enters Round 2.
+        let round2Ready = await waitForCondition { provider.callCount == 2 && provider.ready }
+        XCTAssertTrue(round2Ready)
+        XCTAssertEqual(soulStore.displayName, "赵大哥")
+
+        // Round 2 system prompt immediately carries the newly updated 赵大哥 Soul persona!
+        let round2SystemPrompt = provider.lastUploadedMessages
+            .filter { $0.role == MessageRole.system }
+            .map { $0.toText() }
+            .joined(separator: "\n")
+        XCTAssertTrue(round2SystemPrompt.contains("赵大哥"))
+        XCTAssertTrue(round2SystemPrompt.contains("豪爽重情义的北方老哥"))
+
+        // Before Bubble 2 emits visible body text, progress row ("正在思考") must remain visible below Bubble 1!
+        let round2ThinkingProj = NativeTimelineProjector.build(
+            messages: viewModel.messages,
+            event: .toolResultAppended,
+            isGenerationActive: true
+        )
+        let settledAckEntry = try XCTUnwrap(round2ThinkingProj.messageEntry(for: ackID))
+        let round2ThinkingActivity = try XCTUnwrap(view.currentTimelineActivity)
+        XCTAssertEqual(round2ThinkingActivity.anchorMessageID, ackID)
+        XCTAssertEqual(round2ThinkingActivity.presentation.title, "正在思考")
+        XCTAssertTrue(
+            round2ThinkingActivity.shouldDisplayBelow(settledAckEntry),
+            "次轮思考期间尚未产出新气泡正文时，Bubble 1 下方必须保持进度条可见"
+        )
+
+        // Composer remains non-blocking while background ReAct loop runs.
+        XCTAssertNil(viewModel.composerSendBlockReason(for: "顺便问一句"))
+
+        // Round 2 streams Bubble 2 final reply as an independent assistant message.
+        provider.send(IOSChatForegroundFixtures.assistantText("哈哈，兄弟！以后有啥事尽管招呼你赵大哥！"))
+        let bubble2Streaming = await waitForCondition {
+            viewModel.messages.filter { $0.role == .assistant }.count == 2 &&
+                viewModel.messages.contains { $0.toText().contains("尽管招呼你赵大哥") }
+        }
+        XCTAssertTrue(bubble2Streaming)
+
+        let assistantBubbles = viewModel.messages.filter { $0.role == .assistant }
+        XCTAssertEqual(assistantBubbles.count, 2, "首轮接话与工具后的正式结果必须落成两个独立助手气泡")
+        let bubble2ID = ChatMessageProjector.messageId(for: assistantBubbles[1])
+        XCTAssertNotEqual(ackID, bubble2ID)
+
+        let bubble2Proj = NativeTimelineProjector.build(
+            messages: viewModel.messages,
+            event: .assistantStreamDelta,
+            isGenerationActive: true
+        )
+        let bubble2Entry = try XCTUnwrap(bubble2Proj.messageEntry(for: bubble2ID))
+        XCTAssertTrue(bubble2Entry.isAssistantContinuation)
+        let bubble2Activity = try XCTUnwrap(view.currentTimelineActivity)
+        XCTAssertEqual(bubble2Activity.anchorMessageID, bubble2ID)
+        XCTAssertFalse(
+            bubble2Activity.shouldDisplayBelow(bubble2Entry),
+            "Bubble 2 开始流式吐出正文后，进度行应立即原位让位给 Bubble 2"
+        )
+
+        // Also verify 3-round projection with an intermediate tool-only round keeps continuation consistent.
+        let hiddenToolOnly = IOSChatForegroundFixtures.assistantMessage(parts: [soulToolCall])
+        let threeRoundProj = NativeTimelineProjector.build(
+            messages: [UIMessage.companion.user(prompt: "hi"), assistantBubbles[0], hiddenToolOnly, assistantBubbles[1]],
+            event: .assistantStreamDelta,
+            isGenerationActive: true
+        )
+        XCTAssertFalse(try XCTUnwrap(threeRoundProj.messageEntry(for: ackID)).isAssistantContinuation)
+        XCTAssertTrue(try XCTUnwrap(threeRoundProj.messageEntry(for: ChatMessageProjector.messageId(for: hiddenToolOnly))).isAssistantContinuation)
+        XCTAssertTrue(try XCTUnwrap(threeRoundProj.messageEntry(for: bubble2ID)).isAssistantContinuation)
+
+        provider.finish()
+        let completed = await waitForCondition { !viewModel.isGenerationActive }
+        XCTAssertTrue(completed)
+        XCTAssertNil(view.currentTimelineActivity)
     }
 }

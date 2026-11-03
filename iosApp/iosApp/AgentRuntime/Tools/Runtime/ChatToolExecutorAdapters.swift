@@ -385,6 +385,20 @@ extension ChatToolRuntime {
             }
         }
 
+        for name in AgentSoulToolCatalog.toolNames where availableToolNames.contains(name) {
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+                guard let self else { return .failed("Chat runtime is unavailable.") }
+                let result = await self.dispatchAdvancedToolCall(
+                    self.toolCall(name: toolName, input: arguments),
+                    providerSetting: providerSetting,
+                    params: params,
+                    runId: runId,
+                    conversationId: conversationId
+                )
+                return .filled(result)
+            }
+        }
+
         let skillMcpNames = IOSSkillToolCatalog.toolNames
             .union(IOSMcpManagementToolCatalog.toolNames)
             .union([IOSSoulToolCatalog.toolName])
@@ -672,6 +686,7 @@ extension ChatToolRuntime {
             "send_message", "followup_task", "wait_agent",
         ])
         .union(IOSAppleAgentToolCatalog.toolNames)
+        .union(AgentSoulToolCatalog.toolNames)
         .union(IOSWakeToolCatalog.toolNames)
         .union(IOSShortcutAuthoringToolCatalog.toolNames)
         .union(IOSSkillToolCatalog.toolNames)

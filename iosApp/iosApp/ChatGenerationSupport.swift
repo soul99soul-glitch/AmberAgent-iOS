@@ -35,6 +35,7 @@ struct ChatGenerationDependencies {
     /// 跨会话读取工具（session_search/session_read）的会话存储源。var 带默认值，
     /// 成员构造器给默认参数——既有调用点零改动；nil = 工具返回结构化不可用。
     var conversationStoreProvider: (() -> IOSConversationStore?)? = nil
+    var agentSoulStore: AgentSoulStore? = nil
 }
 
 struct ChatMiniAppOutputApplication {

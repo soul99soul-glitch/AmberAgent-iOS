@@ -39,7 +39,8 @@ extension ChatViewModel {
             mcpManager: mcpManager,
             orchestrationToolService: orchestrationToolService,
             memoryPollutionMarker: memoryPollutionMarker,
-            conversationStoreProvider: { [weak self] in self?.conversationStore }
+            conversationStoreProvider: { [weak self] in self?.conversationStore },
+            agentSoulStore: agentSoulStore
         )
     }
 
@@ -368,6 +369,9 @@ extension ChatViewModel {
                     let stageChanged = stage.map { $0 != taskSlot.activityStage } ?? false
                     let restartsPlan = stage == .preparing && !taskSlot.plannedActivityStages.isEmpty
                     if let stage {
+                        if stage == .preparing {
+                            taskSlot.currentRoundAssistantMessageId = nil
+                        }
                         if restartsPlan {
                             taskSlot.stagePlanStartedUptime = now
                         }
@@ -429,7 +433,10 @@ extension ChatViewModel {
                 },
                 setProvisionalAssistant: { [weak self, weak taskSlot] message in
                     guard let self, let taskSlot else { return false }
-                    let structuralChange = taskSlot.generatedMessages.last?.id != message.id
+                    let messageID = ChatMessageProjector.messageId(for: message)
+                    let structuralChange = taskSlot.generatedMessages.last?.id != message.id ||
+                        taskSlot.currentRoundAssistantMessageId != messageID
+                    taskSlot.currentRoundAssistantMessageId = messageID
                     self.spliceTaskProvisionalAssistant(message, for: taskSlot, into: state)
                     if structuralChange, self.isCurrentConversation(state.conversationId) {
                         self.runActivityRevision &+= 1

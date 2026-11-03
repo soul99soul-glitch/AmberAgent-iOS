@@ -971,6 +971,10 @@ struct ChatView: View {
     }
 
     var timelineActivityState: ChatActivityIslandState {
+        activeTimelinePresentation ?? .conversationTitle(conversationTitleForIsland)
+    }
+
+    private var activeTimelinePresentation: ChatActivityIslandState? {
         // 等待用户永远最先：审批/问答暂停时，岛同步停下来等。
         if viewModel.hasPendingUserGate {
             return ChatActivityIslandState.activity(
@@ -1050,6 +1054,14 @@ struct ChatView: View {
                     systemImage: "brain.head.profile", tint: .amber
                 )
             case .generating:
+                if let step = chatListSummary.activeToolStep {
+                    return ChatActivityIslandState.activity(
+                        kind: step.visualKind.isImageTool ? .image : .tool,
+                        title: compactIslandText(ChatToolStepModel.runningActivityTitle(step.title), limit: 18),
+                        detail: step.detail.map { compactIslandText($0, limit: 20) },
+                        systemImage: step.systemImage, tint: islandTint(for: step), toolID: step.id
+                    )
+                }
                 return ChatActivityIslandState.activity(
                     kind: .generating, title: IOSAppLocalization.string("正在整理回复", defaultValue: "正在整理回复"),
                     systemImage: "text.bubble", tint: .accent
@@ -1070,14 +1082,14 @@ struct ChatView: View {
                    task.activeToolName == nil || step.tool?.toolName == task.activeToolName {
                     return ChatActivityIslandState.activity(
                         kind: step.visualKind.isImageTool ? .image : .tool,
-                        title: compactIslandText(step.title, limit: 18),
+                        title: compactIslandText(ChatToolStepModel.runningActivityTitle(step.title), limit: 18),
                         detail: step.detail.map { compactIslandText($0, limit: 20) },
                         systemImage: step.systemImage, tint: islandTint(for: step), toolID: step.id
                     )
                 }
                 if let name = task.activeToolName {
                     return ChatActivityIslandState.activity(
-                        kind: .tool, title: ChatToolStepModel.friendlyToolTitle(name, executed: false),
+                        kind: .tool, title: ChatToolStepModel.runningActivityTitle(ChatToolStepModel.friendlyToolTitle(name, executed: false)),
                         systemImage: "wrench.and.screwdriver", tint: .amber
                     )
                 }
@@ -1103,7 +1115,7 @@ struct ChatView: View {
         if (viewModel.isGenerationActive || viewModel.isLoading), let step = chatListSummary.activeToolStep {
             return ChatActivityIslandState.activity(
                 kind: step.visualKind.isImageTool ? .image : .tool,
-                title: compactIslandText(step.title, limit: 18),
+                title: compactIslandText(ChatToolStepModel.runningActivityTitle(step.title), limit: 18),
                 detail: step.detail.map { compactIslandText($0, limit: 20) },
                 systemImage: step.systemImage,
                 tint: islandTint(for: step),
@@ -1152,12 +1164,11 @@ struct ChatView: View {
             )
         }
 
-        return .conversationTitle(conversationTitleForIsland)
+        return nil
     }
 
     var currentTimelineActivity: ChatTimelineActivity? {
-        let presentation = timelineActivityState
-        guard presentation.isActive else { return nil }
+        guard let presentation = activeTimelinePresentation else { return nil }
         let task = viewModel.focusedActiveTask
         let assistant = task?.generatedMessages.last(where: { $0.role == .assistant })
         guard let anchor = (showsTaskFailure && task == nil ? failureMessageID : nil)

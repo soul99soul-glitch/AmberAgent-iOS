@@ -922,8 +922,11 @@ enum IOSToolEffectClassMapping {
         if toolName == "provider_config_status" {
             return .pure
         }
-        if toolName == "theme_pack_status" {
+        if toolName == "theme_pack_status" || toolName == AgentSoulToolCatalog.getToolName {
             return .pure
+        }
+        if toolName == AgentSoulToolCatalog.updateToolName {
+            return .sideEffect
         }
         // SSH profile：list 是本地只读快照；三个写工具改本机配置 + 钥匙串凭证，
         // 重放会在不同目标上再写一次，按 sideEffect 处理。
