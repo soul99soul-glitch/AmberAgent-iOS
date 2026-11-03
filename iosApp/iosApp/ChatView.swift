@@ -201,7 +201,9 @@ struct ChatView: View {
                 .allowsHitTesting(!collapsesComposerForSiteMemoryApproval)
                 .accessibilityHidden(collapsesComposerForSiteMemoryApproval)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                    composerState.subAgentActivityBarHeight = height
+                    if abs(composerState.subAgentActivityBarHeight - height) > 0.5 {
+                        composerState.subAgentActivityBarHeight = height
+                    }
                     let visible = height > 0
                     if composerState.isSubAgentBarVisible != visible { composerState.isSubAgentBarVisible = visible }
                 }

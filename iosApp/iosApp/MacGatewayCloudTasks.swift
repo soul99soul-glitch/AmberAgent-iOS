@@ -407,7 +407,9 @@ extension MacGatewayStore {
         do {
             let list = try await client.agents()
             guard self.client === client, generation == requestGeneration.cloudAgents else { return }
-            cloudAgents = list
+            if cloudAgents != list {
+                cloudAgents = list
+            }
             await refreshCloudAgentActivity(agentId: list.first?.id ?? "main")
         } catch is CancellationError {
         } catch {
@@ -421,7 +423,9 @@ extension MacGatewayStore {
         do {
             let snapshot = try await client.agentActivity(agentId: agentId)
             guard self.client === client else { return }
-            cloudAgentActivities[agentId] = snapshot
+            if cloudAgentActivities[agentId] != snapshot {
+                cloudAgentActivities[agentId] = snapshot
+            }
         } catch is CancellationError {
         } catch {
             guard self.client === client else { return }
@@ -523,10 +527,18 @@ extension MacGatewayStore {
             let detail = try await client.workItem(id: workItemId)
             guard self.client === client else { return }
             if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
+                let existing = cloudTasks[index]
+                let updatedDate = detail.workItem.updatedAtDate
+                guard existing.workItem != detail.workItem
+                    || existing.detail != detail
+                    || existing.lastError != nil
+                    || existing.updatedAt != updatedDate else {
+                    return
+                }
                 cloudTasks[index].workItem = detail.workItem
                 cloudTasks[index].detail = detail
                 cloudTasks[index].lastError = nil
-                cloudTasks[index].updatedAt = detail.workItem.updatedAtDate
+                cloudTasks[index].updatedAt = updatedDate
                 persistCloudTasks()
             }
         } catch is CancellationError {
@@ -534,7 +546,9 @@ extension MacGatewayStore {
             guard self.client === client else { return }
             if forgetIfRevoked(error) { return }
             if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
-                cloudTasks[index].lastError = error.localizedDescription
+                let errorMessage = error.localizedDescription
+                guard cloudTasks[index].lastError != errorMessage else { return }
+                cloudTasks[index].lastError = errorMessage
                 persistCloudTasks()
             }
         }

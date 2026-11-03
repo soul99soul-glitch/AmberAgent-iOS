@@ -29,46 +29,63 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     @ViewBuilder let content: (String) -> Content
 
     @State private var revealedCount = 0
+    /// 是否处于需要逐字推进或收尾排空的会话期。
+    /// 历史非流式行在 `init` 时直接为 `false`，首帧即直接渲染完整 `text`，
+    /// 绝不经过「先挂空串 `""` 再在 `onAppear` 二次刷全文」的双渲染路径。
+    @State private var isActivelyPacing: Bool
     /// 内容自然高度（不含裁剪）。
     @State private var contentHeight: CGFloat = 0
     /// 当前实际占位高度：朝 `contentHeight` 平滑逼近。
     @State private var displayedHeight: CGFloat = 0
 
+    init(
+        text: String,
+        isStreaming: Bool,
+        reduceMotion: Bool,
+        @ViewBuilder content: @escaping (String) -> Content
+    ) {
+        self.text = text
+        self.isStreaming = isStreaming
+        self.reduceMotion = reduceMotion
+        self.content = content
+        let initialPacing = isStreaming && !reduceMotion
+        self._isActivelyPacing = State(initialValue: initialPacing)
+    }
+
     /// 是否仍按帧吐字。流式结束后若还有尾巴没吐完，继续按同一节奏吐。
     private var isPacing: Bool { isStreaming && !reduceMotion }
 
-    /// 平滑高度 + 裁剪是否仍生效。
-    /// 关键：上游 `isStreaming` 一关，尾巴可能还没吐完；此时若立刻解除平滑容器，
-    /// 剩余文字会整段冒出、且高度一次性跳到自然值。所以这里必须延续到尾巴吐完。
-    private var heightTransitionActive: Bool {
-        guard !reduceMotion else { return false }
-        return revealedCount < text.count || isStreaming
-    }
-
-    private var displayedCount: Int {
-        min(max(0, revealedCount), text.count)
-    }
-
     var body: some View {
-        content(String(text.prefix(displayedCount)))
+        let activePacing = !reduceMotion && (isStreaming || isActivelyPacing)
+        let displayedText: String
+        let heightTransitionActive: Bool
+        if activePacing {
+            let totalCount = text.count
+            let clampedCount = min(max(0, revealedCount), totalCount)
+            displayedText = clampedCount < totalCount ? String(text.prefix(clampedCount)) : text
+            heightTransitionActive = clampedCount < totalCount || isStreaming
+        } else {
+            displayedText = text
+            heightTransitionActive = false
+        }
+
+        return content(displayedText)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.height
             } action: { height in
                 contentHeight = height
-                syncDisplayedHeight()
+                syncDisplayedHeight(heightTransitionActive: heightTransitionActive)
             }
             .frame(height: heightTransitionActive ? displayedHeight : nil, alignment: .top)
             .clipped()
             .onAppear {
-                guard revealedCount == 0 else { return }
-                if isPacing {
-                    // 流式中途重进入：只补尾部，不要把已有正文整段重打。
-                    revealedCount = max(0, text.count - ChatStreamingRevealTiming.reentryTailBudget)
-                    displayedHeight = contentHeight
-                } else {
-                    revealedCount = text.count
-                }
+                guard isPacing, revealedCount == 0 else { return }
+                let totalCount = text.count
+                // 流式中途重进入：只补尾部，不要把已有正文整段重打。
+                revealedCount = max(0, totalCount - ChatStreamingRevealTiming.reentryTailBudget)
+                displayedHeight = contentHeight
+                isActivelyPacing = true
             }
             .task(id: PacingKey(text: text, isStreaming: isStreaming, reduceMotion: reduceMotion)) {
                 await drain()
@@ -76,13 +93,17 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     }
 
     /// 内容长高时把占位高度平滑推上去；缩短（收口）直接跟上，避免留白。
-    private func syncDisplayedHeight() {
+    private func syncDisplayedHeight(heightTransitionActive: Bool) {
         guard heightTransitionActive else {
-            displayedHeight = contentHeight
+            if displayedHeight != contentHeight {
+                displayedHeight = contentHeight
+            }
             return
         }
         guard contentHeight > displayedHeight else {
-            displayedHeight = contentHeight
+            if displayedHeight != contentHeight {
+                displayedHeight = contentHeight
+            }
             return
         }
         withAnimation(.linear(duration: ChatStreamingRevealTiming.heightSettleSeconds)) {
@@ -93,15 +114,26 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     /// 小步推进直到追平全文。全程同一节奏：流式结束后不提速、不一次性刷出。
     private func drain() async {
         guard !reduceMotion else {
-            revealedCount = text.count
+            if isActivelyPacing { isActivelyPacing = false }
             return
         }
-        while !Task.isCancelled, revealedCount < text.count {
+        guard isStreaming || isActivelyPacing else {
+            return
+        }
+        if isStreaming && !isActivelyPacing {
+            isActivelyPacing = true
+        }
+        // 单次计算当前块的字符总数，避免每 16ms tick 在循环条件与步长里重复 3 次 O(n) 遍历。
+        let totalCount = text.count
+        while !Task.isCancelled, revealedCount < totalCount {
             // 全程同一节奏：流式结束后依然按同一速率自然吐完，绝不提速、绝不一次性刷出。
             // 收尾翻倍（4→8）会让用户听到/看到一次速度突跳，反而破坏节奏。
-            let step = ChatStreamingRevealTiming.step(remaining: text.count - revealedCount)
-            revealedCount = min(revealedCount + step, text.count)
+            let step = ChatStreamingRevealTiming.step(remaining: totalCount - revealedCount)
+            revealedCount = min(revealedCount + step, totalCount)
             try? await Task.sleep(nanoseconds: ChatStreamingRevealTiming.tickNanos)
+        }
+        if !Task.isCancelled, !isStreaming, revealedCount >= totalCount, isActivelyPacing {
+            isActivelyPacing = false
         }
     }
 

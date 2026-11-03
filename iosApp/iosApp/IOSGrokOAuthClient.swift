@@ -75,15 +75,28 @@ struct IOSGrokOAuthTokens: Codable, Equatable {
 }
 
 enum IOSGrokOAuthAuthStore {
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var decodedCache: [String: (raw: String, tokens: IOSGrokOAuthTokens)] = [:]
+
     static func credentialKey(providerId: String) -> String { "grokweb.\(providerId).oauth" }
     static func backupKey(providerId: String) -> String { "grokweb.\(providerId).oauth.backup" }
 
     static func load(providerId: String) -> IOSGrokOAuthTokens? {
-        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)),
-              let data = raw.data(using: .utf8),
-              let tokens = try? JSONDecoder().decode(IOSGrokOAuthTokens.self, from: data) else {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)) else {
+            decodedCache.removeValue(forKey: providerId)
             return nil
         }
+        if let cached = decodedCache[providerId], cached.raw == raw {
+            return cached.tokens
+        }
+        guard let data = raw.data(using: .utf8),
+              let tokens = try? JSONDecoder().decode(IOSGrokOAuthTokens.self, from: data) else {
+            decodedCache.removeValue(forKey: providerId)
+            return nil
+        }
+        decodedCache[providerId] = (raw, tokens)
         return tokens
     }
 
@@ -91,7 +104,15 @@ enum IOSGrokOAuthAuthStore {
     static func save(providerId: String, tokens: IOSGrokOAuthTokens) -> Bool {
         guard let data = try? JSONEncoder().encode(tokens),
               let raw = String(data: data, encoding: .utf8) else { return false }
-        return IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        let saved = IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        if saved {
+            decodedCache[providerId] = (raw, tokens)
+        } else {
+            decodedCache.removeValue(forKey: providerId)
+        }
+        return saved
     }
 
     static func loadBackup(providerId: String) -> IOSGrokWebProviderBackup? {
@@ -112,6 +133,9 @@ enum IOSGrokOAuthAuthStore {
     }
 
     static func clear(providerId: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        decodedCache.removeValue(forKey: providerId)
         IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId))
     }
 

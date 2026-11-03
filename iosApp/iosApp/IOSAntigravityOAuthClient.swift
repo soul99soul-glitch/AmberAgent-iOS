@@ -69,14 +69,27 @@ struct IOSAntigravityAuthTokens: Codable, Equatable {
 }
 
 enum IOSAntigravityAuthStore {
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var decodedCache: [String: (raw: String, tokens: IOSAntigravityAuthTokens)] = [:]
+
     static func credentialKey(providerId: String) -> String { "antigravity.\(providerId).tokens" }
 
     static func load(providerId: String) -> IOSAntigravityAuthTokens? {
-        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)),
-              let data = raw.data(using: .utf8),
-              let tokens = try? JSONDecoder().decode(IOSAntigravityAuthTokens.self, from: data) else {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)) else {
+            decodedCache.removeValue(forKey: providerId)
             return nil
         }
+        if let cached = decodedCache[providerId], cached.raw == raw {
+            return cached.tokens
+        }
+        guard let data = raw.data(using: .utf8),
+              let tokens = try? JSONDecoder().decode(IOSAntigravityAuthTokens.self, from: data) else {
+            decodedCache.removeValue(forKey: providerId)
+            return nil
+        }
+        decodedCache[providerId] = (raw, tokens)
         return tokens
     }
 
@@ -84,10 +97,21 @@ enum IOSAntigravityAuthStore {
     static func save(providerId: String, tokens: IOSAntigravityAuthTokens) -> Bool {
         guard let data = try? JSONEncoder().encode(tokens),
               let raw = String(data: data, encoding: .utf8) else { return false }
-        return IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        let saved = IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        if saved {
+            decodedCache[providerId] = (raw, tokens)
+        } else {
+            decodedCache.removeValue(forKey: providerId)
+        }
+        return saved
     }
 
     static func clear(providerId: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        decodedCache.removeValue(forKey: providerId)
         IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId))
     }
 }

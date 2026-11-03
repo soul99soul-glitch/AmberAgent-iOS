@@ -329,100 +329,41 @@ extension ChatView {
 
                             // Apple Music dock：左侧输入胶囊 + 右侧发送键（或在后台交办模式下原地变形为「交办 ↗」）；
                             // 打开「任务」或「中心」面板时折叠高度为 0，但保持 UITextView 挂载以完整保留草稿。
-                            HStack(alignment: .bottom, spacing: 8) {
-                                HStack(alignment: .center, spacing: 6) {
-                                    ComposerAttachToggleButton(
-                                        isExpanded: composerState.isAttachExpanded,
-                                        isBusy: viewModel.isAttachingSelectedFile,
-                                        // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
-                                        isDisabled: viewModel.isRecognizingImages
-                                            || viewModel.isAttachingSelectedFile
-                                            || hasPendingComposerGate
-                                            || viewModel.currentConversationIsOrchestratedChild
-                                    ) {
-                                        withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
-                                            composerState.isAttachExpanded.toggle()
-                                        }
+                            // 独立成叶子 View，把高频变化的 inputText 与 composerInputHeight 观察范围锁死在行内，
+                            // 避免每敲一个字或换行都触发整页 ChatView（顶栏、时间轴、底栏）重算 body。
+                            ChatComposerInputDockRow(
+                                viewModel: viewModel,
+                                sharedSettings: sharedSettings,
+                                composerInputController: composerInputController,
+                                isAttachExpanded: composerState.isAttachExpanded,
+                                isBackgroundHandoffMode: composerState.isBackgroundHandoffMode,
+                                isSubmittingHandoff: composerState.isSubmittingHandoff,
+                                handoffNeedsRetry: composerState.handoffNeedsRetry,
+                                hasPendingComposerGate: hasPendingComposerGate,
+                                isRunActive: isCurrentConversationRunActive,
+                                collapsesComposerForDuetPanel: collapsesComposerForDuetPanel,
+                                inputPlaceholder: inputPlaceholder,
+                                isInputFocused: inputFocusBinding,
+                                onToggleAttach: {
+                                    withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
+                                        composerState.isAttachExpanded.toggle()
                                     }
-
-                                    ZStack(alignment: .leading) {
-                                        ComposerInputTextView(
-                                            text: $viewModel.inputText,
-                                            height: $composerState.composerInputHeight,
-                                            isFocused: inputFocusBinding,
-                                            isEnabled: !hasPendingComposerGate
-                                                && !viewModel.currentConversationIsOrchestratedChild
-                                                && !collapsesComposerForDuetPanel,
-                                            sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
-                                            controller: composerInputController,
-                                            onSubmit: composerState.isBackgroundHandoffMode ? submitBackgroundHandoff : sendComposerMessage
-                                        )
-                                        .frame(height: composerState.composerInputHeight)
-
-                                        if viewModel.inputText.isEmpty {
-                                            ComposerPlaceholderText(
-                                                text: composerState.isBackgroundHandoffMode ? "描述要后台交办的目标…" : inputPlaceholder
-                                            )
-                                        }
+                                },
+                                onExitHandoffMode: {
+                                    withAnimation(.snappy(duration: 0.2)) {
+                                        composerState.exitBackgroundHandoffModePreservingDraft()
                                     }
-                                    .frame(minHeight: 40)
-
-                                    if composerState.isBackgroundHandoffMode {
-                                        Button {
-                                            withAnimation(.snappy(duration: 0.2)) {
-                                                composerState.exitBackgroundHandoffModePreservingDraft()
-                                            }
-                                        } label: {
-                                            ZStack {
-                                                Circle()
-                                                    .fill(AmberTheme.surface.opacity(0.85))
-                                                    .frame(width: 24, height: 24)
-                                                Image(systemName: "xmark")
-                                                    .font(.system(size: 10, weight: .bold))
-                                                    .foregroundStyle(AmberTheme.muted)
-                                            }
-                                        }
-                                        .buttonStyle(.plain)
-                                        .accessibilityLabel("退出后台交办模式并保留草稿")
-                                        .accessibilityIdentifier("chat.duet.handoffExitButton")
+                                },
+                                onSubmitHandoff: submitBackgroundHandoff,
+                                onSendMessage: sendComposerMessage,
+                                onStopGeneration: {
+                                    if viewModel.isRecognizingImages {
+                                        viewModel.cancelVisionRecognition()
+                                    } else {
+                                        viewModel.cancelGeneration()
                                     }
                                 }
-                                .padding(.leading, 8)
-                                .padding(.trailing, composerState.isBackgroundHandoffMode ? 12 : 18)
-                                .padding(.vertical, 5)
-                                .composerDockGlass(cornerRadius: 27)
-                                .overlay {
-                                    if composerState.isBackgroundHandoffMode {
-                                        RoundedRectangle(cornerRadius: AmberTheme.controlRadius(27), style: .continuous)
-                                            .strokeBorder(AmberTheme.accent.opacity(0.45), lineWidth: 1.0)
-                                            .allowsHitTesting(false)
-                                    }
-                                }
-
-                                if composerState.isBackgroundHandoffMode {
-                                    ComposerDockHandoffButton(
-                                        isSubmitting: composerState.isSubmittingHandoff,
-                                        needsRetry: composerState.handoffNeedsRetry,
-                                        isEnabled: !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                        height: 54,
-                                        onSubmit: submitBackgroundHandoff
-                                    )
-                                } else {
-                                    ComposerDockSendButton(
-                                        isLoading: isComposerStopMode,
-                                        sendEnabled: sendEnabled,
-                                        diameter: 54,
-                                        onSend: sendComposerMessage,
-                                        onStop: {
-                                            if viewModel.isRecognizingImages {
-                                                viewModel.cancelVisionRecognition()
-                                            } else {
-                                                viewModel.cancelGeneration()
-                                            }
-                                        }
-                                    )
-                                }
-                            }
+                            )
                             .frame(height: collapsesComposerForDuetPanel ? 0 : nil, alignment: .top)
                             .clipped()
                             .opacity(collapsesComposerForDuetPanel ? 0 : 1)
@@ -549,6 +490,7 @@ extension ChatView {
             .allowsHitTesting(!collapsesComposerForSiteMemoryApproval)
             .accessibilityHidden(collapsesComposerForSiteMemoryApproval)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                guard viewModel.hasPendingUserGate else { return }
                 if abs(composerState.composerAuxiliaryHeight - height) > 0.5 { composerState.composerAuxiliaryHeight = height }
             }
         }
@@ -648,19 +590,7 @@ extension ChatView {
     }
 
     func currentConversationTaskSegments() -> [ChatTaskRunSegment] {
-        let messages = viewModel.messages
-        guard !messages.isEmpty else { return [] }
-        let lastID = messages.last.map(ChatMessageProjector.messageId(for:))
-        var collected: [ChatTaskRunSegment] = []
-        for message in messages where message.role == MessageRole.assistant {
-            let msgID = ChatMessageProjector.messageId(for: message)
-            let isTail = viewModel.isGenerationActive && (msgID == lastID)
-            let segs = ChatTaskStreamGrouping.segments(for: message, messageID: msgID, isGeneratingTail: isTail)
-            for case .taskGroup(let group) in segs where group.hasTools {
-                collected.append(group)
-            }
-        }
-        return collected.reversed()
+        taskCountCache.taskSegments(messages: viewModel.messages, isGenerationActive: viewModel.isGenerationActive)
     }
 
     private func sendEnabled(for text: String) -> Bool {
@@ -1057,6 +987,127 @@ extension ChatView {
             viewportState.followPaused = false
             viewModel.sendMessage(startsGenerationAfterInsertion: true)
             composerState.completeHandoffSubmission()
+        }
+    }
+}
+
+private struct ChatComposerInputDockRow: View {
+    let viewModel: ChatViewModel
+    let sharedSettings: IOSSharedSettingsStore
+    let composerInputController: ComposerInputController
+    let isAttachExpanded: Bool
+    let isBackgroundHandoffMode: Bool
+    let isSubmittingHandoff: Bool
+    let handoffNeedsRetry: Bool
+    let hasPendingComposerGate: Bool
+    let isRunActive: Bool
+    let collapsesComposerForDuetPanel: Bool
+    let inputPlaceholder: String
+    @Binding var isInputFocused: Bool
+    let onToggleAttach: () -> Void
+    let onExitHandoffMode: () -> Void
+    let onSubmitHandoff: () -> Void
+    let onSendMessage: () -> Void
+    let onStopGeneration: () -> Void
+
+    @State private var composerInputHeight: CGFloat = 40
+
+    var body: some View {
+        @Bindable var bindableViewModel = viewModel
+        let currentInputText = viewModel.inputText
+        let trimmedNonEmpty = !currentInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSendableContent = trimmedNonEmpty
+            || !viewModel.pendingImages.isEmpty
+            || viewModel.pendingSelectedFilePreview != nil
+        let _ = sharedSettings.revision
+        let isSendEnabled = viewModel.composerSendBlockReason(for: currentInputText) == nil
+        let isStopMode = ChatView.composerSendButtonIsStopMode(
+            isRunActive: isRunActive,
+            isRecognizingImages: viewModel.isRecognizingImages,
+            hasSendableContent: hasSendableContent,
+            sendEnabled: isSendEnabled
+        )
+
+        HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
+                ComposerAttachToggleButton(
+                    isExpanded: isAttachExpanded,
+                    isBusy: viewModel.isAttachingSelectedFile,
+                    // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
+                    isDisabled: viewModel.isRecognizingImages
+                        || viewModel.isAttachingSelectedFile
+                        || hasPendingComposerGate
+                        || viewModel.currentConversationIsOrchestratedChild,
+                    action: onToggleAttach
+                )
+
+                ZStack(alignment: .leading) {
+                    ComposerInputTextView(
+                        text: $bindableViewModel.inputText,
+                        height: $composerInputHeight,
+                        isFocused: $isInputFocused,
+                        isEnabled: !hasPendingComposerGate
+                            && !viewModel.currentConversationIsOrchestratedChild
+                            && !collapsesComposerForDuetPanel,
+                        sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
+                        controller: composerInputController,
+                        onSubmit: isBackgroundHandoffMode ? onSubmitHandoff : onSendMessage
+                    )
+                    .frame(height: composerInputHeight)
+
+                    if currentInputText.isEmpty {
+                        ComposerPlaceholderText(
+                            text: isBackgroundHandoffMode ? "描述要后台交办的目标…" : inputPlaceholder
+                        )
+                    }
+                }
+                .frame(minHeight: 40)
+
+                if isBackgroundHandoffMode {
+                    Button(action: onExitHandoffMode) {
+                        ZStack {
+                            Circle()
+                                .fill(AmberTheme.surface.opacity(0.85))
+                                .frame(width: 24, height: 24)
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("退出后台交办模式并保留草稿")
+                    .accessibilityIdentifier("chat.duet.handoffExitButton")
+                }
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, isBackgroundHandoffMode ? 12 : 18)
+            .padding(.vertical, 5)
+            .composerDockGlass(cornerRadius: 27)
+            .overlay {
+                if isBackgroundHandoffMode {
+                    RoundedRectangle(cornerRadius: AmberTheme.controlRadius(27), style: .continuous)
+                        .strokeBorder(AmberTheme.accent.opacity(0.45), lineWidth: 1.0)
+                        .allowsHitTesting(false)
+                }
+            }
+
+            if isBackgroundHandoffMode {
+                ComposerDockHandoffButton(
+                    isSubmitting: isSubmittingHandoff,
+                    needsRetry: handoffNeedsRetry,
+                    isEnabled: trimmedNonEmpty,
+                    height: 54,
+                    onSubmit: onSubmitHandoff
+                )
+            } else {
+                ComposerDockSendButton(
+                    isLoading: isStopMode,
+                    sendEnabled: isSendEnabled,
+                    diameter: 54,
+                    onSend: onSendMessage,
+                    onStop: onStopGeneration
+                )
+            }
         }
     }
 }

@@ -66,7 +66,7 @@ struct ChatListSummarySnapshot: Equatable {
     }
 }
 
-/// Keeps the counts used by the chat chrome independent of repeated body evaluations.
+/// Keeps the counts and grouped task segments used by the chat chrome independent of repeated body evaluations.
 @MainActor
 final class ChatTaskCountCache {
     struct Counts: Equatable {
@@ -78,44 +78,66 @@ final class ChatTaskCountCache {
         let identity: ChatMessageContentIdentity
         let isGeneratingTail: Bool
         let counts: Counts
+        let taskGroups: [ChatTaskRunSegment]
     }
 
     private var entries: [String: Entry] = [:]
+    private(set) var latestTaskSegments: [ChatTaskRunSegment] = []
 
     func counts(messages: [UIMessage], isGenerationActive: Bool) -> Counts {
+        refresh(messages: messages, isGenerationActive: isGenerationActive).counts
+    }
+
+    func taskSegments(messages: [UIMessage], isGenerationActive: Bool) -> [ChatTaskRunSegment] {
+        refresh(messages: messages, isGenerationActive: isGenerationActive).segments
+    }
+
+    private func refresh(messages: [UIMessage], isGenerationActive: Bool) -> (counts: Counts, segments: [ChatTaskRunSegment]) {
         let lastID = messages.last.map(ChatMessageProjector.messageId(for:))
         var retainedIDs: Set<String> = []
         var total = Counts()
+        var collectedGroups: [ChatTaskRunSegment] = []
         for message in messages where message.role == MessageRole.assistant {
             let id = ChatMessageProjector.messageId(for: message)
             retainedIDs.insert(id)
             let isTail = isGenerationActive && id == lastID
-            let counts: Counts
+            let entry: Entry
             if let cached = entries[id], cached.isGeneratingTail == isTail,
                cached.identity.matches(message) {
-                counts = cached.counts
+                entry = cached
             } else {
                 var next = Counts()
+                var groups: [ChatTaskRunSegment] = []
                 if message.parts.contains(where: { $0 is UIMessagePart.Tool }) {
                     let segments = ChatTaskStreamGrouping.segments(
                         for: message, messageID: id, isGeneratingTail: isTail
                     )
                     for case .taskGroup(let group) in segments where group.hasTools {
+                        groups.append(group)
                         if group.rollupState.isLive { next.active += 1 }
                         if group.rollupState.isFailureOrNeedsUser { next.needsAttention += 1 }
                     }
                 }
-                counts = next
-                entries[id] = Entry(identity: ChatMessageContentIdentity(message),
-                                    isGeneratingTail: isTail, counts: counts)
+                entry = Entry(
+                    identity: ChatMessageContentIdentity(message),
+                    isGeneratingTail: isTail,
+                    counts: next,
+                    taskGroups: groups
+                )
+                entries[id] = entry
             }
-            total.active += counts.active
-            total.needsAttention += counts.needsAttention
+            total.active += entry.counts.active
+            total.needsAttention += entry.counts.needsAttention
+            if !entry.taskGroups.isEmpty {
+                collectedGroups.append(contentsOf: entry.taskGroups)
+            }
         }
         if entries.count != retainedIDs.count {
             entries = entries.filter { retainedIDs.contains($0.key) }
         }
-        return total
+        let reversed = Array(collectedGroups.reversed())
+        latestTaskSegments = reversed
+        return (total, reversed)
     }
 }
 

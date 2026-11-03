@@ -87,14 +87,27 @@ enum IOSGrokWebCookieValidator {
 }
 
 enum IOSGrokWebAuthStore {
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var decodedCache: [String: (raw: String, session: IOSGrokWebSession)] = [:]
+
     static func credentialKey(providerId: String) -> String { "grokweb.\(providerId).session" }
 
     static func load(providerId: String) -> IOSGrokWebSession? {
-        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)),
-              let data = raw.data(using: .utf8),
-              let session = try? JSONDecoder().decode(IOSGrokWebSession.self, from: data) else {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)) else {
+            decodedCache.removeValue(forKey: providerId)
             return nil
         }
+        if let cached = decodedCache[providerId], cached.raw == raw {
+            return cached.session
+        }
+        guard let data = raw.data(using: .utf8),
+              let session = try? JSONDecoder().decode(IOSGrokWebSession.self, from: data) else {
+            decodedCache.removeValue(forKey: providerId)
+            return nil
+        }
+        decodedCache[providerId] = (raw, session)
         return session
     }
 
@@ -128,13 +141,24 @@ enum IOSGrokWebAuthStore {
     }
 
     static func clear(providerId: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        decodedCache.removeValue(forKey: providerId)
         IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId))
     }
 
     private static func persist(_ session: IOSGrokWebSession, providerId: String) -> Bool {
         guard let data = try? JSONEncoder().encode(session),
               let raw = String(data: data, encoding: .utf8) else { return false }
-        return IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        let saved = IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        if saved {
+            decodedCache[providerId] = (raw, session)
+        } else {
+            decodedCache.removeValue(forKey: providerId)
+        }
+        return saved
     }
 }
 

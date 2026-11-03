@@ -620,8 +620,10 @@ extension MacGatewayStore {
         do {
             let page = try await client.dialogueEvents(after: currentCursor, limit: limit)
             guard self.client === client else { return .failure(CancellationError()) }
-            ingestCloudDialogueEventsPage(page, requestedAfter: currentCursor)
-            persistCloudDialogueState()
+            if !page.items.isEmpty {
+                ingestCloudDialogueEventsPage(page, requestedAfter: currentCursor)
+                persistCloudDialogueState()
+            }
             return .success(page)
         } catch {
             if forgetIfRevoked(error) {
