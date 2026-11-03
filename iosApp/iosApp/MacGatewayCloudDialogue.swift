@@ -358,8 +358,16 @@ extension MacGatewayStore {
     }
 
     func persistCloudDialogueState() {
+        let targetDefaults = defaults
         guard let connection else {
-            defaults.removeObject(forKey: Self.cloudDialogueStateKey)
+            if targetDefaults === UserDefaults.standard {
+                nonisolated(unsafe) let sendableDefaults = targetDefaults
+                Self.persistenceQueue.async {
+                    sendableDefaults.removeObject(forKey: Self.cloudDialogueStateKey)
+                }
+            } else {
+                targetDefaults.removeObject(forKey: Self.cloudDialogueStateKey)
+            }
             return
         }
         let envelope = MacGatewayCloudDialoguePersistedEnvelope(
@@ -373,8 +381,15 @@ extension MacGatewayStore {
             progressByWorkItem: cloudDialogueProgressByWorkItem,
             submissions: cloudDialogueSubmissions
         )
-        if let data = try? JSONEncoder().encode(envelope) {
-            defaults.set(data, forKey: Self.cloudDialogueStateKey)
+        if targetDefaults === UserDefaults.standard {
+            nonisolated(unsafe) let sendableDefaults = targetDefaults
+            Self.persistenceQueue.async {
+                if let data = try? JSONEncoder().encode(envelope) {
+                    sendableDefaults.set(data, forKey: Self.cloudDialogueStateKey)
+                }
+            }
+        } else if let data = try? JSONEncoder().encode(envelope) {
+            targetDefaults.set(data, forKey: Self.cloudDialogueStateKey)
         }
     }
 

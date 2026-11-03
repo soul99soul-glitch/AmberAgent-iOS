@@ -348,6 +348,7 @@ extension MacGatewayClient {
 
 extension MacGatewayStore {
     static let cloudTasksKey = "macGateway.cloudTasks.v1"
+    static let persistenceQueue = DispatchQueue(label: "app.amber.ios.macGateway.persistence", qos: .utility)
 
     var effectiveCloudAgents: [MacGatewayCloudAgent] {
         if cloudAgents.isEmpty {
@@ -393,10 +394,22 @@ extension MacGatewayStore {
 
     func persistCloudTasks(_ records: [MacGatewayCloudTaskRecord]? = nil) {
         let list = records ?? cloudTasks
-        if list.isEmpty {
-            defaults.removeObject(forKey: Self.cloudTasksKey)
-        } else if let data = try? JSONEncoder().encode(list) {
-            defaults.set(data, forKey: Self.cloudTasksKey)
+        let targetDefaults = defaults
+        if targetDefaults === UserDefaults.standard {
+            nonisolated(unsafe) let sendableDefaults = targetDefaults
+            Self.persistenceQueue.async {
+                if list.isEmpty {
+                    sendableDefaults.removeObject(forKey: Self.cloudTasksKey)
+                } else if let data = try? JSONEncoder().encode(list) {
+                    sendableDefaults.set(data, forKey: Self.cloudTasksKey)
+                }
+            }
+        } else {
+            if list.isEmpty {
+                targetDefaults.removeObject(forKey: Self.cloudTasksKey)
+            } else if let data = try? JSONEncoder().encode(list) {
+                targetDefaults.set(data, forKey: Self.cloudTasksKey)
+            }
         }
     }
 
