@@ -6,8 +6,6 @@ struct AppShell: View {
 
     let settingsStore: SettingsStore
 
-    @State private var selectedTab: AppTab = .chat
-    @State private var tabRouter = TabRouter()
     @State private var permissionStore: IOSPermissionStore
     @State private var documentAccessStore: DocumentAccessStore
     @State private var workspaceStore: IOSWorkspaceStore
@@ -162,12 +160,6 @@ struct AppShell: View {
 
     var body: some View {
         rootNavigation
-        .onChange(of: usesSplitLayout, initial: true) { _, split in
-            rootRouter.chatIsDetailRoot = split
-        }
-        .sheet(item: Binding(get: { rootRouter.presentedSheet }, set: { rootRouter.presentedSheet = $0 })) { sheet in
-            sheetView(sheet)
-        }
         .environment(rootRouter)
         .environment(conversationStore)
         .environment(chatViewModel)
@@ -295,6 +287,10 @@ struct AppShell: View {
         // 重启时把本进程正在运行的前台 run 改写为 interrupted。
         if !didRunStartupRecovery {
             didRunStartupRecovery = true
+            // 会话引导是首帧内容的唯一前置：先于其它恢复任务加载摘要并选中
+            // 最近会话，根聊天页才能不等整条 recovery 链就能落位。
+            await conversationStore.bootstrap()
+            didBootstrapConversations = true
             let interruptedCouncilTaskIds = IOSAdvancedTaskStore.shared.markInterruptedCouncilTasks()
             IOSAdvancedTaskStore.shared.markInterruptedRemoteCommandTasks()
             IOSAdvancedTaskStore.shared.markInterruptedEmbeddedIshTasks()
@@ -310,10 +306,8 @@ struct AppShell: View {
             )
             let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
             let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
-            await conversationStore.bootstrap()
             IOSBuiltinSkills.installIfMissing(enableWith: sharedSettings)
             await chatViewModel.reconcilePendingMiniAppMutationsAfterConversationBootstrap()
-            didBootstrapConversations = true
 
             // A failed approval-owner query makes it unsafe to classify any
             // unfinished run: an awaiting approval could otherwise be swept
@@ -368,13 +362,6 @@ struct AppShell: View {
         conversationActivityCenter.start()
         await openPendingAgentActivityIfReady()
         await openPendingAppDeepLinkIfReady()
-        if !usesSplitLayout, rootRouter.path.isEmpty {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                rootRouter.navigate(to: .chat)
-            }
-        }
         if scenePhase == .active {
             await IOSWakeScheduler.shared.applicationBecameActive()
         }
@@ -414,16 +401,8 @@ struct AppShell: View {
                         .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
                 } detail: {
                     NavigationStack(path: pathBinding) {
-                        ChatView(
-                            settingsStore: settingsStore,
-                            sharedSettings: sharedSettings,
-                            localToolExecutor: localToolExecutor,
-                            documentStore: documentAccessStore,
-                            workspaceStore: workspaceStore,
-                            viewModel: chatViewModel,
-                            initialMessageAnchor: rootRouter.detailChatAnchor
-                        )
-                        .withAppDestinations(destinationDependencies)
+                        chatRoot
+                            .withAppDestinations(destinationDependencies)
                     }
                 }
                 // 不按宽度切换 style 类型：if/else 会重建 SplitView、丢掉详情栈状态。
@@ -431,14 +410,32 @@ struct AppShell: View {
                 .navigationSplitViewStyle(.automatic)
             } else {
                 NavigationStack(path: pathBinding) {
-                    conversationsList
+                    // 单一根路由真相：两种布局的根都是对话工作区。旧首页只能在
+                    // 会话管理入口（.home）打开，不再参与启动首帧，也不再被异步 push。
+                    chatRoot
                         .withAppDestinations(destinationDependencies)
                 }
             }
         }
+        .onChange(of: usesSplitLayout, initial: true) { _, split in
+            rootRouter.showsSidebarControl = split
+        }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             rootRouter.sidebarOverlaysDetail = width < Self.tiledSidebarMinimumWidth
         }
+    }
+
+    /// 根聊天页。双栏时它已经是详情栏根，无需额外的栈入口。
+    private var chatRoot: some View {
+        ChatView(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            localToolExecutor: localToolExecutor,
+            documentStore: documentAccessStore,
+            workspaceStore: workspaceStore,
+            viewModel: chatViewModel,
+            initialMessageAnchor: rootRouter.detailChatAnchor
+        )
     }
 
     private var conversationsList: some View {
@@ -844,124 +841,6 @@ struct AppShell: View {
         pendingAgentActivityTarget = nil
         pendingAgentActivityURL = nil
     }
-
-    @ViewBuilder
-    private func sheetView(_ sheet: SheetDestination) -> some View {
-        switch sheet {
-        case .modelPicker:
-            NavigationStack {
-                PlaceholderListView(
-                    title: "Models",
-                    systemImage: "cpu",
-                    rows: [
-                        "Provider families",
-                        "Capability filters",
-                        "Context and reasoning presets"
-                    ]
-                )
-            }
-        case .toolPermissions:
-            NavigationStack {
-                ToolPermissionsView(
-                    permissionStore: permissionStore,
-                    documentStore: documentAccessStore,
-                    systemPermissionCoordinator: systemPermissionCoordinator,
-                    localToolExecutor: localToolExecutor
-                )
-            }
-        }
-    }
-}
-
-enum AppTab: String, CaseIterable, Identifiable {
-    case chat
-    case workspace
-    case assistants
-    case settings
-
-    var id: String { rawValue }
-
-    @MainActor
-    @ViewBuilder
-    func rootView(
-        settingsStore: SettingsStore,
-        sharedSettings: IOSSharedSettingsStore,
-        localToolExecutor: IOSLocalToolExecutor,
-        documentStore: DocumentAccessStore? = nil,
-        workspaceStore: IOSWorkspaceStore = .shared,
-        chatViewModel: ChatViewModel? = nil
-    ) -> some View {
-        switch self {
-        case .chat:
-            ChatView(
-                settingsStore: settingsStore,
-                sharedSettings: sharedSettings,
-                localToolExecutor: localToolExecutor,
-                documentStore: documentStore,
-                workspaceStore: workspaceStore,
-                viewModel: chatViewModel
-            )
-        case .workspace:
-            if sharedSettings.isCapabilityGateEnabled(.workspace) {
-                WorkspaceView(workspaceStore: workspaceStore)
-            } else {
-                CapabilityGateLockedView(gate: .workspace)
-            }
-        case .assistants:
-            if sharedSettings.isCapabilityGateEnabled(.workspace) {
-                AssistantsView()
-            } else {
-                CapabilityGateLockedView(gate: .workspace)
-            }
-        case .settings:
-            SettingsHomeView(settingsStore: settingsStore, sharedSettings: sharedSettings)
-        }
-    }
-
-    @ViewBuilder
-    var label: some View {
-        switch self {
-        case .chat:
-            Label("Chat", systemImage: "bubble.left.and.bubble.right")
-        case .workspace:
-            Label("Workspace", systemImage: "square.grid.2x2")
-        case .assistants:
-            Label("Amber", systemImage: "sparkles")
-        case .settings:
-            Label("Settings", systemImage: "gearshape")
-        }
-    }
-}
-
-@MainActor
-@Observable
-final class TabRouter {
-    private var routers: [AppTab: RouterPath] = [:]
-
-    func router(for tab: AppTab) -> RouterPath {
-        if let router = routers[tab] {
-            return router
-        }
-        let router = RouterPath()
-        routers[tab] = router
-        return router
-    }
-
-    func binding(for tab: AppTab) -> Binding<[Route]> {
-        let router = router(for: tab)
-        return Binding(
-            get: { router.path },
-            set: { router.path = $0 }
-        )
-    }
-
-    func sheetBinding(for tab: AppTab) -> Binding<SheetDestination?> {
-        let router = router(for: tab)
-        return Binding(
-            get: { router.presentedSheet },
-            set: { router.presentedSheet = $0 }
-        )
-    }
 }
 
 /// `withAppDestinations` 的依赖包：单栏栈与双栏的侧栏/详情栈各挂一次，共用同一份。
@@ -1030,6 +909,13 @@ private extension View {
     ) -> some View {
         navigationDestination(for: Route.self) { route in
             switch route {
+            case .home:
+                ConversationsView(
+                    sharedSettings: sharedSettings,
+                    chatViewModel: chatViewModel,
+                    councilChatViewModel: councilChatViewModel,
+                    novelCreationViewModel: novelCreationViewModel
+                )
             case .chat:
                 ChatView(
                     settingsStore: settingsStore,
@@ -1318,8 +1204,6 @@ private extension View {
                 } else {
                     CapabilityGateLockedView(gate: .remoteRuntime)
                 }
-            case .conversation(let id):
-                PlaceholderDetailView(title: "Conversation", subtitle: id, systemImage: "text.bubble")
             case .subAgentConversation(let id):
                 SubAgentConversationView(
                     conversationId: id,
@@ -1327,24 +1211,8 @@ private extension View {
                     workspaceStore: workspaceStore,
                     chatViewModel: chatViewModel
                 )
-            case .assistant:
-                PlaceholderDetailView(
-                    title: "Amber Assistant",
-                    subtitle: "iOS 只保留一个 Amber Assistant。",
-                    systemImage: "sparkles"
-                )
-            case .workspaceItem(let id):
-                if sharedSettings.isCapabilityGateEnabled(.workspace) {
-                    WorkspaceView(workspaceStore: workspaceStore, focusedItemId: id)
-                } else {
-                    CapabilityGateLockedView(gate: .workspace)
-                }
-            case .settingsPlaceholder(let title, let subtitle, let systemImage):
-                PlaceholderDetailView(title: title, subtitle: subtitle, systemImage: systemImage)
             case .toolPermissions:
                 PermissionsApprovalView(permissionStore: permissionStore)
-            case .promptInjection:
-                PromptInjectionEditorView(sharedSettings: sharedSettings)
             }
         }
     }

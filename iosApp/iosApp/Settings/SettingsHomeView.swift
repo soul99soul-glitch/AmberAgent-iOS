@@ -169,10 +169,6 @@ struct SettingsHomeView: View {
             }
         }
     }
-
-    private func placeholder(_ title: String, _ subtitle: String, _ systemImage: String) -> Route {
-        .settingsPlaceholder(title: title, subtitle: subtitle, systemImage: systemImage)
-    }
 }
 
 private struct SettingsHomeEntry: Identifiable {

@@ -20,11 +20,13 @@ final class IOSParityRedLightTests: XCTestCase {
 
     func testRouterPathGoBackRemovesOnlyTheTopRoute() {
         let router = RouterPath()
+        // 聊天是根：`.chat` 被吸收，栈里只剩真正被 push 的页面。
         router.path = [.chat, .settings]
 
         router.goBack()
 
-        XCTAssertEqual(router.path, [.chat])
+        XCTAssertEqual(router.path, [])
+        XCTAssertTrue(router.isShowingChat)
     }
 
     func testToolBudgetExhaustionInjectsWrapUpPromptAndKeepsConversation() {

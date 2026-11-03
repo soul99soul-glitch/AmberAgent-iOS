@@ -98,6 +98,15 @@ struct ChatView: View {
                 .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
                 .allowsHitTesting(composerState.activeDuetTab == .chat)
 
+            // 冷启动：会话历史还没读上来时先顶上与最终页同构的中性骨架，
+            // 不先闪欢迎空态再被真实消息替换。顶栏与输入区照常渲染，
+            // 因此骨架消失时不会发生布局跳动。
+            if awaitsConversationBootstrap {
+                ChatStartupSkeleton()
+                    .zIndex(10)
+                    .accessibilityHidden(true)
+            }
+
             if let record = compactWebMountSession {
                 VStack {
                     Spacer()
@@ -347,7 +356,9 @@ struct ChatView: View {
                     Task { await viewModel.startNewConversation() }
                 },
                 onOpenAllHistory: {
-                    router.goBack()
+                    // 旧首页已从「根」降为「会话管理」页：从抽屉里显式 push，
+                    // 不再依赖「back 到根就是首页」这种隐含关系。
+                    router.navigate(to: .home)
                 },
                 onNavigate: { destination in
                     router.navigate(to: destination)
@@ -745,8 +756,10 @@ struct ChatView: View {
 
     private var sideRailTopItems: [AmberSideRailItem] {
         [
-            AmberSideRailItem(id: "back", systemImage: isSplitDetailRoot ? "sidebar.left" : "chevron.left",
-                              accessibilityLabel: "返回") { router.goBack() },
+            AmberSideRailItem(id: "back", systemImage: hasSidebarAtRoot ? "sidebar.left" : "line.3.horizontal",
+                              accessibilityLabel: hasSidebarAtRoot ? "显示会话列表" : "空间与历史") {
+                handleBackTap()
+            },
             AmberSideRailItem(id: "new-chat", systemImage: "square.and.pencil", accessibilityLabel: "新建聊天") {
                 Task { await viewModel.startNewConversation() }
             },
@@ -766,8 +779,25 @@ struct ChatView: View {
         }]
     }
 
-    /// 双栏详情栏根：聊天页没有上一页可返回。
-    private var isSplitDetailRoot: Bool { router.chatIsDetailRoot && router.path.isEmpty }
+    /// 双栏详情栏根：聊天页没有上一页可返回，返回键改为收放会话侧栏。
+    private var hasSidebarAtRoot: Bool { router.showsSidebarControl && router.path.isEmpty }
+
+    /// 启动引导尚未走完（历史未读上来）且当前无可见内容：用骨架占位。
+    /// 一旦 `isBootstrapped` 为真（成功或失败都算结束）就立即让位给真实时线。
+    private var awaitsConversationBootstrap: Bool {
+        !conversationStore.isBootstrapped
+            && !viewModel.isLoading
+            && viewModel.messages.isEmpty
+    }
+
+    /// 顶栏 / 外屏竖条的返回键共用同一套语义，避免两处各自推断根在哪。
+    private func handleBackTap() {
+        if hasSidebarAtRoot {
+            router.goBack()
+        } else {
+            isPresentingDuetWorkspace = true
+        }
+    }
 
     var topBar: some View {
         let generating = viewModel.isGenerationActive
@@ -783,13 +813,7 @@ struct ChatView: View {
             isGenerating: viewModel.isGenerationActive,
             notices: conversationActivityCenter.notices,
             shelfHeight: chatSize.height * 0.55,
-            onBack: {
-                if isSplitDetailRoot {
-                    router.goBack()
-                } else {
-                    isPresentingDuetWorkspace = true
-                }
-            },
+            onBack: handleBackTap,
             onIslandTap: handleIslandTap,
             onCancel: { viewModel.cancelGeneration() },
             onOpenConversation: openActivityConversation,
@@ -804,8 +828,8 @@ struct ChatView: View {
                     .map { String(describing: $0.updateAt) }
             },
             artifacts: artifactShelf.index,
-            backSystemImage: isSplitDetailRoot ? "sidebar.left" : "line.3.horizontal",
-            backAccessibilityLabel: isSplitDetailRoot
+            backSystemImage: hasSidebarAtRoot ? "sidebar.left" : "line.3.horizontal",
+            backAccessibilityLabel: hasSidebarAtRoot
                 ? (router.showsSidebar ? "隐藏会话列表" : "显示会话列表")
                 : "空间与历史",
             showsBackButton: !sideRailActive,

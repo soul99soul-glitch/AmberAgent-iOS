@@ -104,6 +104,11 @@ final class IOSConversationStore {
     /// 会话摘要列表（按 updateAt 倒序、置顶优先，由 KMP 层排序）。
     private(set) var summaries: [ConversationSummary] = []
 
+    /// 启动引导是否已经走完一次（成功或失败都算结束）。
+    /// 根聊天页用它区分「历史还没读上来」和「这个会话真的没有消息」，
+    /// 前者展示与最终页同构的中性骨架，后者才展示欢迎空态。
+    private(set) var isBootstrapped = false
+
     /// 全部已持久化会话摘要。子代理会话不进入 [summaries]，但仍保留在这里供
     /// 编排详情、存储统计和清理操作按明确目标访问。
     private(set) var allSummaries: [ConversationSummary] = []
@@ -302,6 +307,8 @@ final class IOSConversationStore {
     /// App 启动时调用：加载摘要列表，选最近一条作为 current；无历史则新建空会话。
     func bootstrap(allowNewConversationDuringImport: Bool = false) async {
         didLoadSummaries = false
+        isBootstrapped = false
+        defer { isBootstrapped = true }
         listPreviewsByConversationId = Self.loadListPreviews(from: listPreviewsFileURL)
         listIconsByConversationId = Self.loadListPreviews(from: listIconsFileURL)
         _ = await loadSummaryProjectionIfNeeded()

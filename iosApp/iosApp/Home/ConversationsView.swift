@@ -246,6 +246,11 @@ struct ConversationsView: View {
         }
     }
 
+    /// 单栏且本页是被压入的会话管理页：显示返回对话根的按钮。
+    private var showsHomeBackButton: Bool {
+        !router.showsSidebarControl && !router.path.isEmpty
+    }
+
     private var accountInitial: String {
         let trimmed = sharedSettings.displaySetting.userNickname.trimmingCharacters(in: .whitespacesAndNewlines)
         return String((trimmed.isEmpty ? "A" : trimmed).prefix(1)).uppercased()
@@ -336,6 +341,20 @@ struct ConversationsView: View {
 
     private func homeHeaderStack(useGlassEffectID: Bool) -> some View {
         HStack(spacing: 10) {
+            // 会话管理态（单栏下被 push 为 `.home`）才需要返回对话根；
+            // 双栏侧栏永远不是被 push 的页面，不能因为详情栏栈非空就多出返回钮。
+            if showsHomeBackButton {
+                AmberGlassCircleButton(
+                    systemImage: "chevron.left",
+                    accessibilityLabel: "返回对话",
+                    size: 38,
+                    symbolSize: 18
+                ) {
+                    collapseSearchIfNeeded()
+                    router.goBack()
+                }
+            }
+
             // Brand mark layer — HStack chrome layout frozen.
             AmberBrandMarkView()
                 .layoutPriority(1)
