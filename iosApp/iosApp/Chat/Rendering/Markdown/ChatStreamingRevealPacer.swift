@@ -34,7 +34,16 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     /// 当前实际占位高度：朝 `contentHeight` 平滑逼近。
     @State private var displayedHeight: CGFloat = 0
 
+    /// 是否仍按帧吐字。流式结束后若还有尾巴没吐完，继续按同一节奏吐。
     private var isPacing: Bool { isStreaming && !reduceMotion }
+
+    /// 平滑高度 + 裁剪是否仍生效。
+    /// 关键：上游 `isStreaming` 一关，尾巴可能还没吐完；此时若立刻解除平滑容器，
+    /// 剩余文字会整段冒出、且高度一次性跳到自然值。所以这里必须延续到尾巴吐完。
+    private var heightTransitionActive: Bool {
+        guard !reduceMotion else { return false }
+        return revealedCount < text.count || isStreaming
+    }
 
     private var displayedCount: Int {
         min(max(0, revealedCount), text.count)
@@ -49,7 +58,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 contentHeight = height
                 syncDisplayedHeight()
             }
-            .frame(height: isPacing ? displayedHeight : nil, alignment: .top)
+            .frame(height: heightTransitionActive ? displayedHeight : nil, alignment: .top)
             .clipped()
             .onAppear {
                 guard revealedCount == 0 else { return }
@@ -68,7 +77,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
 
     /// 内容长高时把占位高度平滑推上去；缩短（收口）直接跟上，避免留白。
     private func syncDisplayedHeight() {
-        guard isPacing else {
+        guard heightTransitionActive else {
             displayedHeight = contentHeight
             return
         }
@@ -81,17 +90,16 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         }
     }
 
-    /// 小步推进直到追平全文。流式结束后不跳变，只是加快排空。
+    /// 小步推进直到追平全文。全程同一节奏：流式结束后不提速、不一次性刷出。
     private func drain() async {
         guard !reduceMotion else {
             revealedCount = text.count
             return
         }
         while !Task.isCancelled, revealedCount < text.count {
-            let remaining = text.count - revealedCount
-            // 积压越多步长越大；流式结束后上限放宽，让尾段尽快追平又不跳变。
-            let ceiling = isStreaming ? 4 : 8
-            let step = min(max(remaining / 6, 1), ceiling)
+            // 全程同一节奏：流式结束后依然按同一速率自然吐完，绝不提速、绝不一次性刷出。
+            // 收尾翻倍（4→8）会让用户听到/看到一次速度突跳，反而破坏节奏。
+            let step = ChatStreamingRevealTiming.step(remaining: text.count - revealedCount)
             revealedCount = min(revealedCount + step, text.count)
             try? await Task.sleep(nanoseconds: ChatStreamingRevealTiming.tickNanos)
         }
@@ -112,4 +120,13 @@ enum ChatStreamingRevealTiming {
     static let heightSettleSeconds: Double = 0.14
     /// 中途重进入时只补齐尾部这么多个字，避免把已有正文整段重打。
     static let reentryTailBudget = 40
+    /// 每拍推进上限。固定值：流式期与收尾期一致，不做收尾提速。
+    static let maxStepPerTick = 4
+
+    /// 单拍推进字数：积压越多步长越大，但上限恒为 `maxStepPerTick`。
+    /// 供单测锁住「收尾不提速」这条契约。
+    static func step(remaining: Int, maxStep: Int = maxStepPerTick) -> Int {
+        guard remaining > 0 else { return 0 }
+        return min(max(remaining / 6, 1), maxStep)
+    }
 }

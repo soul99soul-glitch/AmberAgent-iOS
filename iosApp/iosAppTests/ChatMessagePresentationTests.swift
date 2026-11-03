@@ -664,4 +664,34 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
                     active: model.active, assumeVisible: true, onVisibilityChanged: { _ in }))
         }
     }
+
+    // MARK: - 流式 pacer：收尾不提速
+
+    /// 流式期间与收尾期必须用**同一个**单拍上限。
+    /// 用户明确反馈：收尾把上限从 4 放宽到 8 会有「速度翻倍」的突跳感。
+    func testRevealPacerKeepsSameCadenceAfterStreamingEnds() {
+        let remainingValues = [1, 5, 24, 60, 200]
+        for remaining in remainingValues {
+            let step = ChatStreamingRevealTiming.step(remaining: remaining)
+            XCTAssertGreaterThanOrEqual(step, 1, "remaining=\(remaining) 每拍至少推进 1 字")
+            XCTAssertLessThanOrEqual(
+                step,
+                ChatStreamingRevealTiming.maxStepPerTick,
+                "remaining=\(remaining) 不得超过单拍上限（收尾不得提速）"
+            )
+        }
+        // 上限本身固定为 4：旧实现收尾会放宽到 8，这里锁死。
+        XCTAssertEqual(ChatStreamingRevealTiming.maxStepPerTick, 4)
+    }
+
+    /// 积压越多步长越大，但到上限就不再增长（大积压不会引发突跳）。
+    func testRevealPacerStepGrowsWithBacklogThenSaturates() {
+        let small = ChatStreamingRevealTiming.step(remaining: 6)
+        let medium = ChatStreamingRevealTiming.step(remaining: 18)
+        let large = ChatStreamingRevealTiming.step(remaining: 1000)
+        XCTAssertLessThanOrEqual(small, medium)
+        XCTAssertLessThanOrEqual(medium, large)
+        XCTAssertEqual(large, ChatStreamingRevealTiming.maxStepPerTick)
+        XCTAssertEqual(ChatStreamingRevealTiming.step(remaining: 0), 0)
+    }
 }
