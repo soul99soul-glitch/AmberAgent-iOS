@@ -723,7 +723,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(result.actions, [])
     }
 
-    func testStreamGrowthAtBottomPinsBottomInSameLayoutFrameFromIdle() {
+    func testStreamGrowthAtBottomDefersPinningToLayoutAnchorFromIdle() {
         let result = NativeTimelineScrollCore.reduce(
             state: .idle,
             intent: .streamContentGrew(),
@@ -736,10 +736,11 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             result.state,
             .followingBottom(virtualOffset: 520, target: 520, lastFollowRequestAt: 2)
         )
-        XCTAssertEqual(result.actions, [.requestBottomAnchor(animated: false, source: .streamGrowth)])
+        // 流式贴底交给 SwiftUI 布局阶段的 .sizeChanges 锚点；driver 不写 offset，避免双机制争夺。
+        XCTAssertEqual(result.actions, [])
     }
 
-    func testStreamGrowthNearBottomPinsBottomInSameLayoutFrameFromIdle() {
+    func testStreamGrowthNearBottomDefersPinningToLayoutAnchorFromIdle() {
         let result = NativeTimelineScrollCore.reduce(
             state: .idle,
             intent: .streamContentGrew(),
@@ -752,7 +753,8 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             result.state,
             .followingBottom(virtualOffset: 520, target: 520, lastFollowRequestAt: 2)
         )
-        XCTAssertEqual(result.actions, [.requestBottomAnchor(animated: false, source: .streamGrowth)])
+        // 流式贴底交给 SwiftUI 布局阶段的 .sizeChanges 锚点；driver 不写 offset，避免双机制争夺。
+        XCTAssertEqual(result.actions, [])
     }
 
     func testRepeatedStreamGrowthClampsTargetMonotonically() {
@@ -1002,7 +1004,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(result.actions, [.writeOffsetY(520), .stopFrameDriver])
     }
 
-    func testStreamGrowthPinsBottomAfterSettledFollowingStopped() {
+    func testStreamGrowthDefersPinningAfterSettledFollowingStopped() {
         let following = NativeTimelineScrollState.followingBottom(
             virtualOffset: 520,
             target: 520,
@@ -1021,7 +1023,8 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             result.state,
             .followingBottom(virtualOffset: 680, target: 680, lastFollowRequestAt: 3)
         )
-        XCTAssertEqual(result.actions, [.requestBottomAnchor(animated: false, source: .streamGrowth)])
+        // 流式贴底交给 SwiftUI 布局阶段的 .sizeChanges 锚点；driver 不写 offset，避免双机制争夺。
+        XCTAssertEqual(result.actions, [])
     }
 
     // MARK: - 终态排空滞后允许度（lagAllowance）

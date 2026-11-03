@@ -283,7 +283,9 @@ struct NativeChatTimelineView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
-                .padding(.bottom, 28)
+                // 底部留白收窄：原先 28 与底锚点 bottomRestGap(26) 叠加达到 54pt，
+                // 气泡悬在半空。这里与锚点合计约 22pt，贴近输入框上方但有呼吸感。
+                .padding(.bottom, 10)
                 .environment(\.chatPhoneToolGroupToggle, phoneToolGroupToggleHandler)
                 .scrollTargetLayout()
                 .onGeometryChange(for: String?.self) { _ in

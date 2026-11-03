@@ -11,9 +11,10 @@ enum ChatLayout {
     /// 它必须大于 `bottomStickThreshold`：后者只描述物理 true-bottom，不能混用。
     static let nearBottomResumeThreshold = followBottomGap
     static let bottomStickThreshold: CGFloat = 40
-    /// 内容底部的静止留白:进入会话定位、回到底部时最后一条与输入框之间留出的小距离,
-    /// 和「手动上推→回弹」的自然停靠位一致(不贴死输入框)。
-    static let bottomRestGap: CGFloat = 26
+    /// 内容底部的静止留白：会话定位与回到底部时，最后一条气泡与输入框之间的
+    /// 舒适间距。配合时间线内容层的 `.padding(.bottom)` 使用，两者相加才是可见间隙；
+    /// 现取 12：贴得近但不死贴输入框边缘。
+    static let bottomRestGap: CGFloat = 12
     /// 内容最底部的不可见锚点 id:定位到它(而非最后一条气泡)即停在「带留白的内容底」。
     static let bottomAnchorID = "chat-bottom-rest-anchor"
     /// 流式消息离底部足够远时冻结渲染,避免用户看历史时为不可见的新 token 重排 Markdown。

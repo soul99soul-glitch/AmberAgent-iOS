@@ -176,13 +176,10 @@ enum NativeTimelineScrollCore {
             case .pausedForUser:
                 return (state, [])
             case let .followingBottom(_, target, _, _, _):
-                // 流式增长：与布局同帧钉底，不走弹簧延迟追随。
-                // 弹簧（τ=0.06s）会让「内容已变高、偏移还没跟上」持续若干帧，
-                // 表现为气泡底边每出一行就向下沉一截再被拉回——就是底部抖动。
-                // 这里把虚拟偏移直接推到新目标并请求一次无动画底部锚定，
-                // 让高度增量与滚动偏移在同一帧内抵消，底边纹丝不动。
-                // 目标保持单调：流式期间布局可能瞬时报告更小的 contentSize，
-                // 跟随目标不得因此回退，否则会闪一下再弹回。虚拟偏移同步贴上该目标。
+                // 流式贴底由 SwiftUI 的 .sizeChanges 底错在【布局阶段】完成：
+                // 内容长高与滚动偏移在同一布局帧内抵消，既不平滑延迟也不硬跳。
+                // driver 这里只同步跟随状态，绝不能再去 writeOffsetY / layoutIfNeeded，
+                // 否则会与布局锚点争夺 offset，表现为逐段生硬跳变。
                 let pinnedTarget = clampedTarget(current: target, incoming: geometry.bottomTarget)
                 return (
                     .followingBottom(
@@ -192,7 +189,7 @@ enum NativeTimelineScrollCore {
                         lagAllowance: lagAllowance,
                         velocity: 0
                     ),
-                    [.requestBottomAnchor(animated: false, source: .streamGrowth)]
+                    []
                 )
             case .keyboardFocus:
                 return (
@@ -200,20 +197,20 @@ enum NativeTimelineScrollCore {
                     [.requestBottomAnchor(animated: false, source: .streamGrowth)]
                 )
             case .settlingAfterTerminal:
-                // 终态收口期间的晚到增长同样钉底，避免完成瞬间「再滑一段」。
+                // 终态收口：同样交给布局锚点，等终态重测完成后由 settle 收口。
                 return (
                     .settlingAfterTerminal(
                         virtualOffset: geometry.bottomTarget,
                         target: geometry.bottomTarget,
                         lastLayoutAt: now
                     ),
-                    [.requestBottomAnchor(animated: false, source: .streamGrowth)]
+                    []
                 )
             case .idle:
                 guard geometry.isNearBottom else {
                     return (state, [])
                 }
-                // 同上：从 idle 重新接管流式时也直接钉底，不引入弹簧滞后。
+                // 从 idle 接管流式：仅建立跟随状态，贴底交给布局锚点。
                 return (
                     .followingBottom(
                         virtualOffset: geometry.bottomTarget,
@@ -221,7 +218,7 @@ enum NativeTimelineScrollCore {
                         lastFollowRequestAt: now,
                         lagAllowance: lagAllowance
                     ),
-                    [.requestBottomAnchor(animated: false, source: .streamGrowth)]
+                    []
                 )
             }
 
