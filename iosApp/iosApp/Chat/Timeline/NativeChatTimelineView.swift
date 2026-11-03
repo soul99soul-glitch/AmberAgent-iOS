@@ -275,9 +275,14 @@ struct NativeChatTimelineView: View {
                         }
                         .padding(.top, isHistoryBoundary ? 0 : topSpacing)
                         if let activity, activityHere, !statusReplacesEntry {
+                            // 正文已上屏就不能再在气泡下方垫一行「正在整理回复」：
+                            // 那行会把气泡顶高，流式结束时它消失→整个气泡单帧下坠。
+                            // 单行动态进度必须由正文原位接管，而不是并排堆在下面。
                             let isAfterUserMessage = entry.role == MessageRole.user
-                            ChatTimelineActivityRowView(activity: activity, showAgentName: isAfterUserMessage, onAction: onAction)
-                                .padding(.top, isAfterUserMessage ? 14 : ChatLayout.assistantPartSpacing)
+                            if isAfterUserMessage || !entry.hasVisibleBodyText {
+                                ChatTimelineActivityRowView(activity: activity, showAgentName: isAfterUserMessage, onAction: onAction)
+                                    .padding(.top, isAfterUserMessage ? 14 : ChatLayout.assistantPartSpacing)
+                            }
                         }
                     }
                 }

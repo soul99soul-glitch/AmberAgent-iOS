@@ -408,23 +408,37 @@ struct MessageBubbleView: View {
                     )
                     .transition(.opacity)
                 } else {
-                    ChatAssistantText {
-                        ChatAssistantMarkdownView(
-                            markdown: textPart.text,
-                            renderCacheNamespace: "\(message.id):text:\(partIndex)",
-                            displaySetting: displaySetting,
-                            generativeUiSetting: generativeUiSetting,
-                            isStreaming: isGenerating && isLastMessage,
-                            hasEverStreamed: hasEverStreamed,
-                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
-                            frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
-                            onGenerativeWidgetAction: onGenerativeWidgetAction,
-                            isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
-                            sourceMessageID: message.id.toHexDashString(),
-                            sourceTextPartIndex: partIndex
-                        )
+                    // 逐字平滑吐字：上游 delta 成块到达，直接整块上屏会一次撑高多行，
+                    // 观感是「黑框先跳、文字后亮」。按帧小步推进让折行自然逐行上推。
+                    ChatStreamingRevealPacer(
+                        text: textPart.text,
+                        isStreaming: isGenerating && isLastMessage,
+                        reduceMotion: reduceMotion
+                    ) { revealedText in
+                        ChatAssistantText {
+                            ChatAssistantMarkdownView(
+                                markdown: revealedText,
+                                renderCacheNamespace: "\(message.id):text:\(partIndex)",
+                                displaySetting: displaySetting,
+                                generativeUiSetting: generativeUiSetting,
+                                isStreaming: isGenerating && isLastMessage,
+                                hasEverStreamed: hasEverStreamed,
+                                liveRenderingEnabled: liveMarkdownRenderingEnabled,
+                                frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
+                                onGenerativeWidgetAction: onGenerativeWidgetAction,
+                                isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
+                                sourceMessageID: message.id.toHexDashString(),
+                                sourceTextPartIndex: partIndex
+                            )
+                        }
                     }
-                    .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
+                    // 流式正文不做整块透明度淡入：上游 delta 是成块到达的，逐块淡入会
+                    // 让气泡先撑高、文字以暗灰鬼影过半秒才浮现（黑框先跳、字后亮）。
+                    // 只有「该消息首段正文」保留一次入场，其余一律实色立即可读。
+                    .chatLiveEntrance(
+                        key: "\(message.id):text:\(partIndex)",
+                        isLive: isLiveTail && nonEmptyTextPartCount == 1
+                    )
                 }
             case .taskGroup(let taskSegment):
                 ForEach(taskSegment.mediaBearingTools, id: \.toolCallId) { tool in
@@ -550,23 +564,37 @@ struct MessageBubbleView: View {
                     )
                     .transition(.opacity)
                 } else {
-                    ChatAssistantText {
-                        ChatAssistantMarkdownView(
-                            markdown: textPart.text,
-                            renderCacheNamespace: "\(message.id):text:\(partIndex)",
-                            displaySetting: displaySetting,
-                            generativeUiSetting: generativeUiSetting,
-                            isStreaming: isGenerating && isLastMessage,
-                            hasEverStreamed: hasEverStreamed,
-                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
-                            frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
-                            onGenerativeWidgetAction: onGenerativeWidgetAction,
-                            isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
-                            sourceMessageID: message.id.toHexDashString(),
-                            sourceTextPartIndex: partIndex
-                        )
+                    // 逐字平滑吐字：上游 delta 成块到达，直接整块上屏会一次撑高多行，
+                    // 观感是「黑框先跳、文字后亮」。按帧小步推进让折行自然逐行上推。
+                    ChatStreamingRevealPacer(
+                        text: textPart.text,
+                        isStreaming: isGenerating && isLastMessage,
+                        reduceMotion: reduceMotion
+                    ) { revealedText in
+                        ChatAssistantText {
+                            ChatAssistantMarkdownView(
+                                markdown: revealedText,
+                                renderCacheNamespace: "\(message.id):text:\(partIndex)",
+                                displaySetting: displaySetting,
+                                generativeUiSetting: generativeUiSetting,
+                                isStreaming: isGenerating && isLastMessage,
+                                hasEverStreamed: hasEverStreamed,
+                                liveRenderingEnabled: liveMarkdownRenderingEnabled,
+                                frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
+                                onGenerativeWidgetAction: onGenerativeWidgetAction,
+                                isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
+                                sourceMessageID: message.id.toHexDashString(),
+                                sourceTextPartIndex: partIndex
+                            )
+                        }
                     }
-                    .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
+                    // 流式正文不做整块透明度淡入：上游 delta 是成块到达的，逐块淡入会
+                    // 让气泡先撑高、文字以暗灰鬼影过半秒才浮现（黑框先跳、字后亮）。
+                    // 只有「该消息首段正文」保留一次入场，其余一律实色立即可读。
+                    .chatLiveEntrance(
+                        key: "\(message.id):text:\(partIndex)",
+                        isLive: isLiveTail && nonEmptyTextPartCount == 1
+                    )
                 }
             } else if part is UIMessagePart.Reasoning {
                 EmptyView()

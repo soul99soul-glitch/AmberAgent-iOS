@@ -59,6 +59,15 @@ struct NativeTimelineEntry: Identifiable, Equatable {
         renderState?.hasEverStreamed ?? hasEverStreamed
     }
 
+    /// 该条目是否已经渲染了非空正文。用于判定锚点下方的单行动态进度是否该退场：
+    /// 正文一旦上屏，进度行就不能再垫在气泡下面（否则流式结束时整块下坠）。
+    var hasVisibleBodyText: Bool {
+        guard role != MessageRole.user, let message else { return false }
+        return message.parts.contains { part in
+            (part as? UIMessagePart.Text)?.text.contains { !$0.isWhitespace } == true
+        }
+    }
+
     var liveMarkdownRenderingEnabled: Bool {
         renderState?.liveRenderingEnabled ?? true
     }
