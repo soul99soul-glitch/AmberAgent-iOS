@@ -600,6 +600,7 @@ enum AmberUnifiedTaskBuilder {
         filterHubId: String? = nil
     ) -> Groups {
         var all: [AmberUnifiedTaskItem] = []
+        var seenTitles = Set<String>()
         let defaultHubId = hubStore.activeHubId
 
         // 1. Cloud work items the user explicitly handed off (/v2/work-items).
@@ -647,6 +648,7 @@ enum AmberUnifiedTaskBuilder {
             }
 
             let matchedHubId = hubStore.hubs.first(where: { $0.taskIds.contains(record.requestId) })?.id ?? defaultHubId
+            seenTitles.insert(record.displayTitle)
             all.append(
                 AmberUnifiedTaskItem(
                     id: "cloud:\(record.requestId)",
@@ -671,7 +673,7 @@ enum AmberUnifiedTaskBuilder {
             let backingRecord = subAgentStore.taskRecord(for: item)
             let resolvedTitle = backingRecord?.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayTitle = (resolvedTitle?.isEmpty == false) ? resolvedTitle! : item.title
-            guard !all.contains(where: { $0.title == displayTitle }) else { continue }
+            guard seenTitles.insert(displayTitle).inserted else { continue }
             let phase: AmberUnifiedTaskPhase
             let statusText: String
             var actionTitle: String? = nil
@@ -731,7 +733,7 @@ enum AmberUnifiedTaskBuilder {
         // receipts are decisions, not work, so they never become cards here.
         for record in taskStore.tasks
         where record.kind != .subAgent && record.kind != .toolApproval {
-            guard !all.contains(where: { $0.title == record.title }) else { continue }
+            guard seenTitles.insert(record.title).inserted else { continue }
             let phase: AmberUnifiedTaskPhase
             switch record.status {
             case .queued: phase = .running
@@ -781,6 +783,7 @@ enum AmberUnifiedTaskBuilder {
             } else {
                 subtitle = "本机定时 · \(task.status.title)"
             }
+            seenTitles.insert(task.title)
             all.append(
                 AmberUnifiedTaskItem(
                     id: "wake:\(task.id)",
@@ -805,6 +808,7 @@ enum AmberUnifiedTaskBuilder {
         for schedule in gateway.schedules ?? [] {
             let phase: AmberUnifiedTaskPhase = schedule.running ? .running
                 : (schedule.enabled ? .scheduled : .cancelled)
+            seenTitles.insert(schedule.name)
             all.append(
                 AmberUnifiedTaskItem(
                     id: "schedule:\(schedule.id)",
@@ -826,7 +830,7 @@ enum AmberUnifiedTaskBuilder {
 
         // 6. Mac board runs and agent sessions.
         for boardItem in gateway.boardItems where boardItem.kind != .schedule {
-            guard !all.contains(where: { $0.title == boardItem.title }) else { continue }
+            guard seenTitles.insert(boardItem.title).inserted else { continue }
             let phase: AmberUnifiedTaskPhase
             switch boardItem.column {
             case .needsYou: phase = .needsAttention

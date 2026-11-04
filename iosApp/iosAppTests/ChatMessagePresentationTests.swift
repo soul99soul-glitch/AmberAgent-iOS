@@ -694,4 +694,20 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
         XCTAssertEqual(large, ChatStreamingRevealTiming.maxStepPerTick)
         XCTAssertEqual(ChatStreamingRevealTiming.step(remaining: 0), 0)
     }
+
+    /// O(1) UTF-16 步进与切片必须与按字符 `step(remaining:)` 完全一致，且绝不劈开代理对或组合 emoji。
+    func testRevealPacerUTF16SteppingMatchesCharacterStepAndPreservesComposedGraphemes() {
+        let sample = "你好👨‍👩‍👧‍👦Amber✨流式性能测试1234567890"
+        var utf16Offset = 0
+        var revealedChars = 0
+        let totalChars = sample.count
+        while utf16Offset < sample.utf16.count {
+            let expectedStep = ChatStreamingRevealTiming.step(remaining: totalChars - revealedChars)
+            utf16Offset = ChatStreamingRevealTiming.nextStepUTF16Offset(in: sample, fromUTF16Offset: utf16Offset)
+            revealedChars = min(totalChars, revealedChars + expectedStep)
+            let prefix = ChatStreamingRevealTiming.slicedPrefix(of: sample, utf16Count: utf16Offset)
+            XCTAssertEqual(prefix, String(sample.prefix(revealedChars)))
+        }
+        XCTAssertEqual(revealedChars, totalChars)
+    }
 }

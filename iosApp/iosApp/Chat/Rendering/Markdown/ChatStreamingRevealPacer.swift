@@ -28,7 +28,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     let reduceMotion: Bool
     @ViewBuilder let content: (String) -> Content
 
-    @State private var revealedCount = 0
+    @State private var revealedUTF16Count = 0
     /// 是否处于需要逐字推进或收尾排空的会话期。
     /// 历史非流式行在 `init` 时直接为 `false`，首帧即直接渲染完整 `text`，
     /// 绝不经过「先挂空串 `""` 再在 `onAppear` 二次刷全文」的双渲染路径。
@@ -37,6 +37,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     @State private var contentHeight: CGFloat = 0
     /// 当前实际占位高度：朝 `contentHeight` 平滑逼近。
     @State private var displayedHeight: CGFloat = 0
+    /// 增量维护的表格检测器：避免在 `body` 中产生状态写回或全量扫描。
+    @State private var pacerBox = ChatStreamingRevealPacerBox()
 
     init(
         text: String,
@@ -57,13 +59,21 @@ struct ChatStreamingRevealPacer<Content: View>: View {
 
     var body: some View {
         let activePacing = !reduceMotion && (isStreaming || isActivelyPacing)
+        // Markdown 表格在 `ChatStreamingBlockMarkdownView` 内部已有稳定前缀 + 尾部节流分块策略；
+        // 若外层再按 60fps 逐字切片并对整张 `TableView` 施加 `.frame(height: displayedHeight)` 动画，
+        // 会导致数百个单元格每 16ms 触发多遍 `TableLayout` 与滚动几何反馈环（单帧卡死 200-330ms）。
+        let bypassPacingForTable = activePacing && pacerBox.containsTable(in: text)
         let displayedText: String
         let heightTransitionActive: Bool
-        if activePacing {
-            let totalCount = text.count
-            let clampedCount = min(max(0, revealedCount), totalCount)
-            displayedText = clampedCount < totalCount ? String(text.prefix(clampedCount)) : text
-            heightTransitionActive = clampedCount < totalCount || isStreaming
+        if activePacing && !bypassPacingForTable {
+            let totalUTF16 = text.utf16.count
+            let clampedUTF16 = min(max(0, revealedUTF16Count), totalUTF16)
+            if clampedUTF16 < totalUTF16 {
+                displayedText = ChatStreamingRevealTiming.slicedPrefix(of: text, utf16Count: clampedUTF16)
+            } else {
+                displayedText = text
+            }
+            heightTransitionActive = clampedUTF16 < totalUTF16 || isStreaming
         } else {
             displayedText = text
             heightTransitionActive = false
@@ -72,22 +82,35 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         return content(displayedText)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.height
+                activePacing && !bypassPacingForTable ? proxy.size.height : 0
             } action: { height in
+                guard activePacing && !bypassPacingForTable else { return }
                 contentHeight = height
                 syncDisplayedHeight(heightTransitionActive: heightTransitionActive)
             }
             .frame(height: heightTransitionActive ? displayedHeight : nil, alignment: .top)
             .clipped()
             .onAppear {
-                guard isPacing, revealedCount == 0 else { return }
-                let totalCount = text.count
+                guard isPacing, revealedUTF16Count == 0 else { return }
+                if pacerBox.containsTable(in: text) {
+                    revealedUTF16Count = text.utf16.count
+                    return
+                }
                 // 流式中途重进入：只补尾部，不要把已有正文整段重打。
-                revealedCount = max(0, totalCount - ChatStreamingRevealTiming.reentryTailBudget)
+                revealedUTF16Count = ChatStreamingRevealTiming.reentryStartUTF16Offset(
+                    in: text,
+                    tailCharacterBudget: ChatStreamingRevealTiming.reentryTailBudget
+                )
                 displayedHeight = contentHeight
                 isActivelyPacing = true
             }
-            .task(id: PacingKey(text: text, isStreaming: isStreaming, reduceMotion: reduceMotion)) {
+            .task(
+                id: PacingKey(
+                    targetUTF16Count: activePacing && !bypassPacingForTable ? text.utf16.count : 0,
+                    isStreaming: isStreaming,
+                    reduceMotion: reduceMotion
+                )
+            ) {
                 await drain()
             }
     }
@@ -120,27 +143,47 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         guard isStreaming || isActivelyPacing else {
             return
         }
+        if pacerBox.containsTable(in: text) {
+            revealedUTF16Count = text.utf16.count
+            if !isStreaming, isActivelyPacing {
+                isActivelyPacing = false
+            }
+            return
+        }
         if isStreaming && !isActivelyPacing {
             isActivelyPacing = true
         }
-        // 单次计算当前块的字符总数，避免每 16ms tick 在循环条件与步长里重复 3 次 O(n) 遍历。
-        let totalCount = text.count
-        while !Task.isCancelled, revealedCount < totalCount {
-            // 全程同一节奏：流式结束后依然按同一速率自然吐完，绝不提速、绝不一次性刷出。
-            // 收尾翻倍（4→8）会让用户听到/看到一次速度突跳，反而破坏节奏。
-            let step = ChatStreamingRevealTiming.step(remaining: totalCount - revealedCount)
-            revealedCount = min(revealedCount + step, totalCount)
+        let totalUTF16 = text.utf16.count
+        while !Task.isCancelled, revealedUTF16Count < totalUTF16 {
+            let nextUTF16 = ChatStreamingRevealTiming.nextStepUTF16Offset(
+                in: text,
+                fromUTF16Offset: revealedUTF16Count
+            )
+            if nextUTF16 <= revealedUTF16Count {
+                revealedUTF16Count = totalUTF16
+                break
+            }
+            revealedUTF16Count = min(nextUTF16, totalUTF16)
             try? await Task.sleep(nanoseconds: ChatStreamingRevealTiming.tickNanos)
         }
-        if !Task.isCancelled, !isStreaming, revealedCount >= totalCount, isActivelyPacing {
+        if !Task.isCancelled, !isStreaming, revealedUTF16Count >= totalUTF16, isActivelyPacing {
             isActivelyPacing = false
         }
     }
 
     private struct PacingKey: Equatable {
-        let text: String
+        let targetUTF16Count: Int
         let isStreaming: Bool
         let reduceMotion: Bool
+    }
+}
+
+private final class ChatStreamingRevealPacerBox {
+    private var tableDetector = ChatStreamingTableDetectionState()
+
+    func containsTable(in text: String) -> Bool {
+        tableDetector.update(with: text)
+        return tableDetector.containsTable
     }
 }
 
@@ -160,5 +203,65 @@ enum ChatStreamingRevealTiming {
     static func step(remaining: Int, maxStep: Int = maxStepPerTick) -> Int {
         guard remaining > 0 else { return 0 }
         return min(max(remaining / 6, 1), maxStep)
+    }
+
+    /// O(1) UTF-16 索引切片并对齐到完整字素簇边界，避免每帧 `text.prefix(count)` 从头 O(n) 扫描全文。
+    static func slicedPrefix(of text: String, utf16Count: Int) -> String {
+        let totalUTF16 = text.utf16.count
+        guard utf16Count > 0 else { return "" }
+        guard utf16Count < totalUTF16 else { return text }
+        let rawIndex = String.Index(utf16Offset: utf16Count, in: text)
+        let alignedIndex = rawIndex < text.endIndex
+            ? text.rangeOfComposedCharacterSequence(at: rawIndex).lowerBound
+            : text.endIndex
+        return String(text[..<alignedIndex])
+    }
+
+    /// 中途重进入时从尾部往回数 `tailCharacterBudget` 个字，时间复杂度 O(tailCharacterBudget) 常数级。
+    static func reentryStartUTF16Offset(in text: String, tailCharacterBudget: Int) -> Int {
+        guard tailCharacterBudget > 0, !text.isEmpty else { return text.utf16.count }
+        var index = text.endIndex
+        var remaining = tailCharacterBudget
+        while remaining > 0, index > text.startIndex {
+            index = text.index(before: index)
+            remaining -= 1
+        }
+        return index.utf16Offset(in: text)
+    }
+
+    /// 基于当前 UTF-16 偏移向前最多探查 `maxStepPerTick * 6`（24）个字素簇，
+    /// 既保持与 `step(remaining:)` 完全一致的吐字步长，又将每帧推进从 O(n) 降为 O(1)。
+    static func nextStepUTF16Offset(
+        in text: String,
+        fromUTF16Offset currentUTF16: Int,
+        maxStep: Int = maxStepPerTick
+    ) -> Int {
+        let totalUTF16 = text.utf16.count
+        let clamped = min(max(0, currentUTF16), totalUTF16)
+        guard clamped < totalUTF16 else { return totalUTF16 }
+        let rawStart = String.Index(utf16Offset: clamped, in: text)
+        let startIndex = rawStart < text.endIndex
+            ? text.rangeOfComposedCharacterSequence(at: rawStart).lowerBound
+            : text.endIndex
+        guard startIndex < text.endIndex else { return totalUTF16 }
+
+        let lookaheadCap = max(maxStep * 6, 1)
+        var probe = startIndex
+        var lookaheadCount = 0
+        var stepIndices: [String.Index] = []
+        stepIndices.reserveCapacity(maxStep)
+
+        while probe < text.endIndex, lookaheadCount < lookaheadCap {
+            probe = text.index(after: probe)
+            lookaheadCount += 1
+            if lookaheadCount <= maxStep {
+                stepIndices.append(probe)
+            }
+        }
+
+        let chosenStep = step(remaining: lookaheadCount, maxStep: maxStep)
+        guard chosenStep > 0, !stepIndices.isEmpty else { return totalUTF16 }
+        let targetIndex = stepIndices[min(chosenStep, stepIndices.count) - 1]
+        return targetIndex.utf16Offset(in: text)
     }
 }

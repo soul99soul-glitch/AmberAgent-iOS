@@ -151,6 +151,7 @@ struct ChatTaskProgressDot: View {
     let isLive: Bool
     var reduceMotion: Bool = false
     var timeOverride: TimeInterval? = nil
+    @Environment(\.amberIsUnderlyingSheetPresented) private var isUnderlyingSheetPresented
 
     static let baseShadeTiers: [Double] = [1.0, 0.72, 0.46]
 
@@ -182,7 +183,7 @@ struct ChatTaskProgressDot: View {
                 } else if let timeOverride {
                     dotsRow(at: timeOverride)
                 } else {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isUnderlyingSheetPresented)) { context in
                         dotsRow(at: context.date.timeIntervalSinceReferenceDate)
                     }
                 }
@@ -220,6 +221,7 @@ struct ChatTaskProgressTextShimmer: ViewModifier {
     let isActive: Bool
     let accentColor: Color
     var timeOverride: TimeInterval? = nil
+    @Environment(\.amberIsUnderlyingSheetPresented) private var isUnderlyingSheetPresented
 
     static func shimmerNormalizedProgress(at time: TimeInterval, period: TimeInterval = 1.8) -> CGFloat {
         let positive = max(0, time)
@@ -233,7 +235,7 @@ struct ChatTaskProgressTextShimmer: ViewModifier {
             if let timeOverride {
                 shimmered(content: content, time: timeOverride)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isUnderlyingSheetPresented)) { context in
                     shimmered(content: content, time: context.date.timeIntervalSinceReferenceDate)
                 }
             }

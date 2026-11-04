@@ -736,6 +736,10 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
 
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.onDismissKeyboard = onDismissKeyboard
+        if context.coordinator.hasResolvedScrollView {
+            context.coordinator.sampleMetricsIfChanged()
+            return
+        }
         DispatchQueue.main.async { [weak view] in
             guard let scrollView = view?.nativeTimelineAncestor(of: UIScrollView.self) else { return }
             onResolve(scrollView)
@@ -749,6 +753,7 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
         private let onMetricsChanged: () -> Void
         var onDismissKeyboard: (() -> Void)?
         private weak var observedScrollView: UIScrollView?
+        var hasResolvedScrollView: Bool { observedScrollView != nil }
         private weak var tapGestureRecognizer: UITapGestureRecognizer?
         private var displayLink: CADisplayLink?
         private var monitoringDeadline: CFTimeInterval?
@@ -850,6 +855,15 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
                 hitView: hitView,
                 locationInHitView: location
             )
+        }
+
+        func sampleMetricsIfChanged() {
+            guard !invalidated, let scrollView = observedScrollView else { return }
+            installTapGestureIfNeeded(on: scrollView)
+            let metrics = Metrics(scrollView)
+            guard metrics != lastMetrics else { return }
+            lastMetrics = metrics
+            scheduleCallback()
         }
 
         func monitorRecentMetrics() {

@@ -125,7 +125,10 @@ struct AmberDuetBottomSwitcher: View {
     }
 
     private var modeSegmentedTrack: some View {
-        HStack(spacing: 2) {
+        let counts = resolvedTaskCounts
+        let tasksBadgeCount = counts.needsAttention + counts.active
+        let tasksBadgeColor = counts.needsAttention > 0 ? AmberTheme.accentRed : AmberTheme.accent
+        return HStack(spacing: 2) {
             modeButton(
                 tab: .chat,
                 isSelected: selectedTab == .chat,
@@ -140,8 +143,8 @@ struct AmberDuetBottomSwitcher: View {
             modeButton(
                 tab: .tasks,
                 isSelected: selectedTab == .tasks,
-                badgeCount: badgeCount,
-                badgeColor: badgeColor
+                badgeCount: tasksBadgeCount,
+                badgeColor: tasksBadgeColor
             ) {
                 if let onSelectTab {
                     onSelectTab(selectedTab == .tasks ? .chat : .tasks)
@@ -934,9 +937,10 @@ struct AmberDuetHubsCard: View {
                         .padding(16)
                         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
+                    let activeTasks = allActiveTasks
                     // Pure-typography Hub cards (No left category icon boxes)
                     ForEach(hubStore.hubs) { hub in
-                        hubRowCard(hub)
+                        hubRowCard(hub, activeTasks: activeTasks)
                     }
                 }
 
@@ -1025,12 +1029,11 @@ struct AmberDuetHubsCard: View {
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func hubRowCard(_ hub: AmberHubItem) -> some View {
+    private func hubRowCard(_ hub: AmberHubItem, activeTasks: [AmberUnifiedTaskItem]) -> some View {
         let isCurrent = hubStore.activeHubId == hub.id
         let subtitle = hubStore.subtitle(
             for: hub,
-            conversations: conversationStore.summaries,
-            activeTasks: allActiveTasks
+            activeTasks: activeTasks
         )
         return Button {
             hubStore.selectHub(hub.id)

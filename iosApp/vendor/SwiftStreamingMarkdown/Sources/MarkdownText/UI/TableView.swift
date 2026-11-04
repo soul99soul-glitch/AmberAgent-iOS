@@ -66,6 +66,10 @@ struct TableView: View {
     return rows.count
   }
 
+  private var a11yTotalRowCount: Int {
+    config.shouldAnimateText ? 0 : (numOfRows + 1)
+  }
+
   private func headerView(colIdx: Int) -> some View {
     TableCellTextView(
       attributedString: headings[colIdx],
@@ -74,7 +78,11 @@ struct TableView: View {
       usesLayerBackedAnimation: usesLayerBackedTableAnimation
     )
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      .accessibilityValue(String.itemPositionInTable(rowIndex: 1, totalRow: numOfRows + 1, columnIndex: colIdx + 1, totalColumn: headings.count))
+      .accessibilityValue(
+        a11yTotalRowCount > 0
+          ? String.itemPositionInTable(rowIndex: 1, totalRow: a11yTotalRowCount, columnIndex: colIdx + 1, totalColumn: headings.count)
+          : ""
+      )
       .padding(.horizontal, config.tableCellHorizontalPadding)
       .padding(.vertical, config.tableCellVerticalPadding)
       .id("\(colIdx)-heading")
@@ -119,7 +127,11 @@ struct TableView: View {
       // width expand the cell/column the same way chat paragraphs used to.
       ParagraphView(contents: applyTypographyThemingAndGetContent(nsAttributedString))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityValue(String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: numOfRows + 1, columnIndex: colIdx + 1, totalColumn: headings.count))
+        .accessibilityValue(
+          a11yTotalRowCount > 0
+            ? String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: a11yTotalRowCount, columnIndex: colIdx + 1, totalColumn: headings.count)
+            : ""
+        )
         .frame(maxHeight: .infinity)
         .padding(.horizontal, config.tableCellHorizontalPadding)
         .padding(.vertical, config.tableCellVerticalPadding)
@@ -133,7 +145,11 @@ struct TableView: View {
         usesLayerBackedAnimation: usesLayerBackedTableAnimation
       )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityValue(String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: numOfRows + 1, columnIndex: colIdx + 1, totalColumn: headings.count))
+        .accessibilityValue(
+          a11yTotalRowCount > 0
+            ? String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: a11yTotalRowCount, columnIndex: colIdx + 1, totalColumn: headings.count)
+            : ""
+        )
         .frame(maxHeight: .infinity)
         .padding(.horizontal, config.tableCellHorizontalPadding)
         .padding(.vertical, config.tableCellVerticalPadding)
@@ -171,7 +187,7 @@ struct TableView: View {
       configShouldAnimateText: config.shouldAnimateText && animateInitialText,
       headingCount: headings.count,
       rowCount: numOfRows,
-      characterCount: attributedString.characters.count
+      characterCount: 0
     )
   }
 
@@ -311,7 +327,10 @@ private struct TableTextEntranceOverlay: UIViewRepresentable {
   }
 
   func updateUIView(_ uiView: TableTextEntranceLabel, context: Context) {
-    uiView.attributedText = themedAttributedString()
+    let themed = themedAttributedString()
+    if uiView.attributedText?.isEqual(to: themed) != true {
+      uiView.attributedText = themed
+    }
   }
 
   func sizeThatFits(
@@ -441,8 +460,11 @@ extension View {
 
 struct TableLayout: Layout {
   struct CacheData {
-    let columnWidths: [CGFloat]
-    let rowHeights: [CGFloat]
+    var columnCount: Int = 0
+    var columnMaxWidths: [CGFloat] = []
+    var cellUnconstrainedWidths: [CGFloat] = []
+    var columnWidths: [CGFloat] = []
+    var rowHeights: [CGFloat] = []
   }
 
   let columnCount: Int
@@ -451,20 +473,78 @@ struct TableLayout: Layout {
   private let defaultRowHeight: CGFloat = 44
 
   func makeCache(subviews: Subviews) -> CacheData {
-    guard columnCount > 0 else { return CacheData(columnWidths: [], rowHeights: []) }
-    let rowCount = subviews.count / columnCount
+    var cache = CacheData()
+    updateCache(&cache, subviews: subviews)
+    return cache
+  }
 
-    var columnWidths = Array(repeating: CGFloat(0), count: columnCount)
-    for row in 0..<rowCount {
+  func updateCache(_ cache: inout CacheData, subviews: Subviews) {
+    guard columnCount > 0, columnMaxWidths.count >= columnCount else {
+      cache = CacheData()
+      return
+    }
+    let rowCount = subviews.count / columnCount
+    let totalCells = rowCount * columnCount
+    let previousRowCount = cache.rowHeights.count
+
+    if cache.columnCount == columnCount,
+       cache.columnMaxWidths == columnMaxWidths,
+       previousRowCount > 0,
+       rowCount == previousRowCount,
+       cache.cellUnconstrainedWidths.count == totalCells {
+      return
+    }
+
+    let canIncrementalAppend = cache.columnCount == columnCount
+      && cache.columnMaxWidths == columnMaxWidths
+      && previousRowCount > 0
+      && rowCount > previousRowCount
+      && cache.cellUnconstrainedWidths.count == previousRowCount * columnCount
+
+    // Preserve settled rows 0 ..< max(0, previousRowCount - 1) and only re-measure the
+    // previous trailing row (in case streaming completed a partial row) plus newly appended rows.
+    let preservedRowCount = canIncrementalAppend ? max(0, previousRowCount - 1) : 0
+    let preservedCellCount = preservedRowCount * columnCount
+
+    var cellUnconstrainedWidths: [CGFloat]
+    if preservedCellCount > 0 {
+      cellUnconstrainedWidths = Array(cache.cellUnconstrainedWidths.prefix(preservedCellCount))
+      cellUnconstrainedWidths.reserveCapacity(totalCells)
+    } else {
+      cellUnconstrainedWidths = []
+      cellUnconstrainedWidths.reserveCapacity(totalCells)
+    }
+
+    for row in preservedRowCount..<rowCount {
       for col in 0..<columnCount {
         let index = row * columnCount + col
         let size = subviews[index].sizeThatFits(.unspecified)
-        columnWidths[col] = min(max(columnWidths[col], size.width), columnMaxWidths[col])
+        cellUnconstrainedWidths.append(size.width)
       }
     }
 
-    var rowHeights = Array(repeating: CGFloat(0), count: rowCount)
+    var columnWidths = Array(repeating: CGFloat(0), count: columnCount)
     for row in 0..<rowCount {
+      let rowBase = row * columnCount
+      for col in 0..<columnCount {
+        let width = cellUnconstrainedWidths[rowBase + col]
+        columnWidths[col] = min(max(columnWidths[col], width), columnMaxWidths[col])
+      }
+    }
+
+    let columnsChanged = !canIncrementalAppend || columnWidths != cache.columnWidths
+    let heightStartRow = columnsChanged ? 0 : preservedRowCount
+
+    var rowHeights: [CGFloat]
+    if heightStartRow > 0 {
+      rowHeights = Array(cache.rowHeights.prefix(heightStartRow))
+      rowHeights.reserveCapacity(rowCount)
+    } else {
+      rowHeights = []
+      rowHeights.reserveCapacity(rowCount)
+    }
+
+    for row in heightStartRow..<rowCount {
       var rowHeight: CGFloat = 0
       for col in 0..<columnCount {
         let index = row * columnCount + col
@@ -472,10 +552,14 @@ struct TableLayout: Layout {
         let cellHeight = height.isFinite ? height : defaultRowHeight
         rowHeight = max(rowHeight, cellHeight)
       }
-      rowHeights[row] = rowHeight
+      rowHeights.append(rowHeight)
     }
 
-    return CacheData(columnWidths: columnWidths, rowHeights: rowHeights)
+    cache.columnCount = columnCount
+    cache.columnMaxWidths = columnMaxWidths
+    cache.cellUnconstrainedWidths = cellUnconstrainedWidths
+    cache.columnWidths = columnWidths
+    cache.rowHeights = rowHeights
   }
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) -> CGSize {

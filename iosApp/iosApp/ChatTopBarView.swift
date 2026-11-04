@@ -133,8 +133,14 @@ struct ChatTopBarView: View {
                         onExportConversation: onExportConversation
                     )
                     .scaleEffect(reduceMotion ? 1 : dockScale)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
-                        guard !isUnderlyingSheetPresented, !isModalSheetPresented else { return }
+                    .onGeometryChange(for: CGRect.self) {
+                        ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                            $0.frame(in: .global),
+                            isPanelOpen: panel != nil,
+                            isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                        )
+                    } action: { rect in
+                        guard !rect.isNull else { return }
                         tapRegions.dock = rect
                     }
                 }
@@ -142,8 +148,14 @@ struct ChatTopBarView: View {
 
                 island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))
                     .padding(.top, ChatTopBarLayout.islandTopOffset)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
-                        guard !isUnderlyingSheetPresented, !isModalSheetPresented else { return }
+                    .onGeometryChange(for: CGRect.self) {
+                        ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                            $0.frame(in: .global),
+                            isPanelOpen: panel != nil,
+                            isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                        )
+                    } action: { rect in
+                        guard !rect.isNull else { return }
                         tapRegions.island = rect
                     }
 
@@ -180,7 +192,16 @@ struct ChatTopBarView: View {
                     }
                     .onDisappear { onShelfStripHeightChange(0) }
                     .frame(width: min(340, geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
+                    .onGeometryChange(for: CGRect.self) {
+                        ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                            $0.frame(in: .global),
+                            isPanelOpen: panel != nil,
+                            isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                        )
+                    } action: { rect in
+                        guard !rect.isNull else { return }
+                        tapRegions.panel = rect
+                    }
                     .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
                     .padding(.top, ChatTopBarLayout.controlsHeight + 8)
                     .transition(.opacity)
@@ -512,7 +533,16 @@ struct ChatTopBarView: View {
             .contentShape(shape)
             // Blank panel space must not activate the timeline underneath.
             .onTapGesture { }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
+            .onGeometryChange(for: CGRect.self) {
+                ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                    $0.frame(in: .global),
+                    isPanelOpen: panel != nil,
+                    isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                )
+            } action: { rect in
+                guard !rect.isNull else { return }
+                tapRegions.panel = rect
+            }
     }
 
     private func panelTransition(anchor: UnitPoint) -> AnyTransition {

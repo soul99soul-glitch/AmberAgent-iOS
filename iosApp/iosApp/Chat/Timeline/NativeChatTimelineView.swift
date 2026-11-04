@@ -203,7 +203,8 @@ struct NativeChatTimelineView: View {
                 ? contentHashCache.streamingTailLayoutToken(for: row)
                 : contentHashCache.contentHash(for: row)
         }
-        let firstHistoryEntryID = projection.entries.first(where: { $0.kind == .message })?.id
+        let firstHistoryMessageEntry = projection.entries.first(where: { $0.kind == .message })
+        let firstHistoryEntryID = firstHistoryMessageEntry?.id
         let hasActivityAnchor = activity.map { status in
             projection.entries.contains { $0.messageId == status.anchorMessageID }
         } ?? true
@@ -290,7 +291,7 @@ struct NativeChatTimelineView: View {
                 .environment(\.chatPhoneToolGroupToggle, phoneToolGroupToggleHandler)
                 .scrollTargetLayout()
                 .onGeometryChange(for: String?.self) { _ in
-                    projection.entries.first(where: { $0.kind == .message })?.messageId
+                    firstHistoryMessageEntry?.messageId
                 } action: { firstMessageID in
                     laidOutHistoryFirstMessageID = firstMessageID
                     restoreHistoryRevealAnchorIfReady(using: historyScrollProxy)

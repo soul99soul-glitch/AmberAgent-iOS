@@ -69,6 +69,14 @@ struct AgentSoulPresentation: Equatable {
     var bodyText: String
     var voiceSample: String?
 
+    private static let leadingBulletRegex = try? NSRegularExpression(pattern: #"^[-*•\d\.\)\s]+"#)
+    private static let dialogueRegexes: [NSRegularExpression] = [
+        #"“([^”]{10,88}[。！？!?～~])”"#,
+        #"\"([^\"]{10,88}[。！？!?～~])\""#,
+    ].compactMap { try? NSRegularExpression(pattern: $0) }
+    private static let shortTagSeparators = CharacterSet(charactersIn: "、，,·/｜|；;。！？!?\n")
+    private static let shortTagForbidden = ["自称", "管你叫", "平时", "遇到", "说话", "我是", "你是", "可以", "或者", "如果"]
+
     static func parse(soulPrompt: String, tagline: String) -> AgentSoulPresentation {
         let trimmedSoul = soulPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSoul.isEmpty else {
@@ -82,11 +90,13 @@ struct AgentSoulPresentation: Equatable {
         for line in trimmedSoul.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            let cleanLine = trimmed.replacingOccurrences(
-                of: #"^[-*•\d\.\)\s]+"#,
-                with: "",
-                options: .regularExpression
-            )
+            let cleanLine: String
+            if let regex = leadingBulletRegex {
+                let nsRange = NSRange(trimmed.startIndex..., in: trimmed)
+                cleanLine = regex.stringByReplacingMatches(in: trimmed, range: nsRange, withTemplate: "")
+            } else {
+                cleanLine = trimmed
+            }
             if let match = extractPrefixedValue(from: cleanLine, prefixes: ["标签：", "标签:", "性格标签：", "性格标签:", "关键词：", "关键词:"]) {
                 explicitTraits.append(contentsOf: splitShortTags(match))
                 continue
@@ -131,23 +141,21 @@ struct AgentSoulPresentation: Equatable {
     }
 
     private static func splitShortTags(_ text: String) -> [String] {
-        let separators = CharacterSet(charactersIn: "、，,·/｜|；;。！？!?\n")
-        let forbidden = ["自称", "管你叫", "平时", "遇到", "说话", "我是", "你是", "可以", "或者", "如果"]
         return text
-            .components(separatedBy: separators)
+            .components(separatedBy: shortTagSeparators)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { token in
                 token.count >= 2 && token.count <= 6
-                    && !forbidden.contains(where: { token.contains($0) })
+                    && !shortTagForbidden.contains(where: { token.contains($0) })
                     && !token.contains("「") && !token.contains("」")
                     && !token.contains("“") && !token.contains("”")
             }
     }
 
     private static func extractQuotedDialogue(from text: String) -> String? {
-        for pattern in [#"“([^”]{10,88}[。！？!?～~])”"#, #"\"([^\"]{10,88}[。！？!?～~])\""#] {
-            if let regex = try? NSRegularExpression(pattern: pattern),
-               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+        let nsRange = NSRange(text.startIndex..., in: text)
+        for regex in dialogueRegexes {
+            if let match = regex.firstMatch(in: text, range: nsRange),
                let range = Range(match.range(at: 1), in: text) {
                 return "“\(text[range])”"
             }

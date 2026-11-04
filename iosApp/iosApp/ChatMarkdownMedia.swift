@@ -305,7 +305,7 @@ struct ChatMarkdownMediaContent<TextContent: View>: View {
         var segments = controller.plan.segments
         let consumed = min(controller.plan.consumedUTF8Count, text.utf8.count)
         let tail = consumed == 0 ? text : String(decoding: text.utf8.dropFirst(consumed), as: UTF8.self)
-        if !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if tail.contains(where: { !$0.isWhitespace }) {
             segments.append(.init(id: "text:\(consumed)", kind: .text(tail)))
         }
         return segments
