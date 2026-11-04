@@ -87,10 +87,12 @@ final class MacGatewayStore {
     /// Bumped per request so a slower, older response never overwrites a newer one (polls, pull to refresh and
     /// the refresh after a decision overlap).
     @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
+    @ObservationIgnored var hasCheckedCloudSoulOnConnect = false
     @ObservationIgnored let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        bindCloudSoulStoreIfNeeded()
         if let data = defaults.data(forKey: Self.connectionKey),
            let saved = try? JSONDecoder().decode(MacGatewayConnection.self, from: data),
            let token = IOSCredentialSideTable.load(key: Self.tokenKey) {
@@ -108,6 +110,8 @@ final class MacGatewayStore {
         self.connection = connection
         self.client = client
         self.isReachable = true
+        self.hasCheckedCloudSoulOnConnect = false
+        bindCloudSoulStoreIfNeeded()
         loadPersistedCloudTasks()
         loadPersistedCloudDialogueState()
     }
@@ -254,6 +258,9 @@ final class MacGatewayStore {
             guard self.client === client, generation == requestGeneration.status else { return }
             status = latest
             isReachable = true
+            let forceSoulPull = !hasCheckedCloudSoulOnConnect
+            hasCheckedCloudSoulOnConnect = true
+            await syncCloudSoulIfNeeded(observedRevision: latest.soulRevision, forcePull: forceSoulPull)
             await refreshCloudAgents()
             await refreshActiveCloudTasks()
             startCloudTaskPollingIfNeeded()
@@ -528,6 +535,7 @@ final class MacGatewayStore {
         cloudImporting = false
         cloudImportKeyChanged = false
         pendingImportOperation = IOSCloudPendingOperation()
+        hasCheckedCloudSoulOnConnect = false
         isReachable = nil
         pushError = nil
     }

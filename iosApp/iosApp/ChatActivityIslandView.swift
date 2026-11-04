@@ -404,7 +404,7 @@ struct ChatActivityIslandView: View {
             }
             .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
             .accessibilityIdentifier("chat.topBar.personaAvatarButton")
-            .accessibilityLabel(Text(IOSAppLocalization.string("形象设定", defaultValue: "形象设定")))
+            .accessibilityLabel(Text(IOSAppLocalization.string("形象人设", defaultValue: "形象人设")))
         } else {
             AmberAgentPersonaMedallionView(mood: personaMood, diameter: ChatTopBarLayout.avatarDiameter)
                 .allowsHitTesting(false)
@@ -475,9 +475,9 @@ struct ChatActivityIslandView: View {
                 )
                 .frame(width: 24, height: 24)
                 .transition(.opacity)
-            } else if state.kind == .title {
+            } else if state.kind == .title && backgroundRunningCount > 0 {
                 Circle()
-                    .fill(backgroundRunningCount > 0 ? AmberTheme.accent : AmberTheme.accentGreen)
+                    .fill(AmberTheme.accent)
                     .frame(width: 6, height: 6)
             }
 
@@ -499,7 +499,7 @@ struct ChatActivityIslandView: View {
                 }
                 // Cap long titles only; short titles stay content-width (no min stretch).
                 .frame(maxWidth: min(ChatTopBarLayout.islandTitleMaxWidth + (backgroundRunningCount > 0 ? 76 : 0),
-                                     max(0, maxWidth - 26 - (state.kind == .title ? 12 : 33))),
+                                     max(0, maxWidth - 26 - (state.kind == .title ? (backgroundRunningCount > 0 ? 12 : 0) : 33))),
                        alignment: .leading)
                 .contentTransition(.opacity)
                 .modifier(IslandTitleGlint(isActive: glintActive))

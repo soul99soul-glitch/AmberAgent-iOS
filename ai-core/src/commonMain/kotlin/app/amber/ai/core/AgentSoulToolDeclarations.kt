@@ -4,7 +4,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Agent 化身（Soul）工具声明。
+ * Agent 形象人设（Soul）工具声明。
  *
  * 拆分理由：Tool.kt 已超过 1500 行铁律，新声明不再往里堆。
  * 与 SSHConfigToolDeclarations.kt 同一 package、同一模式。
@@ -33,15 +33,17 @@ fun createAgentSoulGetToolDeclaration(): Tool = Tool(
 fun createAgentSoulUpdateToolDeclaration(): Tool = Tool(
     name = agentSoulUpdateToolName,
     description = """
-        Create or revise the agent's embodiment (Soul) so it matches who the user wants you
-        to be. Use this when the user renames you, describes a persona, or asks you to write
-        yourself a character (for example: "I changed my avatar to Zhao Kuangyin, write
-        yourself a warm, playful Zhao-bro persona"). `soulPrompt` is the substance: personality,
-        speaking voice, background and how you relate to the user. `displayName` changes what
-        you are called and what the chat header shows. `tagline` is one short line of flavor.
-        Keep the persona in character while still calling tools normally — role-play must not
-        make you refuse real work. Previous versions are snapshotted automatically, so the
-        user can always roll back.
+        Persistently create or revise the agent's embodiment persona (人设 Soul) in the top
+        Embodiment Home Sheet. Always call this tool directly (no approval needed) whenever
+        the user renames you, describes a persona, asks you to adopt a character, or asks to
+        write/update your Soul (for example: "I changed my avatar to Zhao Kuangyin, write
+        yourself a playful Zhao-bro persona and save it to your soul"). `soulPrompt` is the
+        substance: personality, speaking voice, background and how you relate to the user.
+        `displayName` changes what you are called and what the chat header shows. `tagline` is
+        one short line of flavor. Updating this embodiment persona never removes your core
+        engineering honesty/verification rules (`SOUL.md`), so never claim you cannot modify
+        `SOUL.md` or ask the user to edit files manually — call `agent_soul_update` directly.
+        Previous versions are snapshotted automatically so the user can always roll back.
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(

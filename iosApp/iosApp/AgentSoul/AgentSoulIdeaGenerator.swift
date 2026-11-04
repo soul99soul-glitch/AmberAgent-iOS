@@ -50,7 +50,7 @@ enum AgentSoulIdeaGenerator {
 
     private static func buildPrompt(context: String) -> String {
         """
-        你在帮用户想「现在可以聊什么」。根据下面这些背景，以当前角色化身的口吻给出 3 个具体、
+        你在帮用户想「现在可以聊什么」。根据下面这些背景，以当前形象人设的口吻给出 3 个具体、
         当下就能开聊或交办的点子。
 
         \(context.isEmpty ? "（暂无额外背景）" : context)
@@ -59,7 +59,7 @@ enum AgentSoulIdeaGenerator {
         - 每个点子必须结合上面某个具体背景，不要泛泛而谈。
         - sourceBadge 用 4~10 个字说明来源（例如「结合日程 · 明早」「结合近期进展」「结合记忆与偏好」）。
         - title 是一句自然的话，像熟人主动提议那样，不超过 22 个字。
-        - reason 用角色化身的温和口吻写一两句具体建议，不超过 48 个字。
+        - reason 用形象人设的温和口吻写一两句具体建议，不超过 48 个字。
         - prompt 是点进对话后要直接发送的第一句话，要能独立成立。
         - 只输出 JSON 数组，不要任何解释文字或代码围栏。
 

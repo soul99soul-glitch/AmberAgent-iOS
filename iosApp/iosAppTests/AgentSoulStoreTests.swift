@@ -2,7 +2,7 @@ import XCTest
 @preconcurrency import Shared
 @testable import iosApp
 
-/// Agent 化身（Soul）存储与工具的最小契约测试。
+/// Agent 形象人设（Soul）存储与工具的最小契约测试。
 ///
 /// 只覆盖会影响用户可见行为的三件事：称呼/签名/正文能存住、旧版进快照可回退、
 /// 注入片段只在有内容时出现且带称呼。不做渲染或网络验证。

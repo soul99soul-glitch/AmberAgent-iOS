@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Arquiel Design v2.5 · Agent 化身主页视觉令牌（自适应暖纸与深浅色主题）
+// MARK: - Arquiel Design v2.5 · Agent 形象人设视觉令牌（自适应暖纸与深浅色主题）
 
 enum AgentEmbodimentPalette {
     private static var isDefaultPaper: Bool {
@@ -197,9 +197,9 @@ extension AnyTransition {
     }
 }
 
-// MARK: - Agent 化身主页 Sheet
+// MARK: - Agent 形象人设 Sheet
 
-/// Agent 化身主页：顶部角色头卡 + 人设 / 记忆 / 灵感 三栏。
+/// Agent 形象人设：顶部角色头卡 + 人设 / 记忆 / 灵感 三栏。
 struct AgentEmbodimentHomeSheet: View {
     let sharedSettings: IOSSharedSettingsStore
     var onStartConversation: (String) -> Void = { _ in }
@@ -275,13 +275,16 @@ struct AgentEmbodimentHomeSheet: View {
             AgentSoulEditorSheet(store: soul)
                 .presentationDetents([.large])
         }
+        .task {
+            await MacGatewayStore.shared.syncCloudSoulIfNeeded(forcePull: true, soulStore: soul)
+        }
     }
 
     // MARK: - 顶部导航栏
 
     private var topNavigationBar: some View {
         ZStack {
-            Text(IOSAppLocalization.string("化身主页", defaultValue: "化身主页"))
+            Text(IOSAppLocalization.string("形象人设", defaultValue: "形象人设"))
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(AgentEmbodimentPalette.ink)
 
@@ -576,7 +579,7 @@ struct AgentEmbodimentHomeSheet: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(AgentEmbodimentPalette.inkSecondary)
                 Spacer()
-                Text(IOSAppLocalization.string("唯一全局化身 · 一键回退", defaultValue: "唯一全局化身 · 一键回退"))
+                Text(IOSAppLocalization.string("全局统一形象人设 · 一键回退", defaultValue: "全局统一形象人设 · 一键回退"))
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(AgentEmbodimentPalette.inkMuted)
             }

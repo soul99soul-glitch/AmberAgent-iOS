@@ -398,6 +398,8 @@ struct ChatRuntimeContextBuilder {
         <agents_md>
         \(soul)
         </agents_md>
+
+        \(AgentSoulStore.toolGuidanceSection)
         """)
     }
 

@@ -28,6 +28,10 @@ struct ChatComposerLocalState {
     var handoffNeedsRetry = false
     var handoffErrorMessage: String?
     var handoffFollowupTask: AmberUnifiedTaskItem?
+    var isSubmittingCloudDialogue = false
+    var cloudDialogueErrorMessage: String?
+    var activeCloudDialogueRequestId = UUID().uuidString.lowercased()
+    var lastCloudDialogueFingerprint: String?
 
     mutating func enterBackgroundHandoffMode(followupTask: AmberUnifiedTaskItem? = nil) {
         activeDuetTab = .chat

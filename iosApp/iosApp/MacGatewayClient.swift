@@ -90,6 +90,8 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
     var health: Health?
     /// Where Synara-hosted tasks are answered from outside the LAN; opened in the browser.
     var synaraURL: String?
+    /// Monotonically increasing revision of `/v2/soul` (`C-SOUL-V1`) when supported by the gateway.
+    var soulRevision: Int64?
     var sessions: [Session]
 }
 

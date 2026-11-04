@@ -81,6 +81,7 @@ struct MacGatewayCloudDialogueReceipt: Codable, Equatable, Sendable {
     var workItemIds: [String]
     var state: MacGatewayCloudDialogueReceiptState
     var replayed: Bool
+    var soulRevision: Int64?
 }
 
 enum MacGatewayCloudDialogueEventKind: String, Codable, Equatable, CaseIterable, Sendable {
@@ -126,11 +127,13 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
     var topicId: String
     var workItemId: String?
     var outcome: MacGatewayCloudDialogueOutcome?
+    var soulRevision: Int64?
 }
 
 struct MacGatewayCloudDialogueEventsPage: Codable, Equatable, Sendable {
     var items: [MacGatewayCloudDialogueEvent]
     var nextCursor: Int64
+    var soulRevision: Int64?
 }
 
 /// Tracks a single in-place dynamic progress line for a cloud `workItemId`.
@@ -615,6 +618,9 @@ extension MacGatewayStore {
                 cloudDialogueFollowups[fIdx].state = receipt.state
             }
             persistCloudDialogueState()
+            if let rev = receipt.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision {
+                await syncCloudSoulIfNeeded(observedRevision: rev)
+            }
             return .success(receipt)
         } catch {
             if forgetIfRevoked(error) {
@@ -638,6 +644,9 @@ extension MacGatewayStore {
             if !page.items.isEmpty {
                 ingestCloudDialogueEventsPage(page, requestedAfter: currentCursor)
                 persistCloudDialogueState()
+            }
+            if let rev = page.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision {
+                await syncCloudSoulIfNeeded(observedRevision: rev)
             }
             return .success(page)
         } catch {
@@ -704,6 +713,7 @@ extension MacGatewayStore {
             if let workItemId = event.workItemId, current.outcome == .cancelled {
                 markUnconsumedFollowupsCancelled(forWorkItemId: workItemId)
             }
+            syncCloudDialogueSoulIfNeeded(for: event)
 
         case .stopRequested:
             if let workItemId = event.workItemId {
@@ -743,9 +753,34 @@ extension MacGatewayStore {
         case .inputCancelled:
             updateFollowupStateFromEvent(event, newState: .cancelled)
 
-        case .userMessage, .assistantReply:
+        case .userMessage:
             break
+
+        case .assistantReply:
+            syncCloudDialogueSoulIfNeeded(for: event)
         }
+    }
+
+    private func syncCloudDialogueSoulIfNeeded(for event: MacGatewayCloudDialogueEvent) {
+        if let rev = event.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision, client != nil {
+            Task { @MainActor in
+                await self.syncCloudSoulIfNeeded(observedRevision: rev, forcePull: true)
+            }
+            return
+        }
+        let userEvents = cloudDialogueEvents.filter {
+            ($0.kind == .userMessage || $0.kind == .followup) && $0.topicId == event.topicId
+        }
+        let latestUserText = userEvents.last?.text
+            ?? cloudDialogueSubmissions.first(where: { $0.kind == .mainMessage || $0.kind == .followupInput })?.text
+            ?? ""
+        let recentContext = userEvents.dropLast().suffix(3).map(\.text).joined(separator: "\n")
+        _ = AgentSoulCloudBridge.syncFromTurnIfNeeded(
+            userText: latestUserText,
+            assistantText: event.text,
+            recentConversationContext: recentContext,
+            store: AgentSoulStore.shared
+        )
     }
 
     private func updateFollowupStateFromEvent(
@@ -813,6 +848,11 @@ extension MacGatewayStore {
                 lastError: nil
             )
         }
+        if let rev = receipt.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision {
+            Task { @MainActor in
+                await self.syncCloudSoulIfNeeded(observedRevision: rev)
+            }
+        }
     }
 
     private func upsertSubmission(_ submission: MacGatewayCloudDialoguePersistedSubmission) {
@@ -877,208 +917,5 @@ extension MacGatewayStore {
     func stopCloudDialoguePolling() {
         cloudDialoguePollTask?.cancel()
         cloudDialoguePollTask = nil
-    }
-}
-
-// MARK: - Explicit Paired Cloud Main Dialogue Sheet View
-
-struct MacGatewayCloudDialogueSheet: View {
-    let store: MacGatewayStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var inputText = ""
-    @State private var activeRequestId = UUID().uuidString.lowercased()
-    @State private var lastAttemptedFingerprint: String?
-    @State private var errorMessage: String?
-    @State private var isSending = false
-
-    private var currentFingerprint: String {
-        "\(store.selectedCloudDialogueWorkItemId ?? "main")\u{0000}\(inputText)"
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if !store.cloudDialogueProgressByWorkItem.isEmpty {
-                    VStack(spacing: 6) {
-                        ForEach(Array(store.cloudDialogueProgressByWorkItem.values.sorted(by: { $0.lastEventSeq > $1.lastEventSeq }))) { progress in
-                            HStack(spacing: 8) {
-                                if progress.isLive {
-                                    ProgressView().controlSize(.small)
-                                } else {
-                                    Image(systemName: progress.outcome == .completed ? "checkmark.circle.fill" : "xmark.circle")
-                                        .font(.caption)
-                                        .foregroundStyle(progress.outcome == .completed ? AmberTheme.accentGreen : AmberTheme.muted)
-                                }
-                                Text(verbatim: progress.displaySingleLine)
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(AmberTheme.foreground)
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                if progress.isLive {
-                                    Button(macGatewayL("补充")) {
-                                        store.selectedCloudDialogueWorkItemId = progress.workItemId
-                                    }
-                                    .font(.caption.weight(.semibold))
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.mini)
-
-                                    Button(macGatewayL("停止"), role: .destructive) {
-                                        Task { _ = await store.stopCloudWorkItem(workItemId: progress.workItemId) }
-                                    }
-                                    .font(.caption.weight(.semibold))
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.mini)
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                }
-
-                List {
-                    ForEach(store.cloudDialogueVisibleEvents) { event in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(verbatim: event.role == "user" ? macGatewayL("你") : "Amber Cloud")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(AmberTheme.muted)
-                                if let workItemId = event.workItemId {
-                                    Text(verbatim: workItemId)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(AmberTheme.muted2)
-                                }
-                                Spacer()
-                                if event.kind == .followup,
-                                   let followup = store.cloudDialogueFollowups.first(where: { $0.eventId == event.id || ($0.workItemId == event.workItemId && $0.text == event.text) }) {
-                                    Text(verbatim: followup.state.displayBadgeText)
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(followup.state == .cancelled ? .orange : AmberTheme.accent)
-                                }
-                            }
-                            Text(verbatim: event.text)
-                                .font(.body)
-                                .foregroundStyle(AmberTheme.foreground)
-                        }
-                        .padding(.vertical, 2)
-                    }
-
-                    ForEach(store.cloudDialogueFollowups.filter { record in
-                        !store.cloudDialogueVisibleEvents.contains(where: { $0.id == record.eventId })
-                    }) { followup in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(verbatim: macGatewayL("任务补充"))
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(AmberTheme.muted)
-                                Spacer()
-                                Text(verbatim: followup.state.displayBadgeText)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(followup.state == .cancelled ? .orange : AmberTheme.accent)
-                            }
-                            Text(verbatim: followup.text)
-                                .font(.subheadline)
-                                .foregroundStyle(followup.state == .cancelled ? AmberTheme.muted : AmberTheme.foreground)
-                        }
-                    }
-                }
-                .listStyle(.plain)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    if let targetWorkItemId = store.selectedCloudDialogueWorkItemId {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.turn.down.right")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(AmberTheme.accent)
-                            Text(verbatim: "\(macGatewayL("补充运行中任务"))：\(targetWorkItemId)")
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                            Spacer()
-                            Button {
-                                store.selectedCloudDialogueWorkItemId = nil
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(AmberTheme.muted)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    if let errorMessage {
-                        Text(verbatim: errorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                    HStack(spacing: 8) {
-                        TextField(
-                            store.selectedCloudDialogueWorkItemId == nil
-                                ? macGatewayL("发送消息给已配对云主对话…")
-                                : macGatewayL("向选中任务追加补充说明…"),
-                            text: $inputText,
-                            axis: .vertical
-                        )
-                        .lineLimit(1...4)
-                        .textFieldStyle(.roundedBorder)
-
-                        Button(macGatewayL("发送")) {
-                            sendInput()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isSending || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-                .padding(12)
-                .background(AmberTheme.surface)
-            }
-            .navigationTitle(Text(verbatim: macGatewayL("已配对云主对话")))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(macGatewayL("关闭")) {
-                        store.setCloudMainDialogueSelected(false)
-                        dismiss()
-                    }
-                }
-            }
-            .onAppear {
-                store.setCloudMainDialogueSelected(true)
-            }
-        }
-        .tint(AmberTheme.accent)
-    }
-
-    private func sendInput() {
-        if let lastAttemptedFingerprint, lastAttemptedFingerprint != currentFingerprint {
-            activeRequestId = UUID().uuidString.lowercased()
-        }
-        lastAttemptedFingerprint = currentFingerprint
-        let reqId = activeRequestId
-        let text = inputText
-        let targetWorkItemId = store.selectedCloudDialogueWorkItemId
-        isSending = true
-        errorMessage = nil
-
-        Task { @MainActor in
-            let result: Result<MacGatewayCloudDialogueReceipt, Error>
-            if let targetWorkItemId {
-                result = await store.sendCloudWorkItemInput(workItemId: targetWorkItemId, text: text, requestId: reqId)
-            } else {
-                result = await store.sendCloudDialogueMessage(text: text, requestId: reqId)
-            }
-            isSending = false
-            switch result {
-            case .success:
-                inputText = ""
-                activeRequestId = UUID().uuidString.lowercased()
-                lastAttemptedFingerprint = nil
-                _ = await store.pollCloudDialogueEvents()
-            case .failure(let error):
-                errorMessage = error.localizedDescription
-            }
-        }
     }
 }

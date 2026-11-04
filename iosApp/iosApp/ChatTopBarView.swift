@@ -359,8 +359,8 @@ struct ChatTopBarView: View {
                     .frame(width: maxWidth, height: ChatTopBarLayout.avatarDiameter, alignment: .top)
                     .transaction { $0.animation = nil }
                     .accessibilityIdentifier("chat.topBar.personaAvatarButton")
-                    .accessibilityLabel("形象设定")
-                    .accessibilityHint("轻点上传形象图或生成多帧微动画")
+                    .accessibilityLabel("形象人设")
+                    .accessibilityHint("轻点查看或编辑形象人设、记忆与灵感")
                 }
             }
             .accessibilityAddTraits(.isButton)
@@ -374,7 +374,7 @@ struct ChatTopBarView: View {
             }
             .accessibilityActions {
                 if let onAvatarTap {
-                    Button("形象设定") {
+                    Button("形象人设") {
                         onAvatarTap()
                     }
                 }

@@ -211,12 +211,7 @@ extension ChatView {
                                     selectedTab: composerState.activeDuetTab,
                                     activeTaskCount: duetActiveTaskCount,
                                     needsAttentionCount: duetNeedsAttentionCount,
-                                    selectedReasoning: selectedReasoningOption,
-                                    availableReasoningOptions: availableReasoningOptions,
-                                    reasoningIsAvailable: reasoningIsAvailable,
-                                    quickModels: composerQuickModels,
-                                    currentModelSelection: composerCurrentModelSelection,
-                                    currentModelLabel: composerModelLabel,
+                                    gateway: MacGatewayStore.shared,
                                     onSelectTab: { tab in
                                         withAnimation(.snappy(duration: 0.22)) {
                                             selectDuetTab(tab)
@@ -232,17 +227,13 @@ extension ChatView {
                                             selectDuetTab(.hubs)
                                         }
                                     },
-                                    onStartNewTopic: {
-                                        triggerStartNewTopicFromSwitcher()
+                                    onSelectHost: { useCloud in
+                                        withAnimation(.snappy(duration: 0.22)) {
+                                            selectMainDialogueHost(useCloud: useCloud)
+                                        }
                                     },
-                                    onSelectReasoning: { option in
-                                        selectedReasoningBinding.wrappedValue = option
-                                    },
-                                    onSelectModel: { model in
-                                        selectComposerQuickModel(model)
-                                    },
-                                    onOpenModelSheet: {
-                                        openComposerModelSheet()
+                                    onOpenCloudPairingSettings: {
+                                        isPresentingCloudGatewaySettings = true
                                     }
                                 )
                                 .padding(.horizontal, 18)
@@ -274,7 +265,41 @@ extension ChatView {
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
 
-                        VStack(spacing: 0) {
+                        VStack(spacing: 6) {
+                            if isCloudMainDialogueActive,
+                               let targetWorkItemId = MacGatewayStore.shared.selectedCloudDialogueWorkItemId,
+                               !collapsesComposerForDuetPanel {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.turn.down.right")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(AmberTheme.accent)
+                                    Text("补充云端任务：\(targetWorkItemId)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(AmberTheme.foreground)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Button {
+                                        MacGatewayStore.shared.selectedCloudDialogueWorkItemId = nil
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(AmberTheme.muted)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(AmberTheme.surface, in: Capsule(style: .continuous))
+                            }
+
+                            if isCloudMainDialogueActive,
+                               let cloudError = composerState.cloudDialogueErrorMessage,
+                               !collapsesComposerForDuetPanel {
+                                Text(verbatim: cloudError)
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .lineLimit(2)
+                            }
+
                             // Apple Music dock：左侧输入胶囊 + 右侧发送键；
                             // 打开「任务」或「中心」面板时折叠高度为 0，但保持 UITextView 挂载以完整保留草稿。
                             // 独立成叶子 View，把高频变化的 inputText 与 composerInputHeight 观察范围锁死在行内，
@@ -286,6 +311,8 @@ extension ChatView {
                                 isAttachExpanded: composerState.isAttachExpanded,
                                 hasPendingComposerGate: hasPendingComposerGate,
                                 isRunActive: isCurrentConversationRunActive,
+                                isCloudMainDialogueActive: isCloudMainDialogueActive,
+                                isSubmittingCloudDialogue: composerState.isSubmittingCloudDialogue,
                                 collapsesComposerForDuetPanel: collapsesComposerForDuetPanel,
                                 inputPlaceholder: inputPlaceholder,
                                 isInputFocused: inputFocusBinding,
@@ -367,12 +394,7 @@ extension ChatView {
                                         selectedTab: composerState.activeDuetTab,
                                         activeTaskCount: duetActiveTaskCount,
                                         needsAttentionCount: duetNeedsAttentionCount,
-                                        selectedReasoning: selectedReasoningOption,
-                                        availableReasoningOptions: availableReasoningOptions,
-                                        reasoningIsAvailable: reasoningIsAvailable,
-                                        quickModels: composerQuickModels,
-                                        currentModelSelection: composerCurrentModelSelection,
-                                        currentModelLabel: composerModelLabel,
+                                        gateway: MacGatewayStore.shared,
                                         onSelectTab: { tab in
                                             withAnimation(.snappy(duration: 0.22)) {
                                                 selectDuetTab(tab)
@@ -388,17 +410,13 @@ extension ChatView {
                                                 selectDuetTab(.hubs)
                                             }
                                         },
-                                        onStartNewTopic: {
-                                            triggerStartNewTopicFromSwitcher()
+                                        onSelectHost: { useCloud in
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                selectMainDialogueHost(useCloud: useCloud)
+                                            }
                                         },
-                                        onSelectReasoning: { option in
-                                            selectedReasoningBinding.wrappedValue = option
-                                        },
-                                        onSelectModel: { model in
-                                            selectComposerQuickModel(model)
-                                        },
-                                        onOpenModelSheet: {
-                                            openComposerModelSheet()
+                                        onOpenCloudPairingSettings: {
+                                            isPresentingCloudGatewaySettings = true
                                         }
                                     )
                                     .padding(.top, 8)
@@ -522,7 +540,15 @@ extension ChatView {
         taskCountCache.taskSegments(messages: viewModel.messages, isGenerationActive: viewModel.isGenerationActive)
     }
 
+    var isCloudMainDialogueActive: Bool {
+        MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
+    }
+
     private func sendEnabled(for text: String) -> Bool {
+        if isCloudMainDialogueActive {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty && !composerState.isSubmittingCloudDialogue
+        }
         _ = sharedSettings.revision
         return viewModel.composerSendBlockReason(for: text) == nil
     }
@@ -533,8 +559,45 @@ extension ChatView {
             viewModel.inputText = committedText
         }
         guard sendEnabled(for: committedText) else { return }
+        if isCloudMainDialogueActive {
+            sendCloudDialogueFromComposer(text: committedText)
+            return
+        }
         viewportState.followPaused = false
         viewModel.sendMessage(startsGenerationAfterInsertion: true)
+    }
+
+    private func sendCloudDialogueFromComposer(text: String) {
+        let store = MacGatewayStore.shared
+        let targetWorkItemId = store.selectedCloudDialogueWorkItemId
+        let fingerprint = "\(targetWorkItemId ?? "main")\u{0000}\(text)"
+        if let last = composerState.lastCloudDialogueFingerprint, last != fingerprint {
+            composerState.activeCloudDialogueRequestId = UUID().uuidString.lowercased()
+        }
+        composerState.lastCloudDialogueFingerprint = fingerprint
+        let reqId = composerState.activeCloudDialogueRequestId
+        composerState.isSubmittingCloudDialogue = true
+        composerState.cloudDialogueErrorMessage = nil
+
+        Task { @MainActor in
+            let result: Result<MacGatewayCloudDialogueReceipt, Error>
+            if let targetWorkItemId {
+                result = await store.sendCloudWorkItemInput(workItemId: targetWorkItemId, text: text, requestId: reqId)
+            } else {
+                result = await store.sendCloudDialogueMessage(text: text, requestId: reqId)
+            }
+            composerState.isSubmittingCloudDialogue = false
+            switch result {
+            case .success:
+                viewModel.inputText = ""
+                store.selectedCloudDialogueWorkItemId = nil
+                composerState.activeCloudDialogueRequestId = UUID().uuidString.lowercased()
+                composerState.lastCloudDialogueFingerprint = nil
+                _ = await store.pollCloudDialogueEvents()
+            case .failure(let error):
+                composerState.cloudDialogueErrorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func openComposerModelSheet() {
@@ -556,6 +619,12 @@ extension ChatView {
     }
 
     private var inputPlaceholder: String {
+        if isCloudMainDialogueActive {
+            let cloudKey = MacGatewayStore.shared.selectedCloudDialogueWorkItemId == nil
+                ? "发消息给云端真身..."
+                : "向选中云端任务追加补充说明..."
+            return IOSAppLocalization.string(cloudKey, defaultValue: cloudKey)
+        }
         let key: String = switch configurationIssue {
         case .some(.missingAPIKey):
             "先添加 API Key"
@@ -721,7 +790,7 @@ extension ChatView {
         composerState.activeComposerPanel = composerState.activeComposerPanel == panel ? nil : panel
     }
 
-    // MARK: - Argon 3+1 Mode & New Topic Actions
+    // MARK: - Argon 3+1 Mode & Host Switcher Actions
 
     func selectDuetTab(_ tab: AmberDuetModeTab) {
         if let committed = composerInputController.committedText(), committed != viewModel.inputText {
@@ -735,17 +804,24 @@ extension ChatView {
         composerState.activeDuetTab = tab
     }
 
-    func triggerStartNewTopicFromSwitcher() {
-        composerState.activeComposerPanel = nil
-        composerState.isAttachExpanded = false
-        composerState.exitBackgroundHandoffModePreservingDraft()
+    func selectMainDialogueHost(useCloud: Bool) {
+        let store = MacGatewayStore.shared
+        guard store.connection != nil || !useCloud else {
+            isPresentingCloudGatewaySettings = true
+            return
+        }
+        store.setCloudMainDialogueSelected(useCloud)
+        composerState.cloudDialogueErrorMessage = nil
         if composerState.activeDuetTab != .chat {
-            withAnimation(.snappy(duration: 0.22)) {
-                composerState.activeDuetTab = .chat
+            composerState.activeDuetTab = .chat
+        }
+        syncIslandPresentation()
+        if useCloud {
+            Task { @MainActor in
+                await store.refresh()
+                _ = await store.pollCloudDialogueEvents()
             }
         }
-        startNewChatTopic()
-        composerState.isInputFocused = true
     }
 
     func followupTaskInChat(_ followupTask: AmberUnifiedTaskItem) {
@@ -772,6 +848,8 @@ private struct ChatComposerInputDockRow: View {
     let isAttachExpanded: Bool
     let hasPendingComposerGate: Bool
     let isRunActive: Bool
+    let isCloudMainDialogueActive: Bool
+    let isSubmittingCloudDialogue: Bool
     let collapsesComposerForDuetPanel: Bool
     let inputPlaceholder: String
     @Binding var isInputFocused: Bool
@@ -786,16 +864,19 @@ private struct ChatComposerInputDockRow: View {
         let currentInputText = viewModel.inputText
         let trimmedNonEmpty = !currentInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasSendableContent = trimmedNonEmpty
-            || !viewModel.pendingImages.isEmpty
-            || viewModel.pendingSelectedFilePreview != nil
+            || (!isCloudMainDialogueActive && (!viewModel.pendingImages.isEmpty || viewModel.pendingSelectedFilePreview != nil))
         let _ = sharedSettings.revision
-        let isSendEnabled = viewModel.composerSendBlockReason(for: currentInputText) == nil
-        let isStopMode = ChatView.composerSendButtonIsStopMode(
-            isRunActive: isRunActive,
-            isRecognizingImages: viewModel.isRecognizingImages,
-            hasSendableContent: hasSendableContent,
-            sendEnabled: isSendEnabled
-        )
+        let isSendEnabled = isCloudMainDialogueActive
+            ? (trimmedNonEmpty && !isSubmittingCloudDialogue)
+            : (viewModel.composerSendBlockReason(for: currentInputText) == nil)
+        let isStopMode = isCloudMainDialogueActive
+            ? false
+            : ChatView.composerSendButtonIsStopMode(
+                isRunActive: isRunActive,
+                isRecognizingImages: viewModel.isRecognizingImages,
+                hasSendableContent: hasSendableContent,
+                sendEnabled: isSendEnabled
+            )
 
         HStack(alignment: .bottom, spacing: 8) {
             HStack(alignment: .center, spacing: 6) {

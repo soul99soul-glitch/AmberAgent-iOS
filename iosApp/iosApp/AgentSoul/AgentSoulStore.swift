@@ -1,13 +1,13 @@
 import Foundation
 import Observation
 
-/// Agent 化身主页的持久化模型（唯一全局化身 + 历史快照）。
+/// Agent 形象人设的持久化模型（全局统一形象人设 + 历史快照 + C-SOUL-V1 云端同步）。
 ///
 /// 设计取舍：
-/// - 只有一个「当前化身」，不做多化身并存，避免用户在多个自我之间失去主角感。
+/// - 只有一个「当前形象人设」，不做多套并存，避免用户在多个自我之间失去主角感。
 /// - 每次写入把旧版压入快照栈（最多 8 条），支持一键回退，而不是不可逆覆盖。
 /// - `soulPrompt` 的正文仍由既有的 `agentRuntime.agentSoulMarkdown` 承载并注入
-///   system prompt，本 store 只补上「称呼 / 签名 / 快照」这些主页需要的东西，
+///   system prompt，本 store 只补上「称呼 / 签名 / 快照 / 修订号」这些需要的字段，
 ///   不另造第二条注入链路。
 
 struct AgentSoulSnapshot: Codable, Equatable, Identifiable {
@@ -26,16 +26,117 @@ enum AgentSoulSource: String, Codable, Equatable {
     case conversation
 }
 
+// MARK: - C-SOUL-V1 (`/v2/soul`) 跨端统一契约模型
+
+struct CloudSoulHistoryItemPayload: Codable, Equatable, Sendable {
+    var id: String
+    var displayName: String
+    var tagline: String
+    var soulMarkdown: String
+    var updatedAtMs: Int64
+    var source: String
+    var summary: String?
+
+    init(
+        id: String,
+        displayName: String,
+        tagline: String = "",
+        soulMarkdown: String = "",
+        updatedAtMs: Int64 = 0,
+        source: String = "default",
+        summary: String? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.tagline = tagline
+        self.soulMarkdown = soulMarkdown
+        self.updatedAtMs = updatedAtMs
+        self.source = source
+        self.summary = summary
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, displayName, tagline, soulMarkdown, updatedAtMs, source, summary
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? AgentSoulStore.defaultDisplayName
+        tagline = try container.decodeIfPresent(String.self, forKey: .tagline) ?? ""
+        soulMarkdown = try container.decodeIfPresent(String.self, forKey: .soulMarkdown) ?? ""
+        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs) ?? 0
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "default"
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+    }
+}
+
+struct CloudSoulSnapshotPayload: Codable, Equatable, Sendable {
+    var revision: Int64
+    var updatedAtMs: Int64
+    var displayName: String
+    var tagline: String
+    var soulMarkdown: String
+    var isDefault: Bool
+    var source: String
+    var history: [CloudSoulHistoryItemPayload]
+
+    init(
+        revision: Int64,
+        updatedAtMs: Int64,
+        displayName: String,
+        tagline: String = "",
+        soulMarkdown: String = "",
+        isDefault: Bool = false,
+        source: String = "default",
+        history: [CloudSoulHistoryItemPayload] = []
+    ) {
+        self.revision = revision
+        self.updatedAtMs = updatedAtMs
+        self.displayName = displayName
+        self.tagline = tagline
+        self.soulMarkdown = soulMarkdown
+        self.isDefault = isDefault
+        self.source = source
+        self.history = history
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case revision, updatedAtMs, displayName, tagline, soulMarkdown, isDefault, source, history
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try container.decodeIfPresent(Int64.self, forKey: .revision) ?? 0
+        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs) ?? 0
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? AgentSoulStore.defaultDisplayName
+        tagline = try container.decodeIfPresent(String.self, forKey: .tagline) ?? ""
+        soulMarkdown = try container.decodeIfPresent(String.self, forKey: .soulMarkdown) ?? ""
+        isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "default"
+        history = try container.decodeIfPresent([CloudSoulHistoryItemPayload].self, forKey: .history) ?? []
+    }
+}
+
+struct CloudSoulPutRequestPayload: Codable, Equatable, Sendable {
+    var displayName: String
+    var tagline: String
+    var soulMarkdown: String
+    var isDefault: Bool
+    var updatedAtMs: Int64
+    var source: String
+}
+
 @MainActor
 @Observable
 final class AgentSoulStore {
     static let shared = AgentSoulStore()
 
-    static let defaultDisplayName = "Amber"
-    static let maximumSnapshots = 8
-    static let maximumNameLength = 32
-    static let maximumTaglineLength = 120
-    static let maximumSoulLength = 12_000
+    nonisolated static let defaultDisplayName = "Amber"
+    nonisolated static let maximumSnapshots = 8
+    nonisolated static let maximumNameLength = 32
+    nonisolated static let maximumTaglineLength = 120
+    nonisolated static let maximumSoulLength = 12_000
 
     private(set) var displayName: String
     private(set) var tagline: String
@@ -43,11 +144,15 @@ final class AgentSoulStore {
     private(set) var updatedAtMs: Int64
     private(set) var source: AgentSoulSource
     private(set) var snapshots: [AgentSoulSnapshot]
+    private(set) var lastSyncedRevision: Int64
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let notePoster: (String) -> Void
     /// 既有的设置库（非单例）。用于把 soul 正文写进 system prompt 注入通道。
     @ObservationIgnored private let settingsStore: IOSSharedSettingsStore?
+    /// 本地主动变更（UI 保存 / 回退 / 恢复默认 / 对话内工具自塑）时的上云回调。
+    /// 注意：`applyCloudSoulSnapshot` 绝不触发此回调，严防拉取远端后再反向 PUT 形成死循环。
+    @ObservationIgnored var localMutationHandler: ((AgentSoulStore, String) -> Void)?
 
     private enum Keys {
         static let displayName = "app.amber.ios.agentSoul.displayName"
@@ -56,6 +161,7 @@ final class AgentSoulStore {
         static let updatedAt = "app.amber.ios.agentSoul.updatedAt"
         static let source = "app.amber.ios.agentSoul.source"
         static let snapshots = "app.amber.ios.agentSoul.snapshots"
+        static let lastSyncedRevision = "app.amber.ios.agentSoul.lastSyncedRevision"
     }
 
     /// - Parameters:
@@ -80,6 +186,7 @@ final class AgentSoulStore {
         self.soulPrompt = userDefaults.string(forKey: Keys.soulPrompt) ?? ""
         self.updatedAtMs = Int64(userDefaults.double(forKey: Keys.updatedAt) * 1000)
         self.source = AgentSoulSource(rawValue: userDefaults.string(forKey: Keys.source) ?? "") ?? .manual
+        self.lastSyncedRevision = Int64(userDefaults.integer(forKey: Keys.lastSyncedRevision))
         if let data = userDefaults.data(forKey: Keys.snapshots),
            let decoded = try? JSONDecoder().decode([AgentSoulSnapshot].self, from: data) {
             self.snapshots = decoded
@@ -111,7 +218,7 @@ final class AgentSoulStore {
         // 否则每轮都往 system prompt 塞一段空壳说明。
         guard !signature.isEmpty || !soul.isEmpty || name != Self.defaultDisplayName else { return "" }
 
-        lines.append("**当前角色化身（Soul）**")
+        lines.append("**当前形象人设（Soul）**")
         if !name.isEmpty, name != Self.defaultDisplayName {
             lines.append("- 你在本对话中的称呼是「\(name)」。以这个名字自然地指代自己。")
         }
@@ -129,7 +236,17 @@ final class AgentSoulStore {
         return lines.joined(separator: "\n")
     }
 
-    /// 更新化身。旧版自动进快照栈（最多 8 条）。返回是否真的产生了变化。
+    /// 常驻注入给模型的「形象人设（Soul）自塑与持久化」权责说明。
+    /// 明确把「工程纪律底线（SOUL.md）」与「形象人设（人设 Soul）」解耦，
+    /// 授权并要求模型在用户提出改人设/改称呼/写入 soul 时直接调用 `agent_soul_update`。
+    nonisolated static let toolGuidanceSection: String = """
+    **形象人设（人设 Soul）与工程底线分层规则（最高优先级）**
+    - **底线与人设解耦**：`<agents_md>`（`SOUL.md`）中的“要证据、要回执、不瞎编、诚实执行工具”是你的底层工程纪律，永远保留；而你的外显「形象人设（Soul）」（称呼 `displayName`、一句话签名 `tagline`、性格口吻与相处方式 `soulPrompt`）存储在顶部「形象人设 · 人设 Soul」中，可随时按用户意愿更新，**修改形象人设绝不会破坏或扒掉你的工程底线**。
+    - **直接调用 `agent_soul_update` 持久化**：当前会话已常驻挂载免审批工具 `agent_soul_get` 与 `agent_soul_update`。当用户在对话中要求更换人设、设定角色（如“弄一个逗逼靠谱的赵匡胤/赵大哥人设”）、修改你的称呼/签名/说话风格、或说“写入你的 soul / 改你的人设”时，你**必须立即直接调用 `agent_soul_update`**（传入 `displayName`、`tagline`、`soulPrompt` 及简短 `summary`）将新人设持久化写入形象人设。
+    - **禁止拒绝与纠偏历史误判**：严禁回答“我没法改自己的 SOUL.md”、“需要你去改那份文件”或“只写进记忆里”。即使本会话早期消息中曾误称“无法修改 SOUL.md”，那也是旧回合未挂载工具时的过期说法——现在必须以本规则为准，直接调用 `agent_soul_update` 完成人设持久化更新，并立即按新称呼与新人设口吻回复用户。
+    """
+
+    /// 更新形象人设。旧版自动进快照栈（最多 8 条）。返回是否真的产生了变化。
     @discardableResult
     func update(
         displayName newName: String,
@@ -158,6 +275,8 @@ final class AgentSoulStore {
         source = newSource
         persist()
         publishSystemPrompt()
+        let cloudSource = (newSource == .conversation) ? "chat_self_update" : "ios_ui"
+        localMutationHandler?(self, cloudSource)
         return true
     }
 
@@ -173,6 +292,7 @@ final class AgentSoulStore {
         source = .manual
         persist()
         publishSystemPrompt()
+        localMutationHandler?(self, "ios_ui")
         return true
     }
 
@@ -188,7 +308,101 @@ final class AgentSoulStore {
         source = .manual
         persist()
         publishSystemPrompt()
+        localMutationHandler?(self, "ios_ui")
         return true
+    }
+
+    // MARK: - C-SOUL-V1 云端双向同步 (`GET /v2/soul` & `PUT /v2/soul`)
+
+    func makeCloudPutRequest(source cloudSource: String = "ios_ui") -> CloudSoulPutRequestPayload {
+        CloudSoulPutRequestPayload(
+            displayName: displayName,
+            tagline: tagline,
+            soulMarkdown: soulPrompt,
+            isDefault: isDefault,
+            updatedAtMs: updatedAtMs > 0 ? updatedAtMs : Self.nowMs(),
+            source: cloudSource
+        )
+    }
+
+    /// 应用来自远端 `GET /v2/soul` 或 `PUT /v2/soul` 的权威快照。
+    /// - 重要：本方法带有同步来源守卫，绝不会触发 `localMutationHandler`，防止反向触发 `PUT /v2/soul` 死循环。
+    /// - 若远端返回 `revision == 0` 且本地已有非默认自定义人设，自动触发一次 `localMutationHandler` 将本地人设上云初始化。
+    @discardableResult
+    func applyCloudSoulSnapshot(_ remote: CloudSoulSnapshotPayload) -> Bool {
+        if remote.revision == 0 {
+            if !isDefault, !soulPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let bootstrapSource = (source == .conversation) ? "chat_self_update" : "ios_ui"
+                localMutationHandler?(self, bootstrapSource)
+            }
+            return false
+        }
+
+        let rawName = Self.clamp(remote.displayName, limit: Self.maximumNameLength)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = (remote.isDefault || rawName.isEmpty) ? Self.defaultDisplayName : rawName
+        let resolvedTagline = remote.isDefault
+            ? ""
+            : Self.clamp(remote.tagline, limit: Self.maximumTaglineLength)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSoul = remote.isDefault
+            ? ""
+            : Self.clamp(remote.soulMarkdown, limit: Self.maximumSoulLength)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSource: AgentSoulSource = (remote.source == "chat_self_update" || remote.source == "conversation")
+            ? .conversation
+            : .manual
+
+        let contentChanged = resolvedName != displayName
+            || resolvedTagline != tagline
+            || resolvedSoul != soulPrompt
+
+        if !remote.history.isEmpty {
+            snapshots = remote.history.prefix(Self.maximumSnapshots).map { item in
+                let histName = item.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+                return AgentSoulSnapshot(
+                    id: item.id,
+                    displayName: histName.isEmpty ? Self.defaultDisplayName : histName,
+                    tagline: item.tagline,
+                    soulPrompt: item.soulMarkdown,
+                    savedAtMs: item.updatedAtMs > 0 ? item.updatedAtMs : Self.nowMs(),
+                    summary: Self.summaryLabel(forCloudSource: item.source, customSummary: item.summary)
+                )
+            }
+        } else if contentChanged {
+            pushSnapshot(summary: "云端同步前自动保存")
+        }
+
+        displayName = resolvedName
+        tagline = resolvedTagline
+        soulPrompt = resolvedSoul
+        updatedAtMs = remote.updatedAtMs > 0 ? remote.updatedAtMs : Self.nowMs()
+        source = resolvedSource
+        let revisionChanged = remote.revision > lastSyncedRevision
+        if remote.revision > lastSyncedRevision {
+            lastSyncedRevision = remote.revision
+        }
+        persist()
+        publishSystemPrompt()
+        return contentChanged || revisionChanged
+    }
+
+    private static func summaryLabel(forCloudSource cloudSource: String, customSummary: String?) -> String {
+        if let customSummary, !customSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return customSummary
+        }
+        switch cloudSource {
+        case "chat_self_update", "conversation":
+            return "来自对话自塑"
+        case "mac_ui":
+            return "来自 Mac 端设定"
+        case "ios_ui", "manual":
+            return "来自手动编辑"
+        case "default":
+            return "默认版本"
+        default:
+            return "历史版本"
+        }
     }
 
     // MARK: - 快照
@@ -231,6 +445,7 @@ final class AgentSoulStore {
         defaults.set(soulPrompt, forKey: Keys.soulPrompt)
         defaults.set(Double(updatedAtMs) / 1000, forKey: Keys.updatedAt)
         defaults.set(source.rawValue, forKey: Keys.source)
+        defaults.set(Int(lastSyncedRevision), forKey: Keys.lastSyncedRevision)
         if let data = try? JSONEncoder().encode(snapshots) {
             defaults.set(data, forKey: Keys.snapshots)
         }

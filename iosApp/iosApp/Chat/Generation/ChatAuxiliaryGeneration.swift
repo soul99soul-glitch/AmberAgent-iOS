@@ -59,6 +59,8 @@ extension ChatViewModel {
         guard let last = state.messages.last, last.role == MessageRole.assistant,
               !last.toText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
+        syncSoulFromCompletedTurnIfNeeded(messages: state.messages)
+
         // 生成完成不再自动震动：该振动对用户不可控（开关藏得深、且每次回复都触发），
         // 已被明确要求移除。触感只在用户主动点击控件时触发。
 
@@ -67,6 +69,36 @@ extension ChatViewModel {
         if userMessageCount == 1 { generateConversationTitle(state: state) }
         // 与标题共用 titleModelId；后台成功路径走同一 generator。
         generateConversationListPreview(state: state)
+    }
+
+    /// 兜底：若用户在本轮明确要求改人设/写入 soul，但模型仅在回复中答应而漏调 `agent_soul_update`，
+    /// 自动把新设定同步进 `AgentSoulStore.shared`，确保顶部形象人设立即生效。
+    private func syncSoulFromCompletedTurnIfNeeded(messages: [UIMessage]) {
+        guard let lastUserIdx = messages.lastIndex(where: { $0.role == MessageRole.user }) else { return }
+        let trailingSlice = messages[lastUserIdx...]
+        let didCallSoulUpdateTool = trailingSlice.contains { msg in
+            msg.parts.contains { part in
+                guard let tool = part as? UIMessagePart.Tool else { return false }
+                return tool.toolName == AgentSoulToolCatalog.updateToolName
+            }
+        }
+        guard !didCallSoulUpdateTool else { return }
+        let userText = messages[lastUserIdx].toText().trimmingCharacters(in: .whitespacesAndNewlines)
+        let assistantText = trailingSlice
+            .filter { $0.role == MessageRole.assistant }
+            .map { $0.toText().trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let recentContext = messages.prefix(lastUserIdx).suffix(4)
+            .map { $0.toText().trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        _ = AgentSoulCloudBridge.syncFromTurnIfNeeded(
+            userText: userText,
+            assistantText: assistantText,
+            recentConversationContext: recentContext,
+            store: AgentSoulStore.shared
+        )
     }
 
     /// 辅助模型:优先用指定的辅助模型,未设置时回退当前聊天模型(对齐 Android resolveTaskChatModel)。
