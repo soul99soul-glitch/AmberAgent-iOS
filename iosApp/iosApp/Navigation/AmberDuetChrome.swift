@@ -58,20 +58,19 @@ struct AmberDuetBottomSwitcher: View {
     var selectedTab: AmberDuetModeTab = .chat
     let activeTaskCount: Int
     let needsAttentionCount: Int
-    var isBackgroundHandoffMode: Bool = false
-    var handoffExecutionTarget: AmberHandoffExecutionTarget = .cloud
-    var activeHubTitle: String? = nil
-    var hubs: [AmberHubItem] = []
-    var cloudAgents: [MacGatewayCloudAgent] = []
-    var selectedCloudAgentId: String = "main"
+    var selectedReasoning: ComposerReasoningOption = .off
+    var availableReasoningOptions: [ComposerReasoningOption] = [.off, .auto, .low, .medium, .high]
+    var reasoningIsAvailable: Bool = false
+    var quickModels: [ComposerModelOption] = []
+    var currentModelSelection: String = ""
+    var currentModelLabel: String = ""
     var onSelectTab: ((AmberDuetModeTab) -> Void)? = nil
     let onOpenTasks: () -> Void
     let onOpenWorkspace: () -> Void
-    var onDelegateCloudTask: (() -> Void)? = nil
-    var onSelectHub: ((String?) -> Void)? = nil
-    var onSelectExecutionTarget: ((AmberHandoffExecutionTarget) -> Void)? = nil
-    var onSelectCloudAgent: ((String) -> Void)? = nil
-    var onExitHandoffMode: (() -> Void)? = nil
+    var onStartNewTopic: (() -> Void)? = nil
+    var onSelectReasoning: ((ComposerReasoningOption) -> Void)? = nil
+    var onSelectModel: ((ComposerModelOption) -> Void)? = nil
+    var onOpenModelSheet: (() -> Void)? = nil
 
     private var badgeCount: Int {
         needsAttentionCount + activeTaskCount
@@ -81,9 +80,19 @@ struct AmberDuetBottomSwitcher: View {
         needsAttentionCount > 0 ? AmberTheme.accentRed : AmberTheme.accent
     }
 
+    private var isDeepReasoningActive: Bool {
+        guard reasoningIsAvailable else { return false }
+        switch selectedReasoning {
+        case .high, .xhigh, .max:
+            return true
+        case .off, .auto, .low, .medium:
+            return false
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            // Left: Pure-typography segmented pill (对话 | 任务 [N] | 中心)
+            // Left (3): Pure-typography segmented pill (对话 | 任务 [N] | 中心)
             HStack(spacing: 2) {
                 modeButton(
                     tab: .chat,
@@ -127,110 +136,119 @@ struct AmberDuetBottomSwitcher: View {
 
             Spacer(minLength: 4)
 
-            // Right (+1): In-place morphing between "后台交办 ↗" and "● 云端 · <当前中心> ⌄"
-            if isBackgroundHandoffMode {
-                handoffTargetMenuPill
-            } else if let onDelegateCloudTask {
-                Button(action: onDelegateCloudTask) {
-                    HStack(spacing: 4) {
-                        Text(IOSAppLocalization.string("后台交办", defaultValue: "后台交办"))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(AmberTheme.foreground2)
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accent)
-                    }
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 7.5)
-                    .modifier(DuetBottomCapsuleGlass(isHighlighted: false))
-                }
-                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.97, haptic: .selection))
-                .accessibilityIdentifier("chat.duet.delegateTaskButton")
-            }
+            // Right (+1): ✦ 新话题（短按一键开启新话题）+ 思考强度 / 切换模型（长按快捷菜单）
+            newTopicAndQuickSettingsPill
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.duet.bottomSwitcher")
     }
 
-    private var handoffTargetMenuPill: some View {
-        let hubName = (activeHubTitle?.isEmpty == false) ? activeHubTitle! : IOSAppLocalization.string("当前中心", defaultValue: "当前中心")
-        return Menu {
-            Section(IOSAppLocalization.string("执行位置", defaultValue: "执行位置")) {
-                ForEach(AmberHandoffExecutionTarget.allCases) { target in
+    private var newTopicAndQuickSettingsPill: some View {
+        Button {
+            AmberHaptics.selection()
+            onStartNewTopic?()
+        } label: {
+            HStack(spacing: 4.5) {
+                Text("✦")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(AmberTheme.accent)
+
+                Text(IOSAppLocalization.string("新话题", defaultValue: "新话题"))
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(1)
+
+                if isDeepReasoningActive {
+                    Circle()
+                        .fill(AmberTheme.accent)
+                        .frame(width: 5, height: 5)
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9.5)
+            .modifier(DuetBottomCapsuleGlass(isHighlighted: isDeepReasoningActive))
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.97, haptic: .none))
+        .contentShape(.contextMenuPreview, Capsule(style: .continuous))
+        .contextMenu {
+            Button {
+                AmberHaptics.selection()
+                onStartNewTopic?()
+            } label: {
+                Label(
+                    IOSAppLocalization.string("开启新话题", defaultValue: "开启新话题"),
+                    systemImage: "sparkles"
+                )
+            }
+
+            if reasoningIsAvailable {
+                Section(IOSAppLocalization.string("思考强度", defaultValue: "思考强度")) {
+                    ForEach(availableReasoningOptions) { option in
+                        Button {
+                            AmberHaptics.selection()
+                            onSelectReasoning?(option)
+                        } label: {
+                            HStack {
+                                Text(friendlyReasoningMenuTitle(for: option))
+                                if option == selectedReasoning {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section(IOSAppLocalization.string("切换模型", defaultValue: "切换模型")) {
+                ForEach(quickModels.prefix(8)) { model in
                     Button {
-                        onSelectExecutionTarget?(target)
+                        AmberHaptics.selection()
+                        onSelectModel?(model)
                     } label: {
                         HStack {
-                            Text(target.menuTitle)
-                            if handoffExecutionTarget == target {
+                            Text(model.name)
+                            if model.matches(currentModelSelection) {
                                 Image(systemName: "checkmark")
                             }
                         }
                     }
                 }
-            }
 
-            if !hubs.isEmpty {
-                Section(IOSAppLocalization.string("归属中心", defaultValue: "归属中心")) {
-                    ForEach(hubs) { hub in
-                        Button {
-                            onSelectHub?(hub.id)
-                        } label: {
-                            HStack {
-                                Text(hub.title)
-                                if hub.title == activeHubTitle {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
+                Button {
+                    onOpenModelSheet?()
+                } label: {
+                    Label(
+                        currentModelLabel.isEmpty
+                            ? IOSAppLocalization.string("更多模型…", defaultValue: "更多模型…")
+                            : IOSAppLocalization.string("更多模型（当前 \(currentModelLabel)）…", defaultValue: "更多模型（当前 \(currentModelLabel)）…"),
+                        systemImage: "slider.horizontal.3"
+                    )
                 }
             }
-
-            if handoffExecutionTarget == .cloud && !cloudAgents.isEmpty {
-                Section(IOSAppLocalization.string("云端 Agent", defaultValue: "云端 Agent")) {
-                    ForEach(cloudAgents) { agent in
-                        Button {
-                            onSelectCloudAgent?(agent.id)
-                        } label: {
-                            HStack {
-                                Text(agent.name)
-                                if agent.id == selectedCloudAgentId {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let onExitHandoffMode {
-                Divider()
-                Button(role: .destructive, action: onExitHandoffMode) {
-                    Label(IOSAppLocalization.string("退出后台交办模式", defaultValue: "退出后台交办模式"), systemImage: "xmark.circle")
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(handoffExecutionTarget == .cloud ? AmberTheme.accentGreen : AmberTheme.accent)
-                    .frame(width: 5.5, height: 5.5)
-
-                Text("\(handoffExecutionTarget.shortLabel) · \(hubName)")
-                    .font(.system(size: 11.8, weight: .semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(AmberTheme.muted)
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7.5)
-            .modifier(DuetBottomCapsuleGlass(isHighlighted: true))
         }
-        .accessibilityIdentifier("chat.duet.handoffTargetMenu")
+        .accessibilityLabel(IOSAppLocalization.string("新话题，长按切换思考强度与模型", defaultValue: "新话题，长按切换思考强度与模型"))
+        .accessibilityIdentifier("chat.duet.newTopicButton")
+    }
+
+    private func friendlyReasoningMenuTitle(for option: ComposerReasoningOption) -> String {
+        switch option {
+        case .off:
+            return IOSAppLocalization.string("快答（秒回）", defaultValue: "快答（秒回）")
+        case .auto:
+            return IOSAppLocalization.string("智能自适应", defaultValue: "智能自适应")
+        case .low:
+            return IOSAppLocalization.string("轻量思考", defaultValue: "轻量思考")
+        case .medium:
+            return IOSAppLocalization.string("标准思考", defaultValue: "标准思考")
+        case .high:
+            return IOSAppLocalization.string("深度思考", defaultValue: "深度思考")
+        case .xhigh:
+            return IOSAppLocalization.string("超深思考", defaultValue: "超深思考")
+        case .max:
+            return IOSAppLocalization.string("极限思考", defaultValue: "极限思考")
+        }
     }
 
     private func modeButton(
@@ -283,7 +301,7 @@ private struct DuetBottomCapsuleGlass: ViewModifier {
         if #available(iOS 26.0, *) {
             content
                 .background(AmberTheme.glass.opacity(0.16), in: shape)
-                .glassEffect(.regular.interactive(), in: shape)
+                .glassEffect(.regular, in: shape)
                 .overlay {
                     shape
                         .strokeBorder(
