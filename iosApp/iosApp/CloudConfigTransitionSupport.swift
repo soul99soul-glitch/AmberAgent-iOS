@@ -1,0 +1,265 @@
+import Foundation
+
+extension IOSCloudImportDraft {
+    /// Structured "当前 → 目标（服务商 / 模型 / Base URL）" summary for switching the cloud model.
+    func modelTransitionSummary(remote: IOSCloudConfigSnapshot?) -> IOSCloudModelTransitionSummary? {
+        guard let provider = selectedProvider, let model = selectedModel else { return nil }
+        return IOSCloudModelTransitionSummary.build(
+            remote: remote,
+            targetProviderLabel: "\(provider.name) (\(provider.kind.rawValue))",
+            targetProviderKind: provider.kind.rawValue,
+            targetModelId: model.modelId,
+            targetBaseUrl: provider.baseUrl,
+            hasTargetKey: provider.hasApiKey
+        )
+    }
+}
+
+// MARK: - Current → Target transition & action readiness
+
+/// Side-by-side comparison of the cloud's current model configuration and the target
+/// configuration being switched to, surfacing Provider, Model, and Base URL explicitly.
+struct IOSCloudModelTransitionSummary: Equatable, Sendable {
+    struct Endpoint: Equatable, Sendable {
+        var providerLabel: String
+        var providerKind: String
+        var modelId: String
+        var baseUrlDisplay: String
+        var effectiveBaseUrl: String
+        var keyStatusLabel: String
+    }
+
+    /// nil when the cloud has no model configured yet.
+    var current: Endpoint?
+    var target: Endpoint
+    /// True when provider, modelId, or effectiveBaseUrl differs from current, or cloud has no model yet.
+    var changesEndpointOrModel: Bool
+    /// True when the action will also upload/replace the model API key.
+    var replacesOrSetsKey: Bool
+    /// True when remote holds a model key, destination (provider/baseUrl) changed, and no new key is provided.
+    var requiresNewKeyForDestinationChange: Bool
+
+    var currentSummaryLine: String {
+        guard let current else { return macGatewayL("未设置云端模型") }
+        return "\(current.providerLabel) · \(current.modelId) · \(current.baseUrlDisplay)"
+    }
+
+    var targetSummaryLine: String {
+        "\(target.providerLabel) · \(target.modelId) · \(target.baseUrlDisplay)"
+    }
+
+    var transitionArrowLine: String {
+        "\(currentSummaryLine) → \(targetSummaryLine)"
+    }
+
+    static func forManualEdit(
+        remote: IOSCloudConfigSnapshot?,
+        providerKind: IOSCloudProviderKind,
+        modelId: String,
+        baseUrl: String,
+        hasNewApiKey: Bool
+    ) -> IOSCloudModelTransitionSummary {
+        let trimmedModelId = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return build(
+            remote: remote,
+            targetProviderLabel: IOSCloudConfigWire.providerDisplayName(for: providerKind.rawValue),
+            targetProviderKind: providerKind.rawValue,
+            targetModelId: trimmedModelId.isEmpty ? macGatewayL("待填写模型 ID") : trimmedModelId,
+            targetBaseUrl: baseUrl,
+            hasTargetKey: hasNewApiKey
+        )
+    }
+
+    static func build(
+        remote: IOSCloudConfigSnapshot?,
+        targetProviderLabel: String,
+        targetProviderKind: String,
+        targetModelId: String,
+        targetBaseUrl: String,
+        hasTargetKey: Bool
+    ) -> IOSCloudModelTransitionSummary {
+        let currentEndpoint: Endpoint?
+        if let remoteModel = remote?.model,
+           !remoteModel.provider.isEmpty || !remoteModel.modelId.isEmpty {
+            currentEndpoint = Endpoint(
+                providerLabel: IOSCloudConfigWire.providerDisplayName(for: remoteModel.provider),
+                providerKind: remoteModel.provider.lowercased(),
+                modelId: remoteModel.modelId,
+                baseUrlDisplay: IOSCloudConfigWire.displayBaseUrl(provider: remoteModel.provider, baseUrl: remoteModel.baseUrl),
+                effectiveBaseUrl: IOSCloudConfigWire.effectiveBaseUrl(provider: remoteModel.provider, baseUrl: remoteModel.baseUrl),
+                keyStatusLabel: remoteModel.keyConfigured ? macGatewayL("Key 已配置") : macGatewayL("缺少 Key")
+            )
+        } else {
+            currentEndpoint = nil
+        }
+
+        let targetEffectiveUrl = IOSCloudConfigWire.effectiveBaseUrl(provider: targetProviderKind, baseUrl: targetBaseUrl)
+        let targetKeyLabel: String
+        if hasTargetKey {
+            targetKeyLabel = currentEndpoint != nil ? macGatewayL("同步并替换云端 Key") : macGatewayL("同步 Key 到云端")
+        } else if remote?.model?.keyConfigured == true {
+            targetKeyLabel = macGatewayL("保留云端现有 Key")
+        } else {
+            targetKeyLabel = macGatewayL("未提供 Key")
+        }
+
+        let targetEndpoint = Endpoint(
+            providerLabel: targetProviderLabel,
+            providerKind: targetProviderKind.lowercased(),
+            modelId: targetModelId,
+            baseUrlDisplay: IOSCloudConfigWire.displayBaseUrl(provider: targetProviderKind, baseUrl: targetBaseUrl),
+            effectiveBaseUrl: targetEffectiveUrl,
+            keyStatusLabel: targetKeyLabel
+        )
+
+        let destinationChanged = currentEndpoint.map {
+            $0.providerKind != targetEndpoint.providerKind || $0.effectiveBaseUrl != targetEndpoint.effectiveBaseUrl
+        } ?? false
+
+        let changesEndpointOrModel = currentEndpoint.map {
+            destinationChanged || $0.modelId != targetEndpoint.modelId
+        } ?? true
+
+        let requiresNewKey = (remote?.model?.keyConfigured == true) && destinationChanged && !hasTargetKey
+
+        return IOSCloudModelTransitionSummary(
+            current: currentEndpoint,
+            target: targetEndpoint,
+            changesEndpointOrModel: changesEndpointOrModel,
+            replacesOrSetsKey: hasTargetKey,
+            requiresNewKeyForDestinationChange: requiresNewKey
+        )
+    }
+}
+
+/// Evaluates whether a cloud configuration primary action can proceed, and when disabled,
+/// produces the exact reason and actionable next step to display right next to the button.
+///
+/// Crucially: if `reviewed` was nil when opening a sheet (because the initial GET was still
+/// in flight) and `latest` arrives, `effectiveReviewed` automatically adopts `latest` so
+/// initial load completion never causes a false-positive version conflict.
+struct IOSCloudConfigActionReadiness: Equatable, Sendable {
+    enum FormBlocker: Equatable, Sendable {
+        case noSelection
+        case missingModelId
+        case missingDestinationApiKey
+        case missingSearchApiKey(serviceName: String)
+    }
+
+    var effectiveReviewed: IOSCloudConfigSnapshot?
+    var shouldAutoAdoptLatest: Bool
+    var hasVersionConflict: Bool
+    var canSubmit: Bool
+    var disabledReason: String?
+    var nextStep: String?
+
+    var effectiveExpectedRevision: Int? {
+        effectiveReviewed?.revision
+    }
+
+    var combinedGuidance: String? {
+        guard let disabledReason else { return nil }
+        if let nextStep, !nextStep.isEmpty {
+            return "\(disabledReason)。\(nextStep)"
+        }
+        return disabledReason
+    }
+
+    static func evaluate(
+        reviewed: IOSCloudConfigSnapshot?,
+        latest: IOSCloudConfigSnapshot?,
+        isLoading: Bool = false,
+        isSubmitting: Bool = false,
+        formBlocker: FormBlocker? = nil
+    ) -> IOSCloudConfigActionReadiness {
+        let shouldAutoAdopt = (reviewed == nil && latest != nil)
+        let effectiveReviewed = reviewed ?? latest
+        let hasConflict: Bool
+        if let reviewed, let latest {
+            hasConflict = !reviewed.hasSameVersion(as: latest)
+        } else {
+            hasConflict = false
+        }
+
+        if isSubmitting {
+            return IOSCloudConfigActionReadiness(
+                effectiveReviewed: effectiveReviewed,
+                shouldAutoAdoptLatest: shouldAutoAdopt,
+                hasVersionConflict: hasConflict,
+                canSubmit: false,
+                disabledReason: macGatewayL("正在加密同步到云端"),
+                nextStep: macGatewayL("请等待当前请求完成")
+            )
+        }
+
+        if let formBlocker {
+            let (reason, step): (String, String) = switch formBlocker {
+            case .noSelection:
+                (
+                    macGatewayL("无法继续：尚未勾选任何要导入的模型或搜索配置"),
+                    macGatewayL("下一步：请在上方至少勾选一个模型服务商或联网搜索服务")
+                )
+            case .missingModelId:
+                (
+                    macGatewayL("无法切换：尚未填写目标模型 ID"),
+                    macGatewayL("下一步：请在上方「模型 ID」输入框填写模型标识（例如 deepseek-chat）")
+                )
+            case .missingDestinationApiKey:
+                (
+                    macGatewayL("无法切换：更改服务商或 Base URL 时不能沿用旧地址的 API Key"),
+                    macGatewayL("下一步：请在上方「API Key」输入框长按粘贴新服务的 Key，或先删除云端旧 Key")
+                )
+            case .missingSearchApiKey(let serviceName):
+                (
+                    macGatewayL("无法保存：尚未填写 \(serviceName) API Key"),
+                    macGatewayL("下一步：请在上方输入框长按选择「粘贴」（或按 ⌘V）填入 API Key")
+                )
+            }
+            return IOSCloudConfigActionReadiness(
+                effectiveReviewed: effectiveReviewed,
+                shouldAutoAdoptLatest: shouldAutoAdopt,
+                hasVersionConflict: hasConflict,
+                canSubmit: false,
+                disabledReason: reason,
+                nextStep: step
+            )
+        }
+
+        if latest == nil {
+            let reason = isLoading
+                ? macGatewayL("正在读取云端当前配置版本")
+                : macGatewayL("无法提交：尚未读取到云端当前配置状态")
+            let step = isLoading
+                ? macGatewayL("下一步：读取完成后按钮将自动启用")
+                : macGatewayL("下一步：请点击「刷新云端状态」后再提交，已填写内容会保留")
+            return IOSCloudConfigActionReadiness(
+                effectiveReviewed: nil,
+                shouldAutoAdoptLatest: false,
+                hasVersionConflict: false,
+                canSubmit: false,
+                disabledReason: reason,
+                nextStep: step
+            )
+        }
+
+        if hasConflict, let latest {
+            return IOSCloudConfigActionReadiness(
+                effectiveReviewed: effectiveReviewed,
+                shouldAutoAdoptLatest: false,
+                hasVersionConflict: true,
+                canSubmit: false,
+                disabledReason: macGatewayL("暂停提交：云端配置刚在其他终端更新至版本 #\(latest.revision)"),
+                nextStep: macGatewayL("下一步：请点击上方「确认最新云端版本并继续」按钮，已填写内容会完整保留")
+            )
+        }
+
+        return IOSCloudConfigActionReadiness(
+            effectiveReviewed: effectiveReviewed,
+            shouldAutoAdoptLatest: shouldAutoAdopt,
+            hasVersionConflict: false,
+            canSubmit: true,
+            disabledReason: nil,
+            nextStep: nil
+        )
+    }
+}

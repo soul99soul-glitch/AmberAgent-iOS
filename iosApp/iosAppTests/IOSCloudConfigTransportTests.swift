@@ -235,6 +235,62 @@ final class IOSCloudConfigTransportTests: XCTestCase {
         XCTAssertEqual(kidStore.load("gw"), keyA.kid, "旧 pin 保持不变，由显式重置清除")
     }
 
+    @MainActor
+    func testStoreConfirmAfterConflictSubmitsAndUpdatesRemoteModelState() async throws {
+        let key = try TestRSAKey()
+        let gwId = "gw-\(UUID().uuidString)"
+        defer { IOSCloudConfigClient.resetImportKeyTrust(gatewayId: gwId) }
+
+        let updatedView = #"{"gatewayId":"\#(gwId)","revision":5,"model":{"provider":"openai","modelId":"deepseek-chat","baseUrl":"https://api.deepseek.com/v1"},"search":{"sources":["bing","exa"],"mode":"fallback"},"credentials":{"modelApiKey":{"configured":true},"exaApiKey":{"configured":true},"braveApiKey":{"configured":false}},"supportedModelProviders":["openai","claude"],"supportedSearchSources":["bing","duckduckgo","exa","brave"]}"#
+        let harness = Harness(
+            importKeyJSON: key.importKeyJSON(gatewayId: gwId, deviceId: "dev-1"),
+            viewJSON: updatedView,
+            postResponses: [
+                (409, #"{"error":"revision_conflict","currentRevision":4}"#),
+                (200, #"{"requestId":"req-ok","revision":5,"currentRevision":5,"replayed":false,"effective":"next_task"}"#)
+            ]
+        )
+
+        let suiteName = "CloudConfigStoreTest.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = MacGatewayStore(defaults: defaults)
+        store.configureForTesting(
+            connection: MacGatewayConnection(
+                gatewayId: gwId, name: "Cloud", addrs: ["127.0.0.1"],
+                port: 1, fingerprint: "", deviceId: "dev-1"
+            ),
+            client: harness.makeClient()
+        )
+
+        let bundle = IOSCloudConfigBundle(
+            model: .init(
+                providerKind: "openai",
+                modelId: "deepseek-chat",
+                baseUrl: "https://api.deepseek.com/v1",
+                credential: .replace("sk-deepseek-long-key")
+            ),
+            search: [],
+            freeSources: []
+        )
+
+        // 第一次提交遇到并发版本冲突（409）：返回明确错误并自动刷新 store.cloudConfig
+        let conflictError = await store.applyCloudBundle(bundle, expectedRevision: 3)
+        XCTAssertNotNil(conflictError)
+        XCTAssertEqual(store.cloudConfig?.revision, 5, "冲突后应自动刷新最新云端配置")
+
+        // 用户确认最新云端版本后再次提交：提交成功，更新当前状态与成功反馈
+        let secondError = await store.applyCloudBundle(bundle, expectedRevision: store.cloudConfig?.revision)
+        XCTAssertNil(secondError)
+        XCTAssertEqual(store.cloudConfig?.model?.provider, "openai")
+        XCTAssertEqual(store.cloudConfig?.model?.modelId, "deepseek-chat")
+        XCTAssertEqual(store.cloudConfig?.model?.baseUrl, "https://api.deepseek.com/v1")
+        XCTAssertEqual(store.cloudConfig?.model?.keyConfigured, true)
+        XCTAssertEqual(store.notice?.isError, false)
+        XCTAssertTrue(store.notice?.text.contains("deepseek-chat") == true)
+    }
+
     // MARK: - Helpers
 
     private func assertThrows(

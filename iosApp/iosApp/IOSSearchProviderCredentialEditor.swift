@@ -44,12 +44,12 @@ struct IOSSearchProviderCredentialEditor: View {
                             Text("新的 API Key")
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
-                            SecureField("输入新的 API Key", text: $apiKey)
-                                .font(.body.monospaced())
-                                .foregroundStyle(AmberTheme.foreground)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .accessibilityLabel("新的 API Key")
+                            AmberSecureKeyInput(
+                                placeholder: "输入新的 API Key",
+                                text: $apiKey,
+                                font: .monospacedSystemFont(ofSize: 16, weight: .regular),
+                                accessibilityLabel: "新的 API Key"
+                            )
                         }
                         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
                         .padding(.horizontal, 14)

@@ -99,10 +99,16 @@ extension MacGatewayStore {
             // let a later identical-but-new submit silently replay this receipt.
             pendingImportOperation.finish()
             cloudImportKeyChanged = false
+            let summaryText: String
+            if receipt.replayed {
+                summaryText = localized("云端已应用过该配置（重复请求已合并）")
+            } else if let model = bundle.model {
+                summaryText = localized("已切换云端模型为 \(model.providerKind) · \(model.modelId)，新任务开始使用")
+            } else {
+                summaryText = localized("云端配置已更新，新任务开始使用")
+            }
             notice = Notice(
-                text: receipt.replayed
-                    ? localized("云端已应用过该配置（重复请求已合并）")
-                    : localized("云端配置已更新，新任务开始使用"),
+                text: summaryText,
                 isError: false
             )
             await refreshCloudConfig()

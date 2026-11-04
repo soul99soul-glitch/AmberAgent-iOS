@@ -439,17 +439,20 @@ private struct SearchProviderTextFieldRow: View {
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)
 
-            Group {
-                if isSecure {
-                    SecureField(placeholder, text: $text)
-                } else {
-                    TextField(placeholder, text: $text)
-                }
+            if isSecure {
+                AmberSecureKeyInput(
+                    placeholder: placeholder,
+                    text: $text,
+                    font: monospace ? .monospacedSystemFont(ofSize: 14, weight: .regular) : .preferredFont(forTextStyle: .body),
+                    accessibilityLabel: title
+                )
+            } else {
+                TextField(placeholder, text: $text)
+                    .font(monospace ? .system(size: 14, weight: .regular, design: .monospaced) : .body)
+                    .foregroundStyle(AmberTheme.foreground)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
             }
-            .font(monospace ? .system(size: 14, weight: .regular, design: .monospaced) : .body)
-            .foregroundStyle(AmberTheme.foreground)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: 58)

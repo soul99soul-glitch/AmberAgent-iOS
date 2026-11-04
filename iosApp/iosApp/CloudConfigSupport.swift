@@ -117,6 +117,32 @@ enum IOSCloudConfigWire {
         default: cloudSource
         }
     }
+
+    static func providerDisplayName(for provider: String) -> String {
+        switch provider.lowercased() {
+        case "openai": return "OpenAI 兼容 (openai)"
+        case "claude": return "Claude (claude)"
+        default: return provider
+        }
+    }
+
+    /// The contract's default-address normalization: an empty baseUrl resolves
+    /// to the protocol default before comparing destinations.
+    static func effectiveBaseUrl(provider: String, baseUrl: String) -> String {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+        return provider.lowercased() == "claude" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"
+    }
+
+    /// Human-readable Base URL host/default summary for UI comparison.
+    static func displayBaseUrl(provider: String, baseUrl: String) -> String {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            let defaultHost = provider.lowercased() == "claude" ? "api.anthropic.com" : "api.openai.com"
+            return macGatewayL("默认") + " (\(defaultHost))"
+        }
+        return URLComponents(string: trimmed)?.host ?? trimmed
+    }
 }
 
 // MARK: - Local export items (what this device can offer)
@@ -575,9 +601,7 @@ extension IOSCloudImportDraft {
     /// The contract's default-address normalization: an empty baseUrl resolves
     /// to the protocol default before comparing destinations.
     private func effectiveBaseUrl(_ provider: String, _ baseUrl: String) -> String {
-        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
-        return provider.lowercased() == "claude" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"
+        IOSCloudConfigWire.effectiveBaseUrl(provider: provider, baseUrl: baseUrl)
     }
 }
 

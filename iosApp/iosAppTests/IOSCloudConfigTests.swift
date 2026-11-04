@@ -522,6 +522,159 @@ final class IOSCloudConfigTests: XCTestCase {
         XCTAssertFalse(joinedSummaryText.contains("tvly-secret"))
     }
 
+    // ---- Key Paste & Switching Usability ----
+
+    func testLongKeyPasteTrimsWhitespaceAndNewlinesAndReadsPasteboardOnlyOnExplicitPaste() {
+        let longKeyCore = "exa_live_" + String(repeating: "9f8e7d6c5b4a3210", count: 12)
+        let rawClipboard = "  \n\t " + longKeyCore + " \r\n  "
+        var clipboardReadCount = 0
+        var observedBindingValue = ""
+
+        let field = AmberAPIKeyTextField(frame: CGRect(x: 0, y: 0, width: 240, height: 44))
+        field.pasteboardStringProvider = {
+            clipboardReadCount += 1
+            return rawClipboard
+        }
+        field.onTextChange = { observedBindingValue = $0 }
+
+        XCTAssertTrue(field.isSecureTextEntry, "API Key 输入必须保持不回显")
+        XCTAssertEqual(field.intrinsicContentSize.width, UIView.noIntrinsicMetric,
+                       "长 Key 粘贴不得撑宽输入框 intrinsicContentSize")
+        XCTAssertTrue(field.canPerformAction(#selector(UIResponderStandardEditActions.paste(_:)), withSender: nil),
+                      "长按菜单与 ⌘V 必须始终允许粘贴")
+        XCTAssertFalse(field.canPerformAction(#selector(UIResponderStandardEditActions.copy(_:)), withSender: nil),
+                       "密钥输入框禁止复制出明文")
+        XCTAssertFalse(field.canPerformAction(#selector(UIResponderStandardEditActions.cut(_:)), withSender: nil),
+                       "密钥输入框禁止剪切出明文")
+        XCTAssertFalse(field.canPerformAction(#selector(UIResponder.captureTextFromCamera(_:)), withSender: nil),
+                       "禁止相机取词/AutoFill 劫持长按菜单")
+        XCTAssertEqual(clipboardReadCount, 0, "初始化与查询菜单权限时严禁预读剪贴板")
+
+        let hasCmdVPasteCommand = field.keyCommands?.contains {
+            $0.input == "v" && $0.modifierFlags == .command && $0.action == #selector(UIResponderStandardEditActions.paste(_:))
+        } ?? false
+        XCTAssertTrue(hasCmdVPasteCommand, "必须支持物理键盘 ⌘V 粘贴")
+
+        // 用户主动触发系统粘贴（长按「粘贴」或 ⌘V）
+        field.paste(nil)
+
+        XCTAssertEqual(clipboardReadCount, 1, "仅在用户主动粘贴时读取一次剪贴板")
+        XCTAssertEqual(field.text, longKeyCore, "长 Key 必须完整粘贴且自动 trim 首尾空白与换行")
+        XCTAssertEqual(observedBindingValue, longKeyCore, "粘贴后必须同步更新绑定状态")
+        XCTAssertGreaterThan(longKeyCore.count, 180)
+    }
+
+    func testActionReadinessAutoAdoptsInitialSnapshotAndReportsSpecificDisabledReasons() {
+        let remoteV1 = makeRemote(
+            revision: 1, provider: "openai", modelId: "deepseek-chat",
+            baseUrl: "https://api.deepseek.com/v1", modelKeyConfigured: true,
+            sources: ["bing"], mode: "fallback"
+        )
+        let remoteV2 = makeRemote(
+            revision: 2, provider: "openai", modelId: "gpt-5",
+            baseUrl: "https://api.openai.com/v1", modelKeyConfigured: true,
+            sources: ["bing", "exa"], mode: "fallback", exaKeyConfigured: true
+        )
+
+        // 1. 打开弹窗时若初始快照仍在加载（reviewed == nil），加载完成后自动采纳，绝不产生假版本冲突
+        let loadingState = IOSCloudConfigActionReadiness.evaluate(
+            reviewed: nil, latest: nil, isLoading: true, isSubmitting: false, formBlocker: nil
+        )
+        XCTAssertFalse(loadingState.canSubmit)
+        XCTAssertFalse(loadingState.hasVersionConflict)
+        XCTAssertNotNil(loadingState.disabledReason)
+        XCTAssertNotNil(loadingState.nextStep)
+
+        let autoAdopted = IOSCloudConfigActionReadiness.evaluate(
+            reviewed: nil, latest: remoteV1, isLoading: false, isSubmitting: false, formBlocker: nil
+        )
+        XCTAssertTrue(autoAdopted.shouldAutoAdoptLatest)
+        XCTAssertFalse(autoAdopted.hasVersionConflict, "首次读取完成不得误报版本冲突")
+        XCTAssertTrue(autoAdopted.canSubmit)
+        XCTAssertEqual(autoAdopted.effectiveExpectedRevision, 1)
+        XCTAssertNil(autoAdopted.disabledReason)
+
+        // 2. 各类表单前置条件缺失时，必须在按钮旁给出具体原因和下一步
+        let missingExaKey = IOSCloudConfigActionReadiness.evaluate(
+            reviewed: remoteV1, latest: remoteV1, formBlocker: .missingSearchApiKey(serviceName: "Exa")
+        )
+        XCTAssertFalse(missingExaKey.canSubmit)
+        XCTAssertTrue(missingExaKey.disabledReason?.contains("Exa API Key") == true)
+        XCTAssertTrue(missingExaKey.nextStep?.contains("粘贴") == true)
+
+        let missingDestKey = IOSCloudConfigActionReadiness.evaluate(
+            reviewed: remoteV1, latest: remoteV1, formBlocker: .missingDestinationApiKey
+        )
+        XCTAssertFalse(missingDestKey.canSubmit)
+        XCTAssertTrue(missingDestKey.disabledReason?.contains("Base URL") == true)
+        XCTAssertTrue(missingDestKey.nextStep?.contains("API Key") == true)
+
+        // 3. 真实并发版本变化（reviewed=1, latest=2）时明确提示原因与确认动作，确认后立即恢复可提交
+        let conflictState = IOSCloudConfigActionReadiness.evaluate(
+            reviewed: remoteV1, latest: remoteV2, formBlocker: nil
+        )
+        XCTAssertTrue(conflictState.hasVersionConflict)
+        XCTAssertFalse(conflictState.canSubmit)
+        XCTAssertTrue(conflictState.disabledReason?.contains("#2") == true)
+        XCTAssertTrue(conflictState.nextStep?.contains("确认最新云端版本") == true)
+
+        let confirmedState = IOSCloudConfigActionReadiness.evaluate(
+            reviewed: remoteV2, latest: remoteV2, formBlocker: nil
+        )
+        XCTAssertFalse(confirmedState.hasVersionConflict)
+        XCTAssertTrue(confirmedState.canSubmit)
+        XCTAssertEqual(confirmedState.effectiveExpectedRevision, 2)
+    }
+
+    func testModelTransitionSummaryShowsCurrentToTargetAndDetectsBaseUrlChanges() throws {
+        let store = makeStore()
+        let deepseek = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "DeepSeek", apiKey: "sk-ds-long-key", baseUrl: "https://api.deepseek.com/v1",
+            modelName: "DeepSeek Chat", modelId: "deepseek-chat"
+        ))
+        let model = try XCTUnwrap(deepseek.models.first)
+        store.setCurrentChatModelId(model.id.description())
+
+        let currentCloud = makeRemote(
+            revision: 3, provider: "openai", modelId: "gpt-4.1",
+            baseUrl: "https://api.openai.com/v1", modelKeyConfigured: true,
+            sources: ["bing"], mode: "fallback"
+        )
+
+        let draft = IOSCloudImportDraft.make(from: store)
+        let transition = try XCTUnwrap(draft.modelTransitionSummary(remote: currentCloud))
+
+        XCTAssertEqual(transition.current?.modelId, "gpt-4.1")
+        XCTAssertEqual(transition.current?.baseUrlDisplay, "api.openai.com")
+        XCTAssertEqual(transition.target.providerLabel, "DeepSeek (openai)")
+        XCTAssertEqual(transition.target.modelId, "deepseek-chat")
+        XCTAssertEqual(transition.target.baseUrlDisplay, "api.deepseek.com")
+        XCTAssertTrue(transition.changesEndpointOrModel)
+        XCTAssertTrue(transition.replacesOrSetsKey)
+        XCTAssertFalse(transition.requiresNewKeyForDestinationChange)
+        XCTAssertTrue(transition.transitionArrowLine.contains("gpt-4.1"))
+        XCTAssertTrue(transition.transitionArrowLine.contains("deepseek-chat"))
+
+        // 即使同为 openai 协议且同 modelId，只要 Base URL 不同也必须识别为目标变更
+        let sameModelDifferentHost = makeRemote(
+            revision: 3, provider: "openai", modelId: "deepseek-chat",
+            baseUrl: "https://proxy.example.com/v1", modelKeyConfigured: true,
+            sources: ["bing"], mode: "fallback"
+        )
+        let hostTransition = try XCTUnwrap(draft.modelTransitionSummary(remote: sameModelDifferentHost))
+        XCTAssertTrue(hostTransition.changesEndpointOrModel, "不同 Base URL 必须识别为切换目标变更")
+
+        // 手动切换服务商或地址但未填新 Key 时，必须提示需要新 Key
+        let manualMissingKey = IOSCloudModelTransitionSummary.forManualEdit(
+            remote: currentCloud,
+            providerKind: .claude,
+            modelId: "claude-sonnet-4-5",
+            baseUrl: "",
+            hasNewApiKey: false
+        )
+        XCTAssertTrue(manualMissingKey.requiresNewKeyForDestinationChange)
+    }
+
     // ---- helpers ----
 
     private func makeStore() -> IOSSharedSettingsStore {

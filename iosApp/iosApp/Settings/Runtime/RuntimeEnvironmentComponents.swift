@@ -526,14 +526,14 @@ struct RuntimeSecureFieldRow: View {
                 .foregroundStyle(AmberTheme.foreground)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            SecureField(placeholder, text: $text)
+            AmberSecureKeyInput(
+                placeholder: placeholder,
+                text: $text,
+                font: .monospacedSystemFont(ofSize: 15, weight: .regular),
+                textAlignment: .right,
+                accessibilityLabel: title
+            )
                 .privacySensitive()
-                .autocorrectionDisabled()
-                .font(.system(.subheadline, design: .monospaced))
-                .foregroundStyle(AmberTheme.foreground)
-                .multilineTextAlignment(.trailing)
-                .textInputAutocapitalization(.never)
-                .accessibilityLabel(title)
         }
         .frame(minHeight: 52)
         .padding(.horizontal, 14)

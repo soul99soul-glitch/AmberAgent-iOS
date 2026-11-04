@@ -257,16 +257,15 @@ struct IOSJevSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "API Key")
             AmberFormGroup {
-                SecureField(
-                    IOSAppLocalization.string(
+                AmberSecureKeyInput(
+                    placeholder: IOSAppLocalization.string(
                         sharedSettings.jevSettings.apiStyle.keyPlaceholder,
                         defaultValue: sharedSettings.jevSettings.apiStyle.keyPlaceholder
                     ),
-                    text: $apiKeyInput
+                    text: $apiKeyInput,
+                    font: .preferredFont(forTextStyle: .body),
+                    accessibilityLabel: "API Key"
                 )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.body)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
 
