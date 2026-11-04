@@ -157,6 +157,11 @@ final class AgentEmbodimentSinglePanelAvatarTests: XCTestCase {
             duetChrome.contains("modeScrubGesture"),
             "底部模式切换器必须支持手指横滑连续透镜跟随与形变。"
         )
+        let trackWellSlice = slice(duetChrome, from: "private struct DuetBottomTrackWellSurface: ViewModifier {", to: "private struct DuetActiveModeLensModifier")
+        XCTAssertTrue(
+            trackWellSlice.contains("AmberTheme.surface2") && trackWellSlice.contains("AmberTheme.homeGlassHighlight") && trackWellSlice.contains("AmberTheme.homeGlassShadowAmbient"),
+            "底部左侧三段式切换轨必须具备清晰可辨的完整外层液态玻璃胶囊轮廓（凹槽填充、镜面高光环与环境阴影），避免三个标签看起来像孤立按钮。"
+        )
 
         // 2. 前后台恢复首帧玻璃连续性：composerDockGlass 与 ComposerDockCircleGlass 必须具备半透材质衬底，且不靠 asyncAfter 延时掩盖
         let dockComponents = try sourceText("ComposerDockComponents.swift")

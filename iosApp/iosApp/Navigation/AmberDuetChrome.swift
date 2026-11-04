@@ -335,10 +335,11 @@ struct AmberDuetBottomSwitcher: View {
     }
 }
 
-/// Recessed translucent capsule track well for the 3-tab mode switcher.
-/// Keeping the outer well on `.ultraThinMaterial` + subtle glass pad avoids iOS 26
-/// nested `.glassEffect` SDF union, allowing the active Liquid Glass lens inside to
-/// refract, deform, and glide across `对话 | 任务 | 中心` as a distinct lens.
+/// Recessed translucent capsule track well for the 3-tab mode switcher (`对话 | 任务 | 中心`).
+/// Uses a distinct recessed glass well fill (`AmberTheme.surface2`) + vertical glass sheen +
+/// dual-layer contour (outer hairline + inner specular Liquid Glass rim highlight) so the
+/// 3-segment container has a clear, continuous outer silhouette on warm-paper and dark canvases,
+/// while avoiding nested `.glassEffect` SDF union so the active lens inside refracts and glides cleanly.
 private struct DuetBottomTrackWellSurface: ViewModifier {
     func body(content: Content) -> some View {
         let shape = Capsule(style: .continuous)
@@ -347,13 +348,42 @@ private struct DuetBottomTrackWellSurface: ViewModifier {
                 shape
                     .fill(.ultraThinMaterial)
                     .overlay {
-                        shape.fill(AmberTheme.glass.opacity(0.24))
+                        shape.fill(AmberTheme.surface2.opacity(0.68))
                     }
                     .overlay {
-                        shape.strokeBorder(AmberTheme.border.opacity(0.34), lineWidth: 0.6)
+                        shape.fill(
+                            LinearGradient(
+                                colors: [
+                                    AmberTheme.homeGlassTop.opacity(0.54),
+                                    AmberTheme.homeGlassBottom.opacity(0.18),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                    }
+                    .overlay {
+                        shape
+                            .inset(by: 0.75)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        AmberTheme.homeGlassHighlight.opacity(0.88),
+                                        AmberTheme.homeGlassEdge.opacity(0.28),
+                                        AmberTheme.homeGlassHighlight.opacity(0.46),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.65
+                            )
+                    }
+                    .overlay {
+                        shape.strokeBorder(AmberTheme.border.opacity(0.64), lineWidth: 0.75)
                     }
             }
-            .shadow(color: .black.opacity(0.05), radius: 8, y: 3)
+            .shadow(color: AmberTheme.homeGlassShadowContact, radius: 2, x: 0, y: 1)
+            .shadow(color: AmberTheme.homeGlassShadowAmbient, radius: 9, x: 0, y: 4)
     }
 }
 
@@ -373,12 +403,12 @@ private struct DuetActiveModeLensModifier: ViewModifier {
             let backed = content
                 .background {
                     shape
-                        .fill(AmberTheme.surfaceElevated.opacity(0.56))
-                        .shadow(color: Color.black.opacity(0.07), radius: 3, x: 0, y: 1)
+                        .fill(AmberTheme.surfaceElevated.opacity(0.82))
+                        .shadow(color: Color.black.opacity(0.08), radius: 3.5, x: 0, y: 1.5)
                 }
                 .overlay {
                     shape
-                        .strokeBorder(AmberTheme.homeGlassHighlight.opacity(0.72), lineWidth: 0.6)
+                        .strokeBorder(AmberTheme.homeGlassHighlight.opacity(0.88), lineWidth: 0.65)
                         .allowsHitTesting(false)
                 }
 
@@ -386,7 +416,7 @@ private struct DuetActiveModeLensModifier: ViewModifier {
                 if let namespace {
                     backed
                         .glassEffect(
-                            .regular.tint(AmberTheme.surfaceElevated.opacity(0.38)).interactive(),
+                            .regular.tint(AmberTheme.surfaceElevated.opacity(0.46)).interactive(),
                             in: shape
                         )
                         .glassEffectID("duetActiveTabLens", in: namespace)
@@ -394,7 +424,7 @@ private struct DuetActiveModeLensModifier: ViewModifier {
                 } else {
                     backed
                         .glassEffect(
-                            .regular.tint(AmberTheme.surfaceElevated.opacity(0.38)).interactive(),
+                            .regular.tint(AmberTheme.surfaceElevated.opacity(0.46)).interactive(),
                             in: shape
                         )
                 }
