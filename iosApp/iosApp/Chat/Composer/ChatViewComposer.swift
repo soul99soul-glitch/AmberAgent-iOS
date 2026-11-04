@@ -365,7 +365,6 @@ extension ChatView {
                                 }
                             )
                             .frame(height: collapsesComposerForDuetPanel ? 0 : nil, alignment: .top)
-                            .clipped()
                             .opacity(collapsesComposerForDuetPanel ? 0 : 1)
                             .allowsHitTesting(!collapsesComposerForDuetPanel)
                             .accessibilityHidden(collapsesComposerForDuetPanel)

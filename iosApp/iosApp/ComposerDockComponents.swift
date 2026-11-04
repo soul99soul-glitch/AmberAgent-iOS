@@ -22,12 +22,13 @@ extension View {
             }
         }()
         if #available(iOS 26.0, *) {
+            // 输入框胶囊不启用 `.interactive()`，避免长按输入框时产生轻微放大形变并被父级边界裁切。
             if pad > 0 {
                 background(AmberTheme.homeGlassTop.opacity(pad), in: shape)
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                    .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
                     .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
             } else {
-                glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
                     .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
             }
         } else {
