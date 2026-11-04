@@ -7,7 +7,9 @@ extension ChatToolRuntime {
         in messages: [UIMessage],
         availableToolNames: Set<String>
     ) -> UIMessagePart.Tool? {
-        let sessionToolNames: Set<String> = ["session_search", "session_read", "history_search", "history_fetch"]
+        let sessionToolNames: Set<String> = [
+            "session_search", "session_read", "history_search", "history_fetch", ChatEpisodeRecallTool.name
+        ]
         for message in messages.reversed() where message.role == MessageRole.assistant {
             if let toolCall = message.parts.compactMap({ $0 as? UIMessagePart.Tool })
                 .first(where: {
@@ -116,6 +118,12 @@ final class ChatSessionReadTool {
         case "history_fetch":
             return await Self.executeHistoryFetch(
                 toolCall: toolCall, store: store, conversationId: conversationId
+            )
+        case ChatEpisodeRecallTool.name:
+            return await ChatEpisodeRecallTool.execute(
+                arguments: toolCall.input,
+                currentConversationId: conversationId,
+                conversationStore: store
             )
         default:
             return ChatToolOutputFormatter.toolFailureJSON(

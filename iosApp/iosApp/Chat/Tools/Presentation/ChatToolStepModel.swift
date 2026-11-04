@@ -478,6 +478,7 @@ struct ChatToolStepModel: Identifiable {
         "tools_list": "列出可用工具",
         "history_search": "检索历史原文",
         "history_fetch": "读取历史原文",
+        "episode_recall": "调阅归档话题",
         "subagent_report": "子智能体汇报",
         "terminal_execute": "Remote SSH 执行",
         "ios_shell_execute": "AmberShell 执行",

@@ -902,7 +902,7 @@ enum IOSToolEffectClassMapping {
             return .pure
         }
         // 会话读取：跨会话检索与当前会话原始历史，均为本地只读，重放无副作用。
-        if ["session_search", "session_read", "history_search", "history_fetch"].contains(toolName) {
+        if ["session_search", "session_read", "history_search", "history_fetch", ChatEpisodeRecallTool.name].contains(toolName) {
             return .pure
         }
         // 本地运行时自省快照（Jev 模式/门控/目录计数）——纯读，重放无副作用。

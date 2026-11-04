@@ -71,6 +71,10 @@ final class ChatRunUploadPreparation {
         defer { ChatPerfTrace.end(&prepareInterval) }
         try Task.checkCancellation()
         guard isCurrentRun() else { return messages }
+        let messages = ChatEpisodeContextSupport.activeEpisodeMessages(
+            from: messages,
+            conversationId: conversationId?.toHexDashString()
+        )
         let isFastFirstUpload = fastFirstRound && uploadRoundIndex == 0
         uploadRoundIndex += 1
         let effectiveParams = params.replacingTools(

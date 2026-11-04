@@ -356,7 +356,7 @@ struct ChatView: View {
                     Task { _ = await openSubAgentSourceConversation(id.toHexDashString()) }
                 },
                 onNewConversation: {
-                    Task { await viewModel.startNewConversation() }
+                    startNewChatTopic()
                 },
                 onOpenAllHistory: {
                     // 旧首页已从「根」降为「会话管理」页：从抽屉里显式 push，
@@ -814,6 +814,20 @@ struct ChatView: View {
         }
     }
 
+    /// 单流陪伴对话中的「✦ 新话题」入口：将前序活跃轮次就地封存为一个 Episode 并插入轻量分割线，
+    /// 不清空历史滚屏；仅当尚无会话实体时才初始化新会话。
+    func startNewChatTopic() {
+        guard conversationStore.currentConversation != nil else {
+            Task { await viewModel.startNewConversation() }
+            return
+        }
+        if viewModel.startNewEpisode() {
+            viewportState.followPaused = false
+            scrollToBottomSource = .button
+            scrollToBottomTrigger &+= 1
+        }
+    }
+
     var topBar: some View {
         let generating = viewModel.isGenerationActive
         let currentIslandState = topIslandState
@@ -833,7 +847,7 @@ struct ChatView: View {
             onCancel: { viewModel.cancelGeneration() },
             onOpenConversation: openActivityConversation,
             onDismiss: { conversationActivityCenter.dismiss(conversationId: $0) },
-            onNewConversation: { Task { await viewModel.startNewConversation() } },
+            onNewConversation: startNewChatTopic,
             loadPreview: { id in
                 guard let message = await conversationActivityCenter.lastMessage(conversationId: id) else { return nil }
                 return message.toText().nilIfBlank

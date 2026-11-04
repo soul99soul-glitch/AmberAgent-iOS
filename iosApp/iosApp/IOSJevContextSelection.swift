@@ -86,7 +86,7 @@ final class IOSJevContextSelectionService {
         "workspace_file_read", "file_read", "workspace_artifact_read",
         "scrape_web", "wm_extract", "wm_observe",
         "session_read", "session_search",
-        "history_search", "history_fetch",
+        "history_search", "history_fetch", "episode_recall",
         "workspace_file_search", "file_search", "workspace_file_list", "file_list",
         // SSH profile / key 列表：本地只读快照，无副作用、不携带凭据，同参重读安全。
         "ssh_profile_list", "ssh_key_list",

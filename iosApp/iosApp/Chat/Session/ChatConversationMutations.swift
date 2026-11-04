@@ -370,9 +370,12 @@ extension ChatViewModel {
         persistsImmediately: Bool = true
     ) -> (digest: String, conversationId: KotlinUuid?, messageId: String) {
         currentRun.state.clearChildResultWait()
+        let nowMillis = Int64(Date().timeIntervalSince1970 * 1_000.0)
+        _ = sealActiveEpisodeForIdleGapIfNeeded(incomingTimestampMillis: nowMillis)
         let prompt = Self.promptText(userText: text, selectedFilePreview: consumesComposer ? pendingSelectedFilePreview : nil)
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
         let userMsg = makeUserMessage(prompt: prompt, images: images, metadata: metadata)
+        recordEpisodeMessageTimestamp(userMsg, conversationId: currentConversationId, timestampMillis: nowMillis)
         pendingAssistantRegeneration = nil
         // iMessage 式上屏:仅把这条用户消息的插入放进动画事务,驱动消息行的入场 transition。
         // 批量加载/切换会话走 `messages = store.currentMessages`(不在事务内),不会逐条动画。

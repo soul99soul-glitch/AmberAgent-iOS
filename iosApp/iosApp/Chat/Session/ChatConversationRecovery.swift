@@ -84,9 +84,13 @@ extension ChatViewModel {
     }
 
     func refreshContextCompactBoundaries() {
-        contextCompactBoundaries = IOSContextCompactionCoordinator.shared.timelineBoundaries(
+        let compactBoundaries = IOSContextCompactionCoordinator.shared.timelineBoundaries(
             conversationId: currentConversationId, messages: messages
         )
+        let episodeBoundaries = ChatEpisodeStore.shared.timelineBoundaries(
+            conversationId: currentConversationId, messages: messages
+        )
+        contextCompactBoundaries = compactBoundaries + episodeBoundaries
     }
 
     private func messagesByTerminatingStaleSearches(

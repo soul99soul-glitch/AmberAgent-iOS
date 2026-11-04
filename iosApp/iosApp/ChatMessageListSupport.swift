@@ -254,6 +254,10 @@ struct ChatAssistantPendingResponseView: View {
 struct ContextCompactTimelineMarker: View {
     let state: ChatContextCompactState
 
+    private var isCustomEpisodeMarker: Bool {
+        state.status == .completed && state.customCompletedTitle != nil
+    }
+
     private var title: String {
         switch state.status {
         case .planning:
@@ -261,7 +265,7 @@ struct ContextCompactTimelineMarker: View {
         case .compacting:
             return "正在压缩上下文"
         case .completed:
-            return "上下文已压缩"
+            return state.customCompletedTitle ?? "上下文已压缩"
         case .failed:
             return "上下文压缩失败"
         case .idle:
@@ -281,6 +285,9 @@ struct ContextCompactTimelineMarker: View {
     }
 
     private var tint: Color {
+        if isCustomEpisodeMarker {
+            return AmberTheme.muted
+        }
         switch state.status {
         case .completed:
             return AmberTheme.accent
@@ -303,14 +310,16 @@ struct ContextCompactTimelineMarker: View {
         VStack(spacing: 7) {
             HStack(spacing: 10) {
                 Rectangle()
-                    .fill(AmberTheme.border.opacity(0.55))
+                    .fill(AmberTheme.border.opacity(isCustomEpisodeMarker ? 0.38 : 0.55))
                     .frame(height: 0.5)
                 HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(tint)
+                    if !isCustomEpisodeMarker {
+                        Image(systemName: icon)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(tint)
+                    }
                     Text(title)
-                        .font(.footnote.weight(.semibold))
+                        .font(isCustomEpisodeMarker ? .caption.weight(.medium) : .footnote.weight(.semibold))
                         .foregroundStyle(tint)
                         .lineLimit(1)
                     if state.isActive {
@@ -319,7 +328,7 @@ struct ContextCompactTimelineMarker: View {
                 }
                 .fixedSize(horizontal: true, vertical: false)
                 Rectangle()
-                    .fill(AmberTheme.border.opacity(0.55))
+                    .fill(AmberTheme.border.opacity(isCustomEpisodeMarker ? 0.38 : 0.55))
                     .frame(height: 0.5)
             }
 

@@ -744,9 +744,8 @@ extension ChatView {
                 composerState.activeDuetTab = .chat
             }
         }
-        Task {
-            await viewModel.startNewConversation()
-        }
+        startNewChatTopic()
+        composerState.isInputFocused = true
     }
 
     func followupTaskInChat(_ followupTask: AmberUnifiedTaskItem) {

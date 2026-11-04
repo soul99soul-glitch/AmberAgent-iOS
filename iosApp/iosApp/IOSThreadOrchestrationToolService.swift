@@ -504,7 +504,10 @@ final class IOSThreadOrchestrationToolService {
             type: MailboxEnvelopeType.theNewTask.name,
             payload: message
         )
-        let forkMessages = IOSOrchestrationConfigurationCodec.removingOrchestrationConfigurationMessages(from: forked.currentMessages)
+        let forkMessages = ChatEpisodeContextSupport.activeEpisodeMessages(
+            from: IOSOrchestrationConfigurationCodec.removingOrchestrationConfigurationMessages(from: forked.currentMessages),
+            conversationId: parentHex
+        )
         var childMessages = forkMessages
         if let configuration = launch.configuration {
             childMessages.append(IOSOrchestrationConfigurationCodec.orchestrationConfigurationMessage(configuration))

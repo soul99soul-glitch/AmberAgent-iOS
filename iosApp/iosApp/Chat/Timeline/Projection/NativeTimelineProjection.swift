@@ -173,7 +173,7 @@ enum NativeTimelineProjector {
                 $0.coveredMessageIds.isSubset(of: existingIds) && existingIds.contains($0.afterMessageId)
             }
         }
-        let anchors = Set(boundaries.map(\.afterMessageId))
+        let anchors = Set(boundaries.filter { !$0.isEpisodeBoundary }.map(\.afterMessageId))
         let compactedEnd = anchors.isEmpty ? nil : messages.lastIndex {
             anchors.contains(ChatMessageProjector.messageId(for: $0))
         }

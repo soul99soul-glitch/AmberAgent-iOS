@@ -352,6 +352,8 @@ struct ChatRuntimeContextBuilder {
     let miniAppRuntimeEnabled: Bool
     var skillFileStore = IOSSkillFileStore()
     var soulStore: AgentSoulStore? = nil
+    var conversationId: String? = nil
+    var isOrchestratedChild: Bool = false
 
     @MainActor
     func injectingRuntimeContext(
@@ -364,10 +366,27 @@ struct ChatRuntimeContextBuilder {
         prepared = messagesByInjectingMiniAppInstruction(prepared)
         prepared = messagesByInjectingMcpContext(prepared)
         prepared = messagesByInjectingMemoryContext(prepared, memoryRecallOverride: memoryRecallOverride)
+        prepared = messagesByInjectingRecentEpisodesContext(prepared)
         prepared = messagesByInjectingSkillContext(prepared)
         prepared = messagesByInjectingWorkspaceToolPolicy(prepared)
         prepared = messagesByInjectingSystemPrompt(prepared)
         return coalesceSystemMessages ? Self.coalescingSystemMessages(prepared) : prepared
+    }
+
+    @MainActor
+    private func messagesByInjectingRecentEpisodesContext(_ messages: [UIMessage]) -> [UIMessage] {
+        let prompt = ChatEpisodeContextSupport.recentEpisodesPrompt(
+            conversationId: conversationId,
+            isOrchestratedChild: isOrchestratedChild
+        )
+        guard !prompt.isEmpty else { return messages }
+        var prepared = messages
+        let insertionIndex = prepared.firstIndex { $0.role != MessageRole.system } ?? prepared.endIndex
+        prepared.insert(
+            PromptTranscript.shared.sectionMessage(name: "recentEpisodes", text: prompt),
+            at: insertionIndex
+        )
+        return prepared
     }
 
     static func soulSystemMessage(markdown: String) -> UIMessage? {

@@ -62,10 +62,12 @@ enum IOSOrchestrationConfigurationCodec {
         return nil
     }
 
+    static func isOrchestrationConfigurationMessage(_ message: UIMessage) -> Bool {
+        message.role == MessageRole.system && message.toText().hasPrefix(configurationMarker + "\n")
+    }
+
     static func removingOrchestrationConfigurationMessages(from messages: [UIMessage]) -> [UIMessage] {
-        messages.filter { message in
-            !(message.role == MessageRole.system && message.toText().hasPrefix(configurationMarker + "\n"))
-        }
+        messages.filter { !isOrchestrationConfigurationMessage($0) }
     }
 
     static func orchestrationConfigurationPrompt(

@@ -88,6 +88,7 @@ final class IOSContextCompactionCoordinator {
     /// Deleting a conversation deletes its summaries too; an in-flight pass is cancelled
     /// so it cannot recreate the file afterwards.
     func removeCompacts(conversationIds: [String]) throws {
+        ChatEpisodeStore.shared.remove(conversationIds: conversationIds)
         var firstError: Error?
         for conversationId in conversationIds {
             activeCompactionTasks[conversationId]?.cancel()
@@ -143,6 +144,10 @@ final class IOSContextCompactionCoordinator {
         extraWeightedChars: Int = 0,
         systemOverheadText: String = ""
     ) -> Int {
+        let activeMessages = ChatEpisodeContextSupport.activeEpisodeMessages(
+            from: messages,
+            conversationId: conversationId?.toHexDashString()
+        )
         let compacts: [IOSConversationCompact]
         if let conversationId {
             compacts = store.load(conversationId: String(describing: conversationId))
@@ -150,7 +155,7 @@ final class IOSContextCompactionCoordinator {
             compacts = []
         }
         return Self.nextTurnOccupancyTokens(
-            messages: messages,
+            messages: activeMessages,
             activeCompacts: compacts,
             draftText: draftText,
             extraWeightedChars: extraWeightedChars,
@@ -168,9 +173,13 @@ final class IOSContextCompactionCoordinator {
         additionalHistoryOverhead: (([UIMessage]) -> Int)? = nil,
         onEvent: ((IOSContextCompactionEvent) -> Void)? = nil
     ) async throws -> [UIMessage] {
+        let activeEpisodeMessages = ChatEpisodeContextSupport.activeEpisodeMessages(
+            from: uploadMessages,
+            conversationId: conversationId?.toHexDashString()
+        )
         // Request-only: older tool-result images become placeholders before any budgeting,
         // so compaction plans against what is actually uploaded. Storage is unchanged.
-        let uploadMessages = IOSToolImageRequestBudget.apply(uploadMessages)
+        let uploadMessages = IOSToolImageRequestBudget.apply(activeEpisodeMessages)
         let policy = IOSCompactPolicy(settings.agentRuntime.contextCompaction)
         let contextMessageSize = Int(settings.resolveSessionDefaults(
             assistant: settings.getCurrentAssistant(),

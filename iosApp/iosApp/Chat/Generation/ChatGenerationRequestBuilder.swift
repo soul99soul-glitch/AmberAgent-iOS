@@ -122,7 +122,9 @@ extension ChatViewModel {
                 : [],
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
-            soulStore: agentSoulStore
+            soulStore: agentSoulStore,
+            conversationId: state.conversationId?.toHexDashString(),
+            isOrchestratedChild: state.isOrchestratedChild
         ).injectingRuntimeContext(
             into: uploadableWithGuidance,
             coalesceSystemMessages: false,
@@ -475,11 +477,14 @@ extension ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: ["session_search", "session_read"]
         ))
-        // 当前会话原始历史检索（history_search/history_fetch）。常驻：压缩后
-        // 模型必须能立刻回查原文，不能先依赖 tool_search 的额外一轮。
+        // 当前会话原始历史检索（history_search/history_fetch）与归档话题召回（episode_recall）。
+        // 常驻：分段归档或压缩后模型必须能立刻回查原文，不能先依赖 tool_search 的额外一轮。
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: ["history_search", "history_fetch"]
         ))
+        if !state.isOrchestratedChild {
+            toolDeclarations.append(ChatEpisodeRecallTool.declaration)
+        }
         // Agent 自配置 provider/model：非常驻 deferred；写密钥仅前台 + 审批。
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSProviderConfigToolCatalog.toolNames).sorted()
@@ -539,6 +544,9 @@ extension ChatViewModel {
         // the whole run so hits become callable on the NEXT round.
         let exposureBridge = IosToolExposureBridge(tools: toolDeclarations, recipeSearchInfo: recipeSearchInfo)
         exposureBridge.exposeToolNames(names: Array(AgentSoulToolCatalog.toolNames).sorted())
+        if !state.isOrchestratedChild {
+            exposureBridge.exposeToolNames(names: [ChatEpisodeRecallTool.name])
+        }
         if includesPhoneTools {
             exposureBridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
         }
