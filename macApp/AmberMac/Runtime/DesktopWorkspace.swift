@@ -84,6 +84,7 @@ final class DesktopWorkspace {
     let files: DesktopWorkspaceFiles
     let agentTasks: DesktopAgentTasks
     let knowledge: DesktopKnowledgeStore
+    let agentSoul: DesktopAgentSoulStore
     let mcp: DesktopMCPManager
     let collaborations: DesktopCollaborations
     let recipes: DesktopRecipeRuns
@@ -270,6 +271,7 @@ final class DesktopWorkspace {
          provider: any DesktopTextProvider, initialConversations: [DesktopConversation]? = nil,
          insights: DesktopConversationInsights? = nil, files: DesktopWorkspaceFiles = DesktopWorkspaceFiles(),
          agentTasks: DesktopAgentTasks? = nil, knowledge: DesktopKnowledgeStore? = nil,
+         agentSoul: DesktopAgentSoulStore? = nil,
          mcp: DesktopMCPManager? = nil, collaborations: DesktopCollaborations? = nil, recipes: DesktopRecipeRuns? = nil,
          webDAV: DesktopWebDAVManager? = nil, notifications: DesktopNotifications? = nil,
          storageUsageSources: [DesktopStorageUsage.Source]? = nil,
@@ -287,6 +289,7 @@ final class DesktopWorkspace {
         self.intelligentUIStateStore = intelligentUIStateStore ?? IOSIntelligentUIStateStore()
         self.knowledge = knowledge ?? DesktopKnowledgeStore(directory: FileManager.default.temporaryDirectory
             .appendingPathComponent("amber-preview-knowledge-" + UUID().uuidString, isDirectory: true))
+        self.agentSoul = agentSoul ?? DesktopAgentSoulStore(knowledge: self.knowledge)
         self.mcp = mcp ?? DesktopMCPManager(store: DesktopMCPStore(
             defaults: UserDefaults(suiteName: "amber.preview.mcp." + UUID().uuidString)!, credentials: DesktopMemoryCredentials()))
         self.collaborations = collaborations ?? DesktopCollaborations(settings: settings, provider: provider)
@@ -813,7 +816,7 @@ final class DesktopWorkspace {
                                  configuration: DesktopProviderConfiguration) throws -> [DesktopMessage] {
         let model = configuration.selectedModel
         let knowledgeEnabled = plugins.isCoreEnabled(.knowledge)
-        let stableContext = knowledgeEnabled ? try knowledge.stableContext() : ""
+        let stableContext = knowledgeEnabled ? try knowledge.stableContext() : agentSoul.systemPromptContext()
         let memoryContext = knowledgeEnabled
             ? try knowledge.requestMemoryContext(query: history.last(where: { $0.role == .user })?.text ?? "")
             : ""

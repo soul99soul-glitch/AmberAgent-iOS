@@ -6,6 +6,7 @@ struct DesktopCommandPaletteView: View {
     @Bindable var workspace: DesktopWorkspace
     var onDismiss: () -> Void
     var onFocusComposer: () -> Void = {}
+    var onOpenAgentSoul: () -> Void = {}
 
     struct PaletteItem: Identifiable {
         let id: String
@@ -82,6 +83,18 @@ struct DesktopCommandPaletteView: View {
                 onDismiss()
             })
         }
+
+        all.append(PaletteItem(
+            id: "act.agent_soul",
+            category: "智能体设定",
+            title: "形象人设",
+            subtitle: workspace.agentSoul.isDefault ? "默认 Amber · 查看或自定义全端共享人设" : "当前：\(workspace.agentSoul.displayName) · v\(workspace.agentSoul.revision)",
+            badge: nil,
+            symbol: "person.crop.circle.badge.sparkles"
+        ) {
+            onDismiss()
+            onOpenAgentSoul()
+        })
 
         all.append(PaletteItem(
             id: "act.new_chat",

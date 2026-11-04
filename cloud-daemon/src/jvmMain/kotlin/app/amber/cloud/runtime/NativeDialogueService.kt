@@ -35,7 +35,7 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
     fun receipt(device:PairedDevice,requestId:String):DialogueReceipt?=events.find(device.id,requestId)?.let {receipt(it,true)}
     private fun receipt(input:DialogueInput,replayed:Boolean):DialogueReceipt {
         val work=if(input.workItemId!=null) listOf(input.workItemId) else store.listWorkItems().filter {item->item.sourceProvenance.any {it.messageId=="native:${input.id}"}}.map {it.workItemId}
-        return DialogueReceipt(input.id,input.requestId,input.topicId,work,events.disposition(input.id),replayed)
+        return DialogueReceipt(input.id,input.requestId,input.topicId,work,events.disposition(input.id),replayed,soulRevision=kernel.soulStore.currentRevision())
     }
     private fun enqueue(input:DialogueInput) {
         if(events.isConsumed(input.id)||!enqueued.add(input.id))return

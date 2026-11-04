@@ -1,14 +1,18 @@
 package app.amber.cloud.orchestration
 
+import app.amber.ai.core.MessageRole
 import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessagePart
+import app.amber.cloud.agents.AgentMemoryPolicy
 import app.amber.cloud.runtime.CloudModelClient
 import app.amber.cloud.runtime.CloudToolRegistry
 import app.amber.cloud.runtime.ExecutionScope
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.agents.AgentProfile
 import app.amber.cloud.runtime.CloudMemoryStore
+import app.amber.cloud.soul.CloudSoulStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -82,14 +86,22 @@ class ModelRouterBrain(
                     else -> needsFollowup = true
                 }
                 val out = if (call.toolName in CloudRouter.ROUTER_TOOL_NAMES) {
-                    runCatching { registry.executeGate(call.toolName, args, ExecutionScope.MAIN_AGENT).toString() }
-                        .getOrElse { "{\"ok\":false}" }
+                    runCatching {
+                        withContext(RouterTurnAuthContext(input.ownerAuthorizedMessageIds.isNotEmpty())) {
+                            registry.executeGate(call.toolName, args, ExecutionScope.MAIN_AGENT).toString()
+                        }
+                    }.getOrElse { "{\"ok\":false}" }
                 } else {
                     "{\"ok\":false,\"error\":\"Router 不允许执行该工具\"}"
                 }
                 call.copy(output = listOf(UIMessagePart.Text(CredentialRedactor.redact(out))))
             }
             if (!needsFollowup) return RouterDecision(reply, dispatch, steer, proposal,cancel)
+            if (calls.any { it.toolName == "agent_soul_update" } && messages.firstOrNull()?.role == MessageRole.SYSTEM) {
+                contextMessages(input).firstOrNull { it.role == MessageRole.SYSTEM }?.let { freshSys ->
+                    messages[0] = freshSys
+                }
+            }
             messages += answer.copy(parts = answer.parts.map { part ->
                 if (part is UIMessagePart.Tool) executed.firstOrNull { it.toolCallId == part.toolCallId } ?: part else part
             })
@@ -98,10 +110,11 @@ class ModelRouterBrain(
     }
 
     companion object {
-        const val DEFAULT_ROUTER_SYSTEM_PROMPT = """你是 Amber 云端本体的 Router。你只负责和主人对话、派单与汇报：
-- 需要执行的工作一律用 dispatch_work 派给后台 Worker，不要自己执行；
-- 回复简短（不超过 100 词），只在需要主人决策或验收时说明；
-- 不要提及工具名、参数、原始返回或你的推理过程。"""
+        const val DEFAULT_ROUTER_SYSTEM_PROMPT = """你是云端主对话协调层（请全程使用 <agent-soul> 设定的身份、称呼与口吻和用户自然交流）。你负责对话交流、更新形象人设、派单与汇报：
+- 当用户要求更换人设、性格、称呼或说话口吻时，直接调用 agent_soul_update 更新全端共享形象人设，不要派给后台 Worker；
+- 其他需要实际执行的工作一律用 dispatch_work 派给后台 Worker，不要自己伪造执行结果；
+- 回复简短（不超过 100 词），保持当前形象人设口吻；
+- 对外回复中不要提及内部工具名、原始参数或推理过程。"""
     }
 }
 
@@ -116,6 +129,7 @@ class ModelWorkerTurnRunner(
     private val maxSteps: Int = 20,
     private val memoryStore: CloudMemoryStore? = null,
     private val modelClients: Map<String, CloudModelClient> = emptyMap(),
+    private val soulStore: CloudSoulStore? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -128,8 +142,12 @@ class ModelWorkerTurnRunner(
         val tools = toolRegistry.declaredTools(ExecutionScope.SUBAGENT).filter { allowedTools == null || it.name in allowedTools || it.name == "task_finish" }
         val client = profile?.modelPreference?.let { modelClients[it] ?: error("Agent 模型配置已移除") } ?: modelClient
         val memories = if (profile != null) memoryStore?.recallForPrompt(item.brief, agentId = profile.id, memoryPolicy = profile.memoryPolicy).orEmpty() else emptyList()
+        val policy = profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL
         val systemPrompt = buildString {
-            append(if (profile != null) memoryStore?.loadSoulPrompt(profile.memoryPolicy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN)
+            append(
+                soulStore?.renderDirectSystemPrompt(policy)
+                    ?: if (profile != null) memoryStore?.loadSoulPrompt(policy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN
+            )
             append("\n你是受管 Worker，只处理当前任务；不得创建 agent、派单或向其他 agent 发送消息。\n")
             append("任务文件以相对路径访问。脚本执行受OS隔离且不能联网，用HTTP/搜索工具联网。工具失败必须检查并修正或报告阻塞。写代码文本不等于执行。最终必须调用 task_finish，明确completed/blocked/failed并列出实际产物；没有工具调用的回答不会自动成功。\n")
             append("耗时脚本用process_run后台启动（默认background=true），立刻继续处理补充；完成/失败/停止会作为任务事件送达。等待期间可不调用工具，系统会在新事件到达时继续；不要循环长时间process_wait。重启中断事件不表示旧命令已成功，先检查输出再决定下一步。\n")

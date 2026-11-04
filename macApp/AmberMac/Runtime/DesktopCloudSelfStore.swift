@@ -204,6 +204,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     private(set) var remoteConfig: DesktopCloudRemoteConfig?
     private(set) var remoteConfigError: String?
     private(set) var isImporting = false
+    private(set) var isSoulSyncing = false
     /// Names of secret slots the cloud confirmed after the last upload.
     private(set) var lastConfiguredSecrets: Set<String>?
     var pendingPairing: DesktopCloudPairingPayload?
@@ -211,6 +212,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
 
     @ObservationIgnored private var client: DesktopCloudClient?
     @ObservationIgnored private var sync: (any DesktopCloudConfigSync)?
+    @ObservationIgnored private let soulCoordinator: DesktopCloudSoulCoordinator?
     @ObservationIgnored private var poll: Task<Void, Never>?
     @ObservationIgnored private var statusGeneration = 0
     @ObservationIgnored private let defaults: UserDefaults
@@ -219,19 +221,28 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     @ObservationIgnored private let searchSettings: DesktopSearchSettings
     /// Builds the config sync from the paired client; injectable so tests never touch TLS/JWE.
     @ObservationIgnored private let makeSync: @Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudConfigSync)?
+    @ObservationIgnored private let makeSoulSync: @Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudSoulSync)?
+
+    var lastSoulSyncError: String? { soulCoordinator?.lastSyncError }
 
     init(
         settings: DesktopSettings,
         searchSettings: DesktopSearchSettings,
+        soulStore: DesktopAgentSoulStore? = nil,
         defaults: UserDefaults = .standard,
         tokens: any DesktopCloudTokenStore = DesktopCloudKeychainTokens(),
-        makeSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudConfigSync)?)? = nil
+        makeSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudConfigSync)?)? = nil,
+        makeSoulSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudSoulSync)?)? = nil
     ) {
         self.settings = settings
         self.searchSettings = searchSettings
         self.defaults = defaults
         self.tokens = tokens
+        self.soulCoordinator = soulStore.map { DesktopCloudSoulCoordinator(soulStore: $0, defaults: defaults) }
         let kidStore = DesktopCloudPinnedKidStore(defaults: defaults)
+        self.makeSoulSync = makeSoulSync ?? { client, _ in
+            DesktopCloudClientSoulSync(client: client)
+        }
         self.makeSync = makeSync ?? { client, connection in
             DesktopCloudClientConfigSync(client: client, connection: connection, kidStore: kidStore)
         }
@@ -248,6 +259,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                                         fingerprint: connection.fingerprint, token: token)
         self.client = client
         self.sync = makeSync(client, connection)
+        soulCoordinator?.attach(gatewayId: connection.gatewayId, sync: makeSoulSync(client, connection))
     }
 
     // MARK: - Pairing
@@ -318,6 +330,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
             guard self.client === client, generation == statusGeneration else { return }
             status = latest
             isReachable = true
+            await soulCoordinator?.reconcile(remoteRevisionHint: latest.soulRevision)
             await refreshRemoteConfig()
         } catch is CancellationError {
         } catch {
@@ -351,6 +364,13 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     }
 
     func stopPolling() { poll?.cancel(); poll = nil }
+
+    func syncSoulNow() async {
+        guard let soulCoordinator, connection != nil else { return }
+        isSoulSyncing = true
+        defer { isSoulSyncing = false }
+        await soulCoordinator.syncNow()
+    }
 
     // MARK: - Remote config apply (manual update)
 
@@ -626,9 +646,11 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
 
     private func forget() {
         tokens.delete(key: Self.tokenKey)
-        if let gatewayId = connection?.gatewayId {
+        let revokedGatewayId = connection?.gatewayId
+        if let gatewayId = revokedGatewayId {
             DesktopCloudPinnedKidStore(defaults: defaults).unpin(forGateway: gatewayId)
         }
+        soulCoordinator?.detach(clearPendingForGateway: revokedGatewayId)
         defaults.removeObject(forKey: Self.connectionKey)
         connection = nil
         client = nil

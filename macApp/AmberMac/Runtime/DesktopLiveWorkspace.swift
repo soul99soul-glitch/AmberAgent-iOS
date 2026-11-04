@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+@preconcurrency import GatewayCore
 
 @MainActor extension DesktopWorkspace {
     convenience init() {
@@ -11,6 +12,10 @@ import Foundation
             locationsFile: directory.appendingPathComponent("workspace-locations.json"))
         let tasks = DesktopAgentTasks(directory: directory.appendingPathComponent("agent-runs", isDirectory: true), notifications: notifications)
         let knowledge = DesktopKnowledgeStore()
+        let agentSoul = DesktopAgentSoulStore(
+            knowledge: knowledge,
+            gatewayRevisionFile: GatewayPaths.resolve().soulRevision
+        )
         let mcp = DesktopMCPManager(store: DesktopMCPStore())
         let webDAV = DesktopWebDAVManager()
         let searchSettings = DesktopSearchSettings()
@@ -31,7 +36,7 @@ import Foundation
         }
         self.init(settings: settings, storage: DesktopKMPConversationStorage(directory: directory.appendingPathComponent("conversations", isDirectory: true)),
             provider: provider, insights: DesktopConversationInsights(directory: directory.appendingPathComponent("conversation-insights", isDirectory: true)),
-            files: files, agentTasks: tasks, knowledge: knowledge, mcp: mcp, collaborations: collaborations, recipes: recipes, webDAV: webDAV,
+            files: files, agentTasks: tasks, knowledge: knowledge, agentSoul: agentSoul, mcp: mcp, collaborations: collaborations, recipes: recipes, webDAV: webDAV,
             notifications: notifications, storageUsageSources: DesktopStorageUsage.sources(
                 amberRoot: directory, knowledgeDirectory: knowledge.directory),
             imageGeneration: imageGeneration, searchSettings: searchSettings,
@@ -62,23 +67,36 @@ import Foundation
         tasks.onUnattendedApproval = { reporter.approval(conversationID: $0, $1) }
         let control = DesktopGatewayControl(tasks: tasks, reporter: reporter, scheduler: scheduler)
         control.board = { [weak self] in self?.boardItems() ?? [] }
+        control.soulStore = agentSoul
         gatewayControl = control
         boardWriter = DesktopBoardWriter(provider: text, available: { [weak self] in self?.settings.configuration(for: .title) != nil }) { [weak self] in
             self?.boardWriterRequest()
         }
         // Outbound cloud pairing (Mac → cloud amberd). Independent of the local gateway above.
-        cloudSelf = DesktopCloudSelfStore(settings: settings, searchSettings: searchSettings)
+        cloudSelf = DesktopCloudSelfStore(settings: settings, searchSettings: searchSettings, soulStore: agentSoul)
         // Not as a test host: the title model's key is a Keychain read, which prompts an unsigned test build.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             Task { @MainActor [weak self] in
-                while true { try? await Task.sleep(for: .seconds(20)); self?.writeBoardTitles() }
+                await self?.cloudSelf?.refresh()
+                while true {
+                    try? await Task.sleep(for: .seconds(20))
+                    self?.writeBoardTitles()
+                    if self?.cloudSelf?.connection != nil {
+                        await self?.cloudSelf?.refresh()
+                    }
+                }
             }
         }
         // Listening is harmless when the gateway is off (nobody connects), and it means enabling needs no restart.
         control.start()
         // The phone can only reach Amber through this socket; take the path back whenever Amber comes to front.
-        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { control.ensureListening() }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                control.ensureListening()
+                if self?.cloudSelf?.connection != nil {
+                    Task { @MainActor [weak self] in await self?.cloudSelf?.refresh() }
+                }
+            }
         }
         Task { @MainActor in
             while true {

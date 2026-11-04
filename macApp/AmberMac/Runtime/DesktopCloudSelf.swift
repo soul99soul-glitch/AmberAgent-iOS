@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+@preconcurrency import GatewayCore
 import Security
 
 /// C3 §2.1 pairing payload. `amber-cli pair` on the cloud host prints the same
@@ -47,6 +48,7 @@ struct DesktopCloudStatus: Decodable, Equatable, Sendable {
     var gateway: Gateway
     var device: Device
     var serverTime: Date?
+    var soulRevision: Int64?
 }
 
 enum DesktopCloudError: LocalizedError, Equatable {
@@ -164,6 +166,15 @@ actor DesktopCloudClient {
         try decode(await send("GET", "/v1/status"))
     }
 
+    func fetchSoul() async throws -> AmberControl.SoulState {
+        try decode(await send("GET", "/v2/soul"))
+    }
+
+    func putSoul(_ request: AmberControl.SoulPutRequest) async throws -> AmberControl.SoulState {
+        let encoded = try JSONEncoder().encode(request)
+        return try decode(await send("PUT", "/v2/soul", rawBody: encoded))
+    }
+
     func unpair() async throws {
         _ = try await send("POST", "/v1/unpair")
     }
@@ -179,8 +190,14 @@ actor DesktopCloudClient {
     }
 
     @discardableResult
-    func send(_ method: String, _ path: String, body: [String: Any]? = nil, slow: Bool = false) async throws -> Data {
-        let bodyData = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+    func send(
+        _ method: String,
+        _ path: String,
+        body: [String: Any]? = nil,
+        rawBody: Data? = nil,
+        slow: Bool = false
+    ) async throws -> Data {
+        let bodyData = try rawBody ?? body.map { try JSONSerialization.data(withJSONObject: $0) }
         let ordered = preferredAddress.map { [$0] + addrs.filter { $0 != preferredAddress } } ?? addrs
         var sawPinMismatch = false
         for address in ordered {

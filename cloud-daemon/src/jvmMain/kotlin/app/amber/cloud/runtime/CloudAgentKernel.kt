@@ -179,6 +179,11 @@ class CloudAgentKernel(
         masterSecretOverride = masterSecretOverride,
     )
     val memoryStore = CloudMemoryStore(memoryDir)
+    val soulStore = app.amber.cloud.soul.CloudSoulStore(dataDir = dataDir, memoryDir = memoryDir, workspaceDir = workspaceDir).also { s ->
+        memoryStore.onSoulPromptSaved = { md ->
+            s.put(app.amber.cloud.soul.SoulPutRequestDto(soulMarkdown = md, isDefault = md.isBlank(), source = "memory_store"))
+        }
+    }
     val contextManager = CloudContextManager(checkpointsDir)
     val toolRegistry = CloudToolRegistry()
     val taskProcesses = app.amber.cloud.tasks.TaskProcessRunner(File(dataDir, "toolchain").also { it.mkdirs() })
@@ -186,7 +191,7 @@ class CloudAgentKernel(
     val publicHttp = app.amber.cloud.tasks.PublicHttp()
     val taskToolchain = app.amber.cloud.tasks.TaskToolchain(publicHttp,taskProcesses,taskWorkspace)
     val search = app.amber.cloud.tasks.CloudSearch(publicHttp, vault, searchSources, searchMode, workspace = taskWorkspace)
-    val gatewayState = CloudGatewayState(dataDir)
+    val gatewayState = CloudGatewayState(dataDir, soulRevisionProvider = { soulStore.currentRevision() })
     val orchestrationStore = CloudOrchestrationStore(dataDir)
     val agentRegistry = AgentRegistry(dataDir, orchestrationStore,
         ownerGrantedTools = {
@@ -223,6 +228,7 @@ class CloudAgentKernel(
         toolRegistry = toolRegistry,
         memoryStore = memoryStore,
         modelClients = modelClients,
+        soulStore = soulStore,
     )
     val router: CloudRouter
     private val routerIngress by lazy { CloudRouterIngress(this) }
@@ -319,6 +325,7 @@ class CloudAgentKernel(
                     conversationTagger.enqueue(conversation.copy(messageNodes = listOf(UIMessage.user(prompt).toMessageNode(), reply)))
                 }
             },
+            soulStore = soulStore,
         ).also { r ->
             r.brain = ModelRouterBrain(
                 modelClient = modelClient,
@@ -578,7 +585,10 @@ class CloudAgentKernel(
 
         // Defect #7: Prepare request messages with pinned SYSTEM message and dynamic memory on tail
         val preparedMessages = contextManager.prepareRequestMessages(
-            systemPrompt = memoryStore.loadSoulPrompt(profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL) + "\n" + profile?.instructions.orEmpty(),
+            systemPrompt = soulStore.renderDirectSystemPrompt(
+                memoryPolicy = profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL,
+                extraInstructions = profile?.instructions.orEmpty(),
+            ),
             memories = recalledMemories,
             conversationId = convId.toString(),
             historyMessages = currentMessages,

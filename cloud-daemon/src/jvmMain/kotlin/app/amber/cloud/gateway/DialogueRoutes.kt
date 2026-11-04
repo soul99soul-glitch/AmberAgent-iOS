@@ -48,7 +48,8 @@ internal fun Application.configureDialogueRoutes(state:CloudGatewayState,kernel:
             try {
                 val after=call.request.queryParameters["after"]?.toLong()?:0
                 val limit=call.request.queryParameters["limit"]?.toInt()?:100
-                call.respondText(json.encodeToString(kernel.orchestrationStore.dialogue.page(after,limit)),ContentType.Application.Json)
+                val page=kernel.orchestrationStore.dialogue.page(after,limit).copy(soulRevision=kernel.soulStore.currentRevision())
+                call.respondText(json.encodeToString(page),ContentType.Application.Json)
             }catch(_:IllegalArgumentException){call.error(400,"invalid_cursor")}
         }
     }

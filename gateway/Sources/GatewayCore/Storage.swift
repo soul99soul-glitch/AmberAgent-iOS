@@ -18,6 +18,7 @@ public struct GatewayPaths: Sendable {
     public var pairing: URL { stateDir.appendingPathComponent("pairing.json") }
     public var identity: URL { stateDir.appendingPathComponent("gateway.json") }
     public var audit: URL { stateDir.appendingPathComponent("audit.jsonl") }
+    public var soulRevision: URL { stateDir.appendingPathComponent("soul-revision.txt") }
     public var secretsDir: URL { stateDir.appendingPathComponent("secrets", isDirectory: true) }
     public var tlsIdentity: URL { secretsDir.appendingPathComponent("tls.p12") }
 

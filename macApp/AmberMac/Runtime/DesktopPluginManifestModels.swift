@@ -34,7 +34,7 @@ enum DesktopCorePlugin: String, Codable, CaseIterable, Identifiable, Sendable {
     var summary: String {
         switch self {
         case .taskBoard: "在侧栏与主工作区查看排定的定时任务、待批准项与 Claude Code / Codex 会话。"
-        case .knowledge: "管理本地技能（SKILL.md）、长期记忆库与 SOUL.md 偏好设定。"
+        case .knowledge: "管理本地技能（SKILL.md）、长期记忆库与形象人设设定。"
         case .collaborations: "在对话中派发只读子代理并行调研，或召开多模型议会辩论汇总。"
         case .recipes: "将多步工具调用固化为可复用的自动化 Recipe 流程。"
         case .imageGeneration: "调用已配置的图像模型生成图片并保存到当前会话工作区。"

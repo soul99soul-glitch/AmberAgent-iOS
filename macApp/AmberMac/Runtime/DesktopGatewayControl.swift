@@ -14,6 +14,7 @@ import Foundation
 
     /// The task board as the phone sees it; set by the live app (it knows the scheduled runs in flight).
     var board: (@MainActor () -> [AmberControl.BoardItem])?
+    var soulStore: DesktopAgentSoulStore?
 
     init(paths: GatewayPaths = .resolve(), tasks: DesktopAgentTasks, reporter: DesktopGatewayReporter, scheduler: DesktopScheduler?) {
         self.paths = paths; self.tasks = tasks; self.reporter = reporter; self.scheduler = scheduler
@@ -82,6 +83,18 @@ import Foundation
             guard let scheduler else { return .failure(503, "定时任务不可用") }
             await scheduler.waitUntilLoaded()
             return await schedules(request, scheduler)
+        case .getSoul:
+            guard let soulStore else { return .failure(503, "形象人设存储不可用") }
+            return AmberControl.Response(status: 200, soul: soulStore.state)
+        case .putSoul:
+            guard let soulStore else { return .failure(503, "形象人设存储不可用") }
+            guard let soulPut = request.soulPut else { return .failure(400, "缺少形象人设更新内容") }
+            do {
+                let updated = try soulStore.put(soulPut, emitLocalMutation: true)
+                return AmberControl.Response(status: 200, soul: updated)
+            } catch {
+                return .failure(400, error.localizedDescription)
+            }
         }
     }
 
@@ -109,7 +122,7 @@ import Foundation
             }
             if let error = scheduler.runNow(id) { return .failure(409, error) }
             return AmberControl.Response(status: 200, schedule: scheduler.tasks.first { $0.id == id }.map { Self.summary($0, scheduler) })
-        case .decide, .board:
+        case .decide, .board, .getSoul, .putSoul:
             return .failure(400, "无法识别的请求")
         }
     }

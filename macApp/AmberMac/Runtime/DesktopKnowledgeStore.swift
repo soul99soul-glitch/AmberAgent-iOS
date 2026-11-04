@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Observation
+@preconcurrency import GatewayCore
 
 @MainActor @Observable
 final class DesktopKnowledgeStore {
@@ -19,6 +20,8 @@ final class DesktopKnowledgeStore {
     private(set) var soulSource: String?
     private(set) var loadError: String?
     @ObservationIgnored let directory: URL
+    @ObservationIgnored weak var soulStore: DesktopAgentSoulStore?
+    @ObservationIgnored private var isMirroringSoul = false
     @ObservationIgnored private var highestAllocatedMemoryID = 999
 
     static var defaultDirectory: URL {
@@ -152,6 +155,25 @@ final class DesktopKnowledgeStore {
         try ready()
         let text = markdown.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         guard text.count <= 64_000 else { throw failure("SOUL.md 超过 64,000 字符。") }
+        if let soulStore, !isMirroringSoul {
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                _ = try soulStore.resetToDefault(source: source)
+            } else {
+                _ = try soulStore.update(soulMarkdown: text, source: source)
+            }
+            return
+        }
+        try writeMirroredSoul(text, source: source)
+    }
+
+    func mirrorFromSoulStore(_ state: AmberControl.SoulState) {
+        isMirroringSoul = true
+        defer { isMirroringSoul = false }
+        let mirrored = DesktopAgentSoulStore.renderMirrorMarkdown(state)
+        try? writeMirroredSoul(mirrored, source: state.isDefault ? "默认" : state.source)
+    }
+
+    private func writeMirroredSoul(_ text: String, source: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // A hash binds provenance to its exact body even if the second atomic write fails.
         try JSONEncoder().encode(SoulSource(source: source, hash: Self.hash(text))).write(to: directory.appendingPathComponent("SOUL.source.json"), options: .atomic)
@@ -269,7 +291,11 @@ final class DesktopKnowledgeStore {
     func stableContext() throws -> String {
         try ready()
         var sections: [String] = []
-        if !soulMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { sections.append("<soul>\n\(soulMarkdown)\n</soul>") }
+        if let soulStore {
+            sections.append(soulStore.systemPromptContext())
+        } else if !soulMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sections.append("<soul>\n\(soulMarkdown)\n</soul>")
+        }
         let enabled = skills.filter(\.enabled)
         if !enabled.isEmpty {
             sections.append("Enabled local skills (call use_skill for their instructions; allowed-tools never grants permission):\n" + enabled.map { "- \($0.name): \($0.description)" }.joined(separator: "\n"))

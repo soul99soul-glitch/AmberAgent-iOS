@@ -93,6 +93,7 @@ data class StatusResponseDto(
     val health: HealthSnapshotDto? = null,
     val synaraURL: String? = null,
     val sessions: List<SessionDto>,
+    val soulRevision: Long = 0L,
 )
 
 @Serializable
@@ -183,6 +184,7 @@ class CloudGatewayState(
     val dataDir: File,
     gatewayNameOverride: String? = null,
     var pushSender: PushSender = PushSender { Result.success(Unit) },
+    var soulRevisionProvider: () -> Long = { 0L },
 ) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -501,6 +503,7 @@ class CloudGatewayState(
                 diskFreeBytes = dataDir.usableSpace,
             ),
             sessions = orderedSessions,
+            soulRevision = soulRevisionProvider(),
         )
     }
 

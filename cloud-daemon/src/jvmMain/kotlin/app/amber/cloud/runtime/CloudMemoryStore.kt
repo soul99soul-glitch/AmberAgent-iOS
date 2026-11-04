@@ -26,6 +26,7 @@ private data class ScopedCloudMemory(val agentId: String, val record: MemoryReco
  */
 class CloudMemoryStore(
     private val memoryDir: File,
+    var onSoulPromptSaved: ((String) -> Unit)? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val memoriesFile = File(memoryDir, "memories.json")
@@ -50,6 +51,7 @@ class CloudMemoryStore(
     fun saveSoulPrompt(markdown: String) {
         val safe = CredentialRedactor.redact(markdown)
         atomicWrite(soulFile, safe)
+        onSoulPromptSaved?.invoke(safe)
     }
 
     @Synchronized

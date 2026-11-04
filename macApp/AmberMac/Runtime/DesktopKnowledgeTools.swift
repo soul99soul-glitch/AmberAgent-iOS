@@ -28,6 +28,9 @@ extension DesktopKnowledgeStore {
             return try Self.json(["ok": true, "name": skill, "enabled": name == "skill_enable"])
         case "memory_tool":
             return try memoryTool(arguments)
+        case "agent_soul_get", "agent_soul_update":
+            let resolvedSoulStore = soulStore ?? DesktopAgentSoulStore(knowledge: self)
+            return try resolvedSoulStore.executeTool(name: name, arguments: arguments)
         default: throw DesktopRuntimeError.message("不支持的知识工具：\(name)。")
         }
     }

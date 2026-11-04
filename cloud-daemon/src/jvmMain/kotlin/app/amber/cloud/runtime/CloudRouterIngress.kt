@@ -62,7 +62,7 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
             if (conversationId == PRIMARY_CONVERSATION_ID) recalled else recalled.filter { it.scope != MemoryScope.CORE }
         }
         kernel.contextManager.prepareRequestMessages(
-            systemPrompt = kernel.memoryStore.loadSoulPrompt() + "\n" + ModelRouterBrain.DEFAULT_ROUTER_SYSTEM_PROMPT,
+            systemPrompt = kernel.soulStore.renderRouterSystemPrompt(ModelRouterBrain.DEFAULT_ROUTER_SYSTEM_PROMPT),
             memories = memories, conversationId = conversationId.toString(),
             historyMessages = history, tokenBudget = kernel.contextWindowTokens,
         )

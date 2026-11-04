@@ -49,6 +49,7 @@ fun Application.configureCloudGateway(
     state: CloudGatewayState,
     feishuChannel: FeishuChannel? = null,
     agentApi: AgentCentricApi? = null,
+    soulStore: app.amber.cloud.soul.CloudSoulStore? = agentApi?.kernel?.soulStore,
 ) {
     val gatewayJson = Json {
         ignoreUnknownKeys = true
@@ -60,6 +61,7 @@ fun Application.configureCloudGateway(
         json(gatewayJson)
     }
     if (agentApi != null) configureAgentCentricRoutes(state, agentApi)
+    if (soulStore != null) configureSoulRoutes(state, soulStore, agentApi)
 
     suspend fun ApplicationCall.respondJson(status: Int, payload: String) {
         respondText(

@@ -14,13 +14,13 @@ import java.util.UUID
 )
 @Serializable data class DialogueReceipt(
     val eventId: String, val requestId: String, val topicId: String, val workItemIds: List<String>,
-    val state: String, val replayed: Boolean = false,
+    val state: String, val replayed: Boolean = false, val soulRevision: Long = 0L,
 )
 @Serializable data class DialogueEvent(
     val id: String, val kind: String, val role: String, val text: String, val topicId: String,
     val workItemId: String? = null, val outcome: String? = null, val seq: Long = 0,
 )
-@Serializable data class DialoguePage(val items: List<DialogueEvent>, val nextCursor: Long)
+@Serializable data class DialoguePage(val items: List<DialogueEvent>, val nextCursor: Long, val soulRevision: Long = 0L)
 data class RecordedTaskProcess(val id: String, val owner: String, val pid: Long, val startedAtMs: Long)
 class DialogueConflict(val code: String) : IllegalArgumentException(code)
 

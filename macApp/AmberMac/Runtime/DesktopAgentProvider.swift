@@ -123,8 +123,11 @@ import CryptoKit
         )
         let tools = try bridge.declarations(json: Self.schemaJSON(declarations))
         let exposure = IosToolExposureBridge(tools: tools)
-        if context.toolsEnabled, searchSettings.enabledServices.contains(.exa) {
-            exposure.exposeToolNames(names: ["exa_contents", "exa_answer", "exa_find_similar"])
+        if context.toolsEnabled {
+            exposure.exposeToolNames(names: ["agent_soul_get", "agent_soul_update"])
+            if searchSettings.enabledServices.contains(.exa) {
+                exposure.exposeToolNames(names: ["exa_contents", "exa_answer", "exa_find_similar"])
+            }
         }
         let guidance = exposure.discoveryGuidance()
         if !guidance.isEmpty {
@@ -560,7 +563,7 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
             arguments: tool.input,
             pluginEffect: resolvedPluginEffect.map { val in { _ in val } }
         )
-        let approval = effect == .sideEffect || effect == .idempotent
+        let approval = (effect == .sideEffect || effect == .idempotent) && tool.toolName != "agent_soul_update"
         let autoApproved = approval ? await MainActor.run { tasks.autoApproves(tool.toolName, policy: policy) } : false
         if approval, autoApproved, policy != nil {
             let callID = tool.toolCallId
@@ -645,7 +648,7 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
                     throw DesktopRuntimeError.message("message_id 须为消息 UUID。")
                 }
                 output = try Self.json(try DesktopHistoryTools.fetch(id, in: state.messages, covered: state.coveredIDs))
-            case "skills_list", "use_skill", "skill_enable", "skill_disable", "memory_tool":
+            case "skills_list", "use_skill", "skill_enable", "skill_disable", "memory_tool", "agent_soul_get", "agent_soul_update":
                 var ownedArguments = args
                 if tool.toolName == "memory_tool" {
                     if args["action"] as? String == "create" {

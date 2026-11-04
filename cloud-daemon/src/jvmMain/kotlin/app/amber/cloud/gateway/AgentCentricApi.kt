@@ -23,7 +23,7 @@ data class AgentActivity(val agentId: String, val activities: List<ActivityStatu
 @Serializable
 data class TimelineEntry(val id: String, val role: String, val agentId: String = MAIN_AGENT_ID, val text: String)
 @Serializable
-data class TimelinePage(val items: List<TimelineEntry>, val nextCursor: String? = null)
+data class TimelinePage(val items: List<TimelineEntry>, val nextCursor: String? = null, val soulRevision: Long = 0L)
 @Serializable
 data class PublicWorkDetail(val workItem: PublicWorkItem, val brief: String, val failure: String?, val sessionArchived: Boolean, val resultMarkdown: String? = null, val outcome: String? = null)
 
@@ -67,6 +67,10 @@ class AgentCentricApi(val kernel: CloudAgentKernel) {
             val text = safe(message.parts.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text })
             if (text.isBlank()) null else TimelineEntry(message.id.toString(), message.role.name.lowercase(), text = text)
         }
-        return TimelinePage(items, if (start > 0) messages[start].id.toString() else null)
+        return TimelinePage(
+            items = items,
+            nextCursor = if (start > 0) messages[start].id.toString() else null,
+            soulRevision = kernel.soulStore.currentRevision(),
+        )
     }
 }

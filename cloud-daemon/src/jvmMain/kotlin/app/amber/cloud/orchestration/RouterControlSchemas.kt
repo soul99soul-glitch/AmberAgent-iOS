@@ -16,6 +16,8 @@ internal object RouterControlSchemas {
             "diagnose_worker_session" to schema("{$session}","session_id"),
             "recall_object" to schema("""{"kind":{"type":"string"},"id":{"type":"string"}}""","kind","id"),
             "propose_agent" to schema("""{"profile":{"type":"object"}}""","profile"),
+            "agent_soul_get" to schema("""{}"""),
+            "agent_soul_update" to schema("""{"display_name":{"type":"string","description":"称呼或名字，如 赵匡胤 / 赵大哥"},"tagline":{"type":"string","description":"一句话个性签名"},"soul_markdown":{"type":"string","description":"完整角色人设、性格、背景与口吻设定（Markdown）"},"reset_to_default":{"type":"boolean","description":"为 true 时恢复默认 Amber 形象人设"}}"""),
         )
         schemas.forEach {(name,s)->registry.get(name)?.let {registry.register(it.copy(parameters=s))}}
     }

@@ -15,10 +15,14 @@ import app.amber.cloud.runtime.CloudToolRegistry
 import app.amber.cloud.runtime.ExecutionScope
 import app.amber.cloud.runtime.ToolEffect
 import app.amber.cloud.security.CredentialRedactor
+import app.amber.cloud.soul.CloudSoulStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -100,6 +104,10 @@ data class RouterTurnInput(
     val ownerAuthorizedMessageIds: List<String>,
     val batchPrompt: String,
 )
+
+internal class RouterTurnAuthContext(val ownerAuthorized: Boolean) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<RouterTurnAuthContext>
+}
 
 @kotlinx.serialization.Serializable
 data class RouterSteer(val workItemId: String, val instruction: String)
@@ -183,10 +191,11 @@ class CloudRouter(
     private val agentCoordinator: AgentRouterCoordinator? = null,
     private val onTurnCompleted: suspend (RouterTurnInput) -> Unit = {},
     private val onEventsHandled: suspend (List<RouterTriggerEvent>, List<String>) -> Unit = { _, _ -> },
+    private val soulStore: CloudSoulStore? = null,
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = false }
 
-    /** Router 专属工具表：只含派单/引导/读取/诊断/召回，不含任何执行类工具。 */
+    /** Router 专属工具表：只含派单/引导/读取/诊断/召回与形象人设常驻工具，不含任何宿主执行类工具。 */
     val routerTools: CloudToolRegistry = CloudToolRegistry().also { registerRouterTools(it);RouterControlSchemas.apply(it) }
 
     val forbiddenToolNames: Set<String>
@@ -613,6 +622,29 @@ class CloudRouter(
                 )
             }
         )
+        registry.register(
+            CloudToolDefinition(
+                name = "agent_soul_get",
+                description = "读取当前跨端共享的形象人设（称呼、签名、完整人设 Markdown 与最近历史快照）",
+                highRisk = false,
+                effect = ToolEffect.PURE,
+            ) { _ ->
+                soulStore?.executeToolGet()
+                    ?: buildJsonObject { put("ok", false); put("error", "soul_store_unavailable") }
+            }
+        )
+        registry.register(
+            CloudToolDefinition(
+                name = "agent_soul_update",
+                description = "持久更新跨端共享的形象人设（称呼 display_name、签名 tagline、完整人设 soul_markdown，或 reset_to_default=true 恢复默认 Amber）；立即对所有会话与已配对端生效",
+                highRisk = false,
+                effect = ToolEffect.PURE,
+            ) { args ->
+                val ownerAuthorized = currentCoroutineContext()[RouterTurnAuthContext]?.ownerAuthorized ?: true
+                soulStore?.executeToolUpdate(args, ownerAuthorized)
+                    ?: buildJsonObject { put("ok", false); put("error", "soul_store_unavailable") }
+            }
+        )
     }
 
     companion object {
@@ -626,6 +658,8 @@ class CloudRouter(
             "recall_object",
             "async_tool_stop",
             "cancel_work_item",
+            "agent_soul_get",
+            "agent_soul_update",
         )
 
         fun parseDispatchSpecs(args: JsonObject): List<WorkItemSubmissionSpec> {

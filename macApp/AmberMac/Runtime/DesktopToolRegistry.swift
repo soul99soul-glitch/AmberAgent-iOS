@@ -8,7 +8,7 @@ struct DesktopSkillToolScope: Sendable {
         allowed = allowed.map { $0.intersection(incoming) } ?? incoming
     }
     func permits(_ name: String) -> Bool {
-        if ["tool_search", "tools_list", "use_skill"].contains(name) { return true }
+        if ["tool_search", "tools_list", "use_skill", "agent_soul_get", "agent_soul_update"].contains(name) { return true }
         return allowed?.contains(name) ?? true
     }
 }
@@ -48,7 +48,23 @@ enum DesktopToolRegistry {
         declaration("plugin_list", "列出已安装的插件、版本和启用状态；只读，免审批。", properties: [:]),
         declaration("plugin_install", "从当前会话工作区内的插件目录或 plugin.json 路径安装插件；高风险操作，需在 Mac 上批准，同名插件已存在时须设置 overwrite=true。",
             properties: ["path": "string", "overwrite": "boolean"], required: ["path"], approval: true),
+        agentSoulGetDeclaration,
+        agentSoulUpdateDeclaration,
     ]
+
+    static let agentSoulGetDeclaration = DesktopToolDeclaration(
+        name: "agent_soul_get",
+        description: "读取当前全端共享的形象人设（名字/自称、一句话签名、角色性格与口吻 Markdown、版本号及最近 8 条历史快照）；只读，免审批。",
+        parametersJSON: #"{"type":"object","properties":{},"additionalProperties":false}"#,
+        needsApproval: false
+    )
+
+    static let agentSoulUpdateDeclaration = DesktopToolDeclaration(
+        name: "agent_soul_update",
+        description: "持久更新全端共享的形象人设（称呼 display_name、一句话签名 tagline、角色性格与口吻 soul_markdown，或传 reset_to_default=true 恢复默认 Amber）。底层诚实守则自动保留，自带 8 条历史快照可一键回退，免审批即时生效并与云端双向同步。",
+        parametersJSON: #"{"type":"object","properties":{"display_name":{"type":"string","description":"新的名字或自称（最多 64 字）"},"displayName":{"type":"string","description":"display_name 的兼容别名"},"tagline":{"type":"string","description":"一句话签名（最多 200 字）"},"soul_markdown":{"type":"string","description":"角色性格、说话口吻与相处方式 Markdown"},"soulMarkdown":{"type":"string","description":"soul_markdown 的兼容别名"},"soulPrompt":{"type":"string","description":"soul_markdown 的兼容别名"},"reset_to_default":{"type":"boolean","description":"设为 true 时恢复默认 Amber 形象人设"},"resetToDefault":{"type":"boolean","description":"reset_to_default 的兼容别名"}},"additionalProperties":false}"#,
+        needsApproval: false
+    )
 
     static let searchWebDeclaration = DesktopToolDeclaration(
         name: "search_web",
@@ -126,7 +142,8 @@ enum DesktopToolRegistry {
         switch name {
         case "tool_search", "tools_list", "workspace_file_list", "workspace_file_read", "skills_list", "use_skill",
              "mcp_list", "mcp_describe_tool", "list_agents", "schedule_list", "history_search", "history_fetch",
-             "plugin_list": return .pure
+             "plugin_list", "agent_soul_get": return .pure
+        case "agent_soul_update": return .idempotent
         case "search_web", "scrape_web", "exa_search", "exa_contents", "exa_answer", "exa_find_similar": return .networkRead
         case "memory_tool": return memoryEffect(arguments)
         default: return .sideEffect

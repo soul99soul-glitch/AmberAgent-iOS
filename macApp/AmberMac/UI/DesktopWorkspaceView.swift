@@ -23,6 +23,7 @@ struct DesktopWorkspaceView: View {
     @State private var tasksPresented = false
     @State private var pluginInspectorPresented = false
     @State private var commandPalettePresented = false
+    @State private var agentSoulPresented = false
     @State private var knowledgePresented = false
     @State private var backupPresented = false
     @State private var collaborationsPresented = false
@@ -185,8 +186,16 @@ struct DesktopWorkspaceView: View {
         .sheet(item: $imageGenerationOwner) { owner in
             DesktopImageGenerationView(workspace: workspace, ownerID: owner.id)
         }
+        .sheet(isPresented: $agentSoulPresented) {
+            DesktopAgentSoulSheet(soulStore: workspace.agentSoul, cloudSelf: workspace.cloudSelf)
+        }
         .sheet(isPresented: $knowledgePresented) {
-            DesktopKnowledgeView(store: workspace.knowledge, conversationIDs: Set(workspace.summaries.map(\.id))) { conversationID, messageID in
+            DesktopKnowledgeView(
+                store: workspace.knowledge,
+                soulStore: workspace.agentSoul,
+                cloudSelf: workspace.cloudSelf,
+                conversationIDs: Set(workspace.summaries.map(\.id))
+            ) { conversationID, messageID in
                 transcriptFocus = messageID.map { DesktopTranscriptFocus(conversationID: conversationID, messageID: $0) }
                 workspace.select(conversationID)
                 knowledgePresented = false
@@ -196,7 +205,8 @@ struct DesktopWorkspaceView: View {
             DesktopCommandPaletteView(
                 workspace: workspace,
                 onDismiss: { commandPalettePresented = false },
-                onFocusComposer: { composerFocusRequest += 1 }
+                onFocusComposer: { composerFocusRequest += 1 },
+                onOpenAgentSoul: { agentSoulPresented = true }
             )
         }
         .sheet(item: Binding(
@@ -244,9 +254,17 @@ struct DesktopWorkspaceView: View {
             // Top Brand & New Conversation Header
             HStack(spacing: 10) {
                 DesktopAmberMark(size: 22, taps: $markTaps)
-                Text("Amber")
-                    .font(DesktopTheme.serif(size: 18, weight: .semibold))
-                    .foregroundStyle(DesktopTheme.ink)
+                Button {
+                    agentSoulPresented = true
+                } label: {
+                    Text(workspace.agentSoul.isDefault ? "Amber" : workspace.agentSoul.displayName)
+                        .font(DesktopTheme.serif(size: 18, weight: .semibold))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .help("形象人设")
+                .accessibilityLabel("形象人设")
                 Spacer()
                 Button { workspace.createConversation() } label: {
                     HStack(spacing: 4) {
@@ -413,6 +431,7 @@ struct DesktopWorkspaceView: View {
                 Menu {
                     Button("命令面板…", systemImage: "command") { commandPalettePresented = true }
                     Divider()
+                    Button("形象人设", systemImage: "person.crop.circle.badge.sparkles") { agentSoulPresented = true }
                     Button("会话文件", systemImage: "folder") { filesPresented = true }
                         .disabled(workspace.selectedID == nil)
                     Button("任务工作台", systemImage: "checklist") { tasksPresented = true }

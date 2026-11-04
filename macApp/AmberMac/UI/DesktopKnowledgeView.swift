@@ -4,11 +4,14 @@ import UniformTypeIdentifiers
 
 struct DesktopKnowledgeView: View {
     @Bindable var store: DesktopKnowledgeStore
+    var soulStore: DesktopAgentSoulStore? = nil
+    var cloudSelf: DesktopCloudSelfStore? = nil
     let conversationIDs: Set<UUID>
     let onOpenSource: (UUID, UUID?) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var soulDraft = ""
+    @State private var soulEditorUnsaved = false
     @State private var editingSkill: DesktopSkill?
     @State private var editingMemory: DesktopMemoryRecord?
     @State private var deletingSkill: String?
@@ -21,7 +24,9 @@ struct DesktopKnowledgeView: View {
     @State private var selectedTab = 0
     @State private var previousTab = 0
 
-    private var soulChanged: Bool { soulDraft != store.soulMarkdown }
+    private var soulChanged: Bool {
+        soulStore != nil ? soulEditorUnsaved : (soulDraft != store.soulMarkdown)
+    }
     private var visibleMemories: [DesktopMemoryRecord] {
         store.memories.filter {
             (memoryScope == nil || $0.scope == memoryScope)
@@ -35,7 +40,7 @@ struct DesktopKnowledgeView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("知识与偏好").font(DesktopTheme.serif(size: 22, weight: .semibold))
-                    Text("管理此 Mac 上的技能、SOUL.md 与记忆。")
+                    Text("管理此 Mac 上的技能、形象人设与长期记忆。")
                         .font(.system(size: 13)).foregroundStyle(DesktopTheme.muted(colorScheme))
                 }
                 Spacer()
@@ -50,7 +55,7 @@ struct DesktopKnowledgeView: View {
                     Button("重新读取") { perform { try store.reload(); soulDraft = store.soulMarkdown } }
                 }
             }
-            DesktopSegmented(options: [(0, "技能"), (1, "SOUL"), (2, "记忆")], selection: $selectedTab)
+            DesktopSegmented(options: [(0, "技能"), (1, "形象人设"), (2, "记忆")], selection: $selectedTab)
                 .accessibilityLabel("知识分类")
                 .disabled(store.loadError != nil)
             ZStack {
@@ -83,8 +88,10 @@ struct DesktopKnowledgeView: View {
         .alert("操作未完成", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("知道了") { error = nil }
         } message: { Text(error ?? "") }
-        .confirmationDialog("有尚未保存的 SOUL.md", isPresented: $confirmsClose, titleVisibility: .visible) {
-            Button("保存并关闭") { perform { try store.saveSoul(soulDraft); dismiss() } }
+        .confirmationDialog("有尚未保存的形象人设修改", isPresented: $confirmsClose, titleVisibility: .visible) {
+            if soulStore == nil {
+                Button("保存并关闭") { perform { try store.saveSoul(soulDraft); dismiss() } }
+            }
             Button("放弃修改", role: .destructive) { dismiss() }
             Button("继续编辑", role: .cancel) {}
         }
@@ -153,21 +160,30 @@ struct DesktopKnowledgeView: View {
         }
     }
 
+    @ViewBuilder
     private var soul: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(store.soulSource.map { "来源：\($0)" } ?? "可定义长期的表达方式、协作习惯与偏好。")
-                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.muted(colorScheme)).lineLimit(2)
-                Spacer()
-                Button("导入…") { chooseMarkdown { pendingSoulImport = $0 } }
-                Button("保存") { perform { try store.saveSoul(soulDraft) } }
-                    .buttonStyle(.desktopProminent).disabled(!soulChanged)
+        if let soulStore {
+            DesktopAgentSoulEditorView(
+                soulStore: soulStore,
+                cloudSelf: cloudSelf,
+                hasUnsavedChanges: $soulEditorUnsaved
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(store.soulSource.map { "来源：\($0)" } ?? "可定义长期的表达方式、协作习惯与偏好。")
+                        .font(.system(size: 12)).foregroundStyle(DesktopTheme.muted(colorScheme)).lineLimit(2)
+                    Spacer()
+                    Button("导入…") { chooseMarkdown { pendingSoulImport = $0 } }
+                    Button("保存") { perform { try store.saveSoul(soulDraft) } }
+                        .buttonStyle(.desktopProminent).disabled(!soulChanged)
+                }
+                TextEditor(text: $soulDraft).font(.system(size: 13, design: .monospaced))
+                    .desktopEditor()
+                    .accessibilityLabel("形象人设内容")
+                Text("保存后用于后续请求；清空并保存可恢复默认。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
             }
-            TextEditor(text: $soulDraft).font(.system(size: 13, design: .monospaced))
-                .desktopEditor()
-                .accessibilityLabel("SOUL.md 内容")
-            Text("保存后用于后续请求；清空并保存可停用。")
-                .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
         }
     }
 

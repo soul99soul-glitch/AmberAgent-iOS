@@ -6,7 +6,54 @@ public enum AmberControl {
     public static let timeout: TimeInterval = 5
 
     public enum Action: String, Codable, Sendable {
-        case decide, listSchedules, createSchedule, setScheduleEnabled, runSchedule, board
+        case decide, listSchedules, createSchedule, setScheduleEnabled, runSchedule, board, getSoul, putSoul
+    }
+
+    public struct SoulSnapshot: Codable, Sendable, Equatable, Identifiable {
+        public var id: String
+        public var displayName: String
+        public var tagline: String
+        public var soulMarkdown: String
+        public var updatedAtMs: Int64
+        public var source: String
+
+        public init(id: String, displayName: String, tagline: String, soulMarkdown: String, updatedAtMs: Int64, source: String) {
+            self.id = id; self.displayName = displayName; self.tagline = tagline
+            self.soulMarkdown = soulMarkdown; self.updatedAtMs = updatedAtMs; self.source = source
+        }
+    }
+
+    public struct SoulState: Codable, Sendable, Equatable {
+        public var revision: Int64
+        public var updatedAtMs: Int64
+        public var displayName: String
+        public var tagline: String
+        public var soulMarkdown: String
+        public var isDefault: Bool
+        public var source: String
+        public var history: [SoulSnapshot]
+
+        public init(revision: Int64 = 0, updatedAtMs: Int64 = 0, displayName: String = "Amber", tagline: String = "",
+                    soulMarkdown: String = "", isDefault: Bool = true, source: String = "default", history: [SoulSnapshot] = []) {
+            self.revision = revision; self.updatedAtMs = updatedAtMs; self.displayName = displayName
+            self.tagline = tagline; self.soulMarkdown = soulMarkdown; self.isDefault = isDefault
+            self.source = source; self.history = history
+        }
+    }
+
+    public struct SoulPutRequest: Codable, Sendable, Equatable {
+        public var displayName: String?
+        public var tagline: String?
+        public var soulMarkdown: String?
+        public var isDefault: Bool?
+        public var updatedAtMs: Int64?
+        public var source: String?
+
+        public init(displayName: String? = nil, tagline: String? = nil, soulMarkdown: String? = nil,
+                    isDefault: Bool? = nil, updatedAtMs: Int64? = nil, source: String? = nil) {
+            self.displayName = displayName; self.tagline = tagline; self.soulMarkdown = soulMarkdown
+            self.isDefault = isDefault; self.updatedAtMs = updatedAtMs; self.source = source
+        }
     }
 
     public struct Request: Codable, Sendable, Equatable {
@@ -21,11 +68,15 @@ public enum AmberControl {
         public var draft: ScheduleDraft?
         /// Paired device that sent it, for the app's own records.
         public var deviceName: String?
+        /// `putSoul`: C-SOUL-V1 persona payload.
+        public var soulPut: SoulPutRequest?
 
         public init(action: Action, sessionKey: String? = nil, toolCallId: String? = nil, allow: Bool? = nil,
-                    scheduleId: String? = nil, enabled: Bool? = nil, draft: ScheduleDraft? = nil, deviceName: String? = nil) {
+                    scheduleId: String? = nil, enabled: Bool? = nil, draft: ScheduleDraft? = nil,
+                    deviceName: String? = nil, soulPut: SoulPutRequest? = nil) {
             self.action = action; self.sessionKey = sessionKey; self.toolCallId = toolCallId; self.allow = allow
-            self.scheduleId = scheduleId; self.enabled = enabled; self.draft = draft; self.deviceName = deviceName
+            self.scheduleId = scheduleId; self.enabled = enabled; self.draft = draft
+            self.deviceName = deviceName; self.soulPut = soulPut
         }
     }
 
@@ -121,10 +172,12 @@ public enum AmberControl {
         public var schedules: [ScheduleSummary]?
         public var schedule: ScheduleSummary?
         public var board: [BoardItem]?
+        public var soul: SoulState?
 
         public init(status: Int, error: String? = nil, schedules: [ScheduleSummary]? = nil, schedule: ScheduleSummary? = nil,
-                    board: [BoardItem]? = nil) {
-            self.status = status; self.error = error; self.schedules = schedules; self.schedule = schedule; self.board = board
+                    board: [BoardItem]? = nil, soul: SoulState? = nil) {
+            self.status = status; self.error = error; self.schedules = schedules; self.schedule = schedule
+            self.board = board; self.soul = soul
         }
 
         public static func failure(_ status: Int, _ message: String) -> Response { Response(status: status, error: message) }

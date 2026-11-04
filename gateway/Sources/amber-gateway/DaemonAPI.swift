@@ -37,6 +37,7 @@ extension Daemon {
         var serverTime: Date
         var health: HealthSnapshot?
         var synaraURL: String?
+        var soulRevision: Int64
         var sessions: [Session]
     }
 
@@ -107,6 +108,15 @@ extension Daemon {
             forwardToAmber(.init(action: .decide, sessionKey: key, toolCallId: call, allow: allow, deviceName: device.name), respond: respond)
         case ("GET", "/v1/amber/board"):
             forwardToAmber(.init(action: .board, deviceName: device.name), respond: respond)
+        case ("GET", "/v2/soul"):
+            forwardSoulToAmber(.init(action: .getSoul, deviceName: device.name), respond: respond)
+        case ("PUT", "/v2/soul"):
+            let payloadData = request.body.isEmpty ? Data("{}".utf8) : request.body
+            guard let soulPut = try? JSONDecoder().decode(AmberControl.SoulPutRequest.self, from: payloadData) else {
+                return respond(.error(400, "请求格式无法解析"))
+            }
+            audit.record("amber-soul-put", ["device": device.id, "source": soulPut.source ?? "remote"])
+            forwardSoulToAmber(.init(action: .putSoul, deviceName: device.name, soulPut: soulPut), respond: respond)
         case ("GET", "/v1/amber/schedules"):
             forwardToAmber(.init(action: .listSchedules, deviceName: device.name), respond: respond)
         case ("POST", "/v1/amber/schedules"):
@@ -185,10 +195,35 @@ extension Daemon {
             serverTime: now,
             health: registry.health,
             synaraURL: config.synaraURL,
+            soulRevision: Self.readSoulRevision(paths: paths),
             sessions: Array(sessions)
         )
         guard let data = try? GatewayJSON.encoder().encode(response) else { return .error(500, "encode failed") }
         return HTTPResponse(status: 200, body: data)
+    }
+
+    private static func readSoulRevision(paths: GatewayPaths) -> Int64 {
+        guard let text = try? String(contentsOf: paths.soulRevision, encoding: .utf8) else { return 0 }
+        return Int64(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    private func forwardSoulToAmber(_ request: AmberControl.Request, respond: @escaping (HTTPResponse) -> Void) {
+        let socket = paths.amberSocket.path
+        let queue = queue
+        DispatchQueue.global(qos: .userInitiated).async {
+            let reply = (try? GatewayJSON.encoder().encode(request))
+                .flatMap { UnixSocketClient.request($0, to: socket, timeout: AmberControl.timeout) }
+            queue.async {
+                guard let reply, let decoded = try? GatewayJSON.decoder().decode(AmberControl.Response.self, from: reply) else {
+                    return respond(.error(503, "Amber 未运行：在 Mac 上打开 Amber 后重试"))
+                }
+                guard decoded.status < 300 else { return respond(.error(decoded.status, decoded.error ?? "操作未完成")) }
+                guard let soul = decoded.soul, let encoded = try? JSONEncoder().encode(soul) else {
+                    return respond(.error(500, "无法编码形象人设状态"))
+                }
+                respond(HTTPResponse(status: decoded.status, body: encoded))
+            }
+        }
     }
 
     /// The Amber app owns scheduled tasks; it answers on its own socket while running. Done off the daemon queue
