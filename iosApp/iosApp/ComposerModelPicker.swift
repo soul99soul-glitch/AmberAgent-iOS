@@ -53,36 +53,8 @@ struct ComposerModelSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(AmberTheme.foreground)
-
-                Spacer()
-
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("关闭模型选择")
-                .disabled(isSelectionInFlight)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 10)
-
-            Divider()
-                .overlay(AmberTheme.borderSoft)
-
-            ScrollView {
+        ScrollView {
+            VStack(spacing: 0) {
                 if let fallbackTitle, let onFallback {
                     Button {
                         onFallback()
@@ -166,7 +138,40 @@ struct ComposerModelSheet: View {
                     .padding(.bottom, 28)
                 }
             }
-            .scrollIndicators(.hidden)
+            .amberSmoothSheetScrollDismiss()
+        }
+        .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(AmberTheme.foreground)
+
+                    Spacer()
+
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .frame(width: 34, height: 34)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .accessibilityLabel("关闭模型选择")
+                    .disabled(isSelectionInFlight)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 10)
+
+                Divider()
+                    .overlay(AmberTheme.borderSoft)
+            }
+            .background(AmberTheme.background)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .interactiveDismissDisabled(isSelectionInFlight)

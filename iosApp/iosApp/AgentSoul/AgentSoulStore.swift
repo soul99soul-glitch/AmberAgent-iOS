@@ -357,8 +357,9 @@ final class AgentSoulStore {
             || resolvedTagline != tagline
             || resolvedSoul != soulPrompt
 
+        var snapshotsChanged = false
         if !remote.history.isEmpty {
-            snapshots = remote.history.prefix(Self.maximumSnapshots).map { item in
+            let mappedSnapshots = remote.history.prefix(Self.maximumSnapshots).map { item in
                 let histName = item.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
                 return AgentSoulSnapshot(
                     id: item.id,
@@ -369,21 +370,33 @@ final class AgentSoulStore {
                     summary: Self.summaryLabel(forCloudSource: item.source, customSummary: item.summary)
                 )
             }
+            if mappedSnapshots != snapshots {
+                snapshots = mappedSnapshots
+                snapshotsChanged = true
+            }
         } else if contentChanged {
             pushSnapshot(summary: "云端同步前自动保存")
+            snapshotsChanged = true
         }
 
-        displayName = resolvedName
-        tagline = resolvedTagline
-        soulPrompt = resolvedSoul
-        updatedAtMs = remote.updatedAtMs > 0 ? remote.updatedAtMs : Self.nowMs()
-        source = resolvedSource
+        if displayName != resolvedName { displayName = resolvedName }
+        if tagline != resolvedTagline { tagline = resolvedTagline }
+        if soulPrompt != resolvedSoul { soulPrompt = resolvedSoul }
+        let resolvedUpdatedAtMs = remote.updatedAtMs > 0 ? remote.updatedAtMs : Self.nowMs()
+        if contentChanged || (remote.updatedAtMs > 0 && updatedAtMs != remote.updatedAtMs) {
+            updatedAtMs = resolvedUpdatedAtMs
+        }
+        if source != resolvedSource { source = resolvedSource }
         let revisionChanged = remote.revision > lastSyncedRevision
-        if remote.revision > lastSyncedRevision {
+        if revisionChanged {
             lastSyncedRevision = remote.revision
         }
-        persist()
-        publishSystemPrompt()
+        if contentChanged || snapshotsChanged || revisionChanged {
+            persist()
+        }
+        if contentChanged {
+            publishSystemPrompt()
+        }
         return contentChanged || revisionChanged
     }
 

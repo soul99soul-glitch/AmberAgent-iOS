@@ -604,11 +604,28 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset, .zero)
     }
 
-    func testComposerFocusOverridesHistoryPauseAndRequestsBottomImmediately() {
+    func testComposerFocusPreservesHistoryPauseAndDoesNotPullToBottom() {
         let result = NativeTimelineScrollCore.reduce(
             state: .pausedForUser,
             intent: .explicitBottom(source: .composerFocus, animated: false, keyboardToken: 7),
             geometry: geometry(offsetY: 120, distanceToBottom: 600),
+            now: 10
+        )
+
+        XCTAssertEqual(result.state, .pausedForUser)
+        XCTAssertEqual(result.actions, [])
+    }
+
+    func testComposerFocusWhenFollowingBottomRequestsBottomImmediately() {
+        let following = NativeTimelineScrollState.followingBottom(
+            virtualOffset: 520,
+            target: 520,
+            lastFollowRequestAt: 8
+        )
+        let result = NativeTimelineScrollCore.reduce(
+            state: following,
+            intent: .explicitBottom(source: .composerFocus, animated: false, keyboardToken: 7),
+            geometry: geometry(offsetY: 520, distanceToBottom: 0),
             now: 10
         )
 
@@ -618,11 +635,11 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         )
         XCTAssertEqual(
             result.actions,
-            [.requestBottomAnchor(animated: false, source: .composerFocus)]
+            [.stopFrameDriver, .requestBottomAnchor(animated: false, source: .composerFocus)]
         )
     }
 
-    func testComposerFocusOverridesActiveUserInteraction() {
+    func testComposerFocusDoesNotOverrideActiveUserInteraction() {
         let result = NativeTimelineScrollCore.reduce(
             state: .pausedForUser,
             intent: .explicitBottom(source: .composerFocus, animated: false, keyboardToken: 9),
@@ -630,14 +647,8 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 10
         )
 
-        XCTAssertEqual(
-            result.state,
-            .keyboardFocus(NativeTimelineKeyboardFocusTransaction(token: 9, stableFrames: 0))
-        )
-        XCTAssertEqual(
-            result.actions,
-            [.requestBottomAnchor(animated: false, source: .composerFocus)]
-        )
+        XCTAssertEqual(result.state, .pausedForUser)
+        XCTAssertEqual(result.actions, [])
     }
 
     func testButtonBottomOverridesActiveUserInteraction() {
@@ -1259,6 +1270,128 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             releaseVelocityY: -400,
             distanceToBottom: 30
         ), "近底轻甩预测过冲，直接接管"
+        )
+    }
+
+    @MainActor
+    func testKeyboardViewportShrinkSynchronizesBottomWhenAtBottomAndPreservesHistoryWhenPaused() {
+        let driver = NativeTimelineScrollDriver()
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        scrollView.contentSize = CGSize(width: 390, height: 1_600)
+        scrollView.contentOffset = CGPoint(x: 0, y: 800)
+        driver.attach(scrollView)
+
+        // 1) 在底部时键盘弹起（可用高度 800 -> 464）：同步跟到底部新目标 1136。
+        driver.handleKeyboardWillChangeFrame(duration: 0.25, curveRaw: 7)
+        scrollView.frame = CGRect(x: 0, y: 0, width: 390, height: 464)
+        driver.handleLayoutMetricsChanged()
+        XCTAssertEqual(scrollView.contentOffset.y, 1_136, accuracy: 0.5)
+
+        // 2) 在底部时键盘收起（可用高度 464 -> 800）：同步回锚到 800。
+        driver.handleKeyboardWillChangeFrame(duration: 0.25, curveRaw: 7)
+        scrollView.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        driver.handleLayoutMetricsChanged()
+        XCTAssertEqual(scrollView.contentOffset.y, 800, accuracy: 0.5)
+
+        // 3) 用户上滑浏览历史后（pausedForUser, offsetY = 240）：键盘弹起不得拉回底部。
+        driver.submit(.userDragBegan)
+        scrollView.contentOffset = CGPoint(x: 0, y: 240)
+        driver.submit(.userDragEnded(isAtBottom: false))
+        driver.handleKeyboardWillChangeFrame(duration: 0.25, curveRaw: 7)
+        scrollView.frame = CGRect(x: 0, y: 0, width: 390, height: 464)
+        driver.handleLayoutMetricsChanged()
+        XCTAssertEqual(scrollView.contentOffset.y, 240, accuracy: 0.5)
+    }
+
+    @MainActor
+    func testTapDismissPolicyAllowsPlainTextAndBlankAreaWhilePreservingLinksControlsAndSelection() {
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let contentView = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        scrollView.addSubview(contentView)
+
+        let button = UIButton(frame: CGRect(x: 16, y: 16, width: 100, height: 44))
+        contentView.addSubview(button)
+
+        let textView = UITextView(frame: CGRect(x: 16, y: 80, width: 320, height: 120))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        let attributed = NSMutableAttributedString(string: "普通正文段落 ")
+        let linkStart = attributed.length
+        attributed.append(NSAttributedString(
+            string: "https://example.com",
+            attributes: [.link: URL(string: "https://example.com")!]
+        ))
+        let linkRange = NSRange(location: linkStart, length: attributed.length - linkStart)
+        textView.attributedText = attributed
+        textView.layoutIfNeeded()
+        contentView.addSubview(textView)
+
+        // 空白区域点击 -> 允许收起键盘
+        XCTAssertTrue(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: contentView,
+                locationInHitView: CGPoint(x: 200, y: 500)
+            )
+        )
+
+        // 按钮控件点击 -> 不触发收起键盘
+        XCTAssertFalse(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: button,
+                locationInHitView: CGPoint(x: 20, y: 20)
+            )
+        )
+
+        // 普通消息文本点击 -> 允许收起键盘
+        let plainGlyphIndex = textView.layoutManager.glyphIndexForCharacter(at: 1)
+        let plainRect = textView.layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: plainGlyphIndex, length: 1),
+            in: textView.textContainer
+        )
+        let plainPoint = CGPoint(
+            x: plainRect.midX + textView.textContainerInset.left,
+            y: plainRect.midY + textView.textContainerInset.top
+        )
+        XCTAssertTrue(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: textView,
+                locationInHitView: plainPoint
+            )
+        )
+
+        // 链接文本点击 -> 不拦截链接，不触发收起键盘
+        let linkGlyphRange = textView.layoutManager.glyphRange(
+            forCharacterRange: linkRange,
+            actualCharacterRange: nil
+        )
+        let linkRect = textView.layoutManager.boundingRect(
+            forGlyphRange: linkGlyphRange,
+            in: textView.textContainer
+        )
+        let linkPoint = CGPoint(
+            x: linkRect.midX + textView.textContainerInset.left,
+            y: linkRect.midY + textView.textContainerInset.top
+        )
+        XCTAssertFalse(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: textView,
+                locationInHitView: linkPoint
+            )
+        )
+
+        // 存在活动文本选区时点击 -> 不打断选词复制
+        textView.selectedRange = NSRange(location: 0, length: 2)
+        XCTAssertFalse(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: textView,
+                locationInHitView: plainPoint
+            )
         )
     }
 }

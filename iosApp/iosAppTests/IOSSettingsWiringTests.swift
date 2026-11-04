@@ -287,14 +287,96 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(activityIsland.contains("if activityIslandEdgeGlow,"))
     }
 
-    /// 生成完成不再自动震动：用户明确反馈该振动不可控且无法关闭，已移除。
-    /// 本测试保护新决定——完成回调里不得再出现生成完成触觉。
-    func testCompletionHapticIsNotTriggeredOnGenerationCompletion() throws {
-        let viewModel = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
-        XCTAssertFalse(
-            viewModel.contains("AmberHaptics.trigger(.rigidImpact)"),
-            "生成完成不得再自动震动"
+    /// 生成完成触觉：「显示与字体 → 生成完成振动」默认开启，off 时所有完成路径零触发，on 时正常触发，
+    /// 等待子代理的前台分段让出及子代理会话不误触发，且按钮/安全审批独立触感保持不变。
+    @MainActor
+    func testCompletionHapticToggleGatesCompletionPathsForOffAndOn() throws {
+        let keys = try source("iosApp/AmberDesignSystem.swift")
+        let settings = try source("iosApp/DisplayFontSettingsView.swift")
+        let chatAux = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
+        let topBar = try source("iosApp/ChatTopBarView.swift")
+        let novelSeal = try source("iosApp/NovelCreation/NovelInkSeal.swift")
+        let deepRead = try source("iosApp/IOSDeepReadNewsroomView.swift")
+        let storageDeclaration =
+            "@AppStorage(IOSDisplayPreferenceKeys.completionHaptic)" +
+            " private var completionHaptic = true"
+
+        XCTAssertEqual(IOSDisplayPreferenceKeys.completionHaptic, "app.amber.ios.display.completionHaptic")
+        XCTAssertTrue(keys.contains("static func isCompletionHapticEnabled"))
+        XCTAssertTrue(keys.contains("static func triggerCompletion"))
+        XCTAssertTrue(settings.contains(storageDeclaration))
+        XCTAssertTrue(settings.contains("生成完成振动"))
+        XCTAssertTrue(settings.contains("completionHaptic.toggle()"))
+        XCTAssertTrue(chatAux.contains("AmberHaptics.triggerCompletion(.rigidImpact)"))
+        XCTAssertFalse(chatAux.contains("AmberHaptics.trigger(.rigidImpact)"))
+        XCTAssertTrue(topBar.contains("AmberHaptics.triggerCompletion(.lightImpact)"))
+        XCTAssertFalse(topBar.contains("else if notice.kind == .completed {\n                UIImpactFeedbackGenerator"))
+        XCTAssertTrue(topBar.contains("if notice.kind == .awaitingUser {\n                UINotificationFeedbackGenerator().notificationOccurred(.warning)"))
+        XCTAssertTrue(novelSeal.contains("AmberHaptics.triggerCompletion(.rigidImpact)"))
+        XCTAssertTrue(deepRead.contains(storageDeclaration))
+        XCTAssertTrue(deepRead.contains(".sensoryFeedback(.impact(weight: .heavy), trigger: fire) { _, _ in completionHaptic }"))
+
+        let standard = UserDefaults.standard
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        let previousValue = standard.object(forKey: key)
+        var recordedEvents: [AmberHapticEvent] = []
+        AmberHaptics.onTriggerForTesting = { recordedEvents.append($0) }
+        defer {
+            AmberHaptics.onTriggerForTesting = nil
+            if let previousValue {
+                standard.set(previousValue, forKey: key)
+            } else {
+                standard.removeObject(forKey: key)
+            }
+        }
+
+        let suiteName = "CompletionHapticRuntime-\(UUID().uuidString)"
+        let vmDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { vmDefaults.removePersistentDomain(forName: suiteName) }
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: vmDefaults),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: vmDefaults),
+            autoGenerateResponses: false
         )
+        let state = ChatConversationRunState(conversationId: nil)
+        state.messages = [
+            UIMessage.companion.user(prompt: "你好"),
+            UIMessage.companion.assistant(prompt: "你好，这是最终回复。")
+        ]
+
+        // 1. 默认值（未写入 key）为 true，前台完成与后台提醒到达均正常触发
+        standard.removeObject(forKey: key)
+        XCTAssertTrue(AmberHaptics.isCompletionHapticEnabled(defaults: standard))
+        viewModel.onGenerationCompleted(state: state)
+        XCTAssertTrue(AmberHaptics.triggerCompletion(.lightImpact, defaults: standard))
+        XCTAssertEqual(recordedEvents, [.rigidImpact, .lightImpact])
+
+        // 2. 开关置为 off（false）：前台完成、后台完成提醒均零触发；独立控件触感仍保留
+        recordedEvents.removeAll()
+        standard.set(false, forKey: key)
+        XCTAssertFalse(AmberHaptics.isCompletionHapticEnabled(defaults: standard))
+        viewModel.onGenerationCompleted(state: state)
+        XCTAssertFalse(AmberHaptics.triggerCompletion(.lightImpact, defaults: standard))
+        XCTAssertFalse(AmberHaptics.triggerCompletion(.rigidImpact, defaults: standard))
+        XCTAssertTrue(recordedEvents.isEmpty, "生成完成振动关闭时所有完成路径必须零触发")
+        AmberHaptics.trigger(.selection)
+        XCTAssertEqual(recordedEvents, [.selection], "按钮/选择器独立触感不得被生成完成开关误伤")
+
+        // 3. 开关实时切回 on（true）：恢复触发；分段等待子代理让出或子代理会话不触发
+        recordedEvents.removeAll()
+        standard.set(true, forKey: key)
+        state.waitingForChildRunId = "run-yielded"
+        viewModel.onGenerationCompleted(state: state)
+        XCTAssertTrue(recordedEvents.isEmpty, "前台让出等待子代理期间不应提前触发完成振动")
+
+        state.waitingForChildRunId = nil
+        state.isOrchestratedChild = true
+        viewModel.onGenerationCompleted(state: state)
+        XCTAssertTrue(recordedEvents.isEmpty, "后台子代理会话不应直接触发前台完成振动")
+
+        state.isOrchestratedChild = false
+        viewModel.onGenerationCompleted(state: state)
+        XCTAssertEqual(recordedEvents, [.rigidImpact], "主会话最终完成且开关开启时应触发一次刚性轻触")
     }
 
     func testBackgroundToolEnginePublishesLiveActivityStagesAtExecutionBoundaries() throws {

@@ -87,6 +87,7 @@ final class AmberPersonaStore {
     @ObservationIgnored var staticGeneratorOverrideForTesting: ((_ prompt: String, _ sourceImageDataURL: String?) async throws -> UIImage)?
     @ObservationIgnored var spriteSheetGeneratorOverrideForTesting: ((_ prompt: String, _ sourceImageDataURL: String?) async throws -> UIImage)?
     @ObservationIgnored private var activeGenerationTask: Task<Void, Never>?
+    @ObservationIgnored private var referenceImageCache: [String: UIImage] = [:]
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let fileManager: FileManager
@@ -396,6 +397,7 @@ final class AmberPersonaStore {
                 fileName: fileName,
                 createdAtMs: Int64(Date().timeIntervalSince1970 * 1000)
             )
+            referenceImageCache[fileName] = downscaled
             referenceItems.append(item)
             persistReferences()
             return item
@@ -406,6 +408,7 @@ final class AmberPersonaStore {
 
     func removeReference(id: String) {
         guard let item = referenceItems.first(where: { $0.id == id }) else { return }
+        referenceImageCache.removeValue(forKey: item.fileName)
         let url = baseDirectory.appendingPathComponent(item.fileName)
         try? fileManager.removeItem(at: url)
         referenceItems.removeAll { $0.id == id }
@@ -413,9 +416,14 @@ final class AmberPersonaStore {
     }
 
     func loadReferenceImage(for item: AmberPersonaReferenceItem) -> UIImage? {
+        if let cached = referenceImageCache[item.fileName] {
+            return cached
+        }
         let url = baseDirectory.appendingPathComponent(item.fileName)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return UIImage(data: data)
+        guard let data = try? Data(contentsOf: url),
+              let decoded = UIImage(data: data) else { return nil }
+        referenceImageCache[item.fileName] = decoded
+        return decoded
     }
 
     /// Returns a `data:image/jpeg;base64,...` URL for the primary reference image (or custom avatar fallback)
@@ -772,16 +780,35 @@ final class AmberPersonaStore {
 
 // MARK: - Muse-Style Persona Studio Sheet (Preview / Confirm / Static Upload / Multi-Frame Animation)
 
-struct AmberPersonaStudioSheet: View {
+/// 形象编辑内容。外层「形象人设」面板以嵌入方式复用同一份内容（`showsAvatar: false`），
+/// 由外层唯一头像承载预览，不再 present 第二层 sheet；独立入口继续用 `AmberPersonaStudioSheet`。
+struct AmberPersonaStudioContent: View {
     let sharedSettings: IOSSharedSettingsStore
+    @Binding var previewMood: AmberAgentPersonaMood
+    /// 独立 sheet 自带头像；嵌入外层面板时不重复绘制头像。
+    var showsAvatar: Bool = true
+    /// 嵌入态把「恢复默认」放进工具区，不与面板标题争视觉层级。
+    var showsInlineReset: Bool = false
     @Bindable var store = AmberPersonaStore.shared
-    @Environment(\.dismiss) private var dismiss
 
     @State private var avatarPickerItem: PhotosPickerItem?
     @State private var isImportingAvatarFile = false
     @State private var referencePickerItems: [PhotosPickerItem] = []
     @State private var showingPromptEditor = false
-    @State private var previewMood: AmberAgentPersonaMood = .idle
+
+    init(
+        sharedSettings: IOSSharedSettingsStore,
+        previewMood: Binding<AmberAgentPersonaMood>,
+        showsAvatar: Bool = true,
+        showsInlineReset: Bool = false,
+        store: AmberPersonaStore = AmberPersonaStore.shared
+    ) {
+        self.sharedSettings = sharedSettings
+        self._previewMood = previewMood
+        self.showsAvatar = showsAvatar
+        self.showsInlineReset = showsInlineReset
+        self._store = Bindable(wrappedValue: store)
+    }
 
     /// File imports that are 4×4 / Codex-Pets 8×9 sprite sheets become four state clips;
     /// any other image stays an ordinary static portrait.
@@ -825,39 +852,11 @@ struct AmberPersonaStudioSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    heroAndPresetCard
-                    referenceImagesSection
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-            }
-            .background(AmberTheme.background.ignoresSafeArea())
-            .navigationTitle(IOSAppLocalization.string("形象设定", defaultValue: "形象设定"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if store.canResetToDefault {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button(IOSAppLocalization.string("恢复默认", defaultValue: "恢复默认")) {
-                            store.resetToDefault()
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .accessibilityIdentifier("chat.persona.resetDefaultButton")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(IOSAppLocalization.string("完成", defaultValue: "完成")) {
-                        dismiss()
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AmberTheme.accent)
-                    .accessibilityIdentifier("chat.persona.doneButton")
-                }
-            }
-            .onChange(of: avatarPickerItem) { _, item in
+        VStack(alignment: .leading, spacing: 14) {
+            heroAndPresetCard
+            referenceImagesSection
+        }
+        .onChange(of: avatarPickerItem) { _, item in
                 guard let item else { return }
                 Task {
                     if let data = try? await item.loadTransferable(type: Data.self) {
@@ -888,17 +887,16 @@ struct AmberPersonaStudioSheet: View {
                     _ = error
                 }
             }
-            .onChange(of: referencePickerItems) { _, items in
-                guard !items.isEmpty else { return }
-                Task {
-                    for item in items {
-                        if let data = try? await item.loadTransferable(type: Data.self),
-                           let image = UIImage(data: data) {
-                            _ = store.addReferenceImage(image)
-                        }
+        .onChange(of: referencePickerItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task {
+                for item in items {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        _ = store.addReferenceImage(image)
                     }
-                    referencePickerItems = []
                 }
+                referencePickerItems = []
             }
         }
     }
@@ -906,13 +904,15 @@ struct AmberPersonaStudioSheet: View {
     private var heroAndPresetCard: some View {
         VStack(spacing: 14) {
             VStack(spacing: 10) {
-                AmberAgentPersonaMedallionView(
-                    mood: store.pendingPreviewKind == .multiFrameAnimation ? previewMood : .idle,
-                    diameter: 112,
-                    storeOverride: store,
-                    showStagedPreview: true
-                )
-                .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+                if showsAvatar {
+                    AmberAgentPersonaMedallionView(
+                        mood: store.pendingPreviewKind == .multiFrameAnimation ? previewMood : .idle,
+                        diameter: 112,
+                        storeOverride: store,
+                        showStagedPreview: true
+                    )
+                    .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+                }
 
                 Text(activeStatusSummary)
                     .font(.caption.weight(.medium))
@@ -1057,6 +1057,25 @@ struct AmberPersonaStudioSheet: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("chat.persona.generateButton")
                 }
+            }
+
+            // 嵌入态：恢复默认降为主操作下方的一行弱控件，不与面板标题争层级。
+            if showsInlineReset, store.canResetToDefault {
+                Button {
+                    store.resetToDefault()
+                } label: {
+                    Text(IOSAppLocalization.string("恢复默认", defaultValue: "恢复默认"))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(AmberTheme.background.opacity(0.55), in: Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous).stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.persona.resetDefaultButton")
             }
 
             // Single unified footer bar: deduplicated model notice/error on the left, prompt toggle on the right
@@ -1305,6 +1324,53 @@ struct AmberPersonaStudioSheet: View {
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+        }
+    }
+}
+
+/// 独立「形象设定」面板：单层 sheet 入口（顶部栏直连、双栏抽屉），自带头像与唯一完成出口。
+struct AmberPersonaStudioSheet: View {
+    let sharedSettings: IOSSharedSettingsStore
+    /// 保留可注入的 store，供快照/定点测试验证暂存预览。
+    var store: AmberPersonaStore = AmberPersonaStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var previewMood: AmberAgentPersonaMood = .idle
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                AmberPersonaStudioContent(
+                    sharedSettings: sharedSettings,
+                    previewMood: $previewMood,
+                    store: store
+                )
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .amberSmoothSheetScrollDismiss()
+            }
+            .background(AmberTheme.background.ignoresSafeArea())
+            .navigationTitle(IOSAppLocalization.string("形象设定", defaultValue: "形象设定"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if store.canResetToDefault {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(IOSAppLocalization.string("恢复默认", defaultValue: "恢复默认")) {
+                            store.resetToDefault()
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .accessibilityIdentifier("chat.persona.resetDefaultButton")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(IOSAppLocalization.string("完成", defaultValue: "完成")) {
+                        dismiss()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accent)
+                    .accessibilityIdentifier("chat.persona.doneButton")
+                }
+            }
         }
     }
 }

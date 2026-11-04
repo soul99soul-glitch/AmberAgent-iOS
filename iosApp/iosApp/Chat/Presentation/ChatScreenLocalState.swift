@@ -18,6 +18,7 @@ struct ChatComposerLocalState {
 
     // Argon 3+1 Mode & In-Place Background Handoff State
     var activeDuetTab: AmberDuetModeTab = .chat
+    var inlineDuetPanelDragOffsetY: CGFloat = 0
     var isBackgroundHandoffMode = false
     var handoffExecutionTarget: AmberHandoffExecutionTarget = .cloud
     var handoffSelectedCloudAgentId: String = "main"

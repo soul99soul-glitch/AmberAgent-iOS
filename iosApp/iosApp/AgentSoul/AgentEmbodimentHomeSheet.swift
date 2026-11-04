@@ -211,7 +211,9 @@ struct AgentEmbodimentHomeSheet: View {
     @State private var soul = AgentSoulStore.shared
     @State private var tab: Tab = .soul
     @State private var directionBox = EmbodimentTransitionDirectionBox()
-    @State private var isShowingPersonaStudio = false
+    /// 形象编辑态：与外层同面板、同滚动容器，不再 present 第二层 sheet。
+    @State private var isEditingAvatar = false
+    @State private var avatarPreviewMood: AmberAgentPersonaMood = .idle
     @State private var isEditingSoul = false
 
     @Namespace private var tabNamespace
@@ -233,44 +235,75 @@ struct AgentEmbodimentHomeSheet: View {
     }
 
     static let tabSpring = Animation.spring(response: 0.28, dampingFraction: 0.86)
+    static let avatarEditorScrollID = "embodiment.avatarEditor"
+
+    /// 克制的原位切换动效：180–240ms；Reduce Motion 下退为简单淡变。
+    private var avatarModeAnimation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.15) : .easeInOut(duration: 0.22)
+    }
+
+    /// 进入 / 退出形象编辑态：同一面板内切换内容，不 present 第二层 sheet。
+    /// 方向盒子复用现有滑入滑出机制，进入为前进、返回为后退。
+    private func transitionAvatarMode(to editing: Bool) {
+        guard editing != isEditingAvatar else { return }
+        directionBox.movingForward = editing
+        withAnimation(avatarModeAnimation) {
+            isEditingAvatar = editing
+        }
+    }
+
+    /// 整个面板只维这一个头像：编辑态复用同一几何来源，并随暂存预览实时反映。
+    private var sharedAvatarMood: AmberAgentPersonaMood {
+        let store = AmberPersonaStore.shared
+        return isEditingAvatar && store.pendingPreviewKind == .multiFrameAnimation
+            ? avatarPreviewMood
+            : .idle
+    }
 
     var body: some View {
-        VStack(spacing: 12) {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 12) {
+                personaHeroHeader
+
+                ZStack(alignment: .top) {
+                    Group {
+                        if isEditingAvatar {
+                            AmberPersonaStudioContent(
+                                sharedSettings: sharedSettings,
+                                previewMood: $avatarPreviewMood,
+                                showsAvatar: false,
+                                showsInlineReset: true
+                            )
+                        } else {
+                            switch tab {
+                            case .soul:
+                                soulSection
+                            case .memory:
+                                AgentSoulMemorySection()
+                            case .ideas:
+                                AgentSoulIdeasSection(onPick: handleIdeaPicked)
+                            }
+                        }
+                    }
+                    .id(isEditingAvatar ? Self.avatarEditorScrollID : "embodiment.tab.\(tab.rawValue)")
+                    .transition(.embodimentDirectionalSlide(directionBox: directionBox, reduceMotion: reduceMotion))
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 2)
+            .padding(.bottom, isEditingAvatar ? 34 : 28)
+            .amberSmoothSheetScrollDismiss()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .safeAreaInset(edge: .top, spacing: 0) {
             topNavigationBar
                 .padding(.horizontal, 18)
                 .padding(.top, 14)
-
-            personaHeroHeader
-                .padding(.horizontal, 18)
-
-            ZStack(alignment: .top) {
-                ScrollView(.vertical, showsIndicators: false) {
-                    Group {
-                        switch tab {
-                        case .soul:
-                            soulSection
-                        case .memory:
-                            AgentSoulMemorySection()
-                        case .ideas:
-                            AgentSoulIdeasSection(onPick: handleIdeaPicked)
-                        }
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 2)
-                    .padding(.bottom, 28)
-                }
-                .id(tab)
-                .transition(.embodimentDirectionalSlide(directionBox: directionBox, reduceMotion: reduceMotion))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()
+                .padding(.bottom, 10)
+                .background(AgentEmbodimentPalette.sheetBg)
         }
         .background(AgentEmbodimentPalette.sheetBg.ignoresSafeArea())
-        .sheet(isPresented: $isShowingPersonaStudio) {
-            AmberPersonaStudioSheet(sharedSettings: sharedSettings)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
         .sheet(isPresented: $isEditingSoul) {
             AgentSoulEditorSheet(store: soul)
                 .presentationDetents([.large])
@@ -289,6 +322,28 @@ struct AgentEmbodimentHomeSheet: View {
                 .foregroundStyle(AgentEmbodimentPalette.ink)
 
             HStack {
+                if isEditingAvatar {
+                    Button {
+                        transitionAvatarMode(to: false)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(IOSAppLocalization.string("人设", defaultValue: "人设"))
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(AgentEmbodimentPalette.inkSecondary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.cardElevated))
+                        .overlay {
+                            Capsule(style: .continuous).strokeBorder(AgentEmbodimentPalette.hairline, lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("embodiment.avatarBackButton")
+                }
+
                 Spacer()
                 Button {
                     dismiss()
@@ -316,9 +371,14 @@ struct AgentEmbodimentHomeSheet: View {
             VStack(spacing: 8) {
                 ZStack(alignment: .bottom) {
                     Button {
-                        isShowingPersonaStudio = true
+                        transitionAvatarMode(to: true)
                     } label: {
-                        AmberAgentPersonaMedallionView(mood: .idle, diameter: 112)
+                        AmberAgentPersonaMedallionView(
+                            mood: sharedAvatarMood,
+                            diameter: isEditingAvatar ? 96 : 112,
+                            storeOverride: AmberPersonaStore.shared,
+                            showStagedPreview: isEditingAvatar
+                        )
                             .overlay {
                                 Circle().strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.22 : 0.95), lineWidth: 3)
                             }
@@ -330,29 +390,31 @@ struct AgentEmbodimentHomeSheet: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("embodiment.avatar")
 
-                    Button {
-                        isShowingPersonaStudio = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "photo.badge.plus")
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text(IOSAppLocalization.string("更换形象", defaultValue: "更换形象"))
-                                .font(.system(size: 11.5, weight: .semibold))
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9.5, weight: .bold))
+                    if !isEditingAvatar {
+                        Button {
+                            transitionAvatarMode(to: true)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "photo.badge.plus")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                Text(IOSAppLocalization.string("更换形象", defaultValue: "更换形象"))
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 9.5, weight: .bold))
+                            }
+                            .foregroundStyle(AgentEmbodimentPalette.ink)
+                            .padding(.horizontal, 11)
+                            .frame(height: 26)
+                            .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.cardElevated))
+                            .overlay {
+                                Capsule(style: .continuous).strokeBorder(AgentEmbodimentPalette.hairline, lineWidth: 1)
+                            }
+                            .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
                         }
-                        .foregroundStyle(AgentEmbodimentPalette.ink)
-                        .padding(.horizontal, 11)
-                        .frame(height: 26)
-                        .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.cardElevated))
-                        .overlay {
-                            Capsule(style: .continuous).strokeBorder(AgentEmbodimentPalette.hairline, lineWidth: 1)
-                        }
-                        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+                        .buttonStyle(.plain)
+                        .offset(y: 8)
+                        .accessibilityIdentifier("embodiment.changeAvatarButton")
                     }
-                    .buttonStyle(.plain)
-                    .offset(y: 8)
-                    .accessibilityIdentifier("embodiment.changeAvatarButton")
                 }
                 .padding(.bottom, 6)
 
@@ -372,7 +434,9 @@ struct AgentEmbodimentHomeSheet: View {
                 }
             }
 
-            segmentedTabBar
+            if !isEditingAvatar {
+                segmentedTabBar
+            }
         }
     }
 
@@ -618,9 +682,7 @@ struct AgentEmbodimentHomeSheet: View {
         }()
 
         return HStack(spacing: 10) {
-            AmberAgentPersonaMedallionView(mood: .idle, diameter: 36)
-                .overlay { Circle().strokeBorder(Color.white.opacity(0.85), lineWidth: 1.5) }
-                .overlay { Circle().strokeBorder(Color.black.opacity(0.08), lineWidth: 1) }
+            SnapshotMiniAvatar(name: soul.displayName, size: 36)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

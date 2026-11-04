@@ -220,7 +220,7 @@ enum MacGatewayError: LocalizedError, Equatable {
         case .conflict(let message), .server(let message):
             message
         case .invalidResponse:
-            IOSAppLocalization.string("Mac Gateway 返回了无法识别的数据", defaultValue: "Mac Gateway 返回了无法识别的数据")
+            IOSAppLocalization.string("Amber · 云端返回了无法识别的数据", defaultValue: "Amber · 云端返回了无法识别的数据")
         }
     }
 }

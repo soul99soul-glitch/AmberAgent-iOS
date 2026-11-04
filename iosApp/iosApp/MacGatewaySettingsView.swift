@@ -63,7 +63,7 @@ struct MacGatewaySettingsView: View {
                 dismiss()
             }
             Spacer(minLength: 0)
-            Text(verbatim: "Mac Gateway")
+            Text(verbatim: L("Amber · 云端"))
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AmberTheme.foreground)
                 .multilineTextAlignment(.center)
@@ -130,17 +130,23 @@ struct MacGatewaySettingsView: View {
 
     private func macSection(_ connection: MacGatewayConnection) -> some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "Mac")
+            AmberSectionLabel(text: "云端连接")
             AmberFormGroup {
-                MacGatewayRow(icon: "desktopcomputer", title: connection.name, detail: reachabilityText) {
-                    Button { Task { await store.refresh() } } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 18, weight: .medium))
-                            .frame(width: 44, height: 44)
+                MacGatewayRow(icon: "icloud", title: connection.name, detail: reachabilityText) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(sessionStatusDotColor)
+                            .frame(width: 7, height: 7)
+
+                        Button { Task { await store.refresh() } } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 18, weight: .medium))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(AmberTheme.accent)
+                        .accessibilityLabel(Text(verbatim: L("刷新")))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(AmberTheme.accent)
-                    .accessibilityLabel(Text(verbatim: L("刷新")))
                 }
                 MacGatewayRowDivider()
                 MacGatewayRow(icon: "bell.badge", title: L("推送通知"), detail: pushDetail) {
@@ -154,7 +160,7 @@ struct MacGatewaySettingsView: View {
                 }
             }
             noticeFooter(fallback: store.isReachable == false
-                ? L("Mac 睡眠、合盖或断网时无法推送，也无法在这里查看状态。")
+                ? L("云端或 Mac 睡眠、断网时无法推送，也无法在这里查看状态。")
                 : nil)
         }
     }
@@ -223,11 +229,30 @@ struct MacGatewaySettingsView: View {
 
     // MARK: - Text
 
+    private var sessionStatusDotColor: Color {
+        switch store.cloudSessionHealth {
+        case .healthy:
+            return AmberTheme.accentGreen
+        case .checking, .modelUnconfigured, .degraded:
+            return .orange
+        case .offline:
+            return AmberTheme.accentRed
+        case .unpaired:
+            return AmberTheme.muted
+        }
+    }
+
     private var reachabilityText: String {
-        switch store.isReachable {
-        case nil: return L("正在连接…")
-        case false: return L("无法连接")
-        case true:
+        switch store.cloudSessionHealth {
+        case .unpaired:
+            return L("未配对")
+        case .checking:
+            return L("正在连接…")
+        case .offline(let reason):
+            return L("无法连接") + (reason.isEmpty ? "" : " · \(reason)")
+        case .modelUnconfigured(let reason), .degraded(let reason):
+            return reason
+        case .healthy:
             guard let sampled = store.status?.health?.sampledAt else { return L("在线") }
             return L("在线") + " · " + L("更新于") + " " + sampled.formatted(.relative(presentation: .named))
         }

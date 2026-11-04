@@ -12,6 +12,14 @@ struct AmberDuetWorkspaceDrawerSheet: View {
     let onOpenAllHistory: () -> Void
     let onNavigate: (Route) -> Void
 
+    static var topBarTrailingSettingsTitle: String {
+        IOSAppLocalization.string("设置", defaultValue: "设置")
+    }
+    static let topBarTrailingSettingsSystemImage = "gearshape"
+    static let topBarTrailingSettingsAccessibilityId = "chat.duet.topBarSettings"
+    static let topBarTrailingSettingsRoute: Route = .settings
+    static let preferredPresentationDetents: Set<PresentationDetent> = [.large]
+
     @Environment(\.dismiss) private var dismiss
     @State private var showingPersonaStudio = false
     @State private var showingMoreSpacesAndThemes = false
@@ -22,6 +30,17 @@ struct AmberDuetWorkspaceDrawerSheet: View {
 
     private var recentSummaries: [ConversationSummary] {
         Array(conversationStore.summaries.prefix(5))
+    }
+
+    func handleTopBarSettingsTap(performNavigateImmediately: Bool = false) {
+        dismiss()
+        if performNavigateImmediately {
+            onNavigate(Self.topBarTrailingSettingsRoute)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                onNavigate(Self.topBarTrailingSettingsRoute)
+            }
+        }
     }
 
     var body: some View {
@@ -35,6 +54,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 18)
+                .amberSmoothSheetScrollDismiss()
             }
             .background(AmberTheme.background.ignoresSafeArea())
             .navigationTitle(IOSAppLocalization.string("导航与历史", defaultValue: "导航与历史"))
@@ -53,17 +73,26 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                     .foregroundStyle(AmberTheme.foreground)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(IOSAppLocalization.string("返回对话", defaultValue: "返回对话")) {
-                        dismiss()
+                    Button {
+                        handleTopBarSettingsTap()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: Self.topBarTrailingSettingsSystemImage)
+                            Text(Self.topBarTrailingSettingsTitle)
+                        }
+                        .font(.subheadline.weight(.semibold))
                     }
-                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.accent)
+                    .accessibilityLabel(Self.topBarTrailingSettingsTitle)
+                    .accessibilityIdentifier(Self.topBarTrailingSettingsAccessibilityId)
                 }
             }
             .sheet(isPresented: $showingPersonaStudio) {
                 AmberPersonaStudioSheet(
                     sharedSettings: sharedSettings ?? IOSSharedSettingsStore()
                 )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
     }
@@ -103,7 +132,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(gateway.connection != nil ? "已连接 \(gateway.connection?.name ?? "云端/Mac") · 支持后台任务" : "点按头像可生成/上传形象与 Agent 参考图")
+                Text(gateway.connection != nil ? "已连接 \(gateway.connection?.name ?? "Amber · 云端") · 支持后台任务" : "点按头像可生成/上传形象与 Agent 参考图")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
             }

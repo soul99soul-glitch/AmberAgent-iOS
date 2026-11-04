@@ -99,35 +99,46 @@ struct ChatTopBarTrailingDock: View {
 
     private var dockButtonContent: some View {
         Button(action: onTap) {
-            ZStack {
-                dockGlass
-
-                Image(systemName: symbolName)
-                    .symbolRenderingMode(.hierarchical)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(symbolTint)
-                    .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
-
-                if let badgeText {
-                    Text(badgeText)
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .frame(minWidth: 15, minHeight: 15)
-                        .background(badgeTint, in: Capsule())
-                        .overlay(Capsule().stroke(.white.opacity(0.86), lineWidth: 1))
-                        .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
-                               height: ChatTopBarLayout.toolbarButtonDiameter,
-                               alignment: .topTrailing)
-                        .padding(1)
-                        .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
-                        .accessibilityHidden(true)
+            Image(systemName: symbolName)
+                .symbolRenderingMode(dockTint == nil ? .monochrome : .hierarchical)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(symbolTint)
+                .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
+                .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
+                       height: ChatTopBarLayout.toolbarButtonDiameter)
+                .modifier(ChatTopBarDockGlass(tint: dockTint))
+                .overlay {
+                    if case let .satellite(notice, _) = state,
+                       notice.kind == .awaitingUser,
+                       !reduceMotion {
+                        Circle()
+                            .stroke(AmberTheme.accentAmber.opacity(0.52), lineWidth: 1.5)
+                            .phaseAnimator([false, true]) { content, phase in
+                                content
+                                    .scaleEffect(phase ? 1.12 : 0.92)
+                                    .opacity(phase ? 0.18 : 0.72)
+                            } animation: { _ in
+                                .easeInOut(duration: 1.15)
+                            }
+                            .allowsHitTesting(false)
+                    }
                 }
-            }
-            .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
-                   height: ChatTopBarLayout.toolbarButtonDiameter)
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Circle())
+                .overlay(alignment: .topTrailing) {
+                    if let badgeText {
+                        Text(badgeText)
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .frame(minWidth: 15, minHeight: 15)
+                            .background(badgeTint, in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.86), lineWidth: 1))
+                            .padding(1)
+                            .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
+                            .accessibilityHidden(true)
+                    }
+                }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Circle())
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.9, haptic: .lightImpact))
         .accessibilityLabel(accessibilityLabel)
@@ -150,39 +161,6 @@ struct ChatTopBarTrailingDock: View {
         }
         .padding(16)
         .frame(maxHeight: 300, alignment: .topLeading)
-    }
-
-    private var dockGlass: some View {
-        Circle()
-            .fill(AmberTheme.glass.opacity(0.16))
-            .overlay {
-                if let dockTint {
-                    Circle().fill(dockTint.opacity(0.12))
-                }
-            }
-            .overlay {
-                if case let .satellite(notice, _) = state,
-                   notice.kind == .awaitingUser,
-                   !reduceMotion {
-                    Circle()
-                        .stroke(AmberTheme.accentAmber.opacity(0.52), lineWidth: 1.5)
-                        .phaseAnimator([false, true]) { content, phase in
-                            content
-                                .scaleEffect(phase ? 1.12 : 0.92)
-                                .opacity(phase ? 0.18 : 0.72)
-                        } animation: { _ in
-                            .easeInOut(duration: 1.15)
-                        }
-                        .allowsHitTesting(false)
-                }
-            }
-            .overlay {
-                Circle().stroke((dockTint ?? AmberTheme.border).opacity(0.28), lineWidth: 0.5)
-            }
-            .modifier(ChatTopBarDockGlass())
-            .frame(width: ChatTopBarLayout.toolbarButtonDiameter,
-                   height: ChatTopBarLayout.toolbarButtonDiameter)
-            .accessibilityHidden(true)
     }
 
     private var symbolName: String {
@@ -283,14 +261,29 @@ struct ChatTopBarTrailingDock: View {
 }
 
 private struct ChatTopBarDockGlass: ViewModifier {
+    var tint: Color? = nil
+
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular.interactive(), in: Circle())
+            content
+                .background(.ultraThinMaterial, in: Circle())
+                .background((tint ?? AmberTheme.glass).opacity(tint == nil ? 0.16 : 0.14), in: Circle())
+                .glassEffect(.regular.interactive(), in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder((tint ?? AmberTheme.border).opacity(0.32), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                }
         } else {
             content
                 .background(Circle().fill(.ultraThinMaterial))
-                .overlay(Circle().stroke(AmberTheme.border.opacity(0.28), lineWidth: 0.5))
+                .overlay {
+                    if let tint {
+                        Circle().fill(tint.opacity(0.12))
+                    }
+                }
+                .overlay(Circle().stroke((tint ?? AmberTheme.border).opacity(0.28), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
         }
     }

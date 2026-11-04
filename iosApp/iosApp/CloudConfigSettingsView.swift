@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Settings › Mac Gateway › 云端配置 — shows the cloud's provider/model/search
-/// state (non-secret) and imports this device's configuration over the paired
-/// HTTPS/SPKI channel per docs/architecture/cloud-configuration-api.md:
-/// JWE-sealed payloads, kid pinning, explicit key delete actions.
+/// Settings › Amber · 云端 › 云端配置 — prioritizes selecting the cloud's active
+/// provider/model as the primary task, while keeping "从本机导入配置" as an
+/// independent secondary entry over the paired HTTPS/SPKI channel per
+/// docs/architecture/cloud-configuration-api.md (JWE-sealed payloads, kid
+/// pinning, explicit key delete actions, never echoing secrets).
 struct CloudConfigSettingsView: View {
     let sharedSettings: IOSSharedSettingsStore
     private let store = MacGatewayStore.shared
@@ -13,7 +14,8 @@ struct CloudConfigSettingsView: View {
     @Environment(RouterPath.self) private var router
 
     @State private var draft: IOSCloudImportDraft?
-    @State private var presentingPreview = false
+    @State private var presentingModelPreview = false
+    @State private var presentingLocalImport = false
     @State private var manualSheet: ManualSheet?
     @State private var importError: String?
     @State private var previewSnapshot: IOSCloudConfigSnapshot?
@@ -31,8 +33,7 @@ struct CloudConfigSettingsView: View {
                         } else {
                             remoteModelSection
                             remoteSearchSection
-                            importSection
-                            manualSection
+                            importEntrySection
                         }
                     }
                     .padding(.bottom, 36)
@@ -51,10 +52,10 @@ struct CloudConfigSettingsView: View {
             guard let draft else { return }
             self.draft = draft.rebuilt(from: sharedSettings)
         }
-        .sheet(isPresented: $presentingPreview) {
-            if let draft {
+        .sheet(isPresented: $presentingModelPreview) {
+            if let modelDraft = draft?.modelOnlyDraft {
                 CloudImportPreviewSheet(
-                    draft: draft,
+                    draft: modelDraft,
                     remote: previewSnapshot,
                     latestRemote: store.cloudConfig,
                     error: importError,
@@ -63,9 +64,33 @@ struct CloudConfigSettingsView: View {
                     onConfirm: {
                         Task {
                             let error = await store.applyCloudImport(
-                                draft: draft, sharedSettings: sharedSettings,
+                                draft: modelDraft, sharedSettings: sharedSettings,
                                 expectedRevision: previewSnapshot?.revision)
-                            if let error { importError = error } else { presentingPreview = false }
+                            if let error { importError = error } else { presentingModelPreview = false }
+                        }
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $presentingLocalImport) {
+            if let binding = Binding($draft) {
+                CloudLocalImportSheet(
+                    draft: binding,
+                    remote: previewSnapshot,
+                    latestRemote: store.cloudConfig,
+                    error: $importError,
+                    importing: store.cloudImporting,
+                    onReview: { previewSnapshot = store.cloudConfig; importError = nil },
+                    onConfirm: { currentDraft in
+                        Task {
+                            let error = await store.applyCloudImport(
+                                draft: currentDraft, sharedSettings: sharedSettings,
+                                expectedRevision: previewSnapshot?.revision)
+                            if let error {
+                                importError = error
+                            } else {
+                                presentingLocalImport = false
+                            }
                         }
                     }
                 )
@@ -122,7 +147,7 @@ struct CloudConfigSettingsView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            Color.clear.frame(width: 44, height: 44)
+            refreshButton
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
@@ -135,7 +160,7 @@ struct CloudConfigSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(verbatim: macGatewayL("云端配置"))
             AmberFormGroup {
-                MacGatewayRow(icon: "desktopcomputer", title: macGatewayL("先配对 Mac"),
+                MacGatewayRow(icon: "desktopcomputer", title: macGatewayL("先配对 Amber · 云端"),
                               detail: macGatewayL("云端配置通过已配对的加密连接管理"),
                               action: { dismiss() }) {
                     MacGatewayChevron()
@@ -145,29 +170,146 @@ struct CloudConfigSettingsView: View {
         }
     }
 
-    // MARK: - Cloud model
+    // MARK: - Primary Task: Cloud Provider & Model Selection
 
     private var remoteModelSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: macGatewayL("云端模型"))
+            AmberSectionLabel(verbatim: macGatewayL("云端当前模型"))
             AmberFormGroup {
-                if let model = store.cloudConfig?.model {
-                    valueRow(icon: "cpu", title: macGatewayL("服务商"), value: model.provider)
+                if let model = store.cloudConfig?.model,
+                   !model.provider.isEmpty || !model.modelId.isEmpty {
+                    valueRow(icon: "cpu", title: macGatewayL("当前服务商"), value: providerDisplayName(model.provider))
                     MacGatewayRowDivider()
-                    valueRow(icon: "sparkles", title: macGatewayL("模型"), value: model.modelId)
+                    valueRow(icon: "sparkles", title: macGatewayL("当前模型"), value: model.modelId)
                     MacGatewayRowDivider()
                     valueRow(icon: "network", title: "Base URL", value: host(of: model.baseUrl))
                     MacGatewayRowDivider()
-                    valueRow(icon: "key", title: "API Key",
-                             value: model.keyConfigured ? macGatewayL("已配置") : macGatewayL("未配置"))
+                    HStack(spacing: 12) {
+                        MacGatewayIconPlate(icon: "key")
+                        Text(verbatim: "API Key")
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                        Spacer(minLength: 8)
+                        Text(verbatim: model.keyConfigured ? macGatewayL("已配置") : macGatewayL("缺少 Key"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(model.keyConfigured ? AmberTheme.accentGreen : AmberTheme.accentAmber)
+                    }
+                    .frame(minHeight: 52)
+                    .padding(.horizontal, 14)
                 } else {
-                    MacGatewayRow(icon: "cpu", title: macGatewayL("云端未配置模型"),
+                    MacGatewayRow(icon: "cpu", title: macGatewayL("云端尚未设置模型"),
                                   detail: remoteHint) {
-                        refreshButton
+                        if store.cloudConfigLoading {
+                            ProgressView()
+                        }
+                    }
+                }
+
+                if let draft, !draft.exportableProviders.isEmpty {
+                    MacGatewayRowDivider()
+                    primaryProviderMenuRow(draft)
+                    if let selectedProvider = draft.selectedProvider {
+                        MacGatewayRowDivider()
+                        modelPickerRow(selectedProvider, draft: draft)
+                        if shouldShowApplySelectedModel(selectedProvider: selectedProvider, selectedModel: draft.selectedModel) {
+                            MacGatewayRowDivider()
+                            applySelectedModelRow(selectedProvider: selectedProvider, selectedModel: draft.selectedModel)
+                        }
+                    }
+                }
+
+                MacGatewayRowDivider()
+                MacGatewayRow(icon: "slider.horizontal.3",
+                              title: macGatewayL("手动设置云端模型"),
+                              detail: macGatewayL("自定义云端 Provider、模型 ID、Base URL 与 API Key"),
+                              action: { openManualSheet(.model) }) {
+                    MacGatewayChevron()
+                }
+            }
+            footerForCloudSection(fallback: macGatewayL("优先在此选择或切换云端当前使用的 provider / model；云端仅保存 Key 配置状态，不回显密钥内容。"))
+        }
+    }
+
+    private func primaryProviderMenuRow(_ draft: IOSCloudImportDraft) -> some View {
+        let currentName = draft.selectedProvider?.name ?? macGatewayL("选择本机可用服务商")
+        return Menu {
+            ForEach(draft.exportableProviders) { provider in
+                Button {
+                    var next = draft
+                    next.providerId = provider.providerId
+                    next.modelUuid = provider.defaultModelUuid
+                    self.draft = next
+                } label: {
+                    HStack {
+                        Text(verbatim: "\(provider.name) · \(provider.kind.rawValue)")
+                        if draft.providerId == provider.providerId {
+                            Image(systemName: "checkmark")
+                        }
                     }
                 }
             }
-            footerForCloudSection(fallback: macGatewayL("云端只保存 Key 是否已配置的状态，不回显密钥内容。"))
+        } label: {
+            HStack(spacing: 12) {
+                MacGatewayIconPlate(icon: "arrow.triangle.2.circlepath")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: macGatewayL("快速切换服务商"))
+                        .font(.body)
+                        .foregroundStyle(AmberTheme.foreground)
+                    Text(verbatim: macGatewayL("来自本机已就绪的兼容服务商"))
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                }
+                Spacer(minLength: 8)
+                Text(verbatim: currentName)
+                    .font(.subheadline)
+                    .foregroundStyle(AmberTheme.accent)
+                MacGatewayChevron()
+            }
+            .frame(minHeight: 52)
+            .padding(.horizontal, 14)
+            .contentShape(Rectangle())
+        }
+    }
+
+    private func shouldShowApplySelectedModel(
+        selectedProvider: IOSCloudProviderExportItem,
+        selectedModel: IOSCloudProviderExportItem.ChatModel?
+    ) -> Bool {
+        guard let selectedModel else { return false }
+        guard let remoteModel = store.cloudConfig?.model else { return true }
+        return remoteModel.provider.lowercased() != selectedProvider.kind.rawValue
+            || remoteModel.modelId != selectedModel.modelId
+            || !remoteModel.keyConfigured
+    }
+
+    private func applySelectedModelRow(
+        selectedProvider: IOSCloudProviderExportItem,
+        selectedModel: IOSCloudProviderExportItem.ChatModel?
+    ) -> some View {
+        let modelName = selectedModel?.displayName ?? selectedModel?.modelId ?? ""
+        return MacGatewayRow(
+            icon: "checkmark.circle",
+            title: macGatewayL("将「\(selectedProvider.name) · \(modelName)」设为云端模型"),
+            detail: macGatewayL("核对并加密同步该服务商与模型到云端"),
+            action: {
+                previewSnapshot = store.cloudConfig
+                importError = nil
+                presentingModelPreview = true
+            }
+        ) {
+            if store.cloudImporting {
+                ProgressView()
+            } else {
+                MacGatewayChevron()
+            }
+        }
+    }
+
+    private func providerDisplayName(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "openai": return "OpenAI 兼容 (openai)"
+        case "claude": return "Claude (claude)"
+        default: return raw
         }
     }
 
@@ -175,29 +317,32 @@ struct CloudConfigSettingsView: View {
 
     private var remoteSearchSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: macGatewayL("云端搜索"))
+            AmberSectionLabel(verbatim: macGatewayL("云端联网搜索"))
             AmberFormGroup {
                 if let config = store.cloudConfig {
                     if !config.searchSources.isEmpty {
-                        valueRow(icon: "list.number", title: macGatewayL("源顺序"),
+                        valueRow(icon: "magnifyingglass", title: macGatewayL("启用搜索源"),
                                  value: config.searchSources
                                     .map(IOSCloudConfigWire.sourceDisplayName(for:)).joined(separator: " → "))
                         MacGatewayRowDivider()
-                        valueRow(icon: "arrow.triangle.swap", title: macGatewayL("策略"),
+                        valueRow(icon: "arrow.triangle.swap", title: macGatewayL("调用策略"),
                                  value: config.searchMode == "aggregate" ? macGatewayL("聚合所有源") : macGatewayL("按顺序回退"))
-                        MacGatewayRowDivider()
-                    }
-                    ForEach(config.search) { search in
-                        searchRemoteRow(search)
-                        if search.id != config.search.last?.id {
-                            MacGatewayRowDivider()
-                        }
-                    }
-                    if config.search.isEmpty {
+                    } else {
                         MacGatewayRow(icon: "magnifyingglass", title: macGatewayL("云端未配置搜索"),
                                       detail: remoteHint) {
                             EmptyView()
                         }
+                    }
+                    let keySearchItems = config.search.filter(\.requiresKey)
+                    if !keySearchItems.isEmpty {
+                        MacGatewayRowDivider()
+                        valueRow(
+                            icon: "key.horizontal",
+                            title: macGatewayL("付费搜索 Key"),
+                            value: keySearchItems.map { item in
+                                "\(item.name) " + (item.keyConfigured ? macGatewayL("已配置") : macGatewayL("未配置"))
+                            }.joined(separator: " · ")
+                        )
                     }
                 } else {
                     MacGatewayRow(icon: "magnifyingglass", title: macGatewayL("云端未配置搜索"),
@@ -205,37 +350,40 @@ struct CloudConfigSettingsView: View {
                         EmptyView()
                     }
                 }
+                MacGatewayRowDivider()
+                MacGatewayRow(icon: "key.horizontal", title: macGatewayL("手动更新搜索 Key"),
+                              detail: macGatewayL("为 Exa 或 Brave 单独设置或清理云端 API Key"),
+                              action: { openManualSheet(.searchKey) }) {
+                    MacGatewayChevron()
+                }
             }
-            MacGatewaySectionFooter(text: macGatewayL("免费源无需 Key；Exa/Brave 需各自配置 Key。云端只显示配置状态，不回显密钥。"))
+            MacGatewaySectionFooter(text: macGatewayL("Bing 与 DuckDuckGo 免 Key 可用；Exa / Brave 按需配置云端 Key。"))
         }
     }
 
-    private func searchRemoteRow(_ search: IOSCloudConfigSnapshot.Search) -> some View {
-        let status: String = {
-            if !search.enabled { return macGatewayL("停用") }
-            if !search.requiresKey { return macGatewayL("免费") }
-            return search.keyConfigured ? macGatewayL("已配置") : macGatewayL("未配置")
-        }()
-        return MacGatewayRow(icon: "magnifyingglass", title: search.name,
-                             detail: search.type) {
-            Text(verbatim: status)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(search.enabled && (search.keyConfigured || !search.requiresKey)
-                    ? AmberTheme.accent : AmberTheme.muted)
-        }
-        .opacity(search.enabled ? 1 : 0.55)
-    }
+    // MARK: - Secondary Entry: Import from this device
 
-    // MARK: - Import from this device
-
-    private var importSection: some View {
+    private var importEntrySection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: macGatewayL("从本机导入"))
+            AmberSectionLabel(verbatim: macGatewayL("配置同步"))
             AmberFormGroup {
                 if let draft {
-                    providerPickers(draft)
-                    searchPickers(draft)
-                    previewRow(draft)
+                    MacGatewayRow(
+                        icon: "square.and.arrow.up",
+                        title: macGatewayL("从本机导入配置"),
+                        detail: localImportEntrySummary(for: draft),
+                        action: {
+                            previewSnapshot = store.cloudConfig
+                            importError = nil
+                            presentingLocalImport = true
+                        }
+                    ) {
+                        if store.cloudImporting {
+                            ProgressView()
+                        } else {
+                            MacGatewayChevron()
+                        }
+                    }
                 } else {
                     MacGatewayRow(icon: "square.and.arrow.up", title: macGatewayL("读取本机配置…"), detail: "") {
                         ProgressView()
@@ -245,7 +393,7 @@ struct CloudConfigSettingsView: View {
             if let importError {
                 MacGatewaySectionFooter(text: importError, color: .orange)
             } else {
-                MacGatewaySectionFooter(text: macGatewayL("默认只选当前使用的模型与搜索；Key 仅在确认后从钥匙串取出，内存中加密封装后经已配对连接上传。"))
+                MacGatewaySectionFooter(text: macGatewayL("将本机已配置的服务商、模型与联网搜索批量导入到云端；Key 仅在确认时加密上传。"))
             }
             if store.cloudImportKeyChanged {
                 AmberFormGroup {
@@ -261,72 +409,40 @@ struct CloudConfigSettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private func providerPickers(_ draft: IOSCloudImportDraft) -> some View {
-        if !draft.providers.isEmpty {
-            ForEach(draft.providers) { provider in
-                providerRow(provider, draft: draft)
-                MacGatewayRowDivider()
-            }
-            if let provider = draft.selectedProvider {
-                modelPickerRow(provider, draft: draft)
-                MacGatewayRowDivider()
-            }
-        } else {
-            MacGatewayRow(icon: "cpu", title: macGatewayL("本机没有服务商"), detail: "") {
-                EmptyView()
-            }
-            MacGatewayRowDivider()
+    private func localImportEntrySummary(for draft: IOSCloudImportDraft) -> String {
+        let providerCount = draft.exportableProviders.count
+        let searchCount = draft.exportableSearches.count
+        if providerCount == 0 && searchCount == 0 {
+            let blockedCount = draft.blockedSummaries.reduce(0) { $0 + $1.itemNames.count }
+            return blockedCount > 0
+                ? macGatewayL("本机暂无可直接导出的配置（\(blockedCount) 项需补齐 Key 或协议受限）")
+                : macGatewayL("本机暂无可导出的服务商或搜索配置")
         }
-    }
-
-    private func providerRow(_ provider: IOSCloudProviderExportItem, draft: IOSCloudImportDraft) -> some View {
-        let selected = draft.providerId == provider.providerId
-        let detail = provider.blockedReason
-            ?? [provider.kind.rawValue, host(of: provider.baseUrl)]
-                .filter { !$0.isEmpty }.joined(separator: " · ")
-        return MacGatewayRow(icon: "cpu", title: provider.name, detail: detail,
-                             action: provider.isExportable ? { select(provider, in: draft) } : nil) {
-            if selected {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(AmberTheme.accent)
-            } else if !provider.isExportable {
-                Text(verbatim: provider.blockedReason ?? "")
-                    .font(.caption2).foregroundStyle(AmberTheme.muted)
-            }
-        }
-        .opacity(provider.isExportable ? 1 : 0.55)
-    }
-
-    /// Tapping a provider toggles its selection — tapping the selected row
-    /// clears the model choice entirely so a search-only import (e.g. just
-    /// Exa/Brave keys) doesn't drag the model and its key along.
-    private func select(_ provider: IOSCloudProviderExportItem, in draft: IOSCloudImportDraft) {
-        var next = draft
-        if next.providerId == provider.providerId {
-            next.providerId = nil
-            next.modelUuid = nil
-        } else {
-            next.providerId = provider.providerId
-            next.modelUuid = provider.defaultModelUuid
-        }
-        self.draft = next
+        return macGatewayL("可导入 \(providerCount) 个模型服务商 · \(searchCount) 项联网搜索")
     }
 
     private func modelPickerRow(_ provider: IOSCloudProviderExportItem, draft: IOSCloudImportDraft) -> some View {
         let current = draft.selectedModel?.displayName ?? macGatewayL("选择模型")
         return Menu {
             ForEach(provider.chatModels) { model in
-                Button(model.displayName) {
+                Button {
                     var next = draft
                     next.modelUuid = model.uuid
                     self.draft = next
+                } label: {
+                    HStack {
+                        Text(verbatim: model.displayName)
+                        if draft.selectedModel?.uuid == model.uuid {
+                            Image(systemName: "checkmark")
+                        }
+                    }
                 }
             }
         } label: {
             HStack(spacing: 12) {
                 MacGatewayIconPlate(icon: "sparkles")
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(verbatim: macGatewayL("模型")).font(.body).foregroundStyle(AmberTheme.foreground)
+                    Text(verbatim: macGatewayL("选择模型")).font(.body).foregroundStyle(AmberTheme.foreground)
                     Text(verbatim: provider.name).font(.caption).foregroundStyle(AmberTheme.muted)
                 }
                 Spacer(minLength: 8)
@@ -336,84 +452,6 @@ struct CloudConfigSettingsView: View {
             .frame(minHeight: 52)
             .padding(.horizontal, 14)
             .contentShape(Rectangle())
-        }
-    }
-
-    @ViewBuilder
-    private func searchPickers(_ draft: IOSCloudImportDraft) -> some View {
-        if !draft.searches.isEmpty {
-            ForEach(draft.searches) { search in
-                searchRow(search, draft: draft)
-                MacGatewayRowDivider()
-            }
-        }
-    }
-
-    private func searchRow(_ search: IOSCloudSearchExportItem, draft: IOSCloudImportDraft) -> some View {
-        let selected = draft.selectedSearchIds.contains(search.serviceId)
-        var detail = search.typeLabel
-        if let blocked = search.blockedReason { detail += " · " + blocked }
-        else if search.isSelected { detail += " · " + macGatewayL("本机当前使用") }
-        return MacGatewayRow(icon: "magnifyingglass", title: search.name, detail: detail,
-                             action: search.isExportable ? { toggle(search, in: draft) } : nil) {
-            if selected {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(AmberTheme.accent)
-            } else if !search.isExportable {
-                Image(systemName: "circle").foregroundStyle(AmberTheme.muted)
-            }
-        }
-        .opacity(search.isExportable ? 1 : 0.55)
-    }
-
-    private func toggle(_ search: IOSCloudSearchExportItem, in draft: IOSCloudImportDraft) {
-        var next = draft
-        if next.selectedSearchIds.contains(search.serviceId) {
-            next.selectedSearchIds.remove(search.serviceId)
-        } else {
-            next.selectedSearchIds.insert(search.serviceId)
-        }
-        self.draft = next
-    }
-
-    private func previewRow(_ draft: IOSCloudImportDraft) -> some View {
-        MacGatewayRow(icon: "square.and.arrow.up",
-                      title: macGatewayL("预览并导入到云端"),
-                      detail: draft.hasSelection
-                        ? macGatewayL("查看将上传与替换的项目")
-                        : macGatewayL("先在上方勾选服务商或搜索服务"),
-                      action: draft.hasSelection ? {
-                          previewSnapshot = store.cloudConfig
-                          importError = nil
-                          presentingPreview = true
-                      } : nil) {
-            if store.cloudImporting {
-                ProgressView()
-            } else {
-                MacGatewayChevron()
-            }
-        }
-        .opacity(draft.hasSelection ? 1 : 0.55)
-    }
-
-    // MARK: - Manual update (advanced)
-
-    private var manualSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: macGatewayL("高级"))
-            AmberFormGroup {
-                MacGatewayRow(icon: "slider.horizontal.3", title: macGatewayL("手动更新模型"),
-                              detail: macGatewayL("直接设置云端的 provider、Base URL 与模型"),
-                              action: { openManualSheet(.model) }) {
-                    MacGatewayChevron()
-                }
-                MacGatewayRowDivider()
-                MacGatewayRow(icon: "key.horizontal", title: macGatewayL("手动更新搜索 Key"),
-                              detail: macGatewayL("为指定搜索服务设置或替换 API Key"),
-                              action: { openManualSheet(.searchKey) }) {
-                    MacGatewayChevron()
-                }
-            }
-            MacGatewaySectionFooter(text: macGatewayL("删除云端已保存的 Key 是独立操作，请在 Mac 端确认后执行。"))
         }
     }
 
@@ -485,6 +523,337 @@ struct CloudConfigSettingsView: View {
         case model
         case searchKey
         var id: Int { self == .model ? 0 : 1 }
+    }
+}
+
+// MARK: - Secondary local import sheet (in-place selection + preview, no nested sheet)
+
+private struct CloudLocalImportSheet: View {
+    @Binding var draft: IOSCloudImportDraft
+    let remote: IOSCloudConfigSnapshot?
+    let latestRemote: IOSCloudConfigSnapshot?
+    @Binding var error: String?
+    let importing: Bool
+    let onReview: () -> Void
+    let onConfirm: (IOSCloudImportDraft) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingPreviewStep = false
+    @State private var showingBlockedSummary = false
+
+    private var exportableProviders: [IOSCloudProviderExportItem] {
+        draft.exportableProviders
+    }
+
+    private var exportableSearches: [IOSCloudSearchExportItem] {
+        draft.exportableSearches
+    }
+
+    private var blockedSummaries: [IOSCloudBlockedCategorySummary] {
+        draft.blockedSummaries
+    }
+
+    private var blockedItemCount: Int {
+        blockedSummaries.reduce(0) { $0 + $1.itemNames.count }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AmberTheme.background.ignoresSafeArea()
+                ScrollView {
+                    if showingPreviewStep {
+                        previewContent
+                    } else {
+                        selectionContent
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
+            .navigationTitle(showingPreviewStep ? macGatewayL("确认导入") : macGatewayL("从本机导入配置"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    if showingPreviewStep {
+                        Button(macGatewayL("上一步")) {
+                            withAnimation(.snappy(duration: 0.2)) {
+                                showingPreviewStep = false
+                            }
+                        }
+                    } else {
+                        Button(macGatewayL("关闭")) { dismiss() }
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private var selectionContent: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(verbatim: macGatewayL("可导入的模型服务商"))
+            AmberFormGroup {
+                if !exportableProviders.isEmpty {
+                    ForEach(exportableProviders) { provider in
+                        providerRow(provider)
+                        if provider.id != exportableProviders.last?.id || draft.selectedProvider != nil {
+                            MacGatewayRowDivider()
+                        }
+                    }
+                    if let selectedProvider = draft.selectedProvider {
+                        modelPickerRow(selectedProvider)
+                    }
+                } else {
+                    MacGatewayRow(
+                        icon: "cpu",
+                        title: macGatewayL("本机暂无可导出的模型服务商"),
+                        detail: macGatewayL("需为 OpenAI 或 Claude 协议且已在本机填写 API Key")
+                    ) {
+                        EmptyView()
+                    }
+                }
+            }
+
+            AmberSectionLabel(verbatim: macGatewayL("可导入的联网搜索"))
+            AmberFormGroup {
+                if !exportableSearches.isEmpty {
+                    ForEach(exportableSearches) { search in
+                        searchRow(search)
+                        if search.id != exportableSearches.last?.id {
+                            MacGatewayRowDivider()
+                        }
+                    }
+                } else {
+                    MacGatewayRow(
+                        icon: "magnifyingglass",
+                        title: macGatewayL("本机暂无可导出的搜索服务"),
+                        detail: macGatewayL("支持 Bing / DuckDuckGo 免费源或已配置 Key 的 Exa / Brave")
+                    ) {
+                        EmptyView()
+                    }
+                }
+            }
+
+            if !blockedSummaries.isEmpty {
+                blockedSummarySection
+            }
+
+            if let error {
+                MacGatewaySectionFooter(text: error, color: .orange)
+            } else {
+                MacGatewaySectionFooter(text: macGatewayL("默认仅勾选本机当前使用的服务商与搜索源；Key 仅在下一步确认后加密上传，不回显密钥。"))
+            }
+
+            AmberFormGroup {
+                Button {
+                    error = nil
+                    withAnimation(.snappy(duration: 0.2)) {
+                        showingPreviewStep = true
+                    }
+                } label: {
+                    Text(verbatim: macGatewayL("继续并核对导入项"))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(draft.hasSelection ? AmberTheme.accent : AmberTheme.muted)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!draft.hasSelection || importing)
+            }
+            .padding(.top, 16)
+        }
+        .padding(.bottom, 24)
+    }
+
+    private func providerRow(_ provider: IOSCloudProviderExportItem) -> some View {
+        let selected = draft.providerId == provider.providerId
+        let hostText = host(of: provider.baseUrl)
+        let detail = [provider.kind.rawValue, hostText].filter { !$0.isEmpty }.joined(separator: " · ")
+        return MacGatewayRow(
+            icon: "cpu",
+            title: provider.name,
+            detail: detail,
+            action: { toggleProvider(provider) }
+        ) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(selected ? AmberTheme.accent : AmberTheme.muted)
+        }
+    }
+
+    private func toggleProvider(_ provider: IOSCloudProviderExportItem) {
+        if draft.providerId == provider.providerId {
+            draft.providerId = nil
+            draft.modelUuid = nil
+        } else {
+            draft.providerId = provider.providerId
+            draft.modelUuid = provider.defaultModelUuid
+        }
+    }
+
+    private func modelPickerRow(_ provider: IOSCloudProviderExportItem) -> some View {
+        let current = draft.selectedModel?.displayName ?? macGatewayL("选择模型")
+        return Menu {
+            ForEach(provider.chatModels) { model in
+                Button(model.displayName) {
+                    draft.modelUuid = model.uuid
+                }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                MacGatewayIconPlate(icon: "sparkles")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: macGatewayL("导入模型")).font(.body).foregroundStyle(AmberTheme.foreground)
+                    Text(verbatim: provider.name).font(.caption).foregroundStyle(AmberTheme.muted)
+                }
+                Spacer(minLength: 8)
+                Text(verbatim: current).font(.subheadline).foregroundStyle(AmberTheme.accent)
+                MacGatewayChevron()
+            }
+            .frame(minHeight: 52)
+            .padding(.horizontal, 14)
+            .contentShape(Rectangle())
+        }
+    }
+
+    private func searchRow(_ search: IOSCloudSearchExportItem) -> some View {
+        let selected = draft.selectedSearchIds.contains(search.serviceId)
+        let mappedSources = search.cloudSources.map(IOSCloudConfigWire.sourceDisplayName(for:)).joined(separator: "、")
+        let detail = search.isSelected
+            ? "\(mappedSources) · \(macGatewayL("本机当前使用"))"
+            : mappedSources
+        return MacGatewayRow(
+            icon: "magnifyingglass",
+            title: search.name,
+            detail: detail,
+            action: { toggleSearch(search) }
+        ) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(selected ? AmberTheme.accent : AmberTheme.muted)
+        }
+    }
+
+    private func toggleSearch(_ search: IOSCloudSearchExportItem) {
+        if draft.selectedSearchIds.contains(search.serviceId) {
+            draft.selectedSearchIds.remove(search.serviceId)
+        } else {
+            draft.selectedSearchIds.insert(search.serviceId)
+        }
+    }
+
+    private var blockedSummarySection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(verbatim: macGatewayL("不可导出项说明"))
+            AmberFormGroup {
+                MacGatewayRow(
+                    icon: "info.circle",
+                    title: macGatewayL("已略过 \(blockedItemCount) 项不可导出的本机配置"),
+                    detail: showingBlockedSummary
+                        ? macGatewayL("收起分类说明")
+                        : macGatewayL("按需查看不支持协议、缺 API Key 或 OAuth 仅限本机的项目"),
+                    action: {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            showingBlockedSummary.toggle()
+                        }
+                    }
+                ) {
+                    Image(systemName: showingBlockedSummary ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AmberTheme.muted)
+                }
+
+                if showingBlockedSummary {
+                    ForEach(blockedSummaries) { group in
+                        MacGatewayRowDivider()
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(verbatim: "\(group.title)：\(group.itemNames.joined(separator: "、"))")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text(verbatim: group.explanation)
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                    }
+                }
+            }
+        }
+    }
+
+    private var previewContent: some View {
+        let entries = draft.previewEntries(remote: remote)
+        return VStack(spacing: 0) {
+            AmberSectionLabel(verbatim: macGatewayL("将导入的项目"))
+            AmberFormGroup {
+                ForEach(entries) { entry in
+                    previewEntryRow(entry)
+                    if entry.id != entries.last?.id {
+                        MacGatewayRowDivider()
+                    }
+                }
+            }
+            MacGatewaySectionFooter(text: macGatewayL("来源：本机 · 标记「替换」的项目会覆盖云端现有配置；Key 在内存中加密封装后经已配对连接上传，云端只保存状态不回显。"))
+            CloudConfigRevisionNotice(reviewed: remote, latest: latestRemote, error: error, onReview: onReview)
+            AmberFormGroup {
+                Button {
+                    onConfirm(draft)
+                } label: {
+                    ZStack {
+                        if importing {
+                            ProgressView()
+                        } else {
+                            Text(verbatim: macGatewayL("加密并导入"))
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(AmberTheme.accent)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(importing || remote?.hasSameVersion(as: latestRemote) != true)
+            }
+            .padding(.top, 20)
+        }
+        .padding(.bottom, 24)
+    }
+
+    private func previewEntryRow(_ entry: IOSCloudImportPreviewEntry) -> some View {
+        HStack(spacing: 12) {
+            MacGatewayIconPlate(icon: entry.section == .model ? "cpu" : "magnifyingglass")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: entry.title).font(.body).foregroundStyle(AmberTheme.foreground)
+                Text(verbatim: entry.detail).font(.caption).foregroundStyle(AmberTheme.muted)
+                if let warning = entry.warning {
+                    Text(verbatim: warning)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(verbatim: entry.replacesRemote ? macGatewayL("替换") : macGatewayL("新增"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(entry.replacesRemote ? .orange : AmberTheme.accent)
+                if entry.includesSecret {
+                    Image(systemName: "key.fill")
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.muted)
+                        .accessibilityLabel(Text(verbatim: macGatewayL("携带 API Key")))
+                }
+            }
+        }
+        .frame(minHeight: 52)
+        .padding(.horizontal, 14)
+    }
+
+    private func host(of baseUrl: String) -> String {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return macGatewayL("默认") }
+        return URLComponents(string: trimmed)?.host ?? trimmed
     }
 }
 

@@ -261,4 +261,267 @@ struct MacGatewayCloudDialogueTests {
             Issue.record("Expected 409 task_terminal conflict")
         }
     }
+
+    @Test @MainActor func cloudDialogueSessionHealthAndMainTurnPendingReplyLifecycle() async throws {
+        let suiteName = "MacGatewayCloudDialogueTests.Health.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        actor HealthGateway {
+            enum Mode {
+                case legacyGatewayNoV2Dialogue
+                case cloudDaemonMissingKey
+                case cloudDaemonReadyBeforeReply
+                case cloudDaemonReadyAfterReply
+            }
+
+            var mode: Mode = .legacyGatewayNoV2Dialogue
+
+            func setMode(_ newMode: Mode) {
+                mode = newMode
+            }
+
+            func handle(_ request: URLRequest) throws -> (Data, URLResponse) {
+                let url = request.url!
+                let method = request.httpMethod ?? "GET"
+                let path = url.path
+
+                func respond(_ status: Int, _ json: String) -> (Data, URLResponse) {
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: status,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (Data(json.utf8), response)
+                }
+
+                switch (method, path) {
+                case ("GET", "/v1/status"):
+                    return respond(200, #"""
+                    {"gatewayId":"gw-cloud","hostname":"Amber-Mac","osVersion":"macOS","cpuLoad":0.1,"memUsedBytes":1024,"memTotalBytes":2048,"diskFreeBytes":4096,"uptimeSeconds":100,"activeTasks":0,"scheduledCount":0}
+                    """#)
+                case ("GET", "/v2/configuration"):
+                    switch mode {
+                    case .legacyGatewayNoV2Dialogue:
+                        return respond(404, #"{"error":"not found"}"#)
+                    case .cloudDaemonMissingKey:
+                        return respond(200, #"""
+                        {"gatewayId":"gw-cloud","revision":1,"model":{"provider":"openai","modelId":"gpt-5.4","baseUrl":"https://api.openai.com/v1"},"search":{"sources":["duckduckgo"],"mode":"fallback"},"credentials":{"modelApiKey":{"configured":false},"exaApiKey":{"configured":false},"braveApiKey":{"configured":false}},"supportedModelProviders":["openai","claude"],"supportedSearchSources":["duckduckgo","bing","exa","brave"]}
+                        """#)
+                    case .cloudDaemonReadyBeforeReply, .cloudDaemonReadyAfterReply:
+                        return respond(200, #"""
+                        {"gatewayId":"gw-cloud","revision":2,"model":{"provider":"openai","modelId":"gpt-5.4","baseUrl":"https://api.openai.com/v1"},"search":{"sources":["duckduckgo"],"mode":"fallback"},"credentials":{"modelApiKey":{"configured":true},"exaApiKey":{"configured":false},"braveApiKey":{"configured":false}},"supportedModelProviders":["openai","claude"],"supportedSearchSources":["duckduckgo","bing","exa","brave"]}
+                        """#)
+                    }
+                case ("POST", "/v2/dialogue/messages"):
+                    return respond(202, #"""
+                    {"eventId":"evt-user-1","requestId":"990e8400-e29b-41d4-a716-446655440000","topicId":"topic-main","workItemIds":[],"state":"received","replayed":false}
+                    """#)
+                case ("GET", "/v2/dialogue/events"):
+                    switch mode {
+                    case .legacyGatewayNoV2Dialogue:
+                        return respond(404, #"{"error":"not found"}"#)
+                    case .cloudDaemonMissingKey:
+                        return respond(200, #"{"items":[],"nextCursor":0}"#)
+                    case .cloudDaemonReadyBeforeReply:
+                        return respond(200, #"""
+                        {"items":[{"seq":1,"id":"evt-user-1","kind":"user_message","role":"user","text":"你好，云端在吗？","topicId":"topic-main","workItemId":null,"outcome":null}],"nextCursor":1}
+                        """#)
+                    case .cloudDaemonReadyAfterReply:
+                        return respond(200, #"""
+                        {"items":[{"seq":2,"id":"evt-reply-1","kind":"assistant_reply","role":"assistant","text":"我在，云端对话已就绪。","topicId":"topic-main","workItemId":null,"outcome":null}],"nextCursor":2}
+                        """#)
+                    }
+                default:
+                    return respond(404, #"{"error":"not found"}"#)
+                }
+            }
+        }
+
+        let server = HealthGateway()
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            token: "paired-token-health",
+            transport: { request, _ in
+                try await server.handle(request)
+            }
+        )
+        let connection = MacGatewayConnection(
+            gatewayId: "gw-cloud",
+            name: "Amber Cloud",
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            deviceId: "device-health-1"
+        )
+        let store = MacGatewayStore(defaults: defaults)
+        store.configureForTesting(connection: connection, client: client)
+
+        // Before first refresh, health is .checking (never falsely .ready)
+        #expect(store.cloudDialogueSessionHealth == .checking)
+
+        // 1. When /v1/status is 200 OK but /v2/dialogue/events returns 404 (legacy amber-gateway),
+        // health must report .unavailable instead of claiming online!
+        _ = await store.pollCloudDialogueEvents()
+        if case .unavailable(let reason) = store.cloudDialogueSessionHealth {
+            #expect(reason.contains("/v2/dialogue"))
+        } else {
+            Issue.record("Expected .unavailable when /v2/dialogue/events returns 404")
+        }
+
+        // 2. When /v2/dialogue/events succeeds but cloudConfig has keyConfigured == false,
+        // health must report .actionRequired
+        await server.setMode(.cloudDaemonMissingKey)
+        await store.refreshCloudConfig()
+        _ = await store.pollCloudDialogueEvents()
+        if case .actionRequired(let reason) = store.cloudDialogueSessionHealth {
+            #expect(reason.contains("API Key"))
+        } else {
+            Issue.record("Expected .actionRequired when model API Key is not configured")
+        }
+
+        // 3. When model key is configured and /v2/dialogue/events is healthy, health becomes .ready
+        await server.setMode(.cloudDaemonReadyBeforeReply)
+        await store.refreshCloudConfig()
+        _ = try await store.sendCloudDialogueMessage(
+            text: "你好，云端在吗？",
+            requestId: "990e8400-e29b-41d4-a716-446655440000"
+        ).get()
+        store.stopCloudDialoguePolling()
+        #expect(store.cloudDialogueSessionHealth.isReady)
+        // Before poll returns evt-user-1, unmerged submission is tracked and awaiting reply is true
+        #expect(store.isAwaitingCloudMainReply)
+
+        // Poll phase 1: user_message arrives, submission merges into visible events, still awaiting assistant reply
+        _ = try await store.pollCloudDialogueEvents().get()
+        #expect(store.unmergedCloudMainSubmissions.isEmpty)
+        #expect(store.isAwaitingCloudMainReply)
+
+        // Poll phase 2: assistant_reply arrives, awaiting reply clears and receipt transitions to .consumed
+        await server.setMode(.cloudDaemonReadyAfterReply)
+        _ = try await store.pollCloudDialogueEvents().get()
+        #expect(!store.isAwaitingCloudMainReply)
+        let savedSubmission = try #require(store.cloudDialogueSubmissions.first { $0.requestId == "990e8400-e29b-41d4-a716-446655440000" })
+        #expect(savedSubmission.receipt?.state == .consumed)
+    }
+
+    @Test @MainActor func cloudSessionHealthAndReplyStateReflectGatewayState() throws {
+        let suiteName = "MacGatewayCloudDialogueTests.health.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = MacGatewayStore(defaults: defaults)
+        #expect(store.cloudSessionHealth == .unpaired)
+
+        let connection = MacGatewayConnection(
+            gatewayId: "gw-health",
+            name: "Amber Cloud",
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            deviceId: "device-health-1"
+        )
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            token: "paired-token-health",
+            transport: { request, _ in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (Data(#"{"items":[],"nextCursor":0}"#.utf8), response)
+            }
+        )
+        store.configureForTesting(connection: connection, client: client)
+
+        // Paired but reachability not yet checked -> checking
+        store.isReachable = nil
+        #expect(store.cloudSessionHealth == .checking)
+
+        // Reachable with configured cloud model -> healthy
+        store.isReachable = true
+        store.cloudConfig = IOSCloudConfigSnapshot(
+            gatewayId: "gw-health",
+            revision: 1,
+            model: IOSCloudConfigSnapshot.Model(
+                provider: "openai",
+                modelId: "gpt-5",
+                baseUrl: "https://api.openai.com/v1",
+                keyConfigured: true
+            ),
+            search: [],
+            searchSources: [],
+            searchMode: "fallback",
+            supportedModelProviders: ["openai", "claude"],
+            supportedSearchSources: ["bing", "duckduckgo", "exa", "brave"]
+        )
+        #expect(store.cloudSessionHealth == .healthy)
+        #expect(store.cloudSessionHealth.badgeText == "在线")
+
+        // Missing active model -> modelUnconfigured
+        store.cloudConfig?.model = nil
+        if case .modelUnconfigured = store.cloudSessionHealth {
+            #expect(store.cloudSessionHealth.badgeText == "待配置模型")
+        } else {
+            Issue.record("Expected modelUnconfigured state when model is nil")
+        }
+
+        // Reply state diagnostics for unanswered vs stalled vs answered user_message
+        let userEvent = MacGatewayCloudDialogueEvent(
+            seq: 1,
+            id: "evt-u1",
+            kind: .userMessage,
+            role: "user",
+            text: "你好",
+            topicId: "t1",
+            workItemId: "work:u1",
+            outcome: nil
+        )
+        store.cloudDialogueEvents = [userEvent]
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        store.cloudDialogueFirstSeenAtByEventId["evt-u1"] = t0
+
+        // Unconfigured model immediately surfaces stalled diagnostic
+        if case .stalled(let reason) = store.cloudDialogueReplyState(for: userEvent, now: t0.addingTimeInterval(2)) {
+            #expect(reason.contains("尚未配置对话模型"))
+        } else {
+            Issue.record("Expected stalled state when cloud model is unconfigured")
+        }
+
+        // Restore healthy model -> within 18s shows waiting, after 18s shows stalled
+        store.cloudConfig?.model = IOSCloudConfigSnapshot.Model(
+            provider: "openai",
+            modelId: "gpt-5",
+            baseUrl: "https://api.openai.com/v1",
+            keyConfigured: true
+        )
+        #expect(store.cloudDialogueReplyState(for: userEvent, now: t0.addingTimeInterval(3)) == .waiting)
+
+        if case .stalled(let timeoutMsg) = store.cloudDialogueReplyState(for: userEvent, now: t0.addingTimeInterval(20)) {
+            #expect(timeoutMsg.contains("响应超时"))
+        } else {
+            Issue.record("Expected stalled state after 18s without process_event or reply")
+        }
+
+        // Adding assistant reply marks userEvent as answered
+        let replyEvent = MacGatewayCloudDialogueEvent(
+            seq: 2,
+            id: "evt-a1",
+            kind: .assistantReply,
+            role: "assistant",
+            text: "收到，一切正常。",
+            topicId: "t1",
+            workItemId: "work:u1",
+            outcome: .completed
+        )
+        store.cloudDialogueEvents = [userEvent, replyEvent]
+        #expect(store.cloudDialogueReplyState(for: userEvent, now: t0.addingTimeInterval(25)) == .answered)
+    }
 }

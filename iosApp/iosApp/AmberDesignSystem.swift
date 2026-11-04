@@ -984,7 +984,7 @@ extension UIColor {
     }
 }
 
-enum AmberHapticEvent {
+enum AmberHapticEvent: Equatable {
     case lightImpact
     case mediumImpact
     case rigidImpact
@@ -1000,9 +1000,33 @@ enum AmberHaptics {
     /// （用户曾报告完成时物理振动与代码振源不对应的未结之谜）。
     private static let logger = os.Logger(subsystem: "app.amber.ios", category: "amber-haptic")
 
+    /// 测试观测钩子：供单测验证触感实际触发与开关门控。
+    @MainActor
+    static var onTriggerForTesting: ((AmberHapticEvent) -> Void)?
+
+    /// 实时读取「显示与字体 → 生成完成振动」开关（默认开启 `true`）。
+    static func isCompletionHapticEnabled(defaults: UserDefaults = .standard) -> Bool {
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        guard defaults.object(forKey: key) != nil else { return true }
+        return defaults.bool(forKey: key)
+    }
+
+    /// 统一门控生成完成相关触感：开关关闭时所有生成完成路径均不触发，开启时保持原行为。
+    @MainActor
+    @discardableResult
+    static func triggerCompletion(
+        _ event: AmberHapticEvent = .rigidImpact,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard isCompletionHapticEnabled(defaults: defaults) else { return false }
+        trigger(event)
+        return true
+    }
+
     @MainActor
     static func trigger(_ event: AmberHapticEvent) {
         logger.info("haptic \(String(describing: event), privacy: .public)")
+        onTriggerForTesting?(event)
         switch event {
         case .lightImpact:
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1411,5 +1435,221 @@ struct AmberFormRow: View {
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: action == nil ? 1 : 0.985, haptic: .selection))
         .disabled(action == nil)
+    }
+}
+
+// MARK: - Shared Floating Sheet / Panel Dismiss Smoothness Policy & Scroll Bridge
+
+/// Pure policy governing geometry isolation on `ChatView` while modal sheets or inline
+/// floating panels are presented/dismissed, preventing mid-swipe layout thrashing.
+enum ChatSheetDismissSmoothnessPolicy {
+    static let inlinePanelDismissTranslationThreshold: CGFloat = 56
+    static let inlinePanelDismissPredictedTranslationThreshold: CGFloat = 110
+
+    /// Prevents transient UIKit `UISheetPresentationController` card-recess geometry changes
+    /// (`safeAreaInsets.top` dropping to 0 and restoring mid-swipe) from mutating `@State var chatSize`
+    /// and invalidating `ChatView.body` during interactive sheet swipe-down.
+    static func shouldAcceptChatGeometryUpdate(
+        currentSize: CGSize,
+        proposedSize: CGSize,
+        safeAreaTop: CGFloat,
+        isModalSheetPresented: Bool
+    ) -> Bool {
+        guard !isModalSheetPresented else { return false }
+        guard proposedSize.width > 0, proposedSize.height > 0 else { return false }
+        if currentSize.width > 0,
+           currentSize.height > 0,
+           proposedSize.height > proposedSize.width,
+           safeAreaTop <= 0.5 {
+            return false
+        }
+        return abs(currentSize.width - proposedSize.width) > 0.5
+            || abs(currentSize.height - proposedSize.height) > 0.5
+    }
+
+    /// Prevents `composerState.approvalContainerHeight` from mutating mid-swipe when UIKit
+    /// toggles `safeAreaInsets.top` on the presenting view controller during sheet drag.
+    static func shouldAcceptApprovalContainerHeightUpdate(
+        currentHeight: CGFloat,
+        proposedHeight: CGFloat,
+        safeAreaTop: CGFloat,
+        isModalSheetPresented: Bool
+    ) -> Bool {
+        guard !isModalSheetPresented else { return false }
+        guard proposedHeight > 0 else { return false }
+        if currentHeight > 0, safeAreaTop <= 0.5 {
+            return false
+        }
+        return abs(currentHeight - proposedHeight) > 0.5
+    }
+
+    /// Short-circuits `.frame(in: .global)` geometry observers to `.null` whenever the top-bar
+    /// popover panel is closed or a modal sheet is presented, avoiding 60–120Hz action callbacks
+    /// while `UISheetPresentationController` scales/translates the presenting view.
+    static func effectiveGlobalTapFrame(
+        _ rawFrame: @autoclosure () -> CGRect,
+        isPanelOpen: Bool,
+        isModalSheetPresented: Bool
+    ) -> CGRect {
+        guard isPanelOpen, !isModalSheetPresented else { return .null }
+        return rawFrame()
+    }
+
+    /// Suppresses background timeline viewport-change re-anchoring while a modal sheet covers `ChatView`.
+    static func shouldIgnoreTimelineViewportMetrics(isCoveredByPresentedModal: Bool) -> Bool {
+        isCoveredByPresentedModal
+    }
+
+    /// Determines whether an inline Duet floating panel (`任务` / `中心`) should dismiss to `.chat`
+    /// at the end of a downward drag gesture or spring back on mid-drag reversal.
+    static func shouldDismissInlineDuetPanel(
+        translationY: CGFloat,
+        predictedEndTranslationY: CGFloat
+    ) -> Bool {
+        translationY >= inlinePanelDismissTranslationThreshold
+            || predictedEndTranslationY >= inlinePanelDismissPredictedTranslationThreshold
+    }
+}
+
+/// Bridges a SwiftUI `ScrollView` inside a modal sheet to `UIViewController.setContentScrollView(_:for: .top)`
+/// so `UISheetPresentationController` coordinates scroll-to-dismiss handoff from frame 0 without
+/// a top rubber-band + snap stutter.
+struct AmberSheetScrollDismissBridge: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = SheetScrollProbeView(frame: .zero)
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        view.onAttach = { [weak view] in
+            guard let view else { return }
+            Self.attachIfPossible(from: view)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        Self.attachIfPossible(from: uiView)
+    }
+
+    @MainActor
+    static func attachIfPossible(from probeView: UIView) {
+        guard let scrollView = probeView.amberAncestorScrollView() else { return }
+        scrollView.alwaysBounceVertical = true
+        if scrollView.keyboardDismissMode == .none {
+            scrollView.keyboardDismissMode = .interactive
+        }
+        guard let viewController = probeView.amberOwningViewController() else { return }
+        bindTopContentScrollView(scrollView, to: viewController)
+    }
+
+    @MainActor
+    static func bindTopContentScrollView(_ scrollView: UIScrollView, to viewController: UIViewController) {
+        if viewController.contentScrollView(for: .top) !== scrollView {
+            viewController.setContentScrollView(scrollView, for: .top)
+        }
+        if let nav = viewController.navigationController {
+            if nav.topViewController === viewController,
+               nav.contentScrollView(for: .top) !== scrollView {
+                nav.setContentScrollView(scrollView, for: .top)
+            }
+        }
+    }
+
+    private final class SheetScrollProbeView: UIView {
+        var onAttach: (() -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            onAttach?()
+            DispatchQueue.main.async { [weak self] in
+                self?.onAttach?()
+            }
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onAttach?()
+        }
+    }
+}
+
+private extension UIView {
+    func amberAncestorScrollView() -> UIScrollView? {
+        var current = superview
+        while let view = current {
+            if let scrollView = view as? UIScrollView {
+                return scrollView
+            }
+            current = view.superview
+        }
+        return nil
+    }
+
+    func amberOwningViewController() -> UIViewController? {
+        var current: UIResponder? = next
+        while let responder = current {
+            if let viewController = responder as? UIViewController {
+                return viewController
+            }
+            current = responder.next
+        }
+        return nil
+    }
+}
+
+extension View {
+    /// Registers the enclosing sheet's `ScrollView` as the primary top content scroll view
+    /// for `UISheetPresentationController` so downward swipe dismissal hands off seamlessly.
+    func amberSmoothSheetScrollDismiss() -> some View {
+        background {
+            AmberSheetScrollDismissBridge()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+// MARK: - Shared Floating Sheet Presentation & Underlying Canvas Quiescence
+
+private struct AmberUnderlyingSheetPresentedKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+    /// True on the presenting surface (e.g. `ChatView`) while a modal floating sheet is presented over it.
+    /// Used to pause background periodic `TimelineView`s and skip per-frame `.global` geometry updates
+    /// during `UISheetPresentationController` pull-down card zoom transitions.
+    var amberIsUnderlyingSheetPresented: Bool {
+        get { self[AmberUnderlyingSheetPresentedKey.self] }
+        set { self[AmberUnderlyingSheetPresentedKey.self] = newValue }
+    }
+}
+
+/// Shared floating sheet presentation modifier across Amber sheets (`AgentEmbodimentHomeSheet`,
+/// `AmberDuetWorkspaceDrawerSheet`, `AmberDuetTaskCenterSheet`, `ComposerModelSheet`, etc.).
+/// Unifies corner radius, drag indicator, detents, and `.scrollBounceBehavior(.basedOnSize)` so
+/// sheets whose content fits or rests at the top hand off downward pan gestures directly to
+/// `UISheetPresentationController` without tug-of-war against `UIScrollView` rubber-band bounce.
+struct AmberFloatingSheetModifier: ViewModifier {
+    let detents: Set<PresentationDetent>
+    var cornerRadius: CGFloat = 28
+
+    func body(content: Content) -> some View {
+        content
+            .scrollBounceBehavior(.basedOnSize)
+            .presentationDetents(detents)
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(cornerRadius)
+            .environment(\.amberIsUnderlyingSheetPresented, false)
+    }
+}
+
+extension View {
+    func amberFloatingSheet(
+        detents: Set<PresentationDetent> = [.large],
+        cornerRadius: CGFloat = 28
+    ) -> some View {
+        modifier(AmberFloatingSheetModifier(detents: detents, cornerRadius: cornerRadius))
     }
 }

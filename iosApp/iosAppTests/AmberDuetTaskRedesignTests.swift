@@ -249,12 +249,12 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             id: "ssh-fail-1",
             title: "配置 SSH 跳板机与目标机",
             subtitle: "私钥校验未通过 · 本机",
-            category: .needsAttention,
-            statusBadgeText: "4 次失败",
-            actionTitle: "补充密钥",
+            statusText: "4 次失败",
+            actionButtonTitle: "补充密钥",
+            phase: .needsAttention,
+            ownership: .delegated,
             hubId: "hub-amber-core",
-            underlyingSegment: nil,
-            cloudTaskId: nil
+            source: .cloudTask("ssh-fail-1")
         )
 
         state.enterBackgroundHandoffMode(followupTask: failedTask)
@@ -364,8 +364,11 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
     func testHubStoreSmartCollectionPromotionAndUnifiedTaskGrouping() throws {
         let suite = "AmberHubStoreTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {
             defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
         }
 
         // Production store starts empty with zero fabricated hubs or collections
@@ -389,7 +392,8 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         XCTAssertEqual(hubStore.hubs.count, 4)
         XCTAssertEqual(hubStore.smartCollections.count, 1)
 
-        // Build unified tasks grouped by goal/status (needsAttention, running, recent)
+        // An ordinary multi-tool assistant turn must contribute nothing to the
+        // task panel: those steps stay as the conversation's own progress line.
         let failOutput = #"{"ok":false,"status":"failed","error":"私钥校验未通过"}"#
         let doneOutput = #"{"ok":true,"status":"completed","summary":"完成"}"#
         let failMsg = makeAssistantMessage(parts: [
@@ -405,7 +409,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             makeTool(id: "check-1", name: "terminal_execute", input: #"{"command":"echo ok"}"#, outputJSON: doneOutput)
         ])
 
-        let segs = [
+        let inChatSegments = [
             ChatTaskStreamGrouping.segments(for: failMsg, messageID: "m1", isGeneratingTail: false),
             ChatTaskStreamGrouping.segments(for: runningMsg, messageID: "m2", isGeneratingTail: true),
             ChatTaskStreamGrouping.segments(for: doneMsg, messageID: "m3", isGeneratingTail: false)
@@ -413,6 +417,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             if case .taskGroup(let g) = seg { return g }
             return nil
         }
+        XCTAssertEqual(inChatSegments.count, 3, "the stream still groups tool runs for the inline progress line")
 
         let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
         let subAgentStore = IOSSubAgentActivityStore(
@@ -421,18 +426,89 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             launchedAt: Date(),
             loadRuns: { [] }
         )
-        let grouped = AmberUnifiedTaskBuilder.buildTasks(
-            conversationSegments: segs,
+
+        let emptyGroups = AmberUnifiedTaskBuilder.buildTasks(
             gateway: MacGatewayStore.shared,
             subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake-empty.json")),
             hubStore: hubStore
         )
-        XCTAssertEqual(grouped.needsAttention.count, 1)
-        XCTAssertEqual(grouped.needsAttention.first?.statusBadgeText, "4 次失败")
-        XCTAssertEqual(grouped.needsAttention.first?.actionTitle, "补充密钥")
-        XCTAssertEqual(grouped.running.count, 1)
-        XCTAssertEqual(grouped.running.first?.title, "训练视频闪烁检测模型")
-        XCTAssertEqual(grouped.recent.count, 1)
+        XCTAssertTrue(emptyGroups.isEmpty,
+                      "tool calls that only exist in the transcript must not become task cards")
+
+        // A real durable background execution does appear, with its own status.
+        let record = tasksStore.startTask(
+            kind: .subAgent,
+            title: "训练视频闪烁检测模型",
+            objective: "帧差特征 + 时序轻量网络",
+            metadata: ["source_conversation_id": "hub-amber-core"]
+        )
+        subAgentStore.reconcile(subAgentStore.items + [try XCTUnwrap(IOSSubAgentActivityStore.activity(record))])
+        let withRun = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake-empty.json")),
+            hubStore: hubStore
+        )
+        XCTAssertEqual(withRun.running.count, 1)
+        XCTAssertEqual(withRun.running.first?.title, "训练视频闪烁检测模型")
+        XCTAssertEqual(withRun.running.first?.ownership, .backgroundRun)
+        XCTAssertEqual(withRun.running.first?.statusBadgeText, "运行中")
+    }
+
+    /// Scheduled and monitoring work is its own honest group, and a stored result
+    /// is the only thing that may be shown as a conclusion. Nothing is invented.
+    func testScheduledWakeTasksFormTheirOwnGroupAndNeverFakeProgress() async throws {
+        let suite = "AmberWakeTaskGrouping.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let hubStore = AmberHubStore(defaults: defaults)
+        let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
+        let subAgentStore = IOSSubAgentActivityStore(
+            tasks: tasksStore,
+            defaults: defaults,
+            launchedAt: Date(),
+            loadRuns: { [] }
+        )
+        let conversationID = UUID().uuidString.lowercased()
+        let wakeStore = IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake.json"))
+        _ = try wakeStore.schedule(
+            conversationID: conversationID,
+            sourceRunID: "run-source",
+            origin: IOSWakeOrigin(userMessageID: "msg-1", userText: "盯一下岚山小火车余票"),
+            title: "盯岚山小火车余票",
+            prompt: "查询余票并汇报",
+            fireAt: Date().addingTimeInterval(3_600),
+            event: nil,
+            requiresForeground: false,
+            requestID: "req-1"
+        )
+
+        let groups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore
+        )
+        XCTAssertEqual(groups.scheduled.count, 1)
+        XCTAssertEqual(groups.running.count, 0, "a plan that has not fired is not running work")
+        let row = try XCTUnwrap(groups.scheduled.first)
+        XCTAssertEqual(row.ownership, .scheduledMonitor)
+        XCTAssertEqual(row.statusText, "等待触发")
+        XCTAssertNil(row.resultText, "no conclusion exists before the task has run")
+        XCTAssertEqual(row.destination,
+                       .wakeConversation(conversationId: conversationID),
+                       "tapping opens the conversation that will actually run the task")
+        XCTAssertNotNil(row.nextRunAt)
     }
 
     /// Renders and exports high-resolution PNG screenshots for the 3 required Duet states
@@ -990,5 +1066,174 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         )
         textView.insertText("，继续追加")
         XCTAssertEqual(viewModel.inputText, "测试主对话输入\n第二行，继续追加")
+    }
+
+    func testDuetBottomSwitcherScrubGestureResolvesAndInterpolatesAcrossTabs() {
+        let frames: [AmberDuetModeTab: CGRect] = [
+            .chat: CGRect(x: 4, y: 4, width: 88, height: 42),
+            .tasks: CGRect(x: 96, y: 4, width: 88, height: 42),
+            .hubs: CGRect(x: 188, y: 4, width: 88, height: 42),
+        ]
+
+        XCTAssertEqual(AmberDuetBottomSwitcher.resolvedTab(atX: 20, in: frames), .chat)
+        XCTAssertEqual(AmberDuetBottomSwitcher.resolvedTab(atX: 135, in: frames), .tasks)
+        XCTAssertEqual(AmberDuetBottomSwitcher.resolvedTab(atX: 240, in: frames), .hubs)
+
+        // Halfway between chat (midX=48) and tasks (midX=140) -> x=94 should interpolate midX around 94
+        let midwayRect = AmberDuetBottomSwitcher.interpolatedLensRect(
+            atX: 94,
+            in: frames,
+            fallbackTab: .chat
+        )
+        XCTAssertNotNil(midwayRect)
+        if let midwayRect {
+            XCTAssertEqual(midwayRect.midX, 94, accuracy: 1.0)
+            XCTAssertEqual(midwayRect.width, 88, accuracy: 0.5)
+        }
+
+        // Verify "导航与历史" drawer top-right button is "设置" and routes to .settings on the same navigation stack
+        XCTAssertEqual(AmberDuetWorkspaceDrawerSheet.topBarTrailingSettingsTitle, "设置")
+        XCTAssertEqual(AmberDuetWorkspaceDrawerSheet.topBarTrailingSettingsSystemImage, "gearshape")
+        XCTAssertEqual(AmberDuetWorkspaceDrawerSheet.topBarTrailingSettingsAccessibilityId, "chat.duet.topBarSettings")
+        XCTAssertEqual(AmberDuetWorkspaceDrawerSheet.topBarTrailingSettingsRoute, .settings)
+
+        let router = RouterPath()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("DrawerSettingsRoute.\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let conversations = IOSConversationStore(baseDirectory: tempDir, subagentConversationIDsProvider: { [] })
+        let drawer = AmberDuetWorkspaceDrawerSheet(
+            conversationStore: conversations,
+            gateway: MacGatewayStore.shared,
+            onSelectConversation: { _ in },
+            onNewConversation: {},
+            onOpenAllHistory: { router.navigate(to: .home) },
+            onNavigate: { destination in router.navigate(to: destination) }
+        )
+        drawer.handleTopBarSettingsTap(performNavigateImmediately: true)
+        XCTAssertEqual(router.path, [.settings], "Tapping top-right 设置 in 导航与历史 must push .settings onto RouterPath")
+        XCTAssertEqual(
+            AmberDuetWorkspaceDrawerSheet.preferredPresentationDetents,
+            [.large],
+            "导航与历史 drawer must use [.large] so downward swipe dismisses in one stroke without catching at .medium"
+        )
+    }
+
+    @MainActor
+    func testFloatingSheetSwipeDownSmoothnessPolicyAndScrollBridge() {
+        let initialSize = CGSize(width: 402, height: 874)
+        let recessedCardSize = CGSize(width: 402, height: 812)
+
+        // 1. Initial layout accepted when no modal sheet is presented
+        XCTAssertTrue(
+            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+                currentSize: .zero,
+                proposedSize: initialSize,
+                safeAreaTop: 62,
+                isModalSheetPresented: false
+            )
+        )
+
+        // 2. While any modal sheet (形象人设 / 导航与历史 / 选择模型) is presented or being swiped down,
+        // underlying ChatView geometry updates are rejected so ChatView.body does not re-layout mid-swipe.
+        XCTAssertFalse(
+            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+                currentSize: initialSize,
+                proposedSize: recessedCardSize,
+                safeAreaTop: 0,
+                isModalSheetPresented: true
+            )
+        )
+        XCTAssertFalse(
+            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+                currentSize: initialSize,
+                proposedSize: recessedCardSize,
+                safeAreaTop: 62,
+                isModalSheetPresented: true
+            )
+        )
+
+        // 3. Even if a transient card-recess pass arrives with safeAreaTop == 0 on portrait, ignore it.
+        XCTAssertFalse(
+            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+                currentSize: initialSize,
+                proposedSize: recessedCardSize,
+                safeAreaTop: 0,
+                isModalSheetPresented: false
+            )
+        )
+        XCTAssertFalse(
+            ChatSheetDismissSmoothnessPolicy.shouldAcceptApprovalContainerHeightUpdate(
+                currentHeight: 778,
+                proposedHeight: 840,
+                safeAreaTop: 0,
+                isModalSheetPresented: false
+            )
+        )
+        XCTAssertFalse(
+            ChatSheetDismissSmoothnessPolicy.shouldAcceptApprovalContainerHeightUpdate(
+                currentHeight: 778,
+                proposedHeight: 840,
+                safeAreaTop: 62,
+                isModalSheetPresented: true
+            )
+        )
+
+        // 4. Global tap-region frame observers short-circuit to .null without evaluating closure
+        // when top-bar panel is closed or a modal sheet is presented.
+        var evaluatedCount = 0
+        let sampleFrame = CGRect(x: 20, y: 60, width: 200, height: 44)
+        let suppressedWhenPanelClosed = ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+            { evaluatedCount += 1; return sampleFrame }(),
+            isPanelOpen: false,
+            isModalSheetPresented: false
+        )
+        XCTAssertTrue(suppressedWhenPanelClosed.isNull)
+        XCTAssertEqual(evaluatedCount, 0)
+
+        let suppressedWhenSheetPresented = ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+            { evaluatedCount += 1; return sampleFrame }(),
+            isPanelOpen: true,
+            isModalSheetPresented: true
+        )
+        XCTAssertTrue(suppressedWhenSheetPresented.isNull)
+        XCTAssertEqual(evaluatedCount, 0)
+
+        let activeWhenPanelOpenAndNoSheet = ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+            { evaluatedCount += 1; return sampleFrame }(),
+            isPanelOpen: true,
+            isModalSheetPresented: false
+        )
+        XCTAssertEqual(activeWhenPanelOpenAndNoSheet, sampleFrame)
+        XCTAssertEqual(evaluatedCount, 1)
+
+        // 5. Inline Duet floating panels (任务 / 中心) support downward swipe-to-dismiss and mid-drag reversal.
+        XCTAssertTrue(
+            ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
+                translationY: 72,
+                predictedEndTranslationY: 80
+            )
+        )
+        XCTAssertTrue(
+            ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
+                translationY: 32,
+                predictedEndTranslationY: 140
+            )
+        )
+        XCTAssertFalse(
+            ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
+                translationY: 18,
+                predictedEndTranslationY: 12
+            ),
+            "Mid-drag upward reversal must spring back instead of dismissing"
+        )
+
+        // 6. AmberSheetScrollDismissBridge binds contentScrollView(for: .top) on both direct UIViewController
+        // and UINavigationController so UISheetPresentationController coordinates pull-to-dismiss from frame 0.
+        let scrollView = UIScrollView()
+        let childVC = UIViewController()
+        let navVC = UINavigationController(rootViewController: childVC)
+        AmberSheetScrollDismissBridge.bindTopContentScrollView(scrollView, to: childVC)
+        XCTAssertIdentical(childVC.contentScrollView(for: .top), scrollView)
+        XCTAssertIdentical(navVC.contentScrollView(for: .top), scrollView)
     }
 }

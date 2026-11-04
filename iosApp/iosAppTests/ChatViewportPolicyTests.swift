@@ -96,4 +96,33 @@ final class ChatViewportPolicyTests: XCTestCase {
         XCTAssertTrue(ChatEvent.assistantStreamClosed.contract.affectsViewport)
         XCTAssertTrue(ChatEvent.generationCompleted.contract.affectsViewport)
     }
+
+    func testComposerFocusFollowsBottomOnlyWhenTimelineIsAtBottomAndNotPaused() {
+        var state = ChatViewportState()
+        state.isAtBottom = true
+        state.followPaused = false
+        XCTAssertTrue(ChatView.shouldFollowBottomOnComposerFocus(viewportState: state))
+        XCTAssertTrue(
+            NativeChatTimelineView.shouldPinBottomOnSizeChanges(
+                followGeneration: true,
+                viewportState: state,
+                driverPausedForUser: false
+            )
+        )
+
+        state.followPaused = true
+        state.isAtBottom = false
+        XCTAssertFalse(
+            ChatView.shouldFollowBottomOnComposerFocus(viewportState: state),
+            "上滑浏览历史时聚焦输入框不得强行拉回底部。"
+        )
+        XCTAssertFalse(
+            NativeChatTimelineView.shouldPinBottomOnSizeChanges(
+                followGeneration: true,
+                viewportState: state,
+                driverPausedForUser: true
+            ),
+            "浏览历史时必须关闭 .sizeChanges 底锚，防止键盘弹起/收起改高度时拽回底部。"
+        )
+    }
 }

@@ -91,7 +91,7 @@ struct NovelInkSealView: View {
                 withAnimation(.easeOut(duration: 0.2)) { landed = true }
             } else {
                 landed = true
-                AmberHaptics.trigger(.rigidImpact)
+                AmberHaptics.triggerCompletion(.rigidImpact)
             }
         }
     }
