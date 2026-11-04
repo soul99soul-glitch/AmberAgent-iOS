@@ -145,7 +145,7 @@ struct AmberDuetBottomSwitcher: View {
 
     private var newTopicAndQuickSettingsPill: some View {
         Button {
-            AmberHaptics.selection()
+            AmberHaptics.trigger(.selection)
             onStartNewTopic?()
         } label: {
             HStack(spacing: 4.5) {
@@ -174,7 +174,7 @@ struct AmberDuetBottomSwitcher: View {
         .contentShape(.contextMenuPreview, Capsule(style: .continuous))
         .contextMenu {
             Button {
-                AmberHaptics.selection()
+                AmberHaptics.trigger(.selection)
                 onStartNewTopic?()
             } label: {
                 Label(
@@ -187,7 +187,7 @@ struct AmberDuetBottomSwitcher: View {
                 Section(IOSAppLocalization.string("思考强度", defaultValue: "思考强度")) {
                     ForEach(availableReasoningOptions) { option in
                         Button {
-                            AmberHaptics.selection()
+                            AmberHaptics.trigger(.selection)
                             onSelectReasoning?(option)
                         } label: {
                             HStack {
@@ -204,7 +204,7 @@ struct AmberDuetBottomSwitcher: View {
             Section(IOSAppLocalization.string("切换模型", defaultValue: "切换模型")) {
                 ForEach(quickModels.prefix(8)) { model in
                     Button {
-                        AmberHaptics.selection()
+                        AmberHaptics.trigger(.selection)
                         onSelectModel?(model)
                     } label: {
                         HStack {
