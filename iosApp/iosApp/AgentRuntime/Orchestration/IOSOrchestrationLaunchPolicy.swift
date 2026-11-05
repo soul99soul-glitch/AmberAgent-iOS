@@ -44,6 +44,8 @@ final class IOSOrchestrationLaunchPolicy {
         let roleArgument = Self.optionalTrimmedString(arguments["role_id"])
         let systemPromptPresent = arguments.keys.contains("system_prompt")
         let contextPresent = arguments.keys.contains("context")
+        let deliverableHintPresent = arguments.keys.contains("deliverable_hint")
+        let checkpointPolicyPresent = arguments.keys.contains("checkpoint_policy")
         let toolScopeArgument = Self.stringArrayArgument(arguments, keys: ["tool_scope", "tools"])
         let skillNamesArgument = Self.stringArrayArgument(arguments, keys: ["skill_names", "skills"])
         let hasTaskDefinition = roleArgument != nil
@@ -51,6 +53,14 @@ final class IOSOrchestrationLaunchPolicy {
             || contextPresent
             || toolScopeArgument.present
             || skillNamesArgument.present
+
+        if checkpointPolicyPresent,
+           let rawPolicy = Self.optionalTrimmedString(arguments["checkpoint_policy"]),
+           IOSOrchestrationCheckpointPolicy(rawPolicy: rawPolicy) == nil {
+            return .failure(AgentLaunchError(
+                reason: "checkpoint_policy 必须是 \"none\" 或 \"pause_for_decision\"，实际: \(rawPolicy)"
+            ))
+        }
 
         let inheritedBase = roleArgument == nil ? inherited : nil
         // Jev 意图路由建议仅在没有显式定义、也没有继承配置时补位
@@ -99,10 +109,22 @@ final class IOSOrchestrationLaunchPolicy {
         let explicitContext = contextPresent
             ? Self.optionalTrimmedString(arguments["context"])
             : nil
+        let explicitDeliverableHint = deliverableHintPresent
+            ? Self.optionalTrimmedString(arguments["deliverable_hint"])
+            : nil
+        let explicitCheckpointPolicy = checkpointPolicyPresent
+            ? IOSOrchestrationCheckpointPolicy(rawPolicy: Self.optionalTrimmedString(arguments["checkpoint_policy"]))?.rawValue
+            : nil
         let systemPrompt = systemPromptPresent
             ? explicitPrompt
             : (inheritedBase?.systemPrompt ?? savedOverride?.systemPrompt ?? role?.systemPrompt)
         let context = contextPresent ? explicitContext : inheritedBase?.context
+        let deliverableHint = deliverableHintPresent
+            ? explicitDeliverableHint
+            : (inheritedBase?.deliverableHint ?? inherited?.deliverableHint)
+        let checkpointPolicy = checkpointPolicyPresent
+            ? explicitCheckpointPolicy
+            : (inheritedBase?.checkpointPolicy ?? inherited?.checkpointPolicy)
         let toolScope: [String]?
         if toolScopeArgument.present {
             toolScope = toolScopeArgument.values
@@ -275,7 +297,9 @@ final class IOSOrchestrationLaunchPolicy {
             skillNames: normalizedSkills,
             skillContext: skillContext,
             modelId: childModel.id.description(),
-            reasoningLevel: reasoning.name
+            reasoningLevel: reasoning.name,
+            deliverableHint: deliverableHint,
+            checkpointPolicy: checkpointPolicy
         )
         let childHeaders: [CustomHeader]
         let childBodies: [CustomBody]

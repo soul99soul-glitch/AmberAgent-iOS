@@ -137,7 +137,9 @@ enum ChatStreamingMarkdownBlockParser {
         includeTrailingPartialTableRow: Bool,
         includeParsedTableCells: Bool
     ) -> ChatStreamingMarkdownParsedTable? {
-        guard start + 1 < lines.count else { return nil }
+        guard start + 1 < lines.count,
+              lines[start].utf8.contains(UInt8(ascii: "|")),
+              lines[start + 1].utf8.contains(UInt8(ascii: "-")) else { return nil }
         let headers = splitTableCells(lines[start])
         guard headers.count >= 2, isDelimiterLine(lines[start + 1], expectedCount: headers.count) else {
             return nil
@@ -222,11 +224,49 @@ enum ChatStreamingMarkdownBlockParser {
         columnCount: Int,
         leadingPipe: Bool
     ) -> String {
+        if let plainCount = fastPlainPipeCellCount(in: line), plainCount == columnCount {
+            return line
+        }
         let cells = splitTableCells(line, preservingPipeEscapes: true)
         guard cells.count != columnCount else { return line }
         let padded = normalizedRow(cells, count: columnCount)
         let body = padded.joined(separator: " | ")
         return leadingPipe ? "| \(body) |" : body
+    }
+
+    private static func fastPlainPipeCellCount(in line: String) -> Int? {
+        return line.utf8.withContiguousStorageIfAvailable { buffer -> Int? in
+            var start = 0
+            var end = buffer.count
+            while start < end {
+                let b = buffer[start]
+                if b == 0x20 || b == 0x09 || b == 0x0D || b == 0x0A {
+                    start += 1
+                } else {
+                    break
+                }
+            }
+            while end > start {
+                let b = buffer[end - 1]
+                if b == 0x20 || b == 0x09 || b == 0x0D || b == 0x0A {
+                    end -= 1
+                } else {
+                    break
+                }
+            }
+            guard start < end, buffer[start] < 0x80, buffer[end - 1] < 0x80 else { return nil }
+            if buffer[start] == 0x7C { start += 1 }
+            if end > start, buffer[end - 1] == 0x7C { end -= 1 }
+            var pipes = 0
+            var idx = start
+            while idx < end {
+                let b = buffer[idx]
+                if b == 0x5C || b == 0x60 { return nil }
+                if b == 0x7C { pipes += 1 }
+                idx += 1
+            }
+            return pipes + 1
+        } ?? nil
     }
 
     private static func splitTableCells(_ line: String, preservingPipeEscapes: Bool = false) -> [String] {

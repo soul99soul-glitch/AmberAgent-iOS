@@ -43,7 +43,7 @@ final class IOSThreadOrchestrationToolService {
 
     /// 默认并发上限。运行时优先读取 shared settings，测试/旧调用点可通过
     /// initializer 显式覆盖；占用只统计子代理，不把父线程算进来。
-    static let defaultMaxConcurrentRuns = 2
+    static let defaultMaxConcurrentRuns = 4
 
     /// FINAL_ANSWER 正文摘要长度；截断说明和原文引用不计入此限额。
     static let finalAnswerMaxChars = 2_000
@@ -118,6 +118,7 @@ final class IOSThreadOrchestrationToolService {
     private let jsCellRegistry: IOSJsCellRegistry
     private let jevSettingsProvider: () -> IOSJevSettings
     private let modelPool: IOSSubAgentModelPool
+    private let taskStore: IOSAdvancedTaskStore
     private let controlCommands: IOSOrchestrationControlCommands
     private let launchPolicy: IOSOrchestrationLaunchPolicy
     private let jevRouting: IOSOrchestrationJevRouting
@@ -170,7 +171,8 @@ final class IOSThreadOrchestrationToolService {
         sharedSettingsProvider: @escaping () -> IOSSharedSettingsStore? = { nil },
         jevCoordinator: IOSJevDecisionCoordinator = .shared,
         jevSettingsProvider: @escaping () -> IOSJevSettings = { IOSSharedSettingsStore.loadPersistedJevSettings() },
-        jsCellRegistry: IOSJsCellRegistry = .shared
+        jsCellRegistry: IOSJsCellRegistry = .shared,
+        taskStore: IOSAdvancedTaskStore = .shared
     ) {
         self.conversationStoreProvider = conversationStoreProvider
         self.mailboxDaoProvider = mailboxDaoProvider
@@ -193,6 +195,7 @@ final class IOSThreadOrchestrationToolService {
         self.jevCoordinator = jevCoordinator
         self.jsCellRegistry = jsCellRegistry
         self.jevSettingsProvider = jevSettingsProvider
+        self.taskStore = taskStore
         let modelPool = IOSSubAgentModelPool()
         self.modelPool = modelPool
         self.launchPolicy = IOSOrchestrationLaunchPolicy(sharedSettingsProvider: sharedSettingsProvider, modelPool: modelPool, backgroundCoordinator: backgroundCoordinator)
@@ -209,6 +212,7 @@ final class IOSThreadOrchestrationToolService {
             activityCenter: activityCenter,
             sharedSettingsProvider: sharedSettingsProvider,
             modelPool: modelPool,
+            taskStore: taskStore,
             waitTimeoutMinMs: waitTimeoutMinMs,
             waitTimeoutMaxMs: waitTimeoutMaxMs,
             waitTimeoutDefaultMs: waitTimeoutDefaultMs
@@ -276,10 +280,15 @@ final class IOSThreadOrchestrationToolService {
     }
 
     private var configuredMaxConcurrentRuns: Int {
-        let value = maxConcurrentRunsOverride
-            ?? sharedSettingsProvider()?.subAgentMaxConcurrentRuns
-            ?? Self.defaultMaxConcurrentRuns
-        return min(10, max(1, value))
+        if let override = maxConcurrentRunsOverride {
+            return min(10, max(1, override))
+        }
+        if let settingsValue = sharedSettingsProvider()?.subAgentMaxConcurrentRuns {
+            let legacySeededDefault = Int(IosSettingsDefaults.shared.defaultSeededSettings().agentRuntime.subAgent.maxConcurrentRuns)
+            let effective = settingsValue == legacySeededDefault ? Self.defaultMaxConcurrentRuns : settingsValue
+            return min(10, max(1, effective))
+        }
+        return min(10, max(1, Self.defaultMaxConcurrentRuns))
     }
 
     private func spawnAgent(
@@ -584,6 +593,12 @@ final class IOSThreadOrchestrationToolService {
             "child_thread_id": childHex,
             "status": "started",
         ]
+        if let deliverableHint = launch.configuration?.deliverableHint?.nilIfEmpty {
+            spawnResult["deliverable_hint"] = deliverableHint
+        }
+        if let checkpointPolicy = launch.configuration?.checkpointPolicy?.nilIfEmpty {
+            spawnResult["checkpoint_policy"] = checkpointPolicy
+        }
         // 对齐回执：Jev 判定子任务偏离用户最新请求时如实标注。仅 active 会
         // 产出标注（shadow/off 为空建议）；标注不改变 spawn 结果本身。
         if jevDecision.intent.alignmentDoubtful {

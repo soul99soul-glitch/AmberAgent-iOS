@@ -146,10 +146,28 @@ public struct RenderableDocument: Equatable, Sendable {
     let sharedCount = min(merged.count, previous.renderables.count)
     var index = 0
     while index < sharedCount,
-          merged[index].id == previous.renderables[index].id,
-          merged[index] == previous.renderables[index] {
-      merged[index] = previous.renderables[index]
-      index += 1
+          merged[index].id == previous.renderables[index].id {
+      if merged[index] == previous.renderables[index] {
+        merged[index] = previous.renderables[index]
+        index += 1
+        continue
+      }
+      if case let .table(id, headers, rows, rawMarkdown) = merged[index],
+         case let .table(_, prevHeaders, prevRows, _) = previous.renderables[index] {
+        let reusedHeaders = headers == prevHeaders ? prevHeaders : headers
+        var reusedRows = rows
+        let sharedRows = min(rows.count, prevRows.count)
+        for rowIndex in 0..<sharedRows where rows[rowIndex] == prevRows[rowIndex] {
+          reusedRows[rowIndex] = prevRows[rowIndex]
+        }
+        merged[index] = .table(
+          id: id,
+          headers: reusedHeaders,
+          rows: reusedRows,
+          rawMarkdown: rawMarkdown
+        )
+      }
+      break
     }
     if index == merged.count, merged.count == previous.renderables.count {
       return previous

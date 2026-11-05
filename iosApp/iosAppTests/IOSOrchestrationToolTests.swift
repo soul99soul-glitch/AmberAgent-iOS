@@ -557,8 +557,8 @@ final class IOSOrchestrationToolTests: IOSOrchestrationToolTestCase {
         XCTAssertNotNil(scheduler.startedHandoff)
     }
 
-    /// P1-e：子代理活注册表满额（2 个子代理 = 默认 2 槽满）→ spawn 拒绝；
-    /// 降为 1 个子代理 → 放行。父线程不计入子代理并发。
+    /// P1-e：子代理活注册表满额（4 个子代理 = 默认 4 槽满）→ spawn 拒绝；
+    /// 降为 3 个子代理 → 放行。父线程不计入子代理并发。
     func testSpawnRejectsWhenActiveRegistrationsAtCapacity() async throws {
         let base = makeTempDirectory("SpawnLimit")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -567,7 +567,7 @@ final class IOSOrchestrationToolTests: IOSOrchestrationToolTestCase {
         let parentId = try XCTUnwrap(store.currentConversation?.id)
         let db = makeDatabase(directory: base)
         let scheduler = FakeBackgroundScheduler()
-        scheduler.activeSubAgentJobCount = 2
+        scheduler.activeSubAgentJobCount = 4
         let service = makeService(
             store: store, db: db, scheduler: scheduler, currentConversationId: { parentId }
         )
@@ -581,8 +581,8 @@ final class IOSOrchestrationToolTests: IOSOrchestrationToolTestCase {
         XCTAssertEqual(result["error"] as? String, "agent_limit_reached")
         XCTAssertNil(scheduler.startedHandoff)
 
-        // 边界：1 个子代理 < 默认上限 2 → 放行。
-        scheduler.activeSubAgentJobCount = 1
+        // 边界：3 个子代理 < 默认上限 4 → 放行。
+        scheduler.activeSubAgentJobCount = 3
         let retry = parseJSON(await service.execute(
             toolName: "spawn_agent",
             arguments: spawnArguments(taskName: "busy"),
@@ -591,6 +591,125 @@ final class IOSOrchestrationToolTests: IOSOrchestrationToolTestCase {
             runId: "r"
         ))
         XCTAssertEqual(retry["ok"] as? Bool, true)
+    }
+
+    func testSpawnDeliverableHintAndCheckpointPolicyDeliverStructuredSummary() async throws {
+        let base = makeTempDirectory("SpawnStructuredDeliverable")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        let parentHex = parentId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let scheduler = FakeBackgroundScheduler()
+        let taskStore = IOSAdvancedTaskStore(userDefaults: isolatedDefaults())
+        let service = IOSThreadOrchestrationToolService(
+            conversationStoreProvider: { store },
+            mailboxDaoProvider: { db.mailboxDao() },
+            threadEdgeDaoProvider: { db.threadEdgeDao() },
+            agentRuntimeDaoProvider: { db.agentRuntimeDao() },
+            backgroundCoordinator: scheduler,
+            makeBackgroundToolRuntime: { [weak self] in
+                self?.makeRuntime() ?? ChatToolRuntime(
+                    settingsStore: SettingsStore(),
+                    sharedSettings: IOSSharedSettingsStore(),
+                    localToolExecutor: nil,
+                    searchTransport: IOSURLSessionSearchHTTPTransport(),
+                    mcpManager: IOSMcpManager(serverProvider: { [] })
+                )
+            },
+            currentConversationId: { parentId },
+            foregroundActiveRunId: { _ in nil },
+            cancelForegroundRun: { _ in false },
+            taskStore: taskStore
+        )
+
+        // 非法 checkpoint_policy 被拒绝。
+        let invalidArgs = IOSWorkspaceStore.json([
+            "task_name": "invalid_policy",
+            "message": "先做一轮潜在客户摸排",
+            "checkpoint_policy": "invalid_mode",
+        ])
+        let invalidResult = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: invalidArgs,
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "run-invalid"
+        ))
+        XCTAssertEqual(invalidResult["ok"] as? Bool, false)
+        XCTAssertEqual(invalidResult["error"] as? String, "invalid_arguments")
+
+        // 合法 deliverable_hint + checkpoint_policy (pause_for_decision) 成功透传并注入子配置。
+        let validArgs = IOSWorkspaceStore.json([
+            "task_name": "prospect_scan",
+            "message": "摸排 3 家潜在客户并对比优劣",
+            "deliverable_hint": "客户清单与切入建议对比表",
+            "checkpoint_policy": "pause_for_decision",
+        ])
+        let spawnResult = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: validArgs,
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "run-valid"
+        ))
+        XCTAssertEqual(spawnResult["ok"] as? Bool, true)
+        XCTAssertEqual(spawnResult["deliverable_hint"] as? String, "客户清单与切入建议对比表")
+        XCTAssertEqual(spawnResult["checkpoint_policy"] as? String, "pause_for_decision")
+
+        let childHex = try XCTUnwrap(spawnResult["child_thread_id"] as? String)
+        let childId = KotlinUuid.companion.parse(uuidString: childHex)
+        let handoff = try XCTUnwrap(scheduler.startedHandoff)
+        let childSystemPrompt = handoff.uploadMessages
+            .filter { $0.role == MessageRole.system }
+            .map { $0.toText() }
+            .joined(separator: "\n")
+        XCTAssertTrue(childSystemPrompt.contains("Deliverable format: 客户清单与切入建议对比表"))
+        XCTAssertTrue(childSystemPrompt.contains("pause_for_decision"))
+
+        // 登记一条关联的 IOSAdvancedTaskRecord，验证子代理终态时写回结构化 resultSummary。
+        _ = taskStore.startTask(
+            id: childHex,
+            kind: .subAgent,
+            title: "prospect_scan",
+            objective: "摸排 3 家潜在客户并对比优劣",
+            metadata: ["child_thread_id": childHex, "run_id": handoff.runId]
+        )
+
+        let childOutput = """
+        已完成 3 家潜在客户首轮摸排，推荐优先接洽 Acme 与 Nova。
+        - Acme：年度采购预算充足，决策链短
+        - Nova：痛点明确，已有同类替换诉求
+        - Orbit：合规审批周期较长，建议延后
+        需要你拍板：是否先针对 Acme 和 Nova 起草定制接触方案？
+        """
+        let finalMessages = handoff.displayMessages + [
+            UIMessage.companion.assistant(prompt: childOutput)
+        ]
+        await service.notifyRunTerminal(
+            conversationId: childId,
+            runId: handoff.runId,
+            finalMessages: finalMessages,
+            displayBaseline: handoff.displayMessages,
+            terminalStatus: .completed,
+            terminalReason: nil
+        )
+
+        let envelopes = try await db.mailboxDao().pendingForRecipient(recipientId: parentHex)
+        let finalEnvelope = try XCTUnwrap(envelopes.first { $0.type == MailboxEnvelopeType.finalAnswer.name })
+        XCTAssertTrue(finalEnvelope.payload.contains("[Structured Digest]"))
+        XCTAssertTrue(finalEnvelope.payload.contains("核心结论："))
+        XCTAssertTrue(finalEnvelope.payload.contains("关键产出要点："))
+        XCTAssertTrue(finalEnvelope.payload.contains("下一步拍板：需用户拍板"))
+        XCTAssertTrue(finalEnvelope.payload.contains("\"structured_summary\""))
+
+        let updatedRecord = try XCTUnwrap(taskStore.tasks.first { $0.id == childHex })
+        XCTAssertEqual(updatedRecord.status, .completed)
+        let summaryText = updatedRecord.resultSummary
+        XCTAssertTrue(summaryText.contains("核心结论："))
+        XCTAssertTrue(summaryText.contains("下一步拍板：需用户拍板"))
+        XCTAssertEqual(updatedRecord.metadata["needs_user_decision"], "true")
     }
 
     /// P1-e：并发 spawn 共享在途 bootstrap 槽——限额 1 时两个并发 spawn 恰好

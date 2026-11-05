@@ -414,6 +414,142 @@ final class IOSWakeSchedulerTests: XCTestCase {
         XCTAssertEqual(center.requests["amber.wake.\(task.id)"]?.fireDate, date.addingTimeInterval(1))
         XCTAssertEqual(center.addCount, 2)
     }
+
+    func testLegacyArchiveDecodingAndRecurringWatchSilentRenewalThenTriggeredCompletion() async throws {
+        let (_, legacyURL) = try makeStore()
+        let legacyID = UUID().uuidString
+        let legacyJSON = """
+        {
+          "version": 1,
+          "tasks": [
+            {
+              "id": "\(legacyID)",
+              "requestID": "legacy-req-1",
+              "conversationID": "\(conversationID)",
+              "sourceRunID": "legacy-run-1",
+              "origin": {
+                "userMessageID": "msg-1",
+                "userText": "老版本保存的单次提醒"
+              },
+              "title": "旧版单次任务",
+              "prompt": "到期后执行一次",
+              "createdAt": 800000000,
+              "fireAt": 800003600,
+              "requiresForeground": false,
+              "status": "scheduled"
+            }
+          ]
+        }
+        """
+        try Data(legacyJSON.utf8).write(to: legacyURL)
+        let decodedLegacyStore = IOSWakeTaskStore(fileURL: legacyURL, now: { self.date })
+        XCTAssertNil(decodedLegacyStore.loadError)
+        let legacyTask = try XCTUnwrap(decodedLegacyStore.task(id: legacyID))
+        XCTAssertFalse(legacyTask.isRecurringWatch)
+        XCTAssertNil(legacyTask.intervalMinutes)
+        XCTAssertNil(legacyTask.watchCondition)
+        XCTAssertTrue(legacyTask.stopWhenTriggered)
+        XCTAssertEqual(legacyTask.checkCount, 0)
+        XCTAssertNil(legacyTask.lastCheckedAt)
+        XCTAssertNil(legacyTask.lastCheckSummary)
+
+        var currentNow = date
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("recurring-tasks.json")
+        let store = IOSWakeTaskStore(fileURL: url, now: { currentNow })
+        let watchTask = try store.schedule(
+            conversationID: conversationID,
+            sourceRunID: "watch-source-run",
+            origin: IOSWakeOrigin(userMessageID: "user-oil", userText: "帮我盯着国内油价调价窗口，有变动告诉我"),
+            title: "盯国内油价调价窗口",
+            prompt: "查询国内成品油调价窗口与预计涨跌幅",
+            fireAt: nil,
+            event: nil,
+            requiresForeground: false,
+            requestID: "oil-watch-1",
+            intervalMinutes: 360,
+            watchCondition: "国内油价调价窗口开启或预计涨跌超 50 元/吨",
+            stopWhenTriggered: true
+        )
+        XCTAssertTrue(watchTask.isRecurringWatch)
+        XCTAssertEqual(watchTask.fireAt, date.addingTimeInterval(360 * 60))
+
+        let scheduler = IOSWakeScheduler(
+            store: store,
+            now: { currentNow },
+            isForeground: { true },
+            startRun: { _, _ in .started }
+        )
+
+        // Advance to first check window -> silent renewal
+        currentNow = date.addingTimeInterval(360 * 60)
+        let firstReport = await scheduler.runDueTasks()
+        XCTAssertEqual(firstReport.startedCount, 1)
+        let firstRunID = try XCTUnwrap(firstReport.runIDs.first)
+        await scheduler.recordRunTerminal(
+            runID: firstRunID,
+            status: "completed",
+            result: "[WATCH_SILENT] 第 1 次巡检：当前处于计价周期第 6 个工作日，暂未开启调价窗口"
+        )
+
+        let afterSilent = try XCTUnwrap(store.task(id: watchTask.id))
+        XCTAssertEqual(afterSilent.status, .scheduled)
+        XCTAssertEqual(afterSilent.checkCount, 1)
+        XCTAssertEqual(afterSilent.lastCheckedAt, currentNow)
+        XCTAssertEqual(afterSilent.lastCheckSummary, "第 1 次巡检：当前处于计价周期第 6 个工作日，暂未开启调价窗口")
+        XCTAssertEqual(afterSilent.fireAt, currentNow.addingTimeInterval(360 * 60))
+        XCTAssertNil(afterSilent.executionRunID)
+        XCTAssertEqual(afterSilent.attemptNumber, 1)
+
+        // Advance to second check window -> condition triggered & completed
+        currentNow = currentNow.addingTimeInterval(360 * 60)
+        let secondReport = await scheduler.runDueTasks()
+        XCTAssertEqual(secondReport.startedCount, 1)
+        let secondRunID = try XCTUnwrap(secondReport.runIDs.first)
+        await scheduler.recordRunTerminal(
+            runID: secondRunID,
+            status: "completed",
+            result: "[WATCH_TRIGGERED] 调价窗口今晚 24 时开启，预计汽柴油上调 85 元/吨，建议提前加油"
+        )
+
+        let afterTriggered = try XCTUnwrap(store.task(id: watchTask.id))
+        XCTAssertEqual(afterTriggered.status, .completed)
+        XCTAssertEqual(afterTriggered.checkCount, 2)
+        XCTAssertEqual(afterTriggered.lastCheckedAt, currentNow)
+        XCTAssertEqual(afterTriggered.lastCheckSummary, "调价窗口今晚 24 时开启，预计汽柴油上调 85 元/吨，建议提前加油")
+        XCTAssertTrue(afterTriggered.resultText?.contains("调价窗口今晚 24 时开启") == true)
+
+        // Continuous watch with stopWhenTriggered == false keeps rolling after trigger
+        let continuousTask = try store.schedule(
+            conversationID: conversationID,
+            sourceRunID: "watch-source-run-2",
+            origin: IOSWakeOrigin(userMessageID: "user-repo", userText: "持续盯着仓库发版，每次发版都提醒我"),
+            title: "持续盯仓库 Release",
+            prompt: "检查是否有新 Release",
+            fireAt: currentNow,
+            event: nil,
+            requiresForeground: false,
+            requestID: "repo-watch-continuous",
+            intervalMinutes: 60,
+            watchCondition: "发布新版本",
+            stopWhenTriggered: false
+        )
+        let thirdReport = await scheduler.runDueTasks()
+        let thirdRunID = try XCTUnwrap(thirdReport.runIDs.first)
+        await scheduler.recordRunTerminal(
+            runID: thirdRunID,
+            status: "completed",
+            result: "[WATCH_TRIGGERED] 已发布 v2.1.0",
+            conditionTriggered: true
+        )
+        let afterContinuousTrigger = try XCTUnwrap(store.task(id: continuousTask.id))
+        XCTAssertEqual(afterContinuousTrigger.status, .scheduled)
+        XCTAssertEqual(afterContinuousTrigger.checkCount, 1)
+        XCTAssertEqual(afterContinuousTrigger.fireAt, currentNow.addingTimeInterval(60 * 60))
+        XCTAssertTrue(afterContinuousTrigger.resultText?.contains("已发布 v2.1.0") == true)
+    }
 }
 
 @MainActor

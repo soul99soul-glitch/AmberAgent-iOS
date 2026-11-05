@@ -12,15 +12,37 @@ struct ChatMessageContentIdentity {
     let index: Int?
     typealias Metadata = [String: Kotlinx_serialization_jsonJsonElement]
     private let metadata: [Metadata?]
+    private let hasNonNilMetadata: Bool
 
     init(_ message: UIMessage, index: Int? = nil) {
         self.message = message
         self.index = index
-        metadata = Self.metadata(in: message.parts)
+        if Self.containsNonNilMetadata(in: message.parts) {
+            metadata = Self.metadata(in: message.parts)
+            hasNonNilMetadata = true
+        } else {
+            metadata = []
+            hasNonNilMetadata = false
+        }
     }
 
     func matches(_ message: UIMessage) -> Bool {
-        self.message === message && Self.sameMetadata(metadata, Self.metadata(in: message.parts))
+        guard self.message === message else { return false }
+        if !hasNonNilMetadata {
+            return !Self.containsNonNilMetadata(in: message.parts)
+        }
+        return Self.sameMetadata(metadata, Self.metadata(in: message.parts))
+    }
+
+    static func containsNonNilMetadata(in parts: [UIMessagePart]) -> Bool {
+        for part in parts {
+            if part.metadata != nil { return true }
+            if let tool = part as? UIMessagePart.Tool,
+               containsNonNilMetadata(in: tool.output) {
+                return true
+            }
+        }
+        return false
     }
 
     static func metadata(in parts: [UIMessagePart]) -> [Metadata?] {

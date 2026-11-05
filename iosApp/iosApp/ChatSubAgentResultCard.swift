@@ -125,15 +125,39 @@ struct ChatSubAgentResultCard: View {
 
     @ViewBuilder
     private var resultBody: some View {
-        if displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let trimmed = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
             Text(IOSAppLocalization.string("暂无结果", defaultValue: "暂无结果"))
                 .font(.subheadline)
                 .foregroundStyle(AmberTheme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            AmberMarkdownView(markdown: displayText, displaySetting: displaySetting, style: .compact)
-                .font(.subheadline)
-                .foregroundStyle(AmberTheme.foreground)
+            let deliverable = AmberUnifiedTaskBuilder.extractDeliverableSummary(from: trimmed)
+            VStack(alignment: .leading, spacing: 8) {
+                if deliverable.needsDecision, let prompt = deliverable.decisionPrompt, !prompt.isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        RoundedRectangle(cornerRadius: 1, style: .continuous)
+                            .fill(AmberTheme.accentAmber)
+                            .frame(width: 2)
+                            .padding(.vertical, 2)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(IOSAppLocalization.string("等我拍板", defaultValue: "等我拍板"))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(AmberTheme.accentAmber)
+                            Text(prompt)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.bottom, 2)
+                }
+
+                AmberMarkdownView(markdown: displayText, displaySetting: displaySetting, style: .compact)
+                    .font(.subheadline)
+                    .foregroundStyle(AmberTheme.foreground)
+            }
         }
     }
 
@@ -229,6 +253,273 @@ private extension View {
                 .background(.ultraThinMaterial, in: shape)
                 .overlay { shape.stroke(.white.opacity(0.65), lineWidth: 0.5) }
                 .shadow(color: .black.opacity(0.10), radius: 12, y: 2)
+        }
+    }
+}
+
+// MARK: - Task Deliverable Preview Sheet & Inline View
+
+/// Single-layer deliverable conclusion preview for completed or checkpointed tasks in the Tasks panel.
+struct AmberTaskDeliverablePreviewSheet: View {
+    let item: AmberUnifiedTaskItem
+    var onOpenDestination: ((AmberUnifiedTaskItem) -> Void)? = nil
+    var onQuickDecision: ((AmberUnifiedTaskItem, AmberTaskQuickDecision) -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                AmberTaskDeliverablePreviewContent(
+                    item: item,
+                    onOpenDestination: { task in
+                        dismiss()
+                        onOpenDestination?(task)
+                    },
+                    onQuickDecision: { task, decision in
+                        dismiss()
+                        onQuickDecision?(task, decision)
+                    }
+                )
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+            }
+            .background(AmberTheme.background.ignoresSafeArea())
+            .navigationTitle(IOSAppLocalization.string("交付结论", defaultValue: "交付结论"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(IOSAppLocalization.string("完成", defaultValue: "完成")) {
+                        dismiss()
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(AmberTheme.accent)
+                }
+            }
+        }
+        .environment(\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)
+        .accessibilityIdentifier("chat.duet.tasks.deliverablePreviewSheet")
+    }
+}
+
+struct AmberTaskDeliverablePreviewContent: View {
+    let item: AmberUnifiedTaskItem
+    var onBack: (() -> Void)? = nil
+    var onOpenDestination: ((AmberUnifiedTaskItem) -> Void)? = nil
+    var onQuickDecision: ((AmberUnifiedTaskItem, AmberTaskQuickDecision) -> Void)? = nil
+
+    private var distinctBullets: [String] {
+        item.deliverableBullets.filter { $0 != item.resultText }
+    }
+
+    private var cleanedMarkdownBody: String? {
+        guard let raw = item.rawResultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        let lines = raw.split(whereSeparator: \.isNewline)
+            .map { String($0) }
+            .filter { line in
+                let trimmed = line.replacingOccurrences(of: "#", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                return !trimmed.hasPrefix("settlement report") && trimmed != "subagent report"
+            }
+        let joined = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !joined.isEmpty, joined != item.resultText else { return nil }
+        return joined
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let onBack {
+                Button(action: onBack) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(IOSAppLocalization.string("返回任务列表", defaultValue: "返回任务列表"))
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(AmberTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.duet.tasks.deliverablePreviewBack")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(AmberUnifiedTaskBuilder.statusColor(for: item))
+                        .frame(width: 6, height: 6)
+
+                    Text(item.ownership.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AmberTheme.muted)
+
+                    Text("·")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AmberTheme.muted2)
+
+                    Text(item.statusText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AmberUnifiedTaskBuilder.statusColor(for: item))
+
+                    Spacer()
+                }
+
+                Text(item.title)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let decisionPrompt = item.decisionPrompt, !decisionPrompt.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 8) {
+                        RoundedRectangle(cornerRadius: 1, style: .continuous)
+                            .fill(AmberTheme.accentAmber)
+                            .frame(width: 2)
+                            .padding(.vertical, 2)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(IOSAppLocalization.string("等我拍板", defaultValue: "等我拍板"))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(AmberTheme.accentAmber)
+
+                            Text(decisionPrompt)
+                                .font(.system(size: 13.5, weight: .medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    if !item.quickActions.isEmpty, let onQuickDecision {
+                        HStack(spacing: 8) {
+                            ForEach(item.quickActions) { decision in
+                                Button {
+                                    onQuickDecision(item, decision)
+                                } label: {
+                                    Text(decision.title)
+                                        .font(.system(size: 12.5, weight: .medium))
+                                        .foregroundStyle(decision.isPrimary ? AmberTheme.accent : AmberTheme.foreground2)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            decision.isPrimary
+                                                ? AmberTheme.accent.opacity(0.12)
+                                                : AmberTheme.surface2,
+                                            in: Capsule(style: .continuous)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .padding(14)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(AmberTheme.border, lineWidth: 0.6)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(IOSAppLocalization.string("核心结论", defaultValue: "核心结论"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AmberTheme.muted)
+
+                if let headline = item.resultText, !headline.isEmpty {
+                    Text(headline)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(item.subtitle)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !distinctBullets.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(distinctBullets.enumerated()), id: \.offset) { _, bullet in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("·")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(AmberTheme.muted)
+                                Text(bullet)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(AmberTheme.foreground2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AmberTheme.border, lineWidth: 0.6)
+            }
+
+            if let markdown = cleanedMarkdownBody {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(IOSAppLocalization.string("完整交付记录", defaultValue: "完整交付记录"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AmberTheme.muted)
+                        .padding(.leading, 4)
+
+                    AmberMarkdownView(markdown: markdown, displaySetting: nil, style: .compact)
+                        .font(.subheadline)
+                        .foregroundStyle(AmberTheme.foreground)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(AmberTheme.border, lineWidth: 0.6)
+                        }
+                }
+            }
+
+            if item.destination != .none, let onOpenDestination {
+                Button {
+                    onOpenDestination(item)
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(destinationActionLabel(for: item.destination))
+                            .font(.system(size: 13, weight: .medium))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(AmberTheme.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(AmberTheme.accent.opacity(0.10), in: Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.duet.tasks.openDestinationFromPreview")
+            }
+        }
+        .environment(\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)
+    }
+
+    private func destinationActionLabel(for destination: AmberTaskDestination) -> String {
+        switch destination {
+        case .subAgentConversation, .wakeConversation:
+            return IOSAppLocalization.string("打开对应子会话", defaultValue: "打开对应子会话")
+        case .executionRecord:
+            return IOSAppLocalization.string("查看执行记录", defaultValue: "查看执行记录")
+        case .cloudTaskDetail:
+            return IOSAppLocalization.string("查看云端任务详情", defaultValue: "查看云端任务详情")
+        case .macBoard:
+            return IOSAppLocalization.string("打开完整任务看板", defaultValue: "打开完整任务看板")
+        case .none:
+            return IOSAppLocalization.string("查看详情", defaultValue: "查看详情")
         }
     }
 }

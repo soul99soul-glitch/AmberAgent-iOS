@@ -14,6 +14,76 @@ struct IOSSubAgentOutputSnapshot: Codable, Equatable, Sendable {
     let isFinal: Bool
 }
 
+struct IOSSubAgentStructuredDigest: Codable, Equatable, Sendable {
+    let conclusion: String
+    let keyPoints: [String]
+    let needsUserDecision: Bool
+    let decisionPrompt: String?
+    let deliverableHint: String?
+    let checkpointPolicy: String?
+
+    init(
+        conclusion: String,
+        keyPoints: [String] = [],
+        needsUserDecision: Bool = false,
+        decisionPrompt: String? = nil,
+        deliverableHint: String? = nil,
+        checkpointPolicy: String? = nil
+    ) {
+        self.conclusion = conclusion
+        self.keyPoints = keyPoints
+        self.needsUserDecision = needsUserDecision
+        self.decisionPrompt = decisionPrompt
+        self.deliverableHint = deliverableHint
+        self.checkpointPolicy = checkpointPolicy
+    }
+
+    var formattedSummary: String {
+        var lines: [String] = ["核心结论：\(conclusion)"]
+        if let deliverableHint = deliverableHint?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !deliverableHint.isEmpty {
+            lines.append("交付物：\(deliverableHint)")
+        }
+        if !keyPoints.isEmpty {
+            lines.append("关键产出要点：")
+            for point in keyPoints {
+                lines.append("• \(point)")
+            }
+        }
+        if needsUserDecision {
+            if let prompt = decisionPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !prompt.isEmpty,
+               prompt != conclusion {
+                lines.append("下一步拍板：需用户拍板（\(prompt)）")
+            } else {
+                lines.append("下一步拍板：需用户拍板确认下一步方向")
+            }
+        } else {
+            lines.append("下一步拍板：无需额外拍板")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func toMetadataDictionary() -> [String: Any] {
+        var dict: [String: Any] = [
+            "conclusion": conclusion,
+            "key_points": keyPoints,
+            "needs_user_decision": needsUserDecision,
+            "formatted_summary": formattedSummary,
+        ]
+        if let decisionPrompt, !decisionPrompt.isEmpty {
+            dict["decision_prompt"] = decisionPrompt
+        }
+        if let deliverableHint, !deliverableHint.isEmpty {
+            dict["deliverable_hint"] = deliverableHint
+        }
+        if let checkpointPolicy, !checkpointPolicy.isEmpty {
+            dict["checkpoint_policy"] = checkpointPolicy
+        }
+        return dict
+    }
+}
+
 enum IOSSubAgentOutputProjection {
     static let progressReportingInstruction = "When the task permits progress updates, publish one or two concise sentences of verified work and useful findings in ordinary assistant text at meaningful checkpoints. Report completed work or a concrete blocker; do not expose private reasoning, invent progress, or narrate every tool call."
     static let maxSummaryLength = 1_000
@@ -75,11 +145,23 @@ enum IOSSubAgentOutputProjection {
             var pieces: [String] = []
             if let summary = object["summary"] as? String {
                 pieces.append(summary)
+            } else if let conclusion = object["conclusion"] as? String {
+                pieces.append(conclusion)
             }
             if let findings = object["findings"] as? String {
                 pieces.append(findings)
             } else if let findings = object["findings"] as? [Any] {
                 pieces.append(contentsOf: findings.compactMap { $0 as? String })
+            } else if let keyPoints = object["key_points"] as? [Any] {
+                pieces.append(contentsOf: keyPoints.compactMap { $0 as? String })
+            }
+            if let needsDecision = object["needs_user_decision"] as? Bool, needsDecision {
+                if let prompt = (object["decision_prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !prompt.isEmpty {
+                    pieces.append("需用户拍板：\(prompt)")
+                } else {
+                    pieces.append("需用户拍板确认下一步")
+                }
             }
             let result = pieces
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -92,6 +174,249 @@ enum IOSSubAgentOutputProjection {
         // public assistant text and is safe to display as bounded text.
         if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") { return nil }
         return bounded(trimmed, limit: maxSummaryLength)
+    }
+
+    static func structuredDigest(
+        from raw: String,
+        deliverableHint: String? = nil,
+        checkpointPolicy: String? = nil
+    ) -> IOSSubAgentStructuredDigest? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed != "[run ended without assistant output]" else {
+            return nil
+        }
+        let normalizedHint = deliverableHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveHint = (normalizedHint?.isEmpty == false) ? normalizedHint : nil
+        let normalizedPolicy = IOSOrchestrationCheckpointPolicy(rawPolicy: checkpointPolicy)?.rawValue
+            ?? checkpointPolicy?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectivePolicy = (normalizedPolicy?.isEmpty == false) ? normalizedPolicy : nil
+        let policyRequiresDecision = IOSOrchestrationCheckpointPolicy(rawPolicy: effectivePolicy) == .pauseForDecision
+
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let conclusionRaw = (object["conclusion"] as? String)
+                ?? (object["summary"] as? String)
+                ?? ""
+            let conclusion = cleanLine(conclusionRaw)
+            var keyPoints: [String] = []
+            if let arr = (object["key_points"] as? [Any]) ?? (object["findings"] as? [Any]) {
+                keyPoints = arr.compactMap { $0 as? String }.map(cleanLine).filter { !$0.isEmpty }
+            } else if let str = (object["key_points"] as? String) ?? (object["findings"] as? String) {
+                keyPoints = str.components(separatedBy: .newlines).map(cleanLine).filter { !$0.isEmpty }
+            }
+            guard !conclusion.isEmpty || !keyPoints.isEmpty else { return nil }
+            let resolvedConclusion = conclusion.isEmpty ? keyPoints.removeFirst() : conclusion
+            let explicitDecision = object["needs_user_decision"] as? Bool
+            let decisionPrompt = cleanLine(
+                (object["decision_prompt"] as? String) ?? (object["next_step"] as? String) ?? ""
+            )
+            let inferredDecision = detectDecisionSignal(in: trimmed)
+            let needsDecision = explicitDecision ?? (policyRequiresDecision || inferredDecision.needsDecision)
+            return IOSSubAgentStructuredDigest(
+                conclusion: String(resolvedConclusion.prefix(240)),
+                keyPoints: Array(keyPoints.prefix(4)).map { String($0.prefix(160)) },
+                needsUserDecision: needsDecision,
+                decisionPrompt: decisionPrompt.isEmpty ? inferredDecision.prompt : decisionPrompt,
+                deliverableHint: effectiveHint ?? (object["deliverable_hint"] as? String),
+                checkpointPolicy: effectivePolicy ?? (object["checkpoint_policy"] as? String)
+            )
+        }
+        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
+            return nil
+        }
+
+        let lines = stripCodeFences(from: trimmed)
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !isNoiseLogLine($0) }
+        guard !lines.isEmpty else { return nil }
+
+        var paragraphLines: [String] = []
+        var bulletLines: [String] = []
+        for line in lines {
+            if let bullet = extractBulletText(from: line) {
+                bulletLines.append(bullet)
+            } else {
+                let cleaned = cleanLine(line)
+                if !cleaned.isEmpty, !isSectionHeaderOnly(cleaned) {
+                    paragraphLines.append(cleaned)
+                }
+            }
+        }
+
+        let conclusionSource = paragraphLines.first ?? bulletLines.first ?? cleanLine(lines[0])
+        guard !conclusionSource.isEmpty else { return nil }
+        let conclusion = String(firstConciseStatement(from: conclusionSource, maxChars: 240))
+
+        var keyPoints: [String] = []
+        for item in bulletLines where item != conclusion {
+            let concise = firstConciseStatement(from: item, maxChars: 160)
+            if !concise.isEmpty, !keyPoints.contains(concise) {
+                keyPoints.append(concise)
+            }
+            if keyPoints.count >= 4 { break }
+        }
+        if keyPoints.isEmpty, paragraphLines.count > 1 {
+            for item in paragraphLines.dropFirst() where item != conclusion {
+                let concise = firstConciseStatement(from: item, maxChars: 160)
+                if !concise.isEmpty, !keyPoints.contains(concise) {
+                    keyPoints.append(concise)
+                }
+                if keyPoints.count >= 4 { break }
+            }
+        }
+
+        let decisionSignal = detectDecisionSignal(in: trimmed)
+        let needsDecision = policyRequiresDecision || decisionSignal.needsDecision
+        return IOSSubAgentStructuredDigest(
+            conclusion: conclusion,
+            keyPoints: keyPoints,
+            needsUserDecision: needsDecision,
+            decisionPrompt: decisionSignal.prompt,
+            deliverableHint: effectiveHint,
+            checkpointPolicy: effectivePolicy
+        )
+    }
+
+    static func structuredResultSummary(
+        from raw: String,
+        deliverableHint: String? = nil,
+        checkpointPolicy: String? = nil
+    ) -> String? {
+        guard let digest = structuredDigest(
+            from: raw,
+            deliverableHint: deliverableHint,
+            checkpointPolicy: checkpointPolicy
+        ) else {
+            return summaryFromStoredResult(raw)
+        }
+        return bounded(digest.formattedSummary, limit: maxSummaryLength)
+    }
+
+    @MainActor
+    @discardableResult
+    static func syncTaskResultSummary(
+        in taskStore: IOSAdvancedTaskStore,
+        childThreadId: String? = nil,
+        runId: String? = nil,
+        taskId: String? = nil,
+        rawText: String,
+        deliverableHint: String? = nil,
+        checkpointPolicy: String? = nil,
+        status: IOSAdvancedTaskStatus? = nil
+    ) -> IOSAdvancedTaskRecord? {
+        guard let formatted = structuredResultSummary(
+            from: rawText,
+            deliverableHint: deliverableHint,
+            checkpointPolicy: checkpointPolicy
+        ) else {
+            return nil
+        }
+        let targetRecord = taskStore.tasks.first { record in
+            if let taskId, record.id == taskId { return true }
+            if let childThreadId {
+                if record.id == childThreadId || record.metadata["child_thread_id"] == childThreadId {
+                    return true
+                }
+            }
+            if let runId {
+                if record.id == runId || record.metadata["run_id"] == runId || record.metadata["execution_id"] == runId {
+                    return true
+                }
+            }
+            return false
+        }
+        guard let targetRecord else { return nil }
+        var extraMetadata: [String: String] = [:]
+        if let digest = structuredDigest(from: rawText, deliverableHint: deliverableHint, checkpointPolicy: checkpointPolicy) {
+            extraMetadata["needs_user_decision"] = digest.needsUserDecision ? "true" : "false"
+            if let hint = digest.deliverableHint { extraMetadata["deliverable_hint"] = hint }
+            if let policy = digest.checkpointPolicy { extraMetadata["checkpoint_policy"] = policy }
+        }
+        return taskStore.updateTask(
+            id: targetRecord.id,
+            status: status,
+            resultSummary: formatted,
+            metadata: extraMetadata.isEmpty ? nil : extraMetadata
+        )
+    }
+
+    private static func stripCodeFences(from text: String) -> String {
+        var result: [String] = []
+        var insideFence = false
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                insideFence.toggle()
+                continue
+            }
+            if !insideFence {
+                result.append(line)
+            }
+        }
+        return result.joined(separator: "\n")
+    }
+
+    private static func isNoiseLogLine(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        return lower.hasPrefix("[tool") || lower.hasPrefix("tool_call:") || lower.hasPrefix("step ")
+            || line == "---" || line == "***"
+    }
+
+    private static func isSectionHeaderOnly(_ line: String) -> Bool {
+        let normalized = line.replacingOccurrences(of: "：", with: ":").trimmingCharacters(in: .whitespaces)
+        return ["核心结论", "核心结论:", "结论", "结论:", "关键要点", "关键要点:", "关键产出要点", "关键产出要点:", "总结", "总结:"].contains(normalized)
+    }
+
+    private static func extractBulletText(from line: String) -> String? {
+        let prefixes = ["- ", "* ", "• ", "· "]
+        for prefix in prefixes where line.hasPrefix(prefix) {
+            let body = cleanLine(String(line.dropFirst(prefix.count)))
+            return body.isEmpty ? nil : body
+        }
+        if let range = line.range(of: #"^\d+[\.\、\)]\s*"#, options: .regularExpression) {
+            let body = cleanLine(String(line[range.upperBound...]))
+            return body.isEmpty ? nil : body
+        }
+        return nil
+    }
+
+    private static func cleanLine(_ line: String) -> String {
+        var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        while text.hasPrefix("#") || text.hasPrefix(">") {
+            text = String(text.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        text = text.replacingOccurrences(of: "**", with: "")
+        text = text.replacingOccurrences(of: "__", with: "")
+        for prefix in ["核心结论：", "核心结论:", "结论：", "结论:", "总结：", "总结:"] {
+            if text.hasPrefix(prefix) {
+                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return text
+    }
+
+    private static func firstConciseStatement(from text: String, maxChars: Int) -> String {
+        let cleaned = cleanLine(text)
+        guard cleaned.count > maxChars else { return cleaned }
+        return String(cleaned.prefix(maxChars))
+    }
+
+    private static func detectDecisionSignal(in text: String) -> (needsDecision: Bool, prompt: String?) {
+        let decisionKeywords = [
+            "需要你拍板", "需要您拍板", "请拍板", "待你拍板", "待您拍板",
+            "待你确认", "待您确认", "请确认下一步", "需要你决定", "需要您决定",
+            "请选择下一步", "是否继续深入", "pause_for_decision"
+        ]
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = cleanLine(rawLine)
+            guard !line.isEmpty else { continue }
+            if decisionKeywords.contains(where: { line.contains($0) }) {
+                return (true, String(line.prefix(140)))
+            }
+        }
+        return (false, nil)
     }
 
     private static func recentToolSteps(in messages: [UIMessage]) -> [IOSSubAgentOutputStep] {

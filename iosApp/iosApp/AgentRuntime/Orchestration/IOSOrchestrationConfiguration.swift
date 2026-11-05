@@ -1,6 +1,21 @@
 import Foundation
 @preconcurrency import Shared
 
+enum IOSOrchestrationCheckpointPolicy: String, Codable, Equatable, Sendable {
+    case none = "none"
+    case pauseForDecision = "pause_for_decision"
+
+    init?(rawPolicy: String?) {
+        guard let normalized = rawPolicy?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !normalized.isEmpty else {
+            return nil
+        }
+        self.init(rawValue: normalized)
+    }
+}
+
 /// Persisted as a private system-message marker so followups and recovery keep
 /// the child's effective role and tool scope.
 struct IOSOrchestrationAgentConfiguration: Codable, Equatable, Sendable {
@@ -12,6 +27,8 @@ struct IOSOrchestrationAgentConfiguration: Codable, Equatable, Sendable {
     let skillContext: String?
     let modelId: String?
     let reasoningLevel: String?
+    let deliverableHint: String?
+    let checkpointPolicy: String?
 
     init(
         roleId: String? = nil,
@@ -21,7 +38,9 @@ struct IOSOrchestrationAgentConfiguration: Codable, Equatable, Sendable {
         skillNames: [String] = [],
         skillContext: String? = nil,
         modelId: String? = nil,
-        reasoningLevel: String? = nil
+        reasoningLevel: String? = nil,
+        deliverableHint: String? = nil,
+        checkpointPolicy: String? = nil
     ) {
         self.roleId = roleId
         self.systemPrompt = systemPrompt
@@ -31,6 +50,8 @@ struct IOSOrchestrationAgentConfiguration: Codable, Equatable, Sendable {
         self.skillContext = skillContext
         self.modelId = modelId
         self.reasoningLevel = reasoningLevel
+        self.deliverableHint = deliverableHint
+        self.checkpointPolicy = checkpointPolicy
     }
 }
 
@@ -82,6 +103,23 @@ enum IOSOrchestrationConfigurationCodec {
         }
         if let context = configuration.context, !context.isEmpty {
             sections.append("Task context:\n\(context)")
+        }
+        if let deliverableHint = configuration.deliverableHint, !deliverableHint.isEmpty {
+            sections.append("Deliverable format: \(deliverableHint)")
+        }
+        if let checkpointPolicy = configuration.checkpointPolicy, !checkpointPolicy.isEmpty {
+            switch IOSOrchestrationCheckpointPolicy(rawPolicy: checkpointPolicy) {
+            case .some(.pauseForDecision):
+                sections.append(
+                    "Checkpoint policy: pause_for_decision\nComplete initial reconnaissance or candidate screening first, then pause at the decision boundary and report structured conclusions, key findings, and explicit options requiring user decision before deeper execution."
+                )
+            case .some(.none):
+                sections.append(
+                    "Checkpoint policy: none\nExecute the delegated scope end-to-end without pausing for intermediate confirmation."
+                )
+            case nil:
+                sections.append("Checkpoint policy: \(checkpointPolicy)")
+            }
         }
         if configuration.toolScope == nil {
             sections.append("Tool scope: inherit the parent's exposed catalog.")

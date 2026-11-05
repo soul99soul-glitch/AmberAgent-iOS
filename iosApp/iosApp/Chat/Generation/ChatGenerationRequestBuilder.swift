@@ -73,6 +73,16 @@ extension ChatViewModel {
         _ = startOrEnqueueTaskSlot(slot, in: targetRun)
     }
 
+    static let managerDelegationContractPrompt = """
+    【AI 经理并发派工契约（秘书班子领班）】
+    你在前台主对话中扮演“AI 经理（秘书班子领班）”角色：前台只负责与用户自然对话、理清意图、拆解任务，并将重度执行交由后台子代理（spawn_agent）并发完成，使对话与执行彻底解耦，绝不在主会话里同步死磕长耗时任务打断聊天节奏。
+    - 任务分流准则：
+      1. 随手单步查询（如简短问答、查改单条日程/设置、切换形象人设、一次轻量检索即可作答）：在主对话当轮直接轻量完成。
+      2. 多维调研 / 潜在客户摸排 / 赛道对比 / 批量分析 / 复杂多步任务：前台仅用 1 句自然利落的口语接单回应，同轮直接拆解并调用 `spawn_agent` 派发给后台子代理并发干活，不要在主会话里自己连续多轮搜索或长篇憋字。
+    - 多事项并发拆单：当用户在一段话里同时交办多件独立事项（例如同时让找潜在客户、做赛道调研、对比竞品方案）时，在同一轮或连续轮次拆成多个独立的 `spawn_agent` 任务并发执行（后台支持最高 4 路子代理同时并行）；派发后立即结束当前前台轮次释放输入框，供用户继续闲聊或随时补充新意图，不要在主会话同步轮询死等。
+    - 结构化交办参数：调用 `spawn_agent` 时，除清晰的 `task_name`（短小写英文名）与 `message` 外，可按需指定 `deliverable_hint`（期望交付物格式，如“潜在客户清单与联系方式”、“赛道对比结论与核心依据”）与 `checkpoint_policy`（`"none"` 表示全程执行到底；`"pause_for_decision"` 表示完成前序摸排/初筛后先暂停并回传结构化候选供用户拍板下一步），复杂任务可指定 `reasoning_level: "high"`。若其余编排工具（如 `followup_task`、`send_message`、`interrupt_agent`、`list_agents`）未暴露，先通过 `tool_search` 检索精确名称后直接调用，严禁使用 `mcp_call` 包装。
+    """
+
     /// P1 管线闭环：参与线程树的会话注入的 mailbox 语义说明（仅在
     /// currentConversationHasOrchestrationLinks 为真时出现在上传上下文）。
     func messagesByInjectingRuntimeContext(
@@ -92,10 +102,29 @@ extension ChatViewModel {
         // injected inside a started run, after the bridge exists.
         var uploadableWithGuidance = uploadableMessages
         if !state.isOrchestratedChild {
+            if let latestUserIndex = uploadableMessages.lastIndex(where: { $0.role == MessageRole.user }) {
+                let latestUserMessage = uploadableMessages[latestUserIndex]
+                let rawUserText = latestUserMessage.toText().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !rawUserText.isEmpty, !rawUserText.hasPrefix("[mailbox ") {
+                    let currentTurnToolNames = Set(
+                        uploadableMessages[(latestUserIndex + 1)...]
+                            .filter { $0.role == MessageRole.assistant }
+                            .flatMap { $0.getTools().map(\.toolName) }
+                    )
+                    AmberIntentInboxStore.shared.captureFromUserMessage(
+                        rawUserText,
+                        conversationId: state.conversationId?.toHexDashString(),
+                        sourceMessageId: ChatMessageProjector.messageId(for: latestUserMessage),
+                        triggeredToolNames: currentTurnToolNames
+                    )
+                }
+            }
         uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
             name: "conversationalProgress",
             text: """
             无需调用工具的闲聊、寒暄或可直接回答的问题，在同一轮直接自然作答，不要拆成“先应一声、再答一遍”的两段。凡是需要调用工具或多步处理的请求（如修改角色设定、查日程、搜索、读写数据、执行操作等），要调用工具时在同轮调用，绝不能静默只发 tool_calls：首轮发出 tool_calls 的同时，必须先输出简短自然的一句口语回应（严格控制在 1 句以内），按你当前的形象人设（Soul）性格与称呼（默认则以亲切利落的朋友口吻）顺手把事应下来；严禁复读用户原话，严禁“收到您的请求”“正在为您处理”“好的，我将为您……”等客服腔或汇报体。工具执行完毕给出最终答复时，在新一轮直接自然交付结果与正文，不要重复开场寒暄或再来一遍客套汇报；若刚通过 agent_soul_update 切换了角色设定，立即以新身份和口吻说话。若纯文本问题确实需要分步深入展开，可在首轮简短给出核心判断并在末尾附上 <amber-continue>阶段1|阶段2|阶段3</amber-continue>（写出 3 个与具体话题相关、各 6～14 字的思考方向，例如“梳理二人的交往|比较彼此的经历|分析他们的情谊”；不要声称尚未发生的搜索或工具操作，无工具时随后结束本轮，有工具时仍须同轮调用）。编排复杂后台子线程时，如目标模型支持，可为 spawn_agent 指定 reasoning_level: "high"。只陈述真实进展，不要声称尚未完成的操作已完成。仅在用户明确要求记住、修改、忘掉或查询记忆时调用 memory_tool；日常对话流露的信息由后台自动提炼，不必主动调用 memory_tool 打断对话。
+
+            \(Self.managerDelegationContractPrompt)
             """
         )] + uploadableWithGuidance
         }
@@ -545,7 +574,7 @@ extension ChatViewModel {
         let exposureBridge = IosToolExposureBridge(tools: toolDeclarations, recipeSearchInfo: recipeSearchInfo)
         exposureBridge.exposeToolNames(names: Array(AgentSoulToolCatalog.toolNames).sorted())
         if !state.isOrchestratedChild {
-            exposureBridge.exposeToolNames(names: [ChatEpisodeRecallTool.name])
+            exposureBridge.exposeToolNames(names: [ChatEpisodeRecallTool.name, "spawn_agent"])
         }
         if includesPhoneTools {
             exposureBridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
